@@ -26,12 +26,24 @@ class DetectedField:
 
 @dataclass(frozen=True)
 class PageState:
-    """A snapshot of the current page during pre-fill."""
+    """A snapshot of the current page during pre-fill.
+
+    Carries the full set of detection-relevant signals so cautious mode can classify
+    HTTP-status blocks (403/429), anomalous redirects (``url`` vs ``expected_host``),
+    and body markers (Cloudflare/CAPTCHA text) — not just the extracted
+    ``detection_signals`` tuple (FR-PREFILL-6).
+    """
 
     url: str
     fields: tuple[DetectedField, ...] = ()
     screenshot_ref: str | None = None
     detection_signals: tuple[str, ...] = field(default_factory=tuple)
+    #: HTTP status of the page response (FR-PREFILL-6): 403/429 => blocked.
+    status: int | None = None
+    #: Raw page body/markup, scanned for challenge markers (FR-PREFILL-6).
+    body: str | None = None
+    #: The host we expected to land on; a mismatch is an anomalous redirect.
+    expected_host: str | None = None
 
 
 @runtime_checkable

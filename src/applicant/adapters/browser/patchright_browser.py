@@ -81,6 +81,7 @@ class PatchrightBrowser:
         egress: EgressPolicy | None = None,
         rng: random.Random | None = None,
         profiles: ProfileStore | None = None,
+        source_factory=None,
     ) -> None:
         # FR-STEALTH-1: normalized, coherent identity for every session.
         self.fingerprint = dict(fingerprint or NORMALIZED_FINGERPRINT)
@@ -90,6 +91,10 @@ class PatchrightBrowser:
         self._use_real_browser = use_real_browser
         self._rng = rng or random.Random()
         self._profiles = profiles or ProfileStore()
+        # Optional page-source factory seam (tests): called as
+        # ``factory(ats, fingerprint, user_data_dir=...)`` so the resolved per-tenant
+        # ``user_data_dir`` (FR-STEALTH-3) can be asserted without a real browser.
+        self._source_factory = source_factory
         self._sessions: dict[str, _Session] = {}
 
     # --- BrowserAutomationPort -------------------------------------------
@@ -99,7 +104,9 @@ class PatchrightBrowser:
         tenant_key = ats.tenant_key(url)
         # FR-STEALTH-3: a persistent per-tenant profile (same identity on return).
         profile = self._profiles.for_tenant(tenant_key)
-        source = self._make_source(ats, profile.fingerprint)
+        source = self._make_source(
+            ats, profile.fingerprint, user_data_dir=profile.user_data_dir
+        )
         source.open(url)
         # FR-STEALTH-2: a per-session human-interaction model (deterministic rng).
         human = HumanInteraction(random.Random(self._rng.random()))
@@ -178,6 +185,12 @@ class PatchrightBrowser:
         if isinstance(source, FakePageSource):
             source.inject_detection_signal(signal)
 
+    def inject_page_signals(self, application_id: ApplicationId, **kwargs) -> None:
+        """Test/seam helper: set status/body/expected_host on the current page."""
+        source = self._source(application_id)
+        if isinstance(source, FakePageSource):
+            source.inject_page_signals(**kwargs)
+
     def simulate_confirmation(
         self, application_id: ApplicationId, *, text: str = "Application submitted"
     ) -> None:
@@ -191,13 +204,24 @@ class PatchrightBrowser:
         return self._profiles.is_returning(self._session(application_id).tenant_key)
 
     # --- internals -------------------------------------------------------
-    def _make_source(self, ats, fingerprint: dict[str, str]) -> PageSource:
+    def _make_source(
+        self, ats, fingerprint: dict[str, str], *, user_data_dir: str = ""
+    ) -> PageSource:
+        # Test seam: an injected factory receives the resolved per-tenant profile dir.
+        if self._source_factory is not None:
+            return self._source_factory(ats, fingerprint, user_data_dir=user_data_dir)
         if self._use_real_browser:  # pragma: no cover - integration-gated
             from applicant.adapters.browser.page_source import PlaywrightPageSource
 
-            # FR-STEALTH-4: thread the (validated) residential-egress proxy into the
-            # real browser launch so a configured proxy is ACTUALLY used for egress.
-            return PlaywrightPageSource(fingerprint, proxy=self.egress.launch_proxy())
+            # FR-STEALTH-3: thread the persistent per-tenant profile dir into the real
+            # browser launch so per-tenant persistence (same identity on return) works.
+            # FR-STEALTH-4: thread the (validated) residential-egress proxy in too, so
+            # a configured proxy is ACTUALLY used for egress.
+            return PlaywrightPageSource(
+                fingerprint,
+                proxy=self.egress.launch_proxy(),
+                user_data_dir=user_data_dir,
+            )
         return FakePageSource(ats)
 
     def _session(self, application_id: ApplicationId) -> _Session:

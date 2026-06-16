@@ -112,6 +112,15 @@ def authorize_engine_finish(
         ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    # FR-PREFILL-5: actually CLICK the final submit (boundary-gated, authorized) before
+    # recording the conversion — otherwise the real driver would mark a submission
+    # without ever performing the click.
+    try:
+        container.browser.click_final_submit(  # type: ignore[arg-type]
+            application_id, engine_submit_authorized=True
+        )
+    except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     try:
         event = _record_submission(container, application_id, source=OutcomeSource.AUTO)
     except ReviewRequired as exc:

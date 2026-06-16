@@ -38,6 +38,12 @@ class FakePage:
     is_confirmation: bool = False
     #: visible page text (drives confirmation-page heuristics, FR-LOG-4).
     text: str = ""
+    #: HTTP status of the page response (FR-PREFILL-6): 403/429 => blocked.
+    status: int | None = None
+    #: raw page body/markup, scanned for challenge markers (FR-PREFILL-6).
+    body: str | None = None
+    #: host we expected to land on; a mismatch is an anomalous redirect.
+    expected_host: str | None = None
 
 
 class AtsAdapter:

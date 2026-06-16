@@ -62,6 +62,11 @@ class LocalSandbox:
         session = self._sessions.pop(session_id, None)
         if session is not None:
             self._by_application.pop(str(session.application_id), None)
+            # FR-SANDBOX-2: invalidate the live-session deep-link token/takeover so a
+            # torn-down session's URL stops working (no dangling valid token).
+            invalidate = getattr(self._remote_view, "invalidate", None)
+            if callable(invalidate):
+                invalidate(session_id)
             if self._room_control is not None:  # pragma: no cover - integration-gated
                 self._room_control.destroy_room(session_id)
 

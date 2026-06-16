@@ -236,7 +236,9 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.adapters.browser.stealth import EgressPolicy
 
     egress = EgressPolicy.from_settings(
-        mode=settings.egress_mode, proxy_url=settings.egress_proxy_url
+        mode=settings.egress_mode,
+        proxy_url=settings.egress_proxy_url,
+        residential=settings.egress_residential,
     )
     browser = PatchrightBrowser(egress=egress)
     detection = DetectionMonitor()

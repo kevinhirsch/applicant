@@ -73,6 +73,9 @@ _TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             S.BLOCKED_DETECTION,
             S.BLOCKED_MISSING_ATTR,
             S.BLOCKED_QUESTION,
+            # FR-PREFILL-4: a mid-flow account-creation page (not just the first page)
+            # hands off to the human; the engine never creates an account itself.
+            S.AWAITING_ACCOUNT_HUMAN_STEP,
             S.MATERIAL_PREP,
             S.EMERGENCY_DATA_HANDOFF,
         }
