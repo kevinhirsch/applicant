@@ -12,9 +12,27 @@ import sessionModule from './sessions.js';
  * Handle a ui_control SSE event — AI-driven UI manipulation.
  * Extracted from the duplicated ui_control + tool_output.ui_event handlers.
  */
+// W1 (2026-06-10 audit): the ui_control safe subset under the game build — camera
+// direction + house theming only. The server refuses everything else in
+// do_ui_control; this client-side belt makes sure no stray/replayed event can flip
+// the mode, swap the model, toggle incognito, or open a dropped panel either.
+var GAME_UI_SAFE_EVENTS = ['highlight', 'clear_highlight', 'set_theme', 'create_theme'];
+
+function _gameBuildOn() {
+  return !!(document.body && document.body.dataset && document.body.dataset.gameBuild === '1');
+}
+
 export function handleUIControl(uiData) {
   var uiEvent = uiData.ui_event || uiData;
   var esc = uiModule.esc;
+
+  if (_gameBuildOn()) {
+    var evName = typeof uiEvent === 'string' ? uiEvent : (uiData.ui_event || '');
+    if (GAME_UI_SAFE_EVENTS.indexOf(evName) === -1) {
+      console.warn('ui_control event blocked under the game build:', evName);
+      return;
+    }
+  }
 
   try {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
@@ -106,15 +124,15 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'highlight' || uiData.ui_event === 'highlight') {
-      document.querySelectorAll('.odysseus-highlight').forEach(function(e) { e.classList.remove('odysseus-highlight'); });
-      document.querySelectorAll('.odysseus-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.orwell-highlight').forEach(function(e) { e.classList.remove('orwell-highlight'); });
+      document.querySelectorAll('.orwell-hl-label').forEach(function(e) { e.remove(); });
       var target = document.querySelector(uiData.selector);
       if (target) {
-        target.classList.add('odysseus-highlight');
+        target.classList.add('orwell-highlight');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         if (uiData.label) {
           var lbl = document.createElement('div');
-          lbl.className = 'odysseus-hl-label';
+          lbl.className = 'orwell-hl-label';
           lbl.textContent = uiData.label;
           if (!target.style.position) target.style.position = 'relative';
           target.appendChild(lbl);
@@ -122,73 +140,23 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'clear_highlight' || uiData.ui_event === 'clear_highlight') {
-      document.querySelectorAll('.odysseus-highlight').forEach(function(e) { e.classList.remove('odysseus-highlight'); });
-      document.querySelectorAll('.odysseus-hl-label').forEach(function(e) { e.remove(); });
-
-    } else if (uiEvent === 'research_started' || uiData.ui_event === 'research_started') {
-      // Agent kicked off deep research — adopt the session into the
-      // sidebar immediately so the user sees it without waiting for
-      // the 12s active-poll.
-      var rsid = uiData.research_session_id || uiData.session_id;
-      if (rsid) {
-        import('./research/jobs.js').then(function(mod) {
-          var fn = mod.adoptSession || (mod.default && mod.default.adoptSession);
-          if (fn) fn(rsid);
-        }).catch(function(){});
-        // The clickable "Open in Deep Research" link is now emitted by the
-        // agent loop as a `#research-<id>` markdown anchor in the assistant's
-        // response text — it renders as a regular clickable chat link AND
-        // persists across refresh (saved with the message). No ephemeral
-        // chip injection needed here anymore.
-      }
+      document.querySelectorAll('.orwell-highlight').forEach(function(e) { e.classList.remove('orwell-highlight'); });
+      document.querySelectorAll('.orwell-hl-label').forEach(function(e) { e.remove(); });
 
     } else if (uiEvent === 'open_panel' || uiData.ui_event === 'open_panel') {
+      // Game build (feature 0032): only the kept panels remain — the workspace
+      // verticals (documents/gallery/email/cookbook/notes/memories/skills) are
+      // removed, so their open_panel routings are gone with them.
       var panel = uiData.panel;
-      if (panel === 'documents') {
-        import('./documentLibrary.js').then(function(mod) {
-          var fn = mod.openLibrary || (mod.default && mod.default.openLibrary);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'gallery') {
-        import('./gallery.js').then(function(mod) {
-          var fn = mod.openGallery || (mod.default && mod.default.openGallery);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'email') {
-        import('./emailLibrary.js').then(function(mod) {
-          var fn = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'sessions') {
+      if (panel === 'sessions') {
         import('./sessions.js').then(function(mod) {
           var fn = mod.openLibrary || (mod.default && mod.default.openLibrary);
           if (fn) fn();
         }).catch(function(){});
-      } else if (panel === 'cookbook') {
-        import('./cookbook.js').then(function(mod) {
-          var fn = mod.open || (mod.default && mod.default.open);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'notes') {
-        import('./notes.js').then(function(mod) {
-          var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'memories' || panel === 'skills' || panel === 'settings') {
-        // These live in the sidebar / settings drawer — most just need
-        // an existing button click.
-        var ids = { memories: 'tool-memory-btn', skills: 'skills-btn', settings: 'open-settings-btn' };
-        var btn = document.getElementById(ids[panel]);
+      } else if (panel === 'settings') {
+        var btn = document.getElementById('open-settings-btn');
         if (btn) btn.click();
       }
-
-    } else if (uiEvent === 'open_email_reply' || uiData.ui_event === 'open_email_reply') {
-      import('./emailInbox.js').then(function(mod) {
-        var fn = mod.openReplyDraft || (mod.default && mod.default.openReplyDraft);
-        if (fn) fn(uiData.uid, uiData.folder || 'INBOX', uiData.mode || 'reply', uiData.body || '');
-      }).catch(function(e) {
-        console.warn('open_email_reply failed:', e);
-      });
     }
   } catch(e) {
     console.warn('ui_control handler error:', e);

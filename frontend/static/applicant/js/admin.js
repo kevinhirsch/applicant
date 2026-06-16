@@ -4,27 +4,16 @@
  * workflow state, variant library), FR-OOBE-4 (in-UI Update button). Phase 4.
  *
  * Network failures degrade gracefully — an error note is shown, never dead UI
- * presented as live (FR-UI-2).
+ * presented as live (FR-UI-2). Shares the redirect-aware fetch + DOM builder from
+ * ApplicantUI (a 409 from the gate routes to the wizard).
  */
-(function () {
-  "use strict";
+import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
 
   const params = new URLSearchParams(location.search);
   const campaignId = document.body.getAttribute("data-campaign-id") || params.get("campaign_id") || "";
   const applicationId = document.body.getAttribute("data-application-id") || params.get("application_id") || "";
 
-  async function api(path, opts) {
-    const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.status === 204 ? null : res.json();
-  }
-
-  function el(tag, attrs, children) {
-    const node = document.createElement(tag);
-    Object.assign(node, attrs || {});
-    (children || []).forEach((c) => node.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
-    return node;
-  }
+  const api = apiFetch;
 
   function note(container, text) {
     container.innerHTML = "";
@@ -172,10 +161,10 @@
     });
   }
 
+  ApplicantUI.mount({ active: "debug" });
   loadTools();
   loadHistory();
   loadVariants();
   loadLogs();
   loadScreenshots();
   wireUpdate();
-})();

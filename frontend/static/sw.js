@@ -1,4 +1,4 @@
-// static/sw.js — Odysseus PWA Service Worker
+// static/sw.js — Orwell PWA Service Worker
 // Strategy:
 //   - HTML (navigation): stale-while-revalidate. Instant open from cache,
 //     background refresh so the next open has latest HTML.
@@ -7,55 +7,43 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v327';
+const CACHE_NAME = 'orwell-v330';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
 // and <link rel="stylesheet"> in index.html.
 const PRECACHE = [
   '/',
+  '/static/css/responsive-tokens.css',
+  '/static/css/orwellHouseThemes.css',
   '/static/style.css',
+  '/static/icon-192.png',
+  '/static/icon-512.png',
+  '/static/apple-touch-icon.png',
   '/static/app.js',
   '/static/js/storage.js',
   '/static/js/ui.js',
   '/static/js/markdown.js',
   '/static/js/dragSort.js',
   '/static/js/sessions.js',
-  '/static/js/memory.js',
-  '/static/js/skills.js',
   '/static/js/tourHints.js',
   '/static/js/fileHandler.js',
   '/static/js/voiceRecorder.js',
   '/static/js/models.js',
-  '/static/js/rag.js',
   '/static/js/presets.js',
-  '/static/js/search.js',
   '/static/js/spinner.js',
   '/static/js/tts-ai.js',
-  '/static/js/document.js',
-  '/static/js/gallery.js',
   '/static/js/chatRenderer.js',
   '/static/js/codeRunner.js',
   '/static/js/chatStream.js',
   '/static/js/chat.js',
-  '/static/js/cookbook.js',
   '/static/js/search-chat.js',
-  '/static/js/compare/index.js',
   '/static/js/theme.js',
   '/static/js/censor.js',
   '/static/js/settings.js',
   '/static/js/admin.js',
   '/static/js/init.js',
   '/static/js/slashCommands.js',
-  '/static/js/emailInbox.js',
-  '/static/js/emailLibrary/utils.js',
-  '/static/js/emailLibrary/signatureFold.js',
-  '/static/js/emailLibrary/state.js',
-  '/static/js/notes.js',
-  '/static/js/tasks.js',
-  '/static/js/calendar.js',
-  '/static/js/calendar/utils.js',
-  '/static/js/calendar/reminders.js',
   '/static/js/group.js',
   '/static/js/keyboard-shortcuts.js',
   '/static/js/sidebar-layout.js',

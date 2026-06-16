@@ -3,9 +3,8 @@
 
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
-import { providerLogo, providerLogoFromUrl } from './providers.js';
+import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
-import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 
 let initialized = false;
 let modalEl = null;
@@ -55,7 +54,8 @@ async function loadUsers() {
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
+          <button class="admin-btn-sm" data-adm-role-user="${esc(u.username)}" data-adm-is-admin="${u.is_admin ? '1' : '0'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
+          <button class="admin-btn-sm" data-adm-resetpw-user="${esc(u.username)}" style="font-size:11px;">Reset password</button>
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
@@ -94,7 +94,6 @@ async function loadUsers() {
           : [];
         const allowedSet = new Set(allowedModels);
         const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
-        const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -103,7 +102,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -114,7 +113,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin]')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-role-user], [data-adm-resetpw-user]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -125,7 +124,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
           }
         });
 
@@ -200,39 +199,51 @@ async function loadUsers() {
         });
       }
 
-      // Promote / demote (admin toggle) — present on every row
-      const adminToggleBtn = row.querySelector('[data-adm-toggle-admin]');
-      if (adminToggleBtn) {
-        adminToggleBtn.addEventListener('click', async (e) => {
+      // Promote / demote (0029). The last-admin guard is enforced server-side.
+      const roleBtn = row.querySelector('[data-adm-role-user]');
+      if (roleBtn) {
+        roleBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          const username = adminToggleBtn.dataset.admToggleAdmin;
-          const makeAdmin = adminToggleBtn.dataset.makeAdmin === '1';
-          const confirmMsg = makeAdmin
-            ? `Grant admin rights to "${username}"? They'll get full access to all settings and users — including the power to demote or remove other admins (you included).`
-            : `Revoke admin rights from "${username}"? They'll lose access to the admin panel.`;
-          if (!await uiModule.styledConfirm(confirmMsg, { confirmText: makeAdmin ? 'Make admin' : 'Revoke admin', danger: !makeAdmin })) return;
-          adminToggleBtn.disabled = true;
+          const username = roleBtn.dataset.admRoleUser;
+          const makeAdmin = roleBtn.dataset.admIsAdmin !== '1';
+          const verb = makeAdmin ? 'Make' : 'Revoke';
+          if (!await uiModule.styledConfirm(`${verb} admin for "${username}"?`, { confirmText: `${verb} admin`, danger: !makeAdmin })) return;
           try {
-            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/admin`, {
-              method: 'PUT',
-              credentials: 'same-origin',
+            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/role`, {
+              method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ is_admin: makeAdmin }),
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-              uiModule.showError(data.detail || 'Failed to change admin status');
-              adminToggleBtn.disabled = false;
-              return;
-            }
-            // Demoting yourself drops your own admin access — reload into the
-            // normal-user view (mirrors the rename-self reload above).
-            if (data.self) { window.location.reload(); return; }
+            if (!res.ok) { uiModule.showError(data.detail || 'Failed to change role'); return; }
             loadUsers();
-          } catch (err) {
-            uiModule.showError('Failed to change admin status');
-            adminToggleBtn.disabled = false;
-          }
+          } catch (err) { uiModule.showError('Failed to change role'); }
+        });
+      }
+
+      // Admin password reset (0029): set a new password without the current one;
+      // the server revokes that user's sessions on reset.
+      const resetBtn = row.querySelector('[data-adm-resetpw-user]');
+      if (resetBtn) {
+        resetBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const username = resetBtn.dataset.admResetpwUser;
+          const entered = await uiModule.styledPrompt(`Set a new password for "${username}"`, {
+            title: 'Reset password', placeholder: 'New password (min 8 characters)', confirmText: 'Reset',
+          });
+          const newPassword = (entered || '').trim();
+          if (!newPassword) return;
+          if (newPassword.length < 8) { uiModule.showError('Password must be at least 8 characters'); return; }
+          try {
+            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/password`, {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ new_password: newPassword }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) { uiModule.showError(data.detail || 'Failed to reset password'); return; }
+            uiModule.showToast('Password reset');
+          } catch (err) { uiModule.showError('Failed to reset password'); }
         });
       }
 
@@ -241,22 +252,17 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
-    // Use /api/model-endpoints rather than /api/models — the latter is
-    // backed by `cached_models`, so endpoints that haven't been probed yet
-    // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
-    // until some other endpoint happens to trigger a cache refresh. The
-    // endpoints listing always reflects every configured endpoint.
-    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const res = await fetch('/api/models', { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
-    (Array.isArray(data) ? data : []).forEach(ep => {
-      if (!ep.online) return;
-      (ep.models || []).forEach(mid => {
-        allModels.push({ mid, epName: ep.name || '', display: mid.split('/').pop() });
+    (data.items || []).forEach(item => {
+      if (item.offline) return;
+      (item.models || []).forEach(mid => {
+        allModels.push({ mid, epName: item.endpoint_name || '', display: mid.split('/').pop() });
       });
     });
     if (!allModels.length) {
@@ -264,9 +270,8 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
       return;
     }
     let restricted = modelsRestricted;
-    let blockAll = blockAllModels;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = !blockAll && (!restricted || allowedSet.has(m.mid)) ? 'checked' : '';
+      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -280,33 +285,15 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // Three distinct states the backend must be able to tell apart:
-      //  - all checked   -> no restriction (allowed_models: [], block_all_models: false)
-      //  - none checked  -> block everything (allowed_models: [], block_all_models: true)
-      //  - some checked  -> allowlist (allowed_models: checked, block_all_models: false)
-      let value, hintText;
-      if (checked.length === allModels.length) {
-        restricted = false;
-        blockAll = false;
-        value = [];
-        hintText = 'All models allowed (no restrictions)';
-      } else if (checked.length === 0) {
-        restricted = true;
-        blockAll = true;
-        value = [];
-        hintText = 'No models allowed';
-      } else {
-        restricted = true;
-        blockAll = false;
-        value = checked;
-        hintText = value.length + ' model(s) allowed';
-      }
+      // All checked means unrestricted; zero checked means explicitly no models.
+      restricted = checked.length !== allModels.length;
+      const value = restricted ? checked : [];
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = hintText;
+      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -419,7 +406,7 @@ async function _selectAddedModelInChat(endpoint) {
     }
   } catch (_) {}
   try {
-    document.dispatchEvent(new CustomEvent('odysseus:auto-select-model', {
+    document.dispatchEvent(new CustomEvent('orwell:auto-select-model', {
       detail: {
         endpointId: endpoint.id || '',
         endpointName: endpoint.name || '',
@@ -486,16 +473,16 @@ async function loadEndpoints() {
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
-            <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;">
-              <span class="adm-ep-row-logo" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0;opacity:0.9;">${providerLogoFromUrl(ep.base_url) || ''}</span>
+            <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
-              ${hasModels ? `<span style="font-size:10px;opacity:0.4;${category === 'api' ? 'flex-basis:100%;' : ''}">Click to manage models</span>` : ''}
+              ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
-            <div style="display:flex;gap:4px;align-items:center;">
+            <div class="admin-ep-actions">
+              ${_isLocalEndpoint(ep.base_url) ? '<select class="admin-tools-select" data-adm-tools-select="' + ep.id + '" title="Native tool calling mode. Auto = use heuristic (fenced blocks for Ollama /v1). On = always use native function calling. Off = always use fenced blocks."><option value="auto"' + (ep.supports_tools !== true && ep.supports_tools !== false ? ' selected' : '') + '>Tools: Auto</option><option value="true"' + (ep.supports_tools === true ? ' selected' : '') + '>Tools: On</option><option value="false"' + (ep.supports_tools === false ? ' selected' : '') + '>Tools: Off</option></select>' : ''}
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -539,6 +526,22 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-tools-select]').forEach(sel => {
+      sel.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const epId = sel.dataset.admToolsSelect;
+        const val = sel.value;
+        const body = {};
+        if (val === 'auto') body.supports_tools = null;
+        else body.supports_tools = val === 'true';
+        await fetch(`/api/model-endpoints/${epId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -754,80 +757,6 @@ function initEndpointForm() {
   const pickerBtn = el('adm-provider-btn');
   const pickerMenu = el('adm-provider-menu');
   const pickerCurrent = picker ? picker.querySelector('.adm-provider-current') : null;
-  const DEVICE_AUTH_PROVIDER_VALUES = new Set(Object.keys(PROVIDER_DEVICE_FLOWS));
-  let deviceAuthPolling = false;
-  function _selectedProviderOption() {
-    return provider && provider.selectedOptions ? provider.selectedOptions[0] : null;
-  }
-  function _selectedDeviceAuthProvider() {
-    const opt = _selectedProviderOption();
-    const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
-    if (flow && DEVICE_AUTH_PROVIDER_VALUES.has(flow)) return flow;
-    return DEVICE_AUTH_PROVIDER_VALUES.has(provider.value) ? provider.value : '';
-  }
-  function _isDeviceAuthSelected() {
-    return !!_selectedDeviceAuthProvider();
-  }
-  function _setApiFormForProvider() {
-    const deviceAuthProvider = _selectedDeviceAuthProvider();
-    const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
-    const apiKey = el('adm-epApiKey');
-    const testBtn = el('adm-epApiTestBtn');
-    const addBtn = el('adm-epAddBtn');
-    const status = el('adm-deviceAuthStatus');
-    const msg = _endpointMsg('api');
-    if (deviceAuthConfig) {
-      urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
-      urlInput.readOnly = true;
-      if (apiKey) {
-        apiKey.value = '';
-        apiKey.placeholder = 'No API key needed';
-        apiKey.disabled = true;
-      }
-      if (testBtn) {
-        testBtn.disabled = true;
-        testBtn.style.opacity = '0.45';
-        testBtn.style.cursor = 'not-allowed';
-      }
-      if (addBtn) {
-        addBtn.disabled = false;
-        addBtn.textContent = 'Add';
-        addBtn.style.width = '55px';
-        addBtn.style.display = '';
-      }
-      if (kindSel) kindSel.value = 'api';
-      if (msg) {
-        msg.textContent = '';
-        msg.className = '';
-      }
-    } else {
-      urlInput.placeholder = 'Base URL or pick provider';
-      urlInput.readOnly = false;
-      if (apiKey) {
-        apiKey.placeholder = 'API key';
-        apiKey.disabled = false;
-      }
-      if (testBtn) {
-        testBtn.disabled = false;
-        testBtn.style.opacity = '';
-        testBtn.style.cursor = '';
-      }
-      if (addBtn) {
-        addBtn.disabled = false;
-        addBtn.textContent = 'Add';
-        addBtn.style.width = '55px';
-        addBtn.style.display = '';
-      }
-      if (msg) {
-        msg.textContent = '';
-        msg.className = '';
-      }
-      if (!deviceAuthPolling && status) status.textContent = '';
-    }
-  }
   function _renderPickerMenu() {
     if (!pickerMenu) return;
     pickerMenu.innerHTML = Array.from(provider.options).map(o => {
@@ -866,27 +795,12 @@ function initEndpointForm() {
     document.addEventListener('click', (e) => {
       if (!picker.contains(e.target)) pickerMenu.classList.add('hidden');
     });
-    // Capture-phase Esc: dismiss the picker menu without bubbling to the
-    // settings-modal handler that would otherwise close the whole modal.
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      if (pickerMenu.classList.contains('hidden')) return;
-      e.stopPropagation();
-      pickerMenu.classList.add('hidden');
-    }, { capture: true });
   }
 
   provider.addEventListener('change', () => {
-    if (_isDeviceAuthSelected()) {
-      _setApiFormForProvider();
-      _renderPickerMenu();
-      _syncPickerCurrent();
-      return;
-    }
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
     if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
-    _setApiFormForProvider();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
@@ -974,12 +888,6 @@ function initEndpointForm() {
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
   if (apiTestBtn) {
     apiTestBtn.addEventListener('click', async () => {
-      if (_isDeviceAuthSelected()) {
-        const msg = _endpointMsg('api');
-        msg.textContent = '';
-        msg.className = '';
-        return;
-      }
       const msg = _endpointMsg('api');
       msg.textContent = ''; msg.className = '';
       const rawUrl = (urlInput.value || provider.value).trim();
@@ -1027,11 +935,6 @@ function initEndpointForm() {
   }
 
   el('adm-epAddBtn').addEventListener('click', async () => {
-    const deviceAuthProvider = _selectedDeviceAuthProvider();
-    if (deviceAuthProvider) {
-      await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
-      return;
-    }
     const msg = _endpointMsg('api');
     msg.textContent = ''; msg.className = '';
     const rawUrl = (urlInput.value || provider.value).trim();
@@ -1068,15 +971,14 @@ function initEndpointForm() {
         if (d.id) _recentlyAddedEpId = String(d.id);
         await loadEndpoints();
         await _selectAddedModelInChat(d);
-        const goLink = ' <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>';
         if (!d.online) {
-          msg.innerHTML = 'Added (endpoint offline — will retry on next load)' + goLink;
+          msg.textContent = 'Added (endpoint offline — will retry on next load)';
           msg.className = 'admin-error';
         } else if (d.status === 'empty') {
-          msg.innerHTML = 'Added — endpoint reachable, no models found' + goLink;
+          msg.textContent = 'Added — endpoint reachable, no models found';
           msg.className = 'admin-success';
         } else {
-          msg.innerHTML = `Added — found ${count} model${count !== 1 ? 's' : ''}` + goLink;
+          msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
           msg.className = 'admin-success';
         }
       } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
@@ -1084,400 +986,92 @@ function initEndpointForm() {
     btn.disabled = false; btn.textContent = 'Add';
   });
 
-  async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
-    if (deviceAuthPolling) return;
-    const config = PROVIDER_DEVICE_FLOWS[providerKey];
-    if (!config) return;
-    const status = el('adm-deviceAuthStatus') || _endpointMsg('api');
-    if (!status) return;
-    const triggerText = triggerEl ? triggerEl.textContent : '';
-    // Render an error with an inline "Try again" (the top button is hidden for
-    // device-auth providers, so retry lives here). Built with DOM methods, not
-    // innerHTML. Call reset() first so the deviceAuthPolling guard is cleared.
-    const showAuthError = (text) => {
-      status.className = 'admin-error';
-      status.textContent = text + ' ';
-      const retry = document.createElement('button');
-      retry.type = 'button';
-      retry.className = 'admin-btn-sm';
-      retry.textContent = 'Try again';
-      retry.addEventListener('click', () => { _startProviderDeviceAuth(providerKey, triggerEl); });
-      status.appendChild(retry);
-    };
-    const reset = () => {
-      if (triggerEl) {
-        triggerEl.disabled = false;
-        triggerEl.textContent = triggerText || 'Add';
-      }
-      deviceAuthPolling = false;
-      _setApiFormForProvider();
-    };
-    status.textContent = '';
-    status.className = 'adm-ep-inline-msg';
-    if (triggerEl) {
-      triggerEl.disabled = true;
-      triggerEl.textContent = 'Starting...';
-    }
-    deviceAuthPolling = true;
-    _setApiFormForProvider();
-    status.textContent = `Starting ${config.label} sign-in...`;
-
-    try {
-      const result = await runProviderDeviceFlow(providerKey, {
-        openWindow: () => {},
-        onStart: ({ start, authUrl }) => {
-          if (triggerEl) triggerEl.textContent = 'Waiting...';
-          status.className = '';
-          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
-          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
-          status.innerHTML =
-            '<div class="adm-copilot-panel">' +
-              '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
-                '<span>' + esc(waitLabel) + '</span></div>' +
-              '<div class="adm-copilot-coderow">' +
-                '<span class="adm-copilot-code-label">Code</span>' +
-                '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
-                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
-              '</div>' +
-              '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
-            '</div>';
-          const copyBtn = status.querySelector('.adm-device-auth-copy');
-          if (copyBtn) copyBtn.addEventListener('click', async () => {
-            const code = start.user_code || '';
-            let ok = false;
-            try {
-              if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(code);
-                ok = true;
-              }
-            } catch (e) {}
-            if (!ok) {
-              // navigator.clipboard is unavailable in non-secure contexts (HTTP
-              // self-host over a LAN IP), so fall back to execCommand('copy').
-              const ta = document.createElement('textarea');
-              ta.value = code;
-              ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
-              document.body.appendChild(ta);
-              ta.focus();
-              ta.select();
-              try { ta.setSelectionRange(0, code.length); } catch (e) {}
-              try { ok = document.execCommand('copy'); } catch (e) {}
-              ta.remove();
-            }
-            copyBtn.textContent = ok ? 'Copied' : 'Failed';
-            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
-          });
-        },
-      });
-      if (result.status === 'authorized') {
-        const endpoint = result.endpoint || {};
-        const n = ((endpoint && endpoint.models) || []).length;
-        status.className = 'admin-success';
-        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
-        if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
-        await loadEndpoints();
-        await _selectAddedModelInChat(endpoint || {});
-        reset();
-        return;
-      }
-      if (result.status === 'failed') {
-        reset();
-        showAuthError('Authorization failed (' + (result.error || 'denied') + ').');
-        return;
-      }
-      if (result.status === 'expired') {
-        reset();
-        showAuthError('Authorization expired.');
-        return;
-      }
-    } catch (e) {
-      reset();
-      showAuthError(formatDeviceFlowError(e));
-    }
-  }
-
-  // API Key reveal toggle. The key inputs are hidden by default so the Add
-  // form reads as a single action row; the Key button toggles the input row
-  // and flips aria-expanded for screen readers / CSS pseudo-classes.
-  const _wireKeyToggle = (btnId, rowId) => {
-    const btn = el(btnId);
-    const row = el(rowId);
-    if (!btn || !row) return;
-    btn.addEventListener('click', () => {
-      const showing = row.style.display !== 'none';
-      row.style.display = showing ? 'none' : '';
-      btn.setAttribute('aria-expanded', showing ? 'false' : 'true');
-      btn.style.opacity = showing ? '0.75' : '1';
-      if (!showing) {
-        const inp = row.querySelector('input');
-        if (inp) inp.focus();
-      }
-    });
-  };
-  _wireKeyToggle('adm-epLocalKeyBtn', 'adm-epLocalApiKey-row');
-
-  // Delegated link handler for jumping between settings tabs.
-  //   [data-go-added-models]              → quick shortcut for the Added Models tab
-  //   [data-go-settings-tab="X"]          → any tab whose nav button has data-settings-tab="X"
-  //   [data-go-scroll-to="#elementId"]    → after switching, scroll the element into view
-  document.addEventListener('click', (e) => {
-    const explicit = e.target.closest('[data-go-settings-tab]');
-    if (explicit) {
-      e.preventDefault();
-      const tab = explicit.getAttribute('data-go-settings-tab');
-      const scrollTo = explicit.getAttribute('data-go-scroll-to');
-      const btn = document.querySelector(`[data-settings-tab="${tab}"]`);
-      if (btn) btn.click();
-      if (scrollTo) {
-        // Defer to the next frame so the panel has actually become visible
-        // before we try to scroll into it.
-        requestAnimationFrame(() => {
-          const target = document.querySelector(scrollTo);
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
-      return;
-    }
-    const link = e.target.closest('[data-go-added-models]');
-    if (!link) return;
-    e.preventDefault();
-    const btn = document.querySelector('[data-settings-tab="added-models"]');
-    if (btn) btn.click();
-  });
-
-  // Generic open/close helper for the kebab dropdowns in this card.
-  // Both the Local and API cards use the same shape: an h2-anchored button
-  // with id "<prefix>MoreBtn" toggles a sibling menu with id "<prefix>MoreMenu".
-  // Global Esc handler: close any currently-open kebab menu in the admin
-  // panel regardless of which _wireKebab instance owns it. Belt-and-braces
-  // backup for the per-instance handler below — registered once.
-  if (!document._admKebabEscWired) {
-    document._admKebabEscWired = true;
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      // Any visible kebab dropdown in the admin panel — match by id pattern
-      // so adding a new kebab elsewhere automatically benefits.
-      const menus = document.querySelectorAll(
-        '#adm-epLocalMoreMenu, #adm-epApiMoreMenu'
-      );
-      let closed = false;
-      menus.forEach((m) => {
-        if (m && m.style.display !== 'none') {
-          m.style.display = 'none';
-          // Sync the associated button's aria-expanded when we can find it.
-          const btn = document.getElementById(m.id.replace('Menu', 'Btn'));
-          if (btn) btn.setAttribute('aria-expanded', 'false');
-          closed = true;
-        }
-      });
-      if (closed) e.stopPropagation();
-    }, { capture: true });
-  }
-
-  const _wireKebab = (btnId, menuId, onItem) => {
-    const btn = el(btnId);
-    const menu = el(menuId);
-    if (!btn || !menu) return;
-    const isOpen = () => menu.style.display !== 'none';
-    const close = () => { menu.style.display = 'none'; btn.setAttribute('aria-expanded', 'false'); };
-    const open = () => { menu.style.display = 'flex'; btn.setAttribute('aria-expanded', 'true'); };
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (isOpen()) close(); else open();
-    });
-    menu.addEventListener('click', (e) => {
-      const item = e.target.closest('.adm-more-item');
-      if (!item) return;
-      if (onItem) onItem(item, e);
-      close();
-    });
-    document.addEventListener('click', (e) => {
-      if (!isOpen()) return;
-      if (e.target.closest('#' + menuId + ', #' + btnId)) return;
-      close();
-    });
-    // Use capture phase so this fires before the settings-modal Esc handler
-    // (which is in bubble phase). stopPropagation prevents the modal from
-    // closing when the user only meant to dismiss this menu.
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && isOpen()) {
-        e.stopPropagation();
-        close();
-      }
-    }, { capture: true });
-  };
-
-  // API card "..." menu: contains the Proxy/API connection-mode toggle.
-  // Sync the visible checkmarks with the hidden #adm-epKind select so
-  // downstream code (which reads kindSel.value) keeps working.
-  (function wireApiKindMenu() {
-    const kind = el('adm-epKind');
-    if (!kind) return;
-    const opts = document.querySelectorAll('#adm-epApiMoreMenu .adm-kind-opt');
-    const sync = () => {
-      opts.forEach((o) => {
-        const check = o.querySelector('.adm-kind-check');
-        if (check) check.style.visibility = (o.dataset.kind === kind.value) ? 'visible' : 'hidden';
-      });
-    };
-    sync();
-    kind.addEventListener('change', sync);
-    _wireKebab('adm-epApiMoreBtn', 'adm-epApiMoreMenu', (item) => {
-      const k = item.dataset.kind;
-      if (!k) return;
-      kind.value = k;
-      kind.dispatchEvent(new Event('change'));
-    });
-  })();
-
-  // Local card "..." kebab: holds Scan network / Ollama / API key reveal.
-  // Item buttons keep their own click handlers; the helper just handles
-  // open/close + outside-click + Esc.
-  _wireKebab('adm-epLocalMoreBtn', 'adm-epLocalMoreMenu');
-
-  // ── Added Models toolbar: Probe + Clear offline ────────────────────
-  // Both buttons act over the currently-rendered endpoint list. The
-  // online/offline marker is stamped on each row's [data-adm-ep-online]
-  // attribute by loadEndpoints(), so both buttons just iterate the DOM
-  // without re-fetching anything they don't already have.
-  const _refreshOfflineCount = () => {
-    const lbl = el('adm-epOfflineCount');
-    if (!lbl) return;
-    const n = document.querySelectorAll('[data-adm-ep-id] [data-adm-ep-online="0"]').length;
-    lbl.textContent = n > 0 ? `(${n})` : '';
-    // Hide the button entirely when there's nothing offline — no point
-    // showing an action that has nothing to act on.
-    const btn = el('adm-epClearOfflineBtn');
-    if (btn) btn.style.display = n === 0 ? 'none' : '';
-  };
-  // Wire after every loadEndpoints() run by patching the render hook —
-  // simplest path: MutationObserver on the two list containers.
-  const _obsRoots = ['adm-epList-local', 'adm-epList-api']
-    .map(id => el(id)).filter(Boolean);
-  if (_obsRoots.length) {
-    const mo = new MutationObserver(_refreshOfflineCount);
-    _obsRoots.forEach(r => mo.observe(r, { childList: true, subtree: true }));
-    _refreshOfflineCount();
-  }
-
-  const probeAllBtn = el('adm-epProbeAllBtn');
-  if (probeAllBtn) {
-    probeAllBtn.addEventListener('click', async () => {
-      probeAllBtn.disabled = true;
-      const origHTML = probeAllBtn.innerHTML;
-      let _wp = null;
+  // GitHub Copilot — device-flow login. Starts the flow, shows the user a
+  // code + verification link, and polls until they authorise (or it expires).
+  const copilotBtn = el('adm-copilotConnectBtn');
+  if (copilotBtn) {
+    let copilotPolling = false;
+    copilotBtn.addEventListener('click', async () => {
+      if (copilotPolling) return;
+      const status = el('adm-copilotStatus');
+      const reset = () => { copilotBtn.disabled = false; copilotBtn.textContent = 'Connect GitHub Copilot'; copilotPolling = false; };
+      status.textContent = ''; status.className = 'adm-ep-inline-msg';
+      copilotBtn.disabled = true; copilotBtn.textContent = 'Starting...';
+      copilotPolling = true;
+      let start;
       try {
-        const sp = window.spinnerModule || (await import('./spinner.js')).default;
-        _wp = sp.createWhirlpool(11);
-        _wp.element.style.cssText = 'display:inline-flex;width:11px;height:11px;margin:0 4px 0 0;';
-        probeAllBtn.innerHTML = '';
-        probeAllBtn.appendChild(_wp.element);
-        probeAllBtn.appendChild(document.createTextNode('Probing'));
-      } catch (_) {
-        probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing…</span>';
-      }
-      try {
-        // Hit the bulk local probe (same one the model picker uses).
-        await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).catch(() => {});
-        // Then per-endpoint /probe for the rest so API/cloud endpoints
-        // refresh too. Parallel — capped to 6 at a time so we don't
-        // hammer the backend on a big list.
-        const ids = Array.from(document.querySelectorAll('[data-adm-ep-id]')).map(r => r.getAttribute('data-adm-ep-id')).filter(Boolean);
-        const lane = async (id) => {
-          try { await fetch(`/api/model-endpoints/${id}/probe`, { credentials: 'same-origin' }); } catch (_) {}
-        };
-        const queue = [...ids];
-        const workers = Array.from({length: Math.min(6, queue.length)}, () => (async () => {
-          while (queue.length) {
-            const id = queue.shift();
-            if (id) await lane(id);
+        const res = await fetch('/api/copilot/device/start', { method: 'POST', body: new FormData(), credentials: 'same-origin' });
+        start = await res.json();
+        if (!res.ok) { status.textContent = start.detail || 'Failed to start login'; status.className = 'admin-error'; reset(); return; }
+      } catch (e) { status.textContent = 'Request failed'; status.className = 'admin-error'; reset(); return; }
+
+      const { poll_id, user_code, verification_uri, verification_uri_complete, interval, expires_in } = start;
+      // Prefer the "complete" URL — it embeds the code so the user only has to
+      // click "Authorize" (no manual code entry).
+      const authUrl = verification_uri_complete || verification_uri || '';
+      const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      copilotBtn.textContent = 'Waiting…';
+
+      // Cohesive waiting panel: spinner + status line, the device code as a
+      // copyable chip, and a primary "Authorize on GitHub" action.
+      status.className = '';
+      status.innerHTML =
+        '<div class="adm-copilot-panel">' +
+          '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+            '<span>Waiting for GitHub authorization…</span></div>' +
+          '<div class="adm-copilot-coderow">' +
+            '<span class="adm-copilot-code-label">Code</span>' +
+            '<code class="adm-copilot-code">' + esc(user_code) + '</code>' +
+            '<button type="button" class="admin-btn-sm adm-copilot-copy">Copy</button>' +
+          '</div>' +
+          '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl) + '" target="_blank" rel="noopener">Authorize on GitHub ↗</a>' +
+          '<div class="adm-copilot-hint">A new tab opened on GitHub — approve there to finish. Didn\'t open? Use the button above.</div>' +
+        '</div>';
+      const copyBtn = status.querySelector('.adm-copilot-copy');
+      if (copyBtn) copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(user_code || ''); copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); } catch (e) {}
+      });
+      try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+
+      const deadline = Date.now() + (expires_in || 900) * 1000;
+      const stepMs = Math.max((interval || 5), 2) * 1000;
+      const done = (cls, text) => { status.className = cls; status.textContent = text; reset(); };
+      const poll = async () => {
+        if (Date.now() > deadline) { done('admin-error', 'Authorization expired — try again.'); return; }
+        try {
+          const fd = new FormData(); fd.append('poll_id', poll_id);
+          const r = await fetch('/api/copilot/device/poll', { method: 'POST', body: fd, credentials: 'same-origin' });
+          const d = await r.json();
+          if (d.status === 'authorized') {
+            const n = ((d.endpoint && d.endpoint.models) || []).length;
+            done('admin-success', '✓ Connected — ' + n + ' Copilot model' + (n !== 1 ? 's' : '') + ' available.');
+            if (d.endpoint && d.endpoint.id) _recentlyAddedEpId = String(d.endpoint.id);
+            await loadEndpoints();
+            await _selectAddedModelInChat(d.endpoint || {});
+            return;
           }
-        })());
-        await Promise.all(workers);
-        await loadEndpoints();
-        if (uiModule && uiModule.showToast) uiModule.showToast('Endpoint status refreshed', 1800);
-      } finally {
-        if (_wp) { try { _wp.destroy(); } catch (_) {} }
-        probeAllBtn.innerHTML = origHTML;
-        probeAllBtn.disabled = false;
-      }
+          if (d.status === 'failed') { done('admin-error', 'Authorization failed (' + (d.error || 'denied') + ').'); return; }
+        } catch (e) { /* transient — keep polling */ }
+        setTimeout(poll, stepMs);
+      };
+      setTimeout(poll, stepMs);
     });
   }
-
-  const clearOfflineBtn = el('adm-epClearOfflineBtn');
-  if (clearOfflineBtn) {
-    clearOfflineBtn.addEventListener('click', async () => {
-      const offlineBtns = Array.from(document.querySelectorAll('[data-adm-del-ep][data-adm-ep-online="0"]'));
-      const ids = offlineBtns.map(b => b.getAttribute('data-adm-del-ep')).filter(Boolean);
-      if (!ids.length) {
-        if (uiModule && uiModule.showToast) {
-          uiModule.showToast('No offline endpoints — nothing to clear', 1800);
-        }
-        return;
-      }
-      const confirmMsg = ids.length === 1
-        ? 'Remove 1 offline endpoint?'
-        : `Remove ${ids.length} offline endpoints?`;
-      if (uiModule && uiModule.styledConfirm) {
-        const ok = await uiModule.styledConfirm(confirmMsg, { confirmText: 'Remove', danger: true });
-        if (!ok) return;
-      } else if (!confirm(confirmMsg)) {
-        return;
-      }
-      clearOfflineBtn.disabled = true;
-      // Optimistic UI: pull rows immediately, then fire the DELETEs.
-      offlineBtns.forEach(b => {
-        const row = b.closest('[data-adm-ep-id]');
-        if (row) row.remove();
-      });
-      await Promise.all(ids.map(id =>
-        fetch('/api/model-endpoints/' + id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})
-      ));
-      try { await loadEndpoints(); } catch (_) {}
-      _refreshOfflineCount();
-      if (uiModule && uiModule.showToast) uiModule.showToast(`Removed ${ids.length} offline endpoint${ids.length === 1 ? '' : 's'}`, 1800);
-    });
-  }
-
-  // Clear-on-focus for the API key inputs. The fields are type=password so the
-  // value is masked; users can't see what's there to edit it in place, so the
-  // expected gesture is "click in, type new key". Wiping on focus removes the
-  // select-all-and-delete dance.
-  const _wireClearOnFocus = (id) => {
-    const inp = el(id);
-    if (!inp) return;
-    inp.addEventListener('focus', () => {
-      if (inp.value) inp.value = '';
-    });
-  };
-  _wireClearOnFocus('adm-epLocalApiKey');
-  _wireClearOnFocus('adm-epApiKey');
-
-  // Drop the Ollama provider logo into the Ollama Quickstart button. Reuses
-  // the same SVG the provider picker uses, so brand parity stays free.
-  try {
-    const _ollamaLogoSlot = document.querySelector('#adm-epOllamaBtn .adm-ollama-logo');
-    if (_ollamaLogoSlot) {
-      const svg = providerLogo('ollama') || '';
-      if (svg) _ollamaLogoSlot.innerHTML = svg;
-    }
-  } catch (_) {}
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
   const localTestBtn = el('adm-epLocalTestBtn');
   if (localTestBtn) {
     localTestBtn.addEventListener('click', async () => {
-      const testOriginalHtml = localTestBtn.innerHTML || '>Test';
       const msg = _endpointMsg('local');
-      msg.textContent = ''; msg.className = 'adm-ep-inline-msg';
+      msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
       if (!raw) { msg.textContent = 'Enter a base URL to test'; msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
       const keyEl = el('adm-epLocalApiKey');
       const apiKey = keyEl ? keyEl.value.trim() : '';
       localTestBtn.disabled = true;
-      localTestBtn.innerHTML = testOriginalHtml.replace(/>Test\s*$/, '>Testing...');
+      localTestBtn.textContent = 'Testing...';
       try {
         const fd = new FormData();
         fd.append('base_url', url);
@@ -1490,21 +1084,19 @@ function initEndpointForm() {
         msg.className = 'admin-error';
       }
       localTestBtn.disabled = false;
-      localTestBtn.innerHTML = testOriginalHtml;
+      localTestBtn.textContent = 'Test';
     });
   }
   if (localAddBtn) {
     localAddBtn.addEventListener('click', async () => {
-      const addOriginalHtml = localAddBtn.innerHTML || '>Add';
       const msg = _endpointMsg('local');
-      msg.textContent = ''; msg.className = 'adm-ep-inline-msg';
+      msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
       if (!raw) { msg.textContent = 'Enter a base URL (e.g. http://localhost:8002/v1)'; msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
       const keyEl = el('adm-epLocalApiKey');
       const apiKey = keyEl ? keyEl.value.trim() : '';
-      localAddBtn.disabled = true;
-      localAddBtn.innerHTML = addOriginalHtml.replace(/>Add\s*$/, '>Adding...');
+      localAddBtn.disabled = true; localAddBtn.textContent = 'Adding...';
       try {
         const fd = new FormData();
         fd.append('base_url', url);
@@ -1524,17 +1116,15 @@ function initEndpointForm() {
           await loadEndpoints();
           await _selectAddedModelInChat(d);
           const count = (d.models || []).length;
-          const baseText = d.status === 'empty'
+          msg.textContent = d.status === 'empty'
             ? 'Added — Ollama is running, no models pulled yet'
             : d.online
             ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
             : 'Added (offline — will retry on next load)';
-          msg.innerHTML = `${baseText} <a href="#" data-go-added-models style="margin-left:6px;text-decoration:underline;color:inherit;font-weight:600;">Added Models →</a>`;
           msg.className = d.online ? 'admin-success' : 'admin-error';
         } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
       } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
-      localAddBtn.disabled = false;
-      localAddBtn.innerHTML = addOriginalHtml;
+      localAddBtn.disabled = false; localAddBtn.textContent = 'Add';
     });
   }
 
@@ -1560,7 +1150,10 @@ function initEndpointForm() {
     discoverBtn.addEventListener('click', async () => {
       const msg = _endpointMsg('local');
       discoverBtn.disabled = true;
-      msg.className = 'adm-ep-inline-msg';
+      // Keep the button's icon as-is while scanning; the whirlpool +
+      // status text below is enough feedback. (Two spinning indicators
+      // at once looks busy.)
+      msg.className = '';
       msg.innerHTML = '';
       try {
         const sp = window.spinnerModule || (await import('./spinner.js')).default;
@@ -1571,7 +1164,7 @@ function initEndpointForm() {
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
         txt.textContent = 'Scanning ports 8000-8020 and 11434 for model servers...';
-        txt.style.cssText = 'opacity:0.7;';
+        txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
         discoverBtn._wp = wp;
@@ -1622,10 +1215,34 @@ function initEndpointForm() {
     });
   }
 
+  // Collapsible Add-Models subsections (API / Local). Both start collapsed
+  // so the card is compact; the last-used state is remembered per section
+  // in localStorage so a frequent API-adder doesn't re-expand every time.
+  document.querySelectorAll('#adm-add-api, #adm-add-local').forEach((sec) => {
+    const head = sec.querySelector('.adm-section-toggle');
+    if (!head) return;
+    const key = 'orwell.addModels.' + sec.id + '.open';
+    let open = false;
+    try { open = localStorage.getItem(key) === '1'; } catch {}
+    const apply = () => {
+      sec.classList.toggle('collapsed', !open);
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    apply();
+    const toggle = () => {
+      open = !open;
+      try { localStorage.setItem(key, open ? '1' : '0'); } catch {}
+      apply();
+    };
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
   document.querySelectorAll('.adm-quickstart-section').forEach((sec) => {
     const head = sec.querySelector('.adm-quickstart-toggle');
     if (!head) return;
-    const key = 'odysseus.addModels.' + sec.id + '.open';
+    const key = 'orwell.addModels.' + sec.id + '.open';
     let open = false;
     try { open = localStorage.getItem(key) === '1'; } catch {}
     const apply = () => {
@@ -1759,9 +1376,44 @@ const TOOL_META = {
   manage_endpoints:  { name: 'Endpoints',        desc: 'Add/remove model endpoints',      cat: 'System',     ctx: '~100' },
   manage_mcp:        { name: 'MCP Servers',      desc: 'Manage MCP connections',          cat: 'System',     ctx: '~100' },
   manage_webhooks:   { name: 'Webhooks',         desc: 'Configure webhook events',        cat: 'System',     ctx: '~100' },
-  manage_tokens:     { name: 'API Tokens',       desc: 'Manage API access tokens',        cat: 'System',     ctx: '~100' },
-  manage_settings:   { name: 'Settings',         desc: 'Change app settings',             cat: 'System',     ctx: '~100' },
+  manage_tokens:     { name: 'API Tokens',       desc: 'Manage API access tokens',        cat: 'Core',       ctx: '~100' },
+  manage_settings:   { name: 'Settings',         desc: 'Change app settings',             cat: 'Core',       ctx: '~100' },
+  manage_endpoints:  { name: 'Endpoints',        desc: 'Add/remove model endpoints',      cat: 'Core',       ctx: '~100' },
+  manage_mcp:        { name: 'MCP Servers',      desc: 'Manage MCP connections',          cat: 'Core',       ctx: '~100' },
+  // ── Big Brother game engine + God Mode (always available under the game build) ──
+  getGameState:        { name: 'Get Game State',     desc: 'Read the visible game state',      cat: 'Game', ctx: '~200' },
+  runCompetition:      { name: 'Run Competition',    desc: 'Resolve a comp by stats + temperature', cat: 'Game', ctx: '~150' },
+  recordInteraction:   { name: 'Record Interaction', desc: 'Log an event + its hidden impact', cat: 'Game', ctx: '~150' },
+  surfaceInformationTo:{ name: 'Surface Information', desc: 'Reveal a fact via an in-game pathway', cat: 'Game', ctx: '~150' },
+  gameStatus:          { name: 'Game Status',        desc: 'Current week / phase summary',     cat: 'Game', ctx: '~100' },
+  getVisibleStateFor:  { name: 'Visible State For',  desc: 'What an entity can see',           cat: 'Game', ctx: '~150' },
+  socialRead:          { name: 'Social Read',        desc: 'Observable houseguest behavior',   cat: 'Game', ctx: '~150' },
+  askProducers:        { name: 'Ask Producers',      desc: 'Out-of-character producer query',  cat: 'Game', ctx: '~100' },
+  renderScene:         { name: 'Render Scene',       desc: 'Narrate an in-game scene',         cat: 'Game', ctx: '~200' },
+  endOfSessionSummary: { name: 'Session Summary',    desc: 'Wrap up a play session',          cat: 'Game', ctx: '~150' },
+  createCharacter:     { name: 'Create Character',   desc: 'Generate / author a houseguest',   cat: 'Game', ctx: '~200' },
+  advanceGame:         { name: 'Advance Game',       desc: 'Advance the weekly loop a beat',   cat: 'Game', ctx: '~150' },
+  submitDecision:      { name: 'Submit Decision',    desc: 'Resolve a player decision point',  cat: 'Game', ctx: '~100' },
+  inspectNonVaultState:{ name: 'Inspect State',      desc: 'God Mode: read non-Vault state',   cat: 'Game', ctx: '~200' },
+  overrideMechanic:    { name: 'Override Mechanic',  desc: 'God Mode: override a mechanic',    cat: 'Game', ctx: '~150' },
+  configureGame:       { name: 'Configure Game',     desc: 'God Mode: configure the sandbox',  cat: 'Game', ctx: '~150' },
+  manageSandbox:       { name: 'Manage Sandbox',     desc: 'God Mode: manage the game sandbox', cat: 'Game', ctx: '~150' },
+  // ── Core UI / account tools (kept) ──
+  ask_user:          { name: 'Ask User',          desc: 'Ask the player a question',       cat: 'Core',   ctx: '~100' },
+  update_plan:       { name: 'Update Plan',       desc: 'Maintain a running plan',         cat: 'Core',   ctx: '~150' },
+  // ── System (opt-in) — general "power" tools, off by default for security ──
+  edit_file:         { name: 'Edit File',         desc: 'Find & replace in a file',        cat: 'System (opt-in)', ctx: '~150' },
+  grep:              { name: 'Grep',              desc: 'Search file contents',            cat: 'System (opt-in)', ctx: '~100' },
+  glob:              { name: 'Glob',              desc: 'Match files by pattern',          cat: 'System (opt-in)', ctx: '~100' },
+  ls:                { name: 'List Dir',          desc: 'List directory contents',         cat: 'System (opt-in)', ctx: '~100' },
+  app_api:           { name: 'App API',           desc: 'Call a UI-button endpoint (game build: dropped verticals answer 404 by design)', cat: 'System (opt-in)', ctx: '~200' },
 };
+
+// A2 (gate 4): per-owner security blocks every power tool for non-admin accounts regardless
+// of these toggles — say so, or a multi-account install reads the opt-in as random breakage.
+const OPTIONAL_TOOLS_NOTE =
+  'Opt-ins apply to admin accounts only — non-admin players never receive these tools. ' +
+  'Under the game build, App API calls into removed features return 404 by design.';
 
 async function loadBuiltinTools() {
   const list = el('adm-builtin-tools-list');
@@ -1781,8 +1433,10 @@ async function loadBuiltinTools() {
       groups[cat].push({ ...t, ...meta });
     }
 
-    // Category order
-    const catOrder = ['Code', 'Search', 'Documents', 'Media', 'Knowledge', 'Multi-Agent', 'Sessions', 'System', 'Other'];
+    // Category order ('Game' + 'Core' lead under the game build; 'System (opt-in)'
+    // groups the off-by-default power tools; legacy categories trail for the
+    // full-workspace (game-build-off) listing).
+    const catOrder = ['Game', 'Core', 'System (opt-in)', 'Code', 'Search', 'Documents', 'Media', 'Knowledge', 'Multi-Agent', 'Sessions', 'System', 'Other'];
     let html = '';
     for (const cat of catOrder) {
       const items = groups[cat];
@@ -1804,16 +1458,23 @@ async function loadBuiltinTools() {
           </span>
         </div>
         <div class="admin-tool-cat-body hidden" id="${catId}">`;
+      if (cat === 'System (opt-in)') {
+        html += `<div class="admin-tool-desc" style="display:block;padding:6px 10px 2px;opacity:0.65;">${esc(OPTIONAL_TOOLS_NOTE)}</div>`;
+      }
       for (const t of items) {
+        const optHint = t.optional
+          ? '<span class="admin-tool-desc" style="opacity:0.6;font-style:italic;">off by default · security</span>'
+          : '';
         html += `
         <div class="admin-tool-row">
           <div class="admin-tool-info">
             <span class="admin-tool-name">${esc(t.name)}</span>
             <span class="admin-tool-desc">${esc(t.desc)}</span>
+            ${optHint}
           </div>
           <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(t.ctx)}</span>
           <label class="admin-switch" style="flex-shrink:0;">
-            <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
+            <input type="checkbox" data-tool-id="${esc(t.id)}" data-tool-optional="${t.optional ? '1' : '0'}" ${t.enabled ? 'checked' : ''}>
             <span class="admin-slider"></span>
           </label>
         </div>`;
@@ -1842,15 +1503,28 @@ async function loadBuiltinTools() {
       });
     });
 
-    // Helper: save disabled tools + update counters
+    // Helper: save tool state + update counters.
+    //   disabled         = KEEP / non-optional tools that are unchecked.
+    //   enabled_optional = optional ("power") tools that are checked.
+    // When the GET response carried no `optional` field (game build off), every
+    // row is data-tool-optional="0", so all unchecked tools fall into `disabled`
+    // and enabled_optional stays empty — today's behavior, unchanged.
     async function _saveToolState() {
       const allChecks = list.querySelectorAll('input[data-tool-id]');
       const disabled = [];
-      allChecks.forEach(c => { if (!c.checked) disabled.push(c.dataset.toolId); });
+      const enabledOptional = [];
+      allChecks.forEach(c => {
+        const isOptional = c.dataset.toolOptional === '1';
+        if (isOptional) {
+          if (c.checked) enabledOptional.push(c.dataset.toolId);
+        } else if (!c.checked) {
+          disabled.push(c.dataset.toolId);
+        }
+      });
       await fetch('/api/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ disabled }),
+        body: JSON.stringify({ disabled, enabled_optional: enabledOptional }),
         credentials: 'same-origin',
       });
     }
@@ -2337,171 +2011,53 @@ function initRag() {
 /* ═══════════════════════════════════════════
    SYSTEM TAB — Tokens
    ═══════════════════════════════════════════ */
-// Catalog mirrors the one in settings.js integration form. Keep keys in
-// sync with the backend scope allowlist.
-const _TOKEN_SCOPES = [
-  { key: 'todos:read',        label: 'Todos read',        detail: 'Read notes and checklists' },
-  { key: 'todos:write',       label: 'Todos write',       detail: 'Create, update, delete, and toggle todo items' },
-  { key: 'documents:read',    label: 'Documents read',    detail: 'Read documents when a document API is enabled' },
-  { key: 'documents:write',   label: 'Documents write',   detail: 'Create and update draft documents' },
-  { key: 'email:read',        label: 'Email read',        detail: 'Read email when an email API is enabled' },
-  { key: 'email:draft',       label: 'Email draft',       detail: 'Create email reply drafts without sending' },
-  { key: 'email:send',        label: 'Email send',        detail: 'Send email directly' },
-  { key: 'calendar:read',     label: 'Calendar read',     detail: 'Read calendar events when enabled' },
-  { key: 'calendar:write',    label: 'Calendar write',    detail: 'Create and update calendar events' },
-  { key: 'memory:read',       label: 'Memory read',       detail: 'Read memory when enabled' },
-  { key: 'memory:write',      label: 'Memory write',      detail: 'Write memory when enabled' },
-  { key: 'cookbook:read',     label: 'Cookbook read',     detail: 'List cookbook tasks + tail their tmux output' },
-  { key: 'cookbook:launch',   label: 'Cookbook launch',   detail: 'Launch and stop cookbook serve tasks' },
-];
-
-function _renderTokenScopeRows(t) {
-  const have = new Set(t.scopes || []);
-  return _TOKEN_SCOPES.map(s => {
-    const action = (s.key.split(':')[1] || '').toLowerCase();
-    const pill = action === 'read'
-      ? 'background:rgba(150,150,150,0.18);color:var(--fg-muted,#888);'
-      : 'background:color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);color:var(--accent, var(--red));';
-    const tool = s.label.replace(/\s+(read|write|draft|send|launch)$/i, '');
-    return `
-      <label style="display:flex;align-items:center;gap:8px;min-height:28px;padding:1px 0;">
-        <span class="settings-label" style="width:90px;flex-shrink:0;padding:0;font-size:12px;">${esc(tool)}</span>
-        <span style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;padding:1px 7px;border-radius:999px;flex-shrink:0;min-width:44px;text-align:center;box-sizing:border-box;${pill}">${esc(action)}</span>
-        <span style="font-size:11px;line-height:1.35;opacity:0.62;flex:1;min-width:0;">${esc(s.detail)}</span>
-        <label class="admin-switch" style="margin-left:auto;flex-shrink:0;"><input type="checkbox" class="adm-tok-scope" data-token-id="${esc(t.id)}" data-scope="${esc(s.key)}" ${have.has(s.key) ? 'checked' : ''}><span class="admin-slider"></span></label>
-      </label>`;
-  }).join('');
-}
-
 async function loadTokens() {
   const list = el('adm-tokenList');
-  if (!list) return;
   try {
     const res = await fetch('/api/tokens', { credentials: 'same-origin' });
     const tokens = await res.json();
-    if (!tokens.length) { list.innerHTML = '<div class="admin-empty" style="color:var(--accent, var(--red));opacity:0.7;font-size:10px;">No API tokens</div>'; return; }
+    if (!tokens.length) { list.innerHTML = '<div class="admin-empty">No API tokens</div>'; return; }
     list.innerHTML = tokens.map(t => `
-      <div class="admin-user-row" data-adm-tok-row="${esc(t.id)}" style="display:block;">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <div class="admin-user-info" style="flex:1;min-width:0;flex-wrap:wrap;gap:0.3rem;">
-            <input type="text" class="adm-tok-rename" data-token-id="${esc(t.id)}" value="${esc(t.name || '')}" placeholder="Token name" style="font-size:13px;font-weight:600;padding:3px 6px;background:transparent;border:1px solid transparent;border-radius:4px;min-width:160px;" title="Click to rename">
-            <span class="admin-badge">${esc(t.token_prefix)}...</span>
-            ${t.owner ? `<span style="font-size:0.75rem;opacity:0.5;">Owner: ${esc(t.owner)}</span>` : ''}
-            ${t.last_used_at ? `<span style="font-size:0.75rem;opacity:0.5;">Last used: ${new Date(t.last_used_at).toLocaleDateString()}</span>` : '<span style="font-size:0.75rem;opacity:0.4;">Never used</span>'}
-          </div>
-          <button class="admin-btn-sm" data-adm-tok-toggle="${esc(t.id)}" style="opacity:0.75;">Permissions</button>
-          <button class="admin-btn-delete" data-adm-del-token="${esc(t.id)}">Revoke</button>
+      <div class="admin-user-row">
+        <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
+          <span class="admin-user-name">${esc(t.name)}</span>
+          <span class="admin-badge">${esc(t.token_prefix)}...</span>
+          <span class="admin-badge" title="Allowed API scopes">${esc((t.scopes || ['chat']).join(', '))}</span>
+          ${t.owner ? `<span style="font-size:0.75rem;opacity:0.5;">Owner: ${esc(t.owner)}</span>` : ''}
+          ${t.last_used_at ? `<span style="font-size:0.75rem;opacity:0.5;">Last used: ${new Date(t.last_used_at).toLocaleDateString()}</span>` : '<span style="font-size:0.75rem;opacity:0.4;">Never used</span>'}
         </div>
-        <div data-adm-tok-perm="${esc(t.id)}" style="display:none;margin-top:8px;padding:8px 4px 0;border-top:1px solid var(--border);">
-          ${_renderTokenScopeRows(t)}
-          <div class="adm-tok-scope-msg" data-token-id="${esc(t.id)}" style="font-size:11px;min-height:14px;margin-top:4px;"></div>
-        </div>
+        <button class="admin-btn-delete" data-adm-del-token="${t.id}">Revoke</button>
       </div>`).join('');
-
-    // Revoke
     list.querySelectorAll('[data-adm-del-token]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!await uiModule.styledConfirm('Revoke this API token? External integrations using it will stop working.', { confirmText: 'Revoke', danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.admDelToken}`, { method: 'DELETE', credentials: 'same-origin' });
         loadTokens();
-        // Codex / Claude integration cards on the Integrations panel are
-        // backed by these tokens — let them re-render so the deleted token
-        // disappears there too.
-        try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
-      });
-    });
-    // Toggle permissions panel
-    list.querySelectorAll('[data-adm-tok-toggle]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const panel = list.querySelector(`[data-adm-tok-perm="${btn.dataset.admTokToggle}"]`);
-        if (!panel) return;
-        panel.style.display = panel.style.display === 'none' ? '' : 'none';
-      });
-    });
-    // Rename
-    list.querySelectorAll('.adm-tok-rename').forEach(input => {
-      const original = input.value;
-      const commit = async () => {
-        const name = (input.value || '').trim();
-        if (!name || name === original) return;
-        try {
-          const r = await fetch(`/api/tokens/${input.dataset.tokenId}`, {
-            method: 'PATCH', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          if (!r.ok) throw new Error('Save failed');
-          loadTokens();
-        } catch (_) { input.value = original; }
-      };
-      input.addEventListener('blur', commit);
-      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
-    });
-    // Scope toggle change → PATCH the whole scopes array for this token.
-    list.querySelectorAll('.adm-tok-scope').forEach(cb => {
-      cb.addEventListener('change', async () => {
-        const tokenId = cb.dataset.tokenId;
-        const panel = list.querySelector(`[data-adm-tok-perm="${tokenId}"]`);
-        const msg = list.querySelector(`.adm-tok-scope-msg[data-token-id="${tokenId}"]`);
-        const scopes = Array.from(panel.querySelectorAll('.adm-tok-scope:checked')).map(input => input.dataset.scope);
-        try {
-          const r = await fetch(`/api/tokens/${tokenId}`, {
-            method: 'PATCH', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scopes }),
-          });
-          const d = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(d.detail || 'Failed');
-          if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
-        } catch (err) {
-          cb.checked = !cb.checked;
-          if (msg) { msg.textContent = (err && err.message) || 'Failed'; msg.style.color = 'var(--red)'; }
-        }
       });
     });
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load tokens</div>'; }
 }
 
 function initTokenForm() {
-  const addBtn = el('adm-tokenAddBtn');
-  if (!addBtn || addBtn.dataset.bound) return;
-  addBtn.dataset.bound = '1';
-  addBtn.addEventListener('click', async () => {
+  el('adm-tokenAddBtn').addEventListener('click', async () => {
     const msg = el('adm-tokenMsg');
     const reveal = el('adm-tokenReveal');
     msg.textContent = ''; msg.className = ''; reveal.style.display = 'none';
     const name = el('adm-tokenName').value.trim();
     if (!name) { msg.textContent = 'Token name is required'; msg.className = 'admin-error'; return; }
     const fd = new FormData(); fd.append('name', name);
-    const scopes = (el('adm-tokenScopes')?.value || '').trim();
-    if (scopes) fd.append('scopes', scopes);
     try {
       const res = await fetch('/api/tokens', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
-      if (res.ok) {
-        el('adm-tokenValue').textContent = data.token;
-        reveal.style.display = '';
-        el('adm-tokenName').value = '';
-        if (el('adm-tokenScopes')) el('adm-tokenScopes').value = '';
-        loadTokens();
-      }
+      if (res.ok) { el('adm-tokenValue').textContent = data.token; reveal.style.display = ''; el('adm-tokenName').value = ''; loadTokens(); }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
   });
-  const TOKEN_COPY_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-  const TOKEN_CHECK_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   el('adm-tokenCopyBtn').addEventListener('click', () => {
     const val = el('adm-tokenValue').textContent;
-    const btn = el('adm-tokenCopyBtn');
     navigator.clipboard.writeText(val).then(() => {
-      btn.innerHTML = TOKEN_CHECK_ICON;
-      btn.style.color = 'var(--accent, var(--red))';
-      btn.style.opacity = '1';
-      setTimeout(() => {
-        btn.innerHTML = TOKEN_COPY_ICON;
-        btn.style.color = '';
-        btn.style.opacity = '0.7';
-      }, 1600);
+      el('adm-tokenCopyBtn').textContent = 'Copied!';
+      setTimeout(() => { el('adm-tokenCopyBtn').textContent = 'Copy'; }, 2000);
     });
   });
 }
@@ -2668,7 +2224,7 @@ function initBackup() {
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename=(.+)/);
-      const filename = match ? match[1] : 'odysseus_backup.json';
+      const filename = match ? match[1] : 'orwell_backup.json';
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = filename;
@@ -2728,246 +2284,153 @@ function initDangerZone() {
   modalEl.querySelectorAll('[data-wipe-kind]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const kind = btn.dataset.wipeKind;
-      const isAll = kind === '__all__';
-      const label = isAll ? 'data across every category' : (_LABELS[kind] || kind);
-      if (!await uiModule.styledConfirm(`Delete ALL ${label}? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
-      if (!await uiModule.styledConfirm(`Really delete every one of your ${label}?`, { confirmText: isAll ? 'Yes, delete everything' : 'Yes, delete everything', danger: true })) return;
-      btn.disabled = true;
-      const prevHtml = btn.innerHTML;
-      btn.innerHTML = isAll ? 'Deleting all…' : 'Deleting…';
+      const label = _LABELS[kind] || kind;
+      if (!await uiModule.styledConfirm(`Wipe ALL ${label}? This cannot be undone.`, { confirmText: 'Wipe', danger: true })) return;
+      if (!await uiModule.styledConfirm(`Really wipe every one of your ${label}?`, { confirmText: 'Yes, wipe everything', danger: true })) return;
+      btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Wiping…';
       if (_wipeMsg) { _wipeMsg.textContent = ''; _wipeMsg.className = ''; }
       try {
-        if (isAll) {
-          // Iterate every known category. Failures in one shouldn't stop
-          // the rest — record per-category counts and surface a summary.
-          const kinds = Object.keys(_LABELS);
-          const results = [];
-          for (const k of kinds) {
-            try {
-              const r = await fetch(`/api/admin/wipe/${k}`, { method: 'DELETE', credentials: 'same-origin' });
-              const d = await r.json().catch(() => ({}));
-              results.push({ k, ok: r.ok, count: d.count ?? 0, error: r.ok ? null : (d.detail || 'failed') });
-            } catch (e) {
-              results.push({ k, ok: false, count: 0, error: e.message });
-            }
-          }
-          const okCount = results.filter(r => r.ok).length;
-          const total = results.reduce((n, r) => n + (r.ok ? r.count : 0), 0);
-          const fails = results.filter(r => !r.ok).map(r => r.k);
-          if (_wipeMsg) {
-            if (!fails.length) {
-              _wipeMsg.textContent = `Deleted ${total} items across all ${okCount} categories.`;
-              _wipeMsg.className = 'admin-success';
-            } else {
-              _wipeMsg.textContent = `Deleted ${total} items; failed: ${fails.join(', ')}.`;
-              _wipeMsg.className = 'admin-error';
-            }
-          }
+        const res = await fetch(`/api/admin/wipe/${kind}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          if (_wipeMsg) { _wipeMsg.textContent = `Wiped ${data.count ?? 0} ${label}.`; _wipeMsg.className = 'admin-success'; }
         } else {
-          const res = await fetch(`/api/admin/wipe/${kind}`, { method: 'DELETE', credentials: 'same-origin' });
-          const data = await res.json().catch(() => ({}));
-          if (res.ok) {
-            if (_wipeMsg) { _wipeMsg.textContent = `Deleted ${data.count ?? 0} ${label}.`; _wipeMsg.className = 'admin-success'; }
-          } else {
-            if (_wipeMsg) { _wipeMsg.textContent = data.detail || 'Failed'; _wipeMsg.className = 'admin-error'; }
-          }
+          if (_wipeMsg) { _wipeMsg.textContent = data.detail || 'Failed'; _wipeMsg.className = 'admin-error'; }
         }
       } catch (e) {
         if (_wipeMsg) { _wipeMsg.textContent = 'Request failed: ' + e.message; _wipeMsg.className = 'admin-error'; }
       }
-      btn.disabled = false; btn.innerHTML = prevHtml;
+      btn.disabled = false; btn.textContent = prev;
     });
   });
 }
 
-/* ═══════════════════════════════════════════
-   TERMINAL LOGS VIEWER
-   ═══════════════════════════════════════════ */
-let logsPollInterval = null;
-let isLogsPolling = false;
-let cachedLogs = [];
-let logsAbortController = null;
+/* ── Transcripts (Feature 0053) — quiet, read-only admin debug access ── */
+function initTranscripts() {
+  const card = el('adm-transcripts-card');
+  if (!card) return;  // not rendered (non-admin DOM) — nothing to wire
+  const listEl = el('adm-transcripts-list');
+  const filterEl = el('adm-transcripts-filter');
+  const loadBtn = el('adm-transcripts-load');
+  const msgEl = el('adm-transcripts-msg');
 
-function renderLogs(isAutoPoll = false) {
-  const consoleContainer = el('log-console-container');
-  const levelSelect = el('log-level-select');
-  const searchInput = el('log-search-input');
-
-  if (!consoleContainer) return;
-
-  const levelFilter = levelSelect ? levelSelect.value : 'ALL';
-  const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
-
-  let logs = cachedLogs;
-
-  // Filter by level locally
-  if (levelFilter !== 'ALL') {
-    logs = logs.filter(line => line.includes(` - ${levelFilter} - `));
-  }
-
-  // Filter by search query locally
-  if (searchQuery) {
-    logs = logs.filter(line => line.toLowerCase().includes(searchQuery));
-  }
-
-  if (logs.length === 0) {
-    consoleContainer.innerHTML = '<div class="settings-system-logs-placeholder">No logs found matching current filters.</div>';
-    return;
-  }
-
-  // Preserve scroll position if user is reading previous logs
-  const atBottom = consoleContainer.scrollHeight - consoleContainer.scrollTop - consoleContainer.clientHeight < 40;
-
-  consoleContainer.innerHTML = logs.map(line => {
-    let levelClass = 'log-line-default';
-
-    if (line.includes(' - INFO - ')) {
-      levelClass = 'log-line-info';
-    } else if (line.includes(' - WARNING - ')) {
-      levelClass = 'log-line-warning';
-    } else if (line.includes(' - ERROR - ') || line.includes(' - CRITICAL - ')) {
-      levelClass = 'log-line-error';
-    } else if (line.includes(' - DEBUG - ')) {
-      levelClass = 'log-line-debug';
-    }
-
-    // XSS safe escape
-    const escaped = line
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
-    return `<div class="log-line ${levelClass}">${escaped}</div>`;
-  }).join('');
-
-  if (!isAutoPoll || atBottom) {
-    consoleContainer.scrollTop = consoleContainer.scrollHeight;
-  }
-}
-
-async function loadLogs(isAutoPoll = false) {
-  const consoleContainer = el('log-console-container');
-  const limitSelect = el('log-limit-select');
-
-  if (!consoleContainer) return;
-
-  const limit = limitSelect ? limitSelect.value : 200;
-
-  if (logsAbortController) {
-    logsAbortController.abort();
-  }
-  logsAbortController = new AbortController();
-  const { signal } = logsAbortController;
-
-  try {
-    const res = await fetch(`/api/diagnostics/logs?limit=${limit}`, {
-      credentials: 'same-origin',
-      signal
-    });
-
-    if (!res.ok) {
-      if (!isAutoPoll) {
-        consoleContainer.innerHTML = '';
-        const errDiv = document.createElement('div');
-        errDiv.style.color = 'var(--red)';
-        errDiv.style.fontWeight = '600';
-        errDiv.textContent = `Failed to load logs: HTTP ${res.status}`;
-        consoleContainer.appendChild(errDiv);
+  async function load() {
+    if (msgEl) { msgEl.textContent = 'Loading…'; msgEl.className = ''; }
+    const owner = (filterEl && filterEl.value || '').trim();
+    const qs = new URLSearchParams();
+    if (owner) qs.set('user', owner);
+    try {
+      const res = await fetch('/api/admin/transcripts?' + qs.toString(), { credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (msgEl) { msgEl.textContent = data.detail || 'Failed'; msgEl.className = 'admin-error'; }
+        return;
       }
-      return;
-    }
-
-    const data = await res.json();
-    if (data.status !== 'success' || !data.logs) {
-      if (!isAutoPoll) {
-        consoleContainer.innerHTML = '';
-        const errDiv = document.createElement('div');
-        errDiv.style.color = 'var(--red)';
-        errDiv.style.fontWeight = '600';
-        errDiv.textContent = 'Failed to parse logs data';
-        consoleContainer.appendChild(errDiv);
+      render(data.transcripts || []);
+      if (msgEl) {
+        msgEl.textContent = `${(data.transcripts || []).length} of ${data.total ?? 0} session(s).`;
+        msgEl.className = 'admin-toggle-sub';
       }
-      return;
-    }
-
-    cachedLogs = data.logs;
-    renderLogs(isAutoPoll);
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      return; // Silently ignore deliberate abort
-    }
-    if (!isAutoPoll) {
-      consoleContainer.innerHTML = '';
-      const errDiv = document.createElement('div');
-      errDiv.style.color = 'var(--red)';
-      errDiv.style.fontWeight = '600';
-      errDiv.textContent = `Error retrieving logs: ${err.message}`;
-      consoleContainer.appendChild(errDiv);
-    }
-  } finally {
-    if (logsAbortController?.signal === signal) {
-      logsAbortController = null;
+    } catch (e) {
+      if (msgEl) { msgEl.textContent = 'Request failed: ' + e.message; msgEl.className = 'admin-error'; }
     }
   }
-}
 
-function startLogsPolling() {
-  if (isLogsPolling) return;
-  isLogsPolling = true;
-  const toggle = el('log-auto-refresh-toggle');
-  if (toggle) toggle.checked = true;
-
-  logsPollInterval = setInterval(() => {
-    const modal = el('settings-modal');
-    const systemPanel = el('settings-modal')?.querySelector('[data-settings-panel="system"]');
-
-    // Safe self-cleanup if modal or panel is hidden/closed
-    if (!modal || modal.classList.contains('hidden') || !systemPanel || systemPanel.classList.contains('hidden')) {
-      stopLogsPolling();
-      return;
-    }
-
-    loadLogs(true);
-  }, 3000);
-}
-
-function stopLogsPolling() {
-  if (!isLogsPolling) return;
-  isLogsPolling = false;
-  if (logsPollInterval) {
-    clearInterval(logsPollInterval);
-    logsPollInterval = null;
+  function render(rows) {
+    if (!listEl) return;
+    if (!rows.length) { listEl.innerHTML = '<div class="admin-toggle-sub">No sessions.</div>'; return; }
+    listEl.innerHTML = rows.map(r => `
+      <div class="settings-row settings-row--end settings-gap-top">
+        <div>
+          <div class="admin-toggle-label">${esc(r.title || r.id)}${r.is_game_session ? ' <span class="admin-badge">GAME</span>' : ''}</div>
+          <div class="admin-toggle-sub">${esc(r.owner || '(unknown)')} · ${r.message_count ?? 0} msg · ${esc((r.updated_at || '').slice(0, 16).replace('T', ' '))}</div>
+        </div>
+        <div style="display:flex;gap:6px;white-space:nowrap;">
+          <a class="admin-btn-sm" href="/api/admin/transcripts/${encodeURIComponent(r.id)}?format=json" target="_blank" rel="noopener">JSON</a>
+          <a class="admin-btn-sm" href="/api/admin/transcripts/${encodeURIComponent(r.id)}?format=md" target="_blank" rel="noopener">MD</a>
+        </div>
+      </div>`).join('');
   }
-  const toggle = el('log-auto-refresh-toggle');
-  if (toggle) toggle.checked = false;
+
+  if (loadBtn) loadBtn.addEventListener('click', load);
+  if (filterEl) filterEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
 }
 
-function initLogsView() {
-  const refreshBtn = el('log-refresh-btn');
-  const levelSelect = el('log-level-select');
-  const limitSelect = el('log-limit-select');
-  const searchInput = el('log-search-input');
-  const autoRefreshToggle = el('log-auto-refresh-toggle');
+/* ── Health & Logs (Lane G1) — UI-based health checking + the failure log ── */
+function initHealthLogs() {
+  const card = el('adm-health-card');
+  if (!card) return;  // not rendered (non-admin DOM) — nothing to wire
+  const rowsEl = el('adm-health-rows');
+  const refreshBtn = el('adm-health-refresh');
+  const msgEl = el('adm-health-msg');
 
-  if (refreshBtn) refreshBtn.addEventListener('click', () => loadLogs(false));
-  if (levelSelect) levelSelect.addEventListener('change', () => renderLogs(false));
-  if (limitSelect) limitSelect.addEventListener('change', () => loadLogs(false));
-  if (searchInput) searchInput.addEventListener('input', () => renderLogs(false));
+  const badge = (ok, text) =>
+    `<span class="admin-badge" style="background:${ok ? 'rgba(60,180,110,.16)' : 'rgba(229,85,85,.16)'};color:${ok ? '#3cb46e' : '#e55'};">${esc(text)}</span>`;
 
-  if (autoRefreshToggle) {
-    autoRefreshToggle.addEventListener('change', (e) => {
-      if (e.target.checked) {
-        startLogsPolling();
-      } else {
-        stopLogsPolling();
+  const row = (label, valueHtml) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:6px;">
+      <div class="admin-toggle-label">${esc(label)}</div>
+      <div class="admin-toggle-sub" style="text-align:right;">${valueHtml}</div>
+    </div>`;
+
+  const fmtUptime = (s) => {
+    s = Math.max(0, Number(s) || 0);
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : m ? `${m}m` : `${Math.floor(s)}s`;
+  };
+
+  function render(d) {
+    const eng = d.engine || {};
+    const rows = [];
+    let engineVal = badge(!!eng.ok, eng.ok ? 'REACHABLE' : 'DOWN');
+    if (eng.latencyMs != null) engineVal += ` ${esc(String(eng.latencyMs))} ms`;
+    if (eng.uptimeSeconds != null) engineVal += ` · up ${esc(fmtUptime(eng.uptimeSeconds))}`;
+    if (eng.error) engineVal += ` · ${esc(eng.error)}`;
+    rows.push(row('Engine', engineVal));
+    rows.push(row('Tiers agree', badge(!!d.tiersAgree, d.tiersAgree ? 'YES' : 'NO')));
+    const emb = eng.embeddings;
+    if (emb) {
+      rows.push(row('Embeddings', `${esc(emb.provider || '?')} ${emb.degraded ? badge(false, 'DEGRADED') : badge(true, 'OK')}`));
+    } else {
+      rows.push(row('Embeddings', badge(false, 'UNKNOWN')));
+    }
+    const img = d.images || {};
+    let imgVal = img.available ? badge(true, 'AVAILABLE') : badge(false, img.enabled ? 'NO USABLE MODEL' : 'DISABLED');
+    if (img.model) imgVal += ` ${esc(img.model)}`;
+    // G20: portrait completeness over the active cast (the reconciler retries the gap).
+    const por = img.portraits;
+    if (por && por.total) imgVal += ` · ${badge(!por.missing, `portraits ${por.present}/${por.total}`)}`;
+    rows.push(row('Image generation', imgVal));
+    const tc = eng.toolCalls;
+    if (tc) rows.push(row('Tool calls (since engine start)', `${esc(String(tc.total ?? 0))} total · ${esc(String(tc.failed ?? 0))} failed`));
+    const store = (d.frontend || {}).store || {};
+    if (store.sessions != null) {
+      rows.push(row('Front-end store', `${esc(String(store.sessions))} session(s) · ${esc(String(store.messages ?? 0))} message(s)` +
+        (store.database_size_mb != null ? ` · ${esc(String(store.database_size_mb))} MB` : '')));
+    }
+    if (rowsEl) rowsEl.innerHTML = rows.join('');
+
+    // G1b: the failure log moved to the standalone /admin/status page.
+  }
+
+  async function load() {
+    if (msgEl) { msgEl.textContent = 'Checking…'; msgEl.className = ''; }
+    try {
+      const res = await fetch('/api/admin/health', { credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (msgEl) { msgEl.textContent = data.detail || 'Failed'; msgEl.className = 'admin-error'; }
+        return;
       }
-    });
+      render(data);
+      if (msgEl) { msgEl.textContent = `Checked ${new Date().toLocaleTimeString()}.`; msgEl.className = 'admin-toggle-sub'; }
+    } catch (e) {
+      if (msgEl) { msgEl.textContent = 'Request failed: ' + e.message; msgEl.className = 'admin-error'; }
+    }
   }
 
-  // Initial fetch on view loading
-  loadLogs(false);
+  if (refreshBtn) refreshBtn.addEventListener('click', load);
+  load();  // live rows on open — the card is a health surface, not a form
 }
 
 /* ═══════════════════════════════════════════
@@ -2975,11 +2438,7 @@ function initLogsView() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [
-    initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
-    () => settingsModule.initIntegrations()
-  ];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTranscripts, initHealthLogs, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2992,8 +2451,6 @@ function refreshAll() {
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();
-  loadTokens();
-  loadLogs(false);
 }
 
 /* ═══════════════════════════════════════════
@@ -3010,7 +2467,6 @@ export function open(tab) {
 }
 
 export function close() {
-  stopLogsPolling();
   settingsModule.close();
 }
 

@@ -28,10 +28,11 @@
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
+import { isNarrow } from './platform.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
-const _rememberedDockKey = (id) => `odysseus-modal-remembered-dock-${id}`;
+const _rememberedDockKey = (id) => `orwell-modal-remembered-dock-${id}`;
 function _rememberDock(id, side) {
   if (!id || !side) return;
   try { localStorage.setItem(_rememberedDockKey(id), side); } catch (_) {}
@@ -56,19 +57,36 @@ function _applyRememberedDock(id) {
   try { applyEdgeDock(modal, side); } catch (e) { console.warn('apply remembered dock failed', e); }
 }
 
-// Monotonic stacking counter so the most-recently-surfaced tool window always
-// sits on top. Tool modals otherwise carry fixed CSS z-indexes (base .modal
-// = 250, cookbook/theme = 260, …), so restoring one from the dock could leave
-// it BEHIND an already-open tool with a higher static z-index. Start above
-// those statics and bump on every bring-to-front.
-let _modalTopZ = 300;
+// Surface a tool window to the top of the stack. ONE z-authority (Lane G14 /
+// DWE audit F9b): ui.js's Escape-arbiter counter (window._owPromoteModal —
+// plain inline z, 1000s, the same ladder pickTopModal reads) is the single
+// stacking authority for the whole .modal family. This used to be a second
+// counter here (a 300s ladder stamped with bang-priority): a minimized
+// window held that stale stamp for its whole parked life, every dock restore
+// wrote z three times, and the final order only survived because ui.js's
+// body-wide observer always got the last write. Kit windows (.ow-window —
+// NOT .modal) are deliberately untouched: the kit re-asserts its own 500–980
+// band in raise()/_afterDockRestore().
 function _bringToFront(modal) {
-  if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  if (!modal || !modal.classList || !modal.classList.contains('modal')) return;
+  if (typeof window._owPromoteModal === 'function') {
+    window._owPromoteModal(modal);
+    return;
+  }
+  // Fallback (ui.js not loaded): the same shared ladder by inspection — top
+  // inline z across the .modal family + 1, starting above the static CSS
+  // band (base .modal = 250, cookbook/theme = 260). Plain inline only.
+  let top = 999;
+  document.querySelectorAll('.modal').forEach((m) => {
+    const z = parseInt(m.style.zIndex, 10);
+    if (Number.isFinite(z) && z > top) top = z;
+  });
+  modal.style.zIndex = String(top + 1);
 }
 
 function _emitModalOpened(id, modal) {
   try {
-    window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+    window.dispatchEvent(new CustomEvent('orwell:modal-opened', {
       detail: { id, modal },
     }));
   } catch (_) {}
@@ -88,7 +106,7 @@ function _captureRestoreHeight(modal, state) {
   const rect = content.getBoundingClientRect();
   if (!rect || rect.height < 120) return;
   const maxHeight = Math.max(180, window.innerHeight - 24);
-  const minHeight = modal.id === 'email-lib-modal' && window.innerWidth > 768
+  const minHeight = modal.id === 'email-lib-modal' && !isNarrow()
     ? Math.min(560, maxHeight)
     : 0;
   state.restoreMinHeight = `${Math.round(Math.max(minHeight, Math.min(rect.height, maxHeight)))}px`;
@@ -100,7 +118,7 @@ function _applyRestoreHeight(modal, state) {
   if (!content) return;
   const maxHeight = Math.max(180, window.innerHeight - 24);
   const requested = parseInt(state.restoreMinHeight, 10);
-  const minHeight = modal.id === 'email-lib-modal' && window.innerWidth > 768
+  const minHeight = modal.id === 'email-lib-modal' && !isNarrow()
     ? Math.min(560, maxHeight)
     : 0;
   const height = Number.isFinite(requested) ? Math.max(minHeight, Math.min(requested, maxHeight)) : null;
@@ -148,8 +166,14 @@ function _ensureDock() {
   if (dock) return dock;
   dock = document.createElement('div');
   dock.id = 'minimized-dock';
-  document.body.appendChild(dock);
-  _loadDockState();
+  // E95 (ruling #10): minimized windows dock as rows in a "Windows" cluster at
+  // the bottom of the sidebar — never as chips parked over the chatbox.
+  dock.innerHTML = '<div class="minimized-dock-hd">Windows</div><div class="minimized-dock-rows"></div>';
+  const sidebar = document.getElementById('sidebar');
+  const userBar = sidebar && sidebar.querySelector('.sidebar-user-bar');
+  if (userBar) sidebar.insertBefore(dock, userBar);
+  else if (sidebar) sidebar.appendChild(dock);
+  else document.body.appendChild(dock);
   return dock;
 }
 
@@ -169,7 +193,7 @@ let _dockPos = null; // { left, top } | null
 const _renderedChipIds = new Set();
 
 // ── Persistence (mobile dock + free-chip positions) ──
-const _DOCK_STORAGE_KEY = 'odysseus.mobileDockState.v1';
+const _DOCK_STORAGE_KEY = 'orwell.mobileDockState.v1';
 let _dockStateLoaded = false;
 
 function _saveDockState() {
@@ -260,11 +284,7 @@ function _renderDock() {
   // On mobile we ALSO keep chips around for any modal that's been
   // free-positioned on screen — even while it's open — so the chip acts as
   // a persistent toggle (tap to minimize, tap again to restore).
-  const isMobile = window.innerWidth <= 768;
-  const persistentIds = isMobile
-    ? [..._state.entries()].filter(([id, _]) => _chipPositions.has(id)).map(([id]) => id)
-    : [];
-  const allIds = Array.from(new Set([...minimizedIds, ...persistentIds]));
+  const allIds = Array.from(new Set(minimizedIds)); // E95: minimized only — no floating chips
   // Keep _dockOrder for every modal still alive in _state — even when it's
   // currently restored (not in allIds). That way re-minimizing a chip lands
   // back in its original slot instead of being pushed to the right edge.
@@ -311,17 +331,15 @@ function _renderDock() {
   // new chip would land in the dock by itself — visually unlinking the
   // group. Collapse everyone back into the dock so the chain stays
   // together as a single group at the new size.
-  const newIds = renderIds.filter(id => !_renderedChipIds.has(id));
-  if (newIds.length && _chipPositions.size) {
-    _chipPositions.clear();
-    _saveDockState();
-  }
   if (!renderIds.length) {
-    dock.innerHTML = '';
-    // Scrub ALL drag/animation inline styles, then re-apply display:none so
-    // the empty dock stays hidden until new chips arrive.
-    dock.style.cssText = '';
-    dock.style.display = 'none';
+    // F1 (DWE audit): dock visibility is CLASS-driven. The old inline
+    // `display:''` reveal fell back to the base CSS `display:none` (the U3
+    // sidebar-rows rule), so the dock was invisible WHILE holding chips and a
+    // minimized window had no pointer path back.
+    dock.classList.remove('ow-has-rows');
+    dock.style.removeProperty('display');
+    const rows0 = dock.querySelector('.minimized-dock-rows');
+    if (rows0) rows0.innerHTML = '';
     return;
   }
 
@@ -331,12 +349,10 @@ function _renderDock() {
     oldRects.set(c.dataset.modalId, c.getBoundingClientRect());
   });
 
-  dock.style.display = '';
-  // Re-assert the remembered position — the empty-dock branch clears inline
-  // styles, so without this the dock would snap back to its CSS default the
-  // first time it re-populates after every chip was restored.
-  _applyDockPos(dock);
-  dock.innerHTML = '';
+  dock.classList.add('ow-has-rows');
+  dock.style.removeProperty('display');
+  const rows = dock.querySelector('.minimized-dock-rows') || dock;
+  rows.innerHTML = '';
   for (const id of renderIds) {
     const meta = _LABELS[id] || { label: id, icon: '' };
     const chip = document.createElement('button');
@@ -379,29 +395,16 @@ function _renderDock() {
         restore(id);
       }
     });
-    _wireChipDrag(chip, dock);
-    // Visually mark whether the modal is currently open (chip-active) so
-    // the user can see at a glance which floating chip belongs to the
-    // visible modal.
+    // E95: a plain sidebar row — icon + name, click restores; no drag.
     const st = _state.get(id);
     if (st && !st.isMinimized) chip.classList.add('chip-active');
-    // Free-positioned chips on mobile live OUTSIDE the dock so the dock's
-    // transform: translateX(-50%) doesn't shift their `position: fixed`
-    // coords. Dock-resident chips render as normal flex children.
-    const pos = _chipPositions.get(id);
-    if (pos && window.innerWidth <= 768) {
-      chip.style.setProperty('position', 'fixed', 'important');
-      chip.style.setProperty('left', `${pos.left}px`, 'important');
-      chip.style.setProperty('top', `${pos.top}px`, 'important');
-      chip.style.setProperty('z-index', '10020', 'important');
-      document.body.appendChild(chip);
-    } else {
-      dock.appendChild(chip);
-    }
+    rows.appendChild(chip);
   }
 
-  // FLIP: animate from old → new positions
-  dock.querySelectorAll('.minimized-dock-chip').forEach(c => {
+  // FLIP: animate from old → new positions (skipped under prefers-reduced-motion
+  // — the E97 contract applies to dock motion too; DWE audit note).
+  const _reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!_reduced) dock.querySelectorAll('.minimized-dock-chip').forEach(c => {
     const oldRect = oldRects.get(c.dataset.modalId);
     if (!oldRect) return;
     const newRect = c.getBoundingClientRect();
@@ -652,7 +655,7 @@ function _wireChipDrag(chip, dock) {
     chipStartLeft = cr.left;
     chipStartTop = cr.top;
 
-    const onTouch = (e.pointerType === 'touch' || window.innerWidth <= 768);
+    const onTouch = (e.pointerType === 'touch' || isNarrow());
     if (onTouch) {
       const isFree = _chipPositions.has(chip.dataset.modalId);
       trashZone = _ensureTrashZone();
@@ -752,7 +755,7 @@ function _wireChipDrag(chip, dock) {
     // Touch fingers drift a few pixels even on a "still" tap, so the touch
     // threshold is generous — otherwise a tap-to-restore reads as a drag
     // and the click gets eaten when the chain settles.
-    const DRAG_THRESHOLD = (e.pointerType === 'touch' || window.innerWidth <= 768) ? 14 : 5;
+    const DRAG_THRESHOLD = (e.pointerType === 'touch' || isNarrow()) ? 14 : 5;
     if (!dragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
     if (!dragging) {
       dragging = true;
@@ -789,7 +792,7 @@ function _wireChipDrag(chip, dock) {
     // Desktop: dragging a chip into a screen snap zone previews restoring the
     // window + snapping it there (top → maximize/fullscreen, right → right
     // dock). Releasing in the zone commits it (see onPointerUp).
-    if (e.pointerType !== 'touch' && window.innerWidth > 768) {
+    if (e.pointerType !== 'touch' && !isNarrow()) {
       const z = previewZoneAt(e.clientX, e.clientY, modal);
       // Ignore the bottom zone — the dock lives at the bottom, so horizontal
       // chip reordering must not get hijacked into a bottom-half snap.
@@ -830,10 +833,14 @@ function _wireChipDrag(chip, dock) {
       }
       // !important needed because the chip's class-level transform/transition
       // (the FLIP reorder animation + spring transition) outranks plain
-      // inline styles set via .style on some Safari versions.
+      // inline styles set via .style on some Safari versions. z-index stays
+      // PLAIN on purpose (G14): no class rule fights it (.dragging's z 1000
+      // is plain, so the inline wins on specificity) and this module carries
+      // no z-index priority stamp anywhere — the G14 source pin holds the
+      // whole file to that.
       chip.style.setProperty('transition', 'none', 'important');
       chip.style.setProperty('transform', `translate(${tx}px, ${ty}px) scale(${inZone ? 1.12 : 1.05})`, 'important');
-      chip.style.setProperty('z-index', '10030', 'important');
+      chip.style.zIndex = '10030';
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${chipStartLeft}px`, 'important');
       chip.style.setProperty('top', `${chipStartTop}px`, 'important');
@@ -1157,7 +1164,36 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
     const _isVisible = () => !_modalEl.classList.contains('hidden')
         && getComputedStyle(_modalEl).display !== 'none';
     _modalEl._mmAutoStackLast = _isVisible();
+    _modalEl._mmLastHidden = _modalEl.classList.contains('hidden');
+    _modalEl._mmLastInlineDisplay = _modalEl.style.display;
     const obs = new MutationObserver(() => {
+      // G2 (launcher-agnostic restore): when ANY code path un-hides this
+      // modal while its minimized state is held — e.g. the settings gear
+      // calls the tool's own open(), which just removes `.hidden` — run the
+      // REAL restore path (clear .modal-minimized, the dock chip, badges and
+      // state) instead of leaving a window that looks open but is
+      // display:none + pointer-events:none under `.modal-minimized`. The
+      // detection is transition-based (hidden → un-hidden, or the inline
+      // display turned visible) so the minimize paths themselves — which add
+      // `.hidden`/`.modal-minimized` — never trip it.
+      const nowHidden = _modalEl.classList.contains('hidden');
+      const nowDisplay = _modalEl.style.display;
+      const unHid = _modalEl._mmLastHidden && !nowHidden;
+      const displayedInline = !!nowDisplay && nowDisplay !== 'none'
+          && nowDisplay !== _modalEl._mmLastInlineDisplay;
+      _modalEl._mmLastHidden = nowHidden;
+      _modalEl._mmLastInlineDisplay = nowDisplay;
+      if ((unHid || displayedInline)
+          && _state.get(id)?.isMinimized
+          && _modalEl.classList.contains('modal-minimized')) {
+        restore(id);
+        // restore() just mutated class/style itself — resync the trackers to
+        // the restored state so the re-entrant callback diffs cleanly.
+        _modalEl._mmLastHidden = _modalEl.classList.contains('hidden');
+        _modalEl._mmLastInlineDisplay = _modalEl.style.display;
+        _modalEl._mmAutoStackLast = _isVisible();
+        return;
+      }
       const vis = _isVisible();
       if (vis && !_modalEl._mmAutoStackLast) {
         _bringToFront(_modalEl);
@@ -1257,6 +1293,12 @@ export function restore(id) {
   const modal = document.getElementById(id);
   if (modal) {
     modal.classList.remove('hidden', 'modal-minimized');
+    // G2 interop: the legacy app.js minimize dock marks windows with its own
+    // `minimized` class (display:none !important). When both systems engaged
+    // on the same `_` click, a restore through THIS path must scrub that
+    // class too — otherwise the window stays invisible after a "successful"
+    // restore.
+    modal.classList.remove('minimized');
     modal.style.display = '';
     _applyRestoreHeight(modal, s);
     // Surface above any already-open tool window — restoring from the dock
@@ -1406,7 +1448,12 @@ const _AUTO_WIRE = {
   'email-lib-modal':      { rail: null,             sidebar: null },
   'research-overlay':     { rail: 'rail-research',  sidebar: 'tool-research-btn' },
   'theme-modal':          { rail: null,             sidebar: 'tool-theme-btn' },
-  'settings-modal':       { rail: null,             sidebar: 'tool-settings-btn' },
+  // G2: the user-bar gear (#user-bar-settings) is a settings launcher too —
+  // listing it lets the capture-phase click interceptor below restore a
+  // minimized settings window even when the click never reaches the tool's
+  // own open() (belt #1; the auto-stack observer's launcher-agnostic heal in
+  // register() is belt #2 and covers launchers nobody listed).
+  'settings-modal':       { rail: null,             sidebar: ['tool-settings-btn', 'user-bar-settings'] },
   'compare-model-overlay':{ rail: 'rail-compare',   sidebar: 'tool-compare-btn' },
   'ge-shortcuts-modal':   { rail: null,             sidebar: null },
   // Prompt window opens from the overflow menu (no rail/sidebar button), but

@@ -39,6 +39,44 @@
 import { makeEdgeDockController } from './modalSnap.js';
 import { makeWindowResizable } from './windowResize.js';
 
+// Registry of content elements that have been manually positioned (dragged).
+// On every viewport resize we clamp them back inside the visible area so
+// a window the player moved to the corner doesn't fall off-screen when the
+// browser is resized smaller.
+const _draggedElements = new Set();
+
+function _clampToViewport(el) {
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let changed = false;
+  let left = parseFloat(el.style.left) || r.left;
+  let top = parseFloat(el.style.top) || r.top;
+  const w = r.width || 200;
+  const h = r.height || 100;
+  if (left + w > vw) { left = Math.max(0, vw - w); changed = true; }
+  if (top + h > vh) { top = Math.max(0, vh - h); changed = true; }
+  if (left < 0) { left = 0; changed = true; }
+  if (top < 0) { top = 0; changed = true; }
+  if (changed) { el.style.left = left + 'px'; el.style.top = top + 'px'; }
+}
+
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+  // Debounce so we only clamp once the resize gesture settles.
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    for (const el of _draggedElements) {
+      // Only clamp if the element is fixed-positioned (i.e. has been dragged).
+      if (el.isConnected && getComputedStyle(el).position === 'fixed') {
+        _clampToViewport(el);
+      } else if (!el.isConnected) {
+        _draggedElements.delete(el);
+      }
+    }
+  }, 120);
+});
+
 const SNAP_PX = 6;        // cursor distance from top edge for fullscreen snap
 const UNSNAP_PX = 24;     // cursor distance from top before fullscreen exits
 const DOCK_EDGE_PX = 60;  // cursor distance from L/R edge to trigger dock
@@ -61,7 +99,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const fsClass = options.fsClass || null;
   const onEnterFullscreen = options.onEnterFullscreen || null;
   const onExitFullscreen = options.onExitFullscreen || null;
-  const enableFullscreen = false;
+  const enableFullscreen = options.enableFullscreen !== false && !!onEnterFullscreen;
   const onDragEnd = options.onDragEnd || null;
   const onDragStart = options.onDragStart || null;
   const skipSelector = options.skipSelector || 'button, input, select';
@@ -148,6 +186,7 @@ export function makeWindowDraggable(modal, options = {}) {
 
   const _startDrag = (cx, cy) => {
     dragging = true;
+    _draggedElements.add(content);
     if (modal) modal.classList.add('modal-dragging');
     // Cancel any in-flight open animation so we don't pin a mid-animation
     // rect and then jump once the animation settles.

@@ -8,10 +8,10 @@
  *    redline after every turn (each turn re-applies the server-side filters);
  *  - approve/decline (no submission until approved).
  * The aggressiveness control (FR-RESUME-9) ships GRAYED/disabled (FR-UI-2). Network
- * failures degrade gracefully (no dead UI shown as live).
+ * failures degrade gracefully (no dead UI shown as live). Shares the redirect-aware
+ * fetch from ApplicantUI (a 409 from the gate routes to the wizard).
  */
-(function () {
-  "use strict";
+import { ApplicantUI, apiFetch } from "./applicant-ui.js";
 
   function qs(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
@@ -25,11 +25,7 @@
   var activeType = "resume";
   var lastBase = "";
 
-  async function api(path, opts) {
-    const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.status === 204 ? null : res.json();
-  }
+  const api = apiFetch;
 
   function setStatus(msg) {
     const el = document.getElementById("review-status");
@@ -149,6 +145,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    ApplicantUI.mountShell({ active: "review" });
     document.querySelectorAll("button[data-kind]").forEach((btn) => {
       btn.addEventListener("click", () => submitTurn(btn.getAttribute("data-kind")));
     });
@@ -163,4 +160,3 @@
     openReview();
     loadRedline("", "");
   });
-})();

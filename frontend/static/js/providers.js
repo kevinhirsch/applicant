@@ -15,10 +15,6 @@ const _PROVIDERS = [
   [/opencode/i,
     '<svg viewBox="0 0 24 30" fill="currentColor"><path d="M18 6H6V24H18V6ZM24 30H0V0H24V30Z"/></svg>'],
 
-  // GitHub / Copilot
-  [/github|copilot/i,
-    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A12 12 0 0 0 8.2 23.9c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.8.1-.8.1-.8 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.3-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0C15.3 4.7 16 5 16 5c.6 1.6.2 2.9.1 3.2.8.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>'],
-
   // OpenRouter
   [/openrouter|open router/i,
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.5 12h4.5c2 0 2.5-6 4.5-6"/><path d="M12 12c2 0 2.5 6 4.5 6"/></svg>'],
@@ -106,7 +102,6 @@ export function providerLogo(modelId) {
 // doesn't match `x.ai`.
 const _ENDPOINT_LABELS = [
   [/(^|\.)githubcopilot\.com$/i, "GitHub Copilot"],
-  [/(^|\.)chatgpt\.com$/i, "ChatGPT Subscription"],
   [/(^|\.)openrouter\.ai$/i, "OpenRouter"],
   [/(^|\.)anthropic\.com$/i, "Anthropic"],
   [/(^|\.)openai\.com$/i, "OpenAI"],
@@ -118,7 +113,6 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)together\.(ai|xyz)$/i, "Together"],
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
-  [/(^|\.)nvidia\.com$/i, "NVIDIA"],
   [/(^|\.)x\.ai$/i, "xAI"],
 ];
 
@@ -147,31 +141,4 @@ export function providerLabel(endpointUrl) {
   return host.replace(/^api\./i, "");
 }
 
-// Map endpoint URL → logo SVG using the same model-id regex catalog.
-// Tests host + port + path so loopback servers (e.g. Ollama on
-// localhost:11434) still match by port. Falls back to null when nothing
-// recognises the URL, so callers can render a neutral placeholder.
-export function providerLogoFromUrl(url) {
-  if (!url) return null;
-  let host = '', port = '', path = '';
-  try {
-    const u = new URL(url);
-    host = u.hostname; port = u.port; path = u.pathname || '';
-  } catch (_) {
-    const raw = String(url).replace(/^[a-z]+:\/\//i, '');
-    const slashIdx = raw.indexOf('/');
-    const hostport = slashIdx >= 0 ? raw.slice(0, slashIdx) : raw;
-    path = slashIdx >= 0 ? raw.slice(slashIdx) : '';
-    const colon = hostport.lastIndexOf(':');
-    host = colon >= 0 ? hostport.slice(0, colon) : hostport;
-    port = colon >= 0 ? hostport.slice(colon + 1) : '';
-  }
-  // Build candidate strings to test against the provider catalog.
-  const candidates = [host, port ? `${host}:${port}` : '', port ? `:${port}` : '', path].filter(Boolean);
-  for (const [re, svg] of _PROVIDERS) {
-    if (candidates.some(c => re.test(c))) return svg;
-  }
-  return null;
-}
-
-export default { providerLogo, providerLabel, providerLogoFromUrl };
+export default { providerLogo, providerLabel };

@@ -5,10 +5,10 @@
  * and surfaces proposed changes. Integral/sensitive proposals (requires_confirmation)
  * show a Confirm button that commits via /api/chat/confirm (FR-FB-3). Non-integral
  * proposals are auto-applied server-side and shown as applied. Degrades gracefully
- * on network error (FR-UI-2).
+ * on network error (FR-UI-2). Shares the redirect-aware fetch + DOM builder from
+ * ApplicantUI (a 409 from the gate routes to the wizard).
  */
-(function () {
-  "use strict";
+import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
 
   const params = new URLSearchParams(location.search);
   const campaignId = document.body.getAttribute("data-campaign-id") || params.get("campaign_id") || "";
@@ -18,21 +18,9 @@
   const form = document.getElementById("chat-form");
   const input = document.getElementById("chat-input");
 
-  async function api(path, body) {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
-  }
-
-  function el(tag, attrs, children) {
-    const node = document.createElement(tag);
-    Object.assign(node, attrs || {});
-    (children || []).forEach((c) => node.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
-    return node;
+  // Chat always POSTs a JSON body; wrap the shared helper to keep the call sites.
+  function api(path, body) {
+    return apiFetch(path, { method: "POST", body: JSON.stringify(body) });
   }
 
   function addTurn(cls, text) {
@@ -86,4 +74,5 @@
       addTurn("chat-bot applicant-note", "Assistant unavailable right now.");
     }
   });
-})();
+
+  ApplicantUI.mountShell({ active: "chat" });

@@ -12,18 +12,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Applicant — Document review</title>
   <link rel="stylesheet" href="../style.css" />
-  <style>
-    /* Redline highlighting (additions + deletions), FR-RESUME-8. */
-    .redline-add, ins.redline-add { background: #e6ffed; color: #045d1e; text-decoration: none; }
-    .redline-sub, del.redline-sub { background: #ffeef0; color: #9e1c23; text-decoration: line-through; }
-    .redline-eq { color: #444; }
-    #redline-view { white-space: pre-wrap; font-family: ui-monospace, monospace; line-height: 1.5; }
-    .applicant-grayed { opacity: .5; }
-    /* Material tabs (resume / cover letter / screening answers), FR-RESUME-1. */
-    .review-tabs { display: flex; gap: 4px; margin: 12px 0; }
-    .review-tab { cursor: pointer; }
-    .review-tab[aria-selected="true"] { font-weight: 700; border-bottom: 2px solid #045d1e; }
-  </style>
+  <link rel="stylesheet" href="applicant.css" />
 </head>
 <body data-document-id="" data-variant-id="" data-application-id="">
   <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;">
@@ -70,6 +59,6 @@
       <span id="review-status" class="admin-empty"></span>
     </section>
   </main>
-  <script src="js/review.js"></script>
+  <script type="module" src="js/review.js"></script>
 </body>
 </html>
