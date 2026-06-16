@@ -55,6 +55,12 @@ class DbosOrchestrator:
         # acquire/release/pivot contract is uniform across both adapters (FR-DUR-2/4).
         self._queue_caps: dict[str, dict[str, Any]] = {}
         self._queue_admit: dict[str, dict[str, Any]] = {}
+        # Real DBOS ``Queue`` objects, kept so admission actually routes through them
+        # (FR-DUR-2) rather than being created and discarded.
+        self._queues: dict[str, Any] = {}
+        # Registered cron-scheduled workflows (FR-DUR-3 scheduling) — kept so the
+        # decorated functions stay referenced and are not garbage-collected.
+        self._scheduled: dict[str, Callable[..., Any]] = {}
 
     def _ensure_launched(self) -> None:
         if self._launched:
@@ -136,11 +142,14 @@ class DbosOrchestrator:
         limiter_limit: int | None = None,
         limiter_period: float | None = None,
     ) -> Any:
-        """Create a durable queue for concurrency caps / LLM rate limits (FR-DUR-2).
+        """Create + retain a durable DBOS queue for concurrency / rate limits (FR-DUR-2).
 
-        Skeleton: returns a ``dbos.Queue`` configured with an optional global
-        concurrency cap and an optional rate limiter (limit per period seconds).
-        Phase 2 enqueues sandbox sessions / LLM calls onto these queues.
+        Returns a ``dbos.Queue`` configured with an optional global concurrency cap
+        and an optional rate limiter (limit per period seconds), and STORES it so
+        sandbox/LLM work is actually enqueued onto it (``enqueue``) — the real DBOS
+        admission gate. The in-memory ``_queue_admit`` bookkeeping mirrors the same
+        cap so the synchronous ``acquire``/``release`` contract stays uniform across
+        both adapters (the shim has no Postgres-backed queue runtime).
         """
         self._ensure_launched()
         from dbos import Queue
@@ -154,7 +163,29 @@ class DbosOrchestrator:
             "limiter_period": limiter_period,
         }
         self._queue_admit[name] = {"active": set(), "waiting": deque(), "admit_times": deque()}
-        return Queue(name, concurrency=concurrency, limiter=limiter)
+        queue = Queue(name, concurrency=concurrency, limiter=limiter)
+        self._queues[name] = queue
+        return queue
+
+    def enqueue(self, queue_name: str, workflow_name: str, workflow_id: str, *args: Any, **kwargs: Any) -> _DbosHandle:
+        """Enqueue a workflow onto a durable queue so DBOS gates admission (FR-DUR-2).
+
+        This is the real concurrency/rate gate: DBOS only dispatches as many queued
+        workflows as the queue's ``concurrency`` / rate limiter allow, and survives a
+        crash. Falls back to a direct start if the queue was not created.
+        """
+        self._ensure_launched()
+        from dbos import SetWorkflowID
+
+        queue = self._queues.get(queue_name)
+        shim = self._wf_shims.get(workflow_name)
+        if shim is None:
+            raise KeyError(f"workflow not registered: {workflow_name}")
+        if queue is None:
+            return self.start_workflow(workflow_name, workflow_id, *args, **kwargs)
+        with SetWorkflowID(workflow_id):
+            handle = queue.enqueue(shim, workflow_id, *args, **kwargs)
+        return _DbosHandle(workflow_id, handle)
 
     def acquire(self, queue_name: str, work_id: str) -> bool:
         """Admit ``work_id`` onto the queue (concurrency/rate gate) (FR-DUR-2)."""
@@ -195,10 +226,12 @@ class DbosOrchestrator:
         return None
 
     def schedule(self, name: str, cron: str, fn: Callable[..., Any]) -> Callable[..., Any]:
-        """Register a cron-scheduled durable workflow (FR-DUR-3, scheduling).
+        """Register + retain a cron-scheduled durable workflow (FR-DUR-3, scheduling).
 
-        Skeleton: wraps ``fn`` with ``@DBOS.scheduled(cron)`` + ``@DBOS.workflow``
-        so DBOS fires it on the schedule with crash-safe, exactly-once semantics.
+        Wraps ``fn`` with ``@DBOS.scheduled(cron)`` + ``@DBOS.workflow`` so DBOS fires
+        it on the schedule with crash-safe, exactly-once semantics, and STORES the
+        decorated function so it stays registered for the process lifetime (the
+        scheduler tick is driven this way on the DBOS path).
         """
         self._ensure_launched()
         from dbos import DBOS
@@ -208,4 +241,5 @@ class DbosOrchestrator:
         def _scheduled(scheduled_time: Any, actual_time: Any) -> Any:
             return fn(scheduled_time, actual_time)
 
+        self._scheduled[name] = _scheduled
         return _scheduled

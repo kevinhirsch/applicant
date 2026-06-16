@@ -91,3 +91,22 @@ class DurableOrchestrationPort(Protocol):
         Returns the ``work_id`` promoted off the wait-queue (the pivot), or ``None``.
         """
         ...
+
+    def enqueue(
+        self, queue_name: str, workflow_name: str, workflow_id: str, *args: Any, **kwargs: Any
+    ) -> WorkflowHandle:
+        """Enqueue a workflow onto a durable queue so the backend gates admission.
+
+        The real concurrency/rate gate on DBOS (queued workflows are dispatched only
+        within the queue's cap, crash-safe); the shim runs it inline after a
+        synchronous ``acquire`` (FR-DUR-2).
+        """
+        ...
+
+    def schedule(self, name: str, cron: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register a cron-scheduled durable workflow (FR-DUR-3 scheduling).
+
+        On DBOS this is ``@DBOS.scheduled``; on the shim the asyncio task in the app
+        lifespan drives the cadence and this just records the function.
+        """
+        ...

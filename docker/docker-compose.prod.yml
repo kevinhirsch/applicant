@@ -20,6 +20,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:-applicant}@postgres:5432/${POSTGRES_DB:-applicant}
       APP_STATIC_DIR: frontend/static
       ORCHESTRATOR_BACKEND: ${ORCHESTRATOR_BACKEND:-shim}
+      # 24/7 scheduler ON in prod: ticks each campaign's run loop, delivers the
+      # daily digest, and advances the notification escalation ladder (NFR-247-1).
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
       LOG_FORMAT: json
     ports:
       - "8000:8000"

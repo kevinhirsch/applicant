@@ -1,30 +1,73 @@
-"""App lifespan: startup recovers durable workflows + seeds dormant surfaces;
-shutdown disposes the engine. DB connectivity is verified but tolerated absent
-(so tests/first-boot work) (FR-DUR-1, FR-UI-2, FR-OBS-1).
+"""App lifespan: startup recovers + re-drives durable workflows, seeds dormant
+surfaces, and (when enabled) starts the scheduler background loop; shutdown stops
+the loop + disposes the engine. DB connectivity is verified but tolerated absent
+(so tests/first-boot work) (FR-DUR-1, FR-DIG-1, FR-NOTIF-2, FR-UI-2, NFR-247-1).
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 
+from applicant.application.workflows.application_pipeline import WORKFLOW_NAME
 from applicant.dormant import seed_dormant_surfaces
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
 
+def _redrive_pending(container) -> int:
+    """Re-drive every recovered pending workflow so a killed worker resumes (FR-DUR-1).
+
+    ``recover_pending`` returns interrupted workflow ids; on the shim it only lists
+    them, so here we actually re-start each (idempotent — completed steps return
+    their checkpointed result without re-running). On DBOS recovery is automatic,
+    so this is a best-effort no-op there.
+    """
+    orch = container.orchestrator
+    recovered = orch.recover_pending()
+    redriven = 0
+    for wf_id in recovered:
+        try:
+            orch.start_workflow(WORKFLOW_NAME, wf_id)
+            redriven += 1
+        except Exception as exc:  # pragma: no cover - defensive (already-running etc.)
+            log.info("redrive_skipped", workflow_id=wf_id, reason=str(exc))
+    return redriven
+
+
+async def _scheduler_loop(container) -> None:
+    """Periodically tick the scheduler (FR-DIG-1, FR-NOTIF-2, NFR-247-1).
+
+    Started ONLY when ``SCHEDULER_ENABLED`` so the default test lane / TestClient
+    never spins a live loop. The tick itself is pure (injected clock); the sleep
+    here is the only timing element and lives outside the hermetic unit lane.
+    """
+    interval = container.settings.scheduler_interval_seconds
+    while True:
+        try:
+            container.scheduler.tick(datetime.now(UTC))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("scheduler_tick_error", error=str(exc))
+        await asyncio.sleep(interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     container = app.state.container
+    scheduler_task: asyncio.Task | None = None
 
-    # 1) Recover interrupted durable workflows (FR-DUR-1).
+    # 1) Recover + RE-DRIVE interrupted durable workflows (FR-DUR-1).
     try:
-        recovered = container.orchestrator.recover_pending()
-        log.info("durable_recovery", recovered=len(recovered))
+        redriven = _redrive_pending(container)
+        log.info("durable_recovery", redriven=redriven)
     except NotImplementedError:
         log.info("durable_recovery_skipped", reason="orchestrator backend not ready")
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("durable_recovery_failed", error=str(exc))
 
     # 2) Verify DB connectivity (tolerate no-DB in tests).
     try:
@@ -43,9 +86,23 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("dormant_seed_failed", error=str(exc))
 
+    # 4) Start the scheduler loop ONLY when enabled (default OFF, hermetic safety).
+    if getattr(container.settings, "scheduler_enabled", False) and container.scheduler is not None:
+        scheduler_task = asyncio.create_task(_scheduler_loop(container))
+        log.info("scheduler_started", interval=container.settings.scheduler_interval_seconds)
+    else:
+        log.info("scheduler_disabled")
+
     yield
 
-    # Shutdown: dispose the engine if present.
+    # Shutdown: stop the scheduler loop, then dispose the engine if present.
+    if scheduler_task is not None:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except (asyncio.CancelledError, Exception):  # pragma: no cover - shutdown
+            pass
+        log.info("scheduler_stopped")
     if getattr(container, "engine", None) is not None:
         container.engine.dispose()
         log.info("engine_disposed")

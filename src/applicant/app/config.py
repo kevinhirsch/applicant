@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
     checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
 
+    # Scheduler (FR-DIG-1, FR-NOTIF-2, NFR-247-1). OFF by default so the default
+    # test lane / TestClient never spins a live background loop; prod compose sets
+    # it True (zero-CLI via env). When True the lifespan starts the asyncio tick
+    # loop on the shim, or DBOS @scheduled drives it on the DBOS path.
+    scheduler_enabled: bool = Field(default=False, alias="SCHEDULER_ENABLED")
+    scheduler_interval_seconds: float = Field(
+        default=60.0, alias="SCHEDULER_INTERVAL_SECONDS"
+    )
+
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     sandbox_concurrency: int = Field(default=3, alias="SANDBOX_CONCURRENCY")
     llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables

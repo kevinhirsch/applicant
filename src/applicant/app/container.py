@@ -111,6 +111,10 @@ class Container:
     final_approval_service: Any = None
     submission_service: Any = None
     prefill_service: Any = None
+    material_service: Any = None
+    # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
+    agent_loop: Any = None
+    scheduler: Any = None
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -305,6 +309,45 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         llm=llm,
     )
+    from applicant.application.services.material_service import MaterialService
+
+    material_service = MaterialService(
+        storage,
+        llm=llm,
+        resume_tailoring=latex_tailor,
+        embedding=embedding,
+        docx_tailoring=docx_tailor,
+        conversion_service=conversion_service,
+        notifications=notification_service,
+        pending_actions=pending_actions_service,
+    )
+
+    # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
+    from applicant.application.services.agent_loop import AgentLoop
+    from applicant.application.services.scheduler import Scheduler
+
+    agent_loop = AgentLoop(
+        storage=storage,
+        agent_run_service=agent_run_service,
+        discovery_service=discovery_service,
+        scoring_service=scoring_service,
+        digest_service=digest_service,
+        prefill_service=prefill_service,
+        material_service=material_service,
+        submission_service=submission_service,
+        learning_service=learning_service,
+        notification_service=notification_service,
+        capacity_service=capacity_service,
+        final_approval_service=final_approval_service,
+        orchestrator=orchestrator,
+    )
+    scheduler = Scheduler(
+        storage=storage,
+        agent_loop=agent_loop,
+        digest_service=digest_service,
+        notification_service=notification_service,
+        final_approval_service=final_approval_service,
+    )
 
     return Container(
         settings=settings,
@@ -347,4 +390,7 @@ def build_container(settings: Settings | None = None) -> Container:
         final_approval_service=final_approval_service,
         submission_service=submission_service,
         prefill_service=prefill_service,
+        material_service=material_service,
+        agent_loop=agent_loop,
+        scheduler=scheduler,
     )
