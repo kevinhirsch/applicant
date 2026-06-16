@@ -39,9 +39,11 @@ class Settings(BaseSettings):
     log_format: str = Field(default="pretty", alias="LOG_FORMAT")  # pretty | json
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Notifications (FR-NOTIF-1)
+    # Notifications (FR-NOTIF-1). Live network send is OFF by default so the default
+    # test lane never touches Discord/SMTP; flip on in a real deployment (zero-CLI).
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
+    notifications_live: bool = Field(default=False, alias="NOTIFICATIONS_LIVE")
 
     # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).

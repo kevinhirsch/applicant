@@ -19,6 +19,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
 from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
@@ -29,6 +30,7 @@ from applicant.core.ids import (
     ApplicationId,
     AttributeId,
     CampaignId,
+    FieldMappingId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
@@ -100,6 +102,17 @@ class PendingActionRepository(Protocol):
 
 
 @runtime_checkable
+class FieldMappingRepository(Protocol):
+    """Attribute->form-field bindings; shared or per-campaign (FR-ATTR-2)."""
+
+    def add(self, mapping: FieldMapping) -> None: ...
+    def get(self, mapping_id: FieldMappingId) -> FieldMapping | None: ...
+    def list_for_site(self, site_key: str) -> list[FieldMapping]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[FieldMapping]: ...
+    def find(self, site_key: str, field_selector: str) -> FieldMapping | None: ...
+
+
+@runtime_checkable
 class DiscoverySourceRepository(Protocol):
     """Per-campaign source toggles + learned yield stats (FR-DISC-2/5)."""
 
@@ -134,6 +147,7 @@ class StoragePort(Protocol):
     decisions: DecisionRepository
     outcomes: OutcomeEventRepository
     pending_actions: PendingActionRepository
+    field_mappings: FieldMappingRepository
     discovery_sources: DiscoverySourceRepository
     agent_runs: AgentRunRepository
 

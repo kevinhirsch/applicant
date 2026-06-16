@@ -11,9 +11,35 @@
       if (el) {
         el.innerHTML = "Gate: <strong>" + (s.gate_open ? "open" : "closed") + "</strong>";
       }
+      const ch = document.getElementById("channels-status");
+      if (ch) {
+        ch.innerHTML =
+          "Channels: <strong>" +
+          (s.channels_configured ? "configured" : "not configured") +
+          "</strong>";
+      }
     } catch (e) {
       /* offline; ignore */
     }
+  }
+
+  // Channel setup (FR-NOTIF-1, FR-OOBE-2/3): post Discord/email and reflect the gate.
+  function onChannelsSubmit(ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const body = {
+      discord_webhook_url: (form.discord_webhook_url || {}).value || "",
+      apprise_urls: (form.apprise_urls || {}).value || "",
+    };
+    fetch("/api/setup/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(refreshStatus);
+  }
+
+  function onChannelsTest() {
+    fetch("/api/setup/channels/test", { method: "POST" }).then(refreshStatus);
   }
 
   function onSubmit(ev) {
@@ -34,6 +60,10 @@
   document.addEventListener("DOMContentLoaded", function () {
     const form = document.getElementById("llm-form");
     if (form) form.addEventListener("submit", onSubmit);
+    const channels = document.getElementById("channels-form");
+    if (channels) channels.addEventListener("submit", onChannelsSubmit);
+    const test = document.getElementById("channels-test");
+    if (test) test.addEventListener("click", onChannelsTest);
     refreshStatus();
   });
 })();

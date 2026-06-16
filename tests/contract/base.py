@@ -12,13 +12,16 @@ import pytest
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
+    AttributeId,
     CampaignId,
     DiscoverySourceId,
+    FieldMappingId,
     OutcomeEventId,
     PendingActionId,
     new_id,
@@ -88,6 +91,34 @@ class StoragePortContract:
         assert got is not None and got.enabled is False
         assert got.yield_stats["matches"] == 7
         assert len(adapter.discovery_sources.list_for_campaign(cid)) == 1
+
+    def test_field_mapping_shared_and_scoped(self, adapter):
+        # FR-ATTR-2: shared (global) + per-campaign mappings; find prefers scoped.
+        cid = CampaignId(new_id())
+        shared = FieldMappingId(new_id())
+        scoped = FieldMappingId(new_id())
+        adapter.field_mappings.add(
+            FieldMapping(
+                id=shared,
+                site_key="workday",
+                field_selector="email",
+                attribute_id=AttributeId("attr-shared"),
+            )
+        )
+        adapter.field_mappings.add(
+            FieldMapping(
+                id=scoped,
+                site_key="workday",
+                field_selector="email",
+                campaign_id=cid,
+                attribute_id=AttributeId("attr-scoped"),
+            )
+        )
+        adapter.commit()
+        assert len(adapter.field_mappings.list_for_site("workday")) == 2
+        assert len(adapter.field_mappings.list_for_campaign(cid)) == 1
+        found = adapter.field_mappings.find("workday", "email")
+        assert found is not None and found.campaign_id == cid  # scoped wins
 
     def test_agent_run_roundtrip(self, adapter):
         # FR-AGENT-2/7: run mode + intent sentence persist on the agent_runs row.

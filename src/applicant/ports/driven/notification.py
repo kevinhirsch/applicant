@@ -1,9 +1,11 @@
 """Notification port (FR-NOTIF-1/2/3/5).
 
-Channels: Discord (primary, one-click), web UI, email via Apprise; extensible and
-configured in the setup wizard. The adapter implements the escalation ladder
-(hold Discord 30s; in-app if present; email after the configurable timeout) and
-idempotency (acting on one channel expires the others).
+Channels: Discord (primary, one-click), web UI / in-app, email via Apprise;
+extensible and configured in the setup wizard. The adapter implements the
+escalation ladder (hold Discord 30s; in-app if the user is verifiably present;
+email after the configurable timeout) and idempotency (acting on one channel
+expires the others). The ladder is driven by an injected clock so the time-based
+hops are deterministic in tests (no real sleeps).
 """
 
 from __future__ import annotations
@@ -18,6 +20,14 @@ class NotificationUrgency(str, Enum):
     IMMEDIATE = "immediate"  # errors surface any hour (FR-NOTIF-5)
 
 
+class NotificationChannel(str, Enum):
+    """The notification channels Apprise can dispatch to (FR-NOTIF-1)."""
+
+    DISCORD = "discord"
+    IN_APP = "in_app"
+    EMAIL = "email"
+
+
 @dataclass(frozen=True)
 class Notification:
     title: str
@@ -25,6 +35,10 @@ class Notification:
     urgency: NotificationUrgency = NotificationUrgency.NORMAL
     deep_link: str | None = None  # e.g. redline surface or VNC link
     dedup_key: str | None = None  # idempotency across channels (FR-NOTIF-3)
+    # Web-portal pre-emption (FR-NOTIF-2): a decision that can be approved on the
+    # web portal first holds the Discord push for ``hold_seconds`` and never fires
+    # Discord if the user acts (or is verifiably present) before the hold lapses.
+    web_preemptable: bool = False
 
 
 @runtime_checkable

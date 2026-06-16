@@ -34,6 +34,11 @@ dependencies = [
     # JobSpy/SearXNG calls sit behind a marked network boundary; the default test
     # lane stays offline (the live source is integration-gated).
     "python-jobspy",
+    # Multi-channel notification dispatch (FR-NOTIF-1): Discord, email/SMTP, web,
+    # and 80+ services behind one URL grammar. The real send sits behind a marked
+    # network boundary in the AppriseNotifier; the default test lane uses a
+    # capturing sink (no network), and live Discord/SMTP tests are integration-gated.
+    "apprise",
 ]
 
 [project.optional-dependencies]

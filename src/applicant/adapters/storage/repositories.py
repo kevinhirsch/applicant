@@ -17,6 +17,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
@@ -28,6 +29,7 @@ from applicant.core.ids import (
     AttributeId,
     CampaignId,
     DiscoverySourceId,
+    FieldMappingId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
@@ -148,6 +150,17 @@ def _pending_to_entity(row: m.PendingActionModel) -> PendingAction:
         payload=dict(row.payload or {}),
         resolved=row.resolved,
         created_at=row.created_at,
+    )
+
+
+def _field_mapping_to_entity(row: m.FieldMappingModel) -> FieldMapping:
+    return FieldMapping(
+        id=FieldMappingId(row.id),
+        site_key=row.site_key,
+        field_selector=row.field_selector,
+        campaign_id=CampaignId(row.campaign_id) if row.campaign_id else None,
+        attribute_id=AttributeId(row.attribute_id) if row.attribute_id else None,
+        metadata=dict(row.mapping_metadata or {}),
     )
 
 
@@ -437,6 +450,49 @@ class PendingActionRepo:
             row.resolved = True
 
 
+class FieldMappingRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, mapping: FieldMapping) -> None:
+        self._s.merge(
+            m.FieldMappingModel(
+                id=mapping.id,
+                campaign_id=mapping.campaign_id,
+                attribute_id=mapping.attribute_id,
+                site_key=mapping.site_key,
+                field_selector=mapping.field_selector,
+                mapping_metadata=mapping.metadata,
+            )
+        )
+
+    def get(self, mapping_id: FieldMappingId) -> FieldMapping | None:
+        row = self._s.get(m.FieldMappingModel, mapping_id)
+        return _field_mapping_to_entity(row) if row else None
+
+    def list_for_site(self, site_key: str) -> list[FieldMapping]:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel).where(m.FieldMappingModel.site_key == site_key)
+        ).all()
+        return [_field_mapping_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[FieldMapping]:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel).where(m.FieldMappingModel.campaign_id == campaign_id)
+        ).all()
+        return [_field_mapping_to_entity(r) for r in rows]
+
+    def find(self, site_key: str, field_selector: str) -> FieldMapping | None:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel)
+            .where(m.FieldMappingModel.site_key == site_key)
+            .where(m.FieldMappingModel.field_selector == field_selector)
+        ).all()
+        entities = [_field_mapping_to_entity(r) for r in rows]
+        scoped = [e for e in entities if e.campaign_id is not None]
+        return (scoped or entities or [None])[0]
+
+
 class DiscoverySourceRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -513,6 +569,7 @@ class SqlAlchemyStorage:
         self.decisions = DecisionRepo(session)
         self.outcomes = OutcomeEventRepo(session)
         self.pending_actions = PendingActionRepo(session)
+        self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)
         self.agent_runs = AgentRunRepo(session)
 

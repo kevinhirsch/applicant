@@ -20,6 +20,7 @@ from applicant.app.routers import (
     digest,
     discovery_sources,
     documents,
+    feedback,
     fonts,
     onboarding,
     outcomes,
@@ -45,6 +46,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(conversion.router)
     app.include_router(attributes.router)
     app.include_router(digest.router)
+    app.include_router(feedback.router)
     app.include_router(documents.router)
     app.include_router(chat.router)
     app.include_router(remote.router)

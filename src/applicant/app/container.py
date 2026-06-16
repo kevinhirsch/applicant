@@ -35,13 +35,18 @@ from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
 from applicant.app.config import Settings, get_settings
 from applicant.application.services.agent_run_service import AgentRunService
+from applicant.application.services.attribute_cloud_service import AttributeCloudService
 from applicant.application.services.campaign_service import CampaignService
 from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.criteria_service import CriteriaService
+from applicant.application.services.digest_service import DigestService
 from applicant.application.services.discovery_service import DiscoveryService
+from applicant.application.services.feedback_service import FeedbackService
 from applicant.application.services.font_service import FontService
 from applicant.application.services.learning_service import LearningService
+from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
+from applicant.application.services.pending_actions_service import PendingActionsService
 from applicant.application.services.scoring_service import ScoringService
 from applicant.application.services.setup_service import SetupService
 from applicant.application.workflows import application_pipeline
@@ -86,6 +91,11 @@ class Container:
     learning_service: Any
     criteria_service: Any
     agent_run_service: Any
+    notification_service: Any
+    pending_actions_service: Any
+    digest_service: Any
+    attribute_cloud_service: Any
+    feedback_service: Any
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -149,18 +159,22 @@ def build_container(settings: Settings | None = None) -> Container:
                 return True
         return False
 
-    def _channels_gate() -> bool:
-        return bool(settings.discord_webhook_url or settings.apprise_urls)
-
     # Setup service so the persisted ladder can configure the LLM adapter; its
-    # automated-work gate now consults the real onboarding + channels gates.
+    # automated-work gate now consults the real onboarding + channels gates. The
+    # channels gate reads the wizard-persisted channel config OR env defaults.
     setup_service = SetupService(
         llm_configured=settings.llm_configured,
         config_store=config_store,
         credentials=credentials,
         onboarding_gate=_onboarding_gate,
-        channels_gate=_channels_gate,
     )
+
+    def _channels_gate() -> bool:
+        return setup_service.channels_configured() or bool(
+            settings.discord_webhook_url or settings.apprise_urls
+        )
+
+    setup_service.set_channels_gate(_channels_gate)
     # Seed L1 from env on first boot if the UI hasn't set a ladder yet (FR-LLM-2).
     if settings.llm_configured and not setup_service.get_tiers():
         from applicant.ports.driving.setup_wizard import LLMSettings as _LLMSettings
@@ -192,9 +206,13 @@ def build_container(settings: Settings | None = None) -> Container:
     latex_tailor = LatexTailor()
     docx_tailor = DocxTailor()
     font_installer = FontInstaller(install_root=settings.fonts_dir)
+    # Channel config: wizard-persisted (FR-OOBE-2) overrides env defaults; real
+    # network send is opt-in (NOTIFICATIONS_LIVE) so the default lane is hermetic.
+    chan = setup_service.get_channels()
     notification = AppriseNotifier(
-        discord_webhook_url=settings.discord_webhook_url,
-        apprise_urls=settings.apprise_urls,
+        discord_webhook_url=chan.get("discord_webhook_url") or settings.discord_webhook_url,
+        apprise_urls=chan.get("apprise_urls") or settings.apprise_urls,
+        send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
     tool_registry = ToolRegistry()
@@ -210,6 +228,21 @@ def build_container(settings: Settings | None = None) -> Container:
     scoring_service = ScoringService(storage, llm, embedding, learning=learning_service)
     criteria_service = CriteriaService(storage, llm)
     agent_run_service = AgentRunService(storage)
+    notification_service = NotificationService(notification)
+    pending_actions_service = PendingActionsService(storage)
+    digest_service = DigestService(
+        storage,
+        notification,
+        scoring_service,
+        learning=learning_service,
+        criteria=criteria_service,
+        notification_service=notification_service,
+        pending_actions=pending_actions_service,
+    )
+    attribute_cloud_service = AttributeCloudService(
+        storage, pending_actions=pending_actions_service
+    )
+    feedback_service = FeedbackService(storage, learning_service, criteria=criteria_service)
 
     return Container(
         settings=settings,
@@ -240,4 +273,9 @@ def build_container(settings: Settings | None = None) -> Container:
         learning_service=learning_service,
         criteria_service=criteria_service,
         agent_run_service=agent_run_service,
+        notification_service=notification_service,
+        pending_actions_service=pending_actions_service,
+        digest_service=digest_service,
+        attribute_cloud_service=attribute_cloud_service,
+        feedback_service=feedback_service,
     )

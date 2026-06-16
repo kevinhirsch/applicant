@@ -13,6 +13,7 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
 from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
@@ -23,6 +24,7 @@ from applicant.core.ids import (
     ApplicationId,
     AttributeId,
     CampaignId,
+    FieldMappingId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
@@ -160,6 +162,33 @@ class _PendingRepo:
             self._d[str(pid)] = dataclasses.replace(cur, resolved=True)
 
 
+class _FieldMappingRepo:
+    def __init__(self) -> None:
+        self._d: dict[str, FieldMapping] = {}
+
+    def add(self, mapping: FieldMapping) -> None:
+        self._d[str(mapping.id)] = mapping
+
+    def get(self, mapping_id: FieldMappingId) -> FieldMapping | None:
+        return self._d.get(str(mapping_id))
+
+    def list_for_site(self, site_key: str) -> list[FieldMapping]:
+        return [m for m in self._d.values() if m.site_key == site_key]
+
+    def list_for_campaign(self, cid: CampaignId) -> list[FieldMapping]:
+        return [m for m in self._d.values() if m.campaign_id == cid]
+
+    def find(self, site_key: str, field_selector: str) -> FieldMapping | None:
+        # Prefer a campaign-scoped mapping; fall back to a shared one (FR-ATTR-2).
+        matches = [
+            m
+            for m in self._d.values()
+            if m.site_key == site_key and m.field_selector == field_selector
+        ]
+        scoped = [m for m in matches if m.campaign_id is not None]
+        return (scoped or matches or [None])[0]
+
+
 class _DiscoverySourceRepo:
     def __init__(self) -> None:
         self._d: dict[str, DiscoverySource] = {}
@@ -205,6 +234,7 @@ class InMemoryStorage:
         self.decisions = _DecisionRepo()
         self.outcomes = _OutcomeRepo()
         self.pending_actions = _PendingRepo()
+        self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
         self.agent_runs = _AgentRunRepo()
 
