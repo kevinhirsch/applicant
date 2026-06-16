@@ -323,7 +323,11 @@ def never_solves(p2ctx):
 
 @given("an application awaiting final approval in a live session")
 def app_awaiting_final(p2ctx, app_client):
-    _open_gate(app_client)
+    from tests.conftest import open_automated_work_gate
+
+    # The remote submit paths are automated work behind the automated-work gate
+    # (FR-ONBOARD-2/FR-OOBE-3) in addition to the LLM gate.
+    open_automated_work_gate(app_client)
     p2ctx["client"] = app_client
     p2ctx["application_id"] = new_id()
     r = app_client.post("/api/remote/sessions", json={"application_id": p2ctx["application_id"]})

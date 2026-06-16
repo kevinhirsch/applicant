@@ -87,7 +87,10 @@ def test_detect_no_session_returns_false(client):
 # === Final-approval gate request (FR-NOTIF-2/4) ============================
 @pytest.mark.integration
 def test_request_final_approval_notifies(client):
-    _open_gate(client)
+    from tests.conftest import open_automated_work_gate
+
+    # /api/remote is automated work behind the automated-work gate (FR-ONBOARD-2).
+    open_automated_work_gate(client)
     aid = new_id()
     # Provision a session so the request carries a one-click live-session URL.
     client.post("/api/remote/sessions", json={"application_id": aid})
@@ -98,7 +101,9 @@ def test_request_final_approval_notifies(client):
 
 @pytest.mark.integration
 def test_submit_self_logs_and_records(client):
-    _open_gate(client)
+    from tests.conftest import open_automated_work_gate
+
+    open_automated_work_gate(client)
     aid = new_id()
     r = client.post(f"/api/remote/applications/{aid}/submit-self")
     assert r.status_code == 201 and r.json()["result"] == "submitted_by_user"

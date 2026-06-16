@@ -84,3 +84,23 @@ def require_llm_configured(container: Container = Depends(get_container)) -> Non
             status_code=status.HTTP_409_CONFLICT,
             detail="LLM is not configured. Complete the OOBE LLM-settings gate first (FR-UI-5).",
         )
+
+
+def require_automated_work(container: Container = Depends(get_container)) -> None:
+    """Gate dependency: 409 until automated work may begin (FR-ONBOARD-2, FR-OOBE-3).
+
+    Automated work is blocked until ALL of the OOBE preconditions hold: the LLM is
+    configured (FR-UI-5), notification channels are configured (FR-OOBE-3), and the
+    onboarding intake is complete (FR-ONBOARD-2). Apply this to every router that
+    triggers automated work (discovery runs, scoring, digest, prefill/remote,
+    agent-runs); do NOT apply it to the setup/onboarding/channels routers that must
+    work BEFORE the gate opens.
+    """
+    if not container.setup_service.is_automated_work_allowed():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Automated work is blocked until onboarding is complete and the LLM + "
+                "notification channels are configured (FR-ONBOARD-2, FR-OOBE-3)."
+            ),
+        )

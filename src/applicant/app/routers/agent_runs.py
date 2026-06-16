@@ -9,11 +9,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from applicant.app.deps import get_agent_run_service, require_llm_configured
+from applicant.app.deps import (
+    get_agent_run_service,
+    require_automated_work,
+    require_llm_configured,
+)
 from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP
 
 router = APIRouter(
-    prefix="/api/agent-runs", tags=["agent-runs"], dependencies=[Depends(require_llm_configured)]
+    prefix="/api/agent-runs",
+    tags=["agent-runs"],
+    dependencies=[Depends(require_llm_configured), Depends(require_automated_work)],
 )
 
 

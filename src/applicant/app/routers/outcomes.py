@@ -9,13 +9,14 @@ Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import get_container, require_llm_configured
 from applicant.core.entities.application import Application
 from applicant.core.entities.outcome_event import OutcomeSource
+from applicant.core.errors import ReviewRequired
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -45,7 +46,11 @@ def detect_submission(
     if not detected:
         return {"application_id": application_id, "detected": False}
     app = _load_or_stub(container, application_id)
-    event = container.submission_service.record_submission(app, source=OutcomeSource.AUTO)
+    try:
+        event = container.submission_service.record_submission(app, source=OutcomeSource.AUTO)
+    except ReviewRequired as exc:
+        # FR-RESUME-8: never auto-submit material that has not passed the review gate.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     _close_conversion_loop(container, app)
     return {
         "application_id": application_id,
@@ -64,7 +69,11 @@ def mark_submitted(
     """One-tap mark-submitted when auto-detection cannot confirm (FR-LOG-4)."""
     app = _load_or_stub(container, application_id)
     attrs = body.attributes_used if body else None
-    event = container.submission_service.mark_submitted(app, attributes_used=attrs)
+    try:
+        event = container.submission_service.mark_submitted(app, attributes_used=attrs)
+    except ReviewRequired as exc:
+        # FR-RESUME-8: review-before-submission applies to the one-tap path too.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     _close_conversion_loop(container, app)
     return {"outcome_id": event.id, "type": event.type, "source": event.source.value}
 

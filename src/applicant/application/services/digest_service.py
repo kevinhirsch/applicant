@@ -193,7 +193,16 @@ class DigestService:
         feedback_text: str = "",
         criteria_delta: dict | None = None,
     ) -> Decision:
-        """Record a decline carrying feedback + a criteria delta for learning."""
+        """Record a decline carrying feedback + a criteria delta for learning.
+
+        FR-FB-1: decline feedback is MANDATORY — a blank/whitespace-only feedback
+        text is rejected so the learning loop never closes on silent declines.
+        """
+        if not feedback_text or not feedback_text.strip():
+            raise ValueError(
+                "Decline feedback is required (FR-FB-1): say briefly why this role "
+                "is not a fit so the next run learns."
+            )
         decision = Decision(
             id=DecisionId(new_id()),
             application_id=application_id,
@@ -211,9 +220,12 @@ class DigestService:
         # Idempotency: acting expires the other channels (FR-NOTIF-3).
         if self._notification_service is not None:
             self._notification_service.acted(str(decision.application_id))
-        # Resolve the digest-approval pending item (FR-UI-3).
+        # Resolve the digest-approval pending item (FR-UI-3). The digest row id the
+        # user acts on is the POSTING id (the same id ``deliver`` keys the pending
+        # action on), not an application row — so resolve by the decision id end-to-end
+        # and find the campaign via the posting (it has no applications row yet).
         if self._pending is not None:
-            campaign_id = self._campaign_for_application(decision.application_id)
+            campaign_id = self._campaign_for_decision(decision.application_id)
             if campaign_id is not None:
                 self._pending.resolve_by_dedup(
                     campaign_id, f"digest_approval:{decision.application_id}"
@@ -222,7 +234,7 @@ class DigestService:
             self._learn_from_decline(decision)
 
     def _learn_from_decline(self, decision: Decision) -> None:
-        campaign_id = self._campaign_for_application(decision.application_id)
+        campaign_id = self._campaign_for_decision(decision.application_id)
         if campaign_id is None:
             return
         # Fold the feedback into the learning model (FR-DIG-5, FR-LEARN-3).
@@ -245,3 +257,22 @@ class DigestService:
     def _campaign_for_application(self, application_id: ApplicationId) -> CampaignId | None:
         app = self._storage.applications.get(application_id)
         return app.campaign_id if app is not None else None
+
+    def _campaign_for_decision(self, decision_id: ApplicationId) -> CampaignId | None:
+        """Resolve the campaign for a digest decision id.
+
+        The digest row id the user approves/declines is the POSTING id (what
+        ``deliver`` materializes the pending action on). It may also be a real
+        application id. Look in both so the pending-action resolve never silently
+        no-ops (the FR-UI-3 portal leak fix).
+        """
+        campaign_id = self._campaign_for_application(decision_id)
+        if campaign_id is not None:
+            return campaign_id
+        from applicant.core.ids import JobPostingId
+
+        try:
+            posting = self._storage.postings.get(JobPostingId(str(decision_id)))
+        except Exception:
+            posting = None
+        return posting.campaign_id if posting is not None else None
