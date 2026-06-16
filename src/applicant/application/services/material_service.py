@@ -42,7 +42,16 @@ from applicant.core.ids import (
     RevisionSessionId,
     new_id,
 )
+from applicant.core.rules.materials import (
+    AGGRESSIVENESS_DEFAULT,
+    ScreeningKind,
+    aggressiveness_directive,
+    clamp_aggressiveness,
+    classify_screening_question,
+    should_generate_cover_letter,
+)
 from applicant.core.rules.review_gate import ReviewableMaterial, ensure_submittable
+from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
 from applicant.core.rules.truthfulness import (
     VoiceProfile,
     extract_voice_profile,
@@ -98,6 +107,9 @@ class MaterialService:
         embedding=None,
         docx_tailoring=None,
         conversion_service=None,
+        notifications=None,
+        pending_actions=None,
+        review_base_url: str = "/applicant/review.html",
     ) -> None:
         self._storage = storage
         self._llm = llm
@@ -105,12 +117,17 @@ class MaterialService:
         self._docx_tailoring = docx_tailoring  # docx fallback engine
         self._embedding = embedding  # local embedding port (variant clustering)
         self._conversion = conversion_service  # per-campaign engine choice (Phase 0)
-        # Revision sessions live in-memory keyed by document id (no repo yet).
-        self._sessions: dict[str, RevisionSession] = {}
+        # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
+        self._notifications = notifications
+        self._pending_actions = pending_actions
+        self._review_base_url = review_base_url
         # UI-editable banned-phrase list (FR-RESUME-5); supplements the core seed.
         self._extra_banned: tuple[str, ...] = ()
         # Voice profile extracted from the user's corpus (FR-RESUME-5).
         self._voice: VoiceProfile = VoiceProfile()
+        # Truthful-framing dial (FR-RESUME-9); present-but-grayed in the UI (FR-UI-2)
+        # but wired so a backend-only flip makes it live.
+        self._aggressiveness: int = AGGRESSIVENESS_DEFAULT
 
     # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
     def tailoring_for(self, campaign_id: CampaignId):
@@ -137,6 +154,21 @@ class MaterialService:
     @property
     def banned_phrases(self) -> tuple[str, ...]:
         return self._extra_banned
+
+    # === aggressiveness dial (FR-RESUME-9, dormant per FR-UI-2) ============
+    def set_aggressiveness(self, value: int | None) -> int:
+        """Set the truthful-framing dial (FR-RESUME-9), clamped into range.
+
+        The control is grayed/dormant in the UI (FR-UI-2); this setter wires the
+        backend so flipping it live later is a UI change only. The dial only biases
+        framing (assertive vs measured), never the truthfulness guardrail.
+        """
+        self._aggressiveness = clamp_aggressiveness(value)
+        return self._aggressiveness
+
+    @property
+    def aggressiveness(self) -> int:
+        return self._aggressiveness
 
     # === voice matching (FR-RESUME-5) =====================================
     def load_voice_corpus(self, corpus: list[str]) -> VoiceProfile:
@@ -373,16 +405,50 @@ class MaterialService:
         return False
 
     # === generation: resume / cover letter / screening answer =============
+    def cover_letter_warranted(
+        self, *, campaign_default: bool = False, role_requires: bool | None = None
+    ) -> bool:
+        """Decide whether the role warrants a cover letter (FR-RESUME-10).
+
+        Cover letters are opt-in: the per-campaign default (off by default) sets the
+        baseline; a role can force one on or off. Exposed so the orchestrator / UI
+        can gate the (token-costing) generation on the same pure rule the service
+        uses.
+        """
+        return should_generate_cover_letter(
+            campaign_default=campaign_default, role_requires=role_requires
+        )
+
     def generate_cover_letter(
-        self, campaign_id: CampaignId, application_id: ApplicationId, true_source: str, jd_terms: list[str]
-    ) -> GeneratedDocument:
-        """Generate a cover letter (FR-RESUME-10), filtered + truthful, unapproved."""
+        self,
+        campaign_id: CampaignId,
+        application_id: ApplicationId,
+        true_source: str,
+        jd_terms: list[str],
+        *,
+        campaign_default: bool = True,
+        role_requires: bool | None = None,
+    ) -> GeneratedDocument | None:
+        """Generate a cover letter ON DEMAND (FR-RESUME-10), filtered + truthful.
+
+        Returns ``None`` when the role does not warrant one (per the on-demand
+        decision). Otherwise renders via the same LaTeX-primary/docx-fallback engine
+        family (cover.cls), applies the em-dash + banned-phrase + voice filters and
+        the truthfulness guardrail, stores it unapproved, and routes it to review
+        (review-ready notification + pending action, FR-NOTIF-4).
+        """
+        if not self.cover_letter_warranted(
+            campaign_default=campaign_default, role_requires=role_requires
+        ):
+            return None
         body = self._generate_text(true_source, jd_terms, kind="cover_letter")
         report = self.apply_post_filter(body)
         self.assert_no_fabrication(true_source, report.text)
-        return self._store_document(
+        doc = self._store_document(
             campaign_id, application_id, DocumentType.COVER_LETTER, report.text
         )
+        self._announce_review_ready(doc, "Cover letter ready for review")
+        return doc
 
     def generate_screening_answer(
         self,
@@ -391,28 +457,68 @@ class MaterialService:
         question: str,
         true_source: str,
         *,
-        essay: bool,
+        essay: bool | None = None,
     ) -> GeneratedDocument:
-        """Generate a screening answer (FR-ANSWER-1): factual vs essay style.
+        """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive.
 
-        Factual answers are short/direct; essay answers are voice-matched prose.
-        Both go through the post-filter + truthfulness check and the review gate.
+        When ``essay`` is None the question is CLASSIFIED (factual / essay /
+        sensitive). Factual answers come deterministically from the true source / the
+        attribute cloud (no fabrication); sensitive (EEO) ones follow the
+        sensitive-field policy (explicit answer only, else decline). Essay/long-form
+        answers are LLM-generated from true history, voice + em-dash filtered, and
+        routed through review. All go through the post-filter + truthfulness check and
+        the review gate.
         """
-        if essay:
+        kind = (
+            (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
+            if essay is not None
+            else classify_screening_question(question)
+        )
+        if kind is ScreeningKind.ESSAY:
             answer = self._generate_text(true_source, [question], kind="essay_answer")
+        elif kind is ScreeningKind.SENSITIVE:
+            # EEO/demographic: no fabrication, no AI-guess. Use the explicit stored
+            # answer if present, otherwise decline (FR-ATTR-6).
+            answer = true_source.strip() or DECLINE_TO_SELF_IDENTIFY
         else:
             # Factual: answer directly from the true source, no embellishment.
             answer = true_source.strip()
         report = self.apply_post_filter(answer)
         self.assert_no_fabrication(true_source, report.text)
-        return self._store_document(
+        doc = self._store_document(
             campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text
+        )
+        self._announce_review_ready(doc, "Screening answer ready for review")
+        return doc
+
+    def generate_for_deferred_question(
+        self,
+        campaign_id: CampaignId,
+        application_id: ApplicationId,
+        deferred: dict,
+        true_source: str,
+    ) -> GeneratedDocument:
+        """Clean handoff entry point for Phase 2's deferred essay screening questions.
+
+        Phase 2 pre-fill records essay screening questions it must NOT auto-answer
+        (``deferred_essay_questions`` with ``label``/``selector``/``url``) and defers
+        them here (FR-ANSWER-1, FR-PREFILL-3). The question is classified and routed
+        through the same generate + filter + review path.
+        """
+        question = deferred.get("label") or deferred.get("question") or ""
+        return self.generate_screening_answer(
+            campaign_id, application_id, question, true_source, essay=None
         )
 
     # === interactive revision loop (FR-RESUME-8) ==========================
     def open_revision(self, document_id: GeneratedDocumentId) -> RevisionSession:
-        """Open (or return the existing) revision session for a document."""
-        existing = self._sessions.get(str(document_id))
+        """Open (or resume) the DURABLE revision session for a document.
+
+        Sessions persist to ``revision_sessions`` so the interactive loop is
+        resumable across restarts (FR-RESUME-8): a reopened review picks up exactly
+        where it left off.
+        """
+        existing = self._storage.revisions.get_for_material(document_id)
         if existing is not None:
             return existing
         session = RevisionSession(
@@ -420,7 +526,13 @@ class MaterialService:
             material_id=document_id,
             status=RevisionStatus.OPEN,
         )
-        self._sessions[str(document_id)] = session
+        self._storage.revisions.add(session)
+        self._storage.commit()
+        return session
+
+    def _save_session(self, session: RevisionSession) -> RevisionSession:
+        self._storage.revisions.add(session)
+        self._storage.commit()
         return session
 
     def apply_turn(
@@ -469,8 +581,7 @@ class MaterialService:
             turns=(*session.turns, turn),
             redline_state={"content": new_content},
         )
-        self._sessions[str(document_id)] = session
-        return session
+        return self._save_session(session)
 
     def approve(self, document_id: GeneratedDocumentId) -> GeneratedDocument:
         """Approve the material through the review gate (FR-RESUME-8)."""
@@ -490,14 +601,16 @@ class MaterialService:
         )
         self._storage.documents.add(approved)
         self._storage.commit()
-        session = self._sessions.get(str(document_id))
+        session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
-            self._sessions[str(document_id)] = RevisionSession(
-                id=session.id,
-                material_id=session.material_id,
-                status=RevisionStatus.APPROVED,
-                turns=session.turns,
-                redline_state=session.redline_state,
+            self._save_session(
+                RevisionSession(
+                    id=session.id,
+                    material_id=session.material_id,
+                    status=RevisionStatus.APPROVED,
+                    turns=session.turns,
+                    redline_state=session.redline_state,
+                )
             )
         return approved
 
@@ -506,14 +619,16 @@ class MaterialService:
         doc = self._storage.documents.get(document_id)
         if doc is None:
             raise ValueError(f"no such document {document_id}")
-        session = self._sessions.get(str(document_id))
+        session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
-            self._sessions[str(document_id)] = RevisionSession(
-                id=session.id,
-                material_id=session.material_id,
-                status=RevisionStatus.DECLINED,
-                turns=session.turns,
-                redline_state=session.redline_state,
+            self._save_session(
+                RevisionSession(
+                    id=session.id,
+                    material_id=session.material_id,
+                    status=RevisionStatus.DECLINED,
+                    turns=session.turns,
+                    redline_state=session.redline_state,
+                )
             )
         return doc
 
@@ -534,6 +649,44 @@ class MaterialService:
             raise RuntimeError("no resume-tailoring adapter configured")
         return self._resume_tailoring.render_redline(variant_id, base_source, new_source)
 
+    # --- review-ready notification linkage (FR-NOTIF-4) -------------------
+    def _announce_review_ready(self, doc: GeneratedDocument, title: str) -> None:
+        """Emit a review-ready notification + pending action linked to the review surface.
+
+        Reuses the Phase 1 escalation ladder (NotificationService) and the
+        pending-actions home base (FR-NOTIF-4, FR-UI-3): the user is pinged with a
+        deep link to the redline review surface, and the same item is materialized in
+        the portal so review survives restarts. Both are best-effort: generation never
+        blocks if a channel is unavailable.
+        """
+        deep_link = f"{self._review_base_url}?document_id={doc.id}"
+        if self._pending_actions is not None:
+            try:
+                self._pending_actions.materialize(
+                    doc.campaign_id,
+                    "material_review",
+                    title,
+                    application_id=doc.application_id or None,
+                    payload={
+                        "document_id": str(doc.id),
+                        "document_type": doc.type.value,
+                        "review_url": deep_link,
+                    },
+                    dedup_key=f"material_review:{doc.id}",
+                )
+            except Exception:
+                pass
+        if self._notifications is not None:
+            try:
+                self._notifications.notify_decision(
+                    f"material_review:{doc.id}",
+                    title=title,
+                    body="Tap to open the redline review.",
+                    deep_link=deep_link,
+                )
+            except Exception:
+                pass
+
     # --- internals --------------------------------------------------------
     def _generate_text(self, true_source: str, terms: list[str], *, kind: str) -> str:
         """1 LLM pass with deterministic truthful fallback when no LLM is wired."""
@@ -541,8 +694,10 @@ class MaterialService:
             try:
                 from applicant.ports.driven.llm import ChatMessage
 
-                # Voice-matching constrains generation on every pass (FR-RESUME-5).
+                # Voice-matching + the truthful-framing dial constrain generation on
+                # every pass (FR-RESUME-5/9). The dial only biases framing.
                 system = _SYSTEM_PROMPT + "\n" + self._voice.as_directive()
+                system += "\n" + aggressiveness_directive(self._aggressiveness)
                 if self._extra_banned:
                     system += "\nAvoid these phrases: " + "; ".join(self._extra_banned)
                 result = self._llm.complete(

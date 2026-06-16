@@ -24,6 +24,11 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
+from applicant.core.entities.revision_session import (
+    RevisionSession,
+    RevisionStatus,
+    RevisionTurn,
+)
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -35,6 +40,7 @@ from applicant.core.ids import (
     JobPostingId,
     PendingActionId,
     ResumeVariantId,
+    RevisionSessionId,
     ScreenshotId,
 )
 from applicant.core.state_machine import ApplicationState
@@ -120,6 +126,23 @@ def _document_to_entity(row: m.GeneratedMaterialModel) -> GeneratedDocument:
         content=row.content,
         storage_path=row.storage_path,
         approved=row.approved,
+    )
+
+
+def _revision_to_entity(row: m.RevisionSessionModel) -> RevisionSession:
+    return RevisionSession(
+        id=RevisionSessionId(row.id),
+        material_id=GeneratedDocumentId(row.material_id),
+        status=RevisionStatus(row.status),
+        turns=tuple(
+            RevisionTurn(
+                kind=t.get("kind", ""),
+                instruction=t.get("instruction", ""),
+                ai_response=t.get("ai_response", ""),
+            )
+            for t in (row.turns or [])
+        ),
+        redline_state=dict(row.redline_state or {}),
     )
 
 
@@ -382,6 +405,39 @@ class GeneratedDocumentRepo:
         return [_document_to_entity(r) for r in rows]
 
 
+class RevisionSessionRepo:
+    """Durable interactive redline sessions (FR-RESUME-8): resumable across restarts."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, session: RevisionSession) -> None:
+        self._s.merge(
+            m.RevisionSessionModel(
+                id=session.id,
+                material_id=session.material_id,
+                status=session.status.value,
+                redline_state=session.redline_state,
+                turns=[
+                    {"kind": t.kind, "instruction": t.instruction, "ai_response": t.ai_response}
+                    for t in session.turns
+                ],
+            )
+        )
+
+    def get(self, session_id: RevisionSessionId) -> RevisionSession | None:
+        row = self._s.get(m.RevisionSessionModel, session_id)
+        return _revision_to_entity(row) if row else None
+
+    def get_for_material(self, material_id: GeneratedDocumentId) -> RevisionSession | None:
+        row = self._s.scalars(
+            select(m.RevisionSessionModel).where(
+                m.RevisionSessionModel.material_id == material_id
+            )
+        ).first()
+        return _revision_to_entity(row) if row else None
+
+
 class DecisionRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -604,6 +660,7 @@ class SqlAlchemyStorage:
         self.applications = ApplicationRepo(session)
         self.resume_variants = ResumeVariantRepo(session)
         self.documents = GeneratedDocumentRepo(session)
+        self.revisions = RevisionSessionRepo(session)
         self.decisions = DecisionRepo(session)
         self.outcomes = OutcomeEventRepo(session)
         self.screenshots = ApplicationScreenshotRepo(session)

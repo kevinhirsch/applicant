@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Redline / document review surface (FR-RESUME-8, FR-RESUME-9, FR-ANSWER-1).
-  Live in Phase 3: shows the redline (additions + deletions highlighted), the
-  interactive add/subtract/free-text revision loop, and approve/decline. No
-  submission until approved. Reuses the vendored Odysseus style (../style.css).
+  Applicant — Redline / document review surface (FR-RESUME-1/8/9, FR-ANSWER-1, FR-NOTIF-4).
+  Live in Phase 3: a real review surface with resume / cover-letter / screening-answer
+  tabs, the redline (additions + deletions highlighted), the interactive
+  add/subtract/free-text revision loop, and approve/decline. No submission until
+  approved. Reuses the vendored Odysseus style (../style.css).
 -->
 <html lang="en">
 <head>
@@ -18,16 +19,28 @@
     .redline-eq { color: #444; }
     #redline-view { white-space: pre-wrap; font-family: ui-monospace, monospace; line-height: 1.5; }
     .applicant-grayed { opacity: .5; }
+    /* Material tabs (resume / cover letter / screening answers), FR-RESUME-1. */
+    .review-tabs { display: flex; gap: 4px; margin: 12px 0; }
+    .review-tab { cursor: pointer; }
+    .review-tab[aria-selected="true"] { font-weight: 700; border-bottom: 2px solid #045d1e; }
   </style>
 </head>
-<body data-document-id="" data-variant-id="">
+<body data-document-id="" data-variant-id="" data-application-id="">
   <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;">
     <h1>Document review <span class="admin-badge admin-badge-on">Phase 3</span></h1>
     <p class="admin-empty">
       Redline with add+subtract highlights; interactive add/subtract/free-text
       revision loop; approve/decline/revise. No submission until approved
-      (FR-RESUME-8, FR-ANSWER-1).
+      (FR-RESUME-1/8, FR-ANSWER-1).
     </p>
+
+    <!-- Material tabs: resume variant / cover letter / screening answers (FR-RESUME-1). -->
+    <div class="review-tabs" role="tablist" id="material-tabs">
+      <button class="admin-btn admin-btn-sm review-tab" role="tab" data-type="resume" aria-selected="true">Resume</button>
+      <button class="admin-btn admin-btn-sm review-tab" role="tab" data-type="cover_letter" aria-selected="false">Cover letter</button>
+      <button class="admin-btn admin-btn-sm review-tab" role="tab" data-type="screening_answer" aria-selected="false">Screening answers</button>
+    </div>
+    <ul id="material-list" class="admin-empty"></ul>
 
     <!-- FR-RESUME-9 aggressiveness control: GRAYED scaffold (not yet load-bearing). -->
     <label class="toggle-switch applicant-grayed" aria-disabled="true" title="Coming soon (FR-RESUME-9)">
@@ -43,7 +56,7 @@
     <section style="margin-top:16px;">
       <h2>Revise</h2>
       <div>
-        <input id="revise-instruction" type="text" placeholder="e.g. add a metric to the lead bullet" />
+        <input id="revise-instruction" type="text" placeholder="e.g. make it more concise, emphasize leadership" />
         <button class="admin-btn admin-btn-sm" data-kind="add">Add</button>
         <button class="admin-btn admin-btn-sm" data-kind="subtract">Subtract</button>
         <button class="admin-btn admin-btn-sm" data-kind="free_text">Free text</button>

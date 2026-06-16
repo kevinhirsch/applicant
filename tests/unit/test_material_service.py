@@ -182,6 +182,120 @@ def test_post_filter_is_idempotent(svc):
     assert once == twice
 
 
+# === cover letters on demand (FR-RESUME-10) ===============================
+@pytest.mark.unit
+def test_cover_letter_not_generated_when_role_does_not_warrant(svc):
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, new_id(), "I built Python pipelines.", ["Python"], campaign_default=False
+    )
+    assert doc is None
+
+
+@pytest.mark.unit
+def test_cover_letter_generated_when_role_requires(svc):
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, new_id(), "I built Python pipelines.", ["Python"], role_requires=True
+    )
+    assert doc is not None
+    assert doc.type.value == "cover_letter"
+    assert doc.approved is False
+
+
+@pytest.mark.unit
+def test_cover_letter_review_ready_notifies_and_materializes():
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.pending_actions_service import PendingActionsService
+
+    storage = InMemoryStorage()
+    sent: list = []
+
+    class _Spy:
+        def notify(self, n):
+            sent.append(n)
+            return "h"
+
+        def expire(self, k):  # pragma: no cover - not exercised here
+            pass
+
+    svc = MaterialService(
+        storage,
+        resume_tailoring=LatexTailor(),
+        notifications=NotificationService(_Spy()),
+        pending_actions=PendingActionsService(storage),
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(cid, new_id(), "Built Python pipelines.", ["Python"], role_requires=True)
+    assert sent and str(doc.id) in (sent[-1].deep_link or "")
+    pending = PendingActionsService(storage).list_pending(cid)
+    assert any(p.kind == "material_review" for p in pending)
+
+
+# === screening classification routing (FR-ANSWER-1) =======================
+@pytest.mark.unit
+def test_screening_essay_auto_classified_and_reviewed(svc):
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "Why do you want to work here?", "I love building pipelines.", essay=None
+    )
+    assert doc.type.value == "screening_answer"
+    assert doc.approved is False
+
+
+@pytest.mark.unit
+def test_screening_factual_taken_from_true_source(svc):
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "How many years of Python?", "Eight years.", essay=None
+    )
+    assert doc.content == "Eight years."
+
+
+@pytest.mark.unit
+def test_screening_sensitive_declines_without_explicit_answer(svc):
+    from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
+
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "What is your race/ethnicity?", "", essay=None
+    )
+    assert doc.content == DECLINE_TO_SELF_IDENTIFY
+
+
+@pytest.mark.unit
+def test_deferred_question_handoff_from_phase2(svc):
+    # Phase 2 prefill defers essay screening questions to this entry point.
+    cid = CampaignId(new_id())
+    deferred = {"selector": "#q1", "label": "Describe a time you led a team.", "url": "/apply"}
+    doc = svc.generate_for_deferred_question(cid, new_id(), deferred, "I led the data team.")
+    assert doc.type.value == "screening_answer"
+    assert doc.approved is False
+
+
+# === durable + resumable revision sessions (FR-RESUME-8) ==================
+@pytest.mark.unit
+def test_revision_session_is_durable_and_resumable(storage):
+    # A fresh service instance (simulating a restart) resumes the same session.
+    svc1 = MaterialService(storage, resume_tailoring=LatexTailor())
+    cid = CampaignId(new_id())
+    doc = svc1.generate_cover_letter(cid, new_id(), "Built Python pipelines.", ["Python"], role_requires=True)
+    svc1.apply_turn(doc.id, "add", "a true metric")
+    svc2 = MaterialService(storage, resume_tailoring=LatexTailor())
+    resumed = svc2.open_revision(doc.id)
+    assert len(resumed.turns) == 1
+    assert resumed.turns[0].kind == "add"
+
+
+# === aggressiveness dial setter (FR-RESUME-9) =============================
+@pytest.mark.unit
+def test_aggressiveness_setter_clamps(svc):
+    assert svc.set_aggressiveness(80) == 80
+    assert svc.aggressiveness == 80
+    assert svc.set_aggressiveness(500) == 100
+    assert svc.set_aggressiveness(None) == 20
+
+
 # === engine selection respects Phase 0 choice (FR-RESUME-3a) ==============
 @pytest.mark.unit
 def test_engine_selection_follows_conversion_choice(storage):

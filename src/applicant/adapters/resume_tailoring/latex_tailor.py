@@ -126,6 +126,46 @@ class LatexTailor:
             rendered_html="\n".join(html_parts),
         )
 
+    # --- cover letter (FR-RESUME-10) --------------------------------------
+    def build_cover_source(
+        self,
+        *,
+        first_name: str = "",
+        last_name: str = "",
+        contact_line: str = "",
+        date: str = "",
+        company: str = "",
+        company_address: str = "",
+        body_paragraphs: list[str] | None = None,
+        closing: str = "Sincerely,",
+        signature: str = "",
+    ) -> str:
+        """Build a one-page cover-letter LaTeX source from cover.cls (FR-RESUME-10).
+
+        Renders the vendored ``cover.cls`` commands deterministically (no template
+        engine dependency) from TRUTHFUL, voice-matched body text. The em-dash
+        post-filter runs on every field so the cover letter carries no tell, and the
+        ``\\documentclass[]{cover}`` marker makes the fidelity check enforce exactly
+        one page (FR-RESUME-4).
+        """
+        paras = [normalize_emdashes(p) for p in (body_paragraphs or []) if p.strip()]
+        lines = [
+            "\\documentclass[]{cover}",
+            "\\begin{document}",
+            f"\\namesection{{{normalize_emdashes(first_name)}}}"
+            f"{{{normalize_emdashes(last_name)}}}{{{normalize_emdashes(contact_line)}}}",
+            f"\\currentdate{{{normalize_emdashes(date)}}}",
+            f"\\companyname{{{normalize_emdashes(company)}}}",
+            f"\\companyaddress{{{normalize_emdashes(company_address)}}}",
+        ]
+        lines += [f"\\lettercontent{{{p}}}" for p in paras]
+        lines += [
+            f"\\closing{{{normalize_emdashes(closing)}}}",
+            f"\\signature{{{normalize_emdashes(signature)}}}",
+            "\\end{document}",
+        ]
+        return "\n".join(lines)
+
     # --- render + fidelity (FR-RESUME-4) ----------------------------------
     def render_artifact(self, variant_id: ResumeVariantId, source: str) -> RenderResult:
         """Compile a font-embedded PDF and run the compile-and-inspect fidelity check.
