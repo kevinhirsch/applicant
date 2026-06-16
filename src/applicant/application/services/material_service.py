@@ -42,16 +42,36 @@ from applicant.core.ids import (
     RevisionSessionId,
     new_id,
 )
+from applicant.core.rules.materials import (
+    AGGRESSIVENESS_DEFAULT,
+    ScreeningKind,
+    aggressiveness_directive,
+    clamp_aggressiveness,
+    classify_screening_question,
+    should_generate_cover_letter,
+)
 from applicant.core.rules.review_gate import ReviewableMaterial, ensure_submittable
+from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
 from applicant.core.rules.truthfulness import (
+    VoiceProfile,
+    extract_voice_profile,
     find_banned_phrases,
     normalize_emdashes,
+    strip_banned_phrases,
+    unsupported_claims,
+    voice_alignment,
 )
 
 #: FR-RESUME-7 default selection threshold (coverage as a 0-100 percentage).
 FIT_THRESHOLD = 70
 #: FR-RESUME-* generation budget: 1 initial LLM pass + this many refinements.
 REFINEMENT_BUDGET = 2
+#: FR-RESUME-6 sprawl cap: max approved reusable parents kept per campaign before
+#: clustering collapses near-duplicates.
+VARIANT_CAP = 8
+#: Two variants whose targeted-JD signatures embed above this similarity are
+#: treated as the same cluster (FR-RESUME-6 cluster/cap, reuses the embedding port).
+CLUSTER_SIMILARITY = 0.92
 
 
 @dataclass(frozen=True)
@@ -61,6 +81,7 @@ class FilterReport:
     text: str
     em_dashes_stripped: bool
     banned_phrases: tuple[str, ...]
+    voice_alignment: float = 1.0
 
     @property
     def clean(self) -> bool:
@@ -77,28 +98,125 @@ class SelectionResult:
 
 
 class MaterialService:
-    def __init__(self, storage, llm=None, resume_tailoring=None) -> None:
+    def __init__(
+        self,
+        storage,
+        llm=None,
+        resume_tailoring=None,
+        *,
+        embedding=None,
+        docx_tailoring=None,
+        conversion_service=None,
+        notifications=None,
+        pending_actions=None,
+        review_base_url: str = "/applicant/review.html",
+    ) -> None:
         self._storage = storage
         self._llm = llm
-        self._resume_tailoring = resume_tailoring
-        # Revision sessions live in-memory keyed by document id (no repo yet).
-        self._sessions: dict[str, RevisionSession] = {}
+        self._resume_tailoring = resume_tailoring  # default/LaTeX engine
+        self._docx_tailoring = docx_tailoring  # docx fallback engine
+        self._embedding = embedding  # local embedding port (variant clustering)
+        self._conversion = conversion_service  # per-campaign engine choice (Phase 0)
+        # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
+        self._notifications = notifications
+        self._pending_actions = pending_actions
+        self._review_base_url = review_base_url
+        # UI-editable banned-phrase list (FR-RESUME-5); supplements the core seed.
+        self._extra_banned: tuple[str, ...] = ()
+        # Voice profile extracted from the user's corpus (FR-RESUME-5).
+        self._voice: VoiceProfile = VoiceProfile()
+        # Truthful-framing dial (FR-RESUME-9); present-but-grayed in the UI (FR-UI-2)
+        # but wired so a backend-only flip makes it live.
+        self._aggressiveness: int = AGGRESSIVENESS_DEFAULT
+
+    # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
+    def tailoring_for(self, campaign_id: CampaignId):
+        """Return the tailoring adapter for the campaign's chosen engine.
+
+        Phase 0's ConversionService persists the per-campaign engine (LaTeX vs
+        docx) at the accept/reject gate; generation respects that choice. Falls
+        back to the configured default adapter when no choice/adapter is wired.
+        """
+        if self._conversion is not None and self._docx_tailoring is not None:
+            try:
+                engine = self._conversion.get_engine(str(campaign_id))
+            except Exception:
+                engine = None
+            if engine == "docx":
+                return self._docx_tailoring
+        return self._resume_tailoring
+
+    # === banned-phrase list (UI-editable, FR-RESUME-5) ====================
+    def set_banned_phrases(self, phrases: list[str]) -> None:
+        """Replace the UI-editable banned-phrase list (FR-RESUME-5)."""
+        self._extra_banned = tuple(p for p in phrases if p and p.strip())
+
+    @property
+    def banned_phrases(self) -> tuple[str, ...]:
+        return self._extra_banned
+
+    # === aggressiveness dial (FR-RESUME-9, dormant per FR-UI-2) ============
+    def set_aggressiveness(self, value: int | None) -> int:
+        """Set the truthful-framing dial (FR-RESUME-9), clamped into range.
+
+        The control is grayed/dormant in the UI (FR-UI-2); this setter wires the
+        backend so flipping it live later is a UI change only. The dial only biases
+        framing (assertive vs measured), never the truthfulness guardrail.
+        """
+        self._aggressiveness = clamp_aggressiveness(value)
+        return self._aggressiveness
+
+    @property
+    def aggressiveness(self) -> int:
+        return self._aggressiveness
+
+    # === voice matching (FR-RESUME-5) =====================================
+    def load_voice_corpus(self, corpus: list[str]) -> VoiceProfile:
+        """Extract + cache the voice profile from the user's resume corpus."""
+        self._voice = extract_voice_profile(corpus)
+        return self._voice
+
+    @property
+    def voice(self) -> VoiceProfile:
+        return self._voice
 
     # === non-AI-looking post-filter (FR-RESUME-5) =========================
     def apply_post_filter(self, text: str) -> FilterReport:
-        """Strip em-dashes deterministically and report banned phrases.
+        """Strip em-dashes + banned phrases deterministically; score voice alignment.
 
-        Runs on EVERY generated/revised artifact before it reaches review and
-        again before submission (voice-and-truthfulness §6).
+        Runs on EVERY generated/revised artifact before it reaches review and again
+        before submission (voice-and-truthfulness §6). Em-dashes and banned phrases
+        are STRIPPED deterministically (not left to the model); voice alignment is a
+        nudge signal applied on every revision pass.
         """
         stripped = normalize_emdashes(text)
+        debanned = strip_banned_phrases(stripped, self._extra_banned)
         return FilterReport(
-            text=stripped,
+            text=debanned,
             em_dashes_stripped=(stripped != text),
-            banned_phrases=tuple(find_banned_phrases(stripped)),
+            banned_phrases=tuple(find_banned_phrases(stripped, self._extra_banned)),
+            voice_alignment=voice_alignment(self._voice, debanned),
         )
 
     # === truthfulness guardrail (FR-RESUME-2, NFR-TRUTH-1) ================
+    def true_attribute_text(self, campaign_id: CampaignId, base_source: str = "") -> str:
+        """Flatten the candidate's TRUE attribute set + work history to one string.
+
+        The fabrication check (FR-RESUME-2) compares generated claims against this
+        ground truth: identity, work history, education, skills as stored in the
+        attribute cloud, plus the base source. Nothing here is invented.
+        """
+        parts: list[str] = [base_source]
+        try:
+            attrs = self._storage.attributes.list_for_campaign(campaign_id)
+        except Exception:
+            attrs = []
+        for a in attrs:
+            val = getattr(a, "value", None)
+            if val:
+                parts.append(str(val))
+        return "\n".join(p for p in parts if p)
+
     def reframe_truthfully(self, true_source: str, jd_terms: list[str]) -> str:
         """Reframe/re-emphasize TRUE source toward the JD without fabricating.
 
@@ -113,23 +231,29 @@ class MaterialService:
         # added. The em-dash post-filter always runs on the reframed output.
         return normalize_emdashes(true_source)
 
-    def assert_no_fabrication(self, true_source: str, generated: str) -> None:
-        """Raise ``TruthfulnessViolation`` if ``generated`` adds an unsupported skill.
+    def detect_fabrication(self, true_source: str, generated: str) -> list[str]:
+        """Return generated claims not supported by the candidate's TRUE history.
 
-        A generated bullet that names a skill/term absent from the true source
-        (and not a stopword) is a fabrication. Conservative substring check: every
-        capitalized/technical token in the generated text that looks like a skill
-        claim must be traceable to the source.
+        Pure detection (no raise) so the engine can flag/route. Compares every
+        skill/qualification claim token in ``generated`` against the candidate's
+        real attribute set / work history / base source (FR-RESUME-2).
         """
-        source_low = true_source.lower()
-        for line in generated.splitlines():
-            for token in _candidate_skill_tokens(line):
-                if token.lower() not in source_low:
-                    raise TruthfulnessViolation(
-                        f"Generated material claims '{token}' which is absent from the "
-                        "candidate's real source (FR-RESUME-2): adaptation reframes, "
-                        "it never fabricates a skill."
-                    )
+        return unsupported_claims(true_source, generated)
+
+    def assert_no_fabrication(self, true_source: str, generated: str) -> None:
+        """Raise ``TruthfulnessViolation`` if ``generated`` adds an unsupported claim.
+
+        A generated bullet that names a skill/term absent from the candidate's true
+        history is a fabrication (FR-RESUME-2, NFR-TRUTH-1). Wired into every
+        generation + revision pass.
+        """
+        flagged = self.detect_fabrication(true_source, generated)
+        if flagged:
+            raise TruthfulnessViolation(
+                f"Generated material claims {flagged!r} which is absent from the "
+                "candidate's real history (FR-RESUME-2): adaptation reframes, it "
+                "never fabricates a skill, title, date, or qualification."
+            )
 
     # === fit scoring / selection (FR-RESUME-6/7) ==========================
     def score_fit(
@@ -151,6 +275,17 @@ class MaterialService:
             missing_terms=tuple(missing),
         )
 
+    def lineage(self, variant: ResumeVariant) -> list[ResumeVariant]:
+        """Walk parent_id back to the root (FR-RESUME-6), nearest-first."""
+        chain: list[ResumeVariant] = []
+        cur: ResumeVariant | None = variant
+        seen: set[str] = set()
+        while cur is not None and str(cur.id) not in seen:
+            chain.append(cur)
+            seen.add(str(cur.id))
+            cur = self._storage.resume_variants.get(cur.parent_id) if cur.parent_id else None
+        return chain
+
     def select_or_generate(
         self,
         campaign_id: CampaignId,
@@ -159,28 +294,39 @@ class MaterialService:
         base_source: str,
         *,
         threshold: int = FIT_THRESHOLD,
+        variant_sources: dict[str, str] | None = None,
     ) -> SelectionResult:
-        """Reuse an approved variant scoring >= threshold, else fork a new one.
+        """Reuse an approved variant scoring >= threshold, else fork from the best parent.
 
-        Only ``approved`` variants are reusable (FR-RESUME-6 lineage). A forked
-        variant reframes the parent's TRUE source toward the JD (FR-RESUME-2) and
-        starts unapproved (must pass review before reuse/submission).
+        FR-RESUME-7: score existing approved variants against the JD (cheap/local,
+        reusing the embedding port + coverage); if the best clears ``threshold``
+        reuse it; otherwise intelligently choose the best parent and generate a
+        truthful adaptation toward the JD, route to review. Only ``approved``
+        variants are reusable parents (FR-RESUME-6). A forked variant starts
+        unapproved (must pass review before reuse/submission).
+
+        ``variant_sources`` optionally maps a variant id -> its stored source so the
+        coverage score reflects the variant's own text; absent it, the base source
+        is used (the fallback the BDD/contract lane relies on).
         """
+        variant_sources = variant_sources or {}
         candidates = [
             v for v in self._storage.resume_variants.list_for_campaign(campaign_id) if v.approved
         ]
         best: SelectionResult | None = None
         for v in candidates:
-            fit = self.score_fit(v, posting_id, jd_terms, base_source)
+            src = variant_sources.get(str(v.id), base_source)
+            fit = self.score_fit(v, posting_id, jd_terms, src)
             if best is None or fit.coverage > best.fit.coverage:
                 best = SelectionResult(variant=v, fit=fit, generated=False)
         if best is not None and best.fit.coverage * 100 >= threshold:
             return best
 
-        # No good reuse -> fork a new (unapproved) variant from the base source.
+        # No good reuse -> intelligently fork from the best parent (best coverage).
         parent = best.variant if best else None
-        reframed = self.reframe_truthfully(base_source, jd_terms)
-        self.assert_no_fabrication(base_source, reframed)
+        parent_source = variant_sources.get(str(parent.id), base_source) if parent else base_source
+        reframed = self.reframe_truthfully(parent_source, jd_terms)
+        self.assert_no_fabrication(parent_source, reframed)
         new_variant = ResumeVariant(
             id=ResumeVariantId(new_id()),
             campaign_id=campaign_id,
@@ -194,17 +340,115 @@ class MaterialService:
         fit = self.score_fit(new_variant, posting_id, jd_terms, reframed)
         return SelectionResult(variant=new_variant, fit=fit, generated=True)
 
+    def approve_variant(self, variant_id: ResumeVariantId) -> ResumeVariant:
+        """Mark a variant USER-APPROVED so it becomes a reusable parent (FR-RESUME-6).
+
+        Approval is the only path to reusability; after approval the library is
+        clustered/capped to prevent sprawl.
+        """
+        import dataclasses
+
+        v = self._storage.resume_variants.get(variant_id)
+        if v is None:
+            raise ValueError(f"no such variant {variant_id}")
+        approved = dataclasses.replace(v, approved=True)
+        self._storage.resume_variants.add(approved)
+        self._storage.commit()
+        self.cluster_and_cap(v.campaign_id)
+        return approved
+
+    def cluster_and_cap(self, campaign_id: CampaignId, *, cap: int = VARIANT_CAP) -> list[ResumeVariant]:
+        """Cluster near-duplicate approved variants + cap the library (FR-RESUME-6).
+
+        Prevents library sprawl: approved variants whose targeted-JD signatures embed
+        above ``CLUSTER_SIMILARITY`` are treated as one cluster (a child unapproved
+        so only one parent per cluster survives). Returns the retained parents.
+        Uses the local embedding port (NFR-LOCAL-1) when available; falls back to
+        exact-signature dedup otherwise.
+        """
+        import dataclasses
+
+        approved = [
+            v for v in self._storage.resume_variants.list_for_campaign(campaign_id) if v.approved
+        ]
+        kept: list[ResumeVariant] = []
+        for v in approved:
+            sig = v.targeted_jd_signature or ""
+            dup = False
+            for k in kept:
+                if self._signatures_cluster(sig, k.targeted_jd_signature or ""):
+                    dup = True
+                    break
+            if dup:
+                # Demote the near-duplicate so only the cluster representative stays.
+                self._storage.resume_variants.add(dataclasses.replace(v, approved=False))
+            else:
+                kept.append(v)
+        # Hard cap: keep the most-recent ``cap`` representatives, demote the rest.
+        if len(kept) > cap:
+            for v in kept[:-cap]:
+                self._storage.resume_variants.add(dataclasses.replace(v, approved=False))
+            kept = kept[-cap:]
+        self._storage.commit()
+        return kept
+
+    def _signatures_cluster(self, a: str, b: str) -> bool:
+        if a == b:
+            return True
+        if not a or not b:
+            return False
+        if self._embedding is not None:
+            try:
+                return self._embedding.similarity(a, b) >= CLUSTER_SIMILARITY
+            except Exception:
+                pass
+        return False
+
     # === generation: resume / cover letter / screening answer =============
+    def cover_letter_warranted(
+        self, *, campaign_default: bool = False, role_requires: bool | None = None
+    ) -> bool:
+        """Decide whether the role warrants a cover letter (FR-RESUME-10).
+
+        Cover letters are opt-in: the per-campaign default (off by default) sets the
+        baseline; a role can force one on or off. Exposed so the orchestrator / UI
+        can gate the (token-costing) generation on the same pure rule the service
+        uses.
+        """
+        return should_generate_cover_letter(
+            campaign_default=campaign_default, role_requires=role_requires
+        )
+
     def generate_cover_letter(
-        self, campaign_id: CampaignId, application_id: ApplicationId, true_source: str, jd_terms: list[str]
-    ) -> GeneratedDocument:
-        """Generate a cover letter (FR-RESUME-10), filtered + truthful, unapproved."""
+        self,
+        campaign_id: CampaignId,
+        application_id: ApplicationId,
+        true_source: str,
+        jd_terms: list[str],
+        *,
+        campaign_default: bool = True,
+        role_requires: bool | None = None,
+    ) -> GeneratedDocument | None:
+        """Generate a cover letter ON DEMAND (FR-RESUME-10), filtered + truthful.
+
+        Returns ``None`` when the role does not warrant one (per the on-demand
+        decision). Otherwise renders via the same LaTeX-primary/docx-fallback engine
+        family (cover.cls), applies the em-dash + banned-phrase + voice filters and
+        the truthfulness guardrail, stores it unapproved, and routes it to review
+        (review-ready notification + pending action, FR-NOTIF-4).
+        """
+        if not self.cover_letter_warranted(
+            campaign_default=campaign_default, role_requires=role_requires
+        ):
+            return None
         body = self._generate_text(true_source, jd_terms, kind="cover_letter")
         report = self.apply_post_filter(body)
         self.assert_no_fabrication(true_source, report.text)
-        return self._store_document(
+        doc = self._store_document(
             campaign_id, application_id, DocumentType.COVER_LETTER, report.text
         )
+        self._announce_review_ready(doc, "Cover letter ready for review")
+        return doc
 
     def generate_screening_answer(
         self,
@@ -213,28 +457,68 @@ class MaterialService:
         question: str,
         true_source: str,
         *,
-        essay: bool,
+        essay: bool | None = None,
     ) -> GeneratedDocument:
-        """Generate a screening answer (FR-ANSWER-1): factual vs essay style.
+        """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive.
 
-        Factual answers are short/direct; essay answers are voice-matched prose.
-        Both go through the post-filter + truthfulness check and the review gate.
+        When ``essay`` is None the question is CLASSIFIED (factual / essay /
+        sensitive). Factual answers come deterministically from the true source / the
+        attribute cloud (no fabrication); sensitive (EEO) ones follow the
+        sensitive-field policy (explicit answer only, else decline). Essay/long-form
+        answers are LLM-generated from true history, voice + em-dash filtered, and
+        routed through review. All go through the post-filter + truthfulness check and
+        the review gate.
         """
-        if essay:
+        kind = (
+            (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
+            if essay is not None
+            else classify_screening_question(question)
+        )
+        if kind is ScreeningKind.ESSAY:
             answer = self._generate_text(true_source, [question], kind="essay_answer")
+        elif kind is ScreeningKind.SENSITIVE:
+            # EEO/demographic: no fabrication, no AI-guess. Use the explicit stored
+            # answer if present, otherwise decline (FR-ATTR-6).
+            answer = true_source.strip() or DECLINE_TO_SELF_IDENTIFY
         else:
             # Factual: answer directly from the true source, no embellishment.
             answer = true_source.strip()
         report = self.apply_post_filter(answer)
         self.assert_no_fabrication(true_source, report.text)
-        return self._store_document(
+        doc = self._store_document(
             campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text
+        )
+        self._announce_review_ready(doc, "Screening answer ready for review")
+        return doc
+
+    def generate_for_deferred_question(
+        self,
+        campaign_id: CampaignId,
+        application_id: ApplicationId,
+        deferred: dict,
+        true_source: str,
+    ) -> GeneratedDocument:
+        """Clean handoff entry point for Phase 2's deferred essay screening questions.
+
+        Phase 2 pre-fill records essay screening questions it must NOT auto-answer
+        (``deferred_essay_questions`` with ``label``/``selector``/``url``) and defers
+        them here (FR-ANSWER-1, FR-PREFILL-3). The question is classified and routed
+        through the same generate + filter + review path.
+        """
+        question = deferred.get("label") or deferred.get("question") or ""
+        return self.generate_screening_answer(
+            campaign_id, application_id, question, true_source, essay=None
         )
 
     # === interactive revision loop (FR-RESUME-8) ==========================
     def open_revision(self, document_id: GeneratedDocumentId) -> RevisionSession:
-        """Open (or return the existing) revision session for a document."""
-        existing = self._sessions.get(str(document_id))
+        """Open (or resume) the DURABLE revision session for a document.
+
+        Sessions persist to ``revision_sessions`` so the interactive loop is
+        resumable across restarts (FR-RESUME-8): a reopened review picks up exactly
+        where it left off.
+        """
+        existing = self._storage.revisions.get_for_material(document_id)
         if existing is not None:
             return existing
         session = RevisionSession(
@@ -242,17 +526,31 @@ class MaterialService:
             material_id=document_id,
             status=RevisionStatus.OPEN,
         )
-        self._sessions[str(document_id)] = session
+        self._storage.revisions.add(session)
+        self._storage.commit()
+        return session
+
+    def _save_session(self, session: RevisionSession) -> RevisionSession:
+        self._storage.revisions.add(session)
+        self._storage.commit()
         return session
 
     def apply_turn(
-        self, document_id: GeneratedDocumentId, kind: str, instruction: str
+        self,
+        document_id: GeneratedDocumentId,
+        kind: str,
+        instruction: str,
+        *,
+        true_source: str | None = None,
     ) -> RevisionSession:
         """Apply one add/subtract/free-text turn within the refinement budget.
 
         After ``REFINEMENT_BUDGET`` turns the loop stays open but further turns are
         no-ops that re-route to review (the budget caps autonomous churn; the human
-        still drives approve/decline).
+        still drives approve/decline). Every revision pass re-applies the em-dash +
+        banned-phrase + voice post-filter (FR-RESUME-5) and, when ``true_source`` is
+        supplied, the fabrication guardrail (FR-RESUME-2) so a revision can never
+        introduce an unsupported claim.
         """
         if kind not in ("add", "subtract", "free_text"):
             raise ValueError(f"unknown revision turn kind: {kind!r}")
@@ -269,6 +567,9 @@ class MaterialService:
             new_content, ai_response = self._revise(content, kind, instruction)
             # Every revision pass re-applies the post-filter (FR-RESUME-5).
             new_content = self.apply_post_filter(new_content).text
+            # Fabrication guardrail on revision too (FR-RESUME-2) when truth is known.
+            if true_source is not None:
+                self.assert_no_fabrication(true_source, new_content)
             if doc is not None:
                 self._persist_content(doc, new_content)
 
@@ -280,8 +581,7 @@ class MaterialService:
             turns=(*session.turns, turn),
             redline_state={"content": new_content},
         )
-        self._sessions[str(document_id)] = session
-        return session
+        return self._save_session(session)
 
     def approve(self, document_id: GeneratedDocumentId) -> GeneratedDocument:
         """Approve the material through the review gate (FR-RESUME-8)."""
@@ -301,14 +601,16 @@ class MaterialService:
         )
         self._storage.documents.add(approved)
         self._storage.commit()
-        session = self._sessions.get(str(document_id))
+        session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
-            self._sessions[str(document_id)] = RevisionSession(
-                id=session.id,
-                material_id=session.material_id,
-                status=RevisionStatus.APPROVED,
-                turns=session.turns,
-                redline_state=session.redline_state,
+            self._save_session(
+                RevisionSession(
+                    id=session.id,
+                    material_id=session.material_id,
+                    status=RevisionStatus.APPROVED,
+                    turns=session.turns,
+                    redline_state=session.redline_state,
+                )
             )
         return approved
 
@@ -317,14 +619,16 @@ class MaterialService:
         doc = self._storage.documents.get(document_id)
         if doc is None:
             raise ValueError(f"no such document {document_id}")
-        session = self._sessions.get(str(document_id))
+        session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
-            self._sessions[str(document_id)] = RevisionSession(
-                id=session.id,
-                material_id=session.material_id,
-                status=RevisionStatus.DECLINED,
-                turns=session.turns,
-                redline_state=session.redline_state,
+            self._save_session(
+                RevisionSession(
+                    id=session.id,
+                    material_id=session.material_id,
+                    status=RevisionStatus.DECLINED,
+                    turns=session.turns,
+                    redline_state=session.redline_state,
+                )
             )
         return doc
 
@@ -345,6 +649,44 @@ class MaterialService:
             raise RuntimeError("no resume-tailoring adapter configured")
         return self._resume_tailoring.render_redline(variant_id, base_source, new_source)
 
+    # --- review-ready notification linkage (FR-NOTIF-4) -------------------
+    def _announce_review_ready(self, doc: GeneratedDocument, title: str) -> None:
+        """Emit a review-ready notification + pending action linked to the review surface.
+
+        Reuses the Phase 1 escalation ladder (NotificationService) and the
+        pending-actions home base (FR-NOTIF-4, FR-UI-3): the user is pinged with a
+        deep link to the redline review surface, and the same item is materialized in
+        the portal so review survives restarts. Both are best-effort: generation never
+        blocks if a channel is unavailable.
+        """
+        deep_link = f"{self._review_base_url}?document_id={doc.id}"
+        if self._pending_actions is not None:
+            try:
+                self._pending_actions.materialize(
+                    doc.campaign_id,
+                    "material_review",
+                    title,
+                    application_id=doc.application_id or None,
+                    payload={
+                        "document_id": str(doc.id),
+                        "document_type": doc.type.value,
+                        "review_url": deep_link,
+                    },
+                    dedup_key=f"material_review:{doc.id}",
+                )
+            except Exception:
+                pass
+        if self._notifications is not None:
+            try:
+                self._notifications.notify_decision(
+                    f"material_review:{doc.id}",
+                    title=title,
+                    body="Tap to open the redline review.",
+                    deep_link=deep_link,
+                )
+            except Exception:
+                pass
+
     # --- internals --------------------------------------------------------
     def _generate_text(self, true_source: str, terms: list[str], *, kind: str) -> str:
         """1 LLM pass with deterministic truthful fallback when no LLM is wired."""
@@ -352,9 +694,15 @@ class MaterialService:
             try:
                 from applicant.ports.driven.llm import ChatMessage
 
+                # Voice-matching + the truthful-framing dial constrain generation on
+                # every pass (FR-RESUME-5/9). The dial only biases framing.
+                system = _SYSTEM_PROMPT + "\n" + self._voice.as_directive()
+                system += "\n" + aggressiveness_directive(self._aggressiveness)
+                if self._extra_banned:
+                    system += "\nAvoid these phrases: " + "; ".join(self._extra_banned)
                 result = self._llm.complete(
                     [
-                        ChatMessage(role="system", content=_SYSTEM_PROMPT),
+                        ChatMessage(role="system", content=system),
                         ChatMessage(
                             role="user",
                             content=f"[{kind}] Source:\n{true_source}\nEmphasize: {', '.join(terms)}",
@@ -408,31 +756,3 @@ _SYSTEM_PROMPT = (
     "re-term true history. You NEVER fabricate skills, titles, dates, or claims. "
     "No em-dashes. Write in the candidate's own warm, direct, first-person voice."
 )
-
-# Stopwords that are not skill claims (so the fabrication check stays conservative).
-_STOPWORDS = frozenset(
-    {
-        "the", "and", "for", "with", "from", "that", "this", "have", "has", "was",
-        "were", "are", "our", "their", "your", "you", "led", "built", "drove",
-        "managed", "worked", "experience", "team", "role", "year", "years",
-    }
-)
-
-
-def _candidate_skill_tokens(line: str) -> list[str]:
-    """Tokens that look like skill/technology claims (Capitalized or ALLCAPS words).
-
-    Used by the fabrication check: a Capitalized multi-letter token not present in
-    the true source is treated as a potentially fabricated skill claim.
-    """
-    tokens: list[str] = []
-    for raw in line.replace(",", " ").replace(".", " ").split():
-        word = raw.strip("()[]{}:;")
-        if len(word) < 3:
-            continue
-        if word.lower() in _STOPWORDS:
-            continue
-        # Capitalized or all-caps -> likely a proper noun / technology name.
-        if word[0].isupper() or word.isupper():
-            tokens.append(word)
-    return tokens

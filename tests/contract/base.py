@@ -171,6 +171,56 @@ class StoragePortContract:
         assert got.stats["viable"] == 3
         assert len(adapter.agent_runs.list_for_campaign(cid)) == 1
 
+    def test_revision_session_durable_roundtrip(self, adapter):
+        # FR-RESUME-8: the interactive redline loop persists + is resumable.
+        from applicant.core.entities.generated_document import (
+            DocumentType,
+            GeneratedDocument,
+        )
+        from applicant.core.entities.revision_session import (
+            RevisionSession,
+            RevisionStatus,
+            RevisionTurn,
+        )
+        from applicant.core.ids import (
+            GeneratedDocumentId,
+            RevisionSessionId,
+        )
+
+        cid = CampaignId(new_id())
+        aid = ApplicationId(new_id())
+        adapter.campaigns.add(Campaign(id=cid, name="Rev"))
+        adapter.commit()
+        did = GeneratedDocumentId(new_id())
+        adapter.documents.add(
+            GeneratedDocument(
+                id=did,
+                campaign_id=cid,
+                application_id=aid,
+                type=DocumentType.COVER_LETTER,
+                content="body",
+            )
+        )
+        sid = RevisionSessionId(new_id())
+        adapter.revisions.add(
+            RevisionSession(
+                id=sid,
+                material_id=did,
+                status=RevisionStatus.OPEN,
+                turns=(RevisionTurn(kind="add", instruction="metric", ai_response="Added: metric"),),
+                redline_state={"content": "body\nmetric"},
+            )
+        )
+        adapter.commit()
+        # Resumable by session id and by material id (the review surface reopens it).
+        by_id = adapter.revisions.get(sid)
+        by_material = adapter.revisions.get_for_material(did)
+        assert by_id is not None and by_material is not None
+        assert by_material.id == sid
+        assert len(by_material.turns) == 1
+        assert by_material.turns[0].kind == "add"
+        assert by_material.redline_state["content"].endswith("metric")
+
     def test_healthcheck(self, adapter):
         assert adapter.healthcheck() is True
 

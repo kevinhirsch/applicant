@@ -9,3 +9,10 @@ Feature: Resume uploads right and looks right
     And the new variant is not yet approved
     And the rendered artifact passes the compile-and-visually-inspect fidelity check
     And the rendered fonts are embedded and no em-dash remains
+
+  Scenario: The docx fallback engine renders a fidelity-checked artifact too
+    # FR-RESUME-3/4: LaTeX and docx-XML are substitutable under one fidelity contract.
+    Given a campaign whose chosen material engine is docx
+    When the docx engine renders the base resume artifact
+    Then the docx artifact passes the compile-and-visually-inspect fidelity check
+    And the docx fonts are embedded and no em-dash remains

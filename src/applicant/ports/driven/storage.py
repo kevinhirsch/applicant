@@ -25,6 +25,7 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
+from applicant.core.entities.revision_session import RevisionSession
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -35,6 +36,7 @@ from applicant.core.ids import (
     JobPostingId,
     PendingActionId,
     ResumeVariantId,
+    RevisionSessionId,
 )
 
 
@@ -79,6 +81,15 @@ class GeneratedDocumentRepository(Protocol):
     def add(self, document: GeneratedDocument) -> None: ...
     def get(self, document_id: GeneratedDocumentId) -> GeneratedDocument | None: ...
     def list_for_application(self, application_id: ApplicationId) -> list[GeneratedDocument]: ...
+
+
+@runtime_checkable
+class RevisionSessionRepository(Protocol):
+    """Durable interactive redline sessions (FR-RESUME-8): resumable across restarts."""
+
+    def add(self, session: RevisionSession) -> None: ...
+    def get(self, session_id: RevisionSessionId) -> RevisionSession | None: ...
+    def get_for_material(self, material_id: GeneratedDocumentId) -> RevisionSession | None: ...
 
 
 @runtime_checkable
@@ -144,6 +155,7 @@ class StoragePort(Protocol):
     applications: ApplicationRepository
     resume_variants: ResumeVariantRepository
     documents: GeneratedDocumentRepository
+    revisions: RevisionSessionRepository
     decisions: DecisionRepository
     outcomes: OutcomeEventRepository
     pending_actions: PendingActionRepository

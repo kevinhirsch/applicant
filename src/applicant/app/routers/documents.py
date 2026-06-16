@@ -27,12 +27,51 @@ router = APIRouter(
 
 
 def _material_service(container: Container) -> MaterialService:
-    return MaterialService(container.storage, container.llm, container.latex_tailor)
+    # Composed from the frozen container's adapters: storage + llm + both tailoring
+    # engines + the local embedding port (variant clustering, FR-RESUME-6) + the
+    # Phase 0 ConversionService (per-campaign engine choice, FR-RESUME-3a) + the
+    # Phase 1 notification ladder + pending-actions home base (review-ready linkage,
+    # FR-NOTIF-4).
+    return MaterialService(
+        container.storage,
+        container.llm,
+        container.latex_tailor,
+        embedding=container.embedding,
+        docx_tailoring=container.docx_tailor,
+        conversion_service=container.conversion_service,
+        notifications=container.notification_service,
+        pending_actions=container.pending_actions_service,
+    )
 
 
 class TurnIn(BaseModel):
     kind: str  # "add" | "subtract" | "free_text"
     instruction: str = ""
+    true_source: str | None = None  # enables the fabrication guardrail on the turn
+
+
+class CoverLetterIn(BaseModel):
+    campaign_id: str
+    application_id: str
+    true_source: str
+    jd_terms: list[str] = []
+    # On-demand decision (FR-RESUME-10): per-campaign default + optional role override.
+    campaign_default: bool = False
+    role_requires: bool | None = None
+
+
+class ScreeningAnswerIn(BaseModel):
+    campaign_id: str
+    application_id: str
+    question: str
+    true_source: str
+    # None -> classify (factual vs essay vs sensitive); else force essay/factual.
+    essay: bool | None = None
+
+
+class AggressivenessIn(BaseModel):
+    # FR-RESUME-9 truthful-framing dial; the UI control ships grayed (FR-UI-2).
+    aggressiveness: int = 20
 
 
 class RedlineIn(BaseModel):
@@ -89,6 +128,47 @@ def redline(body: RedlineIn, container: Container = Depends(get_container)) -> d
     }
 
 
+@router.post("/cover-letter", status_code=201)
+def generate_cover_letter(body: CoverLetterIn, container: Container = Depends(get_container)) -> dict:
+    """Generate a cover letter ON DEMAND (FR-RESUME-10), routed to review.
+
+    Returns ``{"generated": false}`` when the role does not warrant one.
+    """
+    doc = _material_service(container).generate_cover_letter(
+        body.campaign_id,  # type: ignore[arg-type]
+        body.application_id,  # type: ignore[arg-type]
+        body.true_source,
+        body.jd_terms,
+        campaign_default=body.campaign_default,
+        role_requires=body.role_requires,
+    )
+    if doc is None:
+        return {"generated": False, "reason": "role does not warrant a cover letter"}
+    return {"generated": True, "id": doc.id, "type": doc.type.value, "approved": doc.approved}
+
+
+@router.post("/screening-answer", status_code=201)
+def generate_screening_answer(
+    body: ScreeningAnswerIn, container: Container = Depends(get_container)
+) -> dict:
+    """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive."""
+    doc = _material_service(container).generate_screening_answer(
+        body.campaign_id,  # type: ignore[arg-type]
+        body.application_id,  # type: ignore[arg-type]
+        body.question,
+        body.true_source,
+        essay=body.essay,
+    )
+    return {"id": doc.id, "type": doc.type.value, "approved": doc.approved, "content": doc.content}
+
+
+@router.post("/aggressiveness", status_code=200)
+def set_aggressiveness(body: AggressivenessIn, container: Container = Depends(get_container)) -> dict:
+    """Set the truthful-framing dial (FR-RESUME-9). The UI control is grayed (FR-UI-2)."""
+    value = _material_service(container).set_aggressiveness(body.aggressiveness)
+    return {"aggressiveness": value, "dormant_ui": True}
+
+
 @router.post("/{document_id}/review", status_code=201)
 def open_review(document_id: str, container: Container = Depends(get_container)) -> dict:
     """Open the interactive review session for a document (FR-RESUME-8)."""
@@ -101,7 +181,10 @@ def submit_turn(document_id: str, body: TurnIn, container: Container = Depends(g
     """Apply an add/subtract/free-text revision turn (FR-RESUME-8)."""
     try:
         session = _material_service(container).apply_turn(
-            GeneratedDocumentId(document_id), body.kind, body.instruction
+            GeneratedDocumentId(document_id),
+            body.kind,
+            body.instruction,
+            true_source=body.true_source,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

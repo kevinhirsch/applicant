@@ -54,6 +54,56 @@ def test_post_filter_pass():
     assert not truthfulness.passes_post_filter("A testament to my passion — truly.")
 
 
+@pytest.mark.unit
+def test_banned_phrase_stripped_deterministically_and_idempotent():
+    # FR-RESUME-5: banned phrases are stripped by code, not left to the model.
+    out = truthfulness.strip_banned_phrases("It's important to note that I shipped it.")
+    assert "important to note" not in out.lower()
+    assert "shipped it" in out
+    # Idempotent.
+    assert truthfulness.strip_banned_phrases(out) == out
+
+
+@pytest.mark.unit
+def test_ui_editable_banned_phrases_extend_the_list():
+    # FR-RESUME-5: the UI-editable banned-phrase list supplements the seed list.
+    extra = ("rockstar ninja",)
+    assert truthfulness.has_banned_phrase("I am a rockstar ninja", extra)
+    assert not truthfulness.has_banned_phrase("I am a rockstar ninja")  # not in seed
+    assert "rockstar ninja" not in truthfulness.strip_banned_phrases(
+        "I am a rockstar ninja", extra
+    ).lower()
+
+
+@pytest.mark.unit
+def test_voice_profile_extraction_and_alignment():
+    # FR-RESUME-5: a deterministic voice profile from the user's corpus.
+    corpus = [
+        "I built data pipelines. I shipped analytics dashboards. I led migrations.",
+    ]
+    profile = truthfulness.extract_voice_profile(corpus)
+    assert not profile.is_empty
+    assert profile.first_person_ratio > 0  # first-person voice detected
+    assert "pipelines" in profile.vocabulary
+    # On-voice text aligns higher than off-voice generic text.
+    on = truthfulness.voice_alignment(profile, "I built more pipelines and dashboards")
+    off = truthfulness.voice_alignment(profile, "Synergistic enterprise paradigms unlock value")
+    assert on > off
+    # Empty profile never penalizes.
+    assert truthfulness.voice_alignment(truthfulness.VoiceProfile(), "anything") == 1.0
+
+
+@pytest.mark.unit
+def test_fabrication_detection_flags_unsupported_claims():
+    # FR-RESUME-2/NFR-TRUTH-1: claims absent from the true history are flagged.
+    true = "Built Python services and wrote SQL for analytics."
+    flagged = truthfulness.unsupported_claims(true, "Expert in Kubernetes and Python.")
+    assert "Kubernetes" in flagged
+    assert "Python" not in flagged  # supported -> not flagged
+    # Nothing fabricated -> no flags.
+    assert truthfulness.unsupported_claims(true, "Python and SQL work.") == []
+
+
 # --- sensitive fields ------------------------------------------------------
 @pytest.mark.unit
 def test_eeo_defaults_to_decline_when_no_answer():

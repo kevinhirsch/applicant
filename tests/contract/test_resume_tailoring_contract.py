@@ -101,3 +101,62 @@ class TestLatexTailorSpecific:
         adapter = LatexTailor()
         result = adapter.render_artifact(ResumeVariantId(new_id()), "\\section{Skills}\nPython, SQL")
         assert not contains_emdash(result.notes)
+
+    def test_edit_source_is_plain_text_substitution(self):
+        # FR-RESUME-3: LaTeX variants/revisions are source-level edits (plain text).
+        adapter = LatexTailor()
+        out = adapter.edit_source("\\section{Skills}\nPython, SQL", {"Python": "Python, Go"})
+        assert "Python, Go" in out
+        # The em-dash post-filter rides along (FR-RESUME-5).
+        assert not contains_emdash(adapter.edit_source("a — b", {}))
+
+
+@pytest.mark.contract
+class TestDocxTailorSpecific:
+    """docx-XML specifics: OOXML in-place edit preserving run properties (FR-RESUME-3)."""
+
+    @staticmethod
+    def _doc_xml(text: str = "Python developer") -> str:
+        import io
+        import zipfile
+
+        import docx
+
+        d = docx.Document()
+        run = d.add_paragraph().add_run(text)
+        run.bold = True
+        run.font.name = "Calibri"
+        buf = io.BytesIO()
+        d.save(buf)
+        buf.seek(0)
+        with zipfile.ZipFile(buf) as zf:
+            return zf.read("word/document.xml").decode("utf-8")
+
+    def test_edit_preserves_run_properties(self):
+        # FR-RESUME-3/4: swap text but preserve <w:rPr> fonts/bold (fidelity).
+        adapter = DocxTailor()
+        xml = self._doc_xml("Python developer")
+        out = adapter.edit_document_xml(xml, {"Python": "Go"})
+        assert "Go developer" in adapter.extract_text(out)
+        assert "<w:rPr" in out and "<w:b" in out  # run properties preserved
+
+    def test_clone_run_adds_bullet_carrying_properties(self):
+        # FR-RESUME-3: adding a run clones an existing node (inherits formatting).
+        adapter = DocxTailor()
+        xml = self._doc_xml("Python developer")
+        out = adapter.clone_run(xml, "Python", "Built data pipelines")
+        assert "Built data pipelines" in adapter.extract_text(out)
+        assert out.count("<w:r ") + out.count("<w:r>") > xml.count("<w:r ") + xml.count("<w:r>")
+
+    def test_remove_run_subtracts(self):
+        adapter = DocxTailor()
+        xml = self._doc_xml("Python developer")
+        out = adapter.remove_run(xml, "Python developer")
+        assert "Python developer" not in adapter.extract_text(out)
+
+    def test_edit_strips_emdash(self):
+        # FR-RESUME-5: em-dash post-filter runs on the OOXML edit too.
+        adapter = DocxTailor()
+        xml = self._doc_xml("Senior — engineer")
+        out = adapter.edit_document_xml(xml, {})
+        assert not contains_emdash(adapter.extract_text(out))

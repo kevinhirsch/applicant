@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.application.services.material_service import MaterialService
@@ -32,6 +33,7 @@ scenarios(
     "../features/p3_interactive_review.feature",
     "../features/p3_screening_answers.feature",
     "../features/p3_truthfulness.feature",
+    "../features/p3_cover_letter_on_demand.feature",
 )
 
 
@@ -112,6 +114,31 @@ def artifact_fidelity_ok(p3ctx, material):
 
 @then("the rendered fonts are embedded and no em-dash remains")
 def fonts_embedded_no_emdash(p3ctx):
+    result = p3ctx["render"]
+    assert "fonts not embedded" not in result.notes
+    assert "em-dash survived" not in result.notes
+
+
+# --- docx fallback engine fidelity (FR-RESUME-3/4) -------------------------
+@given("a campaign whose chosen material engine is docx")
+def docx_engine_campaign(p3ctx):
+    p3ctx["docx_engine"] = DocxTailor()
+
+
+@when("the docx engine renders the base resume artifact")
+def docx_render(p3ctx):
+    p3ctx["render"] = p3ctx["docx_engine"].render_artifact(
+        ResumeVariantId(new_id()), "Senior engineer — built data pipelines"
+    )
+
+
+@then("the docx artifact passes the compile-and-visually-inspect fidelity check")
+def docx_fidelity_ok(p3ctx):
+    assert p3ctx["render"].fidelity_ok is True
+
+
+@then("the docx fonts are embedded and no em-dash remains")
+def docx_fonts_embedded_no_emdash(p3ctx):
     result = p3ctx["render"]
     assert "fonts not embedded" not in result.notes
     assert "em-dash survived" not in result.notes
@@ -294,3 +321,139 @@ def no_emdash_remains(p3ctx):
 def stable_idempotent(p3ctx, material):
     again = material.apply_post_filter(p3ctx["report"].text)
     assert again.text == p3ctx["report"].text
+
+
+# === interactive review: filters re-run on every turn (FR-RESUME-5/8) ======
+@when("the user submits a free-text turn instructing it to be more concise")
+def free_text_turn(p3ctx, material):
+    p3ctx["session"] = material.apply_turn(p3ctx["doc"].id, "free_text", "make it more concise")
+
+
+@when("the user submits an add turn that introduces an em-dash")
+def add_emdash_turn(p3ctx, material):
+    # The instruction carries an em-dash; the post-filter MUST strip it on the turn.
+    p3ctx["session"] = material.apply_turn(p3ctx["doc"].id, "add", "Led teams — shipped fast")
+
+
+@then("the revised content carries no em-dash")
+def revised_no_emdash(p3ctx, material):
+    stored = material._storage.documents.get(p3ctx["doc"].id)
+    assert stored is not None
+    assert not contains_emdash(stored.content or "")
+    assert not contains_emdash(p3ctx["session"].redline_state.get("content", ""))
+
+
+@then("the session records the add and free-text turns")
+def session_records_turns(p3ctx):
+    kinds = [t.kind for t in p3ctx["session"].turns]
+    assert "free_text" in kinds
+    assert "add" in kinds
+
+
+# === cover letter on demand (FR-RESUME-10) =================================
+class _RecordingNotifier:
+    """Minimal NotificationPort spy: records emitted notifications (FR-NOTIF-4)."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+
+    def notify(self, notification) -> str:
+        self.sent.append(notification)
+        return f"handle-{len(self.sent)}"
+
+    def expire(self, dedup_key: str) -> None:
+        pass
+
+
+@pytest.fixture
+def review_notifier() -> _RecordingNotifier:
+    return _RecordingNotifier()
+
+
+@pytest.fixture
+def material_with_notify(p3_storage, review_notifier) -> MaterialService:
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.pending_actions_service import PendingActionsService
+
+    return MaterialService(
+        p3_storage,
+        llm=None,
+        resume_tailoring=LatexTailor(),
+        notifications=NotificationService(review_notifier),
+        pending_actions=PendingActionsService(p3_storage),
+    )
+
+
+@given("a campaign whose cover-letter default is off")
+def cover_default_off(p3ctx):
+    p3ctx["campaign_id"] = CampaignId(new_id())
+    p3ctx["application_id"] = new_id()
+    p3ctx["campaign_default"] = False
+
+
+@given("the candidate's true source for the cover letter")
+def cover_true_source(p3ctx):
+    # Carries an em-dash so the deterministic post-filter must strip it.
+    p3ctx["true_source"] = "I built Python data pipelines — and mentored engineers."
+
+
+@when("the engine considers a cover letter for a role with no override")
+def consider_cover_no_override(p3ctx, material_with_notify):
+    p3ctx["doc"] = material_with_notify.generate_cover_letter(
+        p3ctx["campaign_id"],
+        p3ctx["application_id"],
+        "I built Python pipelines.",
+        ["Python"],
+        campaign_default=p3ctx["campaign_default"],
+        role_requires=None,
+    )
+
+
+@then("no cover letter is generated")
+def no_cover_generated(p3ctx):
+    assert p3ctx["doc"] is None
+
+
+@when("the engine generates a cover letter for a role that requires one")
+def generate_cover_required(p3ctx, material_with_notify):
+    p3ctx["doc"] = material_with_notify.generate_cover_letter(
+        p3ctx["campaign_id"],
+        p3ctx["application_id"],
+        p3ctx["true_source"],
+        ["Python"],
+        campaign_default=p3ctx["campaign_default"],
+        role_requires=True,
+    )
+    p3ctx["material"] = material_with_notify
+
+
+@then("the cover letter is stored unapproved")
+def cover_stored_unapproved(p3ctx):
+    assert p3ctx["doc"] is not None
+    assert p3ctx["doc"].approved is False
+
+
+@then("the cover letter contains no em-dash")
+def cover_no_emdash(p3ctx):
+    assert not contains_emdash(p3ctx["doc"].content or "")
+
+
+@then("a review-ready notification linked to the review surface is emitted")
+def cover_notification_emitted(p3ctx, review_notifier):
+    assert review_notifier.sent, "expected a review-ready notification (FR-NOTIF-4)"
+    note = review_notifier.sent[-1]
+    assert note.deep_link and str(p3ctx["doc"].id) in note.deep_link
+    # And a pending action was materialized in the home base.
+    pending = p3ctx["material"]._pending_actions.list_pending(p3ctx["campaign_id"])
+    assert any(pa.kind == "material_review" for pa in pending)
+
+
+@then("submission is blocked while the cover letter is unapproved")
+def cover_submission_blocked(p3ctx):
+    with pytest.raises(ReviewRequired):
+        p3ctx["material"].ensure_application_submittable(p3ctx["application_id"])
+
+
+@when("the user approves the cover letter")
+def approve_cover(p3ctx):
+    p3ctx["material"].approve(p3ctx["doc"].id)

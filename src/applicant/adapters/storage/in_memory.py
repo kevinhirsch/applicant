@@ -20,6 +20,7 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
+from applicant.core.entities.revision_session import RevisionSession
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -30,6 +31,7 @@ from applicant.core.ids import (
     JobPostingId,
     PendingActionId,
     ResumeVariantId,
+    RevisionSessionId,
 )
 
 
@@ -118,6 +120,23 @@ class _DocumentRepo:
 
     def list_for_application(self, aid: ApplicationId) -> list[GeneratedDocument]:
         return [d for d in self._d.values() if d.application_id == aid]
+
+
+class _RevisionRepo:
+    def __init__(self) -> None:
+        self._d: dict[str, RevisionSession] = {}
+
+    def add(self, s: RevisionSession) -> None:
+        self._d[str(s.id)] = s
+
+    def get(self, sid: RevisionSessionId) -> RevisionSession | None:
+        return self._d.get(str(sid))
+
+    def get_for_material(self, mid: GeneratedDocumentId) -> RevisionSession | None:
+        for s in self._d.values():
+            if str(s.material_id) == str(mid):
+                return s
+        return None
 
 
 class _DecisionRepo:
@@ -246,6 +265,7 @@ class InMemoryStorage:
         self.applications = _ApplicationRepo()
         self.resume_variants = _VariantRepo()
         self.documents = _DocumentRepo()
+        self.revisions = _RevisionRepo()
         self.decisions = _DecisionRepo()
         self.outcomes = _OutcomeRepo()
         self.screenshots = _ScreenshotRepo()

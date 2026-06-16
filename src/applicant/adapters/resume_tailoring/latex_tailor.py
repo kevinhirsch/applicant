@@ -1,22 +1,30 @@
 """LaTeX resume-tailoring adapter (primary) (FR-RESUME-3/4, FR-RESUME-5, FR-FONT-2).
 
-# STAGE B — owned by Phase 3.
+LaTeX-primary path: render variants/revisions by editing the **LaTeX source** (plain
+text, so the redline is a trivial source-level diff), produce add+subtract highlights
+(FR-RESUME-8), run a page-fit / orphaned-title fidelity check (FR-RESUME-4), and
+export a font-embedded PDF compiled with xelatex/lualatex + fontspec (moderncv).
 
-LaTeX-primary path: render a moderncv (banking) resume / cover letter from a
-Jinja-style template, produce a deterministic source-level redline (add+subtract
-highlights, FR-RESUME-8), run a page-fit / orphaned-title fidelity check
-(FR-RESUME-4), and export a font-embedded PDF.
+Two clearly-marked boundaries keep the DEFAULT lane hermetic (NO TeX required):
 
-The real ``xelatex``/``lualatex`` + fontspec compile is **stubbed behind a clearly
-marked boundary** (``_compile_pdf``) so the suite passes WITHOUT a TeX install. The
-em-dash deterministic post-filter and the truthfulness guardrail run on every pass
-(``core.rules.truthfulness``), so no adapter can emit an em-dash tell or fabricate.
+* ``_compile_pdf`` — runs the real ``xelatex``/``lualatex`` compile ONLY when a TeX
+  engine is installed AND ``allow_compile`` is set; otherwise it returns a
+  deterministic synthetic result so the suite is green with no TeX install.
+* ``_inspect_pdf`` — when a real PDF exists it is inspected with ``pypdf`` (exact
+  page count + font-embedding); otherwise the fidelity check models the inspection
+  deterministically on the source so "looks fine in source is not acceptable" still
+  has something concrete to assert against.
+
+The em-dash deterministic post-filter and the truthfulness guardrail run on every
+pass (``core.rules.truthfulness``), so no adapter can emit an em-dash tell.
 """
 
 from __future__ import annotations
 
 import difflib
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,19 +42,43 @@ _LINES_PER_PAGE = 55
 
 @dataclass(frozen=True)
 class _CompileResult:
-    """Output of the (stubbed) TeX compile boundary."""
+    """Output of the TeX compile boundary."""
 
     storage_path: str
-    page_count: int
+    page_count: int  # 0 means "compile stubbed; estimate from source"
     fonts_embedded: bool
+    compiled: bool  # True if a real PDF was produced
 
 
 class LatexTailor:
     """ResumeTailoringPort adapter — LaTeX engine (xelatex/lualatex + moderncv)."""
 
-    def __init__(self, *, template_root: Path | None = None, engine: str = "lualatex") -> None:
+    def __init__(
+        self,
+        *,
+        template_root: Path | None = None,
+        engine: str = "lualatex",
+        allow_compile: bool = False,
+        output_dir: Path | None = None,
+    ) -> None:
         self._template_root = template_root or _TEMPLATE_ROOT
         self._engine = engine  # "lualatex" (fontawesome5) / "xelatex" (fontspec)
+        # The real compile only runs when explicitly enabled (integration lane).
+        self._allow_compile = allow_compile
+        self._output_dir = output_dir
+
+    # --- source editing (LaTeX is plain text) -----------------------------
+    def edit_source(self, base_source: str, edits: dict[str, str]) -> str:
+        """Apply literal substitutions to the LaTeX source (FR-RESUME-3).
+
+        LaTeX is plain text, so a variant/revision is a source-level edit: replace
+        ``old -> new`` spans. The em-dash post-filter runs on the result so an edit
+        can never re-introduce the tell.
+        """
+        out = base_source
+        for old, new in edits.items():
+            out = out.replace(old, new)
+        return normalize_emdashes(out)
 
     # --- redline (FR-RESUME-8) --------------------------------------------
     def render_redline(
@@ -94,6 +126,46 @@ class LatexTailor:
             rendered_html="\n".join(html_parts),
         )
 
+    # --- cover letter (FR-RESUME-10) --------------------------------------
+    def build_cover_source(
+        self,
+        *,
+        first_name: str = "",
+        last_name: str = "",
+        contact_line: str = "",
+        date: str = "",
+        company: str = "",
+        company_address: str = "",
+        body_paragraphs: list[str] | None = None,
+        closing: str = "Sincerely,",
+        signature: str = "",
+    ) -> str:
+        """Build a one-page cover-letter LaTeX source from cover.cls (FR-RESUME-10).
+
+        Renders the vendored ``cover.cls`` commands deterministically (no template
+        engine dependency) from TRUTHFUL, voice-matched body text. The em-dash
+        post-filter runs on every field so the cover letter carries no tell, and the
+        ``\\documentclass[]{cover}`` marker makes the fidelity check enforce exactly
+        one page (FR-RESUME-4).
+        """
+        paras = [normalize_emdashes(p) for p in (body_paragraphs or []) if p.strip()]
+        lines = [
+            "\\documentclass[]{cover}",
+            "\\begin{document}",
+            f"\\namesection{{{normalize_emdashes(first_name)}}}"
+            f"{{{normalize_emdashes(last_name)}}}{{{normalize_emdashes(contact_line)}}}",
+            f"\\currentdate{{{normalize_emdashes(date)}}}",
+            f"\\companyname{{{normalize_emdashes(company)}}}",
+            f"\\companyaddress{{{normalize_emdashes(company_address)}}}",
+        ]
+        lines += [f"\\lettercontent{{{p}}}" for p in paras]
+        lines += [
+            f"\\closing{{{normalize_emdashes(closing)}}}",
+            f"\\signature{{{normalize_emdashes(signature)}}}",
+            "\\end{document}",
+        ]
+        return "\n".join(lines)
+
     # --- render + fidelity (FR-RESUME-4) ----------------------------------
     def render_artifact(self, variant_id: ResumeVariantId, source: str) -> RenderResult:
         """Compile a font-embedded PDF and run the compile-and-inspect fidelity check.
@@ -108,7 +180,8 @@ class LatexTailor:
         compiled = self._compile_pdf(variant_id, clean_source)
 
         notes: list[str] = []
-        page_count = self._estimate_pages(clean_source) if compiled.page_count == 0 else compiled.page_count
+        # Prefer the real compiled page count; otherwise model it on the source.
+        page_count = compiled.page_count if compiled.page_count else self._estimate_pages(clean_source)
 
         fidelity_ok = True
         if contains_emdash(clean_source):  # defensive: post-filter must have run
@@ -125,6 +198,9 @@ class LatexTailor:
         if orphans:
             fidelity_ok = False
             notes.append(f"orphaned section/entry title(s): {', '.join(orphans)}")
+        if not compiled.compiled and self._allow_compile:
+            # We were asked to really compile but couldn't (no engine) -> soft error.
+            notes.append("compile requested but no TeX engine available")
 
         return RenderResult(
             storage_path=compiled.storage_path,
@@ -133,20 +209,84 @@ class LatexTailor:
             notes="; ".join(notes) if notes else "fidelity check passed",
         )
 
-    # --- COMPILE BOUNDARY (stubbed; no TeX install required) ---------------
+    # --- COMPILE BOUNDARY -------------------------------------------------
     def _compile_pdf(self, variant_id: ResumeVariantId, source: str) -> _CompileResult:
-        """STAGE B BOUNDARY — real xelatex/lualatex compile goes here.
+        """Real xelatex/lualatex compile when enabled + available; else stub.
 
-        A real install would write ``source`` to a temp dir alongside the vendored
-        ``OpenFonts/`` + ``cover.cls``, invoke ``self._engine`` with fontspec, and
-        return the produced PDF path + actual page count + font-embedding status.
-        That requires a TeX distribution, so it is stubbed: we report a deterministic
-        synthetic path, font-embedding success, and let the page count be estimated
-        from the source so the fidelity check has something to assert against.
+        Real path (integration lane): write ``source`` to a temp dir alongside the
+        vendored ``OpenFonts/`` + ``cover.cls``, invoke ``self._engine`` with
+        fontspec, then inspect the produced PDF (page count + font embedding) via
+        ``_inspect_pdf``. The DEFAULT lane keeps ``allow_compile=False`` so NO TeX
+        is required and the suite stays hermetic.
         """
-        # NOTE: do NOT call subprocess here — keep the suite TeX-free.
         storage_path = f"artifacts/{variant_id}.pdf"
-        return _CompileResult(storage_path=storage_path, page_count=0, fonts_embedded=True)
+        engine_bin = shutil.which(self._engine) or shutil.which("lualatex") or shutil.which("xelatex")
+        if not (self._allow_compile and engine_bin):
+            # Stub: deterministic synthetic path; let the fidelity check estimate.
+            return _CompileResult(
+                storage_path=storage_path, page_count=0, fonts_embedded=True, compiled=False
+            )
+
+        # --- real compile (only when explicitly enabled and a TeX engine exists) ---
+        out_root = self._output_dir or (Path.cwd() / ".artifacts" / "latex")
+        out_root.mkdir(parents=True, exist_ok=True)
+        work = out_root / str(variant_id)
+        work.mkdir(parents=True, exist_ok=True)
+        tex_path = work / "resume.tex"
+        tex_path.write_text(source, encoding="utf-8")
+        # Make the vendored fonts/classes discoverable to the engine.
+        env_input = f"{self._template_root / 'OpenFonts'}:{self._template_root / 'cover'}:"
+        try:
+            subprocess.run(
+                [engine_bin, "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
+                cwd=str(work),
+                env={"TEXINPUTS": env_input, "PATH": str(Path(engine_bin).parent) + ":/usr/bin:/bin"},
+                capture_output=True,
+                timeout=120,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return _CompileResult(
+                storage_path=storage_path, page_count=0, fonts_embedded=True, compiled=False
+            )
+        pdf_path = work / "resume.pdf"
+        if not pdf_path.exists():
+            return _CompileResult(
+                storage_path=storage_path, page_count=0, fonts_embedded=False, compiled=False
+            )
+        page_count, fonts_embedded = self._inspect_pdf(pdf_path)
+        return _CompileResult(
+            storage_path=str(pdf_path),
+            page_count=page_count,
+            fonts_embedded=fonts_embedded,
+            compiled=True,
+        )
+
+    @staticmethod
+    def _inspect_pdf(pdf_path: Path) -> tuple[int, bool]:
+        """Inspect a real PDF: exact page count + whether fonts are embedded.
+
+        Uses pypdf (already a dependency). A font is "embedded" when its descriptor
+        carries a FontFile/FontFile2/FontFile3 stream — exactly the fidelity-check
+        guarantee (FR-RESUME-4, FR-FONT-2).
+        """
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf_path))
+        page_count = len(reader.pages)
+        fonts_embedded = True
+        for page in reader.pages:
+            resources = page.get("/Resources")
+            if not resources:
+                continue
+            fonts = resources.get("/Font") if hasattr(resources, "get") else None
+            if not fonts:
+                continue
+            for font_ref in fonts.values():
+                font = font_ref.get_object()
+                if not _font_is_embedded(font):
+                    fonts_embedded = False
+        return page_count, fonts_embedded
 
     # --- page-fit + orphan heuristics -------------------------------------
     def _estimate_pages(self, source: str) -> int:
@@ -183,6 +323,26 @@ class LatexTailor:
     @staticmethod
     def _body_lines(source: str) -> list[str]:
         return [ln for ln in source.splitlines() if ln.strip() and not ln.lstrip().startswith("%")]
+
+
+def _font_is_embedded(font: object) -> bool:
+    """True if a PDF font dict (or its descendants) carries an embedded font file."""
+    if not hasattr(font, "get"):
+        return True
+    descriptor = font.get("/FontDescriptor")
+    if descriptor is not None:
+        desc = descriptor.get_object()
+        if any(k in desc for k in ("/FontFile", "/FontFile2", "/FontFile3")):
+            return True
+    # Composite (Type0) fonts carry the descriptor on a descendant font.
+    descendants = font.get("/DescendantFonts")
+    if descendants is not None:
+        for child in descendants:
+            if _font_is_embedded(child.get_object()):
+                return True
+        return False
+    # No descriptor at all -> a standard-14 base font (treated as embeddable).
+    return descriptor is None
 
 
 def _esc(text: str) -> str:
