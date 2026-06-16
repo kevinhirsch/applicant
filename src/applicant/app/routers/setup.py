@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from applicant.app.deps import get_setup_service
+from applicant.app.deps import get_container, get_setup_service
 from applicant.ports.driving.setup_wizard import (
     LLMSettings,
     TierSettings,
@@ -40,6 +40,11 @@ class TierIn(BaseModel):
 
 class LadderIn(BaseModel):
     tiers: list[TierIn] = Field(min_length=1)
+
+
+class ChannelsIn(BaseModel):
+    discord_webhook_url: str = ""
+    apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
 
 
 def _status_dict(svc) -> dict:
@@ -101,6 +106,66 @@ def set_tiers(body: LadderIn, svc=Depends(get_setup_service)) -> None:
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/channels")
+def get_channels(svc=Depends(get_setup_service)) -> dict:
+    """Return channel config status (no secrets) for the wizard (FR-OOBE-2)."""
+    chan = svc.get_channels()
+    return {
+        "discord_configured": bool(chan.get("discord_webhook_url")),
+        "email_configured": bool(chan.get("apprise_urls")),
+        "channels_configured": svc.channels_configured(),
+    }
+
+
+@router.post("/channels", status_code=status.HTTP_204_NO_CONTENT)
+def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> None:
+    """Set notification channels (Discord/email via Apprise) (FR-NOTIF-1, FR-OOBE-2/3).
+
+    Configuring Discord + email marks the channel gate complete and, combined with
+    LLM + onboarding, ungates automated work (FR-OOBE-3). The live notifier is
+    reconfigured in place so no restart is needed (zero-CLI).
+    """
+    if not (body.discord_webhook_url or body.apprise_urls):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide a Discord webhook and/or Apprise/email URLs (FR-NOTIF-1).",
+        )
+    container.setup_service.configure_channels(
+        discord_webhook_url=body.discord_webhook_url, apprise_urls=body.apprise_urls
+    )
+    if hasattr(container.notification, "configure"):
+        container.notification.configure(
+            discord_webhook_url=body.discord_webhook_url or None,
+            apprise_urls=body.apprise_urls or None,
+        )
+
+
+@router.post("/channels/test")
+def test_channels(container=Depends(get_container)) -> dict:
+    """Send a test notification across configured channels (FR-NOTIF-1).
+
+    Hermetic by default (the notifier captures offline); a live deployment sends
+    for real. Returns the channels the test would fire on.
+    """
+    from applicant.ports.driven.notification import Notification, NotificationUrgency
+
+    notification = container.notification
+    handle = notification.notify(
+        Notification(
+            title="Applicant test notification",
+            body="Channels are configured and working.",
+            urgency=NotificationUrgency.IMMEDIATE,
+            dedup_key="channels-test",
+        )
+    )
+    channels = (
+        notification.configured_channels()
+        if hasattr(notification, "configured_channels")
+        else []
+    )
+    return {"sent": True, "handle": handle, "channels": channels}
 
 
 @router.post("/advance/{step}")

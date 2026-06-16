@@ -41,12 +41,25 @@
       <p id="llm-status" class="admin-empty">Gate: <strong>closed</strong></p>
     </section>
 
-    <!-- STEP 2..4 — dormant until their backends land (FR-OOBE-2, FR-UI-2). -->
-    <section class="admin-card" id="step-channels" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
-      <h2>2. Notification channels <span class="admin-badge admin-badge-off">Phase 1</span></h2>
-      <label class="toggle-switch"><input type="checkbox" disabled /> Discord</label>
-      <label class="toggle-switch"><input type="checkbox" disabled /> Email (Apprise)</label>
+    <!-- STEP 2 — notification channels (FR-NOTIF-1, FR-OOBE-2/3). LIVE in Phase 1:
+         configuring Discord and/or email completes the channel gate; automated work
+         is blocked until channels are set (FR-OOBE-3). -->
+    <section class="admin-card" id="step-channels" style="margin-top:16px;padding:16px;">
+      <h2>2. Notification channels <span class="admin-badge admin-badge-on">Phase 1 — live</span></h2>
+      <p class="admin-empty">Configure how Applicant reaches you. Discord is primary (one-click); email via Apprise is the escalation channel (FR-NOTIF-1/2).</p>
+      <form id="channels-form">
+        <label>Discord webhook URL
+          <input type="text" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." style="width:100%;" />
+        </label>
+        <label>Apprise / email URLs (comma-separated)
+          <input type="text" name="apprise_urls" placeholder="mailto://user:pass@smtp.example.com" style="width:100%;" />
+        </label>
+        <button type="submit" class="admin-btn">Save channels</button>
+        <button type="button" id="channels-test" class="admin-btn admin-btn-sm">Send test</button>
+      </form>
+      <p id="channels-status" class="admin-empty">Channels: <strong>not configured</strong></p>
     </section>
+    <!-- STEP 3..4 — light up as their backends land (FR-OOBE-2, FR-UI-2). -->
     <section class="admin-card" id="step-fonts" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
       <h2>3. Fonts <span class="admin-badge admin-badge-off">Phase 0/3</span></h2>
     </section>

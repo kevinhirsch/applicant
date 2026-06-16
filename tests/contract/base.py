@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import pytest
 
-from applicant.core.entities.campaign import Campaign
+from applicant.core.entities.agent_run import AgentRun
+from applicant.core.entities.campaign import Campaign, RunMode
+from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.ids import (
+    AgentRunId,
     ApplicationId,
+    AttributeId,
     CampaignId,
+    DiscoverySourceId,
+    FieldMappingId,
     OutcomeEventId,
     PendingActionId,
     new_id,
@@ -61,6 +68,80 @@ class StoragePortContract:
         adapter.pending_actions.resolve(pid)
         adapter.commit()
         assert adapter.pending_actions.list_open(cid) == []
+
+    def test_discovery_source_upsert_and_yield_stats(self, adapter):
+        # FR-DISC-2/5: per-campaign toggle + yield stats persist + upsert in place.
+        cid = CampaignId(new_id())
+        sid = DiscoverySourceId(new_id())
+        adapter.discovery_sources.upsert(
+            DiscoverySource(id=sid, campaign_id=cid, source_key="jobspy:indeed", enabled=True)
+        )
+        adapter.commit()
+        adapter.discovery_sources.upsert(
+            DiscoverySource(
+                id=sid,
+                campaign_id=cid,
+                source_key="jobspy:indeed",
+                enabled=False,
+                yield_stats={"matches": 7, "approvals": 2},
+            )
+        )
+        adapter.commit()
+        got = adapter.discovery_sources.get(cid, "jobspy:indeed")
+        assert got is not None and got.enabled is False
+        assert got.yield_stats["matches"] == 7
+        assert len(adapter.discovery_sources.list_for_campaign(cid)) == 1
+
+    def test_field_mapping_shared_and_scoped(self, adapter):
+        # FR-ATTR-2: shared (global) + per-campaign mappings; find prefers scoped.
+        cid = CampaignId(new_id())
+        shared = FieldMappingId(new_id())
+        scoped = FieldMappingId(new_id())
+        adapter.field_mappings.add(
+            FieldMapping(
+                id=shared,
+                site_key="workday",
+                field_selector="email",
+                attribute_id=AttributeId("attr-shared"),
+            )
+        )
+        adapter.field_mappings.add(
+            FieldMapping(
+                id=scoped,
+                site_key="workday",
+                field_selector="email",
+                campaign_id=cid,
+                attribute_id=AttributeId("attr-scoped"),
+            )
+        )
+        adapter.commit()
+        assert len(adapter.field_mappings.list_for_site("workday")) == 2
+        assert len(adapter.field_mappings.list_for_campaign(cid)) == 1
+        found = adapter.field_mappings.find("workday", "email")
+        assert found is not None and found.campaign_id == cid  # scoped wins
+
+    def test_agent_run_roundtrip(self, adapter):
+        # FR-AGENT-2/7: run mode + intent sentence persist on the agent_runs row.
+        cid = CampaignId(new_id())
+        rid = AgentRunId(new_id())
+        adapter.agent_runs.add(
+            AgentRun(
+                id=rid,
+                campaign_id=cid,
+                intent_sentence="Scan boards next.",
+                run_mode=RunMode.UNTIL_N_VIABLE,
+                throughput_target=20,
+                stats={"viable": 3},
+            )
+        )
+        adapter.commit()
+        got = adapter.agent_runs.get(rid)
+        assert got is not None
+        assert got.intent_sentence == "Scan boards next."
+        assert got.run_mode is RunMode.UNTIL_N_VIABLE
+        assert got.throughput_target == 20
+        assert got.stats["viable"] == 3
+        assert len(adapter.agent_runs.list_for_campaign(cid)) == 1
 
     def test_healthcheck(self, adapter):
         assert adapter.healthcheck() is True

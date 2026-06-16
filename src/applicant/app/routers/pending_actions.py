@@ -28,8 +28,8 @@ def index() -> dict:
 
 @router.get("/{campaign_id}")
 def list_pending(campaign_id: str, container: Container = Depends(get_container)) -> dict:
-    """List open pending actions for the campaign (FR-UI-3)."""
-    actions = container.storage.pending_actions.list_open(campaign_id)  # type: ignore[arg-type]
+    """List open pending actions for the campaign (FR-UI-3) — the 24/7 home base."""
+    actions = container.pending_actions_service.list_pending(campaign_id)  # type: ignore[arg-type]
     return {
         "campaign_id": campaign_id,
         "count": len(actions),
@@ -50,5 +50,4 @@ def list_pending(campaign_id: str, container: Container = Depends(get_container)
 @router.post("/{action_id}/resolve", status_code=204)
 def resolve(action_id: str, container: Container = Depends(get_container)) -> None:
     """Resolve a pending action once the user has acted (FR-UI-3)."""
-    container.storage.pending_actions.resolve(action_id)  # type: ignore[arg-type]
-    container.storage.commit()
+    container.pending_actions_service.resolve(action_id)  # type: ignore[arg-type]

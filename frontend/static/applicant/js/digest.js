@@ -119,5 +119,21 @@
   document.addEventListener("DOMContentLoaded", function () {
     loadDigest();
     loadPending();
+    signalPresence(true);
+    document.addEventListener("visibilitychange", function () {
+      signalPresence(document.visibilityState === "visible");
+    });
+    window.addEventListener("focus", function () { signalPresence(true); });
+    window.addEventListener("blur", function () { signalPresence(false); });
   });
+
+  // Presence beacon (FR-NOTIF-2): tell the backend the user is verifiably present
+  // in the web UI so the in-app surface pre-empts the held Discord push.
+  async function signalPresence(present) {
+    try {
+      await api("/api/digest/presence", { method: "POST", body: JSON.stringify({ present: present }) });
+    } catch (e) {
+      /* presence is best-effort */
+    }
+  }
 })();

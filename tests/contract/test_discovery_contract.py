@@ -66,3 +66,75 @@ class TestJobSpySearxngDiscoveryContract:
         results = agg.search(campaign_id, SearchCriteria(campaign_id=campaign_id))
         urls = [p.source_url for p in results]
         assert len(urls) == len(set(urls)), "aggregator must dedup by source_url"
+
+    def test_apply_toggles_ignores_unknown_keys(self, adapter, campaign_id):
+        # Persisted toggles for an un-registered source must not crash (FR-DISC-2).
+        adapter.apply_toggles({"sample": True, "not-registered": False})
+        assert adapter.is_source_enabled("sample") is True
+
+
+@pytest.mark.contract
+class TestLiveSourcesOffline:
+    """The LIVE JobSpy/SearXNG source code paths, exercised fully offline (FR-DISC-2/4).
+
+    Uses the fake network clients so the real ``JobSpySource``/``SearxngSource`` +
+    normalization run with NO network — the hermetic default lane.
+    """
+
+    @pytest.fixture
+    def campaign_id(self) -> CampaignId:
+        return CampaignId(new_id())
+
+    def test_default_factory_aggregator_is_offline_and_yields(self, campaign_id):
+        from applicant.adapters.discovery.factory import (
+            JOBSPY_SITES,
+            build_default_discovery,
+        )
+
+        agg = build_default_discovery(live=False)
+        # Every easy board is a separately-toggleable registered source (FR-DISC-2).
+        for site in JOBSPY_SITES:
+            assert f"jobspy:{site}" in agg.available_sources()
+        assert "searxng" in agg.available_sources()
+        crit = SearchCriteria(campaign_id=campaign_id, titles=("engineer",))
+        results = agg.search(campaign_id, crit)
+        assert results
+        for p in results:
+            assert isinstance(p, JobPosting)
+            assert p.title and p.source_url and p.source_key
+
+    def test_jobspy_source_normalizes_rows(self, campaign_id):
+        from applicant.adapters.discovery.clients import FakeJobSpyClient
+        from applicant.adapters.discovery.jobspy_searxng import JobSpySource
+
+        src = JobSpySource(site="indeed", client=FakeJobSpyClient())
+        out = src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert out and out[0].source_key == "jobspy:indeed"
+        assert out[0].work_mode == "remote"  # is_remote True -> normalized
+        assert out[0].salary  # min/max amount folded into a salary string
+
+    def test_failing_client_does_not_crash_run(self, campaign_id):
+        from applicant.adapters.discovery.jobspy_searxng import JobSpySource
+
+        class Boom:
+            def scrape(self, **kw):
+                raise RuntimeError("board down")
+
+        src = JobSpySource(site="indeed", client=Boom())
+        assert src.fetch(campaign_id, SearchCriteria(campaign_id=campaign_id)) == []
+
+    def test_proxy_hook_threads_through(self, campaign_id):
+        # FR-DISC-6: a configured proxy is passed to the client; default is none.
+        from applicant.adapters.discovery.jobspy_searxng import JobSpySource, ProxyConfig
+
+        seen = {}
+
+        class Recorder:
+            def scrape(self, *, site, search_term, location, results_wanted, proxies):
+                seen["proxies"] = proxies
+                return []
+
+        JobSpySource(
+            site="indeed", client=Recorder(), proxy=ProxyConfig(proxies=("http://p",), enabled=True)
+        ).fetch(campaign_id, SearchCriteria(campaign_id=campaign_id))
+        assert seen["proxies"] == ["http://p"]

@@ -1,37 +1,146 @@
 """JobSpy + SearXNG discovery adapter (FR-DISC-1..6).
 
-# STAGE B — owned by Phase 1.
+A **master aggregator** over the easy boards (python-jobspy:
+LinkedIn/Indeed/Glassdoor/Google/ZipRecruiter) plus a **SearXNG metasearch** source,
+behind a **pluggable, user-toggleable source registry** (FR-DISC-1/2). Every source is
+structured/metasearch scraping that incurs **zero LLM tokens** (FR-DISC-4,
+NFR-TOKEN-1). Postings are normalized to the core ``JobPosting`` shape — title, company,
+location, work mode, salary, source URL, full description (FR-DISC-3).
 
-A **master aggregator** over easy boards (JobSpy) plus a **pluggable, user-toggleable
-source registry** (FR-DISC-1/2) and SearXNG exploratory discovery (FR-DISC-4). Each
-registered source is structured/metasearch scraping that incurs **zero LLM tokens**
-(FR-DISC-4, NFR-TOKEN-1). Postings are normalized to the core ``JobPosting`` shape
-(FR-DISC-3).
+Hermeticity (CRITICAL): the real network calls live behind a clearly-marked seam —
+``JobSpyClient`` / ``SearxngClient`` — injected into the source. The DEFAULT registry
+ships the offline ``SampleSource`` plus the live sources wired to **fake clients**, so
+the adapter, its contract test, and the app boot run fully offline with **no network**.
+Production wires the real clients (see ``build_default_discovery``); any real-network
+test is integration-gated.
 
-Network calls to real boards are deliberately **stubbed**: a clearly-marked offline
-``SampleSource`` ships sample postings so the adapter (and its contract test) run fully
-offline. Real JobSpy / SearXNG sources register the same ``Source`` protocol; the proxy
-hook (FR-DISC-6) is a constructor seam left for Phase 2+.
+Extensibility (NFR-EXT-1): a new board is a new ``Source`` (or a new client behind
+``JobSpySource``) registered by key — no core changes. The **proxy hook** (FR-DISC-6) is
+a ``ProxyConfig`` seam threaded into every network client without committing to a proxy.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import CampaignId, JobPostingId, new_id
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
+
+
+# --- proxy hook seam (FR-DISC-6) ------------------------------------------
+@dataclass(frozen=True)
+class ProxyConfig:
+    """Pluggable proxy hook for hostile boards (FR-DISC-6).
+
+    Designed but **not committed to a proxy**: the default is no proxy. A real
+    deployment supplies rotating residential proxies later; clients thread this through
+    without any core change. ``as_list`` yields the shape python-jobspy expects.
+    """
+
+    proxies: tuple[str, ...] = ()
+    enabled: bool = False
+
+    def as_list(self) -> list[str] | None:
+        if not self.enabled or not self.proxies:
+            return None
+        return list(self.proxies)
+
+
+# --- network boundary clients ---------------------------------------------
+@runtime_checkable
+class JobSpyClient(Protocol):
+    """Marked network boundary over python-jobspy ``scrape_jobs`` (FR-DISC-2/4)."""
+
+    def scrape(self, *, site: str, search_term: str, location: str | None,
+               results_wanted: int, proxies: list[str] | None) -> list[dict]:
+        """Return raw normalized-ish dict rows for one board (zero LLM tokens)."""
+        ...
 
 
 @runtime_checkable
-class Source(Protocol):
-    """A single pluggable discovery source (board / metasearch)."""
+class SearxngClient(Protocol):
+    """Marked network boundary over a SearXNG instance (FR-DISC-4 metasearch)."""
 
-    key: str
-
-    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
-        """Return normalized postings for ``criteria`` (zero LLM tokens)."""
+    def search(self, *, query: str, proxies: list[str] | None) -> list[dict]:
+        """Return raw result dicts from a SearXNG metasearch (zero LLM tokens)."""
         ...
+
+
+def _normalize_work_mode(raw: object) -> str | None:
+    """Map a board's loose remote/hybrid/onsite signal to our vocabulary."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return "remote" if raw else None
+    text = str(raw).strip().lower()
+    if text == "true":  # some boards send is_remote as a stringified bool
+        return "remote"
+    if text == "false":
+        return None
+    if not text or text in {"nan", "none"}:
+        return None
+    if "remote" in text:
+        return "remote"
+    if "hybrid" in text:
+        return "hybrid"
+    if any(k in text for k in ("on-site", "onsite", "in person", "in-person", "office")):
+        return "onsite"
+    return text
+
+
+def _clean(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return None
+    return text
+
+
+def normalize_row(
+    raw: dict, campaign_id: CampaignId, source_key: str
+) -> JobPosting | None:
+    """Normalize a raw board/metasearch row to a ``JobPosting`` (FR-DISC-3).
+
+    Pure, zero-token. Returns ``None`` when the row lacks the minimum viable shape
+    (a title and a source URL), so junk never reaches the digest.
+    """
+    title = _clean(raw.get("title"))
+    url = _clean(raw.get("job_url") or raw.get("source_url") or raw.get("url"))
+    if not title or not url:
+        return None
+    company = _clean(raw.get("company") or raw.get("company_name")) or ""
+    salary = (
+        _clean(raw.get("salary"))
+        or _format_salary(raw.get("min_amount"), raw.get("max_amount"), raw.get("interval"))
+    )
+    return JobPosting(
+        id=JobPostingId(new_id()),
+        campaign_id=campaign_id,
+        title=title,
+        company=company,
+        source_url=url,
+        location=_clean(raw.get("location")),
+        work_mode=_normalize_work_mode(raw.get("work_mode") or raw.get("is_remote")),
+        salary=salary,
+        description=_clean(raw.get("description")) or "",
+        source_key=source_key,
+    )
+
+
+def _format_salary(lo: object, hi: object, interval: object) -> str | None:
+    lo_c, hi_c = _clean(lo), _clean(hi)
+    if not lo_c and not hi_c:
+        return None
+    unit = f"/{_clean(interval)}" if _clean(interval) else ""
+    if lo_c and hi_c:
+        return f"{lo_c}-{hi_c}{unit}"
+    return f"{lo_c or hi_c}{unit}"
 
 
 def _matches(criteria: SearchCriteria, title: str, work_mode: str | None) -> bool:
@@ -46,12 +155,107 @@ def _matches(criteria: SearchCriteria, title: str, work_mode: str | None) -> boo
     return True
 
 
+def _search_term(criteria: SearchCriteria) -> str:
+    """Build a board search term from criteria (titles + keywords)."""
+    parts = list(criteria.titles) + list(criteria.keywords)
+    return " ".join(parts) if parts else (criteria.human_readable or "")
+
+
+# --- live sources (network boundary injected) ------------------------------
+class JobSpySource:
+    """One easy board via python-jobspy, behind the ``JobSpyClient`` seam (FR-DISC-2).
+
+    LinkedIn/Indeed/Glassdoor/Google/ZipRecruiter are each a separate registered
+    instance (``key="jobspy:indeed"`` etc.) so the user can toggle them individually.
+    """
+
+    def __init__(
+        self,
+        *,
+        site: str,
+        client: JobSpyClient,
+        proxy: ProxyConfig | None = None,
+        results_wanted: int = 25,
+    ) -> None:
+        self.site = site
+        self.key = f"jobspy:{site}"
+        self._client = client
+        self._proxy = proxy or ProxyConfig()
+        self._results_wanted = results_wanted
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        location = criteria.locations[0] if criteria.locations else None
+        try:
+            rows = self._client.scrape(
+                site=self.site,
+                search_term=_search_term(criteria),
+                location=location,
+                results_wanted=self._results_wanted,
+                proxies=self._proxy.as_list(),
+            )
+        except Exception as exc:  # a flaky board must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            posting = normalize_row(raw, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+class SearxngSource:
+    """SearXNG metasearch source behind the ``SearxngClient`` seam (FR-DISC-4)."""
+
+    def __init__(
+        self,
+        *,
+        client: SearxngClient,
+        proxy: ProxyConfig | None = None,
+        key: str = "searxng",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._proxy = proxy or ProxyConfig()
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        query = f"{_search_term(criteria)} jobs".strip()
+        try:
+            rows = self._client.search(query=query, proxies=self._proxy.as_list())
+        except Exception as exc:
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            posting = normalize_row(raw, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+@runtime_checkable
+class Source(Protocol):
+    """A single pluggable discovery source (board / metasearch)."""
+
+    key: str
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        """Return normalized postings for ``criteria`` (zero LLM tokens)."""
+        ...
+
+
 class SampleSource:
     """Offline fake source so discovery runs without network (clearly marked).
 
     Returns a small, deterministic set of postings filtered against the criteria.
-    Real boards (LinkedIn/Indeed via JobSpy, SearXNG) implement the same protocol and
-    replace this in production wiring; tests stay offline.
+    Real boards (JobSpy, SearXNG) implement the same protocol and replace this in
+    production wiring; tests stay offline.
     """
 
     def __init__(self, key: str = "sample", postings: list[dict] | None = None) -> None:
@@ -112,24 +316,31 @@ class SampleSource:
         return out
 
 
+@dataclass
+class _RegistrySnapshot:
+    enabled: dict[str, bool] = field(default_factory=dict)
+
+
 class JobSpySearxngDiscovery:
     """DiscoveryPort adapter: master aggregator over a pluggable source registry.
 
     Sources are registered by key and individually enabled/disabled per the user's
     toggles (FR-DISC-2). ``search`` aggregates across all *enabled* sources, then
-    normalizes/dedups by ``source_url`` (FR-DISC-3).
+    normalizes/dedups by ``source_url`` (FR-DISC-3). Per-source counts feed
+    source-yield learning (FR-DISC-5) via ``DiscoveryService``.
     """
 
     def __init__(
         self,
         *,
         sources: list[Source] | None = None,
+        proxy: ProxyConfig | None = None,
         proxy_url: str | None = None,
-        offline: bool = True,
     ) -> None:
-        # proxy_url is the FR-DISC-6 proxy hook (unused in Stage B offline mode).
-        self._proxy_url = proxy_url
-        self._offline = offline
+        # proxy / proxy_url is the FR-DISC-6 proxy hook (off by default).
+        if proxy is None and proxy_url:
+            proxy = ProxyConfig(proxies=(proxy_url,), enabled=True)
+        self._proxy = proxy or ProxyConfig()
         self._sources: dict[str, Source] = {}
         self._enabled: dict[str, bool] = {}
         for src in sources or [SampleSource()]:
@@ -153,6 +364,16 @@ class JobSpySearxngDiscovery:
 
     def enabled_sources(self) -> list[str]:
         return sorted(k for k, on in self._enabled.items() if on)
+
+    def apply_toggles(self, toggles: dict[str, bool]) -> None:
+        """Apply persisted per-source enable/disable toggles (FR-DISC-2).
+
+        Unknown keys are ignored (a persisted source may not be registered in this
+        process), so loading stale ``discovery_sources`` rows never crashes a run.
+        """
+        for key, on in toggles.items():
+            if key in self._sources:
+                self._enabled[key] = bool(on)
 
     # --- aggregation (FR-DISC-3) ------------------------------------------
     def search(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:

@@ -20,8 +20,11 @@ from applicant.ports.driven.font_install import FontInstallPort, FontStatus
 @pytest.mark.contract
 class TestFontInstallerContract:
     @pytest.fixture
-    def adapter(self) -> FontInstaller:
-        return FontInstaller()
+    def adapter(self, tmp_path) -> FontInstaller:
+        # Confine installs to a per-test dir so runs never pollute each other
+        # (a stray .applicant_fonts/Inconsolata.ttf would break the missing-fonts
+        # assertion on the next run; keep the default lane hermetic).
+        return FontInstaller(install_root=str(tmp_path / "fonts"))
 
     def test_satisfies_port_protocol(self, adapter):
         assert isinstance(adapter, FontInstallPort)

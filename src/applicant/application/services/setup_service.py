@@ -34,6 +34,7 @@ log = get_logger(__name__)
 
 _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
+_CHANNELS_KEY = "notify.channels"
 _DEFAULT_MAX_TIERS = 10
 
 
@@ -95,7 +96,47 @@ class SetupService:
         flagged = bool(rec and WizardStep.CHANNELS.value in set(rec.get("steps", [])))
         if self._channels_gate is not None:
             return bool(self._channels_gate()) or flagged
-        return flagged
+        return flagged or self.channels_configured()
+
+    def set_channels_gate(self, gate: Callable[[], bool]) -> None:
+        """Inject the channels gate after construction (composition root, FR-OOBE-3)."""
+        self._channels_gate = gate
+
+    # --- notification channels (FR-OOBE-2/3, FR-NOTIF-1) ------------------
+    def get_channels(self) -> dict[str, str]:
+        """Return persisted channel config (non-secret enough for the notifier)."""
+        rec = self._store.get(_CHANNELS_KEY)
+        return dict(rec) if rec else {}
+
+    def channels_configured(self) -> bool:
+        """True once at least Discord OR email is configured (FR-OOBE-3)."""
+        chan = self.get_channels()
+        return bool(chan.get("discord_webhook_url") or chan.get("apprise_urls"))
+
+    def configure_channels(
+        self, *, discord_webhook_url: str = "", apprise_urls: str = ""
+    ) -> None:
+        """Persist notification-channel config from the wizard (FR-OOBE-2).
+
+        Configuring Discord + email marks the channels step able to complete and
+        ungates automated work (FR-OOBE-3). Secrets are not logged.
+        """
+        rec = self.get_channels()
+        if discord_webhook_url:
+            rec["discord_webhook_url"] = discord_webhook_url
+        if apprise_urls:
+            rec["apprise_urls"] = apprise_urls
+        self._store.set(_CHANNELS_KEY, rec)
+        if self.channels_configured():
+            steps_rec = self._store.get(_STEPS_KEY) or {"steps": []}
+            steps = set(steps_rec.get("steps", []))
+            steps.add(WizardStep.CHANNELS.value)
+            self._store.set(_STEPS_KEY, {"steps": sorted(steps)})
+        log.info(
+            "channels_configured",
+            discord=bool(discord_webhook_url),
+            email=bool(apprise_urls),
+        )
 
     # --- status ----------------------------------------------------------
     def status(self) -> WizardStatus:

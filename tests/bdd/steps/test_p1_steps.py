@@ -32,6 +32,7 @@ scenarios(
     "../features/p1_scoring_feedback.feature",
     "../features/p1_pending_actions.feature",
     "../features/p1_source_yield_learning.feature",
+    "../features/p1_criteria_runmodes.feature",
 )
 
 
@@ -339,3 +340,82 @@ def compute_split(p1ctx):
 def explore_reserved(p1ctx):
     assert p1ctx["explore"], "exploration budget must reserve at least one source"
     assert any(s not in ("jobspy",) for s in p1ctx["explore"])
+
+
+# --- criteria + run controls (FR-CRIT-2/3, FR-AGENT-1/2/7, FR-LEARN-5) -----
+@given("a campaign exists")
+def a_campaign_exists(p1ctx, app_client):
+    _open_gate(app_client)
+    p1ctx["client"] = app_client
+    r = app_client.post("/api/campaigns", json={"name": "BDD campaign"})
+    assert r.status_code == 201
+    p1ctx["campaign_id"] = r.json()["id"]
+
+
+@when("the user edits the campaign keywords through the API")
+def edit_keywords(p1ctx):
+    p1ctx["resp"] = p1ctx["client"].put(
+        f"/api/criteria/{p1ctx['campaign_id']}", json={"keywords": ["python", "fastapi"]}
+    )
+    assert p1ctx["resp"].status_code == 200
+
+
+@then("the criteria reflect the user's edit")
+def criteria_reflect_edit(p1ctx):
+    body = p1ctx["client"].get(f"/api/criteria/{p1ctx['campaign_id']}").json()
+    assert body["keywords"] == ["python", "fastapi"]
+
+
+@when("the user changes an integral criterion without confirmation")
+def change_integral_criterion(p1ctx):
+    p1ctx["resp"] = p1ctx["client"].put(
+        f"/api/criteria/{p1ctx['campaign_id']}", json={"titles": ["staff engineer"]}
+    )
+
+
+@then("the criteria change is rejected with a confirmation-required response")
+def criteria_change_rejected(p1ctx):
+    assert p1ctx["resp"].status_code == 409
+
+
+@when("learning proposes a non-integral criteria adjustment")
+def learning_proposes_adjustment(p1ctx):
+    p1ctx["resp"] = p1ctx["client"].post(
+        f"/api/criteria/{p1ctx['campaign_id']}/learned",
+        json={"adjustment": {"keywords": ["django"]}, "rationale": "approved roles use django"},
+    )
+    assert p1ctx["resp"].status_code == 200
+
+
+@then("the adjustment is applied and surfaced with a human-readable summary")
+def adjustment_surfaced(p1ctx):
+    body = p1ctx["resp"].json()
+    assert body["keywords"] == ["django"]
+    assert body["learned_adjustments"]["summary"]
+
+
+@when("the user sets the throughput target above the hard cap")
+def set_throughput_over_cap(p1ctx):
+    p1ctx["resp"] = p1ctx["client"].put(
+        f"/api/agent-runs/{p1ctx['campaign_id']}/config", json={"throughput_target": 100}
+    )
+    assert p1ctx["resp"].status_code == 200
+
+
+@then("the persisted throughput target is clamped to thirty")
+def throughput_clamped(p1ctx):
+    assert p1ctx["resp"].json()["throughput_target"] == 30
+
+
+@when("an agent run is started with an intent sentence")
+def start_run_with_intent(p1ctx):
+    container = p1ctx["client"].app.state.container
+    container.agent_run_service.start_run(
+        p1ctx["campaign_id"], "Scan remote boards for backend roles next."
+    )
+
+
+@then("the latest intent for the campaign is that sentence")
+def latest_intent_matches(p1ctx):
+    body = p1ctx["client"].get(f"/api/agent-runs/{p1ctx['campaign_id']}/intent").json()
+    assert body["intent"] == "Scan remote boards for backend roles next."

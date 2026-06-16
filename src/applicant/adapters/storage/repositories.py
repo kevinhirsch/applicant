@@ -11,19 +11,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from applicant.adapters.storage import models as m
+from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
+from applicant.core.entities.discovery_source import DiscoverySource
+from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.ids import (
+    AgentRunId,
     ApplicationId,
     AttributeId,
     CampaignId,
+    DiscoverySourceId,
+    FieldMappingId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
@@ -42,6 +48,7 @@ def _campaign_to_entity(row: m.CampaignModel) -> Campaign:
         throughput_target=row.throughput_target,
         exploration_budget=row.exploration_budget,
         active=row.active,
+        criteria=dict(row.criteria or {}),
         schedule=dict(row.schedule or {}),
         learning_state=dict(row.learning_state or {}),
     )
@@ -146,6 +153,40 @@ def _pending_to_entity(row: m.PendingActionModel) -> PendingAction:
     )
 
 
+def _field_mapping_to_entity(row: m.FieldMappingModel) -> FieldMapping:
+    return FieldMapping(
+        id=FieldMappingId(row.id),
+        site_key=row.site_key,
+        field_selector=row.field_selector,
+        campaign_id=CampaignId(row.campaign_id) if row.campaign_id else None,
+        attribute_id=AttributeId(row.attribute_id) if row.attribute_id else None,
+        metadata=dict(row.mapping_metadata or {}),
+    )
+
+
+def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
+    return DiscoverySource(
+        id=DiscoverySourceId(row.id),
+        campaign_id=CampaignId(row.campaign_id),
+        source_key=row.source_key,
+        enabled=row.enabled,
+        yield_stats=dict(row.yield_stats or {}),
+    )
+
+
+def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
+    blob = dict(row.intent_sentence or {})
+    return AgentRun(
+        id=AgentRunId(row.id),
+        campaign_id=CampaignId(row.campaign_id),
+        intent_sentence=blob.get("sentence", ""),
+        run_mode=RunMode(blob.get("run_mode", RunMode.CONTINUOUS.value)),
+        throughput_target=int(blob.get("throughput_target", 15)),
+        stats=dict(blob.get("stats", {})),
+        timestamp=row.timestamp,
+    )
+
+
 # --- repositories ----------------------------------------------------------
 
 
@@ -162,6 +203,7 @@ class CampaignRepo:
                 throughput_target=campaign.throughput_target,
                 exploration_budget=campaign.exploration_budget,
                 active=campaign.active,
+                criteria=campaign.criteria,
                 schedule=campaign.schedule,
                 learning_state=campaign.learning_state,
             )
@@ -408,6 +450,111 @@ class PendingActionRepo:
             row.resolved = True
 
 
+class FieldMappingRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, mapping: FieldMapping) -> None:
+        self._s.merge(
+            m.FieldMappingModel(
+                id=mapping.id,
+                campaign_id=mapping.campaign_id,
+                attribute_id=mapping.attribute_id,
+                site_key=mapping.site_key,
+                field_selector=mapping.field_selector,
+                mapping_metadata=mapping.metadata,
+            )
+        )
+
+    def get(self, mapping_id: FieldMappingId) -> FieldMapping | None:
+        row = self._s.get(m.FieldMappingModel, mapping_id)
+        return _field_mapping_to_entity(row) if row else None
+
+    def list_for_site(self, site_key: str) -> list[FieldMapping]:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel).where(m.FieldMappingModel.site_key == site_key)
+        ).all()
+        return [_field_mapping_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[FieldMapping]:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel).where(m.FieldMappingModel.campaign_id == campaign_id)
+        ).all()
+        return [_field_mapping_to_entity(r) for r in rows]
+
+    def find(self, site_key: str, field_selector: str) -> FieldMapping | None:
+        rows = self._s.scalars(
+            select(m.FieldMappingModel)
+            .where(m.FieldMappingModel.site_key == site_key)
+            .where(m.FieldMappingModel.field_selector == field_selector)
+        ).all()
+        entities = [_field_mapping_to_entity(r) for r in rows]
+        scoped = [e for e in entities if e.campaign_id is not None]
+        return (scoped or entities or [None])[0]
+
+
+class DiscoverySourceRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def upsert(self, source: DiscoverySource) -> None:
+        self._s.merge(
+            m.DiscoverySourceModel(
+                id=source.id,
+                campaign_id=source.campaign_id,
+                source_key=source.source_key,
+                enabled=source.enabled,
+                yield_stats=source.yield_stats,
+            )
+        )
+
+    def get(self, campaign_id: CampaignId, source_key: str) -> DiscoverySource | None:
+        row = self._s.scalars(
+            select(m.DiscoverySourceModel)
+            .where(m.DiscoverySourceModel.campaign_id == campaign_id)
+            .where(m.DiscoverySourceModel.source_key == source_key)
+        ).first()
+        return _discovery_source_to_entity(row) if row else None
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[DiscoverySource]:
+        rows = self._s.scalars(
+            select(m.DiscoverySourceModel).where(
+                m.DiscoverySourceModel.campaign_id == campaign_id
+            )
+        ).all()
+        return [_discovery_source_to_entity(r) for r in rows]
+
+
+class AgentRunRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, run: AgentRun) -> None:
+        self._s.merge(
+            m.AgentRunModel(
+                id=run.id,
+                campaign_id=run.campaign_id,
+                intent_sentence={
+                    "sentence": run.intent_sentence,
+                    "run_mode": run.run_mode.value,
+                    "throughput_target": run.throughput_target,
+                    "stats": run.stats,
+                },
+                timestamp=run.timestamp,
+            )
+        )
+
+    def get(self, run_id: AgentRunId) -> AgentRun | None:
+        row = self._s.get(m.AgentRunModel, run_id)
+        return _agent_run_to_entity(row) if row else None
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[AgentRun]:
+        rows = self._s.scalars(
+            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
+        ).all()
+        return [_agent_run_to_entity(r) for r in rows]
+
+
 class SqlAlchemyStorage:
     """Concrete ``StoragePort``: aggregates repositories under one session."""
 
@@ -422,6 +569,9 @@ class SqlAlchemyStorage:
         self.decisions = DecisionRepo(session)
         self.outcomes = OutcomeEventRepo(session)
         self.pending_actions = PendingActionRepo(session)
+        self.field_mappings = FieldMappingRepo(session)
+        self.discovery_sources = DiscoverySourceRepo(session)
+        self.agent_runs = AgentRunRepo(session)
 
     def commit(self) -> None:
         self._session.commit()
