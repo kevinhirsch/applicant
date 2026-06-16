@@ -32,35 +32,75 @@ The full build specification lives under [`docs/`](docs/):
 | [`docs/data-model.md`](docs/data-model.md) | Postgres/JSONB schema (campaign-scoped, multi-ready) |
 | [`docs/work-packages.md`](docs/work-packages.md) | Phases 0–4, requirement-tagged, with exit criteria |
 | [`docs/traceability.md`](docs/traceability.md) | Requirement → Work Package → BDD Feature → contract test |
+| [`docs/delivery-status.md`](docs/delivery-status.md) | Per-phase delivery summary + exit-criteria status |
+| [`docs/extending.md`](docs/extending.md) | How to add a new ATS adapter or discovery source |
 | [`docs/dormant-surfaces.md`](docs/dormant-surfaces.md) | Dormant Surface Wiring Backlog |
 | [`docs/onboarding-intake.md`](docs/onboarding-intake.md) | Workday-ready onboarding intake schema |
 | [`docs/voice-and-truthfulness.md`](docs/voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](docs/open-items.md) | Open items and defaults |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 
-## Install (one-liner) and update
+---
 
-Applicant ships the whole stack — FastAPI + frontend, PostgreSQL, SearXNG, on-demand
-Neko, font-install — as a Docker Compose deployment (FR-INSTALL-1/3). No `make` needed.
+# Deployment
 
-**One-liner install** (Proxmox-helper-script style; idempotent, data-safe; runs the
-Compose stack and Alembic migrations, then OOBE finishes in-browser — NFR-ZEROCLI-1):
+Applicant ships the whole stack — FastAPI + the vendored frontend, PostgreSQL,
+SearXNG, on-demand Neko, font-install — as a Docker Compose deployment
+(FR-INSTALL-1/3). No `make` needed. Everything after install is configured
+**in-browser** (zero-CLI, NFR-ZEROCLI-1).
+
+## Prerequisites
+
+- A Linux host (VM, Proxmox LXC, or bare metal) or any Docker host; ~2 vCPU / 4 GB
+  RAM is plenty to start.
+- **Docker + Docker Compose v2** — the only hard requirement for the container path.
+- For local development instead of containers: **Python 3.11+** and
+  **[uv](https://docs.astral.sh/uv/)** (`uv sync`).
+- An LLM endpoint — either a cloud OpenAI-compatible API key (e.g. OpenRouter) **or**
+  a local/network [Ollama](https://ollama.com) (fully local, no cloud key). You set
+  this in the browser at first run; no key needs to live in a file.
+
+The dev Compose stack (`docker/docker-compose.yml`) brings up three services — `api`
+(FastAPI + UI), `postgres` (16), and `searxng` (metasearch) — with a persistent
+`pgdata` volume. `docker/docker-compose.prod.yml` is the hardened production variant
+(env-based secrets, `restart: always`, an `api` healthcheck, a `pgbackups` volume,
+internal-only SearXNG).
+
+## Install and first run
+
+**One-liner** (Proxmox-helper-script style; idempotent and data-safe; brings up the
+Compose stack and runs Alembic migrations, then OOBE finishes in-browser):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/<org>/applicant/main/scripts/install.sh)" -- --apply
 ```
 
-Or from a checkout (dry-run by default — prints the steps; add `--apply` to run them):
+From a checkout (dry-run by default — prints the steps; add `--apply` to run them):
 
 ```bash
 bash scripts/install.sh            # dry-run preview
 bash scripts/install.sh --apply    # provision: compose up + alembic upgrade head
 ```
 
-Editable defaults are environment-driven (`POSTGRES_USER`, `POSTGRES_PASSWORD`,
-`POSTGRES_DB`, `APP_URL`). Then open `http://localhost:8000` and complete the wizard.
+Then open **`http://localhost:8000`** and complete the setup wizard (see the
+[User guide](#user-guide)). Editable defaults are environment-driven (set them in a
+`.env` file next to the compose file before `--apply`, or export them).
 
-**Update** — backs up the DB, pulls, runs migrations, restarts, and supports
+**Local (non-container) run** for development:
+
+```bash
+uv sync                                   # install deps (add --extra browser for patchright)
+uv run alembic upgrade head               # create the schema (needs DATABASE_URL → Postgres)
+uv run uvicorn applicant.app.main:app --host 0.0.0.0 --port 8000
+```
+
+With the default `ORCHESTRATOR_BACKEND=shim` the app boots with **no Postgres**
+(file-backed checkpoints + in-memory storage fallback), which is how the test suite
+stays hermetic; point `DATABASE_URL` at a real Postgres for persistence.
+
+## Updating
+
+`scripts/update.sh` backs up the DB, pulls, runs migrations, restarts, and supports
 **rollback** of the most recent backup on failure (FR-INSTALL-2). Safe-by-default
 (dry-run unless `--apply`):
 
@@ -69,9 +109,176 @@ bash scripts/update.sh --apply              # backup → pull → migrate → re
 bash scripts/update.sh --rollback --apply   # restore the most recent DB backup
 ```
 
-The same update flow is invokable from the **in-UI Update button** on the debug
-surface (`/debug`) without any CLI (FR-OOBE-4); real dispatch is guarded behind
+The same flow is invokable from the **in-UI Update button** on the debug surface
+(`/debug`) with no CLI (FR-OOBE-4); real dispatch is guarded behind
 `APPLICANT_UPDATE_ENABLED=1`, otherwise it reports a safe dry-run.
+
+## Configuration (environment variables)
+
+All settings are env-driven (`src/applicant/app/config.py`, loaded from the
+environment or a `.env` file). Sensible defaults mean a fresh install needs almost
+none of these — the LLM and notification channels are configured in-browser.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `postgresql+psycopg://applicant:applicant@localhost:5432/applicant` | Postgres DSN (app schema). |
+| `ORCHESTRATOR_BACKEND` | `shim` | Durable backbone: `shim` (file-backed, no PG) or `dbos` (needs Postgres). |
+| `CHECKPOINT_DIR` | `.applicant_checkpoints` | Where the shim stores durable checkpoints. |
+| `APP_STATIC_DIR` | `frontend/static` | Vendored UI assets served by FastAPI. |
+| `LLM_PROVIDER` / `LLM_MODEL` | _empty_ | Seed the OOBE LLM gate from env (otherwise set in-browser). |
+| `LLM_BASE_URL` / `LLM_API_KEY` | _empty_ | OpenAI-compatible endpoint + key (or Ollama base URL; key blank). |
+| `LLM_RATE_LIMIT` / `LLM_RATE_PERIOD` | `0` / `60.0` | Per-provider LLM rate cap (0 disables) over N seconds. |
+| `SANDBOX_CONCURRENCY` | `3` | Max concurrent application sandboxes (durable-queue cap). |
+| `CREDENTIAL_KEYFILE` | `secrets/master.key` | libsodium master key file for the credential vault (mode `0600`). |
+| `FONTS_DIR` | `.applicant_fonts` | Confined dir for runtime font installs (never system-wide). |
+| `DISCOVERY_LIVE` | `false` | Turn on real job-board scraping (off = offline fakes). |
+| `SEARXNG_URL` | _empty_ | SearXNG metasearch endpoint for discovery. |
+| `DISCOVERY_PROXIES` | _empty_ | Comma-separated proxy hooks for hostile boards (empty = direct). |
+| `NOTIFICATIONS_LIVE` | `false` | Turn on real Discord/email send (off = captured, no network). |
+| `DISCORD_WEBHOOK_URL` / `APPRISE_URLS` | _empty_ | Notification targets (Apprise URL syntax). |
+| `NEKO_ROOMS_URL` / `NEKO_ROOMS_TOKEN` | _empty_ | Real Neko remote-session server for live takeover. |
+| `APPLICANT_UPDATE_ENABLED` | _unset_ | Set `1` to let the in-UI Update button actually dispatch. |
+| `LOG_FORMAT` / `LOG_LEVEL` | `pretty` / `INFO` | structlog output (`json` in prod) and verbosity. |
+
+## Enabling the real integrations
+
+The default lane runs everything behind hermetic fakes. To go fully live in a real
+deployment, enable each integration (all are opt-in, none required to boot):
+
+- **Persistence + durable execution (DBOS):** set `ORCHESTRATOR_BACKEND=dbos` and a
+  reachable `DATABASE_URL`. DBOS owns its own system tables; Alembic manages the app
+  schema. See [Durable orchestration backend](#durable-orchestration-backend).
+- **Real browser pre-fill (patchright):** `uv sync --extra browser` then
+  `patchright install chromium`. The adapter swaps from the in-memory fake page model
+  to a real Chromium with stealth fingerprinting.
+- **Live discovery:** `DISCOVERY_LIVE=true` (+ `SEARXNG_URL`, optional
+  `DISCOVERY_PROXIES`) to scrape real boards via JobSpy + SearXNG.
+- **Notifications:** `NOTIFICATIONS_LIVE=true` + `DISCORD_WEBHOOK_URL` / `APPRISE_URLS`
+  (email/SMTP/etc. via Apprise URL syntax). Also configurable in the wizard.
+- **Live remote takeover (Neko):** `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`) for the
+  one-click VNC session; the remote-view sub-port also supports noVNC.
+- **Resume fidelity rendering:** install a TeX engine (`lualatex`/`xelatex` +
+  fontspec/moderncv) for LaTeX-primary PDFs, or LibreOffice (`soffice`) for the
+  docx-XML fallback. Without either, rendering uses the deterministic stub seam.
+
+## Data, backups, and security
+
+- **Persistent data** lives in Postgres (the `pgdata`/`pgbackups` Compose volumes):
+  campaigns, attribute clouds, applications, screenshots, resume variants, learning
+  state, durable workflow state. Back it up with `scripts/update.sh` (which dumps
+  before every migration) or your own `pg_dump` schedule.
+- **Secrets:** application credentials are sealed at rest with libsodium
+  (XSalsa20-Poly1305); the master key is a `0600` key-file (`CREDENTIAL_KEYFILE`) —
+  keep it off the repo and back it up separately. Secrets are never logged (structlog
+  redacts recursively). API keys are stored via the encrypted credential path, not in
+  plaintext config.
+- **Remote access / HTTPS:** put the `api` service behind a reverse proxy (Caddy,
+  nginx, Traefik) for TLS, or expose it over a private network (e.g. Tailscale). The
+  Update button and live-session URLs assume an authenticated, trusted network.
+
+---
+
+# User guide
+
+Applicant is operated entirely through its web UI (zero-CLI). The surfaces:
+
+| URL | Surface | What you do there |
+|---|---|---|
+| `/wizard` | Setup wizard (OOBE) | First-run configuration: LLM → channels → fonts → onboarding |
+| `/` `/digest` | Pending-actions home + daily digest | Approve/decline roles, work the 24/7 action queue |
+| `/review` | Redline review | Approve/revise resumes, cover letters, screening answers |
+| `/chat` | Chatbot | Fill gaps in your profile/criteria conversationally |
+| `/debug` | Debug & admin | Tool toggles, logs, screenshots, history, workflow state, Update button |
+
+### 1. First-run setup wizard (`/wizard`)
+
+A resumable, multi-step wizard (FR-OOBE, FR-UI-5). Steps gate in order and the engine
+will not start automated work until they're complete:
+
+1. **LLM settings (gate).** Choose a provider/model — a cloud OpenAI-compatible API
+   (paste an OpenRouter key) or a local Ollama URL (fully local). Optionally arrange a
+   capability-ranked **tier ladder** (cheap model first, escalate on hard tasks).
+   Nothing downstream unlocks until this is set.
+2. **Notification channels.** Connect Discord and/or email (Apprise). This is a gating
+   step — the engine won't run unattended until you can be reached.
+3. **Fonts.** Upload your résumé; the engine detects required fonts and prompts for any
+   missing ones, installing them into the render environment.
+4. **Onboarding intake.** A Workday-ready interview (identity, work authorization,
+   location/remote prefs, target roles, salary floor, full work history, education,
+   references, key attributes, EEO — defaulting to "decline to self-identify", never
+   AI-guessed). Your base résumé is parsed to bootstrap the **attribute cloud**;
+   conflicts with your answers ask for confirmation. Finally you **accept or reject**
+   the LaTeX conversion preview of your résumé (accept → LaTeX-primary engine; reject →
+   docx fallback).
+
+### 2. Create a campaign and criteria
+
+Each job search is a **campaign** (`/api/campaigns`) with its own criteria, attribute
+cloud, learning, and digest. Criteria (`/api/criteria`) are human-readable and editable
+at any time; the engine also proposes learned adjustments, always shown transparently
+and overridable. Tune run behavior (`/api/agent-runs`): throughput (default ~15/day,
+hard cap 30), and run mode (24/7 continuous, fixed duration, or until N viable roles).
+
+### 3. The daily digest (approve / decline)
+
+When matches accumulate, you get a per-campaign **digest** (email + webpage + a Discord
+"ready" ping). Each row shows the role, a brief summary, the posting link, work mode, a
+viability score, and **why it was suggested**. You **approve** (queue it for pre-fill)
+or **decline with feedback** (mandatory free-text) — and that feedback feeds learning
+and tunes the next run's criteria. Empty days get a short "here's what I searched and
+why" note. Notifications follow an escalation ladder: in-app if you're present →
+Discord (held ~30s) → email after a timeout; acting on one channel cancels the others.
+
+### 4. Pending-actions home base (`/` and `/digest`)
+
+The 24/7 home base lists **everything awaiting you** — digest approvals, material
+reviews, missing-attribute soft errors, agent questions, and final-submit approvals —
+each one actionable.
+
+### 5. Application pre-fill and live takeover
+
+For an approved role the engine spins up an isolated, stealthy browser **sandbox** and
+pre-fills every field on every page from your attribute cloud (escalating ambiguous
+mappings to the LLM, never guessing sensitive/EEO fields). It **stops at irreducible
+human steps** — CAPTCHA, email/SMS verification, account-creating submit, final
+submit — and notifies you with a **one-click live session (VNC)** link (`/api/remote`)
+where you can finish the step yourself or authorize the engine to continue. If a board
+gets hostile, **cautious mode** pauses and hands off rather than risking your account.
+Credentials you enter (or that the engine captures during account creation) are banked
+in the encrypted **vault** (`/api/credentials`) for reuse.
+
+### 6. Material review and approval (`/review`)
+
+When a role warrants tailored material, the engine generates a résumé variant and/or
+cover letter and/or screening answers — truthfully (it reframes real experience, never
+fabricates) and without AI tells (em-dashes stripped, your voice matched). Each artifact
+is shown as a **redline** with additions and subtractions highlighted. Run the
+interactive loop: accept, reject, free-text instruction ("make it more concise"),
+targeted add, or targeted subtract — each turn re-generates within budget and
+re-renders. **Nothing is submitted until you approve it.** Approved material bundles
+into the final-submit step.
+
+### 7. Tools, debug, and the chatbot
+
+- **Tool toggles** (`/debug`): switch any capability on/off (discovery, scoring,
+  pre-fill, account-creation, web-research, résumé/cover/answer generation, chat,
+  notifications) — and it actually disables at runtime.
+- **Debug surface** (`/debug`): recent (redacted) logs, per-application history, captured
+  per-page screenshots, durable-workflow state, and the **variant library** (lineage +
+  fit scores). The **Update button** lives here too.
+- **Chatbot** (`/chat`): converse to fill gaps in your profile or criteria; proposed
+  changes go through the confirmation gate (integral/sensitive changes need your
+  explicit OK; minor ones auto-apply).
+
+### 8. How it learns
+
+Every input — digest approvals/declines and their feedback, redline edits, pre-fill
+soft-error resolutions, source yield, and actual **conversions** (approval **plus**
+submission) — feeds per-campaign learning. The engine learns the signature of roles
+that convert and biases discovery, scoring, and variant selection toward them —
+transparently, and always overridable by you.
+
+---
 
 ## Stack
 
