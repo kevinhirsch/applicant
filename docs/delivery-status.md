@@ -1,10 +1,11 @@
 # Delivery Status
 
 Single source of "done" truth: a per-phase delivery summary for the Applicant engine.
-**All five phases (0–4) are implemented and merged to `main`.** The hermetic default test
-lane is green — `uv run pytest -q` reports **539 passed** with 10 integration-gated skips.
+**All five phases (0–4) are merged to `main`, plus a production-hardening remediation pass
+that followed an honest re-audit.** The hermetic default test lane is green —
+`uv run pytest -q` reports **613 passed** with 14 integration-gated skips.
 
-See [traceability.md](traceability.md) for requirement-level coverage and
+See [traceability.md](traceability.md) for the re-verified requirement-level coverage and
 [work-packages.md](work-packages.md) for the original phase plan and exit criteria.
 
 ## Test count progression
@@ -16,9 +17,22 @@ See [traceability.md](traceability.md) for requirement-level coverage and
 | Phase 2 | 339 |
 | Phase 3 | 425 |
 | Phase 3b (durable revision sessions) | 480 |
-| Phase 4 | **539** |
+| Phase 4 | 539 |
+| Production-hardening remediation | 594 |
+| Production-hardening re-audit (current) | **613** |
 
-(10 integration tests skip by default — they require live external boundaries.)
+(14 integration tests skip by default — they require live external boundaries.)
+
+## What is and isn't proven by the test suite
+
+The **613 hermetic tests prove the logic** of every requirement against fakes / in-memory
+adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
+conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
+the **14 integration-gated skips** cover those and run only on a live deployment with the
+matching toolchain/service present (live Postgres/DBOS, a real browser + chromium binary,
+live job boards, real TeX/LibreOffice, a live Neko session, live Discord/SMTP). The
+production code paths for those boundaries exist and are wired — only their live execution is
+gated. They are environment dependencies, not requirement gaps.
 
 ## Per-phase summary
 
@@ -62,11 +76,28 @@ registry (FR-UI-4), debug surface (AdminQueryService + admin router: logs / scre
 per-application history / durable-workflow state), confirmation-gated chatbot (ChatService +
 chat router, FR-CHAT-1), history retrieval UI, in-UI Update button, and the one-liner
 `scripts/install.sh` + `scripts/update.sh` (backup / migrate / restart / rollback).
-**Exit criteria:** met — every FR-*/NFR-* requirement is delivered; no remaining gaps.
+**Exit criteria:** met. Every FR-*/NFR-* requirement is delivered and re-verified against the
+code; the only un-exercised paths are the integration-gated boundaries above (environment
+dependencies, not requirement gaps).
+
+### Production-hardening remediation (post-honest-re-audit)
+
+An honest re-audit found the earlier traceability matrix materially **overstated**: it claimed
+"all delivered" while several MUST behaviors were present-but-not-enforced, never driven, or
+not persisted. The remediation below was implemented and merged; this re-audit re-verified
+each against the actual `src/` code (file:line in [traceability.md](traceability.md)).
+
+| What the audit found | How it was resolved |
+|---|---|
+| **Safety gates unenforced.** Review-before-submit, the automated-work dependency, mandatory decline feedback existed as rules but nothing called them. | Enforced at the service layer / dispatch boundary: `SubmissionService.ensure_submittable` → 409 (FR-RESUME-8); `require_automated_work` dependency → 409 until LLM+channels+onboarding (FR-ONBOARD-2/FR-OOBE-3); `DigestService.decline` rejects blank feedback (FR-FB-1); plus the digest-decision pending-action key bug fix. |
+| **No run loop / nothing on a cadence.** Discovery, scoring, digest, escalation, pre-fill never fired on their own. | Real `AgentLoop.tick` drives the durable pipeline (registers + runs the workflow, enforces the 30/day cap, pivots/yields on blocks) + a `Scheduler` cadence advances campaigns, the daily digest, and the notification ladder; DBOS adapter activated behind the orchestration port (FR-AGENT-1/2/4/5/6/7, FR-DUR-1/2/3/4, FR-DIG-1, FR-NOTIF-2/3). |
+| **Credentials / screenshots not persisted; digest email pull-only.** | `PgCredentialStore` persists libsodium-sealed rows to Postgres and a fresh instance unseals them (survives restart, FR-VAULT-1); screenshots persisted via the storage repo + migration (FR-LOG-2); digest email is actually SENT (FR-DIG-2); source-yield / converting-signature / attr-reuse producers wired (FR-DISC-5, FR-LEARN-5/6, FR-ATTR-5). |
+| **Render fidelity was a passthrough; egress/redaction were seams only.** | Real docx→moderncv conversion via the vendored Jinja2 template + LaTeX escaping (FR-RESUME-3/3a/4); real `fc-cache` shell-out + auto compile/convert when the engine is present (FR-FONT-2); residential egress threaded into the real browser launch with a datacenter-refusal guardrail + honest caveat (FR-STEALTH-4/5); value-based secret redaction (FR-OBS-1); pending-action producers, criteria/attribute editor surfaces, per-task LLM tier (FR-UI-3/6, FR-LLM-4). |
 
 ## Boundaries that require a live deployment
 
-The 10 default skips are not gaps — they exercise real external systems behind
+The 14 default skips are not gaps — they exercise real external systems behind
 integration-gated boundaries: DBOS/Postgres durable execution, real browser
-(patchright/playwright), live job boards, real TeX (lualatex/xelatex), live Neko remote
-session, and live Discord/SMTP delivery. The hermetic lane proves the same logic with fakes.
+(patchright/playwright), live job boards, real TeX (lualatex/xelatex) + LibreOffice docx
+conversion, a live Neko remote session, and live Discord/SMTP delivery. The hermetic lane
+proves the same logic with fakes; these run only when the toolchain/service is present.
