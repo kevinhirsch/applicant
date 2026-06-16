@@ -178,11 +178,11 @@ class DiscoveryService:
         if self._learning is None:
             return
         counts = self.source_yield(postings)
-        model = self._learning.load_model(campaign_id)
-        model = self._learning.record_source_funnel(
-            model, {k: {"matches": v} for k, v in counts.items()}
+        # Atomic per-campaign fold so concurrent approval/submission recording can't
+        # lose-update the shared learning state (FR-LEARN-1/FR-DUR-2).
+        self._learning.record_funnel_atomic(
+            campaign_id, {k: {"matches": v} for k, v in counts.items()}
         )
-        self._learning.persist_model(model)
 
     def _dedup(self, postings: list[JobPosting]) -> list[JobPosting]:
         kept: list[JobPosting] = []

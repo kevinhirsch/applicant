@@ -210,7 +210,7 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
 
 def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
     blob = dict(row.intent_sentence or {})
-    return AgentRun(
+    kwargs = dict(
         id=AgentRunId(row.id),
         campaign_id=CampaignId(row.campaign_id),
         intent_sentence=blob.get("sentence", ""),
@@ -219,6 +219,11 @@ def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
         stats=dict(blob.get("stats", {})),
         timestamp=row.timestamp,
     )
+    # Preserve the monotonic insertion ``seq`` for deterministic tie-break on equal
+    # timestamps (FR-AGENT-7); fall back to the entity default when absent.
+    if "seq" in blob:
+        kwargs["seq"] = int(blob["seq"])
+    return AgentRun(**kwargs)
 
 
 # --- repositories ----------------------------------------------------------
@@ -633,6 +638,7 @@ class AgentRunRepo:
                     "run_mode": run.run_mode.value,
                     "throughput_target": run.throughput_target,
                     "stats": run.stats,
+                    "seq": run.seq,
                 },
                 timestamp=run.timestamp,
             )
