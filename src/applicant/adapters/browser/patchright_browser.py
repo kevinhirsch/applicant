@@ -195,7 +195,9 @@ class PatchrightBrowser:
         if self._use_real_browser:  # pragma: no cover - integration-gated
             from applicant.adapters.browser.page_source import PlaywrightPageSource
 
-            return PlaywrightPageSource(fingerprint)
+            # FR-STEALTH-4: thread the (validated) residential-egress proxy into the
+            # real browser launch so a configured proxy is ACTUALLY used for egress.
+            return PlaywrightPageSource(fingerprint, proxy=self.egress.launch_proxy())
         return FakePageSource(ats)
 
     def _session(self, application_id: ApplicationId) -> _Session:

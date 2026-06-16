@@ -142,6 +142,18 @@ class TestMaximalPrefill:
         questions = next(v for url, v in result.filled_by_page.items() if "questions" in url)
         assert "#q-why" not in questions  # not filled
 
+    def test_essay_question_materializes_agent_question_pending_action(self):
+        # FR-UI-3: a genuine question requiring the human produces an `agent_question`
+        # pending action so it shows in the portal (the kind now HAS a producer).
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        _resume_full(service, _app(cid), _full_answers(cid))
+        pending = storage.pending_actions.list_open(cid)
+        questions = [p for p in pending if p.kind == "agent_question"]
+        assert questions, "essay screening question -> agent_question pending action"
+        assert any("#q-why" == q.payload.get("field_selector") for q in questions)
+
     def test_sensitive_eeo_policy_enforced(self):
         cid = CampaignId(new_id())
         service = _service(InMemoryStorage())
@@ -216,6 +228,33 @@ class TestLLMEscalation:
         assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
         assert any("Phone" in c for c in MapLLM.asked)  # the LLM was consulted
 
+    def test_field_mapping_starts_above_l1(self):
+        # FR-LLM-4: the field-mapping escalation passes a per-task start_tier > 1 so
+        # the ladder begins at the task-appropriate rung (not the trivial L1).
+        cid = CampaignId(new_id())
+        attrs = [a for a in _full_answers(cid) if a.name != "Phone"]
+        attrs.append(_attr(cid, "Mobile Number", "555-0199"))
+
+        class TierCapturingLLM:
+            start_tiers: list[int] = []
+
+            def complete(self, messages, *, start_tier=1, **kw):
+                TierCapturingLLM.start_tiers.append(start_tier)
+                from applicant.ports.driven.llm import LLMResult
+
+                return LLMResult(text="Mobile Number", tier=start_tier, model="fake")
+
+            def list_models(self):
+                return ["fake"]
+
+            def is_configured(self):
+                return True
+
+        service = _service(InMemoryStorage(), llm=TierCapturingLLM())
+        _resume_full(service, _app(cid), attrs)
+        assert TierCapturingLLM.start_tiers, "the LLM was consulted for field mapping"
+        assert all(t > 1 for t in TierCapturingLLM.start_tiers)
+
     def test_low_confidence_llm_falls_back_to_soft_error(self):
         cid = CampaignId(new_id())
         attrs = [a for a in _full_answers(cid) if a.name != "Phone"]
@@ -262,6 +301,42 @@ class TestLLMEscalation:
         eeo = next(v for url, v in result.filled_by_page.items() if "voluntary" in url)
         assert eeo["#gender"] == DECLINE_TO_SELF_IDENTIFY
         assert all("gender" not in c.lower() for c in ShouldNotBeAskedLLM.asked_labels)
+
+
+@pytest.mark.unit
+class TestErrorProducer:
+    def test_fill_failure_materializes_error_pending_action(self):
+        # FR-UI-3: a soft fill-failure produces an `error` pending action (the kind
+        # now HAS a producer) without crashing the run.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+
+        class FlakyBrowser:
+            """Delegates to a real PatchrightBrowser but fails one field fill."""
+
+            def __init__(self):
+                self._inner = PatchrightBrowser()
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def fill_field(self, aid, selector, value):
+                if selector == "#first-name":
+                    raise RuntimeError("element detached")
+                return self._inner.fill_field(aid, selector, value)
+
+        service = PrefillService(
+            storage=storage,
+            browser=FlakyBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+        )
+        _resume_full(service, _app(cid), _full_answers(cid))
+        pending = storage.pending_actions.list_open(cid)
+        errors = [p for p in pending if p.kind == "error"]
+        assert errors, "fill failure -> error pending action"
+        assert errors[0].payload.get("field_selector") == "#first-name"
 
 
 @pytest.mark.unit

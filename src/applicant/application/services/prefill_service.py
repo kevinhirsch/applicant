@@ -46,6 +46,12 @@ from applicant.ports.driven.browser_automation import DetectedField
 #: Topic the durable orchestrator uses for the final-approval gate (FR-NOTIF-2).
 FINAL_APPROVAL_TOPIC = "final_approval"
 
+#: Per-task starting tier for field-mapping escalation (FR-LLM-4). Mapping an
+#: ambiguous form field to a stored attribute is a small reasoning task that the
+#: trivial L1 rung handles poorly, so the ladder STARTS at L2 (it still climbs on
+#: low confidence / overflow). This is the spec's per-task starting tier in action.
+FIELD_MAPPING_START_TIER = 2
+
 
 @dataclass
 class PrefillResult:
@@ -317,9 +323,12 @@ class PrefillService:
                 # Essay screening question: NOT auto-answered in Phase 2 — recorded
                 # and deferred to Phase 3 generation + the FR-RESUME-8 review gate
                 # (FR-ANSWER-1). A clean handoff; pre-fill of other fields continues.
+                # FR-UI-3: a genuine question requiring the human materializes an
+                # ``agent_question`` pending action so it shows in the portal.
                 result.deferred_essay_questions.append(
                     {"selector": fld.selector, "label": fld.label, "url": state.url}
                 )
+                self._emit_agent_question(app, fld, state.url)
                 continue
 
             if resolved.value is None:
@@ -328,7 +337,19 @@ class PrefillService:
                     return self._block_missing_attr(app, fld, result)
                 continue  # optional field with no value → skip.
 
-            self._browser.fill_field(aid, fld.selector, resolved.value)
+            try:
+                self._browser.fill_field(aid, fld.selector, resolved.value)
+            except Exception as exc:  # noqa: BLE001 — soft failure, never crash the loop
+                # FR-UI-3: an error / soft-failure during fill materializes an
+                # ``error`` pending action so it surfaces in the portal (it does not
+                # crash the run; remaining fields continue, then the user is asked).
+                self._emit_error(
+                    app,
+                    title=f"Could not fill field: {fld.label}",
+                    detail=str(exc),
+                    selector=fld.selector,
+                )
+                continue
             page_log[fld.selector] = resolved.value
             if resolved.is_sensitive and resolved.from_explicit:
                 result.sensitive_filled_from_explicit.append(fld.selector)
@@ -403,7 +424,11 @@ class PrefillService:
             "single word NONE if none clearly maps. Do not invent a value."
         )
         try:
-            res = self._llm.complete([ChatMessage(role="user", content=prompt)])
+            # FR-LLM-4: field mapping starts above L1 (the task-appropriate tier).
+            res = self._llm.complete(
+                [ChatMessage(role="user", content=prompt)],
+                start_tier=FIELD_MAPPING_START_TIER,
+            )
         except Exception:
             return None  # LLM unavailable → fall through to soft error (frugal).
         if getattr(res, "low_confidence", False):
@@ -441,6 +466,66 @@ class PrefillService:
         )
         self._persist(app)
         return result
+
+    def _emit_agent_question(self, app, fld: DetectedField, url: str) -> PendingActionId:
+        """Materialize an ``agent_question`` pending action (FR-UI-3 / FR-AGENT-4).
+
+        A genuine question requiring the human (an essay/screening question we do not
+        auto-answer) becomes a portal item so the user can answer it. Deduped per
+        (application, selector) so re-walking the page does not pile up duplicates.
+        """
+        return self._emit_pending(
+            app,
+            kind="agent_question",
+            title=f"Question needs your input: {fld.label}",
+            payload={
+                "question": fld.label,
+                "field_selector": fld.selector,
+                "url": url,
+                "dedup_key": f"agent_question:{app.id}:{fld.selector}",
+            },
+        )
+
+    def _emit_error(self, app, *, title: str, detail: str, selector: str) -> PendingActionId:
+        """Materialize an ``error`` pending action for a soft failure (FR-UI-3)."""
+        return self._emit_pending(
+            app,
+            kind="error",
+            title=title,
+            payload={
+                "detail": detail,
+                "field_selector": selector,
+                "dedup_key": f"error:{app.id}:{selector}",
+            },
+        )
+
+    def _emit_pending(self, app, *, kind: str, title: str, payload: dict) -> PendingActionId:
+        """Create a pending action (deduped by ``payload['dedup_key']`` if present)."""
+        cid: CampaignId = app.campaign_id
+        dedup_key = payload.get("dedup_key")
+        if dedup_key is not None:
+            for existing in self._storage.pending_actions.list_open(cid):
+                if existing.payload.get("dedup_key") == dedup_key:
+                    return existing.id
+        pid = PendingActionId(new_id())
+        action = PendingAction(
+            id=pid, campaign_id=cid, kind=kind, title=title,
+            application_id=app.id, payload=dict(payload),
+        )
+        self._storage.pending_actions.add(action)
+        self._storage.commit()
+        if self._notification is not None:
+            from applicant.ports.driven.notification import Notification
+
+            self._notification.notify(
+                Notification(
+                    title=title,
+                    body=f"Application {app.id} needs you.",
+                    deep_link=None,
+                    dedup_key=f"{app.id}:{kind}:{dedup_key or title}",
+                )
+            )
+        return pid
 
     def _capture_screenshot(self, aid, result: PrefillResult) -> None:
         """Capture a per-page screenshot, record its page URL, and ARCHIVE it (FR-LOG-2).

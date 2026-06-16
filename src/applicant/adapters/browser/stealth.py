@@ -231,29 +231,88 @@ class DatacenterEgressRefused(Exception):
     """Raised when egress would route through a datacenter exit (FR-STEALTH-4)."""
 
 
+#: Explicit egress modes (FR-STEALTH-4). ``direct`` => the host's own (residential)
+#: connection; ``residential-proxy`` => MUST have an attested residential proxy and
+#: it is threaded into the real browser launch.
+EGRESS_DIRECT = "direct"
+EGRESS_RESIDENTIAL_PROXY = "residential-proxy"
+
+#: Honest, best-effort caveat: IP/ASN classification is heuristic. We refuse a
+#: self-flagged datacenter exit and require an attested residential proxy when the
+#: residential-proxy mode is selected, but we cannot *prove* an upstream is
+#: residential — operator attestation + the mode are the guardrail (FR-STEALTH-4).
+EGRESS_CAVEAT = (
+    "Egress residential-classification is best-effort: the engine refuses a "
+    "self-flagged datacenter exit and, in residential-proxy mode, requires an "
+    "attested residential proxy that is threaded into the browser launch — but "
+    "IP/ASN residential classification cannot be fully proven (FR-STEALTH-4)."
+)
+
+
 @dataclass(frozen=True)
 class EgressPolicy:
-    """The residential-egress config seam (FR-STEALTH-4).
+    """The residential-egress config seam + guardrail (FR-STEALTH-4).
 
-    Egress MUST go via the user's residential connection (direct, or a residential
-    proxy/Tailscale exit later). A datacenter exit is forbidden — it is the single
-    biggest legitimacy tell. This is a guardrail + seam, NOT a network client:
-    Phase 2 part B / Phase 4 wires the real residential exit (Tailscale) behind it.
+    Egress MUST go via the user's residential connection. There are two honest
+    modes: ``direct`` (the host's own connection) and ``residential-proxy`` (an
+    attested residential proxy/Tailscale exit, threaded into the real browser
+    launch). A datacenter exit is forbidden — it is the single biggest legitimacy
+    tell — and so is selecting ``residential-proxy`` without a valid proxy: the
+    engine REFUSES to launch rather than silently egress from the datacenter.
     """
 
     #: ``None`` => direct residential connection (the default, honest path).
     proxy_url: str | None = None
     #: True only when the operator explicitly attests the proxy is residential.
     residential: bool = True
+    #: Explicit egress mode (FR-STEALTH-4): ``direct`` | ``residential-proxy``.
+    mode: str = EGRESS_DIRECT
 
     def validate(self) -> None:
-        """Refuse a configured-but-non-residential (datacenter) exit (FR-STEALTH-4)."""
+        """Refuse a non-residential / under-configured egress (FR-STEALTH-4).
+
+        * A configured-but-non-residential (datacenter) proxy is always refused.
+        * In ``residential-proxy`` mode a valid proxy URL is REQUIRED — refuse to
+          launch when it is missing/blank, rather than silently egressing direct
+          from the datacenter the engine may be hosted in.
+        """
         if self.proxy_url is not None and not self.residential:
             raise DatacenterEgressRefused(
                 "Refusing datacenter egress: configure a residential connection "
                 "(direct or residential proxy/Tailscale exit) (FR-STEALTH-4)."
             )
+        if self.mode == EGRESS_RESIDENTIAL_PROXY and not (self.proxy_url or "").strip():
+            raise DatacenterEgressRefused(
+                "Residential-proxy egress required but no proxy is configured; "
+                "refusing to launch (would egress from the datacenter) (FR-STEALTH-4)."
+            )
 
     @property
     def is_direct_residential(self) -> bool:
         return self.proxy_url is None and self.residential
+
+    def launch_proxy(self) -> dict[str, str] | None:
+        """Playwright ``proxy=`` kwarg for the browser launch, or ``None`` (direct).
+
+        Threaded into ``launch_persistent_context(proxy=...)`` so a configured
+        residential proxy is ACTUALLY used for automation egress (FR-STEALTH-4),
+        not merely validated. ``None`` => no proxy (direct residential egress).
+        """
+        if self.proxy_url and (self.proxy_url or "").strip():
+            return {"server": self.proxy_url}
+        return None
+
+    @classmethod
+    def from_settings(cls, *, mode: str, proxy_url: str) -> EgressPolicy:
+        """Build a policy from app settings (EGRESS_MODE / EGRESS_PROXY_URL).
+
+        A configured proxy is treated as operator-attested residential (the
+        ``residential-proxy`` mode is the operator's attestation); selecting that
+        mode without a proxy is refused by :meth:`validate`.
+        """
+        url = (proxy_url or "").strip() or None
+        return cls(
+            proxy_url=url,
+            residential=True,
+            mode=(mode or EGRESS_DIRECT).strip() or EGRESS_DIRECT,
+        )

@@ -12,6 +12,8 @@ The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are bui
 | Digest (in-app) | **live** (Phase 1) | `/digest` |
 | Redline / revision | **live** (Phase 3) | `/review` |
 | Debug surface | **live** (Phase 4) | `/debug` |
+| Criteria editor | **live** (Phase 5) | `/criteria` |
+| Attribute-cloud editor | **live** (Phase 5) | `/attributes` |
 | Tool-toggle registry | **live** (Phase 4) | `/debug` (tools-section) |
 | Chatbot | **live** (Phase 4) | `/chat` |
 | Multi-campaign switcher | **dormant** (grayed for MVP-1; readiness verified) | `/debug` (campaign-switcher-section) |
@@ -82,6 +84,22 @@ The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are bui
 - **What it will do:** Show the browser the engine is working in; let the user submit themselves or authorize the engine to finish (and complete CAPTCHA/verification).
 - **Requirement ID(s):** FR-SANDBOX-2/3; FR-PREFILL-4/5; FR-UI-6.
 - **Wiring remaining:** Bind to the RemoteSessionControl driving port and the Sandbox + RemoteView sub-port (Neko default, swappable). Live in Phase 2.
+
+---
+
+## 10. Criteria editor
+
+- **Surface:** The per-campaign search-criteria editor (`/criteria`, backed by `/api/criteria`).
+- **What it does:** Shows the human-readable + structured criteria (titles, locations, work modes, keywords, salary floor), editable at all times (FR-CRIT-2); surfaces learned adjustments transparently and lets the user override/clear them (FR-CRIT-3); routes integral edits (titles/locations/salary_floor) through the confirmation gate (FR-FB-3) — the API 409s and the surface re-asks then retries with `confirm=true`.
+- **Requirement ID(s):** FR-CRIT-1/2/3; FR-FB-3; FR-UI-6.
+- **Status:** **live** (Phase 5). Backend (`CriteriaService`) already existed; this phase built the surface + nav + route.
+
+## 11. Attribute-cloud editor
+
+- **Surface:** The per-campaign attribute-cloud editor (`/attributes`, backed by `/api/attributes`).
+- **What it does:** Lists the pre-fill answers (learned/AI-added values included and overridable, FR-ATTR-4) and adds/updates an attribute. Integral edits are confirmation-gated (FR-FB-3 → 409, re-ask + retry); a sensitive (EEO) attribute given an AI-suggested value is rejected (FR-ATTR-6 → 422) and surfaced.
+- **Requirement ID(s):** FR-ATTR-1/2/3/4/6; FR-FB-3; FR-UI-6.
+- **Status:** **live** (Phase 5). Backend (`AttributeCloudService`) already existed; this phase built the surface + nav + route.
 
 ---
 

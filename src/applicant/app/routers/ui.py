@@ -54,6 +54,24 @@ def review(container=Depends(get_container)):
     return HTMLResponse("<h1>Review (dormant)</h1>", status_code=200)
 
 
+@router.get("/criteria", response_class=HTMLResponse)
+def criteria(container=Depends(get_container)):
+    """Criteria editor surface (FR-CRIT-1/2/3 / FR-FB-3 / FR-UI-6)."""
+    path = _screen("criteria.html", container)
+    if path.is_file():
+        return FileResponse(str(path))
+    return HTMLResponse("<h1>Criteria (dormant)</h1>", status_code=200)
+
+
+@router.get("/attributes", response_class=HTMLResponse)
+def attributes(container=Depends(get_container)):
+    """Attribute-cloud editor surface (FR-ATTR-1/2/3/4/6 / FR-FB-3 / FR-UI-6)."""
+    path = _screen("attributes.html", container)
+    if path.is_file():
+        return FileResponse(str(path))
+    return HTMLResponse("<h1>Attributes (dormant)</h1>", status_code=200)
+
+
 @router.get("/debug", response_class=HTMLResponse)
 def debug(container=Depends(get_container)):
     """Debug / observability surface (FR-OBS-2 / FR-LOG-3 / FR-UI-6)."""

@@ -108,3 +108,27 @@ def variant_library(campaign_id: str, container: Container = Depends(get_contain
     """Resume-variant library: lineage / scores / approval state (FR-UI-6 / FR-RESUME-6)."""
     variants = container.admin_query_service.variant_library(campaign_id)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "variants": variants}
+
+
+# === Stealth honesty + egress (FR-STEALTH-4 / FR-STEALTH-5) ================
+@router.get("/stealth")
+def stealth(container: Container = Depends(get_container)) -> dict:
+    """Surface the honest best-effort stealth caveat + the live egress posture.
+
+    FR-STEALTH-5: the caveat is shown to the user (here + in the debug UI) so the
+    best-effort honesty note is never hidden. FR-STEALTH-4: report the configured
+    egress mode and whether a residential proxy is actually threaded into launch.
+    """
+    from applicant.adapters.browser.stealth import EGRESS_CAVEAT, STEALTH_CAVEAT
+
+    egress = getattr(container.browser, "egress", None)
+    return {
+        "caveat": STEALTH_CAVEAT,
+        "egress_caveat": EGRESS_CAVEAT,
+        "egress": {
+            "mode": getattr(egress, "mode", "direct"),
+            "is_direct_residential": getattr(egress, "is_direct_residential", True),
+            "proxy_configured": bool(getattr(egress, "proxy_url", None)),
+        },
+        "status": "live",
+    }

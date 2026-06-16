@@ -18,6 +18,8 @@
 export const SURFACES = [
   { key: "wizard", href: "/wizard", label: "Setup" },
   { key: "digest", href: "/digest", label: "Digest" },
+  { key: "criteria", href: "/criteria", label: "Criteria" },
+  { key: "attributes", href: "/attributes", label: "Attributes" },
   { key: "review", href: "/review", label: "Review" },
   { key: "debug", href: "/debug", label: "Debug" },
   { key: "chat", href: "/chat", label: "Assistant" },

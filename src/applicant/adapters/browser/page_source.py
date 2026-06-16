@@ -188,7 +188,14 @@ class PlaywrightPageSource:
     clicking an account-create or final submit (FR-PREFILL-4/5).
     """
 
-    def __init__(self, fingerprint: dict[str, str], *, headless: bool = True) -> None:
+    def __init__(
+        self,
+        fingerprint: dict[str, str],
+        *,
+        headless: bool = True,
+        proxy: dict[str, str] | None = None,
+        user_data_dir: str = "",
+    ) -> None:
         try:
             # patchright is a drop-in Playwright fork that removes automation tells
             # (FR-STEALTH-1); fall back to vanilla playwright if only that is present.
@@ -203,17 +210,43 @@ class PlaywrightPageSource:
             ) from exc
 
         self._fingerprint = dict(fingerprint)
+        # FR-STEALTH-4: the residential-egress proxy (or None for direct egress),
+        # threaded into the launch kwargs below.
+        self._proxy = dict(proxy) if proxy else None
         self._pw = sync_playwright().start()
-        width, _, height = self._fingerprint.get("resolution", "1920x1080").partition("x")
-        self._context = self._pw.chromium.launch_persistent_context(  # pragma: no cover
-            user_data_dir="",  # the adapter supplies a per-tenant dir in real use
-            headless=headless,
-            user_agent=self._fingerprint.get("user_agent"),
-            locale=self._fingerprint.get("locale", "en-US"),
-            timezone_id=self._fingerprint.get("timezone", "America/Phoenix"),
-            viewport={"width": int(width or 1920), "height": int(height or 1080)},
+        kwargs = self.launch_kwargs(
+            self._fingerprint, headless=headless, proxy=self._proxy, user_data_dir=user_data_dir
         )
+        self._context = self._pw.chromium.launch_persistent_context(**kwargs)  # pragma: no cover
         self._page = self._context.new_page()  # pragma: no cover
+
+    @staticmethod
+    def launch_kwargs(
+        fingerprint: dict[str, str],
+        *,
+        headless: bool = True,
+        proxy: dict[str, str] | None = None,
+        user_data_dir: str = "",
+    ) -> dict:
+        """Build the ``launch_persistent_context`` kwargs (pure + unit-testable).
+
+        Kept pure (no browser) so the default lane can assert the coherent
+        fingerprint (FR-STEALTH-1) AND the residential-egress proxy (FR-STEALTH-4)
+        are threaded into the real launch, without constructing a browser.
+        """
+        width, _, height = fingerprint.get("resolution", "1920x1080").partition("x")
+        kwargs: dict = {
+            "user_data_dir": user_data_dir,  # the adapter supplies a per-tenant dir
+            "headless": headless,
+            "user_agent": fingerprint.get("user_agent"),
+            "locale": fingerprint.get("locale", "en-US"),
+            "timezone_id": fingerprint.get("timezone", "America/Phoenix"),
+            "viewport": {"width": int(width or 1920), "height": int(height or 1080)},
+        }
+        if proxy:
+            # FR-STEALTH-4: residential proxy actually used for automation egress.
+            kwargs["proxy"] = dict(proxy)
+        return kwargs
 
     def open(self, url: str) -> None:  # pragma: no cover - integration-gated
         self._page.goto(url)

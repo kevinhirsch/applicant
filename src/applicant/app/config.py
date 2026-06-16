@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # FR-DISC-6 proxy hook: comma-separated; empty = direct egress (no proxy committed).
     discovery_proxies: str = Field(default="", alias="DISCOVERY_PROXIES")
 
+    # Browser egress (FR-STEALTH-4). The automation MUST egress via the user's
+    # residential connection. "direct" (default) uses the host's own connection;
+    # "residential-proxy" requires EGRESS_PROXY_URL (attested residential) and is
+    # threaded into the real browser launch. A datacenter exit is refused.
+    egress_mode: str = Field(default="direct", alias="EGRESS_MODE")  # direct | residential-proxy
+    egress_proxy_url: str = Field(default="", alias="EGRESS_PROXY_URL")
+
     @property
     def llm_configured(self) -> bool:
         """True once enough LLM settings exist to satisfy the OOBE gate (FR-UI-5)."""

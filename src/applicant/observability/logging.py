@@ -7,6 +7,7 @@ redaction so credentials/PII never reach the logs (FR-VAULT-3, NFR-PRIV-1).
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from contextvars import ContextVar
 from typing import Any
@@ -65,9 +66,44 @@ _SECRET_KEYS = frozenset(
 
 _REDACTED = "***REDACTED***"
 
+#: Value-based secret patterns (NFR-PRIV-1): a secret in a NON-secret-named key, or
+#: embedded in a free-text message string, is masked too — key-name redaction alone
+#: is not enough. Each pattern matches the secret token (a group masked in place) so
+#: surrounding text is preserved. Kept cheap: a handful of anchored substrings.
+_SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # JWT: three base64url segments separated by dots.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b"),
+    # OpenAI-style keys: sk-..., sk-proj-..., and generic provider key prefixes.
+    re.compile(r"\b(?:sk|rk|pk|xoxb|ghp|gho|ghs|AKIA|ASIA)[-_][A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+    # Bearer tokens in an Authorization-style string.
+    re.compile(r"(?i)\b(?:bearer|token|api[_-]?key|authorization)\b[=:\s]+\S{8,}"),
+    # password=... / pwd: ... inline in a message.
+    re.compile(r"(?i)\b(?:password|passwd|pwd|secret)\b[=:\s]+\S{4,}"),
+)
+#: A long high-entropy bare token (32+ url-safe chars, mixed case+digits) — a
+#: catch-all for opaque credentials embedded with no telltale prefix.
+_HIGH_ENTROPY = re.compile(r"\b(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{32,}\b")
+
+
+def _redact_text(text: str) -> str:
+    """Mask secret-looking tokens embedded anywhere in a string (cheap, NFR-PRIV-1)."""
+    if not text or len(text) < 8:
+        return text
+    redacted = text
+    for pat in _SECRET_VALUE_PATTERNS:
+        redacted = pat.sub(_REDACTED, redacted)
+    redacted = _HIGH_ENTROPY.sub(_REDACTED, redacted)
+    return redacted
+
 
 def _redact_value(value: Any) -> Any:
-    """Recursively redact secret-looking keys inside nested dicts / lists."""
+    """Recursively redact secret-looking keys AND secret-looking values.
+
+    Key-name redaction (the secret-named key) is supplemented with value-based
+    redaction: a secret under a non-obvious key, or embedded in a string, is masked
+    too — so a token never leaks via an innocuously-named field (NFR-PRIV-1).
+    """
     if isinstance(value, dict):
         return {
             k: (_REDACTED if k.lower() in _SECRET_KEYS else _redact_value(v))
@@ -75,11 +111,13 @@ def _redact_value(value: Any) -> Any:
         }
     if isinstance(value, (list, tuple)):
         return type(value)(_redact_value(v) for v in value)
+    if isinstance(value, str):
+        return _redact_text(value)
     return value
 
 
 def _redact_secrets(_logger: Any, _method: str, event_dict: dict) -> dict:
-    """structlog processor: redact secret-looking keys (recursively)."""
+    """structlog processor: redact secret-looking keys AND values (recursively)."""
     for key in list(event_dict.keys()):
         if key.lower() in _SECRET_KEYS:
             event_dict[key] = _REDACTED

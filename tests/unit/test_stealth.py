@@ -141,6 +141,90 @@ class TestEgressPolicy:
         assert policy.is_direct_residential is False
 
 
+    def test_residential_proxy_mode_without_proxy_is_refused(self):
+        # FR-STEALTH-4: selecting residential-proxy mode with no proxy must REFUSE
+        # to launch (don't silently egress from the datacenter).
+        from applicant.adapters.browser.stealth import EGRESS_RESIDENTIAL_PROXY
+
+        policy = EgressPolicy(mode=EGRESS_RESIDENTIAL_PROXY, proxy_url=None)
+        with pytest.raises(DatacenterEgressRefused):
+            policy.validate()
+
+    def test_residential_proxy_mode_with_proxy_is_allowed(self):
+        from applicant.adapters.browser.stealth import EGRESS_RESIDENTIAL_PROXY
+
+        policy = EgressPolicy(mode=EGRESS_RESIDENTIAL_PROXY, proxy_url="http://home:8080")
+        policy.validate()  # no raise
+        assert policy.launch_proxy() == {"server": "http://home:8080"}
+
+    def test_direct_mode_has_no_launch_proxy(self):
+        assert EgressPolicy().launch_proxy() is None
+
+    def test_from_settings_builds_residential_proxy_policy(self):
+        from applicant.adapters.browser.stealth import EGRESS_RESIDENTIAL_PROXY
+
+        policy = EgressPolicy.from_settings(
+            mode="residential-proxy", proxy_url="http://home:8080"
+        )
+        assert policy.mode == EGRESS_RESIDENTIAL_PROXY
+        assert policy.launch_proxy() == {"server": "http://home:8080"}
+        policy.validate()  # no raise
+
+
+@pytest.mark.unit
+class TestEgressThreadedIntoLaunch:
+    """FR-STEALTH-4: the proxy is ACTUALLY threaded into the browser launch kwargs."""
+
+    def test_launch_kwargs_includes_residential_proxy(self):
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        kwargs = PlaywrightPageSource.launch_kwargs(
+            NORMALIZED_FINGERPRINT, proxy={"server": "http://home:8080"}
+        )
+        # FR-STEALTH-4: proxy threaded into launch_persistent_context(proxy=...).
+        assert kwargs["proxy"] == {"server": "http://home:8080"}
+        # FR-STEALTH-1: the coherent fingerprint is still carried through.
+        assert kwargs["user_agent"] == NORMALIZED_FINGERPRINT["user_agent"]
+        assert kwargs["locale"] == "en-US"
+
+    def test_launch_kwargs_omits_proxy_for_direct_egress(self):
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        kwargs = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT, proxy=None)
+        assert "proxy" not in kwargs
+
+    def test_browser_passes_egress_proxy_to_source(self, monkeypatch):
+        # The adapter must hand the EgressPolicy's launch_proxy() to the page source.
+        from applicant.adapters.browser import patchright_browser as pb
+        from applicant.adapters.browser.stealth import EGRESS_RESIDENTIAL_PROXY
+        from applicant.core.ids import ApplicationId, new_id
+
+        captured: dict = {}
+
+        class _FakeSource:
+            def __init__(self, fingerprint, *, proxy=None):
+                captured["proxy"] = proxy
+
+            def open(self, url):  # noqa: D401
+                captured["opened"] = url
+
+            def current(self):
+                from applicant.ports.driven.browser_automation import PageState
+
+                return PageState(url="https://acme.wd1.myworkdayjobs.com/x", fields=())
+
+        # Use real-browser path but swap PlaywrightPageSource for the fake.
+        monkeypatch.setattr(pb, "PlaywrightPageSource", _FakeSource, raising=False)
+        import applicant.adapters.browser.page_source as ps
+
+        monkeypatch.setattr(ps, "PlaywrightPageSource", _FakeSource, raising=False)
+
+        egress = EgressPolicy(mode=EGRESS_RESIDENTIAL_PROXY, proxy_url="http://home:8080")
+        browser = pb.PatchrightBrowser(use_real_browser=True, egress=egress)
+        browser.open(ApplicationId(new_id()), "https://acme.wd1.myworkdayjobs.com/x")
+        assert captured["proxy"] == {"server": "http://home:8080"}
+
+
 @pytest.mark.unit
 def test_honest_caveat_copy_present():
     # FR-STEALTH-5: honest best-effort caveat surfaced in UX copy.
