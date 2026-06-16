@@ -67,8 +67,11 @@ log "Validating compose file: ${COMPOSE_FILE}"
 docker compose -f "${COMPOSE_FILE}" config >/dev/null
 
 # --- 3. Bring up the stack --------------------------------------------------
+log "Building the api image locally (not published to any registry)…"
+run docker compose -f "${COMPOSE_FILE}" build api
+
 log "Bringing up the Applicant stack (postgres + searxng + api, detached)…"
-run docker compose -f "${COMPOSE_FILE}" up -d
+run docker compose -f "${COMPOSE_FILE}" up -d --build
 
 # --- 4. Run database migrations (after Postgres is healthy) -----------------
 # Postgres has a healthcheck + the api depends_on service_healthy, so by the time
