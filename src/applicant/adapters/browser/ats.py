@@ -34,6 +34,10 @@ class FakePage:
     is_account_create: bool = False
     #: whether this page is the final-submit step (boundary applies).
     is_final_submit: bool = False
+    #: whether this page is a post-submission confirmation page (FR-LOG-4).
+    is_confirmation: bool = False
+    #: visible page text (drives confirmation-page heuristics, FR-LOG-4).
+    text: str = ""
 
 
 class AtsAdapter:

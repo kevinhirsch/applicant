@@ -23,6 +23,8 @@ whereas DBOS is decorator-based. We bridge by:
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -49,6 +51,10 @@ class DbosOrchestrator:
         self._dbos: Any = None
         self._workflows: dict[str, Callable[..., Any]] = {}
         self._wf_shims: dict[str, Callable[..., Any]] = {}
+        # Admission bookkeeping mirrors the DBOS queue concurrency cap so the
+        # acquire/release/pivot contract is uniform across both adapters (FR-DUR-2/4).
+        self._queue_caps: dict[str, dict[str, Any]] = {}
+        self._queue_admit: dict[str, dict[str, Any]] = {}
 
     def _ensure_launched(self) -> None:
         if self._launched:
@@ -142,7 +148,51 @@ class DbosOrchestrator:
         limiter = None
         if limiter_limit is not None and limiter_period is not None:
             limiter = {"limit": limiter_limit, "period": limiter_period}
+        self._queue_caps[name] = {
+            "concurrency": concurrency,
+            "limiter_limit": limiter_limit,
+            "limiter_period": limiter_period,
+        }
+        self._queue_admit[name] = {"active": set(), "waiting": deque(), "admit_times": deque()}
         return Queue(name, concurrency=concurrency, limiter=limiter)
+
+    def acquire(self, queue_name: str, work_id: str) -> bool:
+        """Admit ``work_id`` onto the queue (concurrency/rate gate) (FR-DUR-2)."""
+        cap = self._queue_caps.get(queue_name, {})
+        st = self._queue_admit.setdefault(
+            queue_name, {"active": set(), "waiting": deque(), "admit_times": deque()}
+        )
+        if work_id in st["active"]:
+            return True
+        now = time.monotonic()
+        concurrency = cap.get("concurrency")
+        lim, period = cap.get("limiter_limit"), cap.get("limiter_period")
+        if lim is not None and period is not None:
+            while st["admit_times"] and now - st["admit_times"][0] >= period:
+                st["admit_times"].popleft()
+        capacity_ok = concurrency is None or len(st["active"]) < concurrency
+        rate_ok = lim is None or period is None or len(st["admit_times"]) < lim
+        if capacity_ok and rate_ok:
+            st["active"].add(work_id)
+            if lim is not None:
+                st["admit_times"].append(now)
+            return True
+        if work_id not in st["waiting"]:
+            st["waiting"].append(work_id)
+        return False
+
+    def release(self, queue_name: str, work_id: str) -> str | None:
+        """Free a slot and promote the next waiter — the pivot (FR-DUR-4)."""
+        st = self._queue_admit.get(queue_name)
+        if st is None:
+            return None
+        st["active"].discard(work_id)
+        if st["waiting"]:
+            nxt = st["waiting"][0]
+            if self.acquire(queue_name, nxt):
+                st["waiting"].popleft()
+                return nxt
+        return None
 
     def schedule(self, name: str, cron: str, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Register a cron-scheduled durable workflow (FR-DUR-3, scheduling).

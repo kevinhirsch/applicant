@@ -1,0 +1,175 @@
+"""SubmissionService — detection, logging, screenshots, conversion capture.
+
+Closes the end of the §7 lifecycle (FR-LOG-1/2/4, FR-LEARN-2):
+
+* **Auto-detect** the final submission in the controlled session via the browser
+  adapter's confirmation-page heuristics (FR-LOG-4); where it cannot be auto-detected
+  (e.g. the emergency data-handoff) the one-tap **mark-submitted** path applies.
+* Each detected/marked submission creates an :class:`OutcomeEvent` so conversion
+  learning sees *real* conversions, not just approvals (FR-LEARN-2).
+* On completion, **log every detail** to the ``applications`` row — attributes/values
+  used, the resume variant used (placeholder until Phase 3), role/title/work-mode,
+  and the root application URL (FR-LOG-1).
+* **Archive per-page screenshots** to ``application_screenshots`` via the storage port
+  (FR-LOG-2); the screenshot bytes stay behind the browser/storage port as a
+  path/blob ref seam.
+
+Terminal state follows the §7 transitions: SUBMITTED_BY_USER (user submitted) or
+FINISHED_BY_ENGINE (friction-free, user-authorized).
+"""
+
+from __future__ import annotations
+
+from applicant.core.entities.application import Application
+from applicant.core.entities.application_screenshot import ApplicationScreenshot
+from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
+from applicant.core.ids import (
+    ApplicationId,
+    OutcomeEventId,
+    ScreenshotId,
+    new_id,
+)
+from applicant.core.state_machine import ApplicationState
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
+
+
+class SubmissionService:
+    def __init__(self, storage, browser=None) -> None:
+        self._storage = storage
+        self._browser = browser
+
+    # --- detection (FR-LOG-4) ---------------------------------------------
+    def detect_submission(self, application_id: ApplicationId) -> bool:
+        """Auto-detect a final submission via the confirmation-page heuristics.
+
+        Returns True if the controlled session is now on a post-submission
+        confirmation page. Conservative: only fires on a clear confirmation signal.
+        """
+        if self._browser is None:
+            return False
+        detector = getattr(self._browser, "is_confirmation_page", None)
+        if detector is None:
+            return False
+        try:
+            return bool(detector(application_id))
+        except Exception:  # pragma: no cover - defensive: a driver error never converts
+            return False
+
+    # --- terminal completion (FR-LOG-1/2/4, FR-LEARN-2) -------------------
+    def record_submission(
+        self,
+        application: Application,
+        *,
+        source: OutcomeSource,
+        attributes_used: dict | None = None,
+        screenshots: list[str] | None = None,
+        screenshot_pages: list[str] | None = None,
+        resume_variant_id: str | None = None,
+    ) -> OutcomeEvent:
+        """Log the completed application + archive screenshots + emit an OutcomeEvent.
+
+        ``source`` distinguishes auto-detected from one-tap mark-submitted (FR-LOG-4).
+        The terminal state is derived from the source: AUTO -> engine finished,
+        MANUAL -> user submitted (§7).
+        """
+        terminal = (
+            ApplicationState.FINISHED_BY_ENGINE
+            if source is OutcomeSource.AUTO
+            else ApplicationState.SUBMITTED_BY_USER
+        )
+        logged = self._log_application(
+            application,
+            terminal=terminal,
+            attributes_used=attributes_used,
+            resume_variant_id=resume_variant_id,
+        )
+        self._archive_screenshots(application.id, screenshots or [], screenshot_pages or [])
+        event = OutcomeEvent(
+            id=OutcomeEventId(new_id()),
+            application_id=application.id,
+            type="submitted",
+            source=source,
+        )
+        self._storage.outcomes.add(event)
+        self._storage.commit()
+        log.info(
+            "submission_recorded",
+            application_id=str(application.id),
+            source=source.value,
+            terminal=terminal.value,
+            screenshots=len(screenshots or []),
+        )
+        # keep the logged app available to callers
+        self._last_logged = logged
+        return event
+
+    def mark_submitted(
+        self, application: Application, *, attributes_used: dict | None = None
+    ) -> OutcomeEvent:
+        """One-tap mark-submitted fallback when auto-detection cannot confirm (FR-LOG-4)."""
+        return self.record_submission(
+            application, source=OutcomeSource.MANUAL, attributes_used=attributes_used
+        )
+
+    # --- retrieval (FR-LOG-3 surface, minimal) ----------------------------
+    def get_log(self, application_id: ApplicationId) -> dict:
+        """Return the logged application detail + screenshots + outcomes (FR-LOG-3)."""
+        app = self._storage.applications.get(application_id)
+        shots = self._storage.screenshots.list_for_application(application_id)
+        outcomes = self._storage.outcomes.list_for_application(application_id)
+        return {
+            "application_id": str(application_id),
+            "status": app.status.value if app else None,
+            "role_name": app.role_name if app else None,
+            "job_title": app.job_title if app else None,
+            "work_mode": app.work_mode if app else None,
+            "root_url": app.root_url if app else None,
+            "resume_variant_id": app.resume_variant_id if app else None,
+            "attributes_used": dict(app.attributes_used) if app else {},
+            "screenshots": [
+                {"id": str(s.id), "page_ref": s.page_ref, "page_url": s.page_url}
+                for s in shots
+            ],
+            "outcomes": [{"type": o.type, "source": o.source.value} for o in outcomes],
+        }
+
+    # --- internals --------------------------------------------------------
+    def _log_application(
+        self,
+        application: Application,
+        *,
+        terminal: ApplicationState,
+        attributes_used: dict | None,
+        resume_variant_id: str | None,
+    ) -> Application:
+        import dataclasses
+
+        app = application.with_status(terminal)
+        if attributes_used is not None:
+            app = dataclasses.replace(app, attributes_used=dict(attributes_used))
+        if resume_variant_id is not None:
+            from applicant.core.ids import ResumeVariantId
+
+            app = dataclasses.replace(app, resume_variant_id=ResumeVariantId(resume_variant_id))
+        existing = self._storage.applications.get(app.id)
+        if existing is None:
+            self._storage.applications.add(app)
+        else:
+            self._storage.applications.update(app)
+        return app
+
+    def _archive_screenshots(
+        self, application_id: ApplicationId, refs: list[str], pages: list[str]
+    ) -> None:
+        for i, ref in enumerate(refs):
+            page_url = pages[i] if i < len(pages) else ""
+            self._storage.screenshots.add(
+                ApplicationScreenshot(
+                    id=ScreenshotId(new_id()),
+                    application_id=application_id,
+                    page_ref=ref,
+                    page_url=page_url,
+                )
+            )

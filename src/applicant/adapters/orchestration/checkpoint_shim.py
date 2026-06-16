@@ -17,8 +17,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,48 @@ class _ShimHandle:
         return self._result
 
 
+@dataclass
+class _Queue:
+    """In-process durable-queue stand-in: concurrency cap + rate limiter + pivot.
+
+    * ``concurrency`` caps how many work-ids hold a slot at once (sandbox cap).
+    * ``limiter_limit`` / ``limiter_period`` bound admissions per rolling window
+      (per-provider LLM rate limit).
+    * ``waiting`` is the FIFO of work that could not be admitted; ``release`` pops
+      the next one (pivot-around-blocker, FR-DUR-4).
+    """
+
+    concurrency: int | None = None
+    limiter_limit: int | None = None
+    limiter_period: float | None = None
+    active: set[str] = field(default_factory=set)
+    waiting: deque[str] = field(default_factory=deque)
+    admit_times: deque[float] = field(default_factory=deque)
+
+    def _rate_ok(self, now: float) -> bool:
+        if self.limiter_limit is None or self.limiter_period is None:
+            return True
+        # Drop admissions older than the rolling window.
+        while self.admit_times and now - self.admit_times[0] >= self.limiter_period:
+            self.admit_times.popleft()
+        return len(self.admit_times) < self.limiter_limit
+
+    def _capacity_ok(self) -> bool:
+        return self.concurrency is None or len(self.active) < self.concurrency
+
+    def try_admit(self, work_id: str, now: float) -> bool:
+        if work_id in self.active:
+            return True  # idempotent re-acquire
+        if self._capacity_ok() and self._rate_ok(now):
+            self.active.add(work_id)
+            if self.limiter_limit is not None:
+                self.admit_times.append(now)
+            return True
+        if work_id not in self.waiting:
+            self.waiting.append(work_id)
+        return False
+
+
 class CheckpointShimOrchestrator:
     """Durable orchestrator backed by per-workflow JSON checkpoint files."""
 
@@ -40,6 +84,7 @@ class CheckpointShimOrchestrator:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._workflows: dict[str, Callable[..., Any]] = {}
         self._mailbox: dict[tuple[str, str], list[Any]] = {}
+        self._queues: dict[str, _Queue] = {}
 
     # --- checkpoint persistence -------------------------------------------
     def _path(self, workflow_id: str) -> Path:
@@ -108,6 +153,57 @@ class CheckpointShimOrchestrator:
     def recover_pending(self) -> list[str]:
         """Return workflow ids that have a checkpoint file (interrupted/in-flight)."""
         return [p.stem.replace(".checkpoint", "") for p in self._dir.glob("*.checkpoint.json")]
+
+    # --- durable queues: concurrency cap / rate limit / pivot (FR-DUR-2/4) -
+    def create_queue(
+        self,
+        name: str,
+        *,
+        concurrency: int | None = None,
+        limiter_limit: int | None = None,
+        limiter_period: float | None = None,
+    ) -> _Queue:
+        q = self._queues.get(name)
+        if q is None:
+            q = _Queue(
+                concurrency=concurrency,
+                limiter_limit=limiter_limit,
+                limiter_period=limiter_period,
+            )
+            self._queues[name] = q
+        return q
+
+    def acquire(self, queue_name: str, work_id: str) -> bool:
+        """Admit ``work_id`` if capacity + rate allow; else enqueue it (FR-DUR-2)."""
+        q = self._queues.get(queue_name) or self.create_queue(queue_name)
+        return q.try_admit(work_id, time.monotonic())
+
+    def release(self, queue_name: str, work_id: str) -> str | None:
+        """Free ``work_id``'s slot and promote the next waiter — the pivot (FR-DUR-4)."""
+        q = self._queues.get(queue_name)
+        if q is None:
+            return None
+        q.active.discard(work_id)
+        # Pivot: admit the oldest waiter that now fits (capacity yielded by the
+        # blocked/awaiting application FR-AGENT-6).
+        now = time.monotonic()
+        while q.waiting:
+            nxt = q.waiting[0]
+            if q._capacity_ok() and q._rate_ok(now):
+                q.waiting.popleft()
+                q.active.add(nxt)
+                if q.limiter_limit is not None:
+                    q.admit_times.append(now)
+                return nxt
+            break
+        return None
+
+    def queue_state(self, queue_name: str) -> dict[str, list[str]]:
+        """Introspection: active + waiting work-ids for a queue (tests/debug)."""
+        q = self._queues.get(queue_name)
+        if q is None:
+            return {"active": [], "waiting": []}
+        return {"active": sorted(q.active), "waiting": list(q.waiting)}
 
     def clear(self, workflow_id: str) -> None:
         """Remove a workflow's checkpoint (e.g. on terminal completion)."""

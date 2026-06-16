@@ -99,6 +99,15 @@ class TestMaximalPrefill:
         result = _resume_full(service, _app(cid), _full_answers(cid))
         assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
 
+    def test_per_page_screenshots_pair_with_page_urls(self):
+        # FR-LOG-2: each archived screenshot is paired with the page URL it captured.
+        cid = CampaignId(new_id())
+        service = _service(InMemoryStorage())
+        result = _resume_full(service, _app(cid), _full_answers(cid))
+        assert result.screenshots  # at least one per-page screenshot
+        assert len(result.screenshots) == len(result.screenshot_pages)
+        assert any("application/personal" in u for u in result.screenshot_pages)
+
     def test_factual_screening_question_is_filled(self):
         cid = CampaignId(new_id())
         service = _service(InMemoryStorage())

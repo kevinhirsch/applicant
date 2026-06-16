@@ -26,6 +26,31 @@ from typing import Protocol, runtime_checkable
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.ports.driven.browser_automation import DetectedField, PageState
 
+#: Confirmation-page heuristics (FR-LOG-4): markers a post-submission page shows.
+_CONFIRMATION_URL_MARKERS = ("confirmation", "thank-you", "thankyou", "submitted", "success")
+_CONFIRMATION_TEXT_MARKERS = (
+    "application submitted",
+    "thank you for applying",
+    "we have received your application",
+    "your application has been received",
+    "submission successful",
+)
+
+
+def detect_confirmation(url: str = "", text: str = "") -> bool:
+    """Heuristic: does this page look like a post-submission confirmation? (FR-LOG-4).
+
+    Combines URL markers (``/confirmation``, ``/thank-you``, ...) with on-page text
+    markers ("Application submitted", "Thank you for applying", ...). Conservative:
+    only fires on a clear confirmation signal so a false positive never marks a
+    submission that did not happen.
+    """
+    low_url = url.lower()
+    low_text = text.lower()
+    if any(m in low_url for m in _CONFIRMATION_URL_MARKERS):
+        return True
+    return any(m in low_text for m in _CONFIRMATION_TEXT_MARKERS)
+
 
 @runtime_checkable
 class PageSource(Protocol):
@@ -59,6 +84,10 @@ class PageSource(Protocol):
         ...
 
     def is_final_submit_page(self) -> bool:
+        ...
+
+    def is_confirmation_page(self) -> bool:
+        """True if the current page is a post-submission confirmation (FR-LOG-4)."""
         ...
 
 
@@ -115,6 +144,11 @@ class FakePageSource:
     def is_final_submit_page(self) -> bool:
         return self._page.is_final_submit
 
+    def is_confirmation_page(self) -> bool:
+        page = self._page
+        # An explicit flag short-circuits; otherwise apply the URL/text heuristics.
+        return page.is_confirmation or detect_confirmation(url=page.url, text=page.text)
+
     # --- test/seam helpers (used by the adapter + tests) -----------------
     def filled(self) -> dict[str, str]:
         return dict(self._page.filled)
@@ -126,6 +160,17 @@ class FakePageSource:
         self._pages[self._index] = replace(
             page, detection_signals=(*page.detection_signals, signal)
         )
+
+    def simulate_confirmation(self, *, text: str = "Application submitted") -> None:
+        """Seam/test helper: turn the current page into a confirmation page.
+
+        Models what the live driver observes after the user (or authorized engine)
+        clicks final submit and the ATS renders its confirmation page.
+        """
+        from dataclasses import replace
+
+        page = self._page
+        self._pages[self._index] = replace(page, is_confirmation=True, text=text)
 
 
 # --- real patchright/Playwright driver (REAL, integration-gated) -------------
@@ -206,6 +251,13 @@ class PlaywrightPageSource:
 
     def is_final_submit_page(self) -> bool:  # pragma: no cover
         return "review" in self._page.url.lower() or "submit" in self._page.url.lower()
+
+    def is_confirmation_page(self) -> bool:  # pragma: no cover - integration-gated
+        try:
+            body_text = self._page.inner_text("body")
+        except Exception:
+            body_text = ""
+        return detect_confirmation(url=self._page.url, text=body_text)
 
     def close(self) -> None:  # pragma: no cover - integration-gated
         self._context.close()

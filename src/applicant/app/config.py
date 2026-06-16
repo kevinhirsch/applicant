@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
     checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
 
+    # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
+    sandbox_concurrency: int = Field(default=3, alias="SANDBOX_CONCURRENCY")
+    llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables
+    llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
+
     # Observability (FR-OBS-1)
     log_format: str = Field(default="pretty", alias="LOG_FORMAT")  # pretty | json
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

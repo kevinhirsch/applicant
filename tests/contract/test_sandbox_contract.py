@@ -50,6 +50,20 @@ class TestLocalSandboxContract:
         assert adapter.get(session.session_id) is None
         adapter.teardown(session.session_id)  # idempotent: no error
 
+    def test_one_click_url_carries_access_token(self, adapter):
+        # FR-SANDBOX-2: the live-session URL is a one-click, token-bearing deep link.
+        session = adapter.provision(ApplicationId(new_id()))
+        assert "token=" in session.remote_view_url
+
+    def test_for_application_and_active_count(self, adapter):
+        aid = ApplicationId(new_id())
+        session = adapter.provision(aid)
+        assert adapter.for_application(aid).session_id == session.session_id
+        assert adapter.active_count() == 1
+        adapter.teardown(session.session_id)
+        assert adapter.for_application(aid) is None
+        assert adapter.active_count() == 0
+
 
 @pytest.mark.contract
 @pytest.mark.parametrize("view_cls", [NekoRemoteView, NoVncRemoteView])
@@ -64,11 +78,20 @@ class TestRemoteViewSwappable:
         url = view.view_url("sess-1")
         assert isinstance(url, str) and "sess-1" in url
 
-    def test_authorize_takeover(self, view_cls):
+    def test_authorize_and_revoke_takeover(self, view_cls):
         view = view_cls()
         assert view.has_takeover("sess-1") is False
         view.authorize_takeover("sess-1")
         assert view.has_takeover("sess-1") is True
+        view.revoke_takeover("sess-1")  # user finished the human step (FR-SANDBOX-3)
+        assert view.has_takeover("sess-1") is False
+
+    def test_one_click_url_is_stable_and_tokened(self, view_cls):
+        view = view_cls()
+        url1 = view.view_url("sess-1")
+        url2 = view.view_url("sess-1")
+        assert url1 == url2  # stable one-click link per session
+        assert "token=" in url1
 
 
 @pytest.mark.contract

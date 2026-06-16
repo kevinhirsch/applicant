@@ -39,6 +39,7 @@ scenarios(
     "../features/p2_prefill_workday_account.feature",
     "../features/p2_cautious_mode_takeover.feature",
     "../features/p2_credential_vault.feature",
+    "../features/p2_conversion_capture.feature",
 )
 
 WORKDAY_URL = "https://acme.myworkdayjobs.com/job/123"
@@ -146,6 +147,8 @@ def no_account_submit(p2ctx):
 def vnc_handoff_notification(p2ctx, prefill, storage):
     result = p2ctx["result"]
     assert result.sandbox_session_url  # one-click live-session URL
+    # FR-SANDBOX-2: the live-session URL is a one-click, token-bearing deep link.
+    assert "token=" in result.sandbox_session_url
     # The notification carried the deep link (FR-NOTIF-2 / FR-PREFILL-4).
     notifier: AppriseNotifier = prefill._notification  # phase-local introspection
     dedup = f"{result.application_id}:account_human_step"
@@ -407,6 +410,105 @@ def secret_sealed_at_rest(p2ctx):
     # The internal sealed record must not equal the plaintext secret (NFR-PRIV-1).
     sealed = p2ctx["vault"]._store[(str(p2ctx["campaign_id"]), p2ctx["tenant"])]
     assert sealed["secret"] != "captured-secret"
+
+
+# === Conversion capture (auto-detected or marked) (FR-LOG-1/2/4, FR-LEARN-2) ===
+@given("an application awaiting final approval in a controlled sandbox session")
+def app_awaiting_in_session(p2ctx, storage):
+    from applicant.adapters.browser.patchright_browser import PatchrightBrowser
+    from applicant.application.services.submission_service import SubmissionService
+
+    cid = CampaignId(new_id())
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        role_name="Senior Engineer",
+        work_mode="remote",
+        root_url=WORKDAY_URL,
+    )
+    browser = PatchrightBrowser()
+    browser.open(app.id, WORKDAY_URL)
+    p2ctx["campaign_id"] = cid
+    p2ctx["application"] = app
+    p2ctx["browser"] = browser
+    p2ctx["storage"] = storage
+    p2ctx["submission"] = SubmissionService(storage, browser)
+
+
+@when("the user submits and the ATS shows a confirmation page")
+def ats_shows_confirmation(p2ctx):
+    # The user clicks submit in the live session; the ATS renders its confirmation.
+    p2ctx["browser"].simulate_confirmation(
+        p2ctx["application"].id, text="Application submitted. Thank you for applying."
+    )
+
+
+@then("the engine auto-detects the submission")
+def engine_auto_detects(p2ctx):
+    svc = p2ctx["submission"]
+    assert svc.detect_submission(p2ctx["application"].id) is True
+    # Record it from the controlled session (auto source -> engine-finished).
+    from applicant.core.entities.outcome_event import OutcomeSource
+
+    p2ctx["event"] = svc.record_submission(
+        p2ctx["application"],
+        source=OutcomeSource.AUTO,
+        attributes_used={"Email Address": "kevin@kevinhirsch.com"},
+        screenshots=["screenshot://1", "screenshot://2"],
+        screenshot_pages=[f"{WORKDAY_URL}/personal", f"{WORKDAY_URL}/experience"],
+    )
+
+
+@then("a submitted outcome event is recorded for conversion learning")
+def submitted_outcome_recorded(p2ctx):
+    outcomes = p2ctx["storage"].outcomes.list_for_application(p2ctx["application"].id)
+    assert any(o.type == "submitted" for o in outcomes)
+
+
+@then("the application detail and per-page screenshots are logged")
+def detail_and_screenshots_logged(p2ctx):
+    storage = p2ctx["storage"]
+    logged = storage.applications.get(p2ctx["application"].id)
+    # FR-LOG-1: role/work-mode/root-url + attributes used are logged.
+    assert logged.role_name == "Senior Engineer"
+    assert logged.work_mode == "remote"
+    assert logged.root_url == WORKDAY_URL
+    assert logged.attributes_used.get("Email Address") == "kevin@kevinhirsch.com"
+    # FR-LOG-2: per-page screenshots archived.
+    shots = storage.screenshots.list_for_application(p2ctx["application"].id)
+    assert len(shots) == 2
+
+
+@given("an application in emergency data-handoff")
+def app_in_emergency(p2ctx, storage):
+    from applicant.application.services.submission_service import SubmissionService
+
+    cid = CampaignId(new_id())
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.EMERGENCY_DATA_HANDOFF,
+        role_name="Senior Engineer",
+        root_url=WORKDAY_URL,
+    )
+    p2ctx["campaign_id"] = cid
+    p2ctx["application"] = app
+    p2ctx["storage"] = storage
+    p2ctx["submission"] = SubmissionService(storage)
+
+
+@when("the user taps mark-submitted")
+def user_taps_mark_submitted(p2ctx):
+    p2ctx["event"] = p2ctx["submission"].mark_submitted(p2ctx["application"])
+
+
+@then("the application is logged as submitted by the user")
+def logged_submitted_by_user(p2ctx):
+    logged = p2ctx["storage"].applications.get(p2ctx["application"].id)
+    assert logged.status == ApplicationState.SUBMITTED_BY_USER
 
 
 # --- shared helpers --------------------------------------------------------

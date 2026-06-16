@@ -200,6 +200,7 @@ class ApplicationScreenshotModel(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
     page_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    page_url: Mapped[str] = mapped_column(Text, default="")
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

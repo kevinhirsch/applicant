@@ -65,3 +65,16 @@ def test_dbos_send_recv_roundtrip():
     handle = orch.start_workflow("gated", "wf-gate-1")
     orch.send("wf-gate-1", "approval", {"approved": True})
     assert handle.result() == {"approved": True}
+
+
+@skip_no_pg
+def test_dbos_queue_concurrency_cap_and_pivot():
+    # FR-DUR-2/4: concurrency cap + pivot-around-blocker on the DBOS-backed adapter.
+    from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
+
+    orch = DbosOrchestrator(_PG_URL)
+    orch.create_queue("sandbox", concurrency=2)
+    assert orch.acquire("sandbox", "app-1") is True
+    assert orch.acquire("sandbox", "app-2") is True
+    assert orch.acquire("sandbox", "app-3") is False
+    assert orch.release("sandbox", "app-1") == "app-3"  # waiter pivots in

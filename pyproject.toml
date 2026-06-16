@@ -39,6 +39,7 @@ dependencies = [
     # network boundary in the AppriseNotifier; the default test lane uses a
     # capturing sink (no network), and live Discord/SMTP tests are integration-gated.
     "apprise",
+    "pynacl>=1.6.2",
 ]
 
 [project.optional-dependencies]

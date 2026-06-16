@@ -144,6 +144,10 @@ class PatchrightBrowser:
     def is_final_submit_page(self, application_id: ApplicationId) -> bool:
         return self._source(application_id).is_final_submit_page()
 
+    def is_confirmation_page(self, application_id: ApplicationId) -> bool:
+        """Auto-detect a post-submission confirmation page (FR-LOG-4)."""
+        return self._source(application_id).is_confirmation_page()
+
     def submit_account(self, application_id: ApplicationId) -> None:
         """The engine must NEVER call this without violating the boundary.
 
@@ -173,6 +177,14 @@ class PatchrightBrowser:
         source = self._source(application_id)
         if isinstance(source, FakePageSource):
             source.inject_detection_signal(signal)
+
+    def simulate_confirmation(
+        self, application_id: ApplicationId, *, text: str = "Application submitted"
+    ) -> None:
+        """Test/seam helper: render a confirmation page (post-submit) (FR-LOG-4)."""
+        source = self._source(application_id)
+        if isinstance(source, FakePageSource):
+            source.simulate_confirmation(text=text)
 
     def is_returning_visitor(self, application_id: ApplicationId) -> bool:
         """Whether the per-tenant profile has been seen before (FR-STEALTH-3)."""

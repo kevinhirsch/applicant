@@ -59,3 +59,35 @@ class DurableOrchestrationPort(Protocol):
     def recover_pending(self) -> list[str]:
         """On startup, resume all interrupted workflows; return their ids (FR-DUR-1)."""
         ...
+
+    def create_queue(
+        self,
+        name: str,
+        *,
+        concurrency: int | None = None,
+        limiter_limit: int | None = None,
+        limiter_period: float | None = None,
+    ) -> Any:
+        """Create a durable queue with an optional concurrency cap + rate limiter.
+
+        Backs sandbox-concurrency caps and per-provider LLM rate limits (FR-DUR-2).
+        Returns a handle whose semantics the adapter defines (DBOS ``Queue`` when
+        configured; an in-process semaphore/limiter on the shim).
+        """
+        ...
+
+    def acquire(self, queue_name: str, work_id: str) -> bool:
+        """Try to admit ``work_id`` onto ``queue_name`` (concurrency/rate gate).
+
+        Returns True if admitted (capacity available + within rate limit), False if
+        the work must wait. Idempotent per ``work_id`` (re-acquiring an already-held
+        slot returns True without consuming a second slot).
+        """
+        ...
+
+    def release(self, queue_name: str, work_id: str) -> str | None:
+        """Release ``work_id``'s slot; admit the next waiter if any (FR-DUR-4).
+
+        Returns the ``work_id`` promoted off the wait-queue (the pivot), or ``None``.
+        """
+        ...

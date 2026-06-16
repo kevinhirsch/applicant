@@ -63,6 +63,8 @@ class PrefillResult:
     #: essay screening questions deferred to Phase 3 generation (FR-ANSWER-1).
     deferred_essay_questions: list[dict] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
+    #: page url for each screenshot in ``screenshots`` (parallel list, FR-LOG-2).
+    screenshot_pages: list[str] = field(default_factory=list)
     pending_action_id: PendingActionId | None = None
     detection_signal: str | None = None
     #: the attribute name that was missing, when blocked on FR-ATTR-5.
@@ -137,7 +139,7 @@ class PrefillService:
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
                 return blocked
-            result.screenshots.append(self._browser.screenshot(aid))
+            self._capture_screenshot(aid, result)
             # The engine never clicks the account-creating submit — hand off.
             app = app.with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
             result.account_handoff = True
@@ -278,7 +280,7 @@ class PrefillService:
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
                 return blocked
-            result.screenshots.append(self._browser.screenshot(aid))
+            self._capture_screenshot(aid, result)
 
             # Advance; if there is no next page we are done filling.
             if self._browser.advance(aid) is None:
@@ -439,6 +441,13 @@ class PrefillService:
         )
         self._persist(app)
         return result
+
+    def _capture_screenshot(self, aid, result: PrefillResult) -> None:
+        """Capture a per-page screenshot + record its page URL (FR-LOG-2)."""
+        ref = self._browser.screenshot(aid)
+        url = self._browser.current_state(aid).url
+        result.screenshots.append(ref)
+        result.screenshot_pages.append(url)
 
     def _check_detection(self, aid):
         state = self._browser.current_state(aid)
