@@ -1,28 +1,62 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Redline / review surface (DORMANT placeholder, FR-RESUME-8 / FR-UI-2).
-  Grayed out and present until the Phase 3 DocumentReview backend lands. Reuses the
-  vendored Odysseus style (../style.css). No dead UI ships as if live.
+  Applicant — Redline / document review surface (FR-RESUME-8, FR-RESUME-9, FR-ANSWER-1).
+  Live in Phase 3: shows the redline (additions + deletions highlighted), the
+  interactive add/subtract/free-text revision loop, and approve/decline. No
+  submission until approved. Reuses the vendored Odysseus style (../style.css).
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Applicant — Review (dormant)</title>
+  <title>Applicant — Document review</title>
   <link rel="stylesheet" href="../style.css" />
+  <style>
+    /* Redline highlighting (additions + deletions), FR-RESUME-8. */
+    .redline-add, ins.redline-add { background: #e6ffed; color: #045d1e; text-decoration: none; }
+    .redline-sub, del.redline-sub { background: #ffeef0; color: #9e1c23; text-decoration: line-through; }
+    .redline-eq { color: #444; }
+    #redline-view { white-space: pre-wrap; font-family: ui-monospace, monospace; line-height: 1.5; }
+    .applicant-grayed { opacity: .5; }
+  </style>
 </head>
-<body>
-  <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;opacity:.5;" aria-disabled="true">
-    <h1>Document review <span class="admin-badge admin-badge-off">dormant — Phase 3</span></h1>
+<body data-document-id="" data-variant-id="">
+  <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;">
+    <h1>Document review <span class="admin-badge admin-badge-on">Phase 3</span></h1>
     <p class="admin-empty">
       Redline with add+subtract highlights; interactive add/subtract/free-text
       revision loop; approve/decline/revise. No submission until approved
       (FR-RESUME-8, FR-ANSWER-1).
     </p>
-    <!-- Dormant aggressiveness control (FR-RESUME-9 scaffold-and-gray). -->
-    <label class="toggle-switch" aria-disabled="true">
-      <input type="range" min="0" max="100" value="20" disabled /> Aggressiveness (grayed)
+
+    <!-- FR-RESUME-9 aggressiveness control: GRAYED scaffold (not yet load-bearing). -->
+    <label class="toggle-switch applicant-grayed" aria-disabled="true" title="Coming soon (FR-RESUME-9)">
+      <input id="aggressiveness" type="range" min="0" max="100" value="20" disabled />
+      Aggressiveness (grayed)
     </label>
+
+    <section style="margin-top:16px;">
+      <h2>Redline</h2>
+      <div id="redline-view" aria-live="polite">Loading redline...</div>
+    </section>
+
+    <section style="margin-top:16px;">
+      <h2>Revise</h2>
+      <div>
+        <input id="revise-instruction" type="text" placeholder="e.g. add a metric to the lead bullet" />
+        <button class="admin-btn admin-btn-sm" data-kind="add">Add</button>
+        <button class="admin-btn admin-btn-sm" data-kind="subtract">Subtract</button>
+        <button class="admin-btn admin-btn-sm" data-kind="free_text">Free text</button>
+      </div>
+      <ul id="turn-log" class="admin-empty"></ul>
+    </section>
+
+    <section style="margin-top:16px;">
+      <button id="approve-btn" class="admin-btn">Approve</button>
+      <button id="decline-btn" class="admin-btn">Decline</button>
+      <span id="review-status" class="admin-empty"></span>
+    </section>
   </main>
+  <script src="js/review.js"></script>
 </body>
 </html>
