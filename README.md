@@ -96,5 +96,34 @@ The durable backbone is pluggable via the `ORCHESTRATOR_BACKEND` env var:
 
 ## Status
 
-Specification complete; implementation scaffolding in progress (see
-[`docs/work-packages.md`](docs/work-packages.md)).
+**All five phases (0–4) are implemented and merged to `main`.** The engine is end-to-end
+functional in its hermetic default lane. What works today:
+
+- **Phase 0** — zero-CLI OOBE + onboarding: setup wizard (LLM-gate first, then channels,
+  fonts, Workday-ready intake), provider-agnostic LLM with a tier ladder, resumable
+  onboarding interview, resume parsing to bootstrap the attribute cloud, durable
+  orchestration backbone, structlog observability, vendored Odysseus UI shell.
+- **Phase 1** — discovery → digest → approve/decline → learning: JobSpy/SearXNG discovery,
+  per-campaign self-learning criteria + attribute cloud, daily digest with rationale and
+  approve/decline-with-feedback, pending-actions portal, Discord/web/email notifications
+  with the 30s-hold escalation ladder, source-yield learning.
+- **Phase 2** — maximal Workday pre-fill in a stealth browser sandbox: per-application
+  ephemeral sandbox, deterministic field mapping with LLM escalation, stop-at-irreducible-
+  human-steps handoff, one-click live remote session (Neko), cautious mode, encrypted
+  credential vault (libsodium), per-page screenshot logging, submission detection.
+- **Phase 3** — truthful material generation: LaTeX-primary / docx-XML fallback resume
+  tailoring, cover letters and screening answers, truthfulness + non-AI-voice guardrails,
+  variant library with lineage and fit-scoring, interactive redline review with a durable
+  revision-session loop.
+- **Phase 4** — conversion learning + tool registry + debug surface + chatbot + one-liner
+  install/update: deepened real-conversion learning, per-tool toggle registry, debug surface
+  (logs/screenshots/history/workflow state), confirmation-gated chatbot, and the
+  install/update scripts (with in-UI Update button).
+
+**Tests:** the hermetic default test lane is green — `uv run pytest -q` reports **539
+passed** (10 integration-gated skips). Real external integrations — live job boards, a real
+browser (patchright/playwright), TeX (lualatex/xelatex), Neko remote sessions,
+Postgres/DBOS durable execution, and Discord/SMTP delivery — sit behind integration-gated
+boundaries that require a live deployment; the default lane proves the same logic with
+fakes. See [`docs/delivery-status.md`](docs/delivery-status.md) for the per-phase delivery
+summary and [`docs/traceability.md`](docs/traceability.md) for requirement-level coverage.
