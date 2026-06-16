@@ -54,6 +54,24 @@ def review(container=Depends(get_container)):
     return HTMLResponse("<h1>Review (dormant)</h1>", status_code=200)
 
 
+@router.get("/debug", response_class=HTMLResponse)
+def debug(container=Depends(get_container)):
+    """Debug / observability surface (FR-OBS-2 / FR-LOG-3 / FR-UI-6)."""
+    path = _screen("debug.html", container)
+    if path.is_file():
+        return FileResponse(str(path))
+    return HTMLResponse("<h1>Debug (dormant)</h1>", status_code=200)
+
+
+@router.get("/chat", response_class=HTMLResponse)
+def chat(container=Depends(get_container)):
+    """Assistant chatbot surface (FR-CHAT-1 / FR-UI-6)."""
+    path = _screen("chat.html", container)
+    if path.is_file():
+        return FileResponse(str(path))
+    return HTMLResponse("<h1>Chat (dormant)</h1>", status_code=200)
+
+
 @router.get("/api/dormant-surfaces")
 def dormant_surfaces() -> JSONResponse:
     """Expose the dormant-surface registry so the UI can gray unwired surfaces."""
@@ -64,7 +82,7 @@ def dormant_surfaces() -> JSONResponse:
                 "name": s.surface_name,
                 "requirement_ids": list(s.requirement_ids),
                 "live_phase": s.live_phase,
-                "status": "dormant",
+                "status": s.status,
             }
             for s in DORMANT_SURFACES
         ]

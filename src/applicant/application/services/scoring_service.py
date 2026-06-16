@@ -36,12 +36,14 @@ class ScoringService:
         *,
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
         learning=None,
+        tool_registry=None,
     ) -> None:
         self._storage = storage
         self._llm = llm
         self._embedding = embedding
         self._threshold = threshold
         self._learning = learning
+        self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
 
     @property
     def threshold(self) -> int:
@@ -67,6 +69,9 @@ class ScoringService:
         return scoring.score * 100.0 >= self._threshold
 
     def _score(self, posting: JobPosting, criteria: SearchCriteria | None) -> ViabilityScoring:
+        # Honor the Scoring tool toggle at dispatch (FR-UI-4).
+        if self._tools is not None:
+            self._tools.ensure_enabled("scoring")
         if criteria is None:
             criteria = SearchCriteria(campaign_id=posting.campaign_id)
         criteria_text = " ".join(

@@ -7,10 +7,41 @@ redaction so credentials/PII never reach the logs (FR-VAULT-3, NFR-PRIV-1).
 from __future__ import annotations
 
 import logging
+from collections import deque
 from contextvars import ContextVar
 from typing import Any
 
 import structlog
+
+#: Bounded in-memory ring buffer of recent (already-redacted) log events, so the
+#: debug surface can tail structured logs without a separate log store (FR-OBS-2,
+#: FR-LOG-3). It is the LAST processor's input, so secrets are already redacted.
+_LOG_RING: deque[dict] = deque(maxlen=500)
+
+
+def recent_logs(limit: int = 100) -> list[dict]:
+    """Return the most-recent redacted log entries, newest last (FR-LOG-3)."""
+    items = list(_LOG_RING)
+    return items[-limit:] if limit else items
+
+
+def _capture_log(_logger: Any, _method: str, event_dict: dict) -> dict:
+    """structlog processor: snapshot the (redacted) event into the ring buffer.
+
+    Runs AFTER ``_redact_secrets`` so nothing sensitive is retained (NFR-PRIV-1).
+    """
+    _LOG_RING.append({k: _to_jsonable(v) for k, v in event_dict.items()})
+    return event_dict
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    return str(value)
 
 #: Per-request/per-application correlation id, bound into every log line.
 correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
@@ -112,6 +143,7 @@ def configure_logging(*, log_format: str = "pretty", log_level: str = "INFO") ->
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
             _redact_secrets,
+            _capture_log,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),

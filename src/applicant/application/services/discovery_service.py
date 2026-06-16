@@ -24,11 +24,12 @@ _DEDUP_THRESHOLD = 0.97
 
 
 class DiscoveryService:
-    def __init__(self, storage, discovery, embedding, learning=None) -> None:
+    def __init__(self, storage, discovery, embedding, learning=None, tool_registry=None) -> None:
         self._storage = storage
         self._discovery = discovery
         self._embedding = embedding
         self._learning = learning  # optional LearningService for yield persistence
+        self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
 
     # --- source registry (FR-DISC-2) --------------------------------------
     def sync_registry(self, campaign_id: CampaignId) -> list[DiscoverySource]:
@@ -81,7 +82,13 @@ class DiscoveryService:
     def run_discovery(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> list[JobPosting]:
-        """Search enabled sources, dedup, persist, record yield, return kept postings."""
+        """Search enabled sources, dedup, persist, record yield, return kept postings.
+
+        Honors the Discovery tool toggle (FR-UI-4): when disabled, dispatch is
+        blocked with a clear reason and nothing is searched.
+        """
+        if self._tools is not None:
+            self._tools.ensure_enabled("discovery")
         criteria = criteria or SearchCriteria(campaign_id=campaign_id)
         self.sync_registry(campaign_id)
         raw = self._discovery.search(campaign_id, criteria)

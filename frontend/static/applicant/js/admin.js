@@ -1,15 +1,17 @@
 /*
- * Applicant — debug/observability + tool-toggle + history surface client.
- * FR-UI-4 (tool toggles), FR-OBS-2 / FR-LOG-3 (history + workflow state),
- * FR-OOBE-4 (in-UI Update button). Phase 4 thin client.
+ * Applicant — debug/observability + tool-toggle + history/variant-library surface.
+ * FR-UI-4 (tool toggles), FR-OBS-2 / FR-LOG-3 (logs, screenshots, history,
+ * workflow state, variant library), FR-OOBE-4 (in-UI Update button). Phase 4.
  *
- * Network failures degrade gracefully — a dormant/error note is shown, never
- * dead UI presented as live (FR-UI-2).
+ * Network failures degrade gracefully — an error note is shown, never dead UI
+ * presented as live (FR-UI-2).
  */
 (function () {
   "use strict";
 
-  const campaignId = document.body.getAttribute("data-campaign-id") || "";
+  const params = new URLSearchParams(location.search);
+  const campaignId = document.body.getAttribute("data-campaign-id") || params.get("campaign_id") || "";
+  const applicationId = document.body.getAttribute("data-application-id") || params.get("application_id") || "";
 
   async function api(path, opts) {
     const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
@@ -22,6 +24,11 @@
     Object.assign(node, attrs || {});
     (children || []).forEach((c) => node.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
     return node;
+  }
+
+  function note(container, text) {
+    container.innerHTML = "";
+    container.appendChild(el("p", { className: "admin-empty applicant-note" }, [text]));
   }
 
   // --- tool toggles (FR-UI-4) ---------------------------------------------
@@ -42,8 +49,7 @@
         list.appendChild(el("div", { className: "applicant-toggle-row" }, [el("span", {}, [t.label]), checkbox]));
       });
     } catch (e) {
-      list.innerHTML = "";
-      list.appendChild(el("p", { className: "admin-empty applicant-note" }, ["Tool registry unavailable."]));
+      note(list, "Tool registry unavailable.");
     }
   }
 
@@ -55,20 +61,94 @@
       tbody.innerHTML = "";
       const apps = payload.applications || [];
       if (!apps.length) {
-        tbody.appendChild(el("tr", {}, [el("td", { colSpan: 4, className: "admin-empty" }, ["No applications yet."])]));
+        tbody.appendChild(el("tr", {}, [el("td", { colSpan: 6, className: "admin-empty" }, ["No applications yet."])]));
         return;
       }
       apps.forEach((a) => {
+        const outcomes = (a.outcomes || []).map((o) => o.type).join(", ") || "—";
         tbody.appendChild(el("tr", {}, [
           el("td", {}, [a.role_name || a.job_title || "—"]),
           el("td", {}, [a.status]),
           el("td", {}, [a.work_mode || "—"]),
+          el("td", {}, [String(a.screenshot_count || 0)]),
+          el("td", {}, [outcomes]),
           el("td", {}, [el("a", { href: `/api/admin/workflow/${encodeURIComponent(a.application_id)}` }, ["state"])]),
         ]));
       });
     } catch (e) {
       tbody.innerHTML = "";
-      tbody.appendChild(el("tr", {}, [el("td", { colSpan: 4, className: "admin-empty applicant-note" }, ["History unavailable."])]));
+      tbody.appendChild(el("tr", {}, [el("td", { colSpan: 6, className: "admin-empty applicant-note" }, ["History unavailable."])]));
+    }
+  }
+
+  // --- variant library (FR-UI-6 / FR-RESUME-6) ----------------------------
+  async function loadVariants() {
+    const tbody = document.getElementById("variants-rows");
+    if (!tbody) return;
+    try {
+      const payload = await api(`/api/admin/variants/${encodeURIComponent(campaignId)}`);
+      tbody.innerHTML = "";
+      const variants = payload.variants || [];
+      if (!variants.length) {
+        tbody.appendChild(el("tr", {}, [el("td", { colSpan: 5, className: "admin-empty" }, ["No variants yet."])]));
+        return;
+      }
+      variants.forEach((v) => {
+        tbody.appendChild(el("tr", {}, [
+          el("td", {}, [(v.variant_id || "").slice(0, 8)]),
+          el("td", {}, [v.parent_id ? v.parent_id.slice(0, 8) : "root"]),
+          el("td", {}, [String(v.lineage_depth || 0)]),
+          el("td", {}, [v.approved ? "yes" : "no"]),
+          el("td", {}, [v.targeted_jd_signature || "—"]),
+        ]));
+      });
+    } catch (e) {
+      tbody.innerHTML = "";
+      tbody.appendChild(el("tr", {}, [el("td", { colSpan: 5, className: "admin-empty applicant-note" }, ["Variant library unavailable."])]));
+    }
+  }
+
+  // --- structured logs tail (FR-LOG-3) ------------------------------------
+  async function loadLogs() {
+    const list = document.getElementById("logs-list");
+    if (!list) return;
+    try {
+      const payload = await api("/api/admin/logs?limit=50");
+      list.innerHTML = "";
+      const entries = payload.entries || [];
+      if (!entries.length) {
+        note(list, "No log entries yet.");
+        return;
+      }
+      entries.forEach((e) => {
+        const line = [e.timestamp, e.level, e.event].filter(Boolean).join(" ");
+        list.appendChild(el("div", {}, [line || JSON.stringify(e)]));
+      });
+    } catch (e) {
+      note(list, "Logs unavailable.");
+    }
+  }
+
+  // --- per-page screenshots (FR-OBS-2) ------------------------------------
+  async function loadScreenshots() {
+    const list = document.getElementById("screenshots-list");
+    if (!list || !applicationId) return;
+    try {
+      const payload = await api(`/api/admin/screenshots/${encodeURIComponent(applicationId)}`);
+      list.innerHTML = "";
+      const shots = payload.screenshots || [];
+      if (!shots.length) {
+        note(list, "No screenshots captured for this run.");
+        return;
+      }
+      shots.forEach((s) => {
+        list.appendChild(el("div", { className: "applicant-toggle-row" }, [
+          el("span", {}, [s.page_ref || s.id]),
+          el("a", { href: s.page_url || "#" }, ["view"]),
+        ]));
+      });
+    } catch (e) {
+      note(list, "Screenshots unavailable.");
     }
   }
 
@@ -94,5 +174,8 @@
 
   loadTools();
   loadHistory();
+  loadVariants();
+  loadLogs();
+  loadScreenshots();
   wireUpdate();
 })();

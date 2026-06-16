@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import get_container, require_llm_configured, require_tool_enabled
 from applicant.application.services.material_service import MaterialService
 from applicant.core.errors import ReviewRequired
 from applicant.core.ids import GeneratedDocumentId
@@ -114,7 +114,11 @@ def list_for_application(application_id: str, container: Container = Depends(get
     }
 
 
-@router.post("/redline", status_code=200)
+@router.post(
+    "/redline",
+    status_code=200,
+    dependencies=[Depends(require_tool_enabled("resume_tailoring"))],
+)
 def redline(body: RedlineIn, container: Container = Depends(get_container)) -> dict:
     """Render the add/subtract redline for the review surface (FR-RESUME-8)."""
     result = _material_service(container).render_redline(
@@ -128,7 +132,11 @@ def redline(body: RedlineIn, container: Container = Depends(get_container)) -> d
     }
 
 
-@router.post("/cover-letter", status_code=201)
+@router.post(
+    "/cover-letter",
+    status_code=201,
+    dependencies=[Depends(require_tool_enabled("cover_letter_generation"))],
+)
 def generate_cover_letter(body: CoverLetterIn, container: Container = Depends(get_container)) -> dict:
     """Generate a cover letter ON DEMAND (FR-RESUME-10), routed to review.
 
@@ -147,7 +155,11 @@ def generate_cover_letter(body: CoverLetterIn, container: Container = Depends(ge
     return {"generated": True, "id": doc.id, "type": doc.type.value, "approved": doc.approved}
 
 
-@router.post("/screening-answer", status_code=201)
+@router.post(
+    "/screening-answer",
+    status_code=201,
+    dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
+)
 def generate_screening_answer(
     body: ScreeningAnswerIn, container: Container = Depends(get_container)
 ) -> dict:

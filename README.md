@@ -38,6 +38,41 @@ The full build specification lives under [`docs/`](docs/):
 | [`docs/open-items.md`](docs/open-items.md) | Open items and defaults |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 
+## Install (one-liner) and update
+
+Applicant ships the whole stack — FastAPI + frontend, PostgreSQL, SearXNG, on-demand
+Neko, font-install — as a Docker Compose deployment (FR-INSTALL-1/3). No `make` needed.
+
+**One-liner install** (Proxmox-helper-script style; idempotent, data-safe; runs the
+Compose stack and Alembic migrations, then OOBE finishes in-browser — NFR-ZEROCLI-1):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/<org>/applicant/main/scripts/install.sh)" -- --apply
+```
+
+Or from a checkout (dry-run by default — prints the steps; add `--apply` to run them):
+
+```bash
+bash scripts/install.sh            # dry-run preview
+bash scripts/install.sh --apply    # provision: compose up + alembic upgrade head
+```
+
+Editable defaults are environment-driven (`POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`POSTGRES_DB`, `APP_URL`). Then open `http://localhost:8000` and complete the wizard.
+
+**Update** — backs up the DB, pulls, runs migrations, restarts, and supports
+**rollback** of the most recent backup on failure (FR-INSTALL-2). Safe-by-default
+(dry-run unless `--apply`):
+
+```bash
+bash scripts/update.sh --apply              # backup → pull → migrate → restart
+bash scripts/update.sh --rollback --apply   # restore the most recent DB backup
+```
+
+The same update flow is invokable from the **in-UI Update button** on the debug
+surface (`/debug`) without any CLI (FR-OOBE-4); real dispatch is guarded behind
+`APPLICANT_UPDATE_ENABLED=1`, otherwise it reports a safe dry-run.
+
 ## Stack
 
 Python 3.11+ · FastAPI + vendored Odysseus UI · PostgreSQL + JSONB · DBOS Transact

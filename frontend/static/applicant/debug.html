@@ -4,11 +4,12 @@
   FR-OBS-2 (debug surface), FR-LOG-3 (logs), FR-UI-4 (tool toggles), FR-UI-6
   (history + variant library), FR-OOBE-4 (in-UI Update button).
 
-  Phase 4: tool toggles, per-application history, durable-workflow state, and the
-  Update button are LIVE (wired to /api/admin/* and /api/update/*). Panels whose
-  backing store has not yet landed (logs tail, per-page screenshots, variant
-  library) are GRAYED via .applicant-dormant — present but dormant, never shown as
-  if live (FR-UI-2 scaffold-and-gray). Reuses the vendored Odysseus style.
+  Phase 4: tool toggles, per-application history, per-page screenshots, durable-
+  workflow state, the structured-log tail, the resume-variant library, and the
+  Update button are all LIVE (wired to /api/admin/* and /api/update/*). Genuinely
+  dormant surfaces (resume-aggressiveness, multi-campaign switcher) remain grayed
+  via .applicant-dormant — present but dormant, never shown as if live (FR-UI-2).
+  Reuses the vendored Odysseus style.
 -->
 <html lang="en">
 <head>
@@ -21,6 +22,7 @@
     .applicant-section { max-width: 960px; margin: 32px auto; padding: 20px; }
     .applicant-note { font-style: italic; }
     .applicant-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
+    .applicant-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; }
   </style>
 </head>
 <body data-campaign-id="" data-application-id="">
@@ -36,9 +38,33 @@
     <section class="admin-card applicant-section" id="history-section">
       <h2>Application history <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
       <table class="admin-card" style="width:100%;" id="history-table">
-        <thead><tr><th>Role</th><th>Status</th><th>Work mode</th><th>Workflow</th></tr></thead>
-        <tbody id="history-rows"><tr><td colspan="4" class="admin-empty">Loading…</td></tr></tbody>
+        <thead><tr><th>Role</th><th>Status</th><th>Work mode</th><th>Shots</th><th>Outcomes</th><th>Workflow</th></tr></thead>
+        <tbody id="history-rows"><tr><td colspan="6" class="admin-empty">Loading…</td></tr></tbody>
       </table>
+    </section>
+
+    <!-- Variant library (FR-UI-6 / FR-RESUME-6) — LIVE -->
+    <section class="admin-card applicant-section" id="variants-section">
+      <h2>Variant library <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <p class="admin-empty">Resume variants with lineage, fit scores, and approval state (FR-RESUME-6).</p>
+      <table class="admin-card" style="width:100%;" id="variants-table">
+        <thead><tr><th>Variant</th><th>Parent</th><th>Lineage depth</th><th>Approved</th><th>Signature</th></tr></thead>
+        <tbody id="variants-rows"><tr><td colspan="5" class="admin-empty">Loading…</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- Structured logs tail (FR-LOG-3 / FR-OBS-2) — LIVE -->
+    <section class="admin-card applicant-section" id="logs-section">
+      <h2>Logs <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <p class="admin-empty">Recent structured log entries (secrets redacted, FR-LOG-3 / NFR-PRIV-1).</p>
+      <div id="logs-list" class="applicant-log"><p class="admin-empty">Loading…</p></div>
+    </section>
+
+    <!-- Per-page screenshots (FR-OBS-2) — LIVE -->
+    <section class="admin-card applicant-section" id="screenshots-section">
+      <h2>Screenshots <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <p class="admin-empty">Per-page screenshots captured during pre-fill/sandbox runs (FR-OBS-2).</p>
+      <div id="screenshots-list"><p class="admin-empty">Set ?application_id=… to inspect a run.</p></div>
     </section>
 
     <!-- In-UI Update button (FR-OOBE-4) — LIVE (safe dry-run by default) -->
@@ -49,22 +75,16 @@
       <p class="admin-empty applicant-note" id="update-result" hidden></p>
     </section>
 
-    <!-- Dormant: logs tail (FR-LOG-3) — grayed until the structlog/OTel tail lands. -->
-    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
-      <h2>Logs <span class="admin-badge admin-badge-off">dormant</span></h2>
-      <p class="admin-empty">Structured log tail (FR-LOG-3) arrives with the observability stack.</p>
+    <!-- Dormant: resume aggressiveness (FR-RESUME-9) — grayed by spec for MVP-1. -->
+    <section class="admin-card applicant-section applicant-dormant" id="aggressiveness-section" aria-disabled="true">
+      <h2>Resume aggressiveness <span class="admin-badge admin-badge-off">dormant</span></h2>
+      <p class="admin-empty">Truthful-framing aggressiveness dial (FR-RESUME-9) — built but grayed for MVP-1.</p>
     </section>
 
-    <!-- Dormant: per-page screenshots (FR-OBS-2) — grayed until capture lands. -->
-    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
-      <h2>Screenshots <span class="admin-badge admin-badge-off">dormant</span></h2>
-      <p class="admin-empty">Per-page screenshots (FR-OBS-2) arrive with live prefill/sandbox capture.</p>
-    </section>
-
-    <!-- Dormant: variant library (FR-UI-6 / FR-RESUME-6) — grayed until wired. -->
-    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
-      <h2>Variant library <span class="admin-badge admin-badge-off">dormant</span></h2>
-      <p class="admin-empty">Resume-variant lineage browser (FR-UI-6, FR-RESUME-6) — present but dormant.</p>
+    <!-- Dormant: multi-campaign switcher (FR-CRIT-4 / NFR-EXT-1) — grayed for MVP-1. -->
+    <section class="admin-card applicant-section applicant-dormant" id="campaign-switcher-section" aria-disabled="true">
+      <h2>Multi-campaign switcher <span class="admin-badge admin-badge-off">dormant</span></h2>
+      <p class="admin-empty">Switch/clone campaigns (FR-CRIT-4, NFR-EXT-1) — readiness verified; switcher grayed for MVP-1.</p>
     </section>
   </main>
   <script src="./js/admin.js"></script>

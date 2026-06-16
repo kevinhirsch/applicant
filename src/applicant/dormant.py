@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: Surface status values for the backlog (FR-UI-2).
+STATUS_LIVE = "live"  # backend exists and the surface is wired
+STATUS_DORMANT = "dormant"  # present-but-grayed; backend not yet wired
+
 
 @dataclass(frozen=True)
 class DormantSurface:
@@ -16,6 +20,10 @@ class DormantSurface:
     requirement_ids: tuple[str, ...]
     wiring_notes: str
     live_phase: int
+    #: Current wiring status. As phases land, surfaces whose backend now exists are
+    #: switched from ``dormant`` to ``live`` (FR-UI-2). Anything still genuinely
+    #: dormant stays ``dormant`` (present-but-grayed) with its backlog entry.
+    status: str = STATUS_DORMANT
 
 
 #: The backlog from docs/dormant-surfaces.md (§3.19, FR-UI-2).
@@ -24,64 +32,80 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         key="resume_aggressiveness",
         surface_name="Resume aggressiveness / tuning control",
         requirement_ids=("FR-RESUME-9",),
-        wiring_notes="Bind aggressiveness scale to generation params; never relax truthfulness.",
+        wiring_notes=(
+            "Generation accepts the aggressiveness param (Phase 3 MaterialService); "
+            "per FR-RESUME-9 the control still SHIPS GRAYED for MVP-1. Stays dormant."
+        ),
         live_phase=3,
+        status=STATUS_DORMANT,
     ),
     DormantSurface(
         key="digest_in_app",
         surface_name="Digest surface (in-app)",
         requirement_ids=("FR-DIG-1", "FR-DIG-3", "FR-DIG-4", "FR-DIG-5", "FR-UI-6"),
-        wiring_notes="Bind to DigestReview port + decisions table.",
+        wiring_notes="Wired to DigestReview port + decisions table (Phase 1).",
         live_phase=1,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="redline_surface",
         surface_name="Redline / revision surface",
         requirement_ids=("FR-RESUME-8", "FR-ANSWER-1", "FR-NOTIF-4", "FR-UI-6"),
-        wiring_notes="Bind to DocumentReview port + RevisionSession/generated_materials + renderer.",
+        wiring_notes="Wired to DocumentReview port + RevisionSession/generated_materials + renderer (Phase 3).",
         live_phase=3,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="debug_surface",
         surface_name="Debug surface",
         requirement_ids=("FR-OBS-2", "FR-LOG-3", "FR-UI-6"),
-        wiring_notes="Bind to AdminQuery port + structlog/OTel + screenshots + DBOS state.",
+        wiring_notes="Wired to AdminQuery service + structlog ring buffer + screenshots + DBOS state (Phase 4).",
         live_phase=4,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="tool_toggle_registry",
         surface_name="Tool-toggle registry",
         requirement_ids=("FR-UI-4",),
-        wiring_notes="Bind to ToolRegistry port + tool_settings table; enforce at dispatch.",
+        wiring_notes="Wired to ToolRegistry port + tool_settings table; enforced at dispatch (Phase 4).",
         live_phase=4,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="chatbot",
         surface_name="Chatbot",
         requirement_ids=("FR-CHAT-1", "FR-FB-2", "FR-UI-6"),
-        wiring_notes="Bind to Chat port + LLM + attribute/criteria stores with confirmation gate.",
+        wiring_notes="Wired to ChatService (LLM + attribute/criteria stores) with confirmation gate (Phase 4).",
         live_phase=4,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="multi_campaign_switcher",
         surface_name="Multi-campaign switcher",
         requirement_ids=("FR-CRIT-4", "NFR-EXT-1"),
-        wiring_notes="Schema already campaign-scoped; wire CampaignManagement multi-ops + switcher.",
+        wiring_notes=(
+            "Schema + services are campaign-scoped and multi-campaign readiness is "
+            "verified (Phase 4a); MVP-1 runs a single campaign so the switcher UI "
+            "ships grayed. Stays dormant."
+        ),
         live_phase=4,
+        status=STATUS_DORMANT,
     ),
     DormantSurface(
         key="update_button",
         surface_name="Update button (in-settings)",
         requirement_ids=("FR-OOBE-4", "FR-INSTALL-2"),
-        wiring_notes="Bind to UpdateTrigger port + update script.",
+        wiring_notes="Wired to UpdateTrigger port + update script (safe dry-run default) (Phase 4).",
         live_phase=4,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="remote_takeover",
         surface_name="Remote-session takeover",
         requirement_ids=("FR-SANDBOX-2", "FR-SANDBOX-3", "FR-PREFILL-4", "FR-PREFILL-5", "FR-UI-6"),
-        wiring_notes="Bind to RemoteSessionControl port + Sandbox/RemoteView sub-port.",
+        wiring_notes="Wired to RemoteSessionControl port + Sandbox/RemoteView sub-port (Phase 2).",
         live_phase=2,
+        status=STATUS_LIVE,
     ),
 )
 
@@ -103,7 +127,7 @@ def seed_dormant_surfaces(storage_session: object | None) -> int:
                 id=surface.key,
                 surface_name=surface.surface_name,
                 requirement_ids=list(surface.requirement_ids),
-                status="dormant",
+                status=surface.status,
                 wiring_notes={"notes": surface.wiring_notes, "live_phase": surface.live_phase},
             )
         )

@@ -49,6 +49,8 @@ scenarios(
     "../features/p4_multi_campaign.feature",
     "../features/p4_tool_toggles.feature",
     "../features/p4_dormant_surfaces.feature",
+    "../features/p4_chatbot.feature",
+    "../features/p4_update_button.feature",
 )
 
 _FRONTEND = Path(__file__).resolve().parents[3] / "frontend" / "static" / "applicant"
@@ -371,30 +373,69 @@ def live_panels_present(p4ctx):
     assert "admin-badge-on" in html
 
 
-@then("the logs, screenshots, and variant-library panels are present but dormant")
-def dormant_panels_grayed(p4ctx):
+@then("the logs, screenshots, and variant-library panels are present and live")
+def live_obs_panels_present(p4ctx):
     html = p4ctx["html"]
-    # The grayed class is present and applied to dormant panels (FR-UI-2).
-    assert "applicant-dormant" in html
-    assert html.count("admin-badge-off") >= 3  # logs + screenshots + variant library
+    # These panels are now wired (FR-OBS-2 / FR-LOG-3 / FR-RESUME-6) and carry the
+    # live badge alongside their section ids.
+    for section in ("logs-section", "screenshots-section", "variants-section"):
+        assert f'id="{section}"' in html
     for token in ("Logs", "Screenshots", "Variant library"):
         assert token in html
 
 
-@given("a not-yet-wired observability endpoint")
-def pending_endpoint(p4ctx):
-    from applicant.app.routers.admin import application_screenshots, logs
+@then("the genuinely dormant surfaces are present but grayed")
+def genuinely_dormant_grayed(p4ctx):
+    html = p4ctx["html"]
+    # Per FR-UI-2 the still-dormant surfaces stay present-but-grayed with the
+    # off-badge (resume aggressiveness ships grayed by FR-RESUME-9; the multi-
+    # campaign switcher is grayed for MVP-1).
+    assert "applicant-dormant" in html
+    assert html.count("admin-badge-off") >= 2
+    for token in ("Resume aggressiveness", "Multi-campaign switcher"):
+        assert token in html
 
-    p4ctx["screenshots"] = application_screenshots("app-123")
-    p4ctx["logs"] = logs()
+
+@given("a campaign with a logged application")
+def campaign_with_logged_app(p4ctx):
+    from applicant.application.services.admin_query_service import AdminQueryService
+    from applicant.observability.logging import configure_logging, get_logger
+
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.PREFILLING,
+        role_name="Staff Engineer",
+        work_mode="remote",
+    )
+    storage.applications.add(app)
+    storage.commit()
+    # Emit a log line into the ring buffer (FR-LOG-3).
+    configure_logging(log_format="json", log_level="INFO")
+    get_logger("p4test").info("debug_surface_check", application_id=str(app.id))
+    # Use a real shim orchestrator (file-backed) for workflow-state introspection.
+    from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
+
+    p4ctx["campaign_id"] = cid
+    p4ctx["app"] = app
+    p4ctx["admin_query"] = AdminQueryService(storage, CheckpointShimOrchestrator())
 
 
-@then("it reports a pending status with no fabricated rows")
-def reports_pending(p4ctx):
-    assert p4ctx["screenshots"]["status"] == "pending"
-    assert p4ctx["screenshots"]["screenshots"] == []
-    assert p4ctx["logs"]["status"] == "pending"
-    assert p4ctx["logs"]["entries"] == []
+@then("the debug history reflects the real application")
+def history_reflects_real(p4ctx):
+    rows = p4ctx["admin_query"].application_history(p4ctx["campaign_id"])
+    assert len(rows) == 1
+    assert rows[0]["application_id"] == str(p4ctx["app"].id)
+    assert rows[0]["role_name"] == "Staff Engineer"
+
+
+@then("the logs endpoint returns recent redacted entries")
+def logs_returns_entries(p4ctx):
+    entries = p4ctx["admin_query"].logs(50)
+    assert any(e.get("event") == "debug_surface_check" for e in entries)
 
 
 @given("the update trigger with no override set")
@@ -415,3 +456,108 @@ def update_safe(p4ctx):
     result = p4ctx["result"]
     assert result.started is False
     assert result.message  # non-empty explanation
+
+
+# === Chatbot (FR-CHAT-1 / FR-FB-3) ========================================
+@pytest.fixture
+def chat_ctx() -> dict:
+    return {}
+
+
+@given("a chatbot for an empty campaign")
+def chatbot_for_campaign(chat_ctx):
+    from applicant.application.services.attribute_cloud_service import AttributeCloudService
+    from applicant.application.services.chat_service import ChatService
+    from applicant.application.services.criteria_service import CriteriaService
+
+    storage = InMemoryStorage()
+    chat_ctx["storage"] = storage
+    chat_ctx["campaign_id"] = CampaignId(new_id())
+    chat_ctx["chat"] = ChatService(
+        attribute_service=AttributeCloudService(storage),
+        criteria_service=CriteriaService(storage),
+        llm=None,
+    )
+
+
+@when('the user sends "hello"')
+def user_says_hello(chat_ctx):
+    chat_ctx["result"] = chat_ctx["chat"].converse(chat_ctx["campaign_id"], "hello")
+
+
+@then("the chatbot reports the missing core attributes")
+def reports_missing(chat_ctx):
+    gaps = chat_ctx["result"].gaps
+    assert "first name" in gaps and "email address" in gaps
+
+
+@when("the user states an integral attribute value")
+def states_integral(chat_ctx):
+    chat_ctx["result"] = chat_ctx["chat"].converse(
+        chat_ctx["campaign_id"], "my first name is Kevin"
+    )
+
+
+@then("the chatbot proposes the change requiring confirmation")
+def proposes_gated(chat_ctx):
+    proposals = chat_ctx["result"].proposed_changes
+    assert proposals and proposals[0].requires_confirmation is True
+    assert proposals[0].applied is False
+
+
+@then("the change is not committed until the user confirms")
+def not_committed_until_confirm(chat_ctx):
+    cid = chat_ctx["campaign_id"]
+    storage = chat_ctx["storage"]
+    assert not any(a.name == "first name" for a in storage.attributes.list_for_campaign(cid))
+    chat_ctx["chat"].confirm_change(cid, "first name", "Kevin")
+    assert any(a.name == "first name" for a in storage.attributes.list_for_campaign(cid))
+
+
+@when("the user states a non-integral attribute value")
+def states_non_integral(chat_ctx):
+    chat_ctx["result"] = chat_ctx["chat"].converse(
+        chat_ctx["campaign_id"], "my years of experience is 8"
+    )
+
+
+@then("the chatbot applies the change immediately")
+def applies_immediately(chat_ctx):
+    proposals = chat_ctx["result"].proposed_changes
+    assert proposals and proposals[0].applied is True
+    assert proposals[0].requires_confirmation is False
+
+
+# === Update script ordering (FR-INSTALL-2 / FR-OOBE-4) ====================
+@pytest.fixture
+def update_ctx() -> dict:
+    return {}
+
+
+@given("the update script")
+def update_script(update_ctx):
+    script = Path(__file__).resolve().parents[3] / "scripts" / "update.sh"
+    update_ctx["text"] = script.read_text(encoding="utf-8")
+
+
+@then("it backs up the database before running migrations")
+def backup_before_migrate(update_ctx):
+    text = update_ctx["text"]
+    backup_idx = text.index("pg_dump")
+    migrate_idx = text.index("alembic upgrade head")
+    assert backup_idx < migrate_idx  # backup BEFORE migrate (safe order)
+
+
+@then("a failure leaves the backup intact for rollback")
+def failure_leaves_backup(update_ctx):
+    # The script documents and supports --rollback restoring the latest backup.
+    assert "--rollback" in update_ctx["text"]
+    assert "set -euo pipefail" in update_ctx["text"]  # aborts the run on any failure
+
+
+@then("it restores the most recent backup on rollback")
+def restores_latest_backup(update_ctx):
+    text = update_ctx["text"]
+    assert "ROLLBACK" in text
+    assert "ls -1t" in text  # picks the most-recent backup
+    assert "psql" in text  # restores it into Postgres

@@ -4,6 +4,20 @@ Mandated by **FR-UI-2** (§3.19) and the scaffold-and-gray principle (§2): surf
 
 The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are built with the same CSS classes/components but disabled until their backend lands and the wiring is completed.
 
+**Status (post-Phase 4).** As phases landed, surfaces whose backend now exists were switched from grayed to **live** in `src/applicant/dormant.py` (the `status` field) and in the `dormant_surface_backlog` table. The table below tracks each surface; `src/applicant/dormant.py` is the machine-readable source of truth, and `tests/unit/test_phase4_services.py` asserts registry/UI consistency (FR-UI-2).
+
+| Surface | Status | Where it lives |
+|---|---|---|
+| Resume aggressiveness | **dormant** (grayed by FR-RESUME-9 for MVP-1) | `/debug` (aggressiveness-section) |
+| Digest (in-app) | **live** (Phase 1) | `/digest` |
+| Redline / revision | **live** (Phase 3) | `/review` |
+| Debug surface | **live** (Phase 4) | `/debug` |
+| Tool-toggle registry | **live** (Phase 4) | `/debug` (tools-section) |
+| Chatbot | **live** (Phase 4) | `/chat` |
+| Multi-campaign switcher | **dormant** (grayed for MVP-1; readiness verified) | `/debug` (campaign-switcher-section) |
+| Update button | **live** (Phase 4) | `/debug` (update-section) |
+| Remote-session takeover | **live** (Phase 2) | remote surface |
+
 ---
 
 ## 1. Resume aggressiveness / tuning control

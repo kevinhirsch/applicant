@@ -1,24 +1,31 @@
 """Chat router (FR-CHAT-1, FR-FB-2/3).
 
-# STAGE B — owned by Phase 3 (assists Phase 3 material input/gap-finding).
-
 The assistant chatbot: it takes conversational input, identifies gaps in the
 campaign's attribute cloud / criteria, and proposes attribute/criteria updates.
 Any integral change is surfaced as a PROPOSAL that requires explicit user
 confirmation (the confirmation gate, FR-FB-3); non-integral updates may auto-apply.
-The chatbot never commits an integral change on its own. Gated behind the LLM gate.
+The chatbot never commits an integral change on its own.
+
+Backed by the ChatService (LLM port + attribute/criteria services), which degrades
+gracefully to a deterministic reply when no LLM is configured. Gated behind the LLM
+gate (FR-UI-5) and the Chat tool toggle (FR-UI-4).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
-from applicant.core.rules.confirmation_gate import requires_confirmation
+from applicant.app.deps import get_container, require_llm_configured, require_tool_enabled
+from applicant.core.errors import ConfirmationRequired
+from applicant.core.ids import CampaignId
 
-router = APIRouter(prefix="/api/chat", tags=["chat"], dependencies=[Depends(require_llm_configured)])
+router = APIRouter(
+    prefix="/api/chat",
+    tags=["chat"],
+    dependencies=[Depends(require_llm_configured), Depends(require_tool_enabled("chat"))],
+)
 
 
 class ChatIn(BaseModel):
@@ -26,55 +33,40 @@ class ChatIn(BaseModel):
     message: str
 
 
-def _identify_gaps(campaign_id: str, container: Container) -> list[str]:
-    """Cheap gap-finder: which core attributes are missing for the campaign."""
-    have = {
-        a.name.lower()
-        for a in container.storage.attributes.list_for_campaign(campaign_id)  # type: ignore[arg-type]
-    }
-    core = ["first name", "last name", "email address", "phone", "current job title"]
-    return [c for c in core if c not in have]
+class ConfirmIn(BaseModel):
+    campaign_id: str
+    name: str
+    value: str
 
 
 @router.get("")
 def index() -> dict:
-    return {"surface": "chat", "phase": 3, "status": "live"}
+    return {"surface": "chat", "phase": 4, "status": "live"}
 
 
 @router.post("", status_code=200)
 def send_message(body: ChatIn, container: Container = Depends(get_container)) -> dict:
-    """Conversational turn: reply + any proposed changes (confirmation-gated).
+    """Conversational turn: reply + identified gaps + any proposed changes.
 
-    Proposed changes carry ``requires_confirmation``; the client must echo a
-    confirmation before the change commits (FR-FB-3). The chatbot itself never
-    auto-commits an integral change.
+    Proposed changes carry ``requires_confirmation``; integral/sensitive changes are
+    NOT auto-committed — the client must POST to ``/confirm`` (FR-FB-3). Non-integral
+    proposals are auto-applied and reported with ``applied=true``.
     """
-    gaps = _identify_gaps(body.campaign_id, container)
-    proposed: list[dict] = []
-    # Heuristic: a "my <attr> is <value>" style message proposes an attribute set.
-    text = body.message.strip()
-    if " is " in text.lower():
-        # Treat a stated value as an integral attribute change -> needs confirmation.
-        proposed.append(
-            {
-                "kind": "attribute",
-                "raw": text,
-                "is_integral": True,
-                "requires_confirmation": requires_confirmation(is_integral=True),
-            }
-        )
-
-    if gaps:
-        reply = (
-            "Thanks. I still need a few details to apply confidently: "
-            + ", ".join(gaps)
-            + ". I will not change anything integral without your confirmation."
-        )
-    else:
-        reply = "Got it. Anything you want me to propose will be confirmed before it commits."
-
+    result = container.chat_service.converse(CampaignId(body.campaign_id), body.message)
     return {
-        "message": reply,
-        "gaps": gaps,
-        "proposed_changes": proposed,
+        "message": result.message,
+        "gaps": result.gaps,
+        "proposed_changes": [c.as_dict() for c in result.proposed_changes],
     }
+
+
+@router.post("/confirm", status_code=200)
+def confirm_change(body: ConfirmIn, container: Container = Depends(get_container)) -> dict:
+    """Commit an integral change the user explicitly confirmed (FR-FB-3)."""
+    try:
+        attr = container.chat_service.confirm_change(
+            CampaignId(body.campaign_id), body.name, body.value
+        )
+    except ConfirmationRequired as exc:  # pragma: no cover - confirm=True path
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return {"committed": True, "name": attr.name, "value": attr.value}
