@@ -16,9 +16,12 @@ COPY pyproject.toml uv.lock* README.md ./
 COPY src ./src
 RUN uv sync --no-dev --frozen || uv sync --no-dev
 
-# App code + vendored frontend.
+# App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
+# parents[4]/templates by the resume-render engines — must be in the image).
 COPY alembic.ini ./
 COPY frontend ./frontend
+COPY templates ./templates
+COPY scripts ./scripts
 
 EXPOSE 8000
 
