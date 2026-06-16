@@ -16,6 +16,7 @@ from applicant.app.routers import (
     campaigns,
     chat,
     conversion,
+    credentials,
     criteria,
     digest,
     discovery_sources,
@@ -51,6 +52,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(chat.router)
     app.include_router(remote.router)
     app.include_router(outcomes.router)
+    app.include_router(credentials.router)
     app.include_router(pending_actions.router)
     app.include_router(admin.router)
     app.include_router(update.router)

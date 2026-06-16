@@ -39,6 +39,7 @@ scenarios(
     "../features/p2_prefill_workday_account.feature",
     "../features/p2_cautious_mode_takeover.feature",
     "../features/p2_credential_vault.feature",
+    "../features/p2_conversion_capture.feature",
 )
 
 WORKDAY_URL = "https://acme.myworkdayjobs.com/job/123"
@@ -89,6 +90,8 @@ def _stored_answers(cid: CampaignId) -> list[Attribute]:
         a("Current Job Title", "Engineer"),
         a("Years of Experience", "8"),
         a("Are you authorized to work?", "Yes"),
+        # Factual screening question (the essay one is deferred to Phase 3).
+        a("Are you willing to relocate?", "Yes"),
         # Exactly one EEO answer is explicitly provided; the rest must decline.
         a("Gender", "Female", sensitive=True),
     ]
@@ -144,6 +147,8 @@ def no_account_submit(p2ctx):
 def vnc_handoff_notification(p2ctx, prefill, storage):
     result = p2ctx["result"]
     assert result.sandbox_session_url  # one-click live-session URL
+    # FR-SANDBOX-2: the live-session URL is a one-click, token-bearing deep link.
+    assert "token=" in result.sandbox_session_url
     # The notification carried the deep link (FR-NOTIF-2 / FR-PREFILL-4).
     notifier: AppriseNotifier = prefill._notification  # phase-local introspection
     dedup = f"{result.application_id}:account_human_step"
@@ -199,6 +204,63 @@ def eeo_declined(p2ctx):
 @then("the application is awaiting final approval")
 def awaiting_final(p2ctx):
     assert p2ctx["result"].state == ApplicationState.AWAITING_FINAL_APPROVAL
+
+
+# === Missing-attribute soft error (FR-ATTR-5) ==============================
+@given("the campaign attribute cloud is missing a required detail")
+def attribute_cloud_missing(p2ctx):
+    # Drop "Phone" — a required personal-info field — to trigger the soft error.
+    p2ctx["attributes"] = [a for a in _stored_answers(p2ctx["campaign_id"]) if a.name != "Phone"]
+
+
+@then("pre-fill pauses with a missing-detail soft error")
+def paused_missing_attr(p2ctx):
+    assert p2ctx["result"].state == ApplicationState.BLOCKED_MISSING_ATTR
+    assert p2ctx["result"].missing_attribute == "Phone"
+
+
+@then("a provide-missing-detail pending action is created")
+def missing_attr_pending(p2ctx, storage):
+    pending = storage.pending_actions.list_open(p2ctx["campaign_id"])
+    assert any(p.kind == "missing_attr" for p in pending)
+
+
+@when("the user supplies the missing detail")
+def user_supplies_detail(p2ctx, prefill):
+    # FR-ATTR-5: the supplied value is stored + reused; the engine resumes.
+    phone = next(a for a in _stored_answers(p2ctx["campaign_id"]) if a.name == "Phone")
+    full = [*p2ctx["attributes"], phone]
+    app = (
+        p2ctx["application"]
+        .with_status(ApplicationState.SANDBOX_PROVISIONING)
+        .with_status(ApplicationState.ACCOUNT_PREFILL)
+        .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+    )
+    # Re-run from the account step with the now-complete cloud (fresh session).
+    prefill.prefill_application(p2ctx["application"], WORKDAY_URL, full)
+    p2ctx["result"] = prefill.resume_after_account(app, full)
+
+
+@then("pre-fill resumes and reaches awaiting final approval")
+def resumed_to_final(p2ctx):
+    assert p2ctx["result"].state == ApplicationState.AWAITING_FINAL_APPROVAL
+
+
+# === Screening-question routing (FR-ANSWER-1) ==============================
+@then("factual screening questions are filled from stored answers")
+def factual_filled(p2ctx):
+    result = p2ctx["result"]
+    questions = next(v for url, v in result.filled_by_page.items() if "questions" in url)
+    assert questions["#q-relocate"] == "Yes"
+
+
+@then("essay screening questions are deferred to material generation")
+def essay_deferred(p2ctx):
+    result = p2ctx["result"]
+    deferred = [d["selector"] for d in result.deferred_essay_questions]
+    assert "#q-why" in deferred
+    questions = next(v for url, v in result.filled_by_page.items() if "questions" in url)
+    assert "#q-why" not in questions  # never auto-answered (FR-ANSWER-1)
 
 
 # === Cautious mode + takeover ==============================================
@@ -348,6 +410,105 @@ def secret_sealed_at_rest(p2ctx):
     # The internal sealed record must not equal the plaintext secret (NFR-PRIV-1).
     sealed = p2ctx["vault"]._store[(str(p2ctx["campaign_id"]), p2ctx["tenant"])]
     assert sealed["secret"] != "captured-secret"
+
+
+# === Conversion capture (auto-detected or marked) (FR-LOG-1/2/4, FR-LEARN-2) ===
+@given("an application awaiting final approval in a controlled sandbox session")
+def app_awaiting_in_session(p2ctx, storage):
+    from applicant.adapters.browser.patchright_browser import PatchrightBrowser
+    from applicant.application.services.submission_service import SubmissionService
+
+    cid = CampaignId(new_id())
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        role_name="Senior Engineer",
+        work_mode="remote",
+        root_url=WORKDAY_URL,
+    )
+    browser = PatchrightBrowser()
+    browser.open(app.id, WORKDAY_URL)
+    p2ctx["campaign_id"] = cid
+    p2ctx["application"] = app
+    p2ctx["browser"] = browser
+    p2ctx["storage"] = storage
+    p2ctx["submission"] = SubmissionService(storage, browser)
+
+
+@when("the user submits and the ATS shows a confirmation page")
+def ats_shows_confirmation(p2ctx):
+    # The user clicks submit in the live session; the ATS renders its confirmation.
+    p2ctx["browser"].simulate_confirmation(
+        p2ctx["application"].id, text="Application submitted. Thank you for applying."
+    )
+
+
+@then("the engine auto-detects the submission")
+def engine_auto_detects(p2ctx):
+    svc = p2ctx["submission"]
+    assert svc.detect_submission(p2ctx["application"].id) is True
+    # Record it from the controlled session (auto source -> engine-finished).
+    from applicant.core.entities.outcome_event import OutcomeSource
+
+    p2ctx["event"] = svc.record_submission(
+        p2ctx["application"],
+        source=OutcomeSource.AUTO,
+        attributes_used={"Email Address": "kevin@kevinhirsch.com"},
+        screenshots=["screenshot://1", "screenshot://2"],
+        screenshot_pages=[f"{WORKDAY_URL}/personal", f"{WORKDAY_URL}/experience"],
+    )
+
+
+@then("a submitted outcome event is recorded for conversion learning")
+def submitted_outcome_recorded(p2ctx):
+    outcomes = p2ctx["storage"].outcomes.list_for_application(p2ctx["application"].id)
+    assert any(o.type == "submitted" for o in outcomes)
+
+
+@then("the application detail and per-page screenshots are logged")
+def detail_and_screenshots_logged(p2ctx):
+    storage = p2ctx["storage"]
+    logged = storage.applications.get(p2ctx["application"].id)
+    # FR-LOG-1: role/work-mode/root-url + attributes used are logged.
+    assert logged.role_name == "Senior Engineer"
+    assert logged.work_mode == "remote"
+    assert logged.root_url == WORKDAY_URL
+    assert logged.attributes_used.get("Email Address") == "kevin@kevinhirsch.com"
+    # FR-LOG-2: per-page screenshots archived.
+    shots = storage.screenshots.list_for_application(p2ctx["application"].id)
+    assert len(shots) == 2
+
+
+@given("an application in emergency data-handoff")
+def app_in_emergency(p2ctx, storage):
+    from applicant.application.services.submission_service import SubmissionService
+
+    cid = CampaignId(new_id())
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.EMERGENCY_DATA_HANDOFF,
+        role_name="Senior Engineer",
+        root_url=WORKDAY_URL,
+    )
+    p2ctx["campaign_id"] = cid
+    p2ctx["application"] = app
+    p2ctx["storage"] = storage
+    p2ctx["submission"] = SubmissionService(storage)
+
+
+@when("the user taps mark-submitted")
+def user_taps_mark_submitted(p2ctx):
+    p2ctx["event"] = p2ctx["submission"].mark_submitted(p2ctx["application"])
+
+
+@then("the application is logged as submitted by the user")
+def logged_submitted_by_user(p2ctx):
+    logged = p2ctx["storage"].applications.get(p2ctx["application"].id)
+    assert logged.status == ApplicationState.SUBMITTED_BY_USER
 
 
 # --- shared helpers --------------------------------------------------------

@@ -32,6 +32,14 @@ class RemoteViewPort(Protocol):
         """Hand control to the user (live takeover)."""
         ...
 
+    def revoke_takeover(self, session_id: str) -> None:
+        """Return control to the engine (user finished the human step)."""
+        ...
+
+    def has_takeover(self, session_id: str) -> bool:
+        """Whether the user currently holds live control of ``session_id``."""
+        ...
+
 
 @runtime_checkable
 class SandboxPort(Protocol):
@@ -47,4 +55,8 @@ class SandboxPort(Protocol):
 
     def remote_view(self) -> RemoteViewPort:
         """Return the swappable remote-view sub-port."""
+        ...
+
+    def active_sessions(self) -> list[SandboxSession]:
+        """All currently live sandbox sessions (multi-session, FR-SANDBOX-4)."""
         ...

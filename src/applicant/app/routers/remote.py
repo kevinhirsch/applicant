@@ -20,9 +20,8 @@ from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import get_container, require_llm_configured
-from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
+from applicant.core.entities.outcome_event import OutcomeSource
 from applicant.core.errors import PrefillBoundaryViolation
-from applicant.core.ids import OutcomeEventId, new_id
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
 
 router = APIRouter(
@@ -65,10 +64,27 @@ def authorize_takeover(session_id: str, container: Container = Depends(get_conta
     container.sandbox.remote_view().authorize_takeover(session_id)
 
 
+@router.post("/applications/{application_id}/request-final-approval", status_code=202)
+def request_final_approval(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Notify the user the application awaits final approval (FR-NOTIF-2/4).
+
+    Fires the escalation ladder with a one-click live-session link + a redline-surface
+    seam (FR-NOTIF-4); the durable ``recv`` gate is awaited by the workflow worker.
+    """
+    session = container.sandbox.for_application(application_id)  # type: ignore[arg-type]
+    url = session.remote_view_url if session else None
+    handle = container.final_approval_service.request_approval(application_id, session_url=url)
+    return {"application_id": application_id, "notification": handle, "gate": "awaiting"}
+
+
 @router.post("/applications/{application_id}/submit-self", status_code=201)
 def submit_self(application_id: str, container: Container = Depends(get_container)) -> dict:
     """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4)."""
     event = _record_submission(container, application_id, source=OutcomeSource.MANUAL)
+    # Acting on one channel expires the other escalation rungs (FR-NOTIF-3).
+    container.final_approval_service.acted(application_id)
     return {
         "application_id": application_id,
         "result": "submitted_by_user",
@@ -91,6 +107,7 @@ def authorize_engine_finish(
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     event = _record_submission(container, application_id, source=OutcomeSource.AUTO)
+    container.final_approval_service.acted(application_id)
     return {
         "application_id": application_id,
         "result": "finished_by_engine",
@@ -99,12 +116,12 @@ def authorize_engine_finish(
 
 
 def _record_submission(container: Container, application_id: str, *, source: OutcomeSource):
-    event = OutcomeEvent(
-        id=OutcomeEventId(new_id()),
-        application_id=application_id,  # type: ignore[arg-type]
-        type="submitted",
-        source=source,
-    )
-    container.storage.outcomes.add(event)
-    container.storage.commit()
-    return event
+    """Route the terminal submission through the SubmissionService (FR-LOG-1/2/4).
+
+    Logs the application detail + archives screenshots + records the OutcomeEvent so
+    both live-session paths (user-submit / engine-finish) feed conversion learning.
+    """
+    from applicant.app.routers.outcomes import _load_or_stub
+
+    app = _load_or_stub(container, application_id)
+    return container.submission_service.record_submission(app, source=source)

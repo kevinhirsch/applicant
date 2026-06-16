@@ -103,3 +103,26 @@ class TestPatchrightBrowserContract:
         bad = dict(NORMALIZED_FINGERPRINT)
         bad["webgl_renderer"] = "Apple M1 (Metal)"  # contradicts Windows UA
         assert fingerprint_is_coherent(bad) is False
+
+    # --- screenshot routes through the boundary (FR-PREFILL-4) -----------
+    def test_screenshot_routes_through_boundary(self, adapter, aid):
+        # SCREENSHOT is a benign step (allowed); it must still go through the
+        # boundary so the adapter cannot perform an unguarded action.
+        adapter.open(aid, WORKDAY_URL)
+        assert adapter.screenshot(aid)  # no raise on a benign step
+
+    # --- persistent per-tenant profile (FR-STEALTH-3) --------------------
+    def test_returning_visitor_recognized_on_second_open(self, aid):
+        adapter = PatchrightBrowser()
+        adapter.open(aid, WORKDAY_URL)
+        assert adapter.is_returning_visitor(aid) is False
+        other = ApplicationId(new_id())
+        adapter.open(other, WORKDAY_URL)  # same tenant host
+        assert adapter.is_returning_visitor(other) is True
+
+    # --- residential egress guardrail (FR-STEALTH-4) ---------------------
+    def test_datacenter_egress_refused_at_construction(self):
+        from applicant.adapters.browser.stealth import DatacenterEgressRefused, EgressPolicy
+
+        with pytest.raises(DatacenterEgressRefused):
+            PatchrightBrowser(egress=EgressPolicy(proxy_url="http://dc:8080", residential=False))

@@ -96,6 +96,11 @@ class Container:
     digest_service: Any
     attribute_cloud_service: Any
     feedback_service: Any
+    # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
+    capacity_service: Any = None
+    final_approval_service: Any = None
+    submission_service: Any = None
+    prefill_service: Any = None
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -244,6 +249,30 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     feedback_service = FeedbackService(storage, learning_service, criteria=criteria_service)
 
+    # Phase 2: durable concurrency + final-approval gate + submission logging.
+    from applicant.application.services.capacity_service import CapacityService
+    from applicant.application.services.final_approval_service import FinalApprovalService
+    from applicant.application.services.prefill_service import PrefillService
+    from applicant.application.services.submission_service import SubmissionService
+
+    capacity_service = CapacityService(
+        orchestrator,
+        sandbox_concurrency=settings.sandbox_concurrency,
+        llm_limit=settings.llm_rate_limit or None,
+        llm_period=settings.llm_rate_period or None,
+    )
+    final_approval_service = FinalApprovalService(orchestrator, notification_service)
+    submission_service = SubmissionService(storage, browser)
+    prefill_service = PrefillService(
+        storage=storage,
+        browser=browser,
+        detection=detection,
+        sandbox=sandbox,
+        credentials=credentials,
+        notification=notification,
+        llm=llm,
+    )
+
     return Container(
         settings=settings,
         engine=engine,
@@ -278,4 +307,8 @@ def build_container(settings: Settings | None = None) -> Container:
         digest_service=digest_service,
         attribute_cloud_service=attribute_cloud_service,
         feedback_service=feedback_service,
+        capacity_service=capacity_service,
+        final_approval_service=final_approval_service,
+        submission_service=submission_service,
+        prefill_service=prefill_service,
     )

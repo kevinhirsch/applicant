@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
+from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
@@ -140,6 +141,20 @@ class _OutcomeRepo:
     def list_for_application(self, aid: ApplicationId) -> list[OutcomeEvent]:
         return [e for e in self._l if e.application_id == aid]
 
+    def list_all(self) -> list[OutcomeEvent]:
+        return list(self._l)
+
+
+class _ScreenshotRepo:
+    def __init__(self) -> None:
+        self._l: list[ApplicationScreenshot] = []
+
+    def add(self, s: ApplicationScreenshot) -> None:
+        self._l.append(s)
+
+    def list_for_application(self, aid: ApplicationId) -> list[ApplicationScreenshot]:
+        return [s for s in self._l if s.application_id == aid]
+
 
 class _PendingRepo:
     def __init__(self) -> None:
@@ -233,6 +248,7 @@ class InMemoryStorage:
         self.documents = _DocumentRepo()
         self.decisions = _DecisionRepo()
         self.outcomes = _OutcomeRepo()
+        self.screenshots = _ScreenshotRepo()
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()

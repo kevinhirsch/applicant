@@ -57,6 +57,34 @@ class StoragePortContract:
         events = adapter.outcomes.list_for_application(aid)
         assert len(events) == 1 and events[0].type == "submitted"
 
+    def test_screenshot_archive_and_list(self, adapter):
+        # FR-LOG-2: per-page screenshots archived + retrievable per application.
+        from applicant.core.entities.application_screenshot import ApplicationScreenshot
+        from applicant.core.ids import ScreenshotId
+
+        aid = ApplicationId(new_id())
+        adapter.screenshots.add(
+            ApplicationScreenshot(
+                id=ScreenshotId(new_id()),
+                application_id=aid,
+                page_ref="screenshot://fake/1",
+                page_url="https://acme.workday/application/personal",
+            )
+        )
+        adapter.commit()
+        shots = adapter.screenshots.list_for_application(aid)
+        assert len(shots) == 1
+        assert shots[0].page_url.endswith("personal")
+
+    def test_outcomes_list_all(self, adapter):
+        # FR-LEARN-2: all conversion events queryable for learning depth.
+        aid = ApplicationId(new_id())
+        adapter.outcomes.add(
+            OutcomeEvent(id=OutcomeEventId(new_id()), application_id=aid, type="submitted")
+        )
+        adapter.commit()
+        assert any(o.type == "submitted" for o in adapter.outcomes.list_all())
+
     def test_pending_action_resolve(self, adapter):
         cid = CampaignId(new_id())
         pid = PendingActionId(new_id())
@@ -170,6 +198,31 @@ class CredentialStorePortContract:
         adapter.store(cid, Credential(tenant_key="t1", username="u", secret="s"))
         assert "t1" in adapter.list_tenants(cid)
 
+    def test_capture_banking_mode(self, adapter):
+        # FR-VAULT-2: auto-capture during live account-creation, tagged ``captured``.
+        cid = CampaignId(new_id())
+        adapter.capture(cid, "acme.workday", "kev", "live-secret")
+        got = adapter.retrieve(cid, "acme.workday")
+        assert got is not None
+        assert got.username == "kev" and got.secret == "live-secret"
+        assert got.source == "captured"
+
+    def test_manual_banking_mode_is_default(self, adapter):
+        # FR-VAULT-2: manual vault entry is the default banking mode.
+        cid = CampaignId(new_id())
+        adapter.store(cid, Credential(tenant_key="t2", username="u", secret="s"))
+        got = adapter.retrieve(cid, "t2")
+        assert got is not None and got.source == "manual"
+
+    def test_sealed_at_rest_not_plaintext(self, adapter):
+        # NFR-PRIV-1: the stored record must never equal the plaintext secret.
+        cid = CampaignId(new_id())
+        adapter.store(cid, Credential(tenant_key="t3", username="u", secret="topsecret"))
+        # The adapter keeps an internal sealed record; assert it does not leak.
+        sealed = getattr(adapter, "_store", {})
+        for rec in sealed.values():
+            assert "topsecret" not in str(rec)
+
 
 class NotificationPortContract:
     """Contract for ``NotificationPort`` (dispatch + idempotent expiry)."""
@@ -217,6 +270,31 @@ class OrchestrationPortContract:
     def test_recover_pending_lists_workflows(self, adapter):
         adapter.run_step("wf-3", "s1", lambda: 1)
         assert "wf-3" in adapter.recover_pending()
+
+    def test_queue_concurrency_cap_and_pivot(self, adapter):
+        # FR-DUR-2: a concurrency cap admits up to N; FR-DUR-4: release pivots to
+        # the next waiter so a blocked unit does not stall unrelated work.
+        adapter.create_queue("sandbox", concurrency=2)
+        assert adapter.acquire("sandbox", "app-1") is True
+        assert adapter.acquire("sandbox", "app-2") is True
+        # Cap reached: app-3 must wait (it does NOT stall app-1/app-2).
+        assert adapter.acquire("sandbox", "app-3") is False
+        # app-1 enters a BLOCKED/AWAITING state -> yields capacity (the pivot).
+        promoted = adapter.release("sandbox", "app-1")
+        assert promoted == "app-3"  # the waiter pivots in
+
+    def test_queue_acquire_is_idempotent(self, adapter):
+        adapter.create_queue("llm", concurrency=1)
+        assert adapter.acquire("llm", "call-1") is True
+        assert adapter.acquire("llm", "call-1") is True  # re-acquire holds same slot
+        assert adapter.acquire("llm", "call-2") is False  # cap is still 1
+
+    def test_rate_limiter_bounds_admissions(self, adapter):
+        # FR-DUR-2: per-provider LLM rate limit (limit per period seconds).
+        adapter.create_queue("openrouter", limiter_limit=2, limiter_period=100.0)
+        assert adapter.acquire("openrouter", "a") is True
+        assert adapter.acquire("openrouter", "b") is True
+        assert adapter.acquire("openrouter", "c") is False  # over the window limit
 
 
 class ToolRegistryPortContract:

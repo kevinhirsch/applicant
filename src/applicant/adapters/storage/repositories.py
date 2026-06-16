@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from applicant.adapters.storage import models as m
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
+from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
@@ -34,6 +35,7 @@ from applicant.core.ids import (
     JobPostingId,
     PendingActionId,
     ResumeVariantId,
+    ScreenshotId,
 )
 from applicant.core.state_machine import ApplicationState
 
@@ -137,6 +139,15 @@ def _outcome_to_entity(row: m.OutcomeEventModel) -> OutcomeEvent:
         application_id=ApplicationId(row.application_id),
         type=row.type,
         source=OutcomeSource(row.source),
+    )
+
+
+def _screenshot_to_entity(row: m.ApplicationScreenshotModel) -> ApplicationScreenshot:
+    return ApplicationScreenshot(
+        id=ScreenshotId(row.id),
+        application_id=ApplicationId(row.application_id),
+        page_ref=row.page_ref,
+        page_url=row.page_url or "",
     )
 
 
@@ -413,6 +424,33 @@ class OutcomeEventRepo:
         ).all()
         return [_outcome_to_entity(r) for r in rows]
 
+    def list_all(self) -> list[OutcomeEvent]:
+        rows = self._s.scalars(select(m.OutcomeEventModel)).all()
+        return [_outcome_to_entity(r) for r in rows]
+
+
+class ApplicationScreenshotRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, shot: ApplicationScreenshot) -> None:
+        self._s.merge(
+            m.ApplicationScreenshotModel(
+                id=shot.id,
+                application_id=shot.application_id,
+                page_ref=shot.page_ref,
+                page_url=shot.page_url,
+            )
+        )
+
+    def list_for_application(self, application_id: ApplicationId) -> list[ApplicationScreenshot]:
+        rows = self._s.scalars(
+            select(m.ApplicationScreenshotModel).where(
+                m.ApplicationScreenshotModel.application_id == application_id
+            )
+        ).all()
+        return [_screenshot_to_entity(r) for r in rows]
+
 
 class PendingActionRepo:
     def __init__(self, session: Session) -> None:
@@ -568,6 +606,7 @@ class SqlAlchemyStorage:
         self.documents = GeneratedDocumentRepo(session)
         self.decisions = DecisionRepo(session)
         self.outcomes = OutcomeEventRepo(session)
+        self.screenshots = ApplicationScreenshotRepo(session)
         self.pending_actions = PendingActionRepo(session)
         self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)

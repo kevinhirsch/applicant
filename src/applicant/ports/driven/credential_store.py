@@ -13,14 +13,23 @@ from typing import Protocol, runtime_checkable
 
 from applicant.core.ids import CampaignId
 
+#: How a credential set arrived in the vault (FR-VAULT-2, both banking modes).
+MODE_MANUAL = "manual"  # entered by the user in the vault UI (preferred upfront)
+MODE_CAPTURED = "captured"  # auto-captured from a human account-creation in the live session
+
 
 @dataclass(frozen=True)
 class Credential:
-    """A decrypted credential set (handle with care; never log)."""
+    """A decrypted credential set (handle with care; never log).
+
+    ``source`` records *which* banking mode produced the set (FR-VAULT-2) so the
+    UI can distinguish manually-entered from auto-captured credentials.
+    """
 
     tenant_key: str  # e.g. workday tenant subdomain
     username: str
     secret: str
+    source: str = MODE_MANUAL
 
 
 @runtime_checkable
@@ -29,6 +38,16 @@ class CredentialStorePort(Protocol):
 
     def store(self, campaign_id: CampaignId, credential: Credential) -> None:
         """Seal and persist a credential set for a campaign/tenant (FR-VAULT-1)."""
+        ...
+
+    def capture(
+        self, campaign_id: CampaignId, tenant_key: str, username: str, secret: str
+    ) -> None:
+        """Auto-capture credentials entered during live account-creation (FR-VAULT-2).
+
+        A convenience over :meth:`store` that tags the set ``source=captured`` so the
+        second banking mode is a first-class, contract-tested path.
+        """
         ...
 
     def retrieve(self, campaign_id: CampaignId, tenant_key: str) -> Credential | None:
