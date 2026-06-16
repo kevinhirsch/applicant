@@ -233,8 +233,10 @@ def build_container(settings: Settings | None = None) -> Container:
     browser = PatchrightBrowser()
     detection = DetectionMonitor()
     sandbox = LocalSandbox()
-    latex_tailor = LatexTailor()
-    docx_tailor = DocxTailor()
+    # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the
+    # engine binary is present at runtime (RESUME_RENDER=auto|on|off, default auto).
+    latex_tailor = LatexTailor(render_mode=settings.resume_render)
+    docx_tailor = DocxTailor(render_mode=settings.resume_render)
     font_installer = FontInstaller(install_root=settings.fonts_dir)
     # Channel config: wizard-persisted (FR-OOBE-2) overrides env defaults; real
     # network send is opt-in (NOTIFICATIONS_LIVE) so the default lane is hermetic.

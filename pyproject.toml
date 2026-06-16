@@ -40,6 +40,10 @@ dependencies = [
     # capturing sink (no network), and live Discord/SMTP tests are integration-gated.
     "apprise",
     "pynacl>=1.6.2",
+    # Templating for the real docx->moderncv LaTeX conversion (FR-RESUME-3/3a): the
+    # parsed base resume is rendered into a real moderncv ".tex" source via the
+    # vendored templates/latex/moderncv/main.tex.j2 template. Pure-python, no I/O.
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]

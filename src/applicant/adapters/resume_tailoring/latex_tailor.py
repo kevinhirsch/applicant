@@ -7,9 +7,12 @@ export a font-embedded PDF compiled with xelatex/lualatex + fontspec (moderncv).
 
 Two clearly-marked boundaries keep the DEFAULT lane hermetic (NO TeX required):
 
-* ``_compile_pdf`` — runs the real ``xelatex``/``lualatex`` compile ONLY when a TeX
-  engine is installed AND ``allow_compile`` is set; otherwise it returns a
-  deterministic synthetic result so the suite is green with no TeX install.
+* ``_compile_pdf`` — runs the real ``xelatex``/``lualatex`` compile when the render
+  mode permits it AND a TeX engine is installed. In the default ``render_mode="auto"``
+  the real compile auto-enables whenever a TeX engine is on PATH at runtime (so prod
+  uses the real compile-and-inspect fidelity check, FR-RESUME-4), and degrades to a
+  deterministic synthetic result when no engine is present so the suite is green with
+  no TeX install.
 * ``_inspect_pdf`` — when a real PDF exists it is inspected with ``pypdf`` (exact
   page count + font-embedding); otherwise the fidelity check models the inspection
   deterministically on the source so "looks fine in source is not acceptable" still
@@ -58,14 +61,38 @@ class LatexTailor:
         *,
         template_root: Path | None = None,
         engine: str = "lualatex",
-        allow_compile: bool = False,
+        allow_compile: bool | None = None,
+        render_mode: str = "auto",
         output_dir: Path | None = None,
     ) -> None:
         self._template_root = template_root or _TEMPLATE_ROOT
         self._engine = engine  # "lualatex" (fontawesome5) / "xelatex" (fontspec)
-        # The real compile only runs when explicitly enabled (integration lane).
-        self._allow_compile = allow_compile
+        # Render mode (FR-RESUME-4): "auto" auto-enables the real compile when a TeX
+        # engine is on PATH at runtime, else falls back to the deterministic stub;
+        # "on" forces compile (and soft-errors if no engine); "off" forces the stub.
+        # ``allow_compile`` is kept for back-compat: True == "on", False == "off".
+        if allow_compile is not None:
+            render_mode = "on" if allow_compile else "off"
+        self._render_mode = render_mode
         self._output_dir = output_dir
+
+    @property
+    def _allow_compile(self) -> bool:
+        """Whether the real compile should run, given the render mode + engine."""
+        if self._render_mode == "off":
+            return False
+        if self._render_mode == "on":
+            return True
+        # "auto": enable the real compile only when a TeX engine is actually present.
+        return self._tex_engine() is not None
+
+    def _tex_engine(self) -> str | None:
+        """The TeX engine binary to use, preferring the configured one."""
+        return (
+            shutil.which(self._engine)
+            or shutil.which("lualatex")
+            or shutil.which("xelatex")
+        )
 
     # --- source editing (LaTeX is plain text) -----------------------------
     def edit_source(self, base_source: str, edits: dict[str, str]) -> str:
@@ -220,7 +247,7 @@ class LatexTailor:
         is required and the suite stays hermetic.
         """
         storage_path = f"artifacts/{variant_id}.pdf"
-        engine_bin = shutil.which(self._engine) or shutil.which("lualatex") or shutil.which("xelatex")
+        engine_bin = self._tex_engine()
         if not (self._allow_compile and engine_bin):
             # Stub: deterministic synthetic path; let the fidelity check estimate.
             return _CompileResult(

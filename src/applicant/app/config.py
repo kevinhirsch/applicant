@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).
     fonts_dir: str = Field(default=".applicant_fonts", alias="FONTS_DIR")
 
+    # Resume render fidelity (FR-RESUME-4). "auto" (default) auto-enables the real
+    # xelatex/lualatex compile + LibreOffice docx->PDF convert when the engine binary
+    # is present at runtime, else degrades to the deterministic stub (so the hermetic
+    # lane needs no TeX/LibreOffice). "on" forces real render; "off" forces the stub.
+    resume_render: str = Field(default="auto", alias="RESUME_RENDER")
+
     # Discovery (FR-DISC-2/4/6). Live boards are OFF by default so the default lane
     # never touches the network; flip on in a real deployment (zero-CLI via env/UI).
     discovery_live: bool = Field(default=False, alias="DISCOVERY_LIVE")

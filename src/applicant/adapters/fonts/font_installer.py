@@ -8,15 +8,20 @@ usable without a rebuild. On base-resume upload the engine calls
 ``detect_required_fonts`` and prompts for any that are missing (FR-FONT-1).
 
 Filesystem operations are **real but SAFE and confined** to a configurable fonts
-dir (``install_root``) — never system-wide. The actual ``fc-cache -f`` shell-out
-is **stubbed behind a clearly marked boundary** (``_refresh_font_cache``) so tests
-never require fontconfig. The copy into the confined dir is real and verifiable.
+dir (``install_root``) — never system-wide. The ``fc-cache -f`` shell-out is **real
+when fontconfig is installed** (so an uploaded font is genuinely discoverable to the
+LaTeX/docx render env at runtime, FR-FONT-2) and **degrades gracefully to a no-op
+when ``fc-cache`` is absent** (the default hermetic lane needs no fontconfig). The
+subprocess sits behind a clearly-marked boundary (``_refresh_font_cache``) and is
+always scoped to the confined ``install_root``. The copy into the confined dir is
+real and verifiable.
 """
 
 from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 from applicant.observability.logging import get_logger
@@ -57,6 +62,10 @@ class FontInstaller:
     def __init__(self, *, install_root: str = ".applicant_fonts") -> None:
         self._install_root = install_root
         self._cache_refreshes = 0  # observable by tests
+        # Observable by tests: the dir the last fc-cache ran against, and whether a
+        # real fc-cache binary was invoked (vs the graceful no-op when absent).
+        self._last_cache_dir: str | None = None
+        self._fc_cache_ran = False
         # Track installs in-memory; bundled fonts are present from the start.
         self._installed: dict[str, FontStatus] = {
             name: FontStatus(name=name, installed=True, environment="bundled")
@@ -116,8 +125,23 @@ class FontInstaller:
 
     @property
     def cache_refresh_count(self) -> int:
-        """How many times the (stubbed) fc-cache refresh ran — for tests."""
+        """How many times the fc-cache refresh ran (real or no-op) — for tests."""
         return self._cache_refreshes
+
+    @property
+    def last_cache_dir(self) -> str | None:
+        """The confined dir the last fc-cache refresh targeted — for tests."""
+        return self._last_cache_dir
+
+    @property
+    def fc_cache_available(self) -> bool:
+        """True if a real ``fc-cache`` binary is on PATH (drives graceful no-op)."""
+        return shutil.which("fc-cache") is not None
+
+    @property
+    def fc_cache_invoked(self) -> bool:
+        """True if the last refresh actually shelled out to a real ``fc-cache``."""
+        return self._fc_cache_ran
 
     # --- helpers -----------------------------------------------------------
     def _is_installed(self, name: str) -> bool:
@@ -166,12 +190,33 @@ class FontInstaller:
             log.warning("font_copy_failed", name=name, error=str(exc))
 
     def _refresh_font_cache(self) -> None:
-        """STAGE B BOUNDARY — real ``fc-cache -f <install_root>`` goes here.
+        """SUBPROCESS BOUNDARY — real ``fc-cache -f <install_root>`` (FR-FONT-2).
 
-        A real install would run ``fc-cache -f`` scoped to ``self._install_root``
-        so the conversion environment picks the font up at runtime (no rebuild).
-        Stubbed: we only count the invocation so tests can assert it ran; no
-        subprocess and no fontconfig dependency.
+        Runs ``fc-cache -f`` scoped to the confined ``install_root`` so an uploaded
+        font is discoverable to the LaTeX/docx render env at runtime (no rebuild).
+        The subprocess only fires when ``fc-cache`` is on PATH; when fontconfig is
+        absent (the default hermetic lane) it degrades to a counted no-op so no
+        fontconfig dependency is required. The invocation count and target dir are
+        always recorded for tests.
         """
         self._cache_refreshes += 1
+        root = str(Path(self._install_root).resolve())
+        self._last_cache_dir = root
+        fc_cache = shutil.which("fc-cache")
+        if not fc_cache:
+            self._fc_cache_ran = False
+            log.info("fc_cache_skipped", reason="fc-cache not on PATH", dir=root)
+            return None
+        try:
+            subprocess.run(
+                [fc_cache, "-f", root],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            self._fc_cache_ran = True
+            log.info("fc_cache_refreshed", dir=root)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._fc_cache_ran = False
+            log.warning("fc_cache_failed", dir=root, error=str(exc))
         return None
