@@ -76,6 +76,32 @@ def test_sensitive_question_classified_sensitive():
 
 
 @pytest.mark.unit
+def test_essay_about_protected_attribute_is_not_sensitive():
+    # FR-ATTR-6/NFR-PRIV-1: a multi-word ESSAY prompt that merely mentions a
+    # protected attribute is an essay, NOT an EEO self-identification field.
+    assert (
+        classify_screening_question("How do you foster gender diversity on a team?")
+        is ScreeningKind.ESSAY
+    )
+    assert (
+        classify_screening_question("Describe a time you supported veterans at work.")
+        is ScreeningKind.ESSAY
+    )
+    # An actual short EEO self-id field still classifies sensitive.
+    assert classify_screening_question("Gender") is ScreeningKind.SENSITIVE
+
+
+@pytest.mark.unit
+def test_essay_cues_win_over_broad_factual_cues():
+    # FR-ANSWER-1: essay cues ("describe a") must be checked before broad factual
+    # cues ("do you have") so a mixed prompt routes to essay/review.
+    assert (
+        classify_screening_question("Describe a project — do you have an example?")
+        is ScreeningKind.ESSAY
+    )
+
+
+@pytest.mark.unit
 def test_ambiguous_long_question_defaults_to_essay():
     # Anything unclear routes to essay so it always passes the filters + review gate.
     assert classify_screening_question("Share more about the projects you enjoyed building.") is (

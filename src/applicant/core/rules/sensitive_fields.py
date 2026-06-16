@@ -11,6 +11,7 @@ cannot AI-guess these fields: it must route every fill decision through
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from applicant.core.errors import SensitiveFieldViolation
@@ -18,14 +19,12 @@ from applicant.core.errors import SensitiveFieldViolation
 #: The canonical default when the user has no explicit stored answer (FR-ATTR-6).
 DECLINE_TO_SELF_IDENTIFY = "decline to self-identify"
 
-#: Substrings that mark a form field as sensitive/EEO. Conservative + broad:
-#: a false positive only forces the safe default, which is acceptable.
-_SENSITIVE_MARKERS: tuple[str, ...] = (
-    "race",
+#: Unambiguous multi-character substrings that mark a field as sensitive/EEO.
+#: These are distinctive enough that raw substring matching does not misfire.
+_SENSITIVE_SUBSTRING_MARKERS: tuple[str, ...] = (
     "ethnicity",
     "ethnic",
     "gender",
-    "sex",
     "disability",
     "disabilities",
     "veteran",
@@ -36,14 +35,31 @@ _SENSITIVE_MARKERS: tuple[str, ...] = (
     "religion",
     "national origin",
     "marital",
-    "age",
     "date of birth",
-    "dob",
-    "eeo",
     "self-identification",
     "self identify",
     "self-identify",
     "diversity",
+    "hispanic",
+    "latino",
+    "latinx",
+    "military",
+)
+
+#: Short / ambiguous markers that appear inside ordinary words (e.g. "age" in
+#: "Manager"/"Message", "sex" in "unisex", "race" in "embrace"). These must be
+#: matched on WORD BOUNDARIES so they only fire on the real EEO field (FR-ATTR-6).
+_SENSITIVE_WORD_MARKERS: tuple[str, ...] = (
+    "race",
+    "sex",
+    "age",
+    "dob",
+    "eeo",
+)
+
+#: Pre-compiled word-boundary patterns for the ambiguous short markers.
+_SENSITIVE_WORD_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(m) for m in _SENSITIVE_WORD_MARKERS) + r")\b"
 )
 
 
@@ -62,7 +78,9 @@ def is_sensitive_field(field_label: str) -> bool:
     if not field_label:
         return False
     low = field_label.lower()
-    return any(marker in low for marker in _SENSITIVE_MARKERS)
+    if any(marker in low for marker in _SENSITIVE_SUBSTRING_MARKERS):
+        return True
+    return bool(_SENSITIVE_WORD_RE.search(low))
 
 
 def decide_sensitive_fill(
@@ -90,7 +108,7 @@ def decide_sensitive_fill(
             field_label=field_label,
             is_sensitive=False,
             value=explicit_answer or "",
-            from_explicit_answer=explicit_answer is not None,
+            from_explicit_answer=bool(explicit_answer),
         )
 
     if ai_suggested is not None:

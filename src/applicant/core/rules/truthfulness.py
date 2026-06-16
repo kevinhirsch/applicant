@@ -23,10 +23,19 @@ import re
 from dataclasses import dataclass, field
 
 # Unicode dash characters that read as "em-dash-like" and must not survive.
-_EM_DASH = "—"  # —
-_EN_DASH = "–"  # –
-_HORIZONTAL_BAR = "―"  # ―
-_MINUS_SIGN = "−"  # −
+_EM_DASH = "—"  # — U+2014
+_EN_DASH = "–"  # – U+2013
+_HORIZONTAL_BAR = "―"  # ― U+2015
+_MINUS_SIGN = "−"  # − U+2212
+_TWO_EM_DASH = "⸺"  # ⸺ U+2E3A
+_THREE_EM_DASH = "⸻"  # ⸻ U+2E3B
+_FIGURE_DASH = "‒"  # ‒ U+2012
+_FULLWIDTH_HYPHEN = "－"  # － U+FF0D
+
+#: Em-dash-like code points normalized to ", " (parenthetical separators).
+_EMDASH_LIKE = (_EM_DASH, _HORIZONTAL_BAR, _TWO_EM_DASH, _THREE_EM_DASH)
+#: Dash-like code points normalized to a plain hyphen.
+_HYPHEN_LIKE = (_EN_DASH, _MINUS_SIGN, _FIGURE_DASH, _FULLWIDTH_HYPHEN)
 
 #: Phrases strongly associated with AI-generated prose. Lowercased for matching.
 BANNED_PHRASES: tuple[str, ...] = (
@@ -57,22 +66,54 @@ def normalize_emdashes(text: str) -> str:
     if not text:
         return text
     out = text
-    # Spaced em/horizontal bars used as parenthetical separators -> ", ".
-    out = re.sub(rf"\s*[{_EM_DASH}{_HORIZONTAL_BAR}]\s*", ", ", out)
-    # ASCII double-hyphen used as an em-dash -> ", ".
-    out = re.sub(r"\s+--\s+", ", ", out)
-    # En-dash / minus sign -> simple hyphen.
-    out = out.replace(_EN_DASH, "-").replace(_MINUS_SIGN, "-")
+    # Spaced em/horizontal/two-em/three-em bars used as separators -> ", ".
+    out = re.sub(rf"\s*[{''.join(_EMDASH_LIKE)}]\s*", ", ", out)
+    # ASCII double(+)-hyphen used as an em-dash -> ", " (spacing not required).
+    out = re.sub(r"\s*-{2,}\s*", ", ", out)
+    # En-dash / minus / figure / fullwidth -> simple hyphen.
+    for ch in _HYPHEN_LIKE:
+        out = out.replace(ch, "-")
     return out
 
 
 def contains_emdash(text: str) -> bool:
-    """True if any em-dash-like code point or spaced ``--`` remains in ``text``."""
+    """True if any em-dash-like code point or ``--`` run remains in ``text``."""
     if not text:
         return False
-    if any(ch in text for ch in (_EM_DASH, _EN_DASH, _HORIZONTAL_BAR, _MINUS_SIGN)):
+    if any(ch in text for ch in (*_EMDASH_LIKE, *_HYPHEN_LIKE)):
         return True
-    return bool(re.search(r"\s+--\s+", text))
+    return bool(re.search(r"-{2,}", text))
+
+
+def _normalize_for_match(text: str) -> str:
+    """Normalize text so banned-phrase matching is robust to LLM typography.
+
+    LLMs emit curly apostrophes (``’`` U+2019) and uneven spacing that would let a
+    cliché slip past an ASCII-only match (FR-RESUME-5). Fold curly quotes to ASCII
+    and collapse internal whitespace before comparing.
+    """
+    out = text.replace("’", "'").replace("‘", "'")
+    out = out.replace("“", '"').replace("”", '"')
+    out = re.sub(r"\s+", " ", out)
+    return out
+
+
+def _banned_phrase_pattern(phrase: str) -> str:
+    """Build a regex matching ``phrase`` tolerant of curly quotes + extra spaces.
+
+    The seed phrases use ASCII apostrophes/spaces; generated text may use ``’`` and
+    irregular whitespace, so each apostrophe matches either quote form and each run
+    of whitespace matches one-or-more whitespace characters (FR-RESUME-5).
+    """
+    parts = []
+    for ch in phrase:
+        if ch in "'’‘":
+            parts.append(r"['’‘]")
+        elif ch.isspace():
+            parts.append(r"\s+")
+        else:
+            parts.append(re.escape(ch))
+    return "".join(parts)
 
 
 def find_banned_phrases(text: str, extra: tuple[str, ...] = ()) -> list[str]:
@@ -83,7 +124,7 @@ def find_banned_phrases(text: str, extra: tuple[str, ...] = ()) -> list[str]:
     """
     if not text:
         return []
-    low = text.lower()
+    low = _normalize_for_match(text.lower())
     phrases = (*BANNED_PHRASES, *(p.lower() for p in extra if p.strip()))
     seen: list[str] = []
     for p in phrases:
@@ -108,7 +149,7 @@ def strip_banned_phrases(text: str, extra: tuple[str, ...] = ()) -> str:
         return text
     out = text
     for phrase in (*BANNED_PHRASES, *(p.lower() for p in extra if p.strip())):
-        out = re.sub(re.escape(phrase), "", out, flags=re.IGNORECASE)
+        out = re.sub(_banned_phrase_pattern(phrase), "", out, flags=re.IGNORECASE)
     # Collapse the gaps a removal leaves behind (double spaces, orphaned commas).
     out = re.sub(r"\s+([,.;:])", r"\1", out)
     out = re.sub(r"[ \t]{2,}", " ", out)
@@ -211,6 +252,13 @@ _NON_CLAIM = frozenset(
         "managed", "worked", "experience", "team", "teams", "role", "roles",
         "year", "years", "company", "i", "we", "my", "me", "a", "an", "of", "to",
         "in", "on", "at", "as", "by", "is", "it", "be", "or", "but",
+        # Generic verbs/adjectives/nouns that are framing, not skill claims. Without
+        # capitalization gating these must be excluded so ordinary prose ("SQL
+        # work", "skilled dev") is not flagged as fabrication (NFR-TRUTH-1).
+        "work", "works", "working", "expert", "experienced", "skilled", "proficient",
+        "dev", "developer", "engineer", "professional", "using", "used", "use",
+        "wrote", "write", "writing", "and/or", "also", "well", "strong", "solid",
+        "deep", "wide", "broad", "various", "across", "including", "such", "etc",
     }
 )
 
@@ -218,8 +266,10 @@ _NON_CLAIM = frozenset(
 def candidate_claim_tokens(line: str) -> list[str]:
     """Tokens that look like skill/technology/qualification claims.
 
-    Capitalized or ALL-CAPS multi-letter words (proper nouns / technology names),
-    excluding obvious non-claim words. Used by the fabrication check.
+    Multi-letter words (skills / technology names / qualifications), excluding
+    obvious non-claim filler words. Capitalization is NOT required: lowercase
+    skill claims like "kubernetes" must still be checked (FR-RESUME-2,
+    NFR-TRUTH-1).
     """
     tokens: list[str] = []
     for raw in re.split(r"[\s,.;:()\[\]{}/]+", line):
@@ -228,9 +278,21 @@ def candidate_claim_tokens(line: str) -> list[str]:
             continue
         if word.lower() in _NON_CLAIM:
             continue
-        if word[0].isupper() or word.isupper():
-            tokens.append(word)
+        tokens.append(word)
     return tokens
+
+
+def _source_token_set(true_text: str) -> frozenset[str]:
+    """Whole-token (lowercased) set of the candidate's TRUE source.
+
+    Membership is checked per whole token so "Java" never falsely "supports" a
+    "JavaScript" claim (substring containment was the bug — NFR-TRUTH-1).
+    """
+    return frozenset(
+        t.strip("'\"").lower()
+        for t in re.split(r"[\s,.;:()\[\]{}/]+", true_text)
+        if t.strip("'\"")
+    )
 
 
 def unsupported_claims(true_text: str, generated: str) -> list[str]:
@@ -238,14 +300,15 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
 
     ``true_text`` is the candidate's real attribute set / work history / base
     source flattened to a string. Anything the generated material claims that is
-    not traceable there is a fabrication candidate (FR-RESUME-2). Deterministic.
+    not traceable there (by WHOLE-TOKEN membership, not substring) is a fabrication
+    candidate (FR-RESUME-2). Deterministic.
     """
     if not generated:
         return []
-    source_low = true_text.lower()
+    source_tokens = _source_token_set(true_text)
     flagged: list[str] = []
     for line in generated.splitlines():
         for token in candidate_claim_tokens(line):
-            if token.lower() not in source_low and token not in flagged:
+            if token.lower() not in source_tokens and token not in flagged:
                 flagged.append(token)
     return flagged

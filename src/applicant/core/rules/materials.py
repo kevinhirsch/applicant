@@ -68,10 +68,19 @@ _ESSAY_CUES: tuple[str, ...] = (
     "in your own words",
     "what makes you",
     "how would you",
+    "how do you",
     "give an example",
+    "give us an example",
     "walk us through",
     "what motivates",
     "describe how",
+    "describe a",
+    "describe the",
+    "tell us",
+    "tell me",
+    "why do you",
+    "share an example",
+    "provide an example",
 )
 
 #: Cue phrases that mark a short, factual question answerable from stored data.
@@ -96,24 +105,46 @@ _FACTUAL_CUES: tuple[str, ...] = (
     "yes/no",
 )
 
+#: Self-identification EEO field is short (a bare label / closed question), not a
+#: multi-word essay prompt that merely mentions a protected attribute. Above this
+#: word count a sensitive substring is treated as essay subject-matter, not an EEO
+#: self-id field (e.g. "How do you foster gender diversity?") (FR-ATTR-6).
+_MAX_EEO_FIELD_WORDS = 6
+
+
+def _is_eeo_self_identification(text: str) -> bool:
+    """True only for an actual EEO self-identification field, not an essay prompt.
+
+    A sensitive marker alone is not enough: "How do you foster gender diversity?"
+    is an ESSAY about diversity, not a demographic self-id field. We require the
+    field to be SHORT (a bare label / closed question) before treating a sensitive
+    marker as a self-identification field (FR-ATTR-6, NFR-PRIV-1).
+    """
+    if not is_sensitive_field(text):
+        return False
+    return len(text.split()) <= _MAX_EEO_FIELD_WORDS
+
 
 def classify_screening_question(question: str) -> ScreeningKind:
     """Classify a screening question as factual, essay, or sensitive (FR-ANSWER-1).
 
-    Order matters: a sensitive/EEO question is detected first (it follows the
-    sensitive-field policy regardless of phrasing), then explicit factual cues, then
-    essay cues. Anything ambiguous defaults to **essay** so it always passes through
-    the truthfulness filters + the review gate rather than being answered blindly.
+    Order matters: explicit ESSAY cues win first so a long-form prompt that merely
+    mentions a protected attribute ("How do you foster gender diversity?") routes
+    through review instead of the sensitive-field decline path. Then an actual EEO
+    self-identification FIELD (short label / closed question) is detected, then
+    factual cues. Anything ambiguous defaults to **essay** so it always passes
+    through the truthfulness filters + the review gate rather than being answered
+    blindly.
     """
     text = (question or "").strip().lower()
     if not text:
         return ScreeningKind.ESSAY
-    if is_sensitive_field(text):
+    if any(cue in text for cue in _ESSAY_CUES):
+        return ScreeningKind.ESSAY
+    if _is_eeo_self_identification(text):
         return ScreeningKind.SENSITIVE
     if any(cue in text for cue in _FACTUAL_CUES):
         return ScreeningKind.FACTUAL
-    if any(cue in text for cue in _ESSAY_CUES):
-        return ScreeningKind.ESSAY
     # Short closed questions (ends with '?', few words) lean factual; otherwise essay.
     words = text.split()
     if len(words) <= 8 and text.endswith("?"):

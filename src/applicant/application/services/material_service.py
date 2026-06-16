@@ -51,7 +51,10 @@ from applicant.core.rules.materials import (
     should_generate_cover_letter,
 )
 from applicant.core.rules.review_gate import ReviewableMaterial, ensure_submittable
-from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
+from applicant.core.rules.sensitive_fields import (
+    DECLINE_TO_SELF_IDENTIFY,
+    decide_sensitive_fill,
+)
 from applicant.core.rules.truthfulness import (
     VoiceProfile,
     extract_voice_profile,
@@ -499,16 +502,18 @@ class MaterialService:
         true_source: str,
         *,
         essay: bool | None = None,
+        explicit_answer: str | None = None,
     ) -> GeneratedDocument:
         """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive.
 
         When ``essay`` is None the question is CLASSIFIED (factual / essay /
         sensitive). Factual answers come deterministically from the true source / the
         attribute cloud (no fabrication); sensitive (EEO) ones follow the
-        sensitive-field policy (explicit answer only, else decline). Essay/long-form
-        answers are LLM-generated from true history, voice + em-dash filtered, and
-        routed through review. All go through the post-filter + truthfulness check and
-        the review gate.
+        sensitive-field policy (``explicit_answer`` only, else decline — NEVER the
+        flattened true source, which would leak the full attribute cloud / resume,
+        FR-ATTR-6 / NFR-PRIV-1). Essay/long-form answers are LLM-generated from true
+        history, voice + em-dash filtered, and routed through review. All go through
+        the post-filter + truthfulness check and the review gate.
         """
         kind = (
             (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
@@ -518,14 +523,20 @@ class MaterialService:
         if kind is ScreeningKind.ESSAY:
             answer = self._generate_text(true_source, [question], kind="essay_answer")
         elif kind is ScreeningKind.SENSITIVE:
-            # EEO/demographic: no fabrication, no AI-guess. Use the explicit stored
-            # answer if present, otherwise decline (FR-ATTR-6).
-            answer = true_source.strip() or DECLINE_TO_SELF_IDENTIFY
+            # EEO/demographic: no fabrication, no AI-guess, no PII leak. The answer
+            # comes ONLY from an explicit stored EEO answer; absent that, decline.
+            # NEVER fall back to true_source (FR-ATTR-6, NFR-PRIV-1).
+            decision = decide_sensitive_fill(question, explicit_answer)
+            answer = decision.value or DECLINE_TO_SELF_IDENTIFY
         else:
             # Factual: answer directly from the true source, no embellishment.
             answer = true_source.strip()
         report = self.apply_post_filter(answer)
-        self.assert_no_fabrication(true_source, report.text)
+        # Sensitive answers are policy-driven (explicit EEO answer or the canned
+        # decline), not generated from true_source, so the fabrication guard (which
+        # compares against true_source) does not apply to them (FR-ATTR-6).
+        if kind is not ScreeningKind.SENSITIVE:
+            self.assert_no_fabrication(true_source, report.text)
         doc = self._store_document(
             campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text
         )
@@ -547,8 +558,14 @@ class MaterialService:
         through the same generate + filter + review path.
         """
         question = deferred.get("label") or deferred.get("question") or ""
+        explicit_answer = deferred.get("explicit_answer")
         return self.generate_screening_answer(
-            campaign_id, application_id, question, true_source, essay=None
+            campaign_id,
+            application_id,
+            question,
+            true_source,
+            essay=None,
+            explicit_answer=explicit_answer,
         )
 
     # === interactive revision loop (FR-RESUME-8) ==========================

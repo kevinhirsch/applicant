@@ -49,6 +49,31 @@ def test_banned_phrase_checker():
 
 
 @pytest.mark.unit
+def test_banned_phrase_matches_through_curly_apostrophe():
+    # FR-RESUME-5: LLM output uses U+2019 (’) where the seed list uses ASCII '.
+    # The filter must normalize curly->straight before matching/stripping.
+    assert truthfulness.has_banned_phrase("it’s important to note that I shipped it")
+    assert "it's important to note" in truthfulness.find_banned_phrases(
+        "Well, it’s  important to note that…"
+    )
+    stripped = truthfulness.strip_banned_phrases("it’s important to note that I shipped it")
+    assert "important to note" not in stripped.lower()
+    assert "shipped it" in stripped
+
+
+@pytest.mark.unit
+def test_extra_emdash_variants_detected_and_normalized():
+    # FR-RESUME-5: two-em (⸺) / three-em (⸻) / figure (‒) / fullwidth (－) dashes
+    # and bare word--word must be handled.
+    assert truthfulness.contains_emdash("Led teams ⸺ shipped fast")
+    assert truthfulness.contains_emdash("word--word")
+    assert "⸺" not in truthfulness.normalize_emdashes("a ⸺ b")
+    assert truthfulness.normalize_emdashes("a ⸺ b") == "a, b"
+    assert truthfulness.normalize_emdashes("word--word") == "word, word"
+    assert truthfulness.normalize_emdashes("range 5‒10") == "range 5-10"
+
+
+@pytest.mark.unit
 def test_post_filter_pass():
     assert truthfulness.passes_post_filter("Shipped a payments system that cut latency 30%.")
     assert not truthfulness.passes_post_filter("A testament to my passion — truly.")
@@ -104,6 +129,19 @@ def test_fabrication_detection_flags_unsupported_claims():
     assert truthfulness.unsupported_claims(true, "Python and SQL work.") == []
 
 
+@pytest.mark.unit
+def test_fabrication_detection_catches_lowercase_and_uses_whole_token():
+    # FR-RESUME-2/NFR-TRUTH-1: (a) lowercase claims are not exempt from detection;
+    # (b) whole-token membership, not substring, so "Java" never "supports"
+    # "JavaScript".
+    assert "kubernetes" in truthfulness.unsupported_claims(
+        "Built Python services", "expert in kubernetes"
+    )
+    assert "JavaScript" in truthfulness.unsupported_claims(
+        "Java Java", "Skilled JavaScript dev"
+    )
+
+
 # --- sensitive fields ------------------------------------------------------
 @pytest.mark.unit
 def test_eeo_defaults_to_decline_when_no_answer():
@@ -131,6 +169,42 @@ def test_non_sensitive_field_passthrough():
     d = sensitive_fields.decide_sensitive_fill("First name", "Kevin")
     assert not d.is_sensitive
     assert d.value == "Kevin"
+
+
+@pytest.mark.unit
+def test_short_markers_match_on_word_boundaries_not_substrings():
+    # FR-ATTR-6/FR-PREFILL-3: "age"/"sex"/"race" must not match inside ordinary
+    # words ("Manager", "Message", "language", "unisex", "embrace") and break
+    # prefill, while real EEO fields still classify sensitive.
+    for ordinary in ("Manager name", "Message to manager", "Preferred language", "Unisex size"):
+        assert sensitive_fields.is_sensitive_field(ordinary) is False
+    for eeo in ("What is your age?", "Sex:", "Gender", "Race / Ethnicity"):
+        assert sensitive_fields.is_sensitive_field(eeo) is True
+    # A previously-broken field no longer raises in decide_sensitive_fill.
+    d = sensitive_fields.decide_sensitive_fill("Manager name", None, ai_suggested="Pat")
+    assert d.is_sensitive is False
+
+
+@pytest.mark.unit
+def test_eeo_ethnicity_markers_classify_sensitive():
+    # FR-ATTR-6: Hispanic/Latino/Latinx and military service are EEO markers.
+    for label in (
+        "Are you Hispanic or Latino?",
+        "Latinx",
+        "Military / veteran status",
+    ):
+        assert sensitive_fields.is_sensitive_field(label) is True
+
+
+@pytest.mark.unit
+def test_non_sensitive_empty_answer_not_from_explicit():
+    # Consistency with the sensitive branch: an empty string is not an explicit
+    # answer, so from_explicit_answer must be False.
+    d = sensitive_fields.decide_sensitive_fill("First name", "")
+    assert d.is_sensitive is False
+    assert d.from_explicit_answer is False
+    d2 = sensitive_fields.decide_sensitive_fill("First name", "Kevin")
+    assert d2.from_explicit_answer is True
 
 
 # --- prefill boundary ------------------------------------------------------
