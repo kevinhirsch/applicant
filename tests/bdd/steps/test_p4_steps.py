@@ -24,7 +24,11 @@ from pathlib import Path
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from applicant.adapters.embedding.local_embedding import LocalEmbedding
+from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolDisabledError, ToolRegistry
+from applicant.application.services.attribute_cloud_service import AttributeCloudService
+from applicant.application.services.campaign_service import CampaignService
 from applicant.application.services.learning_advanced import AdvancedLearningService
 from applicant.application.services.learning_service import LearningService
 from applicant.core.entities.application import Application
@@ -42,6 +46,7 @@ from applicant.core.state_machine import ApplicationState
 
 scenarios(
     "../features/p4_conversion_learning.feature",
+    "../features/p4_multi_campaign.feature",
     "../features/p4_tool_toggles.feature",
     "../features/p4_dormant_surfaces.feature",
 )
@@ -191,6 +196,124 @@ def integral_not_committed(p4ctx):
 @then("the proposal requires user confirmation")
 def proposal_needs_confirmation(p4ctx):
     assert p4ctx["proposal"].needs_confirmation is True
+
+
+# === Conversion persistence + multi-campaign (FR-LEARN-2/5, NFR-EXT-1) =====
+@pytest.fixture
+def p4_storage() -> InMemoryStorage:
+    return InMemoryStorage()
+
+
+@pytest.fixture
+def p4_services(p4_storage):
+    base = LearningService(p4_storage, LocalEmbedding())
+    return {
+        "storage": p4_storage,
+        "base": base,
+        "advanced": AdvancedLearningService(base=base, storage=p4_storage),
+        "campaigns": CampaignService(p4_storage),
+        "attrs": AttributeCloudService(p4_storage),
+    }
+
+
+def _store_converted_app(storage, campaign_id, job_title="Senior Backend Engineer"):
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=campaign_id,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.APPROVED,
+        job_title=job_title,
+        work_mode="remote",
+    )
+    storage.applications.add(app)
+    storage.outcomes.add(
+        OutcomeEvent(id=OutcomeEventId(new_id()), application_id=app.id, type="submitted")
+    )
+    storage.commit()
+    return app
+
+
+@given("a stored campaign with an approved application and a submission outcome")
+def stored_campaign_with_conversion(p4ctx, p4_services):
+    campaign = p4_services["campaigns"].create_campaign("Converter")
+    other = p4_services["campaigns"].create_campaign("Bystander")
+    p4ctx["campaign"] = campaign
+    p4ctx["other_campaign"] = other
+    p4ctx["app"] = _store_converted_app(p4_services["storage"], campaign.id)
+
+
+@when("the conversion loop is closed and the learning state persisted")
+def close_and_persist(p4ctx, p4_services):
+    p4_services["advanced"].record_and_persist_conversion(
+        p4ctx["campaign"].id, p4ctx["app"]
+    )
+
+
+@then("reloading the campaign learning state shows the converting-role signature")
+def reload_shows_signature(p4ctx, p4_services):
+    reloaded = p4_services["base"].load_model(p4ctx["campaign"].id)
+    assert reloaded.converting_role_signature
+    assert "role:senior backend engineer" in reloaded.converting_role_signature
+
+
+@then("a bare approval in another campaign leaves that campaign's signature empty")
+def other_campaign_empty(p4ctx, p4_services):
+    reloaded = p4_services["base"].load_model(p4ctx["other_campaign"].id)
+    assert reloaded.converting_role_signature == {}
+
+
+@given("two campaigns A and B")
+def two_campaigns(p4ctx, p4_services):
+    p4ctx["a"] = p4_services["campaigns"].create_campaign("A")
+    p4ctx["b"] = p4_services["campaigns"].create_campaign("B")
+
+
+@when("each campaign stores its own value for the same attribute")
+def store_isolated_values(p4ctx, p4_services):
+    attrs = p4_services["attrs"]
+    attrs.upsert(p4ctx["a"].id, "preferred_location", "Remote")
+    attrs.upsert(p4ctx["b"].id, "preferred_location", "Austin, TX")
+
+
+@when("a field mapping is learned once as shared cross-campaign knowledge")
+def learn_shared_mapping(p4ctx, p4_services):
+    attrs = p4_services["attrs"]
+    a_attr = attrs.get_by_name(p4ctx["a"].id, "preferred_location")
+    p4ctx["mapping"] = attrs.bind_field(
+        "workday", "#location", attribute_id=a_attr.id, shared=True
+    )
+
+
+@then("each campaign resolves the shared mapping to its own value")
+def resolves_per_campaign(p4ctx, p4_services):
+    attrs = p4_services["attrs"]
+    assert p4ctx["mapping"].is_shared is True
+    a = attrs.resolve_attribute_for_field(p4ctx["a"].id, "workday", "#location")
+    b = attrs.resolve_attribute_for_field(p4ctx["b"].id, "workday", "#location")
+    assert a.value == "Remote" and b.value == "Austin, TX"
+
+
+@then("only one global field mapping exists for that field")
+def one_global_mapping(p4ctx, p4_services):
+    assert len(p4_services["storage"].field_mappings.list_for_site("workday")) == 1
+
+
+@when("campaign A records a real conversion")
+def campaign_a_converts(p4ctx, p4_services):
+    app = _store_converted_app(p4_services["storage"], p4ctx["a"].id)
+    p4_services["advanced"].record_and_persist_conversion(p4ctx["a"].id, app)
+
+
+@then("campaign A's converting-role signature is learned")
+def a_learned(p4ctx, p4_services):
+    model = p4_services["base"].load_model(p4ctx["a"].id)
+    assert "role:senior backend engineer" in model.converting_role_signature
+
+
+@then("campaign B's converting-role signature stays empty")
+def b_empty(p4ctx, p4_services):
+    model = p4_services["base"].load_model(p4ctx["b"].id)
+    assert model.converting_role_signature == {}
 
 
 # === Tool toggles (FR-UI-4) ================================================

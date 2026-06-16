@@ -240,6 +240,57 @@ class SearxngSource:
 
 
 @runtime_checkable
+class RssClient(Protocol):
+    """Marked network boundary over an RSS/Atom job feed (FR-DISC-2/4)."""
+
+    def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
+        """Return raw item dicts from one RSS feed (zero LLM tokens)."""
+        ...
+
+
+class RssSource:
+    """An RSS/feed-based discovery source (e.g. HN "Who is hiring", company careers).
+
+    A THIRD discovery source SHAPE proving the abstraction is extensible
+    (NFR-EXT-1): a new board/feed is just a new ``Source`` registered by key — NO
+    core change. The real HTTP/feed parse lives behind the ``RssClient`` seam, so the
+    default lane uses ``FakeRssClient`` and runs fully offline (FR-DISC-4). Toggleable
+    per-campaign exactly like every other source (FR-DISC-2).
+    """
+
+    def __init__(
+        self,
+        *,
+        client: RssClient,
+        feed_url: str,
+        proxy: ProxyConfig | None = None,
+        key: str = "rss",
+    ) -> None:
+        self.key = key
+        self._client = client
+        self._feed_url = feed_url
+        self._proxy = proxy or ProxyConfig()
+
+    def fetch(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
+        try:
+            rows = self._client.fetch_items(
+                feed_url=self._feed_url, proxies=self._proxy.as_list()
+            )
+        except Exception as exc:  # a flaky feed must never crash the whole run
+            log.warning("discovery_source_failed", source=self.key, error=str(exc))
+            return []
+        out: list[JobPosting] = []
+        for raw in rows:
+            posting = normalize_row(raw, campaign_id, self.key)
+            if posting is None:
+                continue
+            if not _matches(criteria, posting.title, posting.work_mode):
+                continue
+            out.append(posting)
+        return out
+
+
+@runtime_checkable
 class Source(Protocol):
     """A single pluggable discovery source (board / metasearch)."""
 

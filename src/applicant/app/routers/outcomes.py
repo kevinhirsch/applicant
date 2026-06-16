@@ -46,6 +46,7 @@ def detect_submission(
         return {"application_id": application_id, "detected": False}
     app = _load_or_stub(container, application_id)
     event = container.submission_service.record_submission(app, source=OutcomeSource.AUTO)
+    _close_conversion_loop(container, app)
     return {
         "application_id": application_id,
         "detected": True,
@@ -64,6 +65,7 @@ def mark_submitted(
     app = _load_or_stub(container, application_id)
     attrs = body.attributes_used if body else None
     event = container.submission_service.mark_submitted(app, attributes_used=attrs)
+    _close_conversion_loop(container, app)
     return {"outcome_id": event.id, "type": event.type, "source": event.source.value}
 
 
@@ -71,6 +73,26 @@ def mark_submitted(
 def get_log(application_id: str, container: Container = Depends(get_container)) -> dict:
     """Retrieve the logged application detail + screenshots + outcomes (FR-LOG-3)."""
     return container.submission_service.get_log(application_id)  # type: ignore[arg-type]
+
+
+def _close_conversion_loop(container: Container, app: Application) -> None:
+    """Fold the now-converted application into per-campaign learning (FR-LEARN-2).
+
+    Conversion = approval (state) PLUS submission (the OutcomeEvent just recorded).
+    The advanced learning service reads the outcomes from storage, folds the rich
+    converting-role signature, and persists it so the next run is biased and the
+    state survives restart. Defensive: learning must never break a submission.
+    """
+    advanced = getattr(container, "advanced_learning_service", None)
+    if advanced is None or not app.campaign_id:
+        return
+    posting = None
+    if app.posting_id:
+        posting = container.storage.postings.get(app.posting_id)  # type: ignore[arg-type]
+    try:
+        advanced.record_and_persist_conversion(app.campaign_id, app, posting=posting)
+    except Exception:  # pragma: no cover - defensive: never fail the submission
+        pass
 
 
 def _load_or_stub(container: Container, application_id: str) -> Application:

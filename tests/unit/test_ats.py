@@ -15,6 +15,7 @@ from applicant.adapters.browser.ats import (
     SCREENING_ESSAY,
     SCREENING_FACTUAL,
     GreenhouseAts,
+    LeverAts,
     WorkdayAts,
     resolve_ats,
 )
@@ -66,8 +67,36 @@ class TestAtsResolution:
         # NFR-EXT-1: a new ATS = a new registry entry, no core change.
         assert "workday" in ATS_REGISTRY
         assert "greenhouse" in ATS_REGISTRY
+        assert "lever" in ATS_REGISTRY  # Phase 4 added shape, no core change
 
     def test_greenhouse_has_no_account_page(self):
         pages = GreenhouseAts().pages("https://boards.greenhouse.io/acme/jobs/1")
         assert not any(p.is_account_create for p in pages)
         assert pages[-1].is_final_submit is True
+
+
+@pytest.mark.unit
+class TestLeverAts:
+    """A THIRD ATS shape added in Phase 4 purely by subclassing (NFR-EXT-1)."""
+
+    URL = "https://jobs.lever.co/acme/abc-123"
+
+    def test_lever_url_resolves_to_lever(self):
+        assert isinstance(resolve_ats(self.URL), LeverAts)
+
+    def test_no_account_page_and_final_submit(self):
+        pages = LeverAts().pages(self.URL)
+        assert not any(p.is_account_create for p in pages)
+        assert pages[-1].is_final_submit is True
+
+    def test_has_both_screening_kinds_and_sensitive_field(self):
+        pages = LeverAts().pages(self.URL)
+        types = {f.field_type for p in pages for f in p.fields}
+        assert SCREENING_FACTUAL in types and SCREENING_ESSAY in types
+        labels = [f.label.lower() for p in pages for f in p.fields]
+        assert any("gender" in lbl for lbl in labels)  # EEO field present
+
+    def test_tenant_key_is_per_tenant(self):
+        a = LeverAts().tenant_key("https://jobs.lever.co/acme/abc")
+        b = LeverAts().tenant_key("https://jobs.lever.co/globex/xyz")
+        assert a == "lever:acme" and b == "lever:globex"

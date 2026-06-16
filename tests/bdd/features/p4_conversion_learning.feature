@@ -28,3 +28,10 @@ Feature: Conversion is approval plus submission
     When an input cross-references an integral attribute value without confirmation
     Then the integral attribute is not committed
     And the proposal requires user confirmation
+
+  Scenario: A conversion shifts the next run's bias and survives a restart
+    # FR-LEARN-2/5: closing the loop persists the learned signature per campaign.
+    Given a stored campaign with an approved application and a submission outcome
+    When the conversion loop is closed and the learning state persisted
+    Then reloading the campaign learning state shows the converting-role signature
+    And a bare approval in another campaign leaves that campaign's signature empty

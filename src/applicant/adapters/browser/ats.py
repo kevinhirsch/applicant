@@ -196,10 +196,75 @@ class GreenhouseAts(AtsAdapter):
         ]
 
 
+class LeverAts(AtsAdapter):
+    """A THIRD ATS adapter shape, further proving the abstraction (NFR-EXT-1).
+
+    Lever's hosted apply flow (``jobs.lever.co/<tenant>/<id>``) is a single
+    application page (name/email/resume/links) plus tenant "additional questions",
+    then a review/submit. Like Greenhouse it has no separate account-create page.
+    Added purely by SUBCLASSING + registry entry — NO core or port change is
+    required (FR-PREFILL-2 / NFR-EXT-1): the maximal-pre-fill loop walks ``pages``
+    exactly as it does for Workday. Field-mapping knowledge (the per-label selectors)
+    lives here and is shareable across campaigns via ``field_mappings`` (FR-ATTR-2).
+    """
+
+    name = "lever"
+
+    def matches(self, url: str) -> bool:
+        low = url.lower()
+        return "lever.co" in low or "jobs.lever" in low
+
+    def tenant_key(self, url: str) -> str:
+        # jobs.lever.co/<tenant>/<posting-id> — the tenant is the first path segment.
+        rest = url.split("lever.co/", 1)[-1]
+        tenant = rest.split("/", 1)[0] if "/" in rest else rest
+        return f"lever:{tenant}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/apply",
+                fields=(
+                    DetectedField("input[name=name]", "Full name", "text"),
+                    DetectedField("input[name=email]", "Email", "text"),
+                    DetectedField("input[name=phone]", "Phone", "text"),
+                    DetectedField("input[name=org]", "Current company", "text"),
+                    DetectedField("input[name=urls[LinkedIn]]", "LinkedIn URL", "text"),
+                ),
+            ),
+            FakePage(
+                # Lever "additional information" custom questions per tenant.
+                url=f"{url}/apply/questions",
+                fields=(
+                    DetectedField(
+                        "input[name=cards[work-auth]]",
+                        "Are you authorized to work?",
+                        SCREENING_FACTUAL,
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "textarea[name=cards[why]]",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                    # Lever surfaces EEO via its own self-identification card.
+                    DetectedField(
+                        "select[name=eeo[gender]]",
+                        "Gender",
+                        "select",
+                        options=("Male", "Female", "Decline to self-identify"),
+                    ),
+                ),
+            ),
+            FakePage(url=f"{url}/apply/review", is_final_submit=True, fields=()),
+        ]
+
+
 #: Registry of ATS adapters keyed by name (extensible — FR-PREFILL-2 / NFR-EXT-1).
 ATS_REGISTRY: dict[str, type[AtsAdapter]] = {
     WorkdayAts.name: WorkdayAts,
     GreenhouseAts.name: GreenhouseAts,
+    LeverAts.name: LeverAts,
 }
 
 

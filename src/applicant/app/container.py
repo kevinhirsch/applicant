@@ -43,6 +43,7 @@ from applicant.application.services.digest_service import DigestService
 from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.feedback_service import FeedbackService
 from applicant.application.services.font_service import FontService
+from applicant.application.services.learning_advanced import AdvancedLearningService
 from applicant.application.services.learning_service import LearningService
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
@@ -89,6 +90,7 @@ class Container:
     discovery_service: Any
     scoring_service: Any
     learning_service: Any
+    advanced_learning_service: Any
     criteria_service: Any
     agent_run_service: Any
     notification_service: Any
@@ -229,6 +231,8 @@ def build_container(settings: Settings | None = None) -> Container:
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     learning_service = LearningService(storage, embedding)
+    # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
+    advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
     discovery_service = DiscoveryService(storage, discovery, embedding, learning_service)
     scoring_service = ScoringService(storage, llm, embedding, learning=learning_service)
     criteria_service = CriteriaService(storage, llm)
@@ -300,6 +304,7 @@ def build_container(settings: Settings | None = None) -> Container:
         discovery_service=discovery_service,
         scoring_service=scoring_service,
         learning_service=learning_service,
+        advanced_learning_service=advanced_learning_service,
         criteria_service=criteria_service,
         agent_run_service=agent_run_service,
         notification_service=notification_service,

@@ -45,6 +45,30 @@ def test_sync_registry_seeds_sources(storage, embedding, campaign):
 
 
 @pytest.mark.unit
+def test_rss_source_is_registered_and_yields_offline(storage, embedding, campaign):
+    # NFR-EXT-1: a NEW discovery source SHAPE (RSS/HN-jobs) plugs in via the registry
+    # with NO core change, toggleable, and offline-faked in the default lane.
+    disc = build_default_discovery(live=False)
+    assert "rss:hn-hiring" in disc.available_sources()
+    svc = DiscoveryService(storage, disc, embedding, LearningService(storage, embedding))
+    crit = SearchCriteria(campaign_id=campaign.id, titles=("engineer",))
+    kept = svc.run_discovery(campaign.id, crit)
+    assert any(p.source_key == "rss:hn-hiring" for p in kept)
+
+
+@pytest.mark.unit
+def test_rss_source_is_toggleable(storage, embedding, campaign):
+    disc = build_default_discovery(live=False)
+    svc = DiscoveryService(storage, disc, embedding)
+    svc.sync_registry(campaign.id)
+    svc.set_source_enabled(campaign.id, "rss:hn-hiring", False)
+    assert disc.is_source_enabled("rss:hn-hiring") is False
+    crit = SearchCriteria(campaign_id=campaign.id, titles=("engineer",))
+    kept = svc.run_discovery(campaign.id, crit)
+    assert not any(p.source_key == "rss:hn-hiring" for p in kept)
+
+
+@pytest.mark.unit
 def test_toggle_source_persists_and_excludes(storage, embedding, campaign):
     disc = build_default_discovery(live=False)
     svc = DiscoveryService(storage, disc, embedding)
