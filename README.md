@@ -70,19 +70,24 @@ internal-only SearXNG).
 
 ### Proxmox VE node (recommended) — paste-and-go
 
-On your **Proxmox VE node shell**, paste this one line. It launches a whiptail wizard
-(Proxmox VE Helper-Scripts style) that creates a Docker-ready Debian 12 LXC, installs
-Docker, deploys Applicant, runs the migrations, and prints the URL:
+On your **Proxmox VE node shell**, paste this one line. Per the spec (FR-INSTALL-1) it
+provisions a **Proxmox VM** (not an LXC): a whiptail wizard creates a Debian 12 cloud
+VM, presets the root password, auto-imports the node's SSH keys, and uses cloud-init to
+self-provision on first boot — install Docker, deploy Applicant, run the migrations:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
 ```
 
-Pick **default** (sensible defaults — unprivileged CT, 2 cores / 4 GB / 16 GB disk,
-DHCP) or **advanced** (choose CTID, resources, storage, bridge). When it finishes it
-prints `http://<container-ip>:8000` and the container's root password — open that URL
-and complete the in-browser OOBE wizard (see the [User guide](#user-guide)). Update
-later from inside the CT: `pct enter <id>` then `cd /opt/applicant && bash scripts/update.sh --apply`.
+Pick **default** (2 cores / 4 GB / 16 GB disk, DHCP, auto-picked storage) or **advanced**
+(choose VMID, resources, disk storage, bridge). It prints the VM's root password and,
+once the first-boot build finishes (a few minutes), `http://<vm-ip>:8000` — open that and
+complete the in-browser OOBE wizard (see the [User guide](#user-guide)). Watch first-boot
+progress with `qm guest exec <vmid> -- tail -n40 /var/log/cloud-init-output.log`; update
+later with `qm guest exec <vmid> -- bash -lc 'cd /opt/applicant && bash scripts/update.sh --apply'`.
+
+A VM (not a container) is used deliberately — it matches the spec, gives Docker and the
+browser sandbox clean isolation, and supports the residential-egress posture (FR-STEALTH-4).
 
 ### Any Docker host
 
