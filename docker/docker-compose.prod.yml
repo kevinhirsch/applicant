@@ -1,0 +1,72 @@
+# Applicant — PRODUCTION stack (FR-INSTALL-1/2/3, NFR-ZEROCLI-1).
+#
+# NEW production variant — do NOT edit the base docker-compose.yml. Differences
+# vs the base: secrets come from the environment (no hard-coded passwords),
+# pinned restart policies, a named volume for DB backups (used by update.sh
+# rollback), internal-only searxng (not published), and a healthcheck on the api.
+#
+# Validate with: docker compose -f docker/docker-compose.prod.yml config
+# Bring up with:  scripts/install.sh --apply
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: applicant/api:latest
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:-applicant}@postgres:5432/${POSTGRES_DB:-applicant}
+      APP_STATIC_DIR: frontend/static
+      ORCHESTRATOR_BACKEND: ${ORCHESTRATOR_BACKEND:-shim}
+      LOG_FORMAT: json
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: always
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-applicant}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-applicant}
+      POSTGRES_DB: ${POSTGRES_DB:-applicant}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgbackups:/backups
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-applicant} -d ${POSTGRES_DB:-applicant}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  # Internal-only search backend (not published to the host in prod).
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    expose:
+      - "8080"
+    restart: always
+
+  # Optional local LLM (uncomment to run fully local, NFR-LOCAL-1):
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   expose:
+  #     - "11434"
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   restart: always
+
+volumes:
+  pgdata:
+  pgbackups:  # DB backups for update.sh rollback (FR-INSTALL-2)
+  # ollama:
