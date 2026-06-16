@@ -1,3 +1,4 @@
+import { isNarrow, isBelowMedium } from './platform.js';
 // Right-edge snap docking for draggable modals.
 //
 // Adds a "drag-to-right" gesture that docks a modal as a right-side panel
@@ -20,8 +21,8 @@
 const SNAP_PX = 60;
 const UNSNAP_PX = 80;
 const MIN_CHAT_WIDTH = 380;
-const EMAIL_DOC_SPLIT_WIDTH_KEY = 'odysseus-email-doc-split-width';
-const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
+const EMAIL_DOC_SPLIT_WIDTH_KEY = 'orwell-email-doc-split-width';
+const EDGE_DOCK_WIDTH_KEY_PREFIX = 'orwell-edge-dock-width';
 const MIN_EDGE_DOCK_WIDTH = 320;
 
 let _edgeDockHandlePositioner = null;
@@ -87,7 +88,7 @@ function _saveDockWidth(modal, content, side, width) {
 }
 
 function _minEdgeDockWidth() {
-  return window.innerWidth < 900 ? 280 : MIN_EDGE_DOCK_WIDTH;
+  return isBelowMedium() ? 280 : MIN_EDGE_DOCK_WIDTH;
 }
 
 function _activeDockWidth(side) {
@@ -232,7 +233,7 @@ function _applyEmailDocSplitGeometry(left, emailWidth) {
   // after opening a document beside a snapped email. Update that inline
   // geometry too, otherwise the email resizes but the document stays put.
   const docPane = document.getElementById('doc-editor-pane');
-  if (!docPane || window.innerWidth <= 768) return;
+  if (!docPane || isNarrow()) return;
   docPane.style.setProperty('position', 'fixed', 'important');
   docPane.style.setProperty('left', `${x}px`, 'important');
   docPane.style.setProperty('right', 'var(--right-dock-w, 0px)', 'important');
@@ -302,7 +303,6 @@ function _anchorLeftDock(content) {
   }
 }
 
-export function collapseSidebarToRail() { return _collapseSidebarToRail(); }
 function _collapseSidebarToRail() {
   const sidebar = document.getElementById('sidebar');
   const rail = document.getElementById('icon-rail');
@@ -809,10 +809,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     handle.style.bottom = '0';
     handle.style.width = '10px';
     handle.style.cursor = 'col-resize';
-    // Invisible at rest, accent stripe fades in on hover (see
-    // .edge-dock-resize-handle CSS rule).
-    handle.style.background = 'transparent';
-    handle.style.transition = 'background 0.18s ease';
+    handle.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
     handle.style.pointerEvents = 'auto';
     handle.style.touchAction = 'none';
     handle.style.display = 'none';
@@ -903,10 +900,10 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   _edgeDockHandlePositioner = () => {
     const splitOwnsLeftSeam = document.body.classList.contains('email-doc-split-active')
       && document.body.classList.contains('doc-view')
-      && window.innerWidth > 768;
+      && !isNarrow();
     for (const side of ['left', 'right']) {
       const handle = handles[side];
-      if (window.innerWidth <= 768 || (side === 'left' && splitOwnsLeftSeam)) {
+      if (isNarrow() || (side === 'left' && splitOwnsLeftSeam)) {
         _hideHandle(handle);
         continue;
       }
@@ -985,7 +982,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   };
   new MutationObserver(schedulePosition).observe(document.body, { childList: true });
   window.addEventListener('resize', _positionEdgeDockResizeHandles);
-  window.addEventListener('odysseus:modal-opened', _positionEdgeDockResizeHandles);
+  window.addEventListener('orwell:modal-opened', _positionEdgeDockResizeHandles);
   _positionEdgeDockResizeHandles();
 })();
 
@@ -998,7 +995,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   stripe.style.bottom = '0';
   stripe.style.width = '10px';
   stripe.style.cursor = 'col-resize';
-  stripe.style.zIndex = '261';
+  stripe.style.zIndex = '9999';
   stripe.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
   stripe.style.pointerEvents = 'auto';
   stripe.style.touchAction = 'none';
@@ -1018,7 +1015,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   const _position = () => {
     const splitActive = document.body.classList.contains('email-doc-split-active')
       && document.body.classList.contains('doc-view')
-      && window.innerWidth > 768;
+      && !isNarrow();
     if (!splitActive) { stripe.style.display = 'none'; return; }
     const x = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--email-doc-split-right-x')) || 0;
     if (!x) { stripe.style.display = 'none'; return; }

@@ -9,6 +9,16 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
+  // ── 0052 (ruling #13): the HOUSE themes lead the picker — the game's identity,
+  //    first in insertion order. Each is a full token set in the preset shape; the
+  //    `house: true` flag drives the frosted-chrome + micro-motion treatment
+  //    (orwellHouseThemes.css) — frost never on the chat text column, motion gated
+  //    by prefers-reduced-motion (never the frost), AA contrast on fg/bg.
+  'the-feed':   { bg:'#050a05', fg:'#9fe8a8', panel:'#0a140b', border:'#1f4a26', red:'#ff3b30', house: true },
+  'telescreen': { bg:'#101418', fg:'#d7e9ee', panel:'#151c22', border:'#2a3e4a', red:'#56c8e8', house: true },
+  'room-101':   { bg:'#232823', fg:'#e8ece4', panel:'#2b302b', border:'#4a524a', red:'#d92e2e', house: true },
+  'memory-wall':{ bg:'#0b0f16', fg:'#c8d6ea', panel:'#111827', border:'#2c3a52', red:'#e8b35a', house: true },
+  'sequester':  { bg:'#170d10', fg:'#e6d3c4', panel:'#221318', border:'#4a2a33', red:'#c9a227', house: true },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -31,9 +41,12 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
+// 0052: each preset knows its own key (drives the per-theme house treatment class).
+for (const [k, v] of Object.entries(THEMES)) v._key = k;
+
 const DEFAULT_THEME = 'dark';
-const LS_KEY = 'odysseus-theme';
-const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
+const LS_KEY = 'orwell-theme';
+const CUSTOM_THEMES_KEY = 'orwell-custom-themes';
 
 const FONT_MAP = {
   mono: "'Fira Code', monospace",
@@ -183,7 +196,7 @@ const ADV_KEYS = [
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
+  { key: 'brandColor',         css: '--brand-color',       label: 'Orwell Logo',    group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
   { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
@@ -286,11 +299,32 @@ export function applyColors(colors) {
 
   // Update favicon to match theme accent color
   _updateFavicon(colors.red || '#e06c75');
+
+  // 0052: the HOUSE treatment — frosted backdrop-blur chrome + per-theme
+  // micro-motion (orwellHouseThemes.css keys off these body classes). Frost
+  // never touches the chat text column; reduced-motion strips motion only.
+  try {
+    const body = document.body;
+    for (const c of [...body.classList]) {
+      if (c.startsWith('house-theme')) body.classList.remove(c);
+    }
+    if (colors.house) {
+      body.classList.add('house-theme');
+      if (colors._key) body.classList.add('house-theme--' + colors._key);
+      // A translucent panel over the theme bg — the house faintly visible
+      // through the chrome. Solid-at-higher-opacity fallback in the CSS.
+      const m = /^#?([0-9a-f]{6})$/i.exec(colors.panel || '');
+      if (m) {
+        const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+        document.documentElement.style.setProperty('--panel-frost', `rgba(${r}, ${g}, ${b}, 0.62)`);
+      }
+    }
+  } catch (_) {}
 }
 
 // Per-route SVG shape registry — kept in sync with the inline favicon
 // script in index.html so a theme change keeps the route icon, not the
-// default boat. Returns the inner SVG markup colored with `fg`.
+// default eye. Returns the inner SVG markup colored with `fg`.
 const _ROUTE_FAVICON_SHAPES = {
   '/calendar':
     "<rect x='4' y='6' width='24' height='22' rx='2' fill='none' stroke='__C__' stroke-width='2.5'/>" +
@@ -333,7 +367,7 @@ function _updateFavicon(fg) {
   if (routeShape) {
     svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>${routeShape.split('__C__').join(fg)}</svg>`;
   } else {
-    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='${fg}'/><path d='M16 8L16 22L24 22Z' fill='${fg}' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='${fg}' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>`;
+    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M2 16Q9 7 16 7Q23 7 30 16Q23 25 16 25Q9 25 2 16Z' fill='none' stroke='${fg}' stroke-width='2.5' stroke-linejoin='round'/><circle cx='16' cy='16' r='4.5' fill='${fg}'/></svg>`;
   }
   const href = 'data:image/svg+xml,' + encodeURIComponent(svg);
   let link = document.querySelector("link[rel='icon']");
@@ -1258,7 +1292,7 @@ export function initThemeUI() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'odysseus_' + (obj.name || 'theme') + '.json';
+      a.download = 'orwell_' + (obj.name || 'theme') + '.json';
       a.click();
       URL.revokeObjectURL(url);
       newExp.innerHTML = '&#x2713; Downloaded!';

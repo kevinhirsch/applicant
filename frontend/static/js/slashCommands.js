@@ -2,8 +2,8 @@
 // Slash command handlers and dispatcher, extracted from chat.js
 
 window.cancelActiveTour = function cancelActiveTour() {
-  document.querySelectorAll('.odysseus-highlight, .odysseus-highlight-click')
-    .forEach(e => e.classList.remove('odysseus-highlight', 'odysseus-highlight-click'));
+  document.querySelectorAll('.orwell-highlight, .orwell-highlight-click')
+    .forEach(e => e.classList.remove('orwell-highlight', 'orwell-highlight-click'));
   document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   document.getElementById('tour-tooltip')?.remove();
   document.body?.classList.remove('tour-active');
@@ -16,12 +16,10 @@ import modelsModule from './models.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
-import documentModule from './document.js';
 import workspaceModule from './workspace.js';
 import settingsModule from './settings.js';
-import cookbookModule from './cookbook.js';
-import { EVAL_PROMPTS } from './compare/index.js';
-import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+// Game build (feature 0032): workspace verticals removed — null stubs for guarded usage sites.
+const documentModule = null, cookbookModule = null, EVAL_PROMPTS = {};
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -44,7 +42,6 @@ const PROVIDER_PATTERNS = [
   { re: /^gsk_/,             name: 'Groq',       url: 'https://api.groq.com/openai/v1' },
   { re: /^AIza/,             name: 'Gemini',     url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { re: /^xai-/,             name: 'xAI',        url: 'https://api.x.ai/v1' },
-  { re: /^nvapi-/,           name: 'NVIDIA',     url: 'https://integrate.api.nvidia.com/v1' },
 ];
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
@@ -58,30 +55,12 @@ const SETUP_PROVIDER_URLS = {
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
   'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
-  nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
-const SETUP_DEVICE_AUTH_PROVIDERS = [
-  { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
-  { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
-];
-const SETUP_PROVIDER_HINT_NAMES = SETUP_PROVIDER_NAMES.concat(SETUP_DEVICE_AUTH_PROVIDERS.map(provider => provider.key));
-const SETUP_PROVIDER_HINT = SETUP_PROVIDER_HINT_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_HINT_NAMES[SETUP_PROVIDER_HINT_NAMES.length - 1];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go'];
+const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const SETUP_SETTINGS_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
-
-function _setupApiProviderChips() {
-  return SETUP_PROVIDER_NAMES.map(name =>
-    '<span class="setup-clickable-provider" data-setup-kind="api-key" data-setup-provider="' + name + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
-  ).join(' ');
-}
-
-function _setupDeviceAuthProviderChips() {
-  return SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
-    '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
-  ).join(' ');
-}
 
 function _setupProviderFromInput(input) {
   const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '');
@@ -100,20 +79,8 @@ function _setupProviderFromInput(input) {
     google: 'gemini',
     xai: 'xai',
     grok: 'xai',
-    nvidia: 'nvidia',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
-}
-
-function _setupDeviceAuthProviderFromInput(input) {
-  const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '').replace(/_/g, '-');
-  if (!raw) return '';
-  for (const provider of SETUP_DEVICE_AUTH_PROVIDERS) {
-    const candidates = [provider.key, provider.name, ...(provider.aliases || [])]
-      .map(value => String(value || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '-'));
-    if (candidates.includes(raw)) return provider.key;
-  }
-  return '';
 }
 
 function _extractSetupProviderCredential(input) {
@@ -128,7 +95,6 @@ function _extractSetupProviderCredential(input) {
     ['groq', 'groq'],
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
-    ['nvidia', 'nvidia'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');
@@ -160,7 +126,7 @@ function _normalizeSetupBaseUrl(raw) {
 }
 
 function _clearSetupGuideMessages() {
-  Storage.remove('odysseus-setup-guide-messages');
+  Storage.remove('orwell-setup-guide-messages');
 }
 
 async function _showSetupRetryPrompt() {
@@ -191,8 +157,9 @@ function _setupReply(text, remember = true) {
 }
 
 function _showSetupEndpointChoices() {
-  const providers = _setupApiProviderChips();
-  const deviceAuthProviders = _setupDeviceAuthProviderChips();
+  const providers = SETUP_PROVIDER_NAMES.map(name =>
+    '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+  ).join(' ');
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
@@ -210,7 +177,6 @@ function _showSetupEndpointChoices() {
         '<div>Paste provider name then API key (example):</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
         '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
-        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -241,8 +207,9 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
-    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
+    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.map(name =>
+      '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+    ).join(' ') },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -263,7 +230,7 @@ async function _hasConfiguredModels() {
 }
 
 function _setupProviderPrompt() {
-  const chips = SETUP_PROVIDER_HINT_NAMES.map(name =>
+  const chips = SETUP_PROVIDER_NAMES.map(name =>
     '<span style="font-weight:650;">' + name + '</span>'
   ).join('  ');
   slashReply('<b>Supported providers:</b><br>' + chips);
@@ -293,7 +260,7 @@ function slashReply(text) {
   div.className = 'msg msg-ai';
   const role = document.createElement('div');
   role.className = 'role';
-  role.textContent = 'Odysseus';
+  role.textContent = 'Orwell';
   div.appendChild(role);
   const body = document.createElement('div');
   body.className = 'body';
@@ -318,56 +285,6 @@ function slashReply(text) {
   return { el: div, body };
 }
 
-let _skillCatalogCache = { at: 0, items: [] };
-
-async function _loadSkillSlashCatalog(force = false) {
-  const now = Date.now();
-  if (!force && (now - _skillCatalogCache.at) < 15000) return _skillCatalogCache.items;
-  try {
-    const res = await fetch(`${API_BASE}/api/skills/slash-catalog`, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error('catalog unavailable');
-    const data = await res.json();
-    const items = Array.isArray(data.skills) ? data.skills : [];
-    _skillCatalogCache = { at: now, items };
-    return items;
-  } catch {
-    return _skillCatalogCache.items || [];
-  }
-}
-
-function _submitComposedMessage(text) {
-  const msgInput = document.getElementById('message');
-  const form = document.getElementById('chat-form');
-  if (!msgInput || !form) return false;
-  // The slash handler and app-level form debounce must both release before
-  // sending the pinned prompt, otherwise the follow-up submit is dropped.
-  setTimeout(() => {
-    msgInput.value = text;
-    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-  }, 350);
-  return true;
-}
-
-async function _invokeSkillByName(name, requestText, ctx) {
-  const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/invoke`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ request: requestText || '' })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => null);
-    slashReply(ctx?.esc ? ctx.esc(err?.detail || 'Skill is not available') : 'Skill is not available');
-    return true;
-  }
-  const data = await res.json();
-  if (!data.message || !_submitComposedMessage(data.message)) {
-    slashReply('Could not start skill invocation.');
-  }
-  return true;
-}
-
 /** Minimal footer for slash replies: copy + dismiss */
 function _slashFooter(msgEl) {
   const footer = document.createElement('div');
@@ -384,7 +301,7 @@ function _slashFooter(msgEl) {
   copyBtn.innerHTML = _copySvg;
   copyBtn.onclick = (e) => {
     e.stopPropagation();
-    uiModule.copyToClipboard(chatRenderer.copyMessageText(msgEl));
+    uiModule.copyToClipboard(msgEl.dataset.raw || msgEl.querySelector('.body')?.textContent || '');
     copyBtn.innerHTML = _checkSvg;
     setTimeout(() => { copyBtn.innerHTML = _copySvg; }, 1500);
   };
@@ -412,7 +329,7 @@ function typewriterReply(text, options = {}) {
     div.className = 'msg msg-ai';
     const role = document.createElement('div');
     role.className = 'role';
-    role.textContent = 'Odysseus';
+    role.textContent = 'Orwell';
     div.appendChild(role);
     const body = document.createElement('div');
     body.className = 'body';
@@ -452,7 +369,7 @@ function typewriterBlocksReply(blocks, options = {}) {
     div.className = 'msg msg-ai';
     const role = document.createElement('div');
     role.className = 'role';
-    role.textContent = 'Odysseus';
+    role.textContent = 'Orwell';
     div.appendChild(role);
     const body = document.createElement('div');
     body.className = 'body';
@@ -643,7 +560,7 @@ async function connectDetectedSetupEndpoint(detected) {
   spinnerDiv.className = 'msg msg-ai';
   const spinnerRole = document.createElement('div');
   spinnerRole.className = 'role';
-  spinnerRole.textContent = 'Odysseus';
+  spinnerRole.textContent = 'Orwell';
   spinnerDiv.appendChild(spinnerRole);
   const spinnerBody = document.createElement('div');
   spinnerBody.className = 'body';
@@ -761,13 +678,6 @@ async function handleSetupWizard(mode, input) {
       setupMode = 'endpoint-provider';
       _showSetupUserBubble(input, false);
       await _setupProviderPrompt();
-      return;
-    }
-    const deviceAuthProvider = _setupDeviceAuthProviderFromInput(input);
-    if (deviceAuthProvider) {
-      _addMessage('user', input);
-      setupMode = false;
-      await _setupProviderDeviceFlow(deviceAuthProvider);
       return;
     }
     const paired = _extractSetupProviderCredential(input);
@@ -1233,7 +1143,7 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
-// Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
+// Workspace: confine the agent's file/shell tools to a folder. Not a boolean —
 // show / set <path> / clear / pick (open the directory browser).
 async function _cmdWorkspace(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
@@ -1245,13 +1155,8 @@ async function _cmdWorkspace(args, ctx) {
   }
   if (sub === 'set' || sub === 'cd' || sub === 'use') {
     if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
-    // Validate server-side before persisting so the pill never claims a
-    // workspace the backend will refuse to bind (typo, file path, deleted
-    // folder, sensitive dir, filesystem root).
-    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
-      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
-      else slashReply(`Not a usable workspace folder: <code>${uiModule.esc(rest)}</code>. It must be an existing directory, not a filesystem root or sensitive path.`);
-    });
+    workspaceModule.setWorkspace(rest);
+    slashReply(`Workspace set: <code>${uiModule.esc(rest)}</code>`);
     return true;
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
@@ -1264,6 +1169,22 @@ async function _cmdWorkspace(args, ctx) {
     return true;
   }
   slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
+  return true;
+}
+// Plan mode: drive the real toggle pill (#plan-toggle-btn) so its per-mode
+// persistence/UI logic runs. Only meaningful in agent mode.
+async function _cmdTogglePlan(args, ctx) {
+  const btn = document.getElementById('plan-toggle-btn');
+  const chk = document.getElementById('plan-toggle');
+  if (!btn || btn.style.display === 'none' || btn.offsetParent === null) {
+    slashReply('Plan mode is only available in agent mode — switch to Agent first.');
+    return true;
+  }
+  const cur = !!(chk && chk.checked);
+  const v = (args[0] || '').toLowerCase();
+  const target = v === 'on' ? true : v === 'off' ? false : !cur;
+  if (target !== cur) btn.click();
+  slashReply(`Plan mode: ${target ? 'on' : 'off'}`);
   return true;
 }
 
@@ -1376,23 +1297,11 @@ async function _cmdToolPanel(tool, args, ctx) {
   if (target === 'cookbook') {
     const sub = (args[0] || '').toLowerCase();
     if (sub === 'serve') {
-      const query = args.slice(1).join(' ').trim();
-      try {
-        if (cookbookModule && typeof cookbookModule.open === 'function') {
-          await cookbookModule.open({ tab: 'Serve', serveSearch: query });
-          if (query) {
-            try {
-              const mod = await import('./cookbookServe.js');
-              if (mod && typeof mod.openServePanelForRepo === 'function') {
-                setTimeout(() => { mod.openServePanelForRepo(query).catch(() => {}); }, 80);
-              }
-            } catch (_) {}
-          }
-        } else {
-          document.getElementById('tool-cookbook-btn')?.click();
-        }
-      } catch (e) {
-        slashReply(`Could not open Cookbook Serve${e?.message ? `: ${ctx.esc(e.message)}` : ''}`);
+      // Game build (feature 0032): the Cookbook vertical is removed.
+      if (cookbookModule && typeof cookbookModule.open === 'function') {
+        await cookbookModule.open({ tab: 'Serve', serveSearch: args.slice(1).join(' ').trim() });
+      } else {
+        document.getElementById('tool-cookbook-btn')?.click();
       }
       return true;
     }
@@ -1507,42 +1416,6 @@ async function _cmdModels(args, ctx) {
   return true;
 }
 
-async function _cmdModel(args, ctx) {
-  const sub = (args[0] || '').toLowerCase();
-  if (sub === 'list' || sub === 'ls') return _cmdModels(args.slice(1), ctx);
-
-  const model = sessionModule.getCurrentModel ? sessionModule.getCurrentModel() : '';
-  const endpoint = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : '';
-  slashReply(`<pre>${[
-    `Current model: ${ctx.esc(model || 'None selected')}`,
-    endpoint ? `Endpoint: ${ctx.esc(endpoint)}` : 'Endpoint: not available',
-    '',
-    'Usage: /model list to show all available models'
-  ].join('\n')}</pre>`);
-  return true;
-}
-
-async function _cmdMcp(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/mcp/servers`, { credentials: 'same-origin' });
-  if (!res.ok) {
-    slashReply('MCP status is unavailable for this user.');
-    return true;
-  }
-  const servers = await res.json();
-  if (!Array.isArray(servers) || !servers.length) {
-    slashReply('No MCP servers configured.');
-    return true;
-  }
-  const lines = servers.map(s => {
-    const status = s.status || (s.is_enabled ? 'enabled' : 'disabled');
-    const enabled = Number(s.enabled_tool_count ?? s.tool_count ?? 0);
-    const total = Number(s.tool_count ?? enabled);
-    return `${s.name || s.id || 'MCP server'} - ${status} (${enabled}/${total} tools)`;
-  });
-  slashReply(`<pre>${lines.map(line => ctx.esc(line)).join('\n')}</pre>`);
-  return true;
-}
-
 // ── Memory ──
 
 async function _cmdMemoryList(args, ctx) {
@@ -1618,73 +1491,6 @@ async function _cmdMemorySearch(args, ctx) {
   if (!mems.length) { await typewriterReply(`No memories matching "${ctx.esc(query)}"`); return true; }
   const lines = mems.map(m => `[${m.category||'fact'}] ${ctx.esc(m.text)}`);
   slashReply(`<pre>${lines.join('\n')}</pre>`);
-  return true;
-}
-
-// ── Skills ──
-
-async function _cmdSkills(args, ctx) {
-  const sub = (args[0] || 'list').toLowerCase();
-  const rest = args.slice(1);
-
-  if (sub === 'list' || sub === 'ls') {
-    const skills = await _loadSkillSlashCatalog(true);
-    if (!skills.length) {
-      slashReply('No published skills available for slash commands.');
-      return true;
-    }
-    const lines = skills.map(s => {
-      const uses = Number(s.uses || 0);
-      const useText = uses > 0 ? `  uses:${uses}` : '';
-      return `${ctx.esc(String(s.token || '').padEnd(24))}${ctx.esc(s.help || '')}${useText}`;
-    });
-    slashReply(`<pre>${lines.join('\n')}</pre>`);
-    return true;
-  }
-
-  if (sub === 'search' || sub === 'find') {
-    const query = rest.join(' ').trim();
-    if (!query) { slashReply('Usage: /skills search query'); return true; }
-    const res = await fetch(`${API_BASE}/api/skills/search`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
-    });
-    if (!res.ok) { slashReply('Skill search failed.'); return true; }
-    const data = await res.json();
-    const skills = Array.isArray(data.skills) ? data.skills : [];
-    if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
-    const lines = skills.map(s =>
-      ctx.esc(`/${s.name || s.id || ''}`.padEnd(24)) + ctx.esc(s.description || '')
-    );
-    slashReply(`<pre>${lines.join('\n')}</pre>`);
-    return true;
-  }
-
-  if (sub === 'view' || sub === 'cat' || sub === 'show') {
-    const name = (rest[0] || '').trim();
-    if (!name) { slashReply('Usage: /skills view name'); return true; }
-    const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`, { credentials: 'same-origin' });
-    if (!res.ok) { slashReply(`Skill "${ctx.esc(name)}" was not found.`); return true; }
-    const data = await res.json();
-    slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
-    return true;
-  }
-
-  if (sub === 'use' || sub === 'run') {
-    const name = (rest[0] || '').trim();
-    if (!name) { slashReply('Usage: /skills use name request'); return true; }
-    return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
-  }
-
-  slashReply('Usage: /skills list | search query | view name | use name request');
-  return true;
-}
-
-async function _cmdReloadSkills(args, ctx) {
-  const skills = await _loadSkillSlashCatalog(true);
-  slashReply(`Reloaded skills. ${skills.length} skill command${skills.length === 1 ? '' : 's'} available.`);
   return true;
 }
 
@@ -1980,53 +1786,6 @@ Uploads:   ${d.uploads || '?'}</pre>`);
   return true;
 }
 
-async function _cmdUsage(args, ctx) {
-  const sid = ctx.sid;
-  if (!sid) {
-    slashReply('No active session.');
-    return true;
-  }
-
-  let session = null;
-  try {
-    const sessions = sessionModule.getSessions ? sessionModule.getSessions() : [];
-    session = (sessions || []).find(s => s.id === sid) || null;
-    if (!session) {
-      const res = await fetch(`${API_BASE}/api/sessions`, { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
-        const items = Array.isArray(data) ? data : (data.sessions || data.items || []);
-        session = items.find(s => s.id === sid) || null;
-      }
-    }
-  } catch (_) {}
-
-  const model = session?.model || 'Unknown';
-  const endpointUrl = session?.endpoint_url || (
-    sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : ''
-  );
-  const messageCount = Number(session?.message_count || 0);
-  const totalTokens = Number(session?.total_tokens || 0);
-  const costTracked = chatRenderer.isCostTrackedEndpoint ? chatRenderer.isCostTrackedEndpoint(endpointUrl) : true;
-  const cost = costTracked && chatRenderer.getSessionCost ? Number(chatRenderer.getSessionCost(sid) || 0) : 0;
-  const costLine = costTracked
-    ? (cost > 0
-      ? `Estimated local cost: $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
-      : 'Estimated local cost: unavailable or zero')
-    : 'Estimated local cost: not tracked for this endpoint';
-
-  slashReply(`<pre>${[
-    `Session: ${ctx.esc(session?.name || 'Current chat')}`,
-    `Model: ${ctx.esc(model)}`,
-    `Messages: ${messageCount.toLocaleString()}`,
-    `Recorded tokens: ${totalTokens.toLocaleString()}`,
-    costLine,
-    '',
-    'Provider account usage is not available from here; check the provider dashboard for account quota/billing.'
-  ].join('\n')}</pre>`);
-  return true;
-}
-
 // ── Context compaction ──
 
 async function _cmdCompact(args, ctx) {
@@ -2105,8 +1864,8 @@ async function _cmdDemo(args, ctx) {
   let _draftObserver = null;
   let _draftPoll = null;
   const _clearTour = () => {
-    document.querySelectorAll('.odysseus-highlight, .odysseus-highlight-click').forEach(e => {
-      e.classList.remove('odysseus-highlight', 'odysseus-highlight-click');
+    document.querySelectorAll('.orwell-highlight, .orwell-highlight-click').forEach(e => {
+      e.classList.remove('orwell-highlight', 'orwell-highlight-click');
     });
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
     document.getElementById('tour-tooltip')?.remove();
@@ -2292,7 +2051,7 @@ async function _cmdDemo(args, ctx) {
   function showStep(sel, text, mode = 'next', isFirst = false, stepOpts = {}) {
     return new Promise(resolve => {
       if (cancelled) return resolve('cancel');
-      document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+      document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
       document.querySelectorAll('.tour-halo').forEach(e => e.remove());
 
       // Support multiple selectors (comma-separated)
@@ -2312,7 +2071,7 @@ async function _cmdDemo(args, ctx) {
       const advanceOnClick = !!stepOpts.advanceOnClick;
       const pulseNext = !!stepOpts.pulseNext;
 
-      targets.forEach(t => t.classList.add('odysseus-highlight'));
+      targets.forEach(t => t.classList.add('orwell-highlight'));
       const halos = breathing ? targets.map(makeHalo) : [];
       // Reset tooltip into the "pre-fade" state so the new step phases in.
       tooltip.classList.remove('tour-fade-in');
@@ -2411,7 +2170,7 @@ async function _cmdDemo(args, ctx) {
           targets.forEach(t => t.removeEventListener(evt, onDocClickCapture, true));
         });
         if (messageInputListener) document.removeEventListener('keydown', messageInputListener, true);
-        if (modelListener) document.removeEventListener('odysseus:model-picked', modelListener);
+        if (modelListener) document.removeEventListener('orwell:model-picked', modelListener);
         if (streamHandle) streamHandle.cancel();
         halos.forEach(h => h.destroy());
       };
@@ -2433,7 +2192,7 @@ async function _cmdDemo(args, ctx) {
       }
       if (sels.includes('#model-picker-btn')) {
         modelListener = onModelPicked;
-        document.addEventListener('odysseus:model-picked', modelListener, { once: true });
+        document.addEventListener('orwell:model-picked', modelListener, { once: true });
       }
 
       tooltip.addEventListener('click', onClick);
@@ -2453,7 +2212,7 @@ async function _cmdDemo(args, ctx) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
 
   // ── Welcome ──
-  await typewriterReply('Welcome to Odysseus! Lets begin the tour!');
+  await typewriterReply('Welcome to Orwell! Lets begin the tour!');
   // Beat between the welcome line and the first hint so it doesn't snap in.
   await delay(900);
 
@@ -2491,8 +2250,8 @@ async function _cmdDemo(args, ctx) {
     { sel: '#sidebar-new-chat-btn', text: 'Start a new chat here. <b>Click it.</b> You can do it!', mode: 'click',
       before() { if (sidebar?.classList.contains('hidden')) sidebar.classList.remove('hidden'); } },
     { sel: '#model-picker-btn',   text: 'Pick your LLM, Local or API.', advanceOnClick: true },
-    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Odysseus more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click' },
-    { sel: '#web-toggle-btn',     text: 'Toggle tools like <b>web search</b>. Odysseus comes with private built-in <b>SearXNG</b> search.', mode: 'click' },
+    { sel: '#mode-agent-btn',     text: '<b>Agent mode</b> gives Orwell more control of the app when your model supports tools: create a theme, download a model, make a daily task, organize things, and more.', mode: 'click' },
+    { sel: '#web-toggle-btn',     text: 'Toggle tools like <b>web search</b>. Orwell comes with private built-in <b>SearXNG</b> search.', mode: 'click' },
     { sel: '#overflow-plus-btn',  text: 'More tools can be found here, or in your sidebar. <b>Click to peek.</b>',
       advanceOnClick: true, pulseNext: true, afterDelay: 2200 },
     { sel: '#message',            text: 'Write your prompt here. Drag and drop files to attach them. <b>/prompt</b> for random prompt, <b>/help</b> for more.',
@@ -2512,7 +2271,7 @@ async function _cmdDemo(args, ctx) {
     await delay(step.afterDelay || 750);
     // After the message input step, wait for any active stream to finish
     if (step.sel === '#message' && _isStreamingFn()) {
-      document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+      document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
       tooltip.style.display = 'none';
       await new Promise(r => {
         const check = setInterval(() => { if (!_isStreamingFn()) { clearInterval(check); r(); } }, 300);
@@ -2522,7 +2281,7 @@ async function _cmdDemo(args, ctx) {
   }
 
   _clearTour();
-  await typewriterReply('Odysseus is yours to explore, enjoy the voyage!');
+  await typewriterReply('Orwell is yours to explore, enjoy the voyage!');
   return true;
 }
 
@@ -2613,7 +2372,7 @@ async function _cmdTourCompare(args, ctx) {
   }
 
   const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+    document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
     _clearHalos();
     tooltip.remove();
     document.body.classList.remove('tour-active');
@@ -2891,7 +2650,7 @@ async function _cmdTourCookbook(args, ctx) {
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   }
   const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+    document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
     _clearHalos();
     tooltip.remove();
     document.body.classList.remove('tour-active');
@@ -3120,7 +2879,7 @@ async function _cmdTourTheme(args, ctx) {
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   }
   const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+    document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
     _clearHalos();
     tooltip.remove();
     document.body.classList.remove('tour-active');
@@ -3237,7 +2996,7 @@ async function _cmdTourTheme(args, ctx) {
   // work as a fallback (read past without touching anything).
   const steps = [
     { sel: '#theme-popup',
-      text: '<b>Welcome to Theme.</b> Odysseus is yours to customize!',
+      text: '<b>Welcome to Theme.</b> Orwell is yours to customize!',
       placement: 'center-above',
       before: () => _clickTab('theme-tab-browse') },
     { sel: '#themeGrid',
@@ -3469,7 +3228,7 @@ async function _cmdTourSettings(args, ctx) {
       text: '<b>AI Defaults</b> — three roles share the work. Let\'s walk through them.',
       before: () => _clickNav('ai') },
     { sel: '#settings-modal .admin-card:has(#set-defaultModelSelect)',
-      text: '<b>Default Chat Model</b> — your main model. The one Odysseus reaches for whenever you start a new chat.',
+      text: '<b>Default Chat Model</b> — your main model. The one Orwell reaches for whenever you start a new chat.',
       before: () => _clickNav('ai') },
     { sel: '#settings-modal .admin-card:has(#set-utilityModelSelect)',
       text: '<b>Utility Model</b> — your hard-working sidekick. Runs background tasks (compaction, cleanup, auto-naming, summarization) so your chat model doesn\'t burn cycles on chores. <b>Recommend a small local model</b> here — it\'s free and always on.',
@@ -3490,7 +3249,7 @@ async function _cmdTourSettings(args, ctx) {
       text: '<b>Email</b> — sync schedule, drafts, snooze defaults — everything email-flow related.',
       before: () => _clickNav('email') },
     { sel: '#settings-modal .settings-nav-item[data-settings-tab="reminders"]',
-      text: '<b>Reminders</b> — quiet hours and how Odysseus nudges you about calendar + urgent email.',
+      text: '<b>Reminders</b> — quiet hours and how Orwell nudges you about calendar + urgent email.',
       before: () => _clickNav('reminders') },
   ];
 
@@ -3521,7 +3280,7 @@ async function _cmdTourGallery(args, ctx) {
     _msgEl.value = '';
     _msgEl.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  try { localStorage.setItem('odysseus-notes-first-open-hint-v1', '1'); } catch (_) {}
+  try { localStorage.setItem('orwell-notes-first-open-hint-v1', '1'); } catch (_) {}
   document.getElementById('notes-first-open-hint')?.remove();
 
   if (!document.getElementById('tour-styles')) {
@@ -3903,7 +3662,7 @@ async function _cmdTourNotes(args, ctx) {
       text: '<b>Notes</b> is your basic todo list, and also where reminders are managed.',
       placement: 'center-above' },
     { sel: '#notes-pane .notes-pane-body',
-      text: 'Your notes show up here. You can also <b>ask Odysseus in chat</b> to take a note for you.' },
+      text: 'Your notes show up here. You can also <b>ask Orwell in chat</b> to take a note for you.' },
     { sel: '#notes-search',
       text: '<b>Search</b> across every note — title, body, tags, the works.' },
     { sel: '#notes-view-toggle',
@@ -4342,7 +4101,7 @@ async function _cmdTourTask1(args, ctx) {
       text: 'Tasks are <b>paused by default</b> — resume whichever ones make sense for you. (Or pause anything that\'s running.)' },
     { sel: '#tasks-modal .modal-body',
       text: 'When enabled, Tasks use the <b>utility model configured in Settings</b> for cleanup and organization jobs.' },
-  ], 'Use Tasks when you want Odysseus to handle background housekeeping.', {
+  ], 'Use Tasks when you want Orwell to handle background housekeeping.', {
     continueLabel: 'continue →',
     continueText: '<b>Part 1 done.</b> Want to keep going into <b>adding & managing tasks</b>?',
   });
@@ -4366,7 +4125,7 @@ async function _cmdTourTask2(args, ctx) {
     // re-show it when the user moves past this step so the tour lands
     // back where it started.
     { sel: '#message',
-      text: 'You can also <b>just ask in chat</b> — say "every weekday at 9am check for urgent emails" and Odysseus will create the task for you.',
+      text: 'You can also <b>just ask in chat</b> — say "every weekday at 9am check for urgent emails" and Orwell will create the task for you.',
       before: () => document.getElementById('tasks-modal')?.classList.add('hidden'),
       after:  () => document.getElementById('tasks-modal')?.classList.remove('hidden') },
   ], 'That\'s Tasks. Have it run the background bits so you can stay in chat.');
@@ -4455,7 +4214,7 @@ async function _cmdTourResearch(args, ctx) {
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   }
   const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+    document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
     _clearHalos();
     tooltip.remove();
     document.body.classList.remove('tour-active');
@@ -4669,7 +4428,7 @@ async function _cmdTourLibrary(args, ctx) {
     document.querySelectorAll('.tour-halo').forEach(e => e.remove());
   }
   const _clear = () => {
-    document.querySelectorAll('.odysseus-highlight').forEach(e => e.classList.remove('odysseus-highlight'));
+    document.querySelectorAll('.orwell-highlight').forEach(e => e.classList.remove('orwell-highlight'));
     _clearHalos();
     tooltip.remove();
     document.body.classList.remove('tour-active');
@@ -4874,7 +4633,7 @@ async function _cmdPrompt(args, ctx) {
     for (const p of list) all.push(p.prompt);
   }
   if (!all.length) { slashReply('No prompts available'); return true; }
-  const firstUseKey = 'odysseus_prompt_command_used';
+  const firstUseKey = 'orwell_prompt_command_used';
   const firstUse = localStorage.getItem(firstUseKey) !== '1';
   const prompt = firstUse
     ? 'i have no imagination help me'
@@ -5011,53 +4770,39 @@ function _clearSetupCommandInput() {
   }
 }
 
-async function _setupProviderDeviceFlow(providerKey) {
+// GitHub Copilot device-flow sign-in, driven from chat (mirrors the Settings
+// "Connect GitHub Copilot" button). Replies via the setup guide messages.
+async function _setupCopilot() {
   _clearSetupGuideMessages();
-  const config = PROVIDER_DEVICE_FLOWS[providerKey];
-  if (!config) {
-    await _setupReply('Provider not recognised.');
-    return;
-  }
-  await _setupReply(`Starting ${config.label} sign-in...`);
+  await _setupReply('Starting GitHub Copilot sign-in…');
+  let start;
   try {
-    const result = await runProviderDeviceFlow(providerKey, {
-      onStart: async ({ start, authUrl }) => {
-        const place = providerKey === 'copilot' ? 'GitHub' : 'OpenAI';
-        const action = providerKey === 'copilot' ? 'approve the request' : 'enter the code';
-        if (providerKey === 'chatgpt-subscription') {
-          slashReply(
-            '<div class="setup-guide-no-censor" style="display:grid;gap:6px;">' +
-              '<div>Open this URL in your browser, enter the code, then come back here. Waiting...</div>' +
-              '<div>Code: <code>' + uiModule.esc(start.user_code || '') + '</code></div>' +
-              '<div><a href="' + uiModule.esc(authUrl || '') + '" target="_blank" rel="noopener noreferrer">' + uiModule.esc(authUrl || '') + '</a></div>' +
-            '</div>'
-          );
-          return;
-        }
-        await _setupReply(`Opening ${place} - ${action} (code ${start.user_code}). Waiting...`);
-      },
-      openWindow: (url) => {
-        if (providerKey === 'chatgpt-subscription') return;
-        try { if (url) window.open(url, '_blank', 'noopener'); } catch (e) {}
-      },
-    });
-    if (result.status === 'authorized') {
-      const n = ((result.endpoint && result.endpoint.models) || []).length;
-      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
-      if (modelsModule) modelsModule.refreshModels(true);
-      return;
-    }
-    if (result.status === 'failed') {
-      await _setupReply(`${config.label} sign-in failed (${result.error || 'denied'}).`);
-      return;
-    }
-    if (result.status === 'expired') {
-      await _setupReply(`${config.label} sign-in expired - run /setup ${providerKey} again.`);
-      return;
-    }
-  } catch (e) {
-    await _setupReply(formatDeviceFlowError(e));
-  }
+    const r = await fetch(`${API_BASE}/api/copilot/device/start`, { method: 'POST', body: new FormData(), credentials: 'same-origin' });
+    start = await r.json();
+    if (!r.ok) { await _setupReply(start.detail || 'Failed to start Copilot sign-in.'); return; }
+  } catch (e) { await _setupReply('Request failed.'); return; }
+  const authUrl = start.verification_uri_complete || start.verification_uri || '';
+  await _setupReply(`Opening GitHub — approve the request (code ${start.user_code}). Waiting…`);
+  try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+  const deadline = Date.now() + (start.expires_in || 900) * 1000;
+  const stepMs = Math.max((start.interval || 5), 2) * 1000;
+  const poll = async () => {
+    if (Date.now() > deadline) { await _setupReply('Copilot sign-in expired — run /setup copilot again.'); return; }
+    try {
+      const fd = new FormData(); fd.append('poll_id', start.poll_id);
+      const r = await fetch(`${API_BASE}/api/copilot/device/poll`, { method: 'POST', body: fd, credentials: 'same-origin' });
+      const d = await r.json();
+      if (d.status === 'authorized') {
+        const n = ((d.endpoint && d.endpoint.models) || []).length;
+        await _setupReply(`Connected — ${n} Copilot model${n !== 1 ? 's' : ''} available.`);
+        if (modelsModule) modelsModule.refreshModels(true);
+        return;
+      }
+      if (d.status === 'failed') { await _setupReply('Copilot sign-in failed (' + (d.error || 'denied') + ').'); return; }
+    } catch (e) { /* transient — keep polling */ }
+    setTimeout(poll, stepMs);
+  };
+  setTimeout(poll, stepMs);
 }
 
 async function _cmdSetup(args, ctx) {
@@ -5065,11 +4810,7 @@ async function _cmdSetup(args, ctx) {
   _clearSetupCommandInput();
   const topic = (args[0] || '').trim().toLowerCase();
   const topicArgs = args.slice(1);
-  const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
-  if (deviceAuthProvider) {
-    await _setupProviderDeviceFlow(deviceAuthProvider);
-    return true;
-  }
+  if (topic === 'copilot' || topic === 'github') { await _setupCopilot(); return true; }
   const provider = _setupProviderFromInput(topic);
   if (provider) {
     _clearSetupGuideMessages();
@@ -5256,7 +4997,7 @@ const _ODYSSEY_QUOTES = [
   "A man who has been through bitter experiences and travelled far enjoys even his sufferings after a time.",
   "For a friend with an understanding heart is worth no less than a brother.",
   "The wine urges me on, the bewitching wine, which sets even a wise man to singing and to laughing gently.",
-  "I am Odysseus, son of Laertes, known to all for my cunning. My fame reaches even unto heaven.",
+  "I am Orwell, son of Laertes, known to all for my cunning. My fame reaches even unto heaven.",
 ];
 
 const _8BALL = [
@@ -5298,7 +5039,7 @@ function _eggRender(html) {
   div.className = 'msg msg-ai';
   const role = document.createElement('div');
   role.className = 'role';
-  role.textContent = 'Odysseus';
+  role.textContent = 'Orwell';
   div.appendChild(role);
   const body = document.createElement('div');
   body.className = 'body';
@@ -5399,7 +5140,7 @@ async function _cmdOdyssey(args, ctx) {
 }
 
 async function _cmdAscii(args, ctx) {
-  const text = args.join(' ') || 'Odysseus';
+  const text = args.join(' ') || 'Orwell';
   const FONT = {
     'A':'  #  \n # # \n#####\n#   #\n#   #','B':'#### \n#   #\n#### \n#   #\n#### ','C':' ####\n#    \n#    \n#    \n ####',
     'D':'#### \n#   #\n#   #\n#   #\n#### ','E':'#####\n#    \n###  \n#    \n#####','F':'#####\n#    \n###  \n#    \n#    ',
@@ -5501,7 +5242,7 @@ async function _cmdWisdom(args, ctx) {
 
 async function _cmdUptime(args, ctx) {
   const now = Date.now();
-  const loaded = window._odysseusLoadTime || now;
+  const loaded = window._orwellLoadTime || now;
   const diff = now - loaded;
   const h = Math.floor(diff / 3600000);
   const m = Math.floor((diff % 3600000) / 60000);
@@ -5676,6 +5417,7 @@ async function _cmdColor(args, ctx) {
 async function _cmdHelp(args, ctx) {
   const categories = {};
   for (const [name, def] of Object.entries(COMMANDS)) {
+    if (!isGameSlashAllowed(name)) continue; // W4: game build lists the keep-set only
     if (def.hidden) continue;
     const cat = def.category || 'Other';
     if (!categories[cat]) categories[cat] = [];
@@ -5709,20 +5451,10 @@ async function _cmdHelp(args, ctx) {
       lines.push('');
     }
   }
-  const skillCommands = await _loadSkillSlashCatalog(false);
-  if (skillCommands.length) {
-    lines.push('Skills:');
-    for (const skill of skillCommands.slice(0, 20)) {
-      const token = String(skill.token || '').padEnd(21);
-      lines.push(`  ${ctx.esc(token)}${ctx.esc(skill.help || '')}`);
-    }
-    if (skillCommands.length > 20) {
-      lines.push(`  ... ${skillCommands.length - 20} more. Use /skills list`);
-    }
-    lines.push('');
-  }
   lines.push('Tip: /<command> --help for details');
-  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /skills');
+  lines.push(_gameBuildOn()
+    ? 'Shortcuts: /new /rename /fork /clear /export'
+    : 'Shortcuts: /new /rename /fork /web /bash /memories /forget');
   slashReply(`<pre style="line-height:1.7">${lines.join('\n')}</pre>`);
   return true;
 }
@@ -5765,6 +5497,7 @@ const COMMANDS = {
       'bash':      { handler: _cmdToggleBash,      alias: ['b','shell'],       help: 'Toggle bash/shell',       usage: '/toggle bash' },
       'research':  { handler: _cmdToggleResearch,  alias: ['r'],               help: 'Toggle deep research',    usage: '/toggle research' },
       'doc':       { handler: _cmdToggleDoc,       alias: [],     help: 'Toggle document editor',  usage: '/toggle doc' },
+      'plan':      { handler: _cmdTogglePlan,      alias: ['p'],  help: 'Toggle plan mode (agent)', usage: '/toggle plan' },
       'sidebar':   { handler: _cmdToggleSidebar,   alias: ['sb'], help: 'Cycle sidebar (full/mini/off)', usage: '/toggle sidebar [1|2|3]' },
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
@@ -5777,6 +5510,13 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/workspace [set <path> | clear | pick]',
   },
+  plan: {
+    alias: [],
+    category: 'Quick toggles',
+    help: 'Toggle plan mode (agent)',
+    handler: _cmdTogglePlan,
+    usage: '/plan [on|off]',
+  },
   memory: {
     alias: ['m'],
     category: 'Memory',
@@ -5788,20 +5528,6 @@ const COMMANDS = {
       'delete': { handler: _cmdMemoryDelete, alias: ['del', 'rm'],   help: 'Delete by ID',        usage: '/memory delete id' },
       'search': { handler: _cmdMemorySearch, alias: ['grep'],        help: 'Search memories',     usage: '/memory search q' }
     }
-  },
-  skills: {
-    alias: ['skill'],
-    category: 'Memory',
-    help: 'List, search, inspect, or run skills',
-    handler: _cmdSkills,
-    usage: '/skills list | search query | view name | use name request',
-  },
-  'reload-skills': {
-    alias: ['reload_skills'],
-    category: 'Memory',
-    help: 'Refresh the slash skill catalog',
-    handler: _cmdReloadSkills,
-    usage: '/reload-skills',
   },
   rag: {
     alias: [],
@@ -5836,7 +5562,7 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription',
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup endpoint',
     // Provider subs so the autocomplete popup surfaces "/setup deepseek",
     // "/setup openai", etc. when the user types "/setup de". Each sub's
     // handler is a thin wrapper that re-prepends the sub name and
@@ -5854,7 +5580,6 @@ const COMMANDS = {
       xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
       ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
       copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
-      'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
       local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
                     usage: '/setup local http://localhost:8000/v1',
                     handler: (a, c) => _cmdSetup(['local', ...a], c) },
@@ -6032,22 +5757,8 @@ const COMMANDS = {
     handler: (args, ctx) => _cmdToolPanel('compare', args, ctx),
     usage: '/compare'
   },
-  mcp: {
-    alias: [],
-    category: 'Tools',
-    help: 'Show MCP server status',
-    handler: _cmdMcp,
-    usage: '/mcp'
-  },
-  model: {
-    alias: [],
-    category: 'Settings',
-    help: 'Show current chat model',
-    handler: _cmdModel,
-    usage: '/model  ·  /model list'
-  },
   models: {
-    alias: [],
+    alias: ['model'],
     category: 'Settings',
     help: 'List available models',
     handler: _cmdModels,
@@ -6078,16 +5789,10 @@ const COMMANDS = {
     handler: _cmdStats,
     usage: '/stats'
   },
-  usage: {
-    alias: ['cost', 'tokens'],
-    category: 'Utility',
-    help: 'Show local usage for the current chat',
-    handler: _cmdUsage,
-    usage: '/usage'
-  },
   compact: {
     alias: [],
     category: 'Utility',
+    hidden: true,
     help: 'Compact older chat messages',
     handler: _cmdCompact,
     usage: '/compact'
@@ -6183,6 +5888,31 @@ export const LEGACY_ALIASES = {
   'status':      { parent: 'toggle', sub: '_show' }
 };
 
+// ── Game-build slash keep-set (W4, 2026-06-10 audit) ──────────────
+// Under the game build the slash surface is the keep-set ONLY: session
+// management, theme, settings, help/shortcuts, conversation search, and the
+// pure client-side easter eggs. Everything else — /sh (shell), /toggle, /setup
+// (API keys), the dropped verticals (/email /gallery /cookbook /notes /memory
+// /rag /tasks /brain /library /research /compare), the /tour-* set, model/
+// endpoint meta (/models /ping /probe), and transcript rewriters (/compact) —
+// is refused at DISPATCH time with a game-framed reply (their backends are
+// gone server-side; this kills the parallel ungated UI into them).
+const GAME_SLASH_KEEP = new Set([
+  'chats', 'theme', 'settings', 'help', 'shortcuts', 'find',
+  // Pure-fun easter eggs: client-side only, no workspace/meta surface.
+  'flip', 'roll', '8ball', 'fortune', 'odyssey', 'ascii', 'matrix',
+  'cowsay', 'wisdom', 'uptime', 'color',
+]);
+
+function _gameBuildOn() {
+  return !!(document.body && document.body.dataset && document.body.dataset.gameBuild === '1');
+}
+
+/** Is this canonical COMMANDS key available in the current build? */
+function isGameSlashAllowed(cmdKey) {
+  return !_gameBuildOn() || GAME_SLASH_KEEP.has(cmdKey);
+}
+
 // ── Dispatch helpers ──────────────────────────────────────────────
 
 /** Build context object for handlers */
@@ -6238,9 +5968,12 @@ function _levenshtein(a, b) {
 /** Suggest close matches for a mistyped command */
 function _fuzzyMatch(typed, maxDist) {
   maxDist = maxDist || 2;
-  const candidates = Object.keys(_ALIAS_MAP);
+  // W4: never suggest a command the current build refuses.
+  let candidates = Object.keys(_ALIAS_MAP).filter(k => isGameSlashAllowed(_ALIAS_MAP[k]));
   // Also include legacy alias keys
-  Object.keys(LEGACY_ALIASES).forEach(k => { if (!candidates.includes(k)) candidates.push(k); });
+  Object.keys(LEGACY_ALIASES).forEach(k => {
+    if (!candidates.includes(k) && isGameSlashAllowed(LEGACY_ALIASES[k].parent)) candidates.push(k);
+  });
   const matches = [];
   for (const c of candidates) {
     const d = _levenshtein(typed, c);
@@ -6272,6 +6005,14 @@ async function handleSlashCommand(input) {
     // --- 1. Try direct command resolution ---
     let cmdKey = _resolveCommand(rawCmd);
     let cmdDef = cmdKey ? COMMANDS[cmdKey] : null;
+
+    // --- W4: game-build keep-set gate (covers direct AND legacy-alias paths) ---
+    const _canonical = cmdKey || (LEGACY_ALIASES[rawCmd] ? LEGACY_ALIASES[rawCmd].parent : null);
+    if (_canonical && !isGameSlashAllowed(_canonical)) {
+      _showUser();
+      slashReply('That control room isn’t part of the broadcast. Type <b>/help</b> for what works in the house.');
+      return true;
+    }
 
     // --- 2. Try legacy alias ---
     if (!cmdDef && LEGACY_ALIASES[rawCmd]) {
@@ -6360,13 +6101,33 @@ async function handleSlashCommand(input) {
     }
 
     // --- 4. Skill invocation: /<skill-name> [request] ---
-    // If `rawCmd` matches a published skill, the backend records usage and
-    // returns a skill-pinned message to submit as the next agent turn.
+    // If `rawCmd` matches a published skill, pin its SKILL.md to the user's
+    // message and re-submit. Lets you fire a stored procedure on demand
+    // without the model having to discover the skill itself.
     try {
-      const catalog = await _loadSkillSlashCatalog(false);
-      if (catalog.some(s => s.name === rawCmd)) {
-        _showUser();
-        return await _invokeSkillByName(rawCmd, args.join(' ').trim(), ctx);
+      const skillRes = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(rawCmd)}/markdown`, { credentials: 'same-origin' });
+      if (skillRes.ok) {
+        const skillData = await skillRes.json();
+        const md = skillData.markdown || '';
+        if (md) {
+          _showUser();
+          const request = args.join(' ').trim();
+          const msgInput = document.getElementById('message');
+          const composed =
+            `Apply the skill below to my request, following its Procedure / Pitfalls / Verification.\n\n` +
+            `--- BEGIN SKILL ---\n${md}\n--- END SKILL ---\n\n` +
+            (request ? `Request: ${request}` : `Request: (use the skill as appropriate)`);
+          if (msgInput) {
+            msgInput.value = composed;
+            const form = document.getElementById('chat-form');
+            if (form && typeof form.requestSubmit === 'function') {
+              form.requestSubmit();
+            } else if (form) {
+              form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            }
+          }
+          return true;
+        }
       }
     } catch (_) { /* fall through to fuzzy match */ }
 
@@ -6423,13 +6184,10 @@ export function initSlashCommands(deps) {
     const providerEl = e.target.closest('.setup-clickable-provider');
     if (providerEl) {
       e.preventDefault();
-      const providerKey = providerEl.dataset.setupProvider || providerEl.textContent.trim();
       const providerName = providerEl.textContent.trim();
       const messageInput = document.getElementById('message');
       if (messageInput) {
-        const text = providerEl.dataset.setupKind === 'device-auth'
-          ? '/setup ' + providerKey
-          : providerName + ' sk-';
+        const text = providerName + ' sk-';
         messageInput.value = text;
         messageInput.dispatchEvent(new Event('input', { bubbles: true }));
         messageInput.focus();
@@ -6483,7 +6241,7 @@ export function clearSetupMode(preservePendingState = false) {
   }
 }
 
-export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply, COMMANDS };
+export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply, COMMANDS, GAME_SLASH_KEEP, isGameSlashAllowed };
 
 const slashCommands = {
   initSlashCommands,

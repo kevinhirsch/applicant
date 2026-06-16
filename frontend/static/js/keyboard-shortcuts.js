@@ -8,11 +8,8 @@ const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
   fav_session: 'ctrl+alt+f', delete_session: 'ctrl+alt+d',
   cancel: 'escape', tts: 'alt+shift+t',
-  incognito: 'ctrl+alt+i', settings: 'ctrl+,', focus_input: 'ctrl+/',
-  // Open-tool shortcuts (Calendar bound by default; rest unbound).
-  open_calendar: 'ctrl+alt+c', open_compare: '', open_cookbook: '',
-  open_research: '', open_gallery: '', open_library: '', open_memory: '',
-  open_notes: '', open_tasks: '', open_theme: '',
+  settings: 'ctrl+,', focus_input: 'ctrl+/',
+  open_theme: '',
 };
 
 export function _matchesCombo(e, combo, isMac = IS_MAC) {
@@ -53,13 +50,31 @@ export function initKeyboardShortcuts(modules) {
     _closeCompareIfActive, _deactivateIncognito, API_BASE
   } = modules;
 
-  window._odysseusKeybinds = { ..._defaultKeybinds };
+  window._orwellKeybinds = { ..._defaultKeybinds };
 
-  // Load saved keybinds
-  fetch('/api/auth/settings', { credentials: 'same-origin' })
-    .then(r => r.json())
-    .then(s => { if (s.keybinds) window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
-    .catch(() => {});
+  // Load saved keybinds — the SAME layering the Shortcuts tab renders from
+  // (settings.js initShortcuts): defaults ← global `keybinds` ← the per-user
+  // /api/prefs/keybinds override. The rebind UI persists per-profile via
+  // PUT /api/prefs/keybinds (C30), so the runtime keymap MUST read that store
+  // back; seeding from /api/auth/settings alone meant every custom shortcut
+  // silently reverted on reload (F1, 2026-06-11 settings-wiring audit).
+  // Sequential on purpose: the per-user layer must land on top.
+  (async () => {
+    const kb = { ..._defaultKeybinds };
+    try {
+      const r = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+      const s = await r.json();
+      if (s.keybinds) Object.assign(kb, s.keybinds);
+    } catch (_) {}
+    try {
+      const r = await fetch('/api/prefs/keybinds', { credentials: 'same-origin' });
+      if (r.ok) {
+        const { value } = await r.json();
+        if (value && typeof value === 'object') Object.assign(kb, value);
+      }
+    } catch (_) {}
+    window._orwellKeybinds = kb;
+  })();
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
   // Every tool's bulk-select bar has a `*-bulk-cancel` button whose click
@@ -98,16 +113,6 @@ export function initKeyboardShortcuts(modules) {
   const _WINDOW_TRIGGERS = {
     'settings-modal':         'user-bar-settings',
     'theme-modal':            'tool-theme-btn',
-    'tasks-modal':            'tool-tasks-btn',
-    'notes-panel':            'tool-notes-btn',
-    'memory-modal':           'tool-memory-btn',
-    'doclib-modal':           'tool-library-btn',
-    'gallery-modal':          'tool-gallery-btn',
-    'research-overlay':       'tool-research-btn',
-    'cookbook-modal':         'tool-cookbook-btn',
-    'compare-model-overlay':  'tool-compare-btn',
-    'calendar-modal':         'tool-calendar-btn',
-    'email-lib-modal':        'email-section-title',
   };
   let _lastWindow = 'settings-modal';
 
@@ -142,7 +147,7 @@ export function initKeyboardShortcuts(modules) {
   };
 
   document.addEventListener('keydown', (e) => {
-    const kb = window._odysseusKeybinds;
+    const kb = window._orwellKeybinds;
 
     if (_matchesCombo(e, kb.search)) {
       e.preventDefault();
@@ -211,7 +216,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Odysseus Chat';
+            el('current-meta').textContent = 'Orwell Chat';
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }
@@ -246,15 +251,6 @@ export function initKeyboardShortcuts(modules) {
     if (_matchesCombo(e, kb.cancel)) {
       if (chatModule) chatModule.abortCurrentRequest();
     }
-    if (_matchesCombo(e, kb.incognito)) {
-      e.preventDefault();
-      // Drive the visible button so the real toggle logic runs (visual
-      // state, welcome-screen guard, checkbox sync) — flipping the hidden
-      // checkbox alone did nothing.
-      const btn = el('incognito-btn');
-      if (btn) btn.click();
-      return;
-    }
     if (_matchesCombo(e, kb.settings)) {
       e.preventDefault();
       _toggleActiveWindow();
@@ -263,15 +259,6 @@ export function initKeyboardShortcuts(modules) {
     // Open-tool shortcuts — click the sidebar tool button so each tool's
     // own open/toggle logic runs. Unbound (empty) combos never match.
     const _toolBtns = {
-      open_calendar: 'tool-calendar-btn',
-      open_compare:  'tool-compare-btn',
-      open_cookbook: 'tool-cookbook-btn',
-      open_research: 'tool-research-btn',
-      open_gallery:  'tool-gallery-btn',
-      open_library:  'tool-library-btn',
-      open_memory:   'tool-memory-btn',
-      open_notes:    'tool-notes-btn',
-      open_tasks:    'tool-tasks-btn',
       open_theme:    'tool-theme-btn',
     };
     for (const action in _toolBtns) {

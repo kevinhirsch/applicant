@@ -3,8 +3,8 @@
 
 // ── Key constants ──
 export const KEYS = {
-  THEME: 'odysseus-theme',
-  TOGGLES: 'odysseus-toggles',
+  THEME: 'orwell-theme',
+  TOGGLES: 'orwell-toggles',
   SIDEBAR_COLLAPSED: 'sidebar-collapsed',
   SIDEBAR_WIDTH: 'sidebar-width',
   SIDEBAR_SIDE: 'sidebar-side',
@@ -13,18 +13,19 @@ export const KEYS = {
   COMPARE_CHAT: 'compare-continue-chat',
   COMPARE_BLIND: 'compare-blind',
   COMPARE_RANDOM: 'compare-randomize',
-  MODELS_EXPANDED: 'odysseus-model-expanded',
-  MODEL_ENDPOINTS: 'odysseus-model-endpoints',
-  MODEL_SELECTED: 'odysseus-selected-model',
-  SORT_ORDER: 'odysseus-sessions-sort',
-  CHAT_SEARCH_SCOPE: 'odysseus-search-scope',
-  INCOGNITO: 'odysseus-incognito',
-  RAG_ACTIVE: 'odysseus-rag-active',
-  MCP_ACTIVE: 'odysseus-mcp-active',
+  MODELS_EXPANDED: 'orwell-model-expanded',
+  MODEL_ENDPOINTS: 'orwell-model-endpoints',
+  MODEL_SELECTED: 'orwell-selected-model',
+  SORT_ORDER: 'orwell-sessions-sort',
+  CHAT_SEARCH_SCOPE: 'orwell-search-scope',
+  INCOGNITO: 'orwell-incognito',
+  RAG_ACTIVE: 'orwell-rag-active',
+  MCP_ACTIVE: 'orwell-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',
-  DENSITY: 'odysseus-density',
-  WORKSPACE: 'odysseus-workspace'
+  DENSITY: 'orwell-density',
+  WORKSPACE: 'orwell-workspace',
+  PLAN: 'orwell-plan'
 };
 
 /**

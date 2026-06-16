@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
+import { isNarrow } from './platform.js';
 
 const API_BASE = window.location.origin;
 
@@ -21,7 +22,7 @@ const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
-let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
+let _sortMode = Storage.get('orwell-session-sort') || 'active'; // default to last active
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -62,7 +63,7 @@ function _deselectCurrentSession(sid) {
   if (currentSessionId !== sid) return;
   currentSessionId = null;
   uiModule.el('chat-history').innerHTML = '';
-  uiModule.el('current-meta').textContent = 'Odysseus Chat';
+  uiModule.el('current-meta').textContent = 'Orwell Chat';
   Storage.remove('lastSessionId');
   history.replaceState(null, '', window.location.pathname);
   if (window.chatModule && window.chatModule.showWelcomeScreen) {
@@ -118,8 +119,8 @@ function _normalizeSessionsList(fetched) {
 export function initDependencies() {}
 
 // ── Folder state persistence ──
-const FOLDER_STATE_KEY = 'odysseus-folder-state';
-const FOLDER_ORDER_KEY = 'odysseus-folder-order';
+const FOLDER_STATE_KEY = 'orwell-folder-state';
+const FOLDER_ORDER_KEY = 'orwell-folder-order';
 
 function loadFolderState() {
   return Storage.getJSON(FOLDER_STATE_KEY, {});
@@ -225,7 +226,7 @@ function buildFolderSubmenu(sessionId, currentFolder, dropdown) {
       sub.style.display = 'none';
     } else {
       const rect = moveItem.getBoundingClientRect();
-      const isMobile = window.innerWidth <= 768;
+      const isMobile = isNarrow();
       sub.style.top = '-9999px';
       sub.style.display = 'block';
       const subRect = sub.getBoundingClientRect();
@@ -393,7 +394,7 @@ function createSessionItem(s) {
   div.addEventListener('touchstart', (e) => {
     _touchMoved = false;
     _longPressed = false;
-    if (window.innerWidth > 768) return;
+    if (!isNarrow()) return;
     _longPressTimer = setTimeout(() => {
       _longPressed = true;
       // Haptic feedback if available
@@ -549,7 +550,7 @@ function createSessionItem(s) {
     });
     // On mobile, "Select" is the primary multi-pick action — put it at the top
     // of the menu. On desktop keep its original position.
-    if (window.innerWidth <= 768) {
+    if (isNarrow()) {
       dropdown.insertBefore(selectMoreItem, dropdown.firstChild);
     } else {
       dropdown.appendChild(selectMoreItem);
@@ -670,7 +671,7 @@ function createSessionItem(s) {
       if (pm.removePersistentChat) pm.removePersistentChat(s.id);
     } catch (e) {}
     // On mobile, close sidebar if we deleted the active session so user sees welcome screen
-    if (wasCurrentSession && window.innerWidth <= 768) {
+    if (wasCurrentSession && isNarrow()) {
       const sidebar = document.getElementById('sidebar');
       if (sidebar) sidebar.classList.add('hidden');
       const backdrop = document.getElementById('sidebar-backdrop');
@@ -1140,7 +1141,7 @@ function _showSwipeHint(list) {
 
 // ── Force sidebar open on mobile (after dropdown actions) ──
 function _forceSidebarOpen() {
-  if (window.innerWidth > 768) return;
+  if (!isNarrow()) return;
   // Suppress backdrop close
   if (window._suppressSidebarClose !== undefined) {
     window._suppressSidebarClose = true;
@@ -1161,7 +1162,7 @@ function _forceSidebarOpen() {
 // the sidebar directly and re-open it if anything hides it — bulletproof against
 // whichever path fires. Returns a stopper to call once the rename is committed.
 function _guardSidebarDuringRename() {
-  if (window.innerWidth > 768 || !window.MutationObserver) return () => {};
+  if (!isNarrow() || !window.MutationObserver) return () => {};
   const sb = document.getElementById('sidebar');
   if (!sb) return () => {};
   const obs = new MutationObserver(() => {
@@ -1438,7 +1439,7 @@ export async function loadSessions() {
             } else {
               await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
               // On mobile, hide sidebar so user lands directly in chat
-              if (window.innerWidth < 768) {
+              if (isNarrow()) {
                 const sb = document.getElementById('sidebar');
                 if (sb) sb.classList.add('hidden');
               }
@@ -1463,7 +1464,7 @@ export async function loadSessions() {
       const msgInput = document.getElementById('message');
       if (msgInput) {
         msgInput.disabled = false;
-        if (window.innerWidth > 768) msgInput.focus();
+        if (!isNarrow()) msgInput.focus();
       }
       if (window.chatModule && window.chatModule.showWelcomeScreen) {
         window.chatModule.showWelcomeScreen();
@@ -1506,7 +1507,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     currentSessionId = id;
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
-    // URL hash — the user complained that coming back to Odysseus kept
+    // URL hash — the user complained that coming back to Orwell kept
     // landing them on the auto-firing task-log chat instead of their last
     // real conversation.
     const _meta = sessions.find(s => s.id === id);
@@ -1573,7 +1574,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta ? meta.name : 'Orwell Chat';
     }
     // Update model picker visibility
     updateModelPicker();
@@ -1722,7 +1723,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (window.documentModule) {
       const docBtn = document.getElementById('overflow-doc-btn');
       const meta = sessions.find(s => s.id === id);
-      const shouldOpen = localStorage.getItem('odysseus-doc-open-' + id) === '1';
+      const shouldOpen = localStorage.getItem('orwell-doc-open-' + id) === '1';
       const hasDocs = !!(meta && meta.has_documents);
       if (docBtn) {
         docBtn.classList.remove('active');
@@ -1751,7 +1752,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     // which is intrusive when the user is just navigating between chats
     // (e.g. picking a chat from the Library). They can tap the input to
     // bring up the keyboard when they actually want to type.
-    if (!_sessionListFocused && window.innerWidth > 768) {
+    if (!_sessionListFocused && !isNarrow()) {
       const msgInput = document.getElementById('message');
       if (msgInput) msgInput.focus();
     }
@@ -2258,8 +2259,8 @@ if (document.readyState === 'loading') {
 // Shared global listener to close all session dropdowns on click-away or Escape
 function _initDropdownDismiss() {
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.session-dropdown-menu, .session-folder-submenu')) return;
-    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
+    if (e.target.closest('.session-dropdown-menu')) return;
+    document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
   });
   // Watch the sidebar — when it's hidden (any path: hamburger, swipe, mobile
   // collapse), close any open session dropdowns so they don't orphan over
@@ -2268,16 +2269,14 @@ function _initDropdownDismiss() {
   if (_sb) {
     new MutationObserver(() => {
       if (_sb.classList.contains('hidden')) {
-        document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
+        document.querySelectorAll('.session-dropdown-menu, .folder-submenu').forEach(d => d.style.display = 'none');
       }
     }).observe(_sb, { attributes: true, attributeFilter: ['class'] });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    // Esc must dismiss both the parent dropdown AND the Move-to-folder
-    // submenu in one keypress — previously only the dropdown closed and
-    // the submenu was left orphaned on screen.
-    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
+    }
   });
 }
 
@@ -3085,8 +3084,8 @@ export function closeArchive() {
 export function getSortMode() { return _sortMode; }
 export function setSortMode(mode) {
   _sortMode = mode || null;
-  if (mode) Storage.set('odysseus-session-sort', mode);
-  else Storage.remove('odysseus-session-sort');
+  if (mode) Storage.set('orwell-session-sort', mode);
+  else Storage.remove('orwell-session-sort');
   renderSessionList();
 }
 

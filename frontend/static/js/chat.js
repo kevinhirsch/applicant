@@ -13,18 +13,16 @@ import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
+import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
-import searchModule from './search.js';
-import documentModule from './document.js';
-import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
-import createResearchSynapse from './researchSynapse.js';
+// Game build (feature 0032): workspace verticals removed — null stubs for guarded usage sites.
+const searchModule = null, documentModule = null, emailInbox = null, createResearchSynapse = null;
 import { createStreamRenderer } from './streamingRenderer.js';
-import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
-
+import { isNarrow } from './platform.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -110,6 +108,35 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
+  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
+
+  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
+  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
+  // on a weak model survives history truncation), and (b) the plan window can be
+  // re-opened/docked at any time via the plan-button menu. Stored per session in
+  // localStorage so it survives a reload mid-execution.
+  function _setStoredPlan(text) {
+    const sid = sessionModule.getCurrentSessionId();
+    if (!sid || !text || !text.trim()) return;
+    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
+    // Live-refresh the plan window if it's open (shows progress as the agent
+    // restates the checklist with [x]).
+    try {
+      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
+        planWindowModule.openPlanWindow(text, null);
+      }
+    } catch (_) {}
+  }
+  function _getStoredPlan() {
+    const sid = sessionModule.getCurrentSessionId();
+    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
+    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
+  }
+  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
+  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
+  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
+  window._getStoredPlan = _getStoredPlan;
+  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -180,8 +207,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   export function init(apiBase) {
     API_BASE = apiBase;
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
-    // Initialize email inbox
-    emailInbox.init(documentModule);
+    if (emailInbox) emailInbox.init(documentModule);
     // Wire the slash-command autocomplete popup on the chat composer. The
     // dispatcher already handles the typed command — this just surfaces the
     // registry as a discoverable menu when the user starts a message with /.
@@ -189,19 +215,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
-
-    // ArrowUp on empty composer recalls last user message (like many chat apps).
-    const _wireArrowUpRecall = (composer) =>
-      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
-        autoResize: uiModule?.autoResize,
-      });
-
-    const composer = document.getElementById('message');
-    if (!_wireArrowUpRecall(composer)) {
-      // Init can run before #message exists (templated UI); short retries only.
-      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
-      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
-    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -222,7 +235,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Clear any pending transitions from + → arrow swap
       submitBtn.classList.remove('anim-spin', 'anim-spin-swap', 'anim-land', 'mic-mode', 'newchat-mode', 'newchat-expanded', 'recording');
       // Ensure arrow icon is showing before launch
-      var icons = window._odysseusBtnIcons;
+      var icons = window._orwellBtnIcons;
       if (icons) submitBtn.innerHTML = icons.send;
       void submitBtn.offsetWidth;
       // Arrow launches up, then stop icon lands in
@@ -253,7 +266,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (window._updateSendBtnIcon) {
         setTimeout(window._updateSendBtnIcon, 50);
       } else {
-        var icons = window._odysseusBtnIcons;
+        var icons = window._orwellBtnIcons;
         submitBtn.innerHTML = icons ? icons.send : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
         submitBtn.title = 'Send message';
         submitBtn.classList.remove('mic-mode', 'newchat-mode');
@@ -486,10 +499,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           const dcRes = await fetch('/api/default-chat');
           dc = await dcRes.json();
           if (dc && dc.endpoint_url && dc.model) {
-            try { window.__odysseusDefaultChat = dc; } catch (_) {}
+            try { window.__orwellDefaultChat = dc; } catch (_) {}
           }
         } catch (_) {
-          dc = (typeof window !== 'undefined' && window.__odysseusDefaultChat) || null;
+          dc = (typeof window !== 'undefined' && window.__orwellDefaultChat) || null;
         }
         if (dc.endpoint_url && dc.model) {
           await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
@@ -547,7 +560,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Acquire Web Lock to hint browser not to discard this tab while streaming
     if (navigator.locks) {
-      navigator.locks.request('odysseus-stream-' + streamSessionId, { mode: 'exclusive', ifAvailable: true }, lock => {
+      navigator.locks.request('orwell-stream-' + streamSessionId, { mode: 'exclusive', ifAvailable: true }, lock => {
         if (!lock) return; // Another stream already holds a lock — fine
         return new Promise(resolve => { _webLockRelease = resolve; });
       }).catch(e => console.warn('web lock acquire failed:', e)); // Ignore lock errors — best-effort
@@ -634,13 +647,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       messageInput.value = '';
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
+      // G17 (refresh-persistence audit F3): a sent turn clears the persisted composer
+      // draft — a refresh must never resurrect words the house already heard.
+      if (window._orwellComposerDraftClear) window._orwellComposerDraftClear();
       // Mobile: dismiss the on-screen keyboard after sending. iOS in
       // particular ignores a bare blur() in some cases (or some other
       // listener refocuses straight after), so we temporarily mark the
       // input readonly which forces the keyboard to retract, then blur,
       // then drop the readonly attribute after the keyboard is gone so
       // typing still works for the next message.
-      if (window.innerWidth <= 768) {
+      if (isNarrow()) {
         try {
           messageInput.setAttribute('readonly', 'readonly');
           messageInput.blur();
@@ -740,11 +756,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const dismissBtn = document.createElement('button');
         dismissBtn.textContent = '\u00d7';
         dismissBtn.className = 'import-prompt-dismiss';
-        dismissBtn.setAttribute('aria-label', 'Dismiss');
-        dismissBtn.title = 'Dismiss';
         dismissBtn.addEventListener('click', () => banner.remove());
         banner.appendChild(dismissBtn);
-        const chatBar = document.querySelector('.chat-input-bar');
+        const chatBar = document.getElementById('chat-bar');
         if (chatBar) chatBar.parentNode.insertBefore(banner, chatBar);
         // Auto-dismiss after 15 seconds
         setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
@@ -787,19 +801,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
         fd.append('active_doc_id', documentModule.getCurrentDocId());
       }
-      // Active email context — when an email reader is open, pass its
-      // uid/folder/account so "reply", "summarize", "what does this say"
-      // resolve to the email the user is actually looking at instead of
-      // making the agent invent a new markdown draft with fake headers.
-      try {
-        const getEmailCtx = window.__odysseusGetActiveEmailContext;
-        const emCtx = typeof getEmailCtx === 'function' ? getEmailCtx() : null;
-        if (emCtx && emCtx.uid) {
-          fd.append('active_email_uid', String(emCtx.uid));
-          fd.append('active_email_folder', String(emCtx.folder || 'INBOX'));
-          if (emCtx.account) fd.append('active_email_account', String(emCtx.account));
-        }
-      } catch (_e) { /* best-effort */ }
       // Web toggle: pre-search in Chat mode, tool permission in Agent mode
       const toggleState = Storage.loadToggleState();
       let isAgentMode = (toggleState.mode || 'chat') === 'agent';
@@ -815,15 +816,31 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         } else {
           fd.append('use_web', 'true');
         }
-      } else if (isAgentMode) {
-        fd.append('allow_web_search', 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
         // Research always runs in chat mode — override agent if set
         fd.set('mode', 'chat');
       }
-      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
+      if (el('bash-toggle').checked) {
+        fd.append('allow_bash', 'true');
+      }
+      // Plan mode: agent investigates read-only and proposes a plan to approve.
+      // Only meaningful in agent mode, and never alongside deep research.
+      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
+      // runs with full tools even though the Plan toggle is still on.
+      const _planToggle = el('plan-toggle');
+      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
+      _forcePlanOff = false;
+      if (planTurn) {
+        fd.append('plan_mode', 'true');
+        fd.set('mode', 'agent');
+      } else if (isAgentMode) {
+        // Executing (not proposing): send the stored plan back so the backend
+        // pins it in context and the agent can always re-reference it.
+        const _sp = _getStoredPlan();
+        if (_sp) fd.append('approved_plan', _sp);
+      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -1098,8 +1115,59 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Tool-aware thinking spinner
       let _lastToolName = '';
       const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+      // C14 (immersion): the Big Brother engine tools render as quiet production
+      // beats — a label, never raw camelCase names or JSON payloads in the player's
+      // transcript. Applies wherever these names appear (they exist only in the game).
+      // E96 (ruling #11): the game build carries no Documents vertical — the
+      // export item is removed from the DOM, not just hidden.
+      if (document.body.hasAttribute('data-game-build')) {
+        const docBtn = document.getElementById('export-doc-btn');
+        if (docBtn) docBtn.remove();
+      }
+      const _orwellToolBeats = {
+        'createCharacter': '\ud83c\udfac Casting',
+        'getGameState': '\ud83d\udccb Production notes',
+        'gameStatus': '\ud83d\udccb Production notes',
+        'getVisibleStateFor': '\ud83d\udccb Production notes',
+        'getMomentPrompt': '\ud83d\udccb Production notes',
+        'runCompetition': '\ud83c\udfc6 Competition',
+        'advanceGame': '\ud83d\udcfa Production',
+        'submitDecision': '\ud83d\uddf3 Your move',
+        'recordInteraction': '\ud83c\udfac Scene log',
+        'surfaceInformationTo': '\ud83e\udd2b Word travels',
+        'socialRead': '\ud83d\udc40 Reading the room',
+        'socialInitiatives': '\ud83d\udeaa Who wants a word',
+        'diaryRoom': '\ud83d\udcd4 Diary Room',
+        'makeDeal': '\ud83e\udd1d Handshake',
+        'askProducers': '\ud83c\udf99 Producers',
+        'renderScene': '\ud83d\udcfa Production',
+        'endOfSessionSummary': '\ud83d\udcfc Tape check',
+        'finaleView': '\ud83d\udc51 Finale',
+        // D5/W6: EVERY keep-set tool the agent can pull renders diegetically —
+        // raw camelCase names in the transcript are the C14/C19 immersion bleed.
+        'updateCasting': '\u{1F3AC} Casting notes',
+        'whereabouts': '\u{1F9ED} Around the house',
+        'seasonRecap': '\u{1F4DC} The season so far',
+        'seasonRetrospective': '\u{1F513} The producers\u2019 vault',
+        'npcVoice': '\u{1F3AD} In their head',
+        'inspectNonVaultState': '\u{1F50E} Control room',
+        'overrideMechanic': '\u{1F39B} Control room',
+        'configureGame': '\u{1F39B} Control room',
+        'manageSandbox': '\u{1F39B} Control room',
+        'web_search': '\u{1F4E1} Checking the feeds',
+        'ask_user': '\u{1F399} A question for you',
+        'update_plan': '\u{1F4CB} Production notes',
+        'ui_control': '\u{1F4FA} Camera direction',
+        'generate_image': '\u{1F4F8} Photo booth',
+        'search_chats': '\u{1F4DC} The archive',
+        'list_models': '\u{1F4E1} Checking the feeds',
+        'manage_settings': '\u{1F39B} Control room',
+        'manage_endpoints': '\u{1F39B} Control room',
+        'manage_tokens': '\u{1F39B} Control room',
+        'manage_mcp': '\u{1F39B} Control room',
+      };
       const _toolLabels = {
-        'web_search': 'Searching',
+        'web_search': _searchIcon + 'Searching',
         'bash': 'Running',
         'python': 'Running',
         'create_document': 'Writing',
@@ -1118,9 +1186,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         'deep_research': 'Researching',
         'list_models': 'Browsing',
         'ui_control': 'Adjusting',
-      };
-      const _toolIcons = {
-        'web_search': _searchIcon,
       };
       function _thinkingLabel() {
         if (!_lastToolName) {
@@ -1577,12 +1642,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    // Keep thinking box scrolled to bottom, but let user scroll up
+                    // Keep thinking box scrolled to bottom
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) {
-                      var nearBottom = thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
-                      if (nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
-                    }
+                    if (thinkBox) thinkBox.scrollTop = thinkBox.scrollHeight;
                   }
                   uiModule.scrollHistory();
                   continue;
@@ -1801,21 +1863,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
-              } else if (json.type === 'workspace_rejected') {
-                // Server refused to bind the posted workspace (deleted folder,
-                // file path, sensitive dir, filesystem root). Clear the stored
-                // value so the pill stops claiming a confinement that is not in
-                // effect, and tell the user.
-                const _wsPath = (json.data && json.data.path) || '';
-                import('./workspace.js').then((m) => {
-                  const ws = m.default || m;
-                  if (ws && ws.setWorkspace) ws.setWorkspace('');
-                });
-                uiModule.showToast(
-                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
-                  6000
-                );
-                continue;
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
@@ -2053,7 +2100,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 _lastToolName = json.tool || '';
 
                 // --- Thread timeline: group tools in a thread container ---
-                const cmd = json.command || '';
+                let cmd = json.command || '';
                 const chatBox = document.getElementById('chat-history');
                 // Find existing thread to append to — check last few children
                 // (agent_step may insert an empty msg-ai between tool rounds)
@@ -2086,12 +2133,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   chatBox.appendChild(threadWrap);
                 }
                 threadWrap.classList.add('streaming');
-                const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
-                const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
+                const _beat = _orwellToolBeats[json.tool];
+                const toolLabel = _beat || _toolLabels[json.tool.toLowerCase()] || json.tool;
+                if (_beat) cmd = '';  // production machinery: never show raw args
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${toolIcon}</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -2165,7 +2213,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     currentToolBubble._elapsedTicker = null;
                   }
                   const ok = (json.exit_code === 0 || json.exit_code == null);
-                  const cmd = json.command || '';
+                  let cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
                     outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
@@ -2196,6 +2244,29 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   }
                   // For file edits the "command" is the raw JSON args — redundant
                   // next to the diff, so hide it when we have a diff to show.
+                  const _beatOut = _orwellToolBeats[json.tool];
+                  if (_beatOut) { cmd = ''; outHtml = ''; }  // game beats: label + status only, no raw JSON
+                  // C20: surface the engine's pending decision (or clear it) to the confirm
+                  // guardrail. Vault-free AdvanceView only; fail-open on any parse trouble.
+                  if (json.tool === 'advanceGame' || json.tool === 'submitDecision') {
+                    try {
+                      const _adv = JSON.parse(json.output || '{}');
+                      window.dispatchEvent(new CustomEvent('orwell:pending', { detail: { pending: _adv && _adv.pending ? _adv.pending : null } }));
+                    } catch (_) {}
+                  }
+                  // G15: every game-MUTATING tool result nudges the panels through THE one
+                  // debounced dispatcher (platform.js orwellGameChanged) — post-action UI
+                  // refreshes event-driven instead of waiting out a 20–30s poll. (E65's
+                  // inline dispatch was nested inside the advanceGame/submitDecision branch
+                  // above, so the lifecycle tools it keyed on could never reach it.)
+                  // runCompetition rides along: it is the single outcome authority, and a
+                  // comp result moves exactly what the status HUD shows (HOH/veto/phase).
+                  if (ok && ['advanceGame', 'submitDecision', 'recordInteraction', 'createCharacter',
+                             'updateCasting', 'manageSandbox', 'runCompetition'].includes(json.tool)) {
+                    if (window.orwellGameChanged) window.orwellGameChanged('tool:' + json.tool);
+                    // E65: a new season (createCharacter success mid-session) opens a FRESH chat.
+                    if (json.tool === 'createCharacter' && window._orwellFreshSession) window._orwellFreshSession();
+                  }
                   const cmdHtml2 = (cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
                   // Preserve the user's .open choice across the innerHTML
                   // rewrite \u2014 otherwise expanding a running tool collapses
@@ -2204,7 +2275,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   // bottom of file) so no per-node listener needed.
                   const _wasOpen = currentToolBubble.classList.contains('open');
                   currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(_beatOut || json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
@@ -2761,6 +2832,61 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
+        // Capture any checklist this message produced as the current plan — both
+        // the initial proposal AND restated progress during execution. Keeps the
+        // stored plan (and the docked plan window) in sync with the latest state.
+        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
+          _setStoredPlan(accumulated);
+        }
+        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
+        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
+        if (planTurn && accumulated.trim()) {
+          const _planText = accumulated;
+          const _runApproved = () => {
+            _approveWrap.remove();
+            _forcePlanOff = true;
+            // Persist the approved plan for THIS chat so it's (a) re-sent and
+            // pinned in context every execution turn, and (b) re-openable via the
+            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
+            // intercept keys off a stored plan existing.
+            _setStoredPlan(_planText);
+            // Approving exits plan mode for good — turn it OFF directly (NOT via
+            // the button's click, which would now open the plan menu instead of
+            // toggling) so execution and every follow-up keep full write tools.
+            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
+            const _inp = el('message');
+            if (_inp) {
+              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
+                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
+                + 'memory. Work through it in order, and after each step call the update_plan tool '
+                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
+                + 'until all are done.';
+              _inp.dispatchEvent(new Event('input'));
+            }
+            // Show a clean bubble; the full instruction still goes to the model.
+            _displayOverride = 'Approved the plan.';
+            handleChatSubmit({ preventDefault() {} });
+          };
+          var _approveWrap = document.createElement('div');
+          _approveWrap.className = 'plan-approve-bar';
+          const _approveBtn = document.createElement('button');
+          _approveBtn.type = 'button';
+          _approveBtn.className = 'plan-approve-btn';
+          _approveBtn.textContent = 'Approve & Run';
+          _approveBtn.addEventListener('click', _runApproved);
+          // Open the plan in a draggable, side-dockable window (reuses the
+          // shared modal framework). Approving from the window runs it too.
+          const _openBtn = document.createElement('button');
+          _openBtn.type = 'button';
+          _openBtn.className = 'plan-open-btn';
+          _openBtn.textContent = 'Open in window';
+          _openBtn.addEventListener('click', () => {
+            planWindowModule.openPlanWindow(_planText, _runApproved);
+          });
+          _approveWrap.appendChild(_approveBtn);
+          _approveWrap.appendChild(_openBtn);
+          footerTarget.appendChild(_approveWrap);
+        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);
@@ -3038,7 +3164,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Re-enable message input; on mobile blur to dismiss keyboard
         if (messageInput) {
           messageInput.disabled = false;
-          if (window.innerWidth <= 768) {
+          if (isNarrow()) {
             messageInput.blur();
           } else {
             messageInput.focus();
@@ -3089,7 +3215,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             if (_box && sessionModule.getCurrentSessionId() === _timeoutSessionId) {
               var _timeoutMsg = document.createElement('div');
               _timeoutMsg.className = 'msg msg-ai';
-              _timeoutMsg.innerHTML = '<div class="role">Odysseus</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
+              _timeoutMsg.innerHTML = '<div class="role">Orwell</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
               _box.appendChild(_timeoutMsg);
               uiModule.scrollHistory();
             }
@@ -3330,6 +3456,62 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // _notifyStreamComplete and _insertStreamDoneToast now in chatStream.js
   var _notifyStreamComplete = chatStream.notifyStreamComplete;
   var _insertStreamDoneToast = chatStream.insertStreamDoneToast;
+
+  /**
+   * Cross-device sync: re-render the conversation for `sessionId` from saved
+   * history WITHOUT the heavy, draft-clearing selectSession path. Used when
+   * another device adds a message to the session this device is viewing. No-op
+   * if it isn't the open session, or if this device is mid-stream/resume for it
+   * (its own live view is authoritative). Preserves the message input; only
+   * touches #chat-history, and only auto-scrolls if already near the bottom.
+   */
+  export async function softReloadHistory(sessionId) {
+    if (!sessionId) return;
+    const isCurrent = () => !sessionModule || !sessionModule.getCurrentSessionId ||
+      sessionModule.getCurrentSessionId() === sessionId;
+    if (!isCurrent() || hasActiveStream(sessionId)) return;
+
+    let data;
+    try {
+      const res = await fetch(`${API_BASE}/api/history/${sessionId}`);
+      if (!res.ok) return;
+      data = await res.json();
+    } catch (_) { return; }
+    // Re-check after the await: the user may have navigated, or a local stream
+    // may have started, while we were fetching.
+    if (!isCurrent() || hasActiveStream(sessionId)) return;
+
+    const box = document.getElementById('chat-history');
+    if (!box) return;
+    const msgs = data.history || [];
+    const modelName = data.model || null;
+    const nearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 120;
+    const prevScrollTop = box.scrollTop;
+
+    box.classList.add('no-animate');
+    box.innerHTML = '';
+    for (const msg of msgs) {
+      let content = '';
+      if (typeof msg.content === 'string') content = msg.content;
+      else if (Array.isArray(msg.content)) content = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
+      if (msg.role === 'user') {
+        const t = content.trim();
+        if (t === 'Continue where you left off' || t.startsWith('Your message was cut off.') ||
+            t.startsWith('Your previous response was interrupted.') ||
+            t.includes('[Instruction: Rewrite') || t.includes('[Instruction: Explain')) continue;
+      }
+      const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
+      chatRenderer.addMessage(msg.role, markdownModule.renderContent(content), modelName, meta);
+    }
+    box.classList.remove('no-animate');
+    if (nearBottom) {
+      if (uiModule.scrollHistoryInstant) uiModule.scrollHistoryInstant();
+      else if (uiModule.scrollHistory) uiModule.scrollHistory();
+    } else {
+      // Reader was scrolled up — keep their place (new content was appended below).
+      box.scrollTop = prevScrollTop;
+    }
+  }
 
   /**
    * Live-resume a chat run still streaming detached on the server (#2539).
@@ -3760,7 +3942,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     });
 
     // On mobile, fade out welcome text when keyboard opens to prevent overlap
-    if (window.innerWidth <= 768) {
+    if (isNarrow()) {
       const msgInput = document.getElementById('message');
       if (msgInput) {
         msgInput.addEventListener('focus', () => {
@@ -3881,9 +4063,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      const isMobile = window.innerWidth <= 768
-
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         saveBtn.click();
       }
@@ -3891,11 +4071,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   }
 
   /**
-   * Resend a user message. Normal resend appends a fresh copy at the end of
-   * the current thread; regenerate flows can opt into replacing from here.
+   * Resend a user message — truncates history to that point and resubmits.
    */
-  export async function resendUserMessage(userMsgElement, opts = {}) {
-    const replaceFromHere = Boolean(opts && opts.replaceFromHere);
+  export async function resendUserMessage(userMsgElement) {
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const msgIndex = allMsgs.indexOf(userMsgElement);
@@ -3941,28 +4119,25 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
+    // Truncate backend to keep everything before this user message
+    const keepCount = msgIndex;
     try {
-      if (replaceFromHere) {
-        // Regenerate flows intentionally trim history to this point before
-        // resubmitting. The plain "Resend message" action must not do this.
-        const keepCount = msgIndex;
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
-        });
+      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keep_count: keepCount })
+      });
 
-        // Drop the AI replies after the user message but KEEP the user bubble
-        // itself (so its photo stays visible). Then suppress the new user
-        // bubble that send would otherwise add — same pattern as regenerate.
-        let sibling = userMsgElement.nextSibling;
-        while (sibling) {
-          const next = sibling.nextSibling;
-          sibling.remove();
-          sibling = next;
-        }
-        _hideUserBubble = true;
+      // Drop the AI replies after the user message but KEEP the user bubble
+      // itself (so its photo stays visible). Then suppress the new user
+      // bubble that send would otherwise add — same pattern as regenerate.
+      let sibling = userMsgElement.nextSibling;
+      while (sibling) {
+        const next = sibling.nextSibling;
+        sibling.remove();
+        sibling = next;
       }
+      _hideUserBubble = true;
       _pendingRegenAttachments = _ids;
 
       // Resubmit
@@ -4496,15 +4671,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    * Delete an AI message and its preceding user message from the conversation.
    */
   export async function deleteMessage(msgElement) {
-    if (uiModule && uiModule.styledConfirm) {
-      const ok = await uiModule.styledConfirm('Delete this message?', {
-        confirmText: 'Delete',
-        cancelText: 'Cancel',
-        danger: true,
-      });
-      if (!ok) return;
-    }
-
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const clickedIndex = allMsgs.indexOf(msgElement);
@@ -4895,12 +5061,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const id = att.id, name = att.name || '', mime = att.mime || '';
     const url = `${API_BASE}/api/upload/${id}`;
 
-    // Images → Gallery editor.
+    // Game build (feature 0032): the Gallery image editor is removed — open
+    // attached images in a new tab instead.
     if (isImage) {
-      try {
-        const gx = await import('./galleryEditor.js');
-        if (gx.openEditor) { gx.openEditor(url, id, null, name); return; }
-      } catch (e) { console.warn('gallery open failed', e); }
       window.open(url, '_blank');
       return;
     }
@@ -4995,6 +5158,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     continueFrom,
     _appendViewReportLink,
     hasActiveStream,
+    softReloadHistory,
   };
 
   // Single delegated handler for tool-call fold/expand. One listener on
@@ -5002,7 +5166,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   // streaming, history-rendered, compare-mode, all of them. Re-attaching
   // per-node listeners on every innerHTML rewrite was the source of the
   // "needs many clicks" bug.
-  if (!window.__odysseus_thread_click_bound) {
+  if (!window.__orwell_thread_click_bound) {
     document.body.addEventListener('click', (e) => {
       const header = e.target.closest('.agent-thread-header');
       if (!header) return;
@@ -5010,7 +5174,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!node) return;
       node.classList.toggle('open');
     });
-    window.__odysseus_thread_click_bound = true;
+    window.__orwell_thread_click_bound = true;
   }
 
   export default chatModule;

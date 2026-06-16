@@ -9,6 +9,7 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { isNarrow } from './platform.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -362,7 +363,7 @@ function _openVisionEditor(att, userMsgEl) {
       await _saveVisionText();
       _closeVisionEditor();
       if (userMsgEl && window.chatModule?.resendUserMessage) {
-        window.chatModule.resendUserMessage(userMsgEl, { replaceFromHere: true });
+        window.chatModule.resendUserMessage(userMsgEl);
       } else if (uiModule?.showToast) {
         uiModule.showToast('Saved');
       }
@@ -680,11 +681,9 @@ export function applyModelColor(roleEl, modelName) {
           html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
         }
       }
-      if (isCostTrackedEndpoint(_epUrl)) {
-        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
-      }
+      if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+      if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+      if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
       popup.style.top = (rect.bottom + 4) + 'px';
@@ -737,31 +736,11 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-export function isSubscriptionEndpoint(url) {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    const path = parsed.pathname.replace(/\/+$/, '');
-    return parsed.hostname === 'chatgpt.com'
-      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
-  } catch (_e) {
-    return false;
-  }
-}
-
-function _currentEndpointUrl() {
-  return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-}
-
-export function isCostTrackedEndpoint(url) {
-  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
-}
-
-/** Cost for the current turn, returning null for non-billable endpoints. */
+/** Cost for the current turn, returning null (free) for local endpoints. */
 function _billableCost(model, inputTokens, outputTokens) {
-  const url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(url)) return null;
+  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+    ? window.sessionModule.getCurrentEndpointUrl() : null;
+  if (isLocalEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
 }
 
@@ -806,10 +785,11 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
-  // cloud-rate calculation may have left in localStorage for this session.
-  const _url = _currentEndpointUrl();
-  if (!isCostTrackedEndpoint(_url)) {
+  // Local model? It's free — hide the badge and clear any stale cost that a
+  // previous (buggy) cloud-rate billing left in localStorage for this session.
+  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+    ? window.sessionModule.getCurrentEndpointUrl() : null;
+  if (isLocalEndpoint(_url)) {
     const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
     if (sid && getSessionCost(sid) > 0) {
       try {
@@ -860,20 +840,6 @@ export function stripToolBlocks(text) {
   cleaned = cleaned.replace(TOOL_NARRATION_RE, '');
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
   return cleaned.trim();
-}
-
-/**
- * Plain-text payload for the message copy buttons: the reply as the renderer
- * displays it — tool blocks and <think> reasoning stripped. dataset.raw keeps
- * the full model output (chat.js even embeds the elapsed time into the
- * <think> tag for reload persistence), so copying it verbatim leaks the
- * thinking block (#3722). Falls back to the raw text when stripping leaves
- * nothing (e.g. turns interrupted mid-thinking).
- */
-export function copyMessageText(msgElement) {
-  const raw = msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '';
-  const { content } = markdownModule.extractThinkingBlocks(stripToolBlocks(raw));
-  return content || raw;
 }
 
 /**
@@ -1086,7 +1052,10 @@ document.addEventListener('click', function(e) {
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
-  const m = href.match(/^#(session|document|note|image|email|event|task|skill|research)-(.+)$/);
+  // Game build (feature 0032): only session links remain — the workspace
+  // content verticals (document/note/image/email/event/task/skill/research)
+  // are removed, so their anchor routings are gone with them.
+  const m = href.match(/^#(session)-(.+)$/);
   if (!m) return;
   e.preventDefault();
   e.stopPropagation();
@@ -1096,49 +1065,6 @@ document.addEventListener('click', function(e) {
       const fn = mod.selectSession || (mod.default && mod.default.selectSession);
       if (fn) fn(id);
     });
-  } else if (kind === 'document') {
-    import('./document.js').then(mod => {
-      const open = mod.loadDocument
-        || mod.openDocument
-        || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'note') {
-    import('./notes.js').then(mod => {
-      const open = mod.openNote || (mod.default && mod.default.openNote);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'image') {
-    import('./gallery.js').then(mod => {
-      const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'email') {
-    import('./emailLibrary.js').then(mod => {
-      const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
-      if (open) open({ uid: id });
-    }).catch(() => {});
-  } else if (kind === 'event') {
-    import('./calendar.js').then(mod => {
-      const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'task') {
-    import('./tasks.js').then(mod => {
-      const open = mod.openTasks || (mod.default && mod.default.openTasks);
-      if (open) open(id);
-      else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
-    }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
-  } else if (kind === 'skill') {
-    import('./skills.js').then(mod => {
-      const open = mod.openSkill || (mod.default && mod.default.openSkill);
-      if (open) open(id);
-    }).catch(() => {});
-  } else if (kind === 'research') {
-    import('./research/panel.js').then(mod => {
-      const open = mod.openPanel || (mod.default && mod.default.openPanel);
-      if (open) open(id);
-    }).catch(() => {});
   }
 });
 
@@ -1224,39 +1150,9 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   });
   actions.appendChild(dlBtn);
 
-  const editBtn = document.createElement('button');
-  editBtn.className = 'footer-copy-btn';
-  editBtn.type = 'button';
-  editBtn.title = 'Edit in image editor';
-  editBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
-  editBtn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    try {
-      const [galleryMod, editorMod] = await Promise.all([
-        import('./gallery.js'),
-        import('./galleryEditor.js'),
-      ]);
-      // Ensure the Gallery modal is open so the editor has a container
-      // to render into; switch its tabs to the Edit tab.
-      galleryMod.default.openGallery();
-      const modal = document.getElementById('gallery-modal');
-      if (modal) {
-        modal.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
-        modal.querySelector('.gallery-tab[data-tab="editor"]')?.classList.add('active');
-      }
-      const imagesContainer = document.getElementById('gallery-images-container');
-      const albumsContainer = document.getElementById('gallery-albums-container');
-      if (imagesContainer) imagesContainer.style.display = 'none';
-      if (albumsContainer) albumsContainer.style.display = 'none';
-      const editorContainer = document.getElementById('gallery-editor-container');
-      if (editorContainer) editorContainer.style.display = 'flex';
-      const label = (prompt || '').trim().slice(0, 60) || 'Generated image';
-      editorMod.openEditor(imageUrl, null, null, label);
-    } catch (err) {
-      console.error('[chat] open in editor failed', err);
-    }
-  });
-  actions.appendChild(editBtn);
+  // Game build (feature 0032): the image editor (Gallery) vertical is removed,
+  // so no "edit in image editor" action — generated images remain copyable,
+  // downloadable, and removable inline.
 
   const delBtn = document.createElement('button');
   delBtn.className = 'footer-copy-btn footer-delete-btn';
@@ -1351,14 +1247,14 @@ export function showWelcomeScreen() {
   const ib = document.getElementById('incognito-btn');
   const _researchChk = document.getElementById('research-toggle');
   if (ib && !(_researchChk && _researchChk.checked)) ib.style.display = '';
-  if (window.innerWidth > 768) {
+  if (!isNarrow()) {
     const msg = document.getElementById('message');
     if (msg) msg.focus();
   }
 }
 
 // ── Dynamic action buttons (show 3 most recent, rest under ···) ──
-const _ACTION_RECENTS_KEY = 'odysseus-msg-actions-recent';
+const _ACTION_RECENTS_KEY = 'orwell-msg-actions-recent';
 const _MAX_VISIBLE = 2;
 
 function _getRecentActions() {
@@ -1386,7 +1282,7 @@ export function createMsgFooter(msgElement) {
     { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
-      uiModule.copyToClipboard(copyMessageText(msgElement));
+      uiModule.copyToClipboard(msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '');
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
@@ -1416,8 +1312,18 @@ export function createMsgFooter(msgElement) {
     }},
   ];
 
+  // E93: the chat transcript of a LIVE game is the played record of events the
+  // engine has already recorded and folded — editing, deleting, or re-rolling it
+  // desyncs the visible story from the EventStore (and edit-then-regenerate is an
+  // anti-sycophancy hole). Under the game build with a game active, only
+  // non-record-altering actions survive (copy, fork). Pre-game OOC is unaffected.
+  const _gameRecord = document.body.hasAttribute('data-game-build')
+    && document.body.dataset.gameActive === '1';
+  const _RECORD_SAFE = new Set(['copy', 'fork']);
+  const actionPool = _gameRecord ? allActions.filter(a => _RECORD_SAFE.has(a.id)) : allActions;
+
   // Filter out unavailable actions (e.g. TTS when not enabled)
-  const availableActions = allActions.filter(a => !a.available || a.available());
+  const availableActions = actionPool.filter(a => !a.available || a.available());
 
   // Determine which 3 to show: use recent order, fallback to defaults
   const recent = _getRecentActions();
@@ -1574,7 +1480,7 @@ export function createMsgFooter(msgElement) {
 /**
  * Create a footer row for a user message with action buttons (same system as AI footer).
  */
-const _USER_ACTION_RECENTS_KEY = 'odysseus-user-actions-recent';
+const _USER_ACTION_RECENTS_KEY = 'orwell-user-actions-recent';
 
 function _getUserRecentActions() {
   try { return JSON.parse(localStorage.getItem(_USER_ACTION_RECENTS_KEY) || '[]'); } catch { return []; }
@@ -1743,8 +1649,7 @@ export function displayMetrics(messageElement, metrics) {
     e.stopPropagation();
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
-    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
+    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1758,7 +1663,7 @@ export function displayMetrics(messageElement, metrics) {
     // Session total cost
     let sessionCostStr = '';
     const sc = getSessionCost();
-    if (costStr && sc > 0) {
+    if (sc > 0) {
       sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
@@ -1774,7 +1679,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      ${costRows}
+      <div><span class="ctx-label">Cost</span> ${costStr}</div>
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
@@ -1874,7 +1779,7 @@ export function displayMetrics(messageElement, metrics) {
           compactMsg.className = 'msg msg-ai';
           const compactRole = document.createElement('div');
           compactRole.className = 'role';
-          compactRole.textContent = 'Odysseus';
+          compactRole.textContent = 'Orwell';
           const compactBody = document.createElement('div');
           compactBody.className = 'body';
           compactBody.innerHTML = 'Compacting context <span class="compact-wave">▁▂▃▅▂▁</span>';
@@ -2132,28 +2037,6 @@ export function addMessage(role, content, modelName, metadata) {
       return lastWrap;
     }
 
-    // --- Wake-task / supervisor system check-in ---
-    // The self-wake mechanism injects "Did you finish?" as a user message
-    // (or persisted history shows a "[Task] Self-check: <id>" envelope)
-    // so the agent loop re-enters and re-checks status. Render as a
-    // normal user-style bubble — same chrome as a real user message,
-    // just with role "Supervisor" and a short summary body — instead of
-    // a slim system chip. Matches chat style and integrates cleanly
-    // into the conversation flow.
-    let _isWakeCheck = !!(metadata?.wake_check_in || metadata?.hidden_from_user_view);
-    if (!_isWakeCheck && typeof textRaw === 'string') {
-      // Also catch historical messages persisted as "[Task] Self-check: <sid>"
-      // (older wake tasks that didn't set wake_check_in metadata).
-      if (/^\s*\[Task\]\s+Self-check:/i.test(textRaw)) {
-        _isWakeCheck = true;
-      }
-    }
-    if (_isWakeCheck) {
-      // Supervisor self-check messages are an internal control signal —
-      // skip rendering entirely so they don't show up in the conversation.
-      return null;
-    }
-
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -2164,7 +2047,7 @@ export function addMessage(role, content, modelName, metadata) {
     const isCompacted = metadata?.compacted;
     const replyModels = replyModelPair(modelName, metadata);
     const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Orwell' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2450,15 +2333,12 @@ const chatRenderer = {
   modelColor,
   applyModelColor,
   getModelCost,
-  isCostTrackedEndpoint,
-  isSubscriptionEndpoint,
   getImageCost,
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
-  copyMessageText,
   safeToolScreenshotSrc,
   safeDisplayImageSrc,
   buildSourcesBox,

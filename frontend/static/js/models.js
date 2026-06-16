@@ -12,16 +12,17 @@ import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
+import { isNarrow } from './platform.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
 let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
-const COLLAPSE_KEY = 'odysseus-models-collapsed';
-const FAVORITES_KEY = 'odysseus-model-favorites';
-const USAGE_KEY = 'odysseus-model-usage';
-const SORT_KEY = 'odysseus-model-sort';
+const COLLAPSE_KEY = 'orwell-models-collapsed';
+const FAVORITES_KEY = 'orwell-model-favorites';
+const USAGE_KEY = 'orwell-model-usage';
+const SORT_KEY = 'orwell-model-sort';
 
 export function init(apiBase) {
   API_BASE = apiBase;
@@ -178,14 +179,7 @@ export async function refreshModels(force = false) {
     _loadingSpinner.start();
     try {
       if (!_fetchInflight) {
-        // Pass ?refresh=true on forced refreshes so the BACKEND's 30s
-        // per-user cache also gets bypassed. Without this, `force=true`
-        // only clears the frontend cache and the same stale list comes
-        // back — newly-served endpoints don't appear until the cache
-        // ages out. (Bug repro: serve a model, picker is empty for ~30s
-        // even though the endpoint is in the DB and online.)
-        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '');
-        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
+        _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
@@ -575,13 +569,29 @@ export async function refreshModels(force = false) {
     } else {
       // Configured installs should feel ready, not stuck in onboarding.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.textContent = 'Yours for the voyage.';
+      // Set the static line first (fail-open: the hero never blocks on the engine), then replace it
+      // with the engine's snarky, state-aware Big Brother tagline (0033) when it answers.
+      if (welcomeSub) {
+        welcomeSub.textContent = 'The house is waiting.';
+        fetch('/api/orwell/tagline')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => { if (d && typeof d.text === 'string' && d.text.trim()) welcomeSub.textContent = d.text.trim(); })
+          .catch(() => {});
+      }
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) {
-        const tips = window.innerWidth <= 768
+        const _gb = document.body && document.body.hasAttribute('data-game-build');
+        const tips = _gb
+          ? [
+              'Tip: Just talk — every conversation is in-character once your season starts.',
+              'Tip: The Status panel tracks the week, the HOH, and who is on the block.',
+              'Tip: The Diary Room is private — the house never hears it.',
+              'Tip: Deals are real. Break one and the jury will remember.',
+            ]
+          : isNarrow()
           ? [
               'Tip: Long-press a session for rename, delete, and memory options.',
-              'Tip: Tap the eye icon for Nobody mode - no history saved.',
+              'Tip: Swipe from the edge to open The House panel.',
               'Tip: Switch to Agent mode when you want tools.',
               'Tip: Attach images or files using the + button next to the input.',
             ]

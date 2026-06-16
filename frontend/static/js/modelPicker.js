@@ -5,6 +5,7 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
+import { isNarrow } from './platform.js';
 
 const API_BASE = window.location.origin;
 
@@ -12,8 +13,8 @@ const API_BASE = window.location.origin;
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
 // own key. Favorites is the SAME key the sidebar Models section uses, so a
 // favorite toggled here shows up there and vice-versa.
-const RECENT_KEY = 'odysseus-model-recent';
-const FAVORITES_KEY = 'odysseus-model-favorites';
+const RECENT_KEY = 'orwell-model-recent';
+const FAVORITES_KEY = 'orwell-model-favorites';
 const RECENT_MAX = 5;
 // Catalogs at or below this size are small enough that hiding everything
 // behind search would be a regression — keep listing them in browse mode.
@@ -34,6 +35,11 @@ function _pushRecent(mid) {
   const next = _loadRecent().filter(x => x !== mid);
   next.unshift(mid);
   _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
+}
+function _removeRecent(mid) {
+  if (!mid) return;
+  const next = _loadRecent().filter(x => x !== mid);
+  _saveList(RECENT_KEY, next);
 }
 function _loadFavorites() { return _loadList(FAVORITES_KEY); }
 function _toggleFavorite(mid) {
@@ -266,7 +272,7 @@ function _initModelPickerDropdown() {
     let slug = slash > 0 ? mid.substring(0, slash) : 'other';
     return _PROVIDER_ALIAS[slug] || slug;
   }
-  const _collapsedProviders = new Set(_loadList('odysseus-model-collapsed'));
+  const _collapsedProviders = new Set(_loadList('orwell-model-collapsed'));
   let _justExpandedProvider = null;
 
   function _populate(filter) {
@@ -304,7 +310,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m) {
+    function _addRow(m, onRemove) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -327,10 +333,13 @@ function _initModelPickerDropdown() {
       // hover so the suffix/variant tag is still discoverable (#1982).
       nameSpan.title = m.display;
       row.appendChild(nameSpan);
-      // Offline state is already conveyed by the row's reduced opacity —
-      // a redundant "offline" pill on top of that just added clutter.
-      // (Class kept on `row` so the opacity rule still applies; the text
-      // badge is gone.)
+      if (m.stale) {
+        const badge = document.createElement('span');
+        badge.className = 'model-switch-stale-badge';
+        badge.textContent = 'offline';
+        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
+        row.appendChild(badge);
+      }
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
@@ -373,6 +382,20 @@ function _initModelPickerDropdown() {
       });
       row.appendChild(favDot);
 
+      // Remove-from-recent button (shown only for Recent section items).
+      if (onRemove) {
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'mp-remove-dot';
+        rmBtn.textContent = '×';
+        rmBtn.title = 'Remove from recent';
+        rmBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onRemove();
+        });
+        row.appendChild(rmBtn);
+      }
+
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -389,8 +412,7 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
-    // Rules:
+    // ── Browse mode: sections in order: Favorites → Recent (big catalogs only) → All / Providers ──
     //   1. Never list the same model twice in the dropdown. Favorites
     //      win over Recent (if you favorited it, that's where it
     //      belongs — Recent shouldn't show it again as duplicate).
@@ -415,7 +437,13 @@ function _initModelPickerDropdown() {
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');
-        recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+        recentModels.forEach(m => {
+          shown.add(m.mid);
+          _addRow(m, () => {
+            _removeRecent(m.mid);
+            _populate('');
+          });
+        });
       }
     }
 
@@ -456,7 +484,7 @@ function _initModelPickerDropdown() {
             _collapsedProviders.add(provider);
             _justExpandedProvider = null;
           }
-          _saveList('odysseus-model-collapsed', [..._collapsedProviders]);
+          _saveList('orwell-model-collapsed', [..._collapsedProviders]);
           const st = listEl.scrollTop;
           _populate('');
           listEl.scrollTop = st;
@@ -487,13 +515,13 @@ function _initModelPickerDropdown() {
 
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
-    try { document.dispatchEvent(new CustomEvent('odysseus:model-picked', { detail: m })); } catch {}
+    try { document.dispatchEvent(new CustomEvent('orwell:model-picked', { detail: m })); } catch {}
 
     // Blur search input before closing to dismiss keyboard on mobile
     if (document.activeElement) document.activeElement.blur();
     _close();
     // Refocus main textarea — skip on mobile to avoid keyboard bounce
-    if (window.innerWidth >= 768) {
+    if (!isNarrow()) {
       const _ta = document.getElementById('message');
       if (_ta) setTimeout(() => _ta.focus(), 50);
     }
@@ -533,7 +561,7 @@ function _initModelPickerDropdown() {
     uiModule.showToast(`Using ${m.display}`);
   }
 
-  document.addEventListener('odysseus:auto-select-model', async (e) => {
+  document.addEventListener('orwell:auto-select-model', async (e) => {
     const detail = (e && e.detail) || {};
     const currentSessionId = _deps.getCurrentSessionId();
     const sessions = _deps.getSessions();
@@ -597,7 +625,7 @@ function _initModelPickerDropdown() {
       _refreshLocalProbe().then(() => {
         if (!menu.classList.contains('hidden')) _populate(search.value || '');
       });
-      if (window.innerWidth >= 768) search.focus();
+      if (!isNarrow()) search.focus();
       // Hide scroll button so it doesn't overlap
       const _scrollBtn = document.getElementById('scroll-bottom-btn');
       if (_scrollBtn) _scrollBtn.style.display = 'none';
@@ -663,7 +691,7 @@ export function updateModelPicker() {
       modelId = null;
     }
   }
-  // SECURITY: deliberately NOT auto-injecting `odysseus-model-favorites[0]`
+  // SECURITY: deliberately NOT auto-injecting `orwell-model-favorites[0]`
   // here. localStorage favorites are per-browser, not per-user, so on a
   // shared browser the previous account's first favorited model would
   // silently pre-populate the chatbox of the next user that signed in. If

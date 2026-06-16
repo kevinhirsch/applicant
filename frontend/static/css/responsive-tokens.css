@@ -1,0 +1,109 @@
+/* ============================================================================
+   responsive-tokens.css — the ONE responsive mechanism (Stream S, ruling #16).
+   Loaded BEFORE style.css. This file is the contract; the FE pytest lint gate
+   (tests/test_s_responsive_mechanism.py) enforces it:
+
+   · Breakpoint tokens — every @media width threshold in the app MUST be one of
+     480 / 768 / 1024 / 1440 px (complements 481/769/1025/1441 allowed for
+     min-width pairing). Container-query tiers: 360 / 620 px.
+     (CSS custom properties cannot parameterize @media — the tokens below are
+     the canonical record + the JS bridge; the gate enforces the raw values.)
+   · Viewport queries are for PAGE CHROME only; anything draggable or dockable
+     responds to @container (S4).
+   · JS never compares window.innerWidth to a literal — use isNarrow()/
+     isBelowMedium()/onNarrowChange() from platform.js (S5).
+   · All UI text sits on the rem type scale below; the floor is --fs-2xs (S10).
+   · One coarse-pointer tap floor (S9) and one standalone tier (S8) live here.
+   ========================================================================== */
+
+:root {
+  /* --- Breakpoint tokens (documentation + JS bridge; see gate) ------------ */
+  --bp-compact: 480px;   /* small phones                                      */
+  --bp-narrow: 768px;    /* the narrow/sheet boundary (phones, small tablets) */
+  --bp-medium: 1024px;   /* tablets landscape / small laptops                 */
+  --bp-wide: 1440px;     /* full desktop                                      */
+  /* Container tiers (for @container rules): 360px, 620px.                    */
+
+  /* --- Type scale (rem — scales with the fluid root and density) ---------- */
+  --fs-2xs: 0.6875rem;   /* ~11px at 16px root — the FLOOR for any UI text    */
+  --fs-xs: 0.75rem;      /* ~12px — hints, captions                           */
+  --fs-sm: 0.8125rem;    /* ~13px — secondary UI                              */
+  --fs-md: 0.875rem;     /* ~14px — body UI                                   */
+  --fs-base: 1rem;       /* 16px — chat/body text                             */
+  --fs-lg: 1.125rem;     /* ~18px — section titles                            */
+  --fs-xl: 1.25rem;      /* ~20px — headings                                  */
+
+  /* --- Spacing scale ------------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* --- Touch + safe areas ------------------------------------------------- */
+  --tap-min: 44px;       /* the coarse-pointer floor (S9)                     */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* --- Fluid root type (S10): rem surfaces breathe with the viewport; the
+       density classes (style.css :root.density-*) still override by design. -- */
+html {
+  font-size: clamp(15px, 14.2px + 0.3vw, 17.5px);
+  /* iOS landscape auto-inflation of fixed-px panels (S8). */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* --- The one coarse-pointer tap floor (S9). Interactive controls get a
+       minimum hit box on touch devices; dense desktop layouts are untouched.
+       Height floors at the full --tap-min; width floors at 36px so text-flow
+       buttons aren't blown wide (the matrix gate asserts ≥36px boxes).
+       `.tap-exempt` opts out a control whose hit area is provided by a parent. */
+@media (pointer: coarse) {
+  button:not(.tap-exempt),
+  [role="button"]:not(.tap-exempt),
+  select:not(.tap-exempt),
+  .settings-nav-item:not(.tap-exempt) {
+    min-height: var(--tap-min);
+    min-width: max(36px, 2.25rem);
+  }
+  input[type="checkbox"]:not(.tap-exempt),
+  input[type="radio"]:not(.tap-exempt) {
+    min-height: 1.5rem;
+    min-width: 1.5rem;
+  }
+}
+
+/* --- Installed-app tier (S8): when running standalone, fixed top chrome must
+       clear the status bar / notch, and bottom chrome the home indicator. ---- */
+@media (display-mode: standalone) {
+  body {
+    padding-top: var(--safe-top);
+  }
+  /* Any fixed top banner (engine status) sits below the status bar. */
+  .orwell-banner,
+  #orwell-engine-banner {
+    top: var(--safe-top) !important;
+  }
+}
+
+/* --- E92: the composer never touches the viewport bottom edge — a small
+       constant inset on every viewport, breathing with the home indicator. */
+.chat-input-bar {
+  margin-bottom: max(10px, var(--safe-bottom));
+}
+
+/* --- E97: ONE animation contract for every slotted game panel — open is a
+       fade+scale-in; reduced motion disables it entirely. */
+@keyframes orwell-pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.orwell-anim-in { animation: orwell-pop 0.18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .orwell-anim-in { animation: none; }
+}

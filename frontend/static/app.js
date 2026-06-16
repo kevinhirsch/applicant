@@ -1,5 +1,5 @@
 // ============================================
-// Odysseus UI — Main Application Orchestrator
+// Orwell UI — Main Application Orchestrator
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
@@ -7,24 +7,15 @@ import uiModule from './js/ui.js';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
-import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
-import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
-import compareModule from './js/compare/index.js';
-import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
-import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
-import galleryModule from './js/gallery.js';
-import tasksModule from './js/tasks.js';
-import calendarModule from './js/calendar.js';
-import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -32,19 +23,16 @@ import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
 import './js/tileManager.js';
 import themeModule from './js/theme.js';
-// IMPORTANT: import cookbook.js with NO ?v= query — the same plain specifier
-// every other importer (cookbook-hwfit.js / cookbook-diagnosis.js) uses. A query
-// mismatch makes the browser load cookbook.js twice as separate modules (two
-// _envState objects), which broke server selection. Keep all cookbook imports
-// unversioned so this can't recur.
-import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
-import * as researchPanelModule from './js/research/panel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+// Game build (feature 0032): workspace verticals removed — null stubs for guarded usage sites.
+const ragModule = null, searchModule = null, compareModule = null, documentModule = null;
+const memoryModule = null, galleryModule = null, tasksModule = null, calendarModule = null;
+const notesModule = null, cookbookModule = null, researchPanelModule = null;
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -77,7 +65,7 @@ async function _refreshDefaultChat() {
     const d = await (await fetch('/api/default-chat')).json();
     if (d && d.endpoint_url && d.model) {
       _defaultChat = d;
-      try { window.__odysseusDefaultChat = d; } catch (_) {}
+      try { window.__orwellDefaultChat = d; } catch (_) {}
       return d;
     }
   } catch (_) {}
@@ -123,12 +111,67 @@ async function _createDirectChatFromPreferredModel() {
 // ============================================
 // EVENT LISTENERS INITIALIZATION
 // ============================================
+
+// ── G13: build gating cascades into the chrome menus ──
+// An entry whose action the game build refuses is HIDDEN, not click-refused —
+// the W1/W4 principle (the surface never advertises a dead lever) applied to
+// the export/overflow menus. E96 hid "Save to Documents" in CSS and chat.js
+// removed it lazily mid-render; the menu itself must never hold an entry
+// whose handler lands on a dropped vertical (POST /api/document is 404 by
+// design under the build). Runs before the menu wiring, so handlers never
+// attach to removed nodes.
+function _g13CascadeMenuTriggers() {
+  // The cascade rule: a launcher whose whole menu has zero visible items is
+  // a zombie parent (the Tools-chevron instance, G3, generalized) — it hides
+  // with its children. Re-run after any async pass that hides entries.
+  [
+    ['export-dl-btn', 'export-dropdown-menu', '.export-dropdown-item'],
+    ['overflow-plus-btn', 'overflow-menu', '.overflow-menu-item'],
+  ].forEach(([btnId, menuId, itemSel]) => {
+    const btn = el(btnId), menu = el(menuId);
+    if (!btn || !menu) return;
+    const anyVisible = Array.from(menu.querySelectorAll(itemSel)).some(it =>
+      !it.hidden && it.style.display !== 'none' && getComputedStyle(it).display !== 'none');
+    // Hide-only: never un-hide (the user's Appearance UI-vis toggles own that).
+    if (!anyVisible) btn.style.display = 'none';
+  });
+}
+
+function applyGameBuildMenuGating() {
+  if (!document.body.hasAttribute('data-game-build')) return;
+  // Menu entries acting on game-build-dropped verticals are removed outright.
+  ['export-doc-btn'].forEach(id => { const n = el(id); if (n) n.remove(); });
+  // Voice is the build's one opt-in vertical: its JS ships only when the
+  // voice flag is on (src/settings.py strips the tts-ai.js <script> tag
+  // otherwise). With the module unshipped the "TTS Mode" entry is a dead
+  // toggle — and .overflow-menu-item's display:flex would defeat its
+  // [hidden] attribute if the TTS-settings pass ever cleared the inline
+  // style — so the entry goes with its vertical.
+  if (!document.querySelector('script[src*="tts-ai.js"]')) {
+    const tts = el('overflow-tts-btn');
+    if (tts) tts.remove();
+  }
+  _g13CascadeMenuTriggers();
+}
+
 function initializeEventListeners() {
   // Chat form submission
 //  document.getElementById('chat-form').addEventListener('submit', chatModule.handleChatSubmit);
 
+  // G13: trim refused menu entries before any wiring below looks them up.
+  applyGameBuildMenuGating();
+
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');
+  // E94: the first-class composer paperclip (game build) drives the same file-input flow.
+  const _composerAttach = el('composer-attach-btn');
+  if (_composerAttach) {
+    if (document.body.hasAttribute('data-game-build')) _composerAttach.style.display = '';
+    _composerAttach.addEventListener('click', () => {
+      const fi = el('file-input');
+      if (fi) fi.click();
+    });
+  }
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
   el('file-input').addEventListener('change', (e)=>{
     for (const f of e.target.files) fileHandlerModule.addFiles([f]);
@@ -351,7 +394,7 @@ function initializeEventListeners() {
       e.stopPropagation();
       exportMenu.classList.remove('open');
       const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const sessionName = meta ? meta.name : 'Odysseus Chat';
+      const sessionName = meta ? meta.name : 'Orwell Chat';
       const originalTitle = document.title;
       document.title = sessionName;
       const chatHistory = document.getElementById('chat-history');
@@ -749,7 +792,7 @@ function initializeEventListeners() {
     const welcomeName = document.querySelector('.welcome-name');
     const welcomeSub = el('welcome-sub');
     const tipEl = el('welcome-tip');
-    const _resIco = '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+    const _resIco = '<svg class="welcome-eye" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
     if (active) {
       if (welcomeName) {
         if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
@@ -830,7 +873,7 @@ function initializeEventListeners() {
   const toolResearchBtn = el('tool-research-btn');
   if (toolResearchBtn) {
     toolResearchBtn.addEventListener('click', () => {
-      researchPanelModule.toggle();
+      if (researchPanelModule) researchPanelModule.toggle();
     });
   }
 
@@ -1052,7 +1095,7 @@ function initializeEventListeners() {
   // click handler in emailInbox, sessionModule's loaded session list) are
   // still being wired up further down in this same function. Stash the
   // opener so it runs from sessionModule.loadSessions().finally() below.
-  if (_opener) window._odysseusRouteOpener = _opener;
+  if (_opener) window._orwellRouteOpener = _opener;
 
   // Archive browser tool button
   const toolLibraryBtn = el('tool-library-btn');
@@ -1102,6 +1145,9 @@ function initializeEventListeners() {
     });
   }
 
+  // H3: the Settings → Appearance theme launcher is gone — the theme picker's
+  // one home is the standing sidebar entry (#tool-theme-btn, wired above).
+
   // Sidebar toggle
   const toggleSidebarOption = el('toggle-sidebar-option');
   if (toggleSidebarOption) {
@@ -1133,6 +1179,7 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
+      document.body.classList.toggle('is-admin', !!d.is_admin); // E72: CSS gates on it
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
@@ -1160,7 +1207,7 @@ function initializeEventListeners() {
         if (!p.can_use_bash) {
           const bashToggle = document.getElementById('bash-toggle');
           if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
-          const bashBtn = document.getElementById('bash-toggle-btn');
+          const bashBtn = document.getElementById('tool-bash-btn');
           if (bashBtn) bashBtn.style.display = 'none';
         }
         // Hide document button
@@ -1177,7 +1224,11 @@ function initializeEventListeners() {
           const resOverflow = document.getElementById('overflow-research-btn');
           if (resOverflow) resOverflow.style.display = 'none';
         }
-
+        // Hide image generation options
+        if (!p.can_generate_images) {
+          const imgBtn = document.getElementById('tool-image-btn');
+          if (imgBtn) imgBtn.style.display = 'none';
+        }
       }
     })
     .catch(() => {});
@@ -1218,7 +1269,7 @@ function initializeEventListeners() {
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
+        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:3px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
         check.textContent = '\u2022';
         if (!o.querySelector('.sort-check')) o.appendChild(check);
       });
@@ -1230,8 +1281,9 @@ function initializeEventListeners() {
     _syncSortChecks();
 
     // AI auto-sort — spinner on the sort button itself. Used by both
-    // the main "★ Tidy" button (AI) and the sub-row "Tidy" button
-    // (no AI, Phase 1 cleanup only) via the skipLlm flag.
+    // the main "★ Tidy" button (AI) and the sub-row "Clean up (no AI)"
+    // button (H6: Phase 1 cleanup only — never a second bare "Tidy"
+    // label) via the skipLlm flag.
     async function _runTidy(skipLlm) {
       const btnIcon = sortBtn.querySelector('.sort-icon');
       if (btnIcon) btnIcon.style.display = 'none';
@@ -1262,9 +1314,9 @@ function initializeEventListeners() {
             let msg;
             if (data.updated > 0) {
               msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
+              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Tidy again`;
             } else if (remaining > 0) {
-              msg = `${remaining} unfiled chats — hit Group again`;
+              msg = `${remaining} unfiled chats — hit Tidy again`;
             } else {
               msg = 'All sorted';
             }
@@ -1285,6 +1337,17 @@ function initializeEventListeners() {
 
     const autoSortBtn = el('auto-sort-sessions-btn');
     if (autoSortBtn) autoSortBtn.addEventListener('click', () => _runTidy(false));
+
+    // Chevron next to the Tidy row toggles the no-AI sub-item.
+    const autoSortMoreBtn = el('auto-sort-sessions-more');
+    const autoSortNoaiBtn = el('auto-sort-sessions-noai-btn');
+    if (autoSortMoreBtn && autoSortNoaiBtn) {
+      autoSortMoreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        autoSortNoaiBtn.style.display = autoSortNoaiBtn.style.display === 'none' ? 'block' : 'none';
+      });
+      autoSortNoaiBtn.addEventListener('click', () => _runTidy(true));
+    }
   }
 
   // Model sort dropdown
@@ -1300,7 +1363,7 @@ function initializeEventListeners() {
     modelSortDropdown.querySelectorAll('.sort-option').forEach(opt => {
       opt.addEventListener('click', () => {
         const mode = opt.dataset.sort;
-        Storage.set('odysseus-model-sort', mode);
+        Storage.set('orwell-model-sort', mode);
         if (modelsModule) modelsModule.refreshModels();
         modelSortDropdown.style.display = 'none';
         uiModule.showToast('Models sorted: ' + opt.textContent.trim().toLowerCase());
@@ -1336,6 +1399,9 @@ function initializeEventListeners() {
       // off then on to trigger applyUIVis a second time, which is the
       // bug they report as "deep research only shows after I toggle".
       try { if (window.applyUIVis && window.loadUIVis) window.applyUIVis(window.loadUIVis()); } catch (_) {}
+      // G13: this pass may have hidden menu entries — a menu left with zero
+      // visible items must take its trigger down with it (gating cascades).
+      try { _g13CascadeMenuTriggers(); } catch (_) {}
     })
     .catch(() => {});
 
@@ -1356,6 +1422,9 @@ function initializeEventListeners() {
       if (overflowTts) {
         overflowTts.style.display = ttsOff ? 'none' : '';
       }
+      // G13: same cascade rule after the TTS-settings pass (it can hide the
+      // overflow entry too) — zero visible items hides the trigger.
+      try { _g13CascadeMenuTriggers(); } catch (_) {}
     })
     .catch(() => {});
 
@@ -1504,23 +1573,24 @@ function initializeEventListeners() {
   }
 
   const addMemBtn = el('add-memory-btn');
-  if (addMemBtn) {
+  if (addMemBtn && memoryModule) {
     addMemBtn.addEventListener('click', memoryModule.addNewMemory);
   }
-  
+
   const memorySearchInput = el('memory-search');
   if (memorySearchInput) {
     memorySearchInput.addEventListener('input', () => {
+      if (!memoryModule) return;
       memoryModule.renderMemoryList();
       memoryModule.updateMemoryCount();
     });
   }
-  
+
   const newMemoryInput = el('new-memory-input');
   if (newMemoryInput) {
     newMemoryInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
-        memoryModule.addNewMemory();
+        if (memoryModule) memoryModule.addNewMemory();
       }
     });
   }
@@ -1540,6 +1610,7 @@ function initializeEventListeners() {
   const MODE_TOOLS = [
     { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
+    { btnId: 'plan-toggle-btn', checkboxId: 'plan-toggle', stateKey: 'plan' },
   ];
 
   function _modeKey(stateKey, mode) { return `${stateKey}_${mode}`; }
@@ -1548,6 +1619,9 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
+    // Plan mode is opt-in: never default it on, otherwise every agent turn
+    // would be forced into planning.
+    if (stateKey === 'plan') return false;
     return mode === 'agent'; // default: ON in agent, OFF in chat
   }
 
@@ -1560,6 +1634,7 @@ function initializeEventListeners() {
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
     bash: 'Shell',
+    plan: 'Plan mode',
   };
 
   function showToolToggleToast(stateKey, active) {
@@ -1571,15 +1646,7 @@ function initializeEventListeners() {
   function applyModeToToggles(mode) {
     MODE_TOOLS.forEach(({ btnId, checkboxId, stateKey }) => {
       const btn = el(btnId);
-      if (!btn) return;
-      // Hide bash button in chat mode
-      if (mode === 'chat' && stateKey === 'bash') {
-        btn.style.display = 'none';
-        return;
-      }
-      // Show buttons in agent mode (or for web toggle in any mode)
-      btn.style.display = '';
-      if (btn.style.display === 'none') return;
+      if (!btn || btn.style.display === 'none') return;
       const on = loadToolPref(stateKey, mode);
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
@@ -1594,12 +1661,6 @@ function initializeEventListeners() {
     const state = loadToggleState();
     let currentMode = state.mode || 'chat';
 
-    // Immediately hide bash button in chat mode on page load
-    if (currentMode === 'chat') {
-      const bashBtn = el('bash-toggle-btn');
-      if (bashBtn) bashBtn.style.display = 'none';
-    }
-
     function setMode(mode) {
       currentMode = mode;
       const st = loadToggleState();
@@ -1612,8 +1673,6 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
-      // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
-      try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
@@ -1628,7 +1687,7 @@ function initializeEventListeners() {
   })();
 
   // ── Tool splash explainer messages (shown first 2 times per tool) ──
-  const SPLASH_COUNT_KEY = 'odysseus-tool-splash-counts';
+  const SPLASH_COUNT_KEY = 'orwell-tool-splash-counts';
   const SPLASH_MAX = 2;
   const _toolSplashes = {
     web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
@@ -1689,6 +1748,81 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
+  setupToggle('plan-toggle-btn', 'plan-toggle', 'plan');
+
+  // Set plan mode on/off directly (checkbox + button state + saved pref) WITHOUT
+  // going through the button's click handler — used by the plan menu and by the
+  // "Approve & Run" flow. Going through .click() would hit the plan-menu
+  // intercept below (a stored plan re-opens the menu instead of toggling), which
+  // is exactly the bug that left approved plans stuck in plan mode.
+  function _setPlanMode(on) {
+    const btn = el('plan-toggle-btn');
+    const chk = el('plan-toggle');
+    const mode = (loadToggleState().mode) || 'chat';
+    if (chk) chk.checked = !!on;
+    if (btn) { btn.classList.toggle('active', !!on); btn.setAttribute('aria-pressed', String(!!on)); }
+    saveToolPref('plan', mode, !!on);
+  }
+  window._setPlanMode = _setPlanMode;
+
+  // ── Plan-button menu ──
+  // When a plan exists for this chat, clicking the plan button opens a small
+  // menu (Show plan / Plan mode on-off) instead of plain-toggling — so the plan
+  // window can be re-opened and docked at any time while the agent works. With
+  // no plan, the button behaves as before (one-click toggle).
+  (function initPlanMenu() {
+    const planBtn = el('plan-toggle-btn');
+    if (!planBtn) return;
+    const _hasPlan = () => { try { return !!(window._getStoredPlan && window._getStoredPlan()); } catch (_) { return false; } };
+    const _close = () => { const m = document.getElementById('plan-menu'); if (m) m.remove(); };
+    function _open() {
+      _close();
+      const planChk = el('plan-toggle');
+      const on = !!(planChk && planChk.checked);
+      const menu = document.createElement('div');
+      menu.id = 'plan-menu';
+      menu.className = 'overflow-menu plan-menu';
+      menu.innerHTML =
+        '<button type="button" class="overflow-menu-item" data-act="show">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'
+        + '<span>Show plan</span></button>'
+        + '<button type="button" class="overflow-menu-item" data-act="toggle">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
+        + '<span>Plan mode: ' + (on ? 'On' : 'Off') + '</span></button>';
+      document.body.appendChild(menu);
+      const r = planBtn.getBoundingClientRect();
+      menu.style.position = 'fixed';
+      menu.style.left = Math.round(r.left) + 'px';
+      menu.style.top = Math.round(r.top - menu.offsetHeight - 6) + 'px';
+      menu.querySelector('[data-act="show"]').addEventListener('click', () => {
+        _close();
+        const txt = window._getStoredPlan ? window._getStoredPlan() : '';
+        if (txt && window.planWindowModule) window.planWindowModule.openPlanWindow(txt, null);
+      });
+      menu.querySelector('[data-act="toggle"]').addEventListener('click', () => {
+        _close();
+        _setPlanMode(!on);   // flip state directly (no click → no menu re-open)
+      });
+      // Dismiss on any outside click (capture so it beats other handlers) / Escape.
+      setTimeout(() => {
+        const off = (e) => {
+          if (!menu.contains(e.target) && e.target !== planBtn) {
+            _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true);
+          }
+        };
+        const esc = (e) => { if (e.key === 'Escape') { _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true); } };
+        document.addEventListener('click', off, true);
+        document.addEventListener('keydown', esc, true);
+      }, 0);
+    }
+    planBtn.addEventListener('click', (e) => {
+      // With a stored plan, the button opens the menu (Show plan / toggle).
+      // Without one, it falls through to the normal one-click toggle.
+      if (_hasPlan()) { e.preventDefault(); e.stopImmediatePropagation(); _open(); }
+    }, true);  // capture phase: intercept before setupToggle's bubble handler
+  })();
+
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
@@ -2116,7 +2250,7 @@ function initializeEventListeners() {
       pickerWrap.classList.toggle('picker-auto-hidden', w < PICKER_HIDE_WIDTH);
       // Hide placeholder text
       if (textarea) {
-        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Odysseus...');
+        textarea.setAttribute('placeholder', w < PLACEHOLDER_HIDE_WIDTH ? '' : 'Message Orwell...');
       }
       // Hide entire bottom toolbar (tools, mode toggle) — only send button remains
       if (inputBottom) {
@@ -2286,7 +2420,7 @@ function initializeEventListeners() {
         incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
         if (welcomeName) {
           welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          welcomeName.innerHTML = '<svg class="welcome-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
           // Restart the L→R clip-wipe reveal on the new label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -2377,7 +2511,7 @@ function initializeEventListeners() {
   }
 
   // ── UI Visibility (Customize UI modal) ──
-  const UI_VIS_KEY = 'odysseus-ui-visibility';
+  const UI_VIS_KEY = 'orwell-ui-visibility';
 
   // Selector map: key → CSS selector(s) for targets
   const UI_VIS_MAP = {
@@ -2656,7 +2790,7 @@ function initializeEventListeners() {
 
   // Migrate old toolbar visibility key if present
   (function migrateOldToolbarVis() {
-    const OLD_KEY = 'odysseus-toolbar-visibility';
+    const OLD_KEY = 'orwell-toolbar-visibility';
     try {
       const old = Storage.getJSON(OLD_KEY, null);
       if (old && typeof old === 'object') {
@@ -2903,15 +3037,15 @@ function initializeEventListeners() {
   const addDirBtn = el('add-directory-btn');
   if (addDirBtn) {
     addDirBtn.addEventListener('click', () => {
-      ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
+      if (ragModule) ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
     });
   }
-  
+
   const directoryInput = el('rag-directory');
   if (directoryInput) {
     directoryInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
-        ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
+        if (ragModule) ragModule.addRagDirectory(uiModule.showToast, uiModule.showError);
       }
     });
 
@@ -3124,9 +3258,7 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      const isMobile = window.innerWidth <= 768
-
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3337,9 +3469,9 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
-function startOdysseusApp() {
-  if (window.__odysseusAppStarted) return;
-  window.__odysseusAppStarted = true;
+function startOrwellApp() {
+  if (window.__orwellAppStarted) return;
+  window.__orwellAppStarted = true;
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
 
@@ -3372,23 +3504,22 @@ function startOdysseusApp() {
 
   fileHandlerModule.init(API_BASE);
   modelsModule.init(API_BASE);
-  ragModule.init(API_BASE);
   presetsModule.init(API_BASE);
-  searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
   groupModule.init(API_BASE);
-  // Initialize compare module
   if (compareModule) {
     compareModule.init(API_BASE);
   }
-  researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  if (researchPanelModule) {
+    researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  }
   // Initialize document editor module
   if (documentModule) {
     documentModule.init(API_BASE);
     // Restore document panel if it was open before refresh
     const _curSession = sessionModule && sessionModule.getCurrentSessionId();
-    if (_curSession && localStorage.getItem('odysseus-doc-open-' + _curSession) === '1') {
+    if (_curSession && localStorage.getItem('orwell-doc-open-' + _curSession) === '1') {
       documentModule.loadSessionDocs(_curSession);
     }
   }  
@@ -3551,7 +3682,7 @@ function startOdysseusApp() {
   const _newChatIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
 
   // Expose icons globally so chat.js updateSubmitButton can use them
-  window._odysseusBtnIcons = { send: _sendIcon, mic: _micIcon, stop: _stopIcon, newChat: _newChatIcon };
+  window._orwellBtnIcons = { send: _sendIcon, mic: _micIcon, stop: _stopIcon, newChat: _newChatIcon };
 
   function _isSttEnabled() {
     return voiceRecorderModule._sttProvider && voiceRecorderModule._sttProvider !== 'disabled';
@@ -3699,9 +3830,7 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      const isMobile = window.innerWidth <= 768
-
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the
@@ -3916,9 +4045,9 @@ function startOdysseusApp() {
         if (loader) { loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
         // Fire any URL route opener now that sessions + module wiring are
         // ready. Deferred from up top of init for exactly this reason.
-        if (window._odysseusRouteOpener) {
-          try { window._odysseusRouteOpener(); } catch (_) {}
-          window._odysseusRouteOpener = null;
+        if (window._orwellRouteOpener) {
+          try { window._orwellRouteOpener(); } catch (_) {}
+          window._orwellRouteOpener = null;
         }
       });
   } else {
@@ -3931,18 +4060,16 @@ function startOdysseusApp() {
     const hasModels = modelsBox && modelsBox.querySelector('.models-row');
     if (!hasModels) {
       const tip = document.getElementById('welcome-tip');
-      if (tip) tip.textContent = 'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.';
+      // D7: under the game build the empty state stays in the fiction.
+      if (tip) tip.textContent = document.body.hasAttribute('data-game-build')
+        ? 'Production needs a feed source — connect a model in Settings and the house comes alive.'
+        : 'Add an AI endpoint from Settings in the sidebar, or paste an endpoint/API key into the chat.';
     }
   }).catch(() => {});
   modelsModule.refreshProviders();
-  ragModule.loadPersonalDocs();
-  memoryModule.loadMemories(); // Ensure memories are loaded on page load
-  
-  // Ensure the memory list is rendered after loading
-  setTimeout(async () => {
-    await memoryModule.loadMemories();
-  }, 1000);
-  
+  if (ragModule) ragModule.loadPersonalDocs();
+  if (memoryModule) memoryModule.loadMemories();
+
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
@@ -4077,7 +4204,7 @@ function startOdysseusApp() {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', startOdysseusApp, { once: true });
+  document.addEventListener('DOMContentLoaded', startOrwellApp, { once: true });
 } else {
-  startOdysseusApp();
+  startOrwellApp();
 }

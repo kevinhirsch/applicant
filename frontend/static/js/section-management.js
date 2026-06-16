@@ -10,6 +10,40 @@ export function initSectionCollapse(Storage) {
   const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
   const savedState = Storage.getJSON('section-collapsed') || {};
 
+  // ── G3 (ruling 2026-06-11): no dead affordances. A chevron on a section
+  // with ≤1 visible row is a button that visibly does nothing — under the
+  // game build (game-trim.css) every Tools child is hidden, so its chevron
+  // collapsed nothing. Sections with ≤1 visible row become plain rows
+  // (.section-no-collapse: chevron hidden, toggle a no-op) and a section
+  // with NO visible content at all hides outright (.section-empty).
+  // Visibility shifts after init (UI-vis inline styles, async session
+  // rows), so each section re-evaluates via its own MutationObserver.
+  const ROW_SELECTOR = '.list-item, .models-row';
+  const _isShown = el => getComputedStyle(el).display !== 'none';
+
+  function updateSectionAffordance(section) {
+    // Measure with .collapsed lifted: the collapsed rule display:none's the
+    // direct children, which would misread every collapsed section as empty.
+    const wasCollapsed = section.classList.contains('collapsed');
+    if (wasCollapsed) section.classList.remove('collapsed');
+    const children = Array.from(section.children)
+      .filter(c => !c.classList.contains('section-header-flex'));
+    const empty = !children.some(_isShown);
+    const visibleRows = section.querySelectorAll(ROW_SELECTOR);
+    const collapsible = !empty
+      && Array.from(visibleRows).filter(_isShown).length > 1;
+    if (collapsible) {
+      // Restore the lifted state (or the saved pref lifted on an earlier,
+      // not-yet-collapsible pass — e.g. chats collapsed + rows still loading).
+      if (wasCollapsed || section._g3LiftedCollapse) section.classList.add('collapsed');
+      section._g3LiftedCollapse = false;
+    } else if (wasCollapsed) {
+      section._g3LiftedCollapse = true; // nothing to collapse — show the lone row
+    }
+    section.classList.toggle('section-empty', empty);
+    section.classList.toggle('section-no-collapse', !collapsible);
+  }
+
   document.querySelectorAll('.section .section-header-flex').forEach(header => {
     const section = header.closest('.section');
     if (!section || !section.id) return;
@@ -26,6 +60,9 @@ export function initSectionCollapse(Storage) {
     }
 
     function toggleCollapse() {
+      // G3: a plain row has nothing to collapse — the affordance is gone,
+      // so the action is too (a button must visibly do something).
+      if (section.classList.contains('section-no-collapse')) return;
       const wasCollapsed = section.classList.contains('collapsed');
       const willCollapse = !wasCollapsed;
       const state = Storage.getJSON('section-collapsed') || {};
@@ -108,6 +145,23 @@ export function initSectionCollapse(Storage) {
       if (e.target.closest('button, select, .dropdown')) return;
       e.stopPropagation();
       toggleCollapse();
+    });
+
+    // G3: compute the affordance now (game-trim CSS is already applied) and
+    // keep it live. Our own class writes — and the measurement's collapsed
+    // lift/re-add — land on the section element itself; recomputing on those
+    // would loop, and they never change what children are visible. Child
+    // style/class churn and row insertion/removal are what matter.
+    updateSectionAffordance(section);
+    const affordanceObserver = new MutationObserver((records) => {
+      if (records.every(r => r.target === section && r.attributeName === 'class')) return;
+      updateSectionAffordance(section);
+    });
+    affordanceObserver.observe(section, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden'],
     });
   });
 }
