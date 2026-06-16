@@ -1,27 +1,53 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Digest surface (DORMANT placeholder, FR-DIG / FR-UI-2).
-  Grayed out and present until the Phase 1 DigestReview backend lands. Reuses the
-  vendored Odysseus style (../style.css). No dead UI ships as if live.
+  Applicant — Digest + Pending-actions surface (FR-DIG-3, FR-UI-3).
+  Phase 1: the digest table and pending-actions portal are LIVE (wired to
+  /api/digest and /api/pending-actions). Surfaces whose backend is not yet built
+  (Phase 2/3) are grayed via .applicant-dormant, never shown as if live
+  (FR-UI-2 scaffold-and-gray). Reuses the vendored Odysseus style (../style.css).
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Applicant — Digest (dormant)</title>
+  <title>Applicant — Daily digest</title>
   <link rel="stylesheet" href="../style.css" />
+  <style>
+    .applicant-dormant { opacity: .5; pointer-events: none; }
+    .applicant-section { max-width: 960px; margin: 32px auto; padding: 20px; }
+    .applicant-feedback { width: 100%; margin-top: 6px; }
+    .applicant-note { font-style: italic; }
+  </style>
 </head>
-<body>
-  <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;opacity:.5;" aria-disabled="true">
-    <h1>Daily digest <span class="admin-badge admin-badge-off">dormant — Phase 1</span></h1>
-    <p class="admin-empty">
-      One row per role: summary, link, work mode, fit/viability score, why-suggested,
-      approve/decline-with-feedback (FR-DIG-3/4/5). Wires to the DigestReview port.
-    </p>
-    <table class="admin-card" style="width:100%;">
-      <thead><tr><th>Role</th><th>Work mode</th><th>Score</th><th>Why</th><th>Action</th></tr></thead>
-      <tbody><tr><td colspan="5" class="admin-empty">No data (dormant).</td></tr></tbody>
-    </table>
+<body data-campaign-id="">
+  <main>
+    <section class="admin-card applicant-section" id="digest-section">
+      <h1>Daily digest <span class="admin-badge admin-badge-on">Phase 1 — live</span></h1>
+      <p class="admin-empty" id="digest-empty-note" hidden></p>
+      <table class="admin-card" style="width:100%;" id="digest-table">
+        <thead>
+          <tr>
+            <th>Role</th><th>Work mode</th><th>Score</th><th>Why suggested</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="digest-rows">
+          <tr><td colspan="5" class="admin-empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="admin-card applicant-section" id="pending-section">
+      <h2>Pending actions <span class="admin-badge admin-badge-on">Phase 1 — live</span></h2>
+      <p class="admin-empty">Everything awaiting your input across the campaign (FR-UI-3).</p>
+      <ul id="pending-list"><li class="admin-empty">Loading…</li></ul>
+    </section>
+
+    <!-- Dormant: redline review (Phase 3) — grayed until ResumeTailoring lands. -->
+    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
+      <h2>Material review <span class="admin-badge admin-badge-off">dormant — Phase 3</span></h2>
+      <p class="admin-empty">Redline add/subtract/free-text revision (FR-RESUME-8) arrives in Phase 3.</p>
+    </section>
   </main>
+  <script src="./js/digest.js"></script>
 </body>
 </html>
