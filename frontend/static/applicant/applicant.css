@@ -1,0 +1,75 @@
+/*
+ * Applicant — our own surface styles (single source of truth).
+ *
+ * The look comes from the vendored Odysseus design system (../style.css); this
+ * stylesheet only adds the handful of `applicant-*` / `review-*` / `chat-*` rules
+ * that our surfaces need, plus the two `.admin-*` classes the canonical CSS is
+ * missing (.admin-btn / .admin-badge-on). Every value here is copied verbatim from
+ * the per-file <style> blocks it replaces so rendering stays pixel-identical
+ * (FR-UI-1). Loaded by our surfaces via <link rel="stylesheet" href="applicant.css">.
+ */
+
+/* --- missing siblings of vendored admin classes --------------------------- */
+/* .admin-btn — the unsuffixed primary admin button (sibling of .admin-btn-add).
+   Matches .admin-btn-add (the primary/red button) so wizard/debug/chat/review
+   buttons that use the bare class render like their suffixed siblings. */
+.admin-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn:hover {
+  background: color-mix(in srgb, var(--red) 80%, white);
+}
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* .admin-badge-on — the "live" sibling of .admin-badge-off; green/positive.
+   Mirrors .admin-badge-off's shape (color-mix tint) using --color-success. */
+.admin-badge-on {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+/* --- shared layout (was duplicated in digest/debug/chat/review) ------------ */
+.applicant-dormant { opacity: .5; pointer-events: none; }
+.applicant-grayed { opacity: .5; }
+.applicant-section { max-width: 960px; margin: 32px auto; padding: 20px; }
+.applicant-feedback { width: 100%; margin-top: 6px; }
+.applicant-note { font-style: italic; }
+.applicant-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
+.applicant-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+
+/* Shared nav injected by ApplicantUI.mountShell (opt-in via #applicant-nav). */
+.applicant-nav { display: flex; gap: 4px; margin: 12px 0; }
+.applicant-nav-active { font-weight: 700; }
+
+/* --- review surface (FR-RESUME-1/8/9) ------------------------------------- */
+/* Redline highlighting (additions + deletions), FR-RESUME-8. */
+.redline-add, ins.redline-add { background: #e6ffed; color: #045d1e; text-decoration: none; }
+.redline-sub, del.redline-sub { background: #ffeef0; color: #9e1c23; text-decoration: line-through; }
+.redline-eq { color: #444; }
+#redline-view { white-space: pre-wrap; font-family: ui-monospace, monospace; line-height: 1.5; }
+/* Material tabs (resume / cover letter / screening answers), FR-RESUME-1. */
+.review-tabs { display: flex; gap: 4px; margin: 12px 0; }
+.review-tab { cursor: pointer; }
+.review-tab[aria-selected="true"] { font-weight: 700; border-bottom: 2px solid #045d1e; }
+
+/* --- chat surface (FR-CHAT-1) --------------------------------------------- */
+/* The chat surface narrows the shared section to 760px (matches its old block). */
+#chat-section.applicant-section { max-width: 760px; }
+.chat-log { min-height: 200px; max-height: 360px; overflow-y: auto; padding: 8px 0; }
+.chat-turn { padding: 6px 10px; margin: 6px 0; border-radius: 8px; }
+.chat-user { background: rgba(0,0,0,.05); }
+.chat-bot { background: rgba(0, 120, 255, .06); }
+.chat-proposal { font-style: italic; }
+.chat-input-row { display: flex; gap: 8px; }
+.chat-input-row input { flex: 1; }
