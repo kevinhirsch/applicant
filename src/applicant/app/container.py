@@ -23,6 +23,7 @@ from applicant.adapters.fonts.font_installer import FontInstaller
 from applicant.adapters.llm.openai_compatible import OpenAICompatibleLLM
 from applicant.adapters.notification.apprise_notifier import AppriseNotifier
 from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
+from applicant.adapters.resume_parser.resume_parser import ResumeParser
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.sandbox.local_sandbox import LocalSandbox
@@ -34,8 +35,11 @@ from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
 from applicant.app.config import Settings, get_settings
 from applicant.application.services.campaign_service import CampaignService
+from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.discovery_service import DiscoveryService
+from applicant.application.services.font_service import FontService
 from applicant.application.services.learning_service import LearningService
+from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.scoring_service import ScoringService
 from applicant.application.services.setup_service import SetupService
 from applicant.application.workflows import application_pipeline
@@ -67,9 +71,14 @@ class Container:
     orchestrator: Any
     tool_registry: Any
 
+    resume_parser: Any
+
     # services
     setup_service: Any
     campaign_service: Any
+    onboarding_service: Any
+    font_service: Any
+    conversion_service: Any
     discovery_service: Any
     scoring_service: Any
     learning_service: Any
@@ -120,11 +129,33 @@ def build_container(settings: Settings | None = None) -> Container:
 
     credentials = PgCredentialStore(settings.credential_keyfile)
 
-    # Setup service first so the persisted ladder can configure the LLM adapter.
+    # Onboarding service (FR-ONBOARD): resumable intake + attribute-cloud bootstrap.
+    resume_parser = ResumeParser()
+    onboarding_service = OnboardingService(
+        storage=storage,
+        config_store=config_store,
+        resume_parser=resume_parser,
+    )
+
+    # The onboarding gate (FR-ONBOARD-2) reports True once ANY campaign has a
+    # completed intake. Channels are modeled until Phase 1 wires real backends.
+    def _onboarding_gate() -> bool:
+        for c in storage.campaigns.list():
+            if onboarding_service.is_complete(str(c.id)):
+                return True
+        return False
+
+    def _channels_gate() -> bool:
+        return bool(settings.discord_webhook_url or settings.apprise_urls)
+
+    # Setup service so the persisted ladder can configure the LLM adapter; its
+    # automated-work gate now consults the real onboarding + channels gates.
     setup_service = SetupService(
         llm_configured=settings.llm_configured,
         config_store=config_store,
         credentials=credentials,
+        onboarding_gate=_onboarding_gate,
+        channels_gate=_channels_gate,
     )
     # Seed L1 from env on first boot if the UI hasn't set a ladder yet (FR-LLM-2).
     if settings.llm_configured and not setup_service.get_tiers():
@@ -147,7 +178,7 @@ def build_container(settings: Settings | None = None) -> Container:
     sandbox = LocalSandbox()
     latex_tailor = LatexTailor()
     docx_tailor = DocxTailor()
-    font_installer = FontInstaller()
+    font_installer = FontInstaller(install_root=settings.fonts_dir)
     notification = AppriseNotifier(
         discord_webhook_url=settings.discord_webhook_url,
         apprise_urls=settings.apprise_urls,
@@ -159,6 +190,8 @@ def build_container(settings: Settings | None = None) -> Container:
     application_pipeline.register(orchestrator)
 
     campaign_service = CampaignService(storage)
+    font_service = FontService(font_installer)
+    conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     discovery_service = DiscoveryService(storage, discovery, embedding)
     scoring_service = ScoringService(storage, llm, embedding)
     learning_service = LearningService(storage, embedding)
@@ -181,8 +214,12 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         orchestrator=orchestrator,
         tool_registry=tool_registry,
+        resume_parser=resume_parser,
         setup_service=setup_service,
         campaign_service=campaign_service,
+        onboarding_service=onboarding_service,
+        font_service=font_service,
+        conversion_service=conversion_service,
         discovery_service=discovery_service,
         scoring_service=scoring_service,
         learning_service=learning_service,

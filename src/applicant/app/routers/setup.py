@@ -52,6 +52,7 @@ def _status_dict(svc) -> dict:
         "current_step": s.current_step,
         "steps_complete": s.steps_complete,
         "gate_open": svc.is_setup_gate_open(),
+        "automated_work_allowed": svc.is_automated_work_allowed(),
     }
 
 

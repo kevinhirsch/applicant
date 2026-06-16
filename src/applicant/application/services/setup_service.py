@@ -13,6 +13,7 @@ plaintext config table (FR-VAULT-3, NFR-PRIV-1).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from applicant.adapters.storage.app_config_store import (
@@ -45,12 +46,19 @@ class SetupService:
         llm_configured: bool = False,
         config_store: AppConfigStore | None = None,
         credentials: Any | None = None,
+        onboarding_gate: Callable[[], bool] | None = None,
+        channels_gate: Callable[[], bool] | None = None,
     ) -> None:
         self._store = config_store or InMemoryAppConfigStore()
         self._credentials = credentials
         self._llm_preconfigured = llm_configured
         self._fonts_ready = False
         self._onboarding_complete = False
+        # Real gates: onboarding completion (FR-ONBOARD-2) + channels (FR-OOBE-3).
+        # When provided, these override the local advance-step flags so the
+        # "automated work may begin" gate reflects genuine backend state.
+        self._onboarding_gate = onboarding_gate
+        self._channels_gate = channels_gate
 
     # --- persistence helpers ---------------------------------------------
     def _load_tiers(self) -> list[dict[str, Any]]:
@@ -67,9 +75,27 @@ class SetupService:
         steps = set(rec.get("steps", [])) if rec else set()
         if self._fonts_ready:
             steps.add(WizardStep.FONTS.value)
-        if self._onboarding_complete:
+        # Onboarding completion is gated on the real onboarding state when wired
+        # (FR-ONBOARD-2); fall back to the local advance flag otherwise.
+        if self._onboarding_complete_now():
             steps.add(WizardStep.ONBOARDING.value)
+        else:
+            steps.discard(WizardStep.ONBOARDING.value)
+        if self._channels_complete_now():
+            steps.add(WizardStep.CHANNELS.value)
         return steps
+
+    def _onboarding_complete_now(self) -> bool:
+        if self._onboarding_gate is not None:
+            return bool(self._onboarding_gate())
+        return self._onboarding_complete
+
+    def _channels_complete_now(self) -> bool:
+        rec = self._store.get(_STEPS_KEY)
+        flagged = bool(rec and WizardStep.CHANNELS.value in set(rec.get("steps", [])))
+        if self._channels_gate is not None:
+            return bool(self._channels_gate()) or flagged
+        return flagged
 
     # --- status ----------------------------------------------------------
     def status(self) -> WizardStatus:
@@ -191,10 +217,30 @@ class SetupService:
         """True once the LLM gate is satisfied (FR-UI-5)."""
         return bool(self._load_tiers()) or self._llm_preconfigured
 
+    def is_automated_work_allowed(self) -> bool:
+        """True only when automated work may begin (FR-OOBE-3, FR-ONBOARD-2).
+
+        Requires: LLM configured (FR-UI-5) AND notification channels configured
+        (modeled, FR-OOBE-3) AND onboarding complete (FR-ONBOARD-2).
+        """
+        return (
+            self.is_setup_gate_open()
+            and self._channels_complete_now()
+            and self._onboarding_complete_now()
+        )
+
     def advance_step(self, step: WizardStep) -> WizardStatus:
         """Mark a wizard step complete (FR-OOBE-2). LLM is gated by its config."""
         if step is WizardStep.LLM and not self.is_setup_gate_open():
             raise ValueError("Configure the LLM before completing the LLM step (FR-UI-5).")
+        if step is WizardStep.ONBOARDING and not self._onboarding_complete_now():
+            # The onboarding step only completes when the intake is complete
+            # (FR-ONBOARD-2). When no real gate is wired, the local flag is used.
+            if self._onboarding_gate is not None:
+                raise ValueError(
+                    "Onboarding intake is not complete; finish it before advancing "
+                    "(FR-ONBOARD-2)."
+                )
         if step is WizardStep.FONTS:
             self._fonts_ready = True
         elif step is WizardStep.ONBOARDING:

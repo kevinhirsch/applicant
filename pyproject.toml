@@ -23,6 +23,12 @@ dependencies = [
     "dbos",
     # LangGraph is the reasoning loop *within* durable steps (architecture §3.15).
     "langgraph",
+    # Base-resume parsing for the onboarding attribute-cloud bootstrap (FR-ONBOARD-3).
+    # python-docx parses .docx; pypdf is a pure-python PDF text extractor (cheap).
+    "python-docx",
+    "pypdf",
+    # Multipart form parsing for base-resume + font uploads via the UI (zero-CLI).
+    "python-multipart",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +36,7 @@ dev = [
     "pytest",
     "pytest-bdd",
     "pytest-asyncio",
+    "pytest-cov",
     "httpx",
     "ruff",
 ]
@@ -40,6 +47,7 @@ dev = [
     "pytest",
     "pytest-bdd",
     "pytest-asyncio",
+    "pytest-cov",
     "httpx",
     "ruff",
 ]

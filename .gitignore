@@ -30,6 +30,9 @@ alembic_tmp/
 .applicant_checkpoints/
 *.checkpoint.json
 
+# Confined runtime font installs (FR-FONT-2)
+.applicant_fonts/
+
 # OS / editor
 .DS_Store
 *.swp
