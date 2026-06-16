@@ -40,6 +40,8 @@ class TestDetectionMonitorContract:
             ({"signals": ("datadome",)}, "datadome"),
             ({"status": 429}, "rate_limited"),
             ({"status": 403}, "blocked_403"),
+            ({"body": "Too many attempts, please try again later"}, "account_friction"),
+            ({"body": "Your account is temporarily locked"}, "account_friction"),
         ],
     )
     def test_known_signals_classified(self, adapter, aid, signals, expected):

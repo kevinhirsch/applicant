@@ -89,6 +89,8 @@ def _stored_answers(cid: CampaignId) -> list[Attribute]:
         a("Current Job Title", "Engineer"),
         a("Years of Experience", "8"),
         a("Are you authorized to work?", "Yes"),
+        # Factual screening question (the essay one is deferred to Phase 3).
+        a("Are you willing to relocate?", "Yes"),
         # Exactly one EEO answer is explicitly provided; the rest must decline.
         a("Gender", "Female", sensitive=True),
     ]
@@ -199,6 +201,63 @@ def eeo_declined(p2ctx):
 @then("the application is awaiting final approval")
 def awaiting_final(p2ctx):
     assert p2ctx["result"].state == ApplicationState.AWAITING_FINAL_APPROVAL
+
+
+# === Missing-attribute soft error (FR-ATTR-5) ==============================
+@given("the campaign attribute cloud is missing a required detail")
+def attribute_cloud_missing(p2ctx):
+    # Drop "Phone" — a required personal-info field — to trigger the soft error.
+    p2ctx["attributes"] = [a for a in _stored_answers(p2ctx["campaign_id"]) if a.name != "Phone"]
+
+
+@then("pre-fill pauses with a missing-detail soft error")
+def paused_missing_attr(p2ctx):
+    assert p2ctx["result"].state == ApplicationState.BLOCKED_MISSING_ATTR
+    assert p2ctx["result"].missing_attribute == "Phone"
+
+
+@then("a provide-missing-detail pending action is created")
+def missing_attr_pending(p2ctx, storage):
+    pending = storage.pending_actions.list_open(p2ctx["campaign_id"])
+    assert any(p.kind == "missing_attr" for p in pending)
+
+
+@when("the user supplies the missing detail")
+def user_supplies_detail(p2ctx, prefill):
+    # FR-ATTR-5: the supplied value is stored + reused; the engine resumes.
+    phone = next(a for a in _stored_answers(p2ctx["campaign_id"]) if a.name == "Phone")
+    full = [*p2ctx["attributes"], phone]
+    app = (
+        p2ctx["application"]
+        .with_status(ApplicationState.SANDBOX_PROVISIONING)
+        .with_status(ApplicationState.ACCOUNT_PREFILL)
+        .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+    )
+    # Re-run from the account step with the now-complete cloud (fresh session).
+    prefill.prefill_application(p2ctx["application"], WORKDAY_URL, full)
+    p2ctx["result"] = prefill.resume_after_account(app, full)
+
+
+@then("pre-fill resumes and reaches awaiting final approval")
+def resumed_to_final(p2ctx):
+    assert p2ctx["result"].state == ApplicationState.AWAITING_FINAL_APPROVAL
+
+
+# === Screening-question routing (FR-ANSWER-1) ==============================
+@then("factual screening questions are filled from stored answers")
+def factual_filled(p2ctx):
+    result = p2ctx["result"]
+    questions = next(v for url, v in result.filled_by_page.items() if "questions" in url)
+    assert questions["#q-relocate"] == "Yes"
+
+
+@then("essay screening questions are deferred to material generation")
+def essay_deferred(p2ctx):
+    result = p2ctx["result"]
+    deferred = [d["selector"] for d in result.deferred_essay_questions]
+    assert "#q-why" in deferred
+    questions = next(v for url, v in result.filled_by_page.items() if "questions" in url)
+    assert "#q-why" not in questions  # never auto-answered (FR-ANSWER-1)
 
 
 # === Cautious mode + takeover ==============================================

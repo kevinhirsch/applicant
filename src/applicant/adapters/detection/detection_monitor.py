@@ -30,6 +30,17 @@ _CHALLENGE_MARKERS: dict[str, str] = {
 #: HTTP status codes that indicate blocking / rate-limiting (FR-PREFILL-6).
 _BLOCKING_STATUSES: frozenset[int] = frozenset({403, 429})
 
+#: Account-creation friction markers (repeated failures, lockouts, "too many
+#: attempts") — a cautious-mode trigger per the work package (FR-PREFILL-6).
+_FRICTION_MARKERS: tuple[str, ...] = (
+    "too many attempts",
+    "temporarily locked",
+    "account locked",
+    "unusual activity",
+    "please try again later",
+    "suspicious activity",
+)
+
 
 def classify_signals(page_signals: dict) -> str | None:
     """Return a normalized signal type if ``page_signals`` indicate detection.
@@ -57,7 +68,12 @@ def classify_signals(page_signals: dict) -> str | None:
         if marker in haystack:
             return signal_type
 
-    # 3. Anomalous redirect: landed on a host we did not expect.
+    # 3. Account-creation friction (lockouts / repeated failures) (FR-PREFILL-6).
+    for marker in _FRICTION_MARKERS:
+        if marker in haystack:
+            return "account_friction"
+
+    # 4. Anomalous redirect: landed on a host we did not expect.
     url = page_signals.get("url")
     expected = page_signals.get("expected_host")
     if url and expected and expected.lower() not in str(url).lower():

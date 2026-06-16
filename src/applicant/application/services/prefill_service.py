@@ -1,7 +1,5 @@
 """PrefillService (FR-PREFILL-*, FR-ATTR-5/6, FR-STEALTH, FR-SANDBOX, FR-NOTIF-2).
 
-# STAGE B — owned by Phase 2; fleshed out as a thin scaffold.
-
 Drives the **maximal pre-fill loop**: provision a sandbox, walk every page of the
 ATS, detect every fillable field, and fill it from the campaign attribute cloud —
 routing every fill decision through the core **sensitive-field policy** (EEO fields
@@ -11,20 +9,37 @@ submit). It emits the §7 ``BLOCKED_*`` / ``AWAITING_*`` states with pending act
 + notifications, supports **cautious mode** (pause on a detection signal), and the
 **final-approval gate** via the durable orchestrator's ``recv`` (FR-NOTIF-2).
 
-Scope note: thin scaffold over the in-memory browser/sandbox/detection adapters —
-no real browser. The state transitions, rule enforcement, and hand-off shape are
-real and tested.
+Field resolution (FR-PREFILL-3, FR-ATTR-5/6, FR-ANSWER-1):
+
+* **Sensitive (EEO) fields** route through ``decide_sensitive_fill`` — explicit
+  stored answer only, else "decline to self-identify"; never AI-guessed.
+* **Factual screening questions** fill from stored attributes like any field.
+* **Essay screening questions** are NOT answered here — they are recorded and
+  deferred to Phase 3 generation + the FR-RESUME-8 review gate (a clean handoff);
+  pre-fill of the remaining fields continues.
+* **Ambiguous non-sensitive mappings** escalate to the LLM port when one is
+  configured; an unconfident/absent answer becomes a missing-attribute soft error.
+* **Missing required attributes** raise the FR-ATTR-5 soft-error flow
+  (``BLOCKED_MISSING_ATTR``): a pending action lands, the value is reused after the
+  user resolves it.
+* **Fill failure** (the agent reports it tried and failed) yields the emergency
+  data-handoff (``EMERGENCY_DATA_HANDOFF``) — never the default (FR-PREFILL-7).
+
+Scope note: drives the in-memory browser/sandbox/detection adapters — no real
+browser. The state transitions, rule enforcement, and hand-off shape are real and
+tested; swapping in the real Playwright page-source is the only change to go live.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.ids import ApplicationId, CampaignId, PendingActionId, new_id
-from applicant.core.rules.sensitive_fields import decide_sensitive_fill
+from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
 
@@ -45,16 +60,31 @@ class PrefillResult:
     sensitive_filled_from_explicit: list[str] = field(default_factory=list)
     #: sensitive selectors that fell back to "decline to self-identify".
     sensitive_declined: list[str] = field(default_factory=list)
+    #: essay screening questions deferred to Phase 3 generation (FR-ANSWER-1).
+    deferred_essay_questions: list[dict] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
     pending_action_id: PendingActionId | None = None
     detection_signal: str | None = None
+    #: the attribute name that was missing, when blocked on FR-ATTR-5.
+    missing_attribute: str | None = None
     #: True once the engine reached and handed off at the account-create page.
     account_handoff: bool = False
+    #: pre-filled values offered for the emergency copy/paste handoff (FR-PREFILL-7).
+    handoff_values: dict[str, str] = field(default_factory=dict)
 
 
 class PrefillService:
     def __init__(
-        self, storage, browser, detection, sandbox, credentials, notification=None
+        self,
+        storage,
+        browser,
+        detection,
+        sandbox,
+        credentials,
+        notification=None,
+        *,
+        llm=None,
+        required_field_types: frozenset[str] | None = None,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -62,6 +92,14 @@ class PrefillService:
         self._sandbox = sandbox
         self._credentials = credentials
         self._notification = notification
+        # LLM port for ambiguous-mapping escalation (FR-PREFILL-3). Optional: when
+        # absent, an unresolved non-sensitive field becomes a missing-attr soft error.
+        self._llm = llm
+        # Field types that MUST be filled (a missing value soft-errors, FR-ATTR-5).
+        # Optional fields just skip. Defaults to the load-bearing required ones.
+        self._required_types = required_field_types or frozenset(
+            {"text", "password", "select", SCREENING_FACTUAL}
+        )
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -96,7 +134,9 @@ class PrefillService:
         # 3. Account-creation page (if any) → pre-fill, then hand off (FR-PREFILL-4).
         if self._browser.is_account_create_page(aid):
             app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
-            self._fill_current_page(aid, attributes, result)
+            blocked = self._fill_current_page(app, attributes, result)
+            if blocked is not None:
+                return blocked
             result.screenshots.append(self._browser.screenshot(aid))
             # The engine never clicks the account-creating submit — hand off.
             app = app.with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
@@ -137,6 +177,64 @@ class PrefillService:
         self._browser.advance(application.id)
         return self._continue_pages(app, attributes, result, cautious=cautious)
 
+    def resume_after_missing_attr(
+        self,
+        application: Application,
+        attributes: list[Attribute],
+        *,
+        cautious: bool = True,
+    ) -> PrefillResult:
+        """Continue pre-filling after the user supplied a missing attribute (FR-ATTR-5).
+
+        The newly-acquired value is reused per campaign, so the same field now fills
+        and the loop proceeds from the page it stalled on.
+        """
+        app = application.with_status(ApplicationState.PREFILLING)
+        result = PrefillResult(
+            application_id=application.id,
+            state=app.status,
+            sandbox_session_url=application.sandbox_session_url,
+        )
+        return self._continue_pages(app, attributes, result, cautious=cautious)
+
+    def emergency_handoff(
+        self, application: Application, attributes: list[Attribute] | None = None
+    ) -> PrefillResult:
+        """Emergency copy/paste handoff — ONLY after a reported fill failure (FR-PREFILL-7).
+
+        This is never the default path: it is invoked when the agent reports it
+        tried to fill and failed. It assembles the values the user can paste into
+        their own browser and lands the EMERGENCY_DATA_HANDOFF waiting state.
+        """
+        attributes = attributes or []
+        # The agent reports it tried to fill and failed while PREFILLING; if the
+        # caller passes an earlier state, normalize to PREFILLING first.
+        app = application
+        if app.status is not ApplicationState.PREFILLING:
+            app = app.with_status(ApplicationState.PREFILLING)
+        # Best-effort assemble the values that WOULD have been filled, for paste.
+        values: dict[str, str] = {}
+        for fld in self._browser.detect_fields(application.id):
+            resolved = self._resolve_value(fld, attributes, PrefillResult(application.id, app.status))
+            if resolved.value is not None and not resolved.defer_essay:
+                values[fld.label] = resolved.value
+        app = app.with_status(ApplicationState.EMERGENCY_DATA_HANDOFF)
+        result = PrefillResult(
+            application_id=application.id,
+            state=app.status,
+            sandbox_session_url=application.sandbox_session_url,
+            handoff_values=values,
+        )
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="emergency_handoff",
+            title="Emergency handoff + mark submitted",
+            session_url=application.sandbox_session_url,
+            payload={"handoff_values": values},
+        )
+        self._persist(app)
+        return result
+
     def await_final_approval(self, orchestrator, workflow_id: str, *, timeout: float | None = None):
         """Block on the durable approval gate (FR-NOTIF-2, FR-DUR-3).
 
@@ -174,71 +272,147 @@ class PrefillService:
 
             # If this is the final-submit page, all fillable pages are done.
             if self._browser.is_final_submit_page(aid):
-                app = app.with_status(ApplicationState.MATERIAL_PREP)
-                app = app.with_status(ApplicationState.MATERIAL_REVIEW)
-                app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
-                result.state = app.status
-                result.pending_action_id = self._emit_waiting(
-                    application=app,
-                    kind="final_approval",
-                    title="Final approval / submit",
-                    session_url=result.sandbox_session_url,
-                )
-                self._persist(app)
-                return result
+                return self._reach_final_approval(app, result)
 
             # Pre-fill every fillable field on this page (maximal pre-fill).
-            self._fill_current_page(aid, attributes, result)
+            blocked = self._fill_current_page(app, attributes, result)
+            if blocked is not None:
+                return blocked
             result.screenshots.append(self._browser.screenshot(aid))
 
             # Advance; if there is no next page we are done filling.
             if self._browser.advance(aid) is None:
-                app = app.with_status(ApplicationState.MATERIAL_PREP)
-                app = app.with_status(ApplicationState.MATERIAL_REVIEW)
-                app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
-                result.state = app.status
-                result.pending_action_id = self._emit_waiting(
-                    application=app,
-                    kind="final_approval",
-                    title="Final approval / submit",
-                    session_url=result.sandbox_session_url,
-                )
-                self._persist(app)
-                return result
+                return self._reach_final_approval(app, result)
 
-    def _fill_current_page(self, aid, attributes, result) -> None:
-        """Fill every detected field on the current page via the core rules."""
+    def _reach_final_approval(self, app, result) -> PrefillResult:
+        app = app.with_status(ApplicationState.MATERIAL_PREP)
+        app = app.with_status(ApplicationState.MATERIAL_REVIEW)
+        app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
+        result.state = app.status
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="final_approval",
+            title="Final approval / submit",
+            session_url=result.sandbox_session_url,
+        )
+        self._persist(app)
+        return result
+
+    def _fill_current_page(self, app, attributes, result) -> PrefillResult | None:
+        """Fill every detected field on the current page via the core rules.
+
+        Returns ``None`` on success, or a terminated :class:`PrefillResult` when the
+        page blocks (missing attribute → BLOCKED_MISSING_ATTR, essay screening
+        question → BLOCKED_QUESTION).
+        """
+        aid = app.id
         state = self._browser.current_state(aid)
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
-            value = self._resolve_value(fld, attributes, result)
-            if value is None:
-                continue  # missing non-sensitive value → would soft-error; skip here.
-            self._browser.fill_field(aid, fld.selector, value)
-            page_log[fld.selector] = value
+            resolved = self._resolve_value(fld, attributes, result)
+
+            if resolved.defer_essay:
+                # Essay screening question: NOT auto-answered in Phase 2 — recorded
+                # and deferred to Phase 3 generation + the FR-RESUME-8 review gate
+                # (FR-ANSWER-1). A clean handoff; pre-fill of other fields continues.
+                result.deferred_essay_questions.append(
+                    {"selector": fld.selector, "label": fld.label, "url": state.url}
+                )
+                continue
+
+            if resolved.value is None:
+                if fld.field_type in self._required_types:
+                    # Required field with no value → missing-attr soft error (FR-ATTR-5).
+                    return self._block_missing_attr(app, fld, result)
+                continue  # optional field with no value → skip.
+
+            self._browser.fill_field(aid, fld.selector, resolved.value)
+            page_log[fld.selector] = resolved.value
+            if resolved.is_sensitive and resolved.from_explicit:
+                result.sensitive_filled_from_explicit.append(fld.selector)
+            elif resolved.is_sensitive:
+                result.sensitive_declined.append(fld.selector)
+
         if page_log:
             result.filled_by_page[state.url] = page_log
+        return None
+
+    # --- field resolution -------------------------------------------------
+    @dataclass
+    class _Resolved:
+        value: str | None
+        is_sensitive: bool = False
+        from_explicit: bool = False
+        defer_essay: bool = False
 
     def _resolve_value(
         self, fld: DetectedField, attributes: list[Attribute], result: PrefillResult
-    ) -> str | None:
-        """Resolve a fill value for a field, enforcing the sensitive-field policy.
+    ) -> PrefillService._Resolved:
+        """Resolve a fill value for a field, enforcing all field policies.
 
-        Sensitive (EEO) fields are routed through ``decide_sensitive_fill`` so they
-        are filled only from the user's explicit stored answer and otherwise
-        default to "decline to self-identify" — never AI-guessed (FR-ATTR-6).
+        * Essay screening questions defer (Phase 3) — never auto-answered here.
+        * Sensitive (EEO) fields route through ``decide_sensitive_fill``: explicit
+          answer only, else decline; never AI-guessed (FR-ATTR-6).
+        * Factual fields use the explicit answer, escalating an ambiguous mapping to
+          the LLM port when configured (FR-PREFILL-3).
         """
+        # Essay screening questions are deferred to Phase 3 generation (FR-ANSWER-1).
+        if fld.field_type == SCREENING_ESSAY:
+            return self._Resolved(value=None, defer_essay=True)
+
         explicit = self._lookup(fld.label, attributes)
-        decision = decide_sensitive_fill(fld.label, explicit)
-        if decision.is_sensitive:
-            if decision.from_explicit_answer:
-                result.sensitive_filled_from_explicit.append(fld.selector)
-            else:
-                result.sensitive_declined.append(fld.selector)
-            return decision.value
-        # Non-sensitive: use the explicit answer (real adapter escalates ambiguous
-        # mappings to the LLM per FR-PREFILL-3; the scaffold uses direct mapping).
-        return explicit
+
+        if is_sensitive_field(fld.label):
+            decision = decide_sensitive_fill(fld.label, explicit)
+            return self._Resolved(
+                value=decision.value,
+                is_sensitive=True,
+                from_explicit=decision.from_explicit_answer,
+            )
+
+        # Non-sensitive (incl. factual screening): direct mapping, else LLM escalate.
+        if explicit is not None:
+            return self._Resolved(value=explicit)
+        guessed = self._escalate_mapping(fld, attributes)
+        return self._Resolved(value=guessed)
+
+    def _escalate_mapping(
+        self, fld: DetectedField, attributes: list[Attribute]
+    ) -> str | None:
+        """Escalate an ambiguous non-sensitive mapping to the LLM port (FR-PREFILL-3).
+
+        The LLM is given the field label and the available attribute names and asked
+        which stored value (if any) maps to the field. A confident, non-sensitive
+        match is returned; anything else returns ``None`` so the caller raises the
+        missing-attribute soft error rather than guessing.
+        """
+        if self._llm is None or not attributes:
+            return None
+        # NEVER escalate a sensitive field to an LLM guess (FR-ATTR-6).
+        if is_sensitive_field(fld.label):
+            return None
+        from applicant.ports.driven.llm import ChatMessage
+
+        names = ", ".join(a.name for a in attributes)
+        prompt = (
+            "You map a web-form field to ONE stored attribute. "
+            f"Field label: {fld.label!r}. Stored attributes: {names}. "
+            "Reply with the EXACT attribute name that maps to this field, or the "
+            "single word NONE if none clearly maps. Do not invent a value."
+        )
+        try:
+            res = self._llm.complete([ChatMessage(role="user", content=prompt)])
+        except Exception:
+            return None  # LLM unavailable → fall through to soft error (frugal).
+        if getattr(res, "low_confidence", False):
+            return None
+        choice = (res.text or "").strip()
+        if not choice or choice.upper() == "NONE":
+            return None
+        for attr in attributes:
+            if attr.matches(choice) and not is_sensitive_field(attr.name):
+                return attr.value
+        return None
 
     @staticmethod
     def _lookup(label: str, attributes: list[Attribute]) -> str | None:
@@ -246,6 +420,25 @@ class PrefillService:
             if attr.matches(label):
                 return attr.value
         return None
+
+    # --- block emitters ---------------------------------------------------
+    def _block_missing_attr(self, app, fld: DetectedField, result: PrefillResult) -> PrefillResult:
+        app = app.with_status(ApplicationState.BLOCKED_MISSING_ATTR)
+        result.state = app.status
+        result.missing_attribute = fld.label
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="missing_attr",
+            title=f"Provide missing detail: {fld.label}",
+            session_url=result.sandbox_session_url,
+            payload={
+                "attribute_name": fld.label,
+                "field_selector": fld.selector,
+                "dedup_key": f"missing_attr:{fld.label}:{fld.selector}",
+            },
+        )
+        self._persist(app)
+        return result
 
     def _check_detection(self, aid):
         state = self._browser.current_state(aid)
