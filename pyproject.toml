@@ -29,6 +29,11 @@ dependencies = [
     "pypdf",
     # Multipart form parsing for base-resume + font uploads via the UI (zero-CLI).
     "python-multipart",
+    # Wave-one master aggregator over the easy boards (LinkedIn/Indeed/Glassdoor/
+    # Google/ZipRecruiter), zero-LLM structured scraping (FR-DISC-2/4). The real
+    # JobSpy/SearXNG calls sit behind a marked network boundary; the default test
+    # lane stays offline (the live source is integration-gated).
+    "python-jobspy",
 ]
 
 [project.optional-dependencies]

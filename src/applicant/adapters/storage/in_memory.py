@@ -7,16 +7,19 @@ and contract tests run without Postgres.
 
 from __future__ import annotations
 
+from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
+from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.ids import (
+    AgentRunId,
     ApplicationId,
     AttributeId,
     CampaignId,
@@ -157,6 +160,38 @@ class _PendingRepo:
             self._d[str(pid)] = dataclasses.replace(cur, resolved=True)
 
 
+class _DiscoverySourceRepo:
+    def __init__(self) -> None:
+        self._d: dict[str, DiscoverySource] = {}
+
+    @staticmethod
+    def _k(cid: CampaignId, key: str) -> str:
+        return f"{cid}:{key}"
+
+    def upsert(self, s: DiscoverySource) -> None:
+        self._d[self._k(s.campaign_id, s.source_key)] = s
+
+    def get(self, cid: CampaignId, key: str) -> DiscoverySource | None:
+        return self._d.get(self._k(cid, key))
+
+    def list_for_campaign(self, cid: CampaignId) -> list[DiscoverySource]:
+        return [s for s in self._d.values() if s.campaign_id == cid]
+
+
+class _AgentRunRepo:
+    def __init__(self) -> None:
+        self._d: dict[str, AgentRun] = {}
+
+    def add(self, r: AgentRun) -> None:
+        self._d[str(r.id)] = r
+
+    def get(self, rid: AgentRunId) -> AgentRun | None:
+        return self._d.get(str(rid))
+
+    def list_for_campaign(self, cid: CampaignId) -> list[AgentRun]:
+        return [r for r in self._d.values() if r.campaign_id == cid]
+
+
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation."""
 
@@ -170,6 +205,8 @@ class InMemoryStorage:
         self.decisions = _DecisionRepo()
         self.outcomes = _OutcomeRepo()
         self.pending_actions = _PendingRepo()
+        self.discovery_sources = _DiscoverySourceRepo()
+        self.agent_runs = _AgentRunRepo()
 
     def commit(self) -> None:  # no-op; writes are immediate
         pass

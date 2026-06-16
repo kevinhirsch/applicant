@@ -36,6 +36,18 @@ def get_conversion_service(container: Container = Depends(get_container)):
     return container.conversion_service
 
 
+def get_criteria_service(container: Container = Depends(get_container)):
+    return container.criteria_service
+
+
+def get_agent_run_service(container: Container = Depends(get_container)):
+    return container.agent_run_service
+
+
+def get_discovery_service(container: Container = Depends(get_container)):
+    return container.discovery_service
+
+
 def get_storage(container: Container = Depends(get_container)):
     return container.storage
 

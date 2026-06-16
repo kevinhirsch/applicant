@@ -17,7 +17,7 @@ from typing import Any
 
 from applicant.adapters.credentials.pg_credential_store import PgCredentialStore
 from applicant.adapters.detection.detection_monitor import DetectionMonitor
-from applicant.adapters.discovery.jobspy_searxng import JobSpySearxngDiscovery
+from applicant.adapters.discovery.factory import build_default_discovery
 from applicant.adapters.embedding.local_embedding import LocalEmbedding
 from applicant.adapters.fonts.font_installer import FontInstaller
 from applicant.adapters.llm.openai_compatible import OpenAICompatibleLLM
@@ -34,8 +34,10 @@ from applicant.adapters.storage.app_config_store import (
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
 from applicant.app.config import Settings, get_settings
+from applicant.application.services.agent_run_service import AgentRunService
 from applicant.application.services.campaign_service import CampaignService
 from applicant.application.services.conversion_service import ConversionService
+from applicant.application.services.criteria_service import CriteriaService
 from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.font_service import FontService
 from applicant.application.services.learning_service import LearningService
@@ -82,6 +84,8 @@ class Container:
     discovery_service: Any
     scoring_service: Any
     learning_service: Any
+    criteria_service: Any
+    agent_run_service: Any
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -171,7 +175,16 @@ def build_container(settings: Settings | None = None) -> Container:
         )
 
     llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
-    discovery = JobSpySearxngDiscovery()
+    # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
+    # + tests); live boards opt-in via DISCOVERY_LIVE (FR-DISC-4 network boundary).
+    discovery_proxies = tuple(
+        p.strip() for p in settings.discovery_proxies.split(",") if p.strip()
+    )
+    discovery = build_default_discovery(
+        live=settings.discovery_live,
+        searxng_url=settings.searxng_url,
+        proxies=discovery_proxies,
+    )
     embedding = LocalEmbedding()
     browser = PatchrightBrowser()
     detection = DetectionMonitor()
@@ -192,9 +205,11 @@ def build_container(settings: Settings | None = None) -> Container:
     campaign_service = CampaignService(storage)
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
-    discovery_service = DiscoveryService(storage, discovery, embedding)
-    scoring_service = ScoringService(storage, llm, embedding)
     learning_service = LearningService(storage, embedding)
+    discovery_service = DiscoveryService(storage, discovery, embedding, learning_service)
+    scoring_service = ScoringService(storage, llm, embedding, learning=learning_service)
+    criteria_service = CriteriaService(storage, llm)
+    agent_run_service = AgentRunService(storage)
 
     return Container(
         settings=settings,
@@ -223,4 +238,6 @@ def build_container(settings: Settings | None = None) -> Container:
         discovery_service=discovery_service,
         scoring_service=scoring_service,
         learning_service=learning_service,
+        criteria_service=criteria_service,
+        agent_run_service=agent_run_service,
     )
