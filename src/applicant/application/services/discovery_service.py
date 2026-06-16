@@ -90,14 +90,81 @@ class DiscoveryService:
         if self._tools is not None:
             self._tools.ensure_enabled("discovery")
         criteria = criteria or SearchCriteria(campaign_id=campaign_id)
+        criteria = self._bias_criteria_toward_converting(campaign_id, criteria)
         self.sync_registry(campaign_id)
-        raw = self._discovery.search(campaign_id, criteria)
+        order = self._prioritized_sources(campaign_id)
+        raw = (
+            self._discovery.search(campaign_id, criteria, sources=order)
+            if order is not None
+            else self._discovery.search(campaign_id, criteria)
+        )
         kept = self._dedup(raw)
         for posting in kept:
             self._storage.postings.add(posting)
         self._storage.commit()
         self._record_yield(campaign_id, kept)
         return kept
+
+    def _bias_criteria_toward_converting(
+        self, campaign_id: CampaignId, criteria: SearchCriteria
+    ) -> SearchCriteria:
+        """Bias discovery titles toward the converting-role's titles (FR-LEARN-5).
+
+        When learning has recorded which roles actually convert, fold those titles
+        into the search criteria so discovery leans toward the converting role's
+        titles/sources. New titles are appended (never replacing the user's), so the
+        user's stated criteria are still honored.
+        """
+        if self._learning is None:
+            return criteria
+        try:
+            model = self._learning.load_model(campaign_id)
+            converting = self._learning.converting_titles(model)
+        except Exception:  # pragma: no cover - defensive
+            return criteria
+        if not converting:
+            return criteria
+        import dataclasses
+
+        merged = list(criteria.titles)
+        for t in converting:
+            if t not in merged:
+                merged.append(t)
+        if len(merged) == len(criteria.titles):
+            return criteria
+        return dataclasses.replace(criteria, titles=tuple(merged))
+
+    def _prioritized_sources(self, campaign_id: CampaignId) -> list[str] | None:
+        """Order enabled sources by learned yield + reserve the exploration budget.
+
+        FR-DISC-5/FR-LEARN-6: discovery no longer treats enabled sources as a flat
+        boolean set. The LearningService's ``source_ranking`` puts high-conversion
+        sources first (exploit), and ``exploration_split`` reserves a fraction of the
+        run for under-used / cold sources so the system keeps probing new sources and
+        never collapses onto one. Returns an ordered list of enabled source keys, or
+        ``None`` when no learning is wired (legacy: query every enabled source).
+        """
+        if self._learning is None:
+            return None
+        enabled = list(self._discovery.enabled_sources()) if hasattr(
+            self._discovery, "enabled_sources"
+        ) else list(self._discovery.available_sources())
+        if not enabled:
+            return None
+        model = self._learning.load_model(campaign_id)
+        exploit, explore = self._learning.exploration_split(model, enabled)
+        # High-yield exploit sources first (ranking order), then the exploration
+        # probes; keep only enabled keys, de-duped, preserving order.
+        ordered: list[str] = []
+        for key in [*exploit, *explore]:
+            if key in enabled and key not in ordered:
+                ordered.append(key)
+        # Any enabled source not placed by the split still gets queried (so a brand
+        # new enabled source is never silently dropped before it has stats).
+        for key in enabled:
+            if key not in ordered:
+                ordered.append(key)
+        return ordered
 
     def source_yield(self, postings: list[JobPosting]) -> dict[str, int]:
         """Count postings per source-key for FR-DISC-5 source-yield learning."""

@@ -37,9 +37,12 @@ log = get_logger(__name__)
 
 
 class SubmissionService:
-    def __init__(self, storage, browser=None) -> None:
+    def __init__(self, storage, browser=None, *, learning=None) -> None:
         self._storage = storage
         self._browser = browser
+        # Optional LearningService so a real submission records the SUBMISSIONS leg of
+        # the source-yield funnel (FR-DISC-5/FR-LEARN-6) — the conversion target.
+        self._learning = learning
 
     # --- detection (FR-LOG-4) ---------------------------------------------
     def detect_submission(self, application_id: ApplicationId) -> bool:
@@ -114,6 +117,7 @@ class SubmissionService:
         )
         self._storage.outcomes.add(event)
         self._storage.commit()
+        self._record_submission_yield(application)
         log.info(
             "submission_recorded",
             application_id=str(application.id),
@@ -154,6 +158,20 @@ class SubmissionService:
             ],
             "outcomes": [{"type": o.type, "source": o.source.value} for o in outcomes],
         }
+
+    def _record_submission_yield(self, application: Application) -> None:
+        """Record the SUBMISSIONS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6)."""
+        if self._learning is None or application.posting_id is None:
+            return
+        posting = self._storage.postings.get(application.posting_id)
+        if posting is None or not posting.source_key:
+            return
+        try:
+            self._learning.record_source_event(
+                posting.campaign_id, posting.source_key, "submissions"
+            )
+        except Exception:  # pragma: no cover - learning must never break a submission
+            pass
 
     # --- internals --------------------------------------------------------
     def _log_application(

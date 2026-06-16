@@ -96,6 +96,25 @@ class NotificationService:
             )
         )
 
+    # --- digest email (FR-DIG-2) ------------------------------------------
+    def send_digest_email(
+        self, *, subject: str, html: str, deep_link: str | None = None
+    ) -> bool:
+        """Send the rendered digest email body through the email channel (FR-DIG-2).
+
+        The digest email is no longer pull-only: this pushes the rendered body to the
+        notifier's email channel. Offline-safe — the notifier captures it in memory
+        and only sends over SMTP when NOTIFICATIONS_LIVE is on. Returns True when the
+        notifier accepted it (email channel configured).
+        """
+        send = getattr(self._notification, "send_email", None)
+        if send is None:
+            return False
+        sent = send(subject=subject, html=html, deep_link=deep_link)
+        if sent:
+            log.info("digest_email_sent", subject=subject)
+        return bool(sent)
+
     # --- ladder advance (deterministic, FR-NOTIF-2) -----------------------
     def advance(self, now: datetime | None = None) -> list[str]:
         """Fire any escalation rungs now due. Returns channels fired this tick."""

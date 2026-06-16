@@ -104,7 +104,92 @@ def test_run_dedups_identical_postings(storage, embedding, campaign):
     assert len(urls) == len(set(urls))
 
 
+class _RecordingSource:
+    """A discovery Source that records each fetch + yields one posting."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        self.fetched = False
+
+    def fetch(self, campaign_id, criteria):
+        from applicant.core.entities.job_posting import JobPosting
+        from applicant.core.ids import JobPostingId, new_id
+
+        self.fetched = True
+        return [
+            JobPosting(
+                id=JobPostingId(new_id()),
+                campaign_id=campaign_id,
+                title=f"Role from {self.key}",
+                company="Co",
+                source_url=f"https://{self.key}.test/job",
+                source_key=self.key,
+                description="python engineer",
+            )
+        ]
+
+
 @pytest.mark.unit
+def test_source_ranking_prioritizes_high_yield_and_explores_cold(storage, embedding, campaign):
+    # FR-DISC-5/FR-LEARN-6: discovery orders enabled sources by learned conversion
+    # yield (high-yield first) AND the exploration budget still probes a cold source.
+    hot = _RecordingSource("hot")
+    cold = _RecordingSource("cold")
+    disc = JobSpySearxngDiscovery(sources=[hot, cold])
+    learning = LearningService(storage, embedding)
+
+    # Give "hot" a strong conversion history (matches + approvals + submissions);
+    # "cold" has no history at all. Set a non-zero exploration budget so cold probes.
+    import dataclasses
+
+    storage.campaigns.add(dataclasses.replace(campaign, exploration_budget=0.5))
+    storage.commit()
+    model = learning.load_model(campaign.id)
+    model = learning.record_source_funnel(
+        model, {"hot": {"matches": 10, "approvals": 5, "submissions": 3}}
+    )
+    learning.persist_model(model)
+
+    svc = DiscoveryService(storage, disc, embedding, learning)
+    order = svc._prioritized_sources(campaign.id)
+    # The high-yield source is prioritized ahead of the cold one.
+    assert order.index("hot") < order.index("cold")
+
+    kept = svc.run_discovery(campaign.id, SearchCriteria(campaign_id=campaign.id))
+    # Both were queried: the exploit (hot) AND the exploration probe (cold).
+    assert hot.fetched and cold.fetched
+    assert {p.source_key for p in kept} == {"hot", "cold"}
+
+
+@pytest.mark.unit
+def test_discovery_titles_shift_toward_converting_role(storage, embedding, campaign):
+    # FR-LEARN-5: a recorded conversion signature biases discovery toward the
+    # converting role's titles. The criteria the aggregator receives gains the
+    # converting title, shifting which roles discovery seeks.
+    learning = LearningService(storage, embedding)
+    model = learning.load_model(campaign.id)
+    model = learning.record_converting_role(
+        model, "staff platform engineer kubernetes", title="Staff Platform Engineer"
+    )
+    learning.persist_model(model)
+
+    seen = {}
+
+    class _CapturingSource:
+        key = "cap"
+
+        def fetch(self, campaign_id, criteria):
+            seen["titles"] = tuple(criteria.titles)
+            return []
+
+    disc = JobSpySearxngDiscovery(sources=[_CapturingSource()])
+    svc = DiscoveryService(storage, disc, embedding, learning)
+    svc.run_discovery(campaign.id, SearchCriteria(campaign_id=campaign.id, titles=("engineer",)))
+    # The user's title is preserved AND the converting role's title is folded in.
+    assert "engineer" in seen["titles"]
+    assert "Staff Platform Engineer" in seen["titles"]
+
+
 def test_scoring_biases_toward_converting_signature(storage, embedding, campaign):
     # FR-LEARN-5: a role matching the converting signature is boosted vs no-learning.
     from applicant.core.entities.job_posting import JobPosting

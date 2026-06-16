@@ -27,6 +27,7 @@ from applicant.core.errors import ConfirmationRequired
 from applicant.core.ids import AttributeId, CampaignId, FieldMappingId, new_id
 from applicant.core.rules import sensitive_fields
 from applicant.core.rules.confirmation_gate import ensure_change_allowed
+from applicant.core.state_machine import ApplicationState
 
 
 @dataclass(frozen=True)
@@ -41,9 +42,17 @@ class MissingAttributeError:
 
 
 class AttributeCloudService:
-    def __init__(self, storage, *, pending_actions=None) -> None:
+    def __init__(self, storage, *, pending_actions=None, prefill=None) -> None:
         self._storage = storage
         self._pending = pending_actions
+        # Optional PrefillService so resolving a missing attribute can RESUME the
+        # stalled pre-fill using the newly-stored value (FR-ATTR-5). Set additively
+        # by the container after both services exist (avoids a construction cycle).
+        self._prefill = prefill
+
+    def set_prefill_service(self, prefill) -> None:
+        """Wire the pre-fill service after construction (FR-ATTR-5 resume path)."""
+        self._prefill = prefill
 
     # --- CRUD (FR-ATTR-1/3) -----------------------------------------------
     def list_attributes(self, campaign_id: CampaignId) -> list[Attribute]:
@@ -207,3 +216,35 @@ class AttributeCloudService:
                 if str(action.payload.get("dedup_key", "")).startswith(prefix):
                     self._pending.resolve(action.id)
         return attr
+
+    def resume_after_missing_attr(
+        self,
+        campaign_id: CampaignId,
+        attribute_name: str,
+        value: str,
+        *,
+        confirm: bool = False,
+    ) -> dict:
+        """Resolve a missing attribute AND resume the stalled pre-fill (FR-ATTR-5).
+
+        The end-to-end soft-error loop: the user supplies the previously-missing
+        detail, it is STORED (and reused per campaign), the open soft-error pending
+        action is resolved, and any application parked at ``BLOCKED_MISSING_ATTR`` is
+        resumed through the pre-fill service using the now-stored value. Returns a
+        small summary of what was stored + which applications resumed (and where they
+        landed) so the caller/UI can reflect the progress.
+        """
+        attr = self.acquire_missing(campaign_id, attribute_name, value, confirm=confirm)
+        resumed: list[dict] = []
+        if self._prefill is not None:
+            attributes = self._storage.attributes.list_for_campaign(campaign_id)
+            for app in self._storage.applications.list_for_campaign(campaign_id):
+                if app.status is ApplicationState.BLOCKED_MISSING_ATTR:
+                    res = self._prefill.resume_after_missing_attr(app, attributes)
+                    resumed.append(
+                        {"application_id": str(app.id), "state": res.state.value}
+                    )
+        return {
+            "attribute": {"id": str(attr.id), "name": attr.name, "value": attr.value},
+            "resumed": resumed,
+        }

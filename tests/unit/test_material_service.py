@@ -106,6 +106,42 @@ def test_approve_variant_makes_it_reusable(svc, storage):
     assert reused.generated is False
 
 
+# === converting-signature bias on variant selection (FR-LEARN-5) ==========
+@pytest.mark.unit
+def test_variant_selection_prefers_converting_signature(storage):
+    # FR-LEARN-5: with a recorded conversion signature, selection prefers the
+    # approved variant whose traits match the converting role (a tiebreak over
+    # equal-coverage candidates). Without learning, the choice would be arbitrary.
+    from applicant.application.services.learning_service import LearningService
+
+    cid = CampaignId(new_id())
+    learning = LearningService(storage, LocalEmbedding())
+    model = learning.load_model(cid)
+    model = learning.record_converting_role(
+        model, "python backend distributed systems kubernetes platform"
+    )
+    learning.persist_model(model)
+
+    # Two approved variants that BOTH cover the JD (same base source → equal
+    # coverage), but with different targeted-JD signatures.
+    aligned = _add_variant(
+        storage, cid, sig="python,backend,kubernetes,distributed,platform"
+    )
+    off = _add_variant(storage, cid, sig="frontend,react,css,design")
+
+    svc = MaterialService(
+        storage,
+        llm=None,
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+        learning=learning,
+    )
+    sel = svc.select_or_generate(cid, JobPostingId(new_id()), ["Python", "SQL"], BASE)
+    assert sel.generated is False
+    assert sel.variant.id == aligned.id
+    assert off.id != aligned.id  # sanity: distinct candidates existed
+
+
 # === cluster/cap (FR-RESUME-6) ============================================
 @pytest.mark.unit
 def test_cluster_collapses_identical_signatures(svc, storage):
