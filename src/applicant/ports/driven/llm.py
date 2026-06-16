@@ -5,12 +5,84 @@ the system can run fully local. The adapter auto-populates the model list
 (FR-LLM-2), honors a capability-ranked tier ladder (FR-LLM-3/4), and is robust to
 model variance in function-calling / JSON-mode (FR-LLM-4a). LLM is the last resort
 for token frugality (FR-LLM-5, NFR-TOKEN-1).
+
+A *tier* is one rung on the escalation ladder: a concrete {provider, base_url,
+api_key, model, context_window}. ``complete`` starts at the lowest sufficient tier
+and CLIMBS on low-confidence signals or context overflow; the top tier is the
+ceiling — on exhaustion the adapter raises :class:`LLMLadderExhausted` rather than
+failing silently (FR-LLM-4).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+
+
+class LLMError(Exception):
+    """Base class for typed LLM domain errors."""
+
+
+class LLMLadderExhausted(LLMError):
+    """Raised when every tier on the ladder has been tried and none succeeded.
+
+    Carries the last underlying error so callers can surface it gracefully.
+    """
+
+    def __init__(self, message: str, *, last_error: Exception | None = None) -> None:
+        super().__init__(message)
+        self.last_error = last_error
+
+
+class LLMNotConfigured(LLMError):
+    """Raised when a completion is attempted before any tier is configured."""
+
+
+@dataclass(frozen=True)
+class TierConfig:
+    """One rung on the capability-ranked tier ladder (FR-LLM-3).
+
+    ``provider`` is one of ``"openrouter"``, ``"openai"`` (OpenAI-compatible cloud)
+    or ``"ollama"`` (local/network). ``context_window`` is the model's token budget
+    and drives overflow-based escalation (FR-LLM-4/4a).
+    """
+
+    provider: str
+    base_url: str
+    model: str
+    api_key: str = ""
+    context_window: int = 8192
+
+
+@dataclass(frozen=True)
+class TierLadder:
+    """Ordered ladder of tiers, L1 (cheapest/local default) -> LN (ceiling).
+
+    1-N tiers, default 3 in the wizard; reorderable (FR-LLM-3).
+    """
+
+    tiers: list[TierConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.tiers:
+            raise ValueError("A tier ladder needs at least one tier (FR-LLM-3).")
+
+    def __len__(self) -> int:
+        return len(self.tiers)
+
+    def at(self, index: int) -> TierConfig:
+        return self.tiers[index]
+
+    def first_fitting(self, required_context: int, *, from_index: int = 0) -> int | None:
+        """Index of the first tier at/after ``from_index`` whose window fits.
+
+        Picks the next tier that can actually hold ``required_context`` — not
+        blindly +1 (FR-LLM-4).
+        """
+        for i in range(max(0, from_index), len(self.tiers)):
+            if self.tiers[i].context_window >= required_context:
+                return i
+        return None
 
 
 @dataclass(frozen=True)
@@ -25,6 +97,8 @@ class LLMResult:
     tier: int  # which ladder tier produced this (1-based)
     model: str
     raw: dict[str, Any] | None = None
+    structured: dict[str, Any] | None = None  # parsed JSON when json_schema given
+    low_confidence: bool = False
 
 
 @runtime_checkable
@@ -45,9 +119,10 @@ class LLMPort(Protocol):
     ) -> LLMResult:
         """Run a completion, climbing the tier ladder on low confidence / overflow.
 
-        When ``json_schema`` is given the adapter must defensively parse and fall
-        back to prompt-based structured output (FR-LLM-4a). The top tier is the
-        ceiling; on exhaustion surface gracefully (FR-LLM-4).
+        ``start_tier`` is the 1-based starting rung (per-task starting tier,
+        FR-LLM-4). When ``json_schema`` is given the adapter must defensively parse
+        and fall back to prompt-based structured output (FR-LLM-4a). The top tier is
+        the ceiling; on exhaustion raise :class:`LLMLadderExhausted` (FR-LLM-4).
         """
         ...
 

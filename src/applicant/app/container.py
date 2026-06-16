@@ -26,6 +26,10 @@ from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrche
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.sandbox.local_sandbox import LocalSandbox
+from applicant.adapters.storage.app_config_store import (
+    InMemoryAppConfigStore,
+    SqlAlchemyAppConfigStore,
+)
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
 from applicant.app.config import Settings, get_settings
@@ -108,12 +112,34 @@ def build_container(settings: Settings | None = None) -> Container:
     # Browser adapter imported lazily (Phase 2 heavy deps not required at boot).
     from applicant.adapters.browser.patchright_browser import PatchrightBrowser
 
-    llm = OpenAICompatibleLLM(
-        provider=settings.llm_provider,
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
+    # App-config store (persists the tier ladder + wizard state, FR-LLM-3/FR-OOBE).
+    session = getattr(storage, "_session", None)
+    config_store = (
+        SqlAlchemyAppConfigStore(session) if session is not None else InMemoryAppConfigStore()
     )
+
+    credentials = PgCredentialStore(settings.credential_keyfile)
+
+    # Setup service first so the persisted ladder can configure the LLM adapter.
+    setup_service = SetupService(
+        llm_configured=settings.llm_configured,
+        config_store=config_store,
+        credentials=credentials,
+    )
+    # Seed L1 from env on first boot if the UI hasn't set a ladder yet (FR-LLM-2).
+    if settings.llm_configured and not setup_service.get_tiers():
+        from applicant.ports.driving.setup_wizard import LLMSettings as _LLMSettings
+
+        setup_service.configure_llm(
+            _LLMSettings(
+                provider=settings.llm_provider,
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model=settings.llm_model,
+            )
+        )
+
+    llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
     discovery = JobSpySearxngDiscovery()
     embedding = LocalEmbedding()
     browser = PatchrightBrowser()
@@ -122,7 +148,6 @@ def build_container(settings: Settings | None = None) -> Container:
     latex_tailor = LatexTailor()
     docx_tailor = DocxTailor()
     font_installer = FontInstaller()
-    credentials = PgCredentialStore(settings.credential_keyfile)
     notification = AppriseNotifier(
         discord_webhook_url=settings.discord_webhook_url,
         apprise_urls=settings.apprise_urls,
@@ -133,7 +158,6 @@ def build_container(settings: Settings | None = None) -> Container:
     # Register durable workflows (recovered on startup in lifespan).
     application_pipeline.register(orchestrator)
 
-    setup_service = SetupService(llm_configured=settings.llm_configured)
     campaign_service = CampaignService(storage)
     discovery_service = DiscoveryService(storage, discovery, embedding)
     scoring_service = ScoringService(storage, llm, embedding)

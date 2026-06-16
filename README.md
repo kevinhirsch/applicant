@@ -45,6 +45,20 @@ Python 3.11+ · FastAPI + vendored Odysseus UI · PostgreSQL + JSONB · DBOS Tra
 · JobSpy + SearXNG (discovery) · LaTeX/moderncv primary resume engine with docx-XML
 fallback · Apprise/Discord notifications · structlog. Toolchain: **uv**.
 
+## Durable orchestration backend
+
+The durable backbone is pluggable via the `ORCHESTRATOR_BACKEND` env var:
+
+- `shim` (**default**) — a file-backed checkpoint store (`CHECKPOINT_DIR`,
+  default `.applicant_checkpoints`). Requires no Postgres, so the app boots and the
+  full test suite runs hermetically while still proving true mid-step resumption.
+- `dbos` — the real DBOS Transact adapter (durable workflows, idempotent
+  checkpointed steps, `send`/`recv` approval gates, cron scheduling, durable
+  queues for concurrency caps / rate limits). Requires a live Postgres at
+  `DATABASE_URL`. The DBOS-backed resumption tests
+  (`tests/integration/test_dbos_orchestrator.py`) are skipped unless both
+  `ORCHESTRATOR_BACKEND=dbos` and a reachable `DATABASE_URL` are set.
+
 ## Status
 
 Specification complete; implementation scaffolding in progress (see
