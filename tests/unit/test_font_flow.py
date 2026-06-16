@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from applicant.adapters.fonts import font_installer as fi_mod
 from applicant.adapters.fonts.font_installer import FontInstaller
 from applicant.application.services.font_service import FontService
 
@@ -76,6 +77,65 @@ def test_confirm_once_installed(service, tmp_path):
     # No longer reported missing on a fresh report.
     again = service.report_for_fonts(["Inconsolata"])
     assert again.missing == []
+
+
+def test_fc_cache_runs_real_against_confined_dir_when_present(installer, tmp_path, monkeypatch):
+    """FR-FONT-2: real ``fc-cache -f <install_root>`` shells out when present.
+
+    Mocks the subprocess + PATH lookup (the marked seam) so the default lane needs
+    NO fontconfig, but asserts the real call would target the confined dir.
+    """
+    calls: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/usr/bin/fc-cache" if name == "fc-cache" else None
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+
+        class _R:
+            returncode = 0
+
+        return _R()
+
+    monkeypatch.setattr(fi_mod.shutil, "which", fake_which)
+    monkeypatch.setattr(fi_mod.subprocess, "run", fake_run)
+
+    font = tmp_path / "Inconsolata.ttf"
+    font.write_bytes(b"\x00\x01")
+    installer.install_font(str(font), "Inconsolata")
+
+    assert installer.fc_cache_invoked is True
+    assert len(calls) == 1
+    # fc-cache -f <confined install_root>, never system-wide.
+    cmd = calls[0]
+    assert cmd[0] == "/usr/bin/fc-cache"
+    assert cmd[1] == "-f"
+    confined = str((tmp_path / "fonts").resolve())
+    assert cmd[2] == confined
+    assert installer.last_cache_dir == confined
+
+
+def test_fc_cache_graceful_noop_when_absent(installer, tmp_path, monkeypatch):
+    """FR-FONT-2: no fontconfig -> graceful no-op (counted), no subprocess."""
+
+    def fake_which(name: str) -> str | None:
+        return None  # fc-cache not on PATH
+
+    def boom(*a, **k):  # subprocess must NOT be called when fc-cache is absent
+        raise AssertionError("fc-cache should not be invoked when absent")
+
+    monkeypatch.setattr(fi_mod.shutil, "which", fake_which)
+    monkeypatch.setattr(fi_mod.subprocess, "run", boom)
+
+    font = tmp_path / "Inconsolata.ttf"
+    font.write_bytes(b"\x00\x01")
+    status = installer.install_font(str(font), "Inconsolata")
+
+    assert status.installed is True  # install still succeeds
+    assert installer.cache_refresh_count == 1  # refresh attempted (no-op)
+    assert installer.fc_cache_invoked is False  # but no real fc-cache ran
+    assert installer.last_cache_dir == str((tmp_path / "fonts").resolve())
 
 
 def test_installs_persist_across_restart(tmp_path):

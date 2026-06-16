@@ -61,10 +61,36 @@ class _ConvertResult:
 class DocxTailor:
     """ResumeTailoringPort adapter — docx-XML engine (OOXML in-place edit)."""
 
-    def __init__(self, *, allow_convert: bool = False, output_dir: Path | None = None) -> None:
-        # Real docx->PDF only runs when enabled (integration lane); default lane stub.
-        self._allow_convert = allow_convert
+    def __init__(
+        self,
+        *,
+        allow_convert: bool | None = None,
+        render_mode: str = "auto",
+        output_dir: Path | None = None,
+    ) -> None:
+        # Render mode (FR-RESUME-4): "auto" auto-enables the real docx->PDF convert
+        # when LibreOffice/Word is on PATH at runtime, else falls back to the stub;
+        # "on" forces convert, "off" forces the stub. ``allow_convert`` kept for
+        # back-compat: True == "on", False == "off".
+        if allow_convert is not None:
+            render_mode = "on" if allow_convert else "off"
+        self._render_mode = render_mode
         self._output_dir = output_dir
+
+    @property
+    def _allow_convert(self) -> bool:
+        """Whether the real convert should run, given the render mode + binary."""
+        if self._render_mode == "off":
+            return False
+        if self._render_mode == "on":
+            return True
+        # "auto": enable the real convert only when LibreOffice/Word is present.
+        return self._soffice() is not None
+
+    @staticmethod
+    def _soffice() -> str | None:
+        """The LibreOffice/Word headless converter binary, if installed."""
+        return shutil.which("soffice") or shutil.which("libreoffice")
 
     # --- OOXML in-place text edit (preserves run properties) --------------
     def edit_document_xml(self, document_xml: str, replacements: dict[str, str]) -> str:
@@ -193,7 +219,7 @@ class DocxTailor:
         NO LibreOffice/Word is required and the suite stays hermetic.
         """
         storage_path = f"artifacts/{variant_id}.docx.pdf"
-        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        soffice = self._soffice()
         # ``source`` is a path to a real .docx only in the integration lane.
         is_docx_path = self._allow_convert and Path(source).suffix == ".docx" and Path(source).exists()
         if not (self._allow_convert and soffice and is_docx_path):

@@ -1,22 +1,27 @@
 """ConversionService — LaTeX conversion preview + accept/reject gate (FR-RESUME-3a).
 
 At onboarding, after the base resume is uploaded and fonts are resolved, the system
-COMPILES the LaTeX conversion of the base resume (vendored moderncv template) and
-presents it for the user to ACCEPT or REJECT:
+performs a **real docx->moderncv conversion** (FR-RESUME-3): the uploaded résumé is
+parsed (identity, work history with dates, education, skills) and rendered into a
+genuine moderncv ("banking") ``.tex`` source via the vendored Jinja2 template, then
+COMPILED, and the result is presented for the user to ACCEPT or REJECT:
 
-* ACCEPT -> LaTeX becomes the campaign's primary material engine.
-* REJECT -> fall back to the docx engine.
+* ACCEPT -> LaTeX becomes the campaign's primary material engine (the template path).
+* REJECT -> fall back to the docx-XML engine.
 
 The choice is persisted as a per-campaign setting (switchable later) so Phase 3
-material generation reads it. The real xelatex/lualatex compile is stubbed behind
-the LatexTailor compile seam (``_compile_pdf``) so the default test lane needs no
-TeX install; a real-compile test lives behind the integration marker.
+material generation reads it. The real xelatex/lualatex compile sits behind the
+LatexTailor compile seam (``_compile_pdf``), which auto-enables when a TeX engine is
+present and otherwise returns a deterministic stub, so the default test lane needs
+no TeX install; a real-compile test lives behind the integration marker.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from applicant.adapters.resume_parser.resume_parser import ResumeParser
+from applicant.adapters.resume_tailoring.moderncv_converter import ModerncvConverter
 from applicant.core.ids import ResumeVariantId, new_id
 from applicant.observability.logging import get_logger
 
@@ -39,14 +44,18 @@ class ConversionPreview:
     page_count: int
     fidelity_ok: bool
     notes: str
+    tex_source: str = ""
 
 
 class ConversionService:
-    """Implements the LaTeX conversion preview + accept/reject gate."""
+    """Implements the docx->moderncv conversion preview + accept/reject gate."""
 
-    def __init__(self, *, latex_tailor, config_store) -> None:
+    def __init__(self, *, latex_tailor, config_store, converter=None) -> None:
         self._latex = latex_tailor
         self._config = config_store
+        # Real docx->moderncv converter (FR-RESUME-3); defaults to the standard
+        # resume parser + vendored template so the wiring stays additive.
+        self._converter = converter or ModerncvConverter(resume_parser=ResumeParser())
 
     # --- engine choice (persisted per campaign) ---------------------------
     def _key(self, campaign_id: str) -> str:
@@ -63,9 +72,16 @@ class ConversionService:
 
     # --- preview + gate (FR-RESUME-3a) ------------------------------------
     def build_preview(self, campaign_id: str, base_source: str) -> ConversionPreview:
-        """Compile the LaTeX conversion of the base resume for accept/reject."""
+        """Build the real docx->moderncv conversion preview for accept/reject.
+
+        The uploaded résumé text is parsed and rendered into a genuine moderncv
+        ``.tex`` source (FR-RESUME-3) — not passed through as-if-LaTeX — then compiled
+        and inspected (compile auto-enables when a TeX engine is present, else stubs).
+        """
+        conversion = self._converter.convert_text(base_source)
+        tex_source = conversion.tex_source
         vid = ResumeVariantId(new_id())
-        result = self._latex.render_artifact(vid, base_source)
+        result = self._latex.render_artifact(vid, tex_source)
         log.info(
             "conversion_preview_built",
             campaign_id=campaign_id,
@@ -78,6 +94,7 @@ class ConversionService:
             page_count=result.page_count,
             fidelity_ok=result.fidelity_ok,
             notes=result.notes,
+            tex_source=tex_source,
         )
 
     def accept(self, campaign_id: str) -> str:
