@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.application.services.material_service import MaterialService
@@ -112,6 +113,31 @@ def artifact_fidelity_ok(p3ctx, material):
 
 @then("the rendered fonts are embedded and no em-dash remains")
 def fonts_embedded_no_emdash(p3ctx):
+    result = p3ctx["render"]
+    assert "fonts not embedded" not in result.notes
+    assert "em-dash survived" not in result.notes
+
+
+# --- docx fallback engine fidelity (FR-RESUME-3/4) -------------------------
+@given("a campaign whose chosen material engine is docx")
+def docx_engine_campaign(p3ctx):
+    p3ctx["docx_engine"] = DocxTailor()
+
+
+@when("the docx engine renders the base resume artifact")
+def docx_render(p3ctx):
+    p3ctx["render"] = p3ctx["docx_engine"].render_artifact(
+        ResumeVariantId(new_id()), "Senior engineer — built data pipelines"
+    )
+
+
+@then("the docx artifact passes the compile-and-visually-inspect fidelity check")
+def docx_fidelity_ok(p3ctx):
+    assert p3ctx["render"].fidelity_ok is True
+
+
+@then("the docx fonts are embedded and no em-dash remains")
+def docx_fonts_embedded_no_emdash(p3ctx):
     result = p3ctx["render"]
     assert "fonts not embedded" not in result.notes
     assert "em-dash survived" not in result.notes

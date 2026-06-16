@@ -27,7 +27,17 @@ router = APIRouter(
 
 
 def _material_service(container: Container) -> MaterialService:
-    return MaterialService(container.storage, container.llm, container.latex_tailor)
+    # Composed from the frozen container's adapters: storage + llm + both tailoring
+    # engines + the local embedding port (variant clustering, FR-RESUME-6) + the
+    # Phase 0 ConversionService (per-campaign engine choice, FR-RESUME-3a).
+    return MaterialService(
+        container.storage,
+        container.llm,
+        container.latex_tailor,
+        embedding=container.embedding,
+        docx_tailoring=container.docx_tailor,
+        conversion_service=container.conversion_service,
+    )
 
 
 class TurnIn(BaseModel):
