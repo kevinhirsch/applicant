@@ -16,20 +16,29 @@ from __future__ import annotations
 
 from applicant.adapters.discovery.clients import (
     FakeJobSpyClient,
+    FakeRssClient,
     FakeSearxngClient,
     LiveJobSpyClient,
+    LiveRssClient,
     LiveSearxngClient,
 )
 from applicant.adapters.discovery.jobspy_searxng import (
     JobSpySearxngDiscovery,
     JobSpySource,
     ProxyConfig,
+    RssSource,
     SampleSource,
     SearxngSource,
 )
 
 #: The easy boards python-jobspy supports (FR-DISC-2 wave-one master aggregator).
 JOBSPY_SITES = ("linkedin", "indeed", "glassdoor", "google", "zip_recruiter")
+
+#: Default RSS/feed sources (FR-DISC-2 extensible source SHAPE, NFR-EXT-1). Key ->
+#: feed URL; toggleable per campaign exactly like every other source.
+RSS_FEEDS: dict[str, str] = {
+    "rss:hn-hiring": "https://hnrss.org/jobs",
+}
 
 
 def build_default_discovery(
@@ -38,6 +47,7 @@ def build_default_discovery(
     searxng_url: str = "",
     proxies: tuple[str, ...] = (),
     include_sample: bool = True,
+    include_rss: bool = True,
 ) -> JobSpySearxngDiscovery:
     """Build the default master-aggregator discovery adapter.
 
@@ -50,9 +60,11 @@ def build_default_discovery(
     if live:
         jobspy_client = LiveJobSpyClient()
         searxng_client = LiveSearxngClient(searxng_url) if searxng_url else None
+        rss_client = LiveRssClient()
     else:
         jobspy_client = FakeJobSpyClient()
         searxng_client = FakeSearxngClient()
+        rss_client = FakeRssClient()
 
     sources = []
     if include_sample:
@@ -61,5 +73,10 @@ def build_default_discovery(
         sources.append(JobSpySource(site=site, client=jobspy_client, proxy=proxy))
     if searxng_client is not None:
         sources.append(SearxngSource(client=searxng_client, proxy=proxy))
+    if include_rss:
+        for key, feed_url in RSS_FEEDS.items():
+            sources.append(
+                RssSource(client=rss_client, feed_url=feed_url, proxy=proxy, key=key)
+            )
 
     return JobSpySearxngDiscovery(sources=sources, proxy=proxy)

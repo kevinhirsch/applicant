@@ -56,6 +56,24 @@ def get_tool_registry(container: Container = Depends(get_container)):
     return container.tool_registry
 
 
+def require_tool_enabled(tool_key: str):
+    """Build a dependency that 403s if ``tool_key`` is toggled off (FR-UI-4).
+
+    Apply to a capability router so an operator's toggle authoritatively disables
+    the capability at the dispatch boundary — the toggle is enforced, not advisory.
+    """
+
+    def _dep(container: Container = Depends(get_container)) -> None:
+        from applicant.adapters.tools.tool_registry import ToolDisabledError
+
+        try:
+            container.tool_registry.ensure_enabled(tool_key)
+        except ToolDisabledError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    return _dep
+
+
 def require_llm_configured(container: Container = Depends(get_container)) -> None:
     """Gate dependency: 409 until the LLM is configured (FR-UI-5, FR-OOBE-1).
 

@@ -83,6 +83,47 @@ class LiveSearxngClient:
         return rows
 
 
+class LiveRssClient:
+    """Real RSS/Atom job-feed client (FR-DISC-2/4).
+
+    Fetches an RSS/Atom feed (e.g. an HN "Who is hiring" or company-careers feed)
+    and maps each item into the normalize shape. Parsing is stdlib-only
+    (``xml.etree``) so no extra dependency is required for the live path.
+    """
+
+    def __init__(self, *, timeout: float = 15.0) -> None:
+        self._timeout = timeout
+
+    def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
+        import xml.etree.ElementTree as ET  # lazy stdlib parse
+
+        import httpx  # lazy
+
+        proxy = proxies[0] if proxies else None
+        with httpx.Client(timeout=self._timeout, proxy=proxy) as client:
+            resp = client.get(feed_url)
+            resp.raise_for_status()
+            text = resp.text
+        root = ET.fromstring(text)
+        rows: list[dict] = []
+        # Support both RSS (<item>) and Atom (<entry>) shapes minimally.
+        for item in root.iter():
+            tag = item.tag.rsplit("}", 1)[-1]
+            if tag not in {"item", "entry"}:
+                continue
+            title = link = desc = None
+            for child in item:
+                ctag = child.tag.rsplit("}", 1)[-1]
+                if ctag == "title":
+                    title = (child.text or "").strip()
+                elif ctag == "link":
+                    link = (child.text or child.get("href") or "").strip()
+                elif ctag in {"description", "summary", "content"}:
+                    desc = (child.text or "").strip()
+            rows.append({"title": title, "url": link, "description": desc})
+        return rows
+
+
 # --- FAKE clients (offline; default lane) ----------------------------------
 class FakeJobSpyClient:
     """Offline stand-in for python-jobspy — exercises ``JobSpySource`` with no network."""
@@ -149,3 +190,32 @@ class FakeSearxngClient:
 
     def search(self, *, query: str, proxies: list[str] | None) -> list[dict]:
         return list(self._rows)
+
+
+class FakeRssClient:
+    """Offline stand-in for an RSS job feed — exercises ``RssSource`` with no network."""
+
+    def __init__(self, items: list[dict] | None = None) -> None:
+        self._items = items if items is not None else self._default_items()
+
+    @staticmethod
+    def _default_items() -> list[dict]:
+        return [
+            {
+                "title": "Senior Software Engineer (Backend)",
+                "company": "HN Startup",
+                "url": "https://rss.test/jobs/hn-backend",
+                "description": "Python, distributed systems. Remote within US.",
+                "work_mode": "remote",
+            },
+            {
+                "title": "Platform Engineer",
+                "company": "Careers Feed Co",
+                "url": "https://rss.test/jobs/platform",
+                "description": "Kubernetes, Go, Terraform. Hybrid.",
+                "work_mode": "hybrid",
+            },
+        ]
+
+    def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
+        return list(self._items)

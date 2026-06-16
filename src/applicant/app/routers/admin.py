@@ -1,15 +1,14 @@
 """Admin router — tool toggles (FR-UI-4) + debug/observability surface (FR-OBS-2, FR-LOG-3).
 
-# STAGE B — owned by Phase 4. Provides:
-#   * Tool registry read + per-tool toggle (FR-UI-4), bound to the ToolRegistry
-#     driven port (persisted to tool_settings).
-#   * Debug-surface data (FR-OBS-2 / FR-LOG-3 / dormant-surfaces.md §4): logs,
-#     per-page screenshots, per-application history, durable-workflow (DBOS) state.
-#
-# Where a backing store is not yet wired (e.g. log/screenshot stores land later),
-# the endpoint returns an explicit ``pending`` marker so the UI grays the panel
-# rather than showing dead data as live (FR-UI-2 scaffold-and-gray).
-Gated behind the LLM-settings gate (FR-UI-5).
+Phase 4. Provides:
+  * Tool registry read + per-tool toggle (FR-UI-4), bound to the ToolRegistry
+    driven port (persisted to tool_settings) and enforced at dispatch.
+  * Debug-surface data (FR-OBS-2 / FR-LOG-3 / FR-UI-6): recent redacted logs,
+    per-application history, per-page screenshots, durable-workflow (DBOS) state,
+    and the resume-variant library with lineage / scores / approval state.
+
+All read-models come from the AdminQueryService (real storage + orchestrator +
+logging ring buffer). Gated behind the LLM-settings gate (FR-UI-5).
 """
 
 from __future__ import annotations
@@ -53,23 +52,12 @@ def toggle_tool(
 # === Debug surface (FR-OBS-2 / FR-LOG-3) ===================================
 @router.get("/history/{campaign_id}")
 def application_history(campaign_id: str, container: Container = Depends(get_container)) -> dict:
-    """Per-application history for the debug surface (FR-OBS-2 / FR-LOG-3).
+    """Per-application history for the debug surface (FR-OBS-2 / FR-LOG-3 / FR-UI-6).
 
-    Reads durable application records straight from storage so history is always
-    available (it is the spine of the observability surface).
+    Each row carries its logged detail: status, role, work mode, the variant used,
+    captured-screenshot count, and recorded outcome events.
     """
-    apps = container.storage.applications.list_for_campaign(campaign_id)  # type: ignore[arg-type]
-    rows = [
-        {
-            "application_id": a.id,
-            "status": a.status.value,
-            "role_name": a.role_name,
-            "job_title": a.job_title,
-            "work_mode": a.work_mode,
-            "root_url": a.root_url,
-        }
-        for a in apps
-    ]
+    rows = container.admin_query_service.application_history(campaign_id)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "applications": rows}
 
 
@@ -90,35 +78,33 @@ def workflow_state(application_id: str, container: Container = Depends(get_conta
     Reports completed idempotent steps and whether the workflow is pending recovery,
     introspected from the durable orchestrator.
     """
-    orch = container.orchestrator
-    workflow_id = f"application:{application_id}"
-    completed = orch.completed_steps(workflow_id) if hasattr(orch, "completed_steps") else []
-    pending = (
-        workflow_id in orch.recover_pending() if hasattr(orch, "recover_pending") else False
-    )
-    return {
-        "application_id": application_id,
-        "workflow_id": workflow_id,
-        "completed_steps": completed,
-        "pending_recovery": pending,
-    }
+    return container.admin_query_service.workflow_state(application_id)  # type: ignore[arg-type]
 
 
 @router.get("/screenshots/{application_id}")
-def application_screenshots(application_id: str) -> dict:
+def application_screenshots(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
     """Per-page screenshots for the debug surface (FR-OBS-2).
 
-    The application_screenshots store lands with the live prefill/sandbox capture;
-    until then this returns ``pending`` so the panel is grayed, not faked (FR-UI-2).
+    Reads the application_screenshots store captured during pre-fill/sandbox runs.
     """
-    return {"application_id": application_id, "screenshots": [], "status": "pending"}
+    shots = container.admin_query_service.screenshots(application_id)  # type: ignore[arg-type]
+    return {"application_id": application_id, "screenshots": shots, "status": "live"}
 
 
 @router.get("/logs")
-def logs() -> dict:
+def logs(limit: int = 100, container: Container = Depends(get_container)) -> dict:
     """Recent structured logs for the debug surface (FR-LOG-3 / FR-OBS-2).
 
-    The structlog/OTel tail binding lands with the observability stack; returns
-    ``pending`` so the UI grays this panel until then (FR-UI-2).
+    Tails the structlog ring buffer; entries are already secret-redacted (NFR-PRIV-1).
     """
-    return {"entries": [], "status": "pending"}
+    entries = container.admin_query_service.logs(limit)
+    return {"entries": entries, "status": "live"}
+
+
+@router.get("/variants/{campaign_id}")
+def variant_library(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+    """Resume-variant library: lineage / scores / approval state (FR-UI-6 / FR-RESUME-6)."""
+    variants = container.admin_query_service.variant_library(campaign_id)  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "variants": variants}

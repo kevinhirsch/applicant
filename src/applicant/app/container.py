@@ -33,16 +33,23 @@ from applicant.adapters.storage.app_config_store import (
 )
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
+from applicant.adapters.tools.tool_settings_sink import (
+    InMemoryToolSettingsSink,
+    SqlAlchemyToolSettingsSink,
+)
 from applicant.app.config import Settings, get_settings
+from applicant.application.services.admin_query_service import AdminQueryService
 from applicant.application.services.agent_run_service import AgentRunService
 from applicant.application.services.attribute_cloud_service import AttributeCloudService
 from applicant.application.services.campaign_service import CampaignService
+from applicant.application.services.chat_service import ChatService
 from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.criteria_service import CriteriaService
 from applicant.application.services.digest_service import DigestService
 from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.feedback_service import FeedbackService
 from applicant.application.services.font_service import FontService
+from applicant.application.services.learning_advanced import AdvancedLearningService
 from applicant.application.services.learning_service import LearningService
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
@@ -89,6 +96,7 @@ class Container:
     discovery_service: Any
     scoring_service: Any
     learning_service: Any
+    advanced_learning_service: Any
     criteria_service: Any
     agent_run_service: Any
     notification_service: Any
@@ -96,6 +104,8 @@ class Container:
     digest_service: Any
     attribute_cloud_service: Any
     feedback_service: Any
+    chat_service: Any = None
+    admin_query_service: Any = None
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
@@ -220,7 +230,14 @@ def build_container(settings: Settings | None = None) -> Container:
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
-    tool_registry = ToolRegistry()
+    # Tool registry persisted to tool_settings when a DB session is available
+    # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
+    tool_sink = (
+        SqlAlchemyToolSettingsSink(session)
+        if session is not None
+        else InMemoryToolSettingsSink()
+    )
+    tool_registry = ToolRegistry(sink=tool_sink)
 
     # Register durable workflows (recovered on startup in lifespan).
     application_pipeline.register(orchestrator)
@@ -229,8 +246,14 @@ def build_container(settings: Settings | None = None) -> Container:
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     learning_service = LearningService(storage, embedding)
-    discovery_service = DiscoveryService(storage, discovery, embedding, learning_service)
-    scoring_service = ScoringService(storage, llm, embedding, learning=learning_service)
+    # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
+    advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
+    discovery_service = DiscoveryService(
+        storage, discovery, embedding, learning_service, tool_registry=tool_registry
+    )
+    scoring_service = ScoringService(
+        storage, llm, embedding, learning=learning_service, tool_registry=tool_registry
+    )
     criteria_service = CriteriaService(storage, llm)
     agent_run_service = AgentRunService(storage)
     notification_service = NotificationService(notification)
@@ -248,6 +271,16 @@ def build_container(settings: Settings | None = None) -> Container:
         storage, pending_actions=pending_actions_service
     )
     feedback_service = FeedbackService(storage, learning_service, criteria=criteria_service)
+    # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
+    # routing integral changes through the shared confirmation gate (FR-FB-3).
+    chat_service = ChatService(
+        attribute_service=attribute_cloud_service,
+        criteria_service=criteria_service,
+        llm=llm,
+    )
+    # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
+    # workflow state, logs, variant library — backed by real storage + orchestrator.
+    admin_query_service = AdminQueryService(storage, orchestrator)
 
     # Phase 2: durable concurrency + final-approval gate + submission logging.
     from applicant.application.services.capacity_service import CapacityService
@@ -300,6 +333,7 @@ def build_container(settings: Settings | None = None) -> Container:
         discovery_service=discovery_service,
         scoring_service=scoring_service,
         learning_service=learning_service,
+        advanced_learning_service=advanced_learning_service,
         criteria_service=criteria_service,
         agent_run_service=agent_run_service,
         notification_service=notification_service,
@@ -307,6 +341,8 @@ def build_container(settings: Settings | None = None) -> Container:
         digest_service=digest_service,
         attribute_cloud_service=attribute_cloud_service,
         feedback_service=feedback_service,
+        chat_service=chat_service,
+        admin_query_service=admin_query_service,
         capacity_service=capacity_service,
         final_approval_service=final_approval_service,
         submission_service=submission_service,
