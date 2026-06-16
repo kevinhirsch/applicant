@@ -71,6 +71,31 @@ def test_complete_gated_on_required_sections(svc_and_storage):
     assert svc.is_complete(CID) is True
 
 
+def test_fr_onboard_1_base_resume_and_references_are_required(svc_and_storage):
+    """FR-ONBOARD-1: onboarding cannot complete without the base resume + references.
+
+    Without the base resume the attribute cloud can't be bootstrapped and the
+    FR-ONBOARD-3 reconciliation would be silently skipped, so both sit in
+    REQUIRED_SECTIONS and gate completion.
+    """
+    svc, *_ = svc_and_storage
+    assert IntakeSection.BASE_RESUME in REQUIRED_SECTIONS
+    assert IntakeSection.REFERENCES in REQUIRED_SECTIONS
+
+    # Fill every required section EXCEPT the base resume -> still incomplete.
+    for section in REQUIRED_SECTIONS:
+        if section is IntakeSection.BASE_RESUME:
+            continue
+        svc.save_section(CID, section, {"x": "value"})
+    state = svc.complete(CID)
+    assert state.complete is False
+    assert IntakeSection.BASE_RESUME.value in state.missing_sections
+
+    # Provide the base resume -> now completion succeeds.
+    svc.save_section(CID, IntakeSection.BASE_RESUME, {"document_path": "/tmp/r.pdf"})
+    assert svc.complete(CID).complete is True
+
+
 def test_editing_reopens_completion(svc_and_storage):
     svc, *_ = svc_and_storage
     _fill_required(svc)

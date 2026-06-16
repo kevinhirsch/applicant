@@ -57,6 +57,28 @@ def fake_clock():
     return _Clock()
 
 
+def open_automated_work_gate(client) -> None:
+    """Open the full automated-work gate on a TestClient app (FR-ONBOARD-2, FR-OOBE-3).
+
+    The ``require_automated_work`` dependency 409s until the LLM is configured AND
+    notification channels are configured AND onboarding is complete. This helper
+    satisfies all three so tests that exercise gated routers (discovery, digest,
+    agent-runs, remote) set up the real preconditions instead of relying on the gate
+    being unenforced.
+    """
+    # 1. LLM gate (FR-UI-5).
+    r = client.post(
+        "/api/setup/llm",
+        json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+    )
+    assert r.status_code == 204
+    # 2. Notification channels (FR-OOBE-3).
+    r = client.post("/api/setup/channels", json={"discord_webhook_url": "https://discord.test/wh"})
+    assert r.status_code == 204
+    # 3. Onboarding completion (FR-ONBOARD-2): force the real onboarding gate True.
+    client.app.state.container.setup_service._onboarding_gate = lambda: True
+
+
 @pytest.fixture
 def sqlite_storage():
     """A real SQLAlchemy storage backed by SQLite (schema via metadata)."""

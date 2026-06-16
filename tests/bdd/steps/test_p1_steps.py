@@ -345,7 +345,11 @@ def explore_reserved(p1ctx):
 # --- criteria + run controls (FR-CRIT-2/3, FR-AGENT-1/2/7, FR-LEARN-5) -----
 @given("a campaign exists")
 def a_campaign_exists(p1ctx, app_client):
-    _open_gate(app_client)
+    from tests.conftest import open_automated_work_gate
+
+    # agent-run controls are automated work (FR-AGENT) and so sit behind the
+    # automated-work gate (FR-ONBOARD-2/FR-OOBE-3); open it fully.
+    open_automated_work_gate(app_client)
     p1ctx["client"] = app_client
     r = app_client.post("/api/campaigns", json={"name": "BDD campaign"})
     assert r.status_code == 201

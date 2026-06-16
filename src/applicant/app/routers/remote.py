@@ -19,13 +19,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import get_container, require_automated_work, require_llm_configured
 from applicant.core.entities.outcome_event import OutcomeSource
-from applicant.core.errors import PrefillBoundaryViolation
+from applicant.core.errors import PrefillBoundaryViolation, ReviewRequired
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
 
 router = APIRouter(
-    prefix="/api/remote", tags=["remote"], dependencies=[Depends(require_llm_configured)]
+    prefix="/api/remote",
+    tags=["remote"],
+    dependencies=[Depends(require_llm_configured), Depends(require_automated_work)],
 )
 
 
@@ -82,7 +84,11 @@ def request_final_approval(
 @router.post("/applications/{application_id}/submit-self", status_code=201)
 def submit_self(application_id: str, container: Container = Depends(get_container)) -> dict:
     """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4)."""
-    event = _record_submission(container, application_id, source=OutcomeSource.MANUAL)
+    try:
+        event = _record_submission(container, application_id, source=OutcomeSource.MANUAL)
+    except ReviewRequired as exc:
+        # FR-RESUME-8: even self-submit cannot record over unapproved material.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     # Acting on one channel expires the other escalation rungs (FR-NOTIF-3).
     container.final_approval_service.acted(application_id)
     return {
@@ -106,7 +112,11 @@ def authorize_engine_finish(
         ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    event = _record_submission(container, application_id, source=OutcomeSource.AUTO)
+    try:
+        event = _record_submission(container, application_id, source=OutcomeSource.AUTO)
+    except ReviewRequired as exc:
+        # FR-RESUME-8: engine-finish is the highest-risk auto path; gate it hard.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     container.final_approval_service.acted(application_id)
     return {
         "application_id": application_id,

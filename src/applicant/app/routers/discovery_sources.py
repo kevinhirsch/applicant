@@ -10,12 +10,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from applicant.app.deps import get_discovery_service, require_llm_configured
+from applicant.app.deps import (
+    get_discovery_service,
+    require_automated_work,
+    require_llm_configured,
+)
 
 router = APIRouter(
     prefix="/api/discovery-sources",
     tags=["discovery"],
-    dependencies=[Depends(require_llm_configured)],
+    dependencies=[Depends(require_llm_configured), Depends(require_automated_work)],
 )
 
 

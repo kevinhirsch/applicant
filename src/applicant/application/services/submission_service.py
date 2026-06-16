@@ -29,6 +29,7 @@ from applicant.core.ids import (
     ScreenshotId,
     new_id,
 )
+from applicant.core.rules.review_gate import ReviewableMaterial, ensure_submittable
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
@@ -57,6 +58,21 @@ class SubmissionService:
         except Exception:  # pragma: no cover - defensive: a driver error never converts
             return False
 
+    # --- review gate before submission (FR-RESUME-8) ----------------------
+    def ensure_submittable(self, application_id: ApplicationId) -> None:
+        """Raise ``ReviewRequired`` if any generated material is unapproved.
+
+        FR-RESUME-8: review-before-submission is enforced HERE, in the service that
+        every submit path funnels through (``record_submission``/``mark_submitted``),
+        so the gate cannot be bypassed per-router by a present or future caller.
+        """
+        docs = self._storage.documents.list_for_application(application_id)
+        materials = [
+            ReviewableMaterial(identifier=str(d.id), is_generated=True, approved=d.approved)
+            for d in docs
+        ]
+        ensure_submittable(materials)
+
     # --- terminal completion (FR-LOG-1/2/4, FR-LEARN-2) -------------------
     def record_submission(
         self,
@@ -73,7 +89,11 @@ class SubmissionService:
         ``source`` distinguishes auto-detected from one-tap mark-submitted (FR-LOG-4).
         The terminal state is derived from the source: AUTO -> engine finished,
         MANUAL -> user submitted (§7).
+
+        FR-RESUME-8: before ANYTHING is recorded, the review gate is enforced — all
+        generated material for this application must be approved, else ``ReviewRequired``.
         """
+        self.ensure_submittable(application.id)
         terminal = (
             ApplicationState.FINISHED_BY_ENGINE
             if source is OutcomeSource.AUTO

@@ -38,8 +38,10 @@ class IntakeSection(str, Enum):
 
 
 #: Sections that MUST be present (non-empty) for the intake to be complete and so
-#: to satisfy the onboarding gate (FR-ONBOARD-2). References/certifications and the
-#: base resume are encouraged but not hard-required to begin.
+#: to satisfy the onboarding gate (FR-ONBOARD-2). The base resume is hard-required
+#: (FR-ONBOARD-1): without it the attribute cloud cannot be bootstrapped and the
+#: FR-ONBOARD-3 reconciliation would be silently skipped. References are part of the
+#: Workday-ready comprehensive intake and are required too.
 REQUIRED_SECTIONS: tuple[IntakeSection, ...] = (
     IntakeSection.IDENTITY,
     IntakeSection.WORK_AUTHORIZATION,
@@ -48,8 +50,10 @@ REQUIRED_SECTIONS: tuple[IntakeSection, ...] = (
     IntakeSection.COMPENSATION,
     IntakeSection.WORK_HISTORY,
     IntakeSection.EDUCATION,
+    IntakeSection.REFERENCES,
     IntakeSection.KEY_ATTRIBUTES,
     IntakeSection.EEO,
+    IntakeSection.BASE_RESUME,
     IntakeSection.CAMPAIGN_CRITERIA,
 )
 
