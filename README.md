@@ -68,11 +68,28 @@ internal-only SearXNG).
 
 ## Install and first run
 
-**One-liner** (Proxmox-helper-script style; idempotent and data-safe; brings up the
-Compose stack and runs Alembic migrations, then OOBE finishes in-browser):
+### Proxmox VE node (recommended) — paste-and-go
+
+On your **Proxmox VE node shell**, paste this one line. It launches a whiptail wizard
+(Proxmox VE Helper-Scripts style) that creates a Docker-ready Debian 12 LXC, installs
+Docker, deploys Applicant, runs the migrations, and prints the URL:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/<org>/applicant/main/scripts/install.sh)" -- --apply
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
+```
+
+Pick **default** (sensible defaults — unprivileged CT, 2 cores / 4 GB / 16 GB disk,
+DHCP) or **advanced** (choose CTID, resources, storage, bridge). When it finishes it
+prints `http://<container-ip>:8000` and the container's root password — open that URL
+and complete the in-browser OOBE wizard (see the [User guide](#user-guide)). Update
+later from inside the CT: `pct enter <id>` then `cd /opt/applicant && bash scripts/update.sh --apply`.
+
+### Any Docker host
+
+If you already have a Docker host (or a fresh VM), install directly:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/install.sh)" -- --apply
 ```
 
 From a checkout (dry-run by default — prints the steps; add `--apply` to run them):
@@ -82,9 +99,9 @@ bash scripts/install.sh            # dry-run preview
 bash scripts/install.sh --apply    # provision: compose up + alembic upgrade head
 ```
 
-Then open **`http://localhost:8000`** and complete the setup wizard (see the
-[User guide](#user-guide)). Editable defaults are environment-driven (set them in a
-`.env` file next to the compose file before `--apply`, or export them).
+Then open **`http://localhost:8000`** and complete the setup wizard. Editable defaults
+are environment-driven (set them in a `.env` file next to the compose file before
+`--apply`, or export them — e.g. `POSTGRES_PASSWORD`, `APP_URL`).
 
 **Local (non-container) run** for development:
 

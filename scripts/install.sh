@@ -6,7 +6,7 @@
 # the whole Docker Compose stack (api + postgres + searxng) with sane, EDITABLE
 # defaults and zero CLI knowledge required. Typical usage:
 #
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/<org>/applicant/main/scripts/install.sh)" -- --apply
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/install.sh)" -- --apply
 #
 # What --apply does (idempotent — safe to re-run; data volumes are never deleted):
 #   1. Preflight: require docker + docker compose v2.
