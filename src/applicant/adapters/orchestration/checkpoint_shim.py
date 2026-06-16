@@ -83,7 +83,6 @@ class CheckpointShimOrchestrator:
         self._dir = Path(checkpoint_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._workflows: dict[str, Callable[..., Any]] = {}
-        self._mailbox: dict[tuple[str, str], list[Any]] = {}
         self._queues: dict[str, _Queue] = {}
         self._scheduled: dict[str, Callable[..., Any]] = {}
 
@@ -145,11 +144,37 @@ class CheckpointShimOrchestrator:
         return list(self._load(workflow_id).get("steps", {}).keys())
 
     def send(self, workflow_id: str, topic: str, payload: Any) -> None:
-        self._mailbox.setdefault((workflow_id, topic), []).append(payload)
+        """Durably enqueue a message for ``(workflow_id, topic)`` (FR-DUR-1/3).
+
+        The mailbox is persisted into the workflow's checkpoint file (under
+        ``state["mailbox"][topic]``) so a decision sent BEFORE a crash/restart is
+        not lost: a fresh ``CheckpointShimOrchestrator`` over the same directory can
+        ``recv`` it. This makes the approval gate survive a mid-step restart, which
+        the previous in-process dict could not.
+        """
+        state = self._load(workflow_id)
+        mailbox = state.setdefault("mailbox", {})
+        mailbox.setdefault(topic, []).append(payload)
+        self._save(workflow_id, state)
 
     def recv(self, workflow_id: str, topic: str, timeout: float | None = None) -> Any:
-        box = self._mailbox.get((workflow_id, topic), [])
-        return box.pop(0) if box else None
+        """Pop the oldest durably-stored message for ``(workflow_id, topic)``.
+
+        Returns immediately (callers poll/await across ticks). The popped payload is
+        removed from the persisted mailbox and the checkpoint is re-saved, so a
+        decision is delivered exactly once even across restarts.
+        """
+        state = self._load(workflow_id)
+        mailbox = state.get("mailbox", {})
+        box = mailbox.get(topic, [])
+        if not box:
+            return None
+        payload = box.pop(0)
+        if not box:
+            mailbox.pop(topic, None)
+        state["mailbox"] = mailbox
+        self._save(workflow_id, state)
+        return payload
 
     def recover_pending(self) -> list[str]:
         """Return workflow ids that have a checkpoint file (interrupted/in-flight)."""

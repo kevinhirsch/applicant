@@ -85,6 +85,7 @@ class AgentLoop:
         notification_service=None,
         capacity_service=None,
         final_approval_service=None,
+        sandbox=None,
         orchestrator=None,
     ) -> None:
         self._storage = storage
@@ -99,9 +100,14 @@ class AgentLoop:
         self._notifications = notification_service
         self._capacity = capacity_service
         self._final_approval = final_approval_service
+        self._sandbox = sandbox
         self._orch = orchestrator
         # (campaign_id, date) -> count of applications acted on that day (FR-AGENT-1).
         self._acted: dict[tuple[str, date], int] = {}
+        # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
+        # Guards the loop's own delivery so a ~60s scheduler tick does not re-send the
+        # digest email + Discord ready-ping every tick.
+        self._digest_sent: dict[tuple[str, date], bool] = {}
         # Register the durable pipeline once if an orchestrator is present.
         if self._orch is not None:
             try:
@@ -111,7 +117,31 @@ class AgentLoop:
 
     # --- daily throughput ledger (FR-AGENT-1) -----------------------------
     def acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
-        return self._acted.get((str(campaign_id), now.date()), 0)
+        """Applications acted on today, counted from PERSISTED state (FR-AGENT-1).
+
+        The hard cap must survive a restart, so the count is derived from durable
+        ``agent_runs`` (each tick persists its ``pipelines_started``) PLUS the
+        current in-progress tick's not-yet-persisted delta. A fresh ``AgentLoop`` over
+        the same storage therefore still sees the prior count and keeps enforcing the
+        cap — the old in-process-only dict zeroed on restart and let the cap be
+        exceeded.
+        """
+        key = (str(campaign_id), now.date())
+        return self._persisted_acted_today(campaign_id, now) + self._acted.get(key, 0)
+
+    def _persisted_acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
+        """Sum durably-recorded ``pipelines_started`` over today's agent runs."""
+        try:
+            runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return 0
+        today = now.date()
+        total = 0
+        for run in runs:
+            ts = getattr(run, "timestamp", None)
+            if ts is not None and ts.date() == today:
+                total += int((run.stats or {}).get("pipelines_started", 0))
+        return total
 
     def _record_acted(self, campaign_id: CampaignId, now: datetime, n: int = 1) -> None:
         key = (str(campaign_id), now.date())
@@ -128,6 +158,18 @@ class AgentLoop:
     ) -> TickResult:
         """Advance one campaign's work by one step. Safe to call repeatedly."""
         now = now or datetime.now(UTC)
+        # The in-memory ledger holds ONLY this tick's not-yet-persisted delta; the
+        # durable ``agent_runs`` carry the cross-tick total (FR-AGENT-1). Reset it at
+        # tick start and clear it at tick end so the persisted count (which survives
+        # restart) is the single source of truth between ticks — no double counting.
+        key = (str(campaign_id), now.date())
+        self._acted.pop(key, None)
+        try:
+            return self._tick(campaign_id, now)
+        finally:
+            self._acted.pop(key, None)
+
+    def _tick(self, campaign_id: CampaignId, now: datetime) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
         campaign = self._storage.campaigns.get(campaign_id)
         if campaign is None:
@@ -185,11 +227,17 @@ class AgentLoop:
                 except Exception:  # pragma: no cover - defensive
                     pass
         if self._digest is not None:
-            try:
-                delivered = self._digest.deliver(campaign.id)
-                result.digest_rows = len(delivered.get("payload", {}).get("rows", []))
-            except Exception as exc:  # pragma: no cover - defensive
-                log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))
+            # FR-DIG-1: deliver the digest at most ONCE per (campaign, UTC day) so a
+            # ~60s scheduler cadence does not re-send the email + Discord ready-ping
+            # on every tick.
+            key = (str(campaign.id), now.date())
+            if not self._digest_sent.get(key):
+                try:
+                    delivered = self._digest.deliver(campaign.id)
+                    result.digest_rows = len(delivered.get("payload", {}).get("rows", []))
+                    self._digest_sent[key] = True
+                except Exception as exc:  # pragma: no cover - defensive
+                    log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))
 
     # --- approvals -> applications -> durable pipeline --------------------
     def _process_approvals(self, campaign, result: TickResult, now: datetime) -> None:
@@ -215,7 +263,18 @@ class AgentLoop:
             log.info("sandbox_admission_deferred", application_id=str(app.id))
             return
         ctx = self._build_context(campaign, app)
-        outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
+        try:
+            outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
+        except Exception:
+            # FR-DUR-2/4: a pipeline exception must NOT permanently leak the sandbox
+            # slot — otherwise ``sandbox_concurrency`` failing apps deadlock all
+            # pre-fill. Release the slot (and tear the session down) so capacity
+            # recovers and a later/other app can be admitted.
+            if self._capacity is not None:
+                self._capacity.release_sandbox(str(app.id))
+            self._teardown_sandbox(app.id)
+            log.warning("pipeline_failed_slot_released", application_id=str(app.id))
+            raise
         result.pipelines_started.append(str(app.id))
         self._apply_outcome(app, outcome, result)
 
@@ -230,6 +289,40 @@ class AgentLoop:
                 ctx = self._build_context(campaign, app)
                 outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
                 self._apply_outcome(app, outcome, result)
+
+    def redrive_recovered(self, workflow_id: str) -> dict | None:
+        """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).
+
+        On restart the orchestrator only knows the workflow id, not which services to
+        bind. Re-starting with ``ctx=None`` would let an already-approved application
+        reach ``_submit`` with no submission service and silently drop the real
+        outcome (no OutcomeEvent, no terminal §7 state, no FR-LEARN-2 signal, no
+        teardown). This rebuilds the same live ``PipelineContext`` used for fresh
+        runs so a recovered+approved workflow completes through the real services
+        (FR-LOG-1/4). Returns the workflow outcome (or None if it cannot be mapped).
+        """
+        if self._orch is None:
+            return None
+        aid = self._application_id_from_workflow(workflow_id)
+        if aid is None:
+            # Not an application workflow we can bind — re-drive without a context so
+            # checkpointed steps still resume idempotently.
+            return self._orch.start_workflow(WORKFLOW_NAME, workflow_id).result()
+        app = self._storage.applications.get(aid)
+        if app is None:
+            return self._orch.start_workflow(WORKFLOW_NAME, workflow_id).result()
+        campaign = self._storage.campaigns.get(app.campaign_id)
+        ctx = self._build_context(campaign, app)
+        outcome = self._orch.start_workflow(WORKFLOW_NAME, workflow_id, ctx=ctx).result()
+        result = TickResult(campaign_id=str(app.campaign_id))
+        self._apply_outcome(app, outcome, result)
+        return outcome
+
+    def _application_id_from_workflow(self, workflow_id: str) -> ApplicationId | None:
+        prefix = "application:"
+        if not workflow_id.startswith(prefix):
+            return None
+        return ApplicationId(workflow_id[len(prefix):])
 
     def _apply_outcome(self, app: Application, outcome: dict, result: TickResult) -> None:
         status = outcome.get("status")
@@ -311,6 +404,10 @@ class AgentLoop:
             return {"recorded": True, "outcome": event.type}
 
         def _teardown() -> None:
+            # FR-SANDBOX-1/4: destroy the real ephemeral session (browser context /
+            # Neko room + its cookies/state) so nothing leaks across applications,
+            # THEN free the concurrency slot for the next waiter (FR-DUR-2).
+            self._teardown_sandbox(aid)
             if self._capacity is not None:
                 self._capacity.release_sandbox(str(aid))
 
@@ -326,6 +423,26 @@ class AgentLoop:
         )
 
     # --- helpers ----------------------------------------------------------
+    def _teardown_sandbox(self, application_id: ApplicationId) -> None:
+        """Destroy the application's live sandbox session if any (FR-SANDBOX-4).
+
+        Resolves the app's session via ``sandbox.for_application`` and tears it down
+        so the real browser context / Neko room (and its cookies/state) does not
+        persist across applications. Idempotent + defensive: a missing session or a
+        driver error never breaks the terminal path.
+        """
+        if self._sandbox is None:
+            return
+        resolver = getattr(self._sandbox, "for_application", None)
+        if resolver is None:
+            return
+        try:
+            session = resolver(application_id)
+            if session is not None:
+                self._sandbox.teardown(session.session_id)
+        except Exception:  # pragma: no cover - defensive: teardown must never raise
+            log.warning("sandbox_teardown_failed", application_id=str(application_id))
+
     def _workflow_id(self, application_id: ApplicationId) -> str:
         return f"application:{application_id}"
 

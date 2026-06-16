@@ -364,6 +364,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notification_service=notification_service,
         capacity_service=capacity_service,
         final_approval_service=final_approval_service,
+        sandbox=sandbox,
         orchestrator=orchestrator,
     )
     scheduler = Scheduler(
