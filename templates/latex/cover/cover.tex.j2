@@ -1,0 +1,24 @@
+%% Applicant — cover letter template (FR-RESUME-10).
+%% Uses the vendored deedy-resume-openfont cover.cls + OpenFonts/ (see ../README.md).
+%% Compile with xelatex/lualatex (fontspec required by cover.cls).
+%%
+%% Jinja2 template rendered by the LaTeX adapter from TRUTHFUL, voice-matched body
+%% text (FR-RESUME-2/5). Exactly one page (fidelity check, FR-RESUME-4).
+\documentclass[]{cover}
+
+\begin{document}
+
+\namesection{{ '{' }}{{ first_name }}{{ '}{' }}{{ last_name }}{{ '}{' }}{{ contact_line }}{{ '}' }}
+
+\currentdate{{ '{' }}{{ date }}{{ '}' }}
+
+\companyname{{ '{' }}{{ company }}{{ '}' }}
+\companyaddress{{ '{' }}{{ company_address }}{{ '}' }}
+
+{% for para in body_paragraphs %}\lettercontent{{ '{' }}{{ para }}{{ '}' }}
+{% endfor %}
+
+\closing{{ '{' }}{{ closing }}{{ '}' }}
+\signature{{ '{' }}{{ signature }}{{ '}' }}
+
+\end{document}

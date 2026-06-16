@@ -1,0 +1,60 @@
+%% Applicant — moderncv (banking) resume template (FR-RESUME-3, FR-FONT-2).
+%% Adapted from kevinhirsch/ai-job-search cv/main_example.tex (see ../README.md).
+%% Compile with lualatex (pdflatex fails on fontawesome5 font-expansion errors);
+%% xelatex where fontspec is strictly required (CLAUDE.md gotchas).
+%%
+%% This is a Jinja2 template. The LaTeX adapter renders it with a context built
+%% from a ResumeVariant's structured, TRUTHFUL content (FR-RESUME-2): the engine
+%% reframes/reorders real experience but never injects a field that has no source.
+\documentclass[11pt,a4paper,sans]{moderncv}
+\moderncvstyle{banking}
+\moderncvcolor{blue}
+
+\renewcommand*{\firstnamestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
+\renewcommand*{\lastnamestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
+\renewcommand*{\sectionstyle}[1]{{\sectionfont\color{color1}#1}}
+
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage[scale=0.80]{geometry}
+\usepackage{needspace}  %% guard against orphaned entry titles (fidelity check)
+
+% personal data
+\name{{ '{' }}{{ first_name }}{{ '}' }}{{ '{' }}{{ last_name }}{{ '}' }}
+\address{{ '{' }}{{ address }}{{ '}{}{}' }}
+\phone[mobile]{{ '{' }}{{ phone }}{{ '}' }}
+\email{{ '{' }}{{ email }}{{ '}' }}
+{% if extra_info %}\extrainfo{{ '{' }}{{ extra_info }}{{ '}' }}{% endif %}
+
+\begin{document}
+\makecvtitle
+
+\vspace{6pt}
+\small{{ '{' }}{{ profile_statement }}{{ '}' }}
+
+{% if competencies %}
+\section{Core Competencies}
+\begin{itemize}
+{% for item in competencies %}\item \textbf{{ '{' }}{{ item.category }}{{ '}' }}: {{ item.detail }}
+{% endfor %}\end{itemize}
+{% endif %}
+
+{% if experience %}
+\section{Professional Experience}
+{% for role in experience %}\needspace{4\baselineskip}
+\item{\cventry{{ '{' }}{{ role.dates }}{{ '}{' }}{{ role.title }}{{ '}{' }}{{ role.company }}{{ '}{' }}{{ role.location }}{{ '}{}{' }}
+\begin{itemize}
+{% for bullet in role.bullets %}    \item {{ bullet }}
+{% endfor %}\end{itemize}}}
+\vspace{3pt}
+{% endfor %}
+{% endif %}
+
+{% if education %}
+\section{Education}
+{% for edu in education %}\item{\cventry{{ '{' }}{{ edu.dates }}{{ '}{' }}{{ edu.degree }}{{ '}{' }}{{ edu.institution }}{{ '}{' }}{{ edu.location }}{{ '}{}{' }}{{ edu.detail }}}}
+\vspace{3pt}
+{% endfor %}
+{% endif %}
+
+\end{document}

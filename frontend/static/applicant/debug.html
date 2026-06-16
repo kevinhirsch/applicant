@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!--
+  Applicant — Debug / observability + tool-toggle + history/variant-library surface.
+  FR-OBS-2 (debug surface), FR-LOG-3 (logs), FR-UI-4 (tool toggles), FR-UI-6
+  (history + variant library), FR-OOBE-4 (in-UI Update button).
+
+  Phase 4: tool toggles, per-application history, durable-workflow state, and the
+  Update button are LIVE (wired to /api/admin/* and /api/update/*). Panels whose
+  backing store has not yet landed (logs tail, per-page screenshots, variant
+  library) are GRAYED via .applicant-dormant — present but dormant, never shown as
+  if live (FR-UI-2 scaffold-and-gray). Reuses the vendored Odysseus style.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Debug &amp; observability</title>
+  <link rel="stylesheet" href="../style.css" />
+  <style>
+    .applicant-dormant { opacity: .5; pointer-events: none; }
+    .applicant-section { max-width: 960px; margin: 32px auto; padding: 20px; }
+    .applicant-note { font-style: italic; }
+    .applicant-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
+  </style>
+</head>
+<body data-campaign-id="" data-application-id="">
+  <main>
+    <!-- Tool registry / toggles (FR-UI-4) — LIVE -->
+    <section class="admin-card applicant-section" id="tools-section">
+      <h1>Agent tools <span class="admin-badge admin-badge-on">Phase 4 — live</span></h1>
+      <p class="admin-empty">Toggle each agent tool on/off; toggles are enforced at dispatch (FR-UI-4).</p>
+      <div id="tools-list"><p class="admin-empty">Loading…</p></div>
+    </section>
+
+    <!-- Per-application history (FR-OBS-2 / FR-LOG-3 / FR-UI-6) — LIVE -->
+    <section class="admin-card applicant-section" id="history-section">
+      <h2>Application history <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <table class="admin-card" style="width:100%;" id="history-table">
+        <thead><tr><th>Role</th><th>Status</th><th>Work mode</th><th>Workflow</th></tr></thead>
+        <tbody id="history-rows"><tr><td colspan="4" class="admin-empty">Loading…</td></tr></tbody>
+      </table>
+    </section>
+
+    <!-- In-UI Update button (FR-OOBE-4) — LIVE (safe dry-run by default) -->
+    <section class="admin-card applicant-section" id="update-section">
+      <h2>Update <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <p class="admin-empty">Runs the one-liner update (backup DB, migrate, rollback support) without SSH (FR-OOBE-4).</p>
+      <button class="admin-btn" id="update-btn" type="button">Check for updates</button>
+      <p class="admin-empty applicant-note" id="update-result" hidden></p>
+    </section>
+
+    <!-- Dormant: logs tail (FR-LOG-3) — grayed until the structlog/OTel tail lands. -->
+    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
+      <h2>Logs <span class="admin-badge admin-badge-off">dormant</span></h2>
+      <p class="admin-empty">Structured log tail (FR-LOG-3) arrives with the observability stack.</p>
+    </section>
+
+    <!-- Dormant: per-page screenshots (FR-OBS-2) — grayed until capture lands. -->
+    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
+      <h2>Screenshots <span class="admin-badge admin-badge-off">dormant</span></h2>
+      <p class="admin-empty">Per-page screenshots (FR-OBS-2) arrive with live prefill/sandbox capture.</p>
+    </section>
+
+    <!-- Dormant: variant library (FR-UI-6 / FR-RESUME-6) — grayed until wired. -->
+    <section class="admin-card applicant-section applicant-dormant" aria-disabled="true">
+      <h2>Variant library <span class="admin-badge admin-badge-off">dormant</span></h2>
+      <p class="admin-empty">Resume-variant lineage browser (FR-UI-6, FR-RESUME-6) — present but dormant.</p>
+    </section>
+  </main>
+  <script src="./js/admin.js"></script>
+</body>
+</html>

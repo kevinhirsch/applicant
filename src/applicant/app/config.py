@@ -1,0 +1,55 @@
+"""Application settings (pydantic-settings, env-driven; zero-CLI, NFR-ZEROCLI-1)."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Runtime configuration, loaded from environment / .env."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # Storage (FR-CRIT-4, FR-DUR-3)
+    database_url: str = Field(
+        default="postgresql+psycopg://applicant:applicant@localhost:5432/applicant",
+        alias="DATABASE_URL",
+    )
+
+    # Frontend (FR-UI-1)
+    app_static_dir: str = Field(default="frontend/static", alias="APP_STATIC_DIR")
+
+    # LLM (FR-LLM-1/2). Empty until configured via OOBE; the gate keys off these.
+    llm_provider: str = Field(default="", alias="LLM_PROVIDER")
+    llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
+    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
+    llm_model: str = Field(default="", alias="LLM_MODEL")
+
+    # Credential vault (FR-VAULT-3)
+    credential_keyfile: str = Field(default="secrets/master.key", alias="CREDENTIAL_KEYFILE")
+
+    # Durable orchestration (FR-DUR-3). "shim" (default, no PG) or "dbos".
+    orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
+    checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
+
+    # Observability (FR-OBS-1)
+    log_format: str = Field(default="pretty", alias="LOG_FORMAT")  # pretty | json
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # Notifications (FR-NOTIF-1)
+    discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
+    apprise_urls: str = Field(default="", alias="APPRISE_URLS")
+
+    @property
+    def llm_configured(self) -> bool:
+        """True once enough LLM settings exist to satisfy the OOBE gate (FR-UI-5)."""
+        return bool(self.llm_provider and self.llm_model)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return cached settings (one instance per process)."""
+    return Settings()

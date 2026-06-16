@@ -1,0 +1,54 @@
+"""Domain exceptions. Raised by the pure core to signal rule violations.
+
+These are framework-agnostic; the delivery layer maps them to HTTP responses.
+"""
+
+from __future__ import annotations
+
+
+class DomainError(Exception):
+    """Base class for all domain-level errors."""
+
+
+class IllegalStateTransition(DomainError):
+    """An application lifecycle transition not permitted by the §7 state machine."""
+
+    def __init__(self, frm: object, to: object) -> None:
+        super().__init__(f"Illegal application state transition: {frm} -> {to}")
+        self.frm = frm
+        self.to = to
+
+
+class TruthfulnessViolation(DomainError):
+    """Generated material would fabricate a qualification/title/date/skill.
+
+    FR-RESUME-2, NFR-TRUTH-1 — the truthfulness guardrail is a hard invariant.
+    """
+
+
+class SensitiveFieldViolation(DomainError):
+    """An EEO/demographic field was about to be AI-guessed (FR-ATTR-6)."""
+
+
+class ConfirmationRequired(DomainError):
+    """An integral change was attempted without explicit user confirmation (FR-FB-3)."""
+
+
+class ReviewRequired(DomainError):
+    """Generated material would be submitted without passing the review gate (FR-RESUME-8)."""
+
+
+class PrefillBoundaryViolation(DomainError):
+    """The engine attempted an irreducible human step (FR-PREFILL-4).
+
+    e.g. clicking an account-creating submit, solving a CAPTCHA, completing
+    email/SMS verification, or clicking the final submit without authorization.
+    """
+
+
+class OnboardingIncomplete(DomainError):
+    """Automated work was attempted before onboarding completed (FR-ONBOARD-2)."""
+
+
+class LLMNotConfigured(DomainError):
+    """A gated capability was used before the LLM was configured (FR-UI-5, FR-OOBE-1)."""
