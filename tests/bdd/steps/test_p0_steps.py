@@ -15,6 +15,7 @@ from applicant.core.errors import ReviewRequired
 from applicant.core.rules import review_gate, sensitive_fields, truthfulness
 from applicant.core.rules.review_gate import ReviewableMaterial
 from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
+from applicant.ports.driving.onboarding import REQUIRED_SECTIONS
 
 # Bind all five P0 feature files.
 scenarios(
@@ -59,6 +60,35 @@ def configure_llm(ctx):
 @then("the gated route is reachable")
 def gate_open(ctx):
     assert ctx["client"].get("/api/campaigns").status_code == 200
+
+
+# --- automated-work gate (LLM + channels + onboarding) ---------------------
+@then("automated work may not begin")
+def automated_work_blocked(ctx):
+    assert ctx["client"].get("/api/setup/status").json()["automated_work_allowed"] is False
+
+
+@when("I configure notification channels through the UI")
+def configure_channels(ctx):
+    r = ctx["client"].post("/api/setup/advance/channels")
+    assert r.status_code == 200
+
+
+@when("I complete the Workday-ready onboarding intake through the UI")
+def complete_onboarding(ctx):
+    client = ctx["client"]
+    cid = client.post("/api/campaigns", json={"name": "Job hunt"}).json()["id"]
+    for section in REQUIRED_SECTIONS:
+        client.post(
+            f"/api/onboarding/{cid}/section",
+            json={"section": section.value, "data": {"answer": "v"}},
+        )
+    assert client.post(f"/api/onboarding/{cid}/complete").json()["complete"] is True
+
+
+@then("automated work may begin")
+def automated_work_allowed(ctx):
+    assert ctx["client"].get("/api/setup/status").json()["automated_work_allowed"] is True
 
 
 @then("no command line was required")

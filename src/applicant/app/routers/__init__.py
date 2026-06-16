@@ -14,8 +14,11 @@ from applicant.app.routers import (
     attributes,
     campaigns,
     chat,
+    conversion,
     digest,
     documents,
+    fonts,
+    onboarding,
     outcomes,
     pending_actions,
     remote,
@@ -31,6 +34,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(ui.router)
     # gated driving-port routers
     app.include_router(campaigns.router)
+    app.include_router(onboarding.router)
+    app.include_router(fonts.router)
+    app.include_router(conversion.router)
     app.include_router(attributes.router)
     app.include_router(digest.router)
     app.include_router(documents.router)

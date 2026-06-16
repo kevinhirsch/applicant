@@ -24,6 +24,18 @@ def get_campaign_service(container: Container = Depends(get_container)):
     return container.campaign_service
 
 
+def get_onboarding_service(container: Container = Depends(get_container)):
+    return container.onboarding_service
+
+
+def get_font_service(container: Container = Depends(get_container)):
+    return container.font_service
+
+
+def get_conversion_service(container: Container = Depends(get_container)):
+    return container.conversion_service
+
+
 def get_storage(container: Container = Depends(get_container)):
     return container.storage
 

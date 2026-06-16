@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
 
+    # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
+    # all filesystem/fc-cache ops are restricted to this dir (never system-wide).
+    fonts_dir: str = Field(default=".applicant_fonts", alias="FONTS_DIR")
+
     @property
     def llm_configured(self) -> bool:
         """True once enough LLM settings exist to satisfy the OOBE gate (FR-UI-5)."""

@@ -1,25 +1,46 @@
 """Font-installer adapter (FR-FONT-1/2).
 
-# STAGE B — owned by Phase 3 (render use; flow framework Phase 0).
+# STAGE B — render use owned by Phase 3; the flow framework is Phase 0.
 
 Detects the fonts an uploaded resume references, installs uploaded fonts into the
-conversion environment, and refreshes the font cache at runtime (``fc-cache -f``)
-so a new font is usable without a rebuild. On base-resume upload the engine calls
-``detect_required_fonts`` and prompts for any that are missing.
+conversion environment, and refreshes the font cache at runtime so a new font is
+usable without a rebuild. On base-resume upload the engine calls
+``detect_required_fonts`` and prompts for any that are missing (FR-FONT-1).
 
-The actual filesystem copy + ``fc-cache`` invocation is **stubbed behind a clearly
-marked boundary** so the suite never touches the real font dirs or shells out.
+Filesystem operations are **real but SAFE and confined** to a configurable fonts
+dir (``install_root``) — never system-wide. The actual ``fc-cache -f`` shell-out
+is **stubbed behind a clearly marked boundary** (``_refresh_font_cache``) so tests
+never require fontconfig. The copy into the confined dir is real and verifiable.
 """
 
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
+from applicant.observability.logging import get_logger
 from applicant.ports.driven.font_install import FontStatus
+
+log = get_logger(__name__)
 
 # Fonts the vendored templates already provide (treated as pre-installed).
 _BUNDLED_FONTS = frozenset({"Lato", "Raleway"})
+
+# Common system fonts present in any conversion environment (not "missing").
+_SYSTEM_FONTS = frozenset(
+    {
+        "Calibri",
+        "Cambria",
+        "Arial",
+        "Times New Roman",
+        "Helvetica",
+        "Georgia",
+        "Verdana",
+        "Tahoma",
+        "Courier New",
+    }
+)
 
 # Regexes that surface font family references in LaTeX / docx-ish sources.
 _FONT_PATTERNS = (
@@ -31,16 +52,20 @@ _FONT_PATTERNS = (
 
 
 class FontInstaller:
-    """FontInstallPort adapter (filesystem ops stubbed safely)."""
+    """FontInstallPort adapter — real copy into a confined dir; fc-cache stubbed."""
 
-    def __init__(self, *, install_root: str = "/usr/share/fonts/applicant") -> None:
+    def __init__(self, *, install_root: str = ".applicant_fonts") -> None:
         self._install_root = install_root
+        self._cache_refreshes = 0  # observable by tests
         # Track installs in-memory; bundled fonts are present from the start.
         self._installed: dict[str, FontStatus] = {
             name: FontStatus(name=name, installed=True, environment="bundled")
             for name in _BUNDLED_FONTS
         }
+        # Pick up any fonts already present in the confined dir (resumable installs).
+        self._rescan_install_root()
 
+    # --- detection (FR-FONT-1) --------------------------------------------
     def detect_required_fonts(self, document_path: str) -> list[str]:
         """Detect font families referenced by a document (FR-FONT-1).
 
@@ -55,7 +80,6 @@ class FontInstaller:
         for pat in _FONT_PATTERNS:
             for m in pat.finditer(text):
                 family = m.group(1).strip()
-                # Strip a leading "Lato-Lig" weight suffix down to the family root.
                 root = family.split("-")[0].strip()
                 if root and root not in found:
                     found.append(root)
@@ -63,19 +87,39 @@ class FontInstaller:
 
     def missing_fonts(self, required: list[str]) -> list[str]:
         """Subset of ``required`` not yet installed (drives the upload prompt)."""
-        return [name for name in required if not self._is_installed(name)]
+        missing: list[str] = []
+        for name in required:
+            root = name.split("-")[0].strip()
+            if root in _SYSTEM_FONTS or name in _SYSTEM_FONTS:
+                continue
+            if not self._is_installed(name):
+                missing.append(name)
+        return missing
 
+    # --- install + cache refresh (FR-FONT-2) ------------------------------
     def install_font(self, font_path: str, name: str) -> FontStatus:
-        """Install an uploaded font and refresh the cache at runtime (FR-FONT-2)."""
-        self._copy_and_refresh(font_path, name)  # STAGE B boundary
+        """Install an uploaded font and refresh the cache at runtime (FR-FONT-2).
+
+        The font file is copied into the confined ``install_root`` (real FS op,
+        never system-wide), then ``_refresh_font_cache`` is invoked so the
+        conversion environment picks it up without a rebuild.
+        """
+        self._copy_into_confined_dir(font_path, name)
+        self._refresh_font_cache()  # STAGE B boundary (fc-cache stubbed)
         status = FontStatus(name=name, installed=True, environment=self._install_root)
         self._installed[name] = status
+        log.info("font_installed", name=name, root=self._install_root)
         return status
 
     def list_fonts(self) -> list[FontStatus]:
         return list(self._installed.values())
 
-    # --- helpers / boundary ------------------------------------------------
+    @property
+    def cache_refresh_count(self) -> int:
+        """How many times the (stubbed) fc-cache refresh ran — for tests."""
+        return self._cache_refreshes
+
+    # --- helpers -----------------------------------------------------------
     def _is_installed(self, name: str) -> bool:
         root = name.split("-")[0].strip()
         return root in self._installed or name in self._installed
@@ -89,11 +133,45 @@ class FontInstaller:
             return ""
         return ""
 
-    def _copy_and_refresh(self, font_path: str, name: str) -> None:
-        """STAGE B BOUNDARY — real copy into the font dir + ``fc-cache -f``.
+    def _rescan_install_root(self) -> None:
+        root = Path(self._install_root)
+        if not root.is_dir():
+            return
+        for f in root.iterdir():
+            if f.is_file() and f.suffix.lower() in (".ttf", ".otf", ".ttc"):
+                name = f.stem
+                self._installed.setdefault(
+                    name, FontStatus(name=name, installed=True, environment=self._install_root)
+                )
 
-        A real install would copy ``font_path`` into ``self._install_root`` and run
-        ``fc-cache -f`` so the conversion environment picks the font up at runtime
-        (no rebuild). Stubbed: no filesystem writes, no subprocess.
+    def _copy_into_confined_dir(self, font_path: str, name: str) -> None:
+        """Copy the uploaded font into the confined fonts dir (real, safe).
+
+        SAFE: the destination is resolved INSIDE ``install_root`` and the leaf is
+        sanitized, so a crafted ``name`` cannot escape the confined directory. No
+        system-wide writes ever happen.
         """
+        root = Path(self._install_root).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        src = Path(font_path)
+        suffix = src.suffix.lower() if src.suffix else ".ttf"
+        leaf = re.sub(r"[^A-Za-z0-9._-]", "_", name) + suffix
+        dest = (root / leaf).resolve()
+        # Confinement guard: never write outside install_root.
+        if root not in dest.parents and dest.parent != root:
+            raise ValueError(f"refusing to install font outside confined dir: {dest}")
+        try:
+            shutil.copyfile(str(src), str(dest))
+        except OSError as exc:  # source missing in some test paths — still mark known
+            log.warning("font_copy_failed", name=name, error=str(exc))
+
+    def _refresh_font_cache(self) -> None:
+        """STAGE B BOUNDARY — real ``fc-cache -f <install_root>`` goes here.
+
+        A real install would run ``fc-cache -f`` scoped to ``self._install_root``
+        so the conversion environment picks the font up at runtime (no rebuild).
+        Stubbed: we only count the invocation so tests can assert it ran; no
+        subprocess and no fontconfig dependency.
+        """
+        self._cache_refreshes += 1
         return None

@@ -8,3 +8,15 @@ Feature: Zero-CLI out-of-box setup with an LLM gate
     When I configure the LLM through the UI settings endpoint
     Then the gated route is reachable
     And no command line was required
+
+  Scenario: Automated work cannot begin until LLM configured and onboarding complete
+    # master spec FR-ONBOARD-2, FR-OOBE-3 (NFR-ZEROCLI-1)
+    Given a freshly booted Applicant instance
+    Then automated work may not begin
+    When I configure the LLM through the UI settings endpoint
+    Then automated work may not begin
+    When I configure notification channels through the UI
+    Then automated work may not begin
+    When I complete the Workday-ready onboarding intake through the UI
+    Then automated work may begin
+    And no command line was required

@@ -35,11 +35,25 @@ _SECRET_KEYS = frozenset(
 _REDACTED = "***REDACTED***"
 
 
+def _redact_value(value: Any) -> Any:
+    """Recursively redact secret-looking keys inside nested dicts / lists."""
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if k.lower() in _SECRET_KEYS else _redact_value(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return type(value)(_redact_value(v) for v in value)
+    return value
+
+
 def _redact_secrets(_logger: Any, _method: str, event_dict: dict) -> dict:
-    """structlog processor: redact secret-looking keys (recursively, shallow)."""
+    """structlog processor: redact secret-looking keys (recursively)."""
     for key in list(event_dict.keys()):
         if key.lower() in _SECRET_KEYS:
             event_dict[key] = _REDACTED
+        else:
+            event_dict[key] = _redact_value(event_dict[key])
     return event_dict
 
 
@@ -49,6 +63,30 @@ def _add_correlation_id(_logger: Any, _method: str, event_dict: dict) -> dict:
     if cid is not None:
         event_dict.setdefault("correlation_id", cid)
     return event_dict
+
+
+def bind_correlation_id(cid: str) -> Any:
+    """Bind a correlation id for the current context (per-run/per-application).
+
+    Returns the contextvars token so callers can ``reset`` it later (FR-OBS-1).
+    """
+    return correlation_id.set(cid)
+
+
+#: OTel/DBOS trace-hook seam. Real deployments install a tracer-provider hook here
+#: (DBOS emits OTel spans, FR-OBS-1); the default no-op keeps the suite hermetic.
+_trace_hook: Any = None
+
+
+def set_trace_hook(hook: Any) -> None:
+    """Install a tracing hook (e.g. an OTel exporter / DBOS tracer). FR-OBS-1."""
+    global _trace_hook
+    _trace_hook = hook
+
+
+def get_trace_hook() -> Any:
+    """Return the installed trace hook (or ``None`` if tracing is off)."""
+    return _trace_hook
 
 
 def configure_logging(*, log_format: str = "pretty", log_level: str = "INFO") -> None:
