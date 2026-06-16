@@ -230,7 +230,15 @@ def build_container(settings: Settings | None = None) -> Container:
         proxies=discovery_proxies,
     )
     embedding = LocalEmbedding()
-    browser = PatchrightBrowser()
+    # FR-STEALTH-4: residential egress is enforced up front — a configured proxy is
+    # threaded into the real browser launch; residential-proxy mode without a proxy
+    # (or a self-flagged datacenter exit) refuses to launch.
+    from applicant.adapters.browser.stealth import EgressPolicy
+
+    egress = EgressPolicy.from_settings(
+        mode=settings.egress_mode, proxy_url=settings.egress_proxy_url
+    )
+    browser = PatchrightBrowser(egress=egress)
     detection = DetectionMonitor()
     sandbox = LocalSandbox()
     # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the

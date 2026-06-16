@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!--
+  Applicant — Attribute-cloud editor surface (FR-ATTR-1/2/3/4/6, FR-FB-3, FR-UI-6).
+  The per-campaign attribute cloud (the answers used to pre-fill applications) is
+  human-readable + editable. Learned / AI-added values are shown and overridable
+  (FR-ATTR-4); integral edits route through the confirmation gate (FR-FB-3, the API
+  409s) and sensitive (EEO) attributes are never AI-guessed (FR-ATTR-6, 422).
+  Reuses the vendored Odysseus style (../style.css).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Attribute cloud</title>
+  <link rel="stylesheet" href="../style.css" />
+  <link rel="stylesheet" href="applicant.css" />
+</head>
+<body data-campaign-id="">
+  <div id="applicant-nav"></div>
+  <main>
+    <section class="admin-card applicant-section" id="attributes-section">
+      <h1>Attribute cloud <span class="admin-badge admin-badge-on">live</span></h1>
+      <p class="admin-empty">
+        The answers used to pre-fill your applications. Editable any time; learned /
+        AI-added values are shown and overridable (FR-ATTR-4). Integral edits ask
+        for confirmation (FR-FB-3); sensitive fields are never AI-guessed (FR-ATTR-6).
+      </p>
+      <table class="admin-card" style="width:100%;" id="attributes-table">
+        <thead>
+          <tr><th>Name</th><th>Value</th><th>Flags</th></tr>
+        </thead>
+        <tbody id="attributes-rows"><tr><td colspan="3" class="admin-empty">Loading…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="admin-card applicant-section" id="add-attribute-section">
+      <h2>Add / update attribute <span class="admin-badge admin-badge-on">live</span></h2>
+      <form id="attribute-form" class="applicant-form">
+        <label>Name<input id="a-name" type="text" required /></label>
+        <label>Value<input id="a-value" type="text" required /></label>
+        <label class="applicant-inline">
+          <input id="a-integral" type="checkbox" /> Integral (confirmation-gated, FR-FB-3)
+        </label>
+        <label class="applicant-inline">
+          <input id="a-sensitive" type="checkbox" /> Sensitive / EEO (never AI-guessed, FR-ATTR-6)
+        </label>
+        <button class="admin-btn" id="a-save" type="submit">Save attribute</button>
+      </form>
+      <p class="admin-empty applicant-note" id="attributes-status" hidden></p>
+    </section>
+  </main>
+  <script type="module" src="./js/attributes.js"></script>
+</body>
+</html>

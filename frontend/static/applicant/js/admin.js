@@ -141,6 +141,24 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     }
   }
 
+  // --- stealth honesty caveat + egress posture (FR-STEALTH-4/5) -----------
+  async function loadStealth() {
+    const caveat = document.getElementById("stealth-caveat");
+    const egress = document.getElementById("stealth-egress");
+    if (!caveat) return;
+    try {
+      const s = await api("/api/admin/stealth");
+      caveat.textContent = s.caveat;
+      const e = s.egress || {};
+      egress.textContent =
+        `Egress: ${e.mode}` +
+        (e.proxy_configured ? " (residential proxy threaded into launch)" : " (direct residential)") +
+        ` — ${s.egress_caveat}`;
+    } catch (e) {
+      note(caveat.parentElement, "Stealth posture unavailable.");
+    }
+  }
+
   // --- in-UI Update button (FR-OOBE-4) ------------------------------------
   function wireUpdate() {
     const btn = document.getElementById("update-btn");
@@ -167,4 +185,5 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
   loadVariants();
   loadLogs();
   loadScreenshots();
+  loadStealth();
   wireUpdate();

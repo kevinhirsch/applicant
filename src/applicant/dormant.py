@@ -80,6 +80,30 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         status=STATUS_LIVE,
     ),
     DormantSurface(
+        key="criteria_editor",
+        surface_name="Criteria editor",
+        requirement_ids=("FR-CRIT-1", "FR-CRIT-2", "FR-CRIT-3", "FR-FB-3", "FR-UI-6"),
+        wiring_notes=(
+            "Wired to CriteriaService via /api/criteria: human-readable + editable, "
+            "learned adjustments surfaced + overridable, integral edits gated (409). "
+            "Live (Phase 5)."
+        ),
+        live_phase=5,
+        status=STATUS_LIVE,
+    ),
+    DormantSurface(
+        key="attribute_editor",
+        surface_name="Attribute-cloud editor",
+        requirement_ids=("FR-ATTR-1", "FR-ATTR-2", "FR-ATTR-3", "FR-ATTR-4", "FR-ATTR-6", "FR-FB-3", "FR-UI-6"),
+        wiring_notes=(
+            "Wired to AttributeCloudService via /api/attributes: learned/AI-added "
+            "values shown + overridable, integral edits gated (409), sensitive fields "
+            "never AI-guessed (422). Live (Phase 5)."
+        ),
+        live_phase=5,
+        status=STATUS_LIVE,
+    ),
+    DormantSurface(
         key="multi_campaign_switcher",
         surface_name="Multi-campaign switcher",
         requirement_ids=("FR-CRIT-4", "NFR-EXT-1"),

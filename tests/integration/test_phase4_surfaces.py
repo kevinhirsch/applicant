@@ -159,8 +159,72 @@ def test_update_trigger_safe_by_default(client, monkeypatch):
 # === UI surfaces + dormant registry (FR-UI-2 / FR-UI-6) ===================
 @pytest.mark.integration
 def test_debug_and_chat_surfaces_served(client):
-    assert "tools-section" in client.get("/debug").text
+    debug = client.get("/debug").text
+    assert "tools-section" in debug
+    # FR-STEALTH-5: the honest caveat is surfaced in the debug UI.
+    assert "stealth-section" in debug
     assert "chat-section" in client.get("/chat").text
+
+
+# === Criteria + attribute editor surfaces (FR-UI-6 / FR-CRIT / FR-ATTR / FR-FB-3) ===
+@pytest.mark.integration
+def test_criteria_and_attribute_surfaces_served(client):
+    crit = client.get("/criteria").text
+    assert "criteria-section" in crit
+    assert "Learned adjustments" in crit  # learned-but-overridable surfaced (FR-CRIT-3)
+    attrs = client.get("/attributes").text
+    assert "attributes-section" in attrs
+    assert "AI-guessed" in attrs  # sensitive policy surfaced (FR-ATTR-6)
+
+
+@pytest.mark.integration
+def test_criteria_integral_edit_is_confirmation_gated(client):
+    # FR-FB-3: an integral criteria change (titles) without confirm 409s; with
+    # confirm it applies — the surface routes the 409 path to a re-ask + retry.
+    cid = "c-crit"
+    blocked = client.put(
+        f"/api/criteria/{cid}", json={"titles": ["Staff Engineer"], "confirm": False}
+    )
+    assert blocked.status_code == 409
+    ok = client.put(
+        f"/api/criteria/{cid}", json={"titles": ["Staff Engineer"], "confirm": True}
+    )
+    assert ok.status_code == 200
+
+
+@pytest.mark.integration
+def test_attribute_integral_edit_is_confirmation_gated(client):
+    # FR-FB-3: an integral attribute upsert without confirm 409s; with confirm 201.
+    cid = "c-attr"
+    blocked = client.post(
+        "/api/attributes",
+        json={"campaign_id": cid, "name": "First Name", "value": "Kevin", "is_integral": True},
+    )
+    assert blocked.status_code == 409
+    ok = client.post(
+        "/api/attributes",
+        json={
+            "campaign_id": cid,
+            "name": "First Name",
+            "value": "Kevin",
+            "is_integral": True,
+            "confirm": True,
+        },
+    )
+    assert ok.status_code == 201
+
+
+# === Stealth honesty caveat + egress (FR-STEALTH-4 / FR-STEALTH-5) ========
+@pytest.mark.integration
+def test_stealth_endpoint_surfaces_caveat_and_egress(client):
+    body = client.get("/api/admin/stealth").json()
+    # FR-STEALTH-5: the honest best-effort caveat is returned by the endpoint.
+    assert "best-effort" in body["caveat"]
+    assert body["egress_caveat"]
+    # FR-STEALTH-4: the live egress posture is reported (default: direct residential).
+    assert body["egress"]["mode"] == "direct"
+    assert body["egress"]["is_direct_residential"] is True
+    assert body["egress"]["proxy_configured"] is False
 
 
 @pytest.mark.integration

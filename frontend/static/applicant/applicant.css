@@ -47,6 +47,15 @@
 .applicant-note { font-style: italic; }
 .applicant-toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
 .applicant-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; }
+.applicant-error { color: #9e1c23; }
+
+/* --- editor forms (criteria + attribute-cloud surfaces, FR-UI-6) ----------- */
+.applicant-form { display: flex; flex-direction: column; gap: 10px; max-width: 560px; }
+.applicant-form label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.applicant-form input[type="text"], .applicant-form input[type="number"],
+.applicant-form textarea { width: 100%; }
+.applicant-form label.applicant-inline { flex-direction: row; align-items: center; gap: 8px; }
+.applicant-form .admin-btn { align-self: flex-start; }
 
 /* Shared nav injected by ApplicantUI.mountShell (opt-in via #applicant-nav). */
 .applicant-nav { display: flex; gap: 4px; margin: 12px 0; }

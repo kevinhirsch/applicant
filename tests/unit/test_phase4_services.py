@@ -243,6 +243,8 @@ def test_dormant_registry_keys_present_in_debug_or_other_surface():
     assert (frontend / "digest.html").is_file()  # digest_in_app
     assert (frontend / "review.html").is_file()  # redline_surface
     assert (frontend / "chat.html").is_file()  # chatbot
+    assert (frontend / "criteria.html").is_file()  # criteria_editor (FR-UI-6)
+    assert (frontend / "attributes.html").is_file()  # attribute_editor (FR-UI-6)
 
 
 def test_live_surfaces_have_no_lingering_dormant_class_in_their_panel():

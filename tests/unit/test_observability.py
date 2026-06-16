@@ -37,6 +37,51 @@ def test_secret_keys_redacted_in_list():
     assert out["tiers"][0]["model"] == "m"
 
 
+def test_secret_value_in_message_string_is_masked():
+    # FR-OBS-1 / NFR-PRIV-1: a secret embedded in a free-text message is masked.
+    out = obs._redact_secrets(
+        None, "info", {"event": "calling provider with sk-ABCD1234efgh5678ijkl9012"}
+    )
+    assert "sk-ABCD1234efgh5678ijkl9012" not in out["event"]
+    assert obs._REDACTED in out["event"]
+    # Surrounding text is preserved.
+    assert out["event"].startswith("calling provider with")
+
+
+def test_secret_value_under_non_obvious_key_is_masked():
+    # FR-OBS-1: a secret stored under an innocuous key name is still masked by value.
+    jwt = "eyJhbGciOi.eyJzdWIiOiIxMjM0NTY3ODkw.SflKxwRJSMeKKF2QT4fwpMeJf36"
+    out = obs._redact_secrets(None, "info", {"detail": jwt, "note": "ok"})
+    assert out["detail"] == obs._REDACTED
+    assert out["note"] == "ok"
+
+
+def test_bearer_and_password_inline_are_masked():
+    out = obs._redact_secrets(
+        None,
+        "info",
+        {"hdr": "Authorization: Bearer abcdef123456ghijkl", "msg": "password=hunter2x"},
+    )
+    assert "abcdef123456ghijkl" not in out["hdr"]
+    assert "hunter2x" not in out["msg"]
+
+
+def test_high_entropy_token_under_plain_key_is_masked():
+    out = obs._redact_secrets(
+        None, "info", {"opaque": "Ab3" + "x9Z2k" * 7}  # 38 mixed chars, no prefix
+    )
+    assert out["opaque"] == obs._REDACTED
+
+
+def test_normal_text_is_untouched():
+    # Ordinary words / short ids / plain sentences are not over-redacted.
+    msg = "Scanning enabled sources for new viable roles to add to today's digest."
+    out = obs._redact_secrets(None, "info", {"event": msg, "count": 7, "id": "app-123"})
+    assert out["event"] == msg
+    assert out["count"] == 7
+    assert out["id"] == "app-123"
+
+
 def test_correlation_id_propagates():
     token = obs.bind_correlation_id("run-abc")
     try:
