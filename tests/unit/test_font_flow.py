@@ -34,6 +34,36 @@ def test_detect_required_fonts(installer, tmp_path):
     assert "Inconsolata" in found
 
 
+def _write_docx_with_font(path, family: str) -> None:
+    """Build a tiny real .docx (a zip) declaring ``family`` via python-docx."""
+    import docx
+
+    d = docx.Document()
+    run = d.add_paragraph().add_run("Jane Smith")
+    run.font.name = family
+    d.save(str(path))
+
+
+def test_detect_required_fonts_reads_real_docx_font_table(installer, tmp_path):
+    """FR-FONT-1: a real .docx (zip) declares fonts in word/*.xml, not as UTF-8 text.
+
+    Before the fix ``detect_required_fonts`` read the zip bytes as UTF-8 and scanned
+    for LaTeX directives only, so it found nothing for a genuine docx.
+    """
+    doc = tmp_path / "resume.docx"
+    _write_docx_with_font(doc, "Segoe UI")
+    found = installer.detect_required_fonts(str(doc))
+    assert "Segoe UI" in found
+
+
+def test_missing_fonts_reports_docx_declared_font(service, tmp_path):
+    """FR-FONT-1: a docx-declared, non-system font surfaces in the missing list."""
+    doc = tmp_path / "resume.docx"
+    _write_docx_with_font(doc, "Segoe UI")
+    report = service.report_for_document(str(doc))
+    assert "Segoe UI" in report.missing
+
+
 def test_missing_font_reporting_excludes_bundled_and_system(service, tmp_path):
     doc = tmp_path / "resume.tex"
     doc.write_text(

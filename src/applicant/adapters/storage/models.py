@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -287,6 +288,14 @@ class CredentialModel(Base):
     """
 
     __tablename__ = "credentials"
+    # Keep the SQLite (create_all) lane in sync with the Postgres migration
+    # (alembic/versions/0003_credentials.py): one credential set per
+    # (campaign, tenant) so banking the same tenant is a consistent upsert.
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "tenant_key", name="uq_credentials_campaign_tenant"
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(

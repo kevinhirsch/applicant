@@ -184,6 +184,24 @@ def test_source_ranking_favors_conversion_over_volume(learning, campaign):
 
 
 @pytest.mark.unit
+def test_source_ranking_tie_break_is_deterministic(learning, campaign):
+    # DETERMINISM: equal-yield sources must order deterministically (score DESC,
+    # then source name ASC) so set/dict iteration order can't make the ranking flaky.
+    names = ["zeta", "alpha", "mike", "bravo", "yankee"]
+    # Build many independent models with the SAME tied stats, in shuffled insert
+    # order, and assert every ranking is identical (name-ascending tie-break).
+    rankings = []
+    for seed in range(8):
+        model = learning.model_for(campaign.id)
+        order = names[seed % len(names):] + names[: seed % len(names)]
+        funnel = {n: {"matches": 4, "approvals": 1, "submissions": 1} for n in order}
+        model = learning.record_source_funnel(model, funnel)
+        rankings.append(learning.source_ranking(model))
+    assert all(r == rankings[0] for r in rankings)
+    assert rankings[0] == sorted(names)  # tied -> pure name-ascending order
+
+
+@pytest.mark.unit
 def test_concurrent_record_source_event_no_lost_update(learning, campaign):
     # FR-LEARN-1/FR-DUR-2: concurrent funnel updates for the same campaign must both
     # persist — the per-campaign lock prevents a lost read-modify-write update.

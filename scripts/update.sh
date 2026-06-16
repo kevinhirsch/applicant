@@ -69,8 +69,25 @@ log "Update flow (backup → pull → migrate → restart)."
 run mkdir -p "${BACKUP_DIR}"
 
 log "1/4 Backing up the database to ${DUMP_FILE}"
-run docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
-  pg_dump -U "${DB_USER}" "${DB_NAME}" >"${DUMP_FILE}" 2>/dev/null || true
+# Back up BEFORE migrate so rollback is always possible (FR-INSTALL-2). A failed or
+# empty backup MUST abort the update — never proceed to migrate with no valid dump.
+if [[ "${APPLY}" -eq 1 ]]; then
+  if ! docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
+      pg_dump -U "${DB_USER}" "${DB_NAME}" >"${DUMP_FILE}"; then
+    echo "Backup failed (pg_dump errored); aborting before migrate." >&2
+    rm -f "${DUMP_FILE}"
+    exit 1
+  fi
+  if [[ ! -s "${DUMP_FILE}" ]]; then
+    echo "Backup is empty (${DUMP_FILE}); aborting before migrate." >&2
+    rm -f "${DUMP_FILE}"
+    exit 1
+  fi
+  log "Backup OK ($(wc -c <"${DUMP_FILE}") bytes)."
+else
+  # Dry-run: print the command WITHOUT redirecting anything into the dump file.
+  echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
+fi
 
 log "2/4 Pulling new images"
 run docker compose -f "${COMPOSE_FILE}" pull

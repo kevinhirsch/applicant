@@ -224,7 +224,9 @@ class LearningService:
         raw match volume alone can't dominate the ranking.
         """
         keys = set(model.source_weights) | set(model.source_yield_stats)
-        return sorted(keys, key=lambda k: -self._conversion_score(model, k))
+        # Total, deterministic order: score DESC, then source name ASC so equal-yield
+        # sources have a stable tie-break (set iteration order is otherwise unstable).
+        return sorted(keys, key=lambda k: (-self._conversion_score(model, k), k))
 
     def exploration_split(
         self, model: LearningModel, all_sources: list[str]

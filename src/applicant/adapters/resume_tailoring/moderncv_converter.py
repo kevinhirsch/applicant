@@ -21,6 +21,7 @@ behind the ``LatexTailor`` compile seam.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,32 +34,37 @@ from applicant.ports.driven.resume_parser import ParsedResume, ResumeParserPort
 _TEMPLATE_DIR = Path(__file__).resolve().parents[4] / "templates" / "latex" / "moderncv"
 _TEMPLATE_NAME = "main.tex.j2"
 
-# LaTeX special characters and their escaped forms. Order matters: backslash first
-# so we do not double-escape the replacements we introduce.
-_LATEX_ESCAPES: tuple[tuple[str, str], ...] = (
-    ("\\", r"\textbackslash{}"),
-    ("&", r"\&"),
-    ("%", r"\%"),
-    ("$", r"\$"),
-    ("#", r"\#"),
-    ("_", r"\_"),
-    ("{", r"\{"),
-    ("}", r"\}"),
-    ("~", r"\textasciitilde{}"),
-    ("^", r"\textasciicircum{}"),
-)
+# LaTeX special characters and their escaped forms. Escaping is done in a SINGLE
+# non-recursive pass (one regex + callback) so that replacements we introduce are
+# never themselves re-escaped. In particular ``\`` -> ``\textbackslash{}`` must not
+# have its ``{``/``}`` re-escaped (FR-RESUME-3).
+_LATEX_ESCAPES: dict[str, str] = {
+    "\\": r"\textbackslash{}",
+    "&": r"\&",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\textasciicircum{}",
+}
+
+# Character class of all specials; matched one at a time so each source char maps to
+# exactly one replacement (no second pass over introduced text).
+_LATEX_SPECIAL_RE = re.compile("|".join(re.escape(ch) for ch in _LATEX_ESCAPES))
 
 
 def latex_escape(text: str) -> str:
     """Escape LaTeX special chars after stripping em-dashes (FR-RESUME-5).
 
     Em-dash normalization runs first so the post-filter guarantee holds, then every
-    LaTeX-special character is escaped so the candidate's real text compiles.
+    LaTeX-special character is escaped in a single non-recursive pass so the
+    candidate's real text compiles (FR-RESUME-3).
     """
     out = normalize_emdashes(text or "")
-    for raw, esc in _LATEX_ESCAPES:
-        out = out.replace(raw, esc)
-    return out
+    return _LATEX_SPECIAL_RE.sub(lambda m: _LATEX_ESCAPES[m.group(0)], out)
 
 
 def _split_name(full_name: str) -> tuple[str, str]:

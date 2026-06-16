@@ -228,18 +228,21 @@ class DigestService:
     # --- close the learning + criteria + idempotency loop -----------------
     def _close_loop(self, decision: Decision) -> None:
         # Idempotency: acting expires the other channels (FR-NOTIF-3).
+        campaign_id = self._campaign_for_decision(decision.application_id)
         if self._notification_service is not None:
             self._notification_service.acted(str(decision.application_id))
+            # Acting on any digest item also expires the campaign's digest-ready
+            # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
+            if campaign_id is not None:
+                self._notification_service.acted_digest(str(campaign_id))
         # Resolve the digest-approval pending item (FR-UI-3). The digest row id the
         # user acts on is the POSTING id (the same id ``deliver`` keys the pending
         # action on), not an application row — so resolve by the decision id end-to-end
         # and find the campaign via the posting (it has no applications row yet).
-        if self._pending is not None:
-            campaign_id = self._campaign_for_decision(decision.application_id)
-            if campaign_id is not None:
-                self._pending.resolve_by_dedup(
-                    campaign_id, f"digest_approval:{decision.application_id}"
-                )
+        if self._pending is not None and campaign_id is not None:
+            self._pending.resolve_by_dedup(
+                campaign_id, f"digest_approval:{decision.application_id}"
+            )
         if decision.type is DecisionType.APPROVE:
             self._record_approval_yield(decision)
         if decision.type is DecisionType.DECLINE:

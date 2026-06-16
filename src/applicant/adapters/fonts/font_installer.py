@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 from applicant.observability.logging import get_logger
@@ -78,20 +79,62 @@ class FontInstaller:
     def detect_required_fonts(self, document_path: str) -> list[str]:
         """Detect font families referenced by a document (FR-FONT-1).
 
-        Parses the source for fontspec/font-family directives. Returns a
-        de-duplicated, order-preserving list of family names. Missing files yield
-        an empty list (safe: nothing detected -> nothing to prompt for).
+        For a real ``.docx`` (a zip) the declared font families live in
+        ``word/fontTable.xml``/``styles.xml``, not in the file's UTF-8 bytes, so we
+        branch on the extension and parse the docx XML first (FR-FONT-1); otherwise
+        we fall back to scanning the source for LaTeX fontspec/font-family
+        directives. Returns a de-duplicated, order-preserving list of family names.
+        Missing files yield an empty list (safe: nothing detected -> nothing to
+        prompt for).
         """
+        found: list[str] = []
+
+        def _add(family: str) -> None:
+            root = family.split("-")[0].strip()
+            if root and root not in found:
+                found.append(root)
+
+        path = Path(document_path)
+        if path.suffix.lower() == ".docx" and path.is_file():
+            for family in self._detect_docx_fonts(path):
+                _add(family)
+            if found:
+                return found
+            # fall through to the LaTeX-regex scan only if the docx declared none.
+
         text = self._read_source(document_path)
         if not text:
-            return []
-        found: list[str] = []
+            return found
         for pat in _FONT_PATTERNS:
             for m in pat.finditer(text):
-                family = m.group(1).strip()
-                root = family.split("-")[0].strip()
-                if root and root not in found:
-                    found.append(root)
+                _add(m.group(1).strip())
+        return found
+
+    @staticmethod
+    def _detect_docx_fonts(path: Path) -> list[str]:
+        """Read declared font families from a docx's font table/styles (FR-FONT-1).
+
+        Mirrors ``ResumeParser._detect_docx_fonts`` so a base-resume upload and the
+        font prompt agree on which families a real ``.docx`` references.
+        """
+        found: list[str] = []
+        try:
+            with zipfile.ZipFile(str(path)) as zf:
+                names = zf.namelist()
+                for member in ("word/fontTable.xml", "word/styles.xml", "word/document.xml"):
+                    if member not in names:
+                        continue
+                    xml = zf.read(member).decode("utf-8", errors="ignore")
+                    for m in re.finditer(r'w:(?:ascii|hAnsi|cs)="([^"]+)"', xml):
+                        fam = m.group(1).strip()
+                        if fam and fam not in found:
+                            found.append(fam)
+                    for m in re.finditer(r'<w:font w:name="([^"]+)"', xml):
+                        fam = m.group(1).strip()
+                        if fam and fam not in found:
+                            found.append(fam)
+        except (OSError, zipfile.BadZipFile):
+            return []
         return found
 
     def missing_fonts(self, required: list[str]) -> list[str]:
