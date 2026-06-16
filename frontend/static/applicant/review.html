@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--
+  Applicant — Redline / review surface (DORMANT placeholder, FR-RESUME-8 / FR-UI-2).
+  Grayed out and present until the Phase 3 DocumentReview backend lands. Reuses the
+  vendored Odysseus style (../style.css). No dead UI ships as if live.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Review (dormant)</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;opacity:.5;" aria-disabled="true">
+    <h1>Document review <span class="admin-badge admin-badge-off">dormant — Phase 3</span></h1>
+    <p class="admin-empty">
+      Redline with add+subtract highlights; interactive add/subtract/free-text
+      revision loop; approve/decline/revise. No submission until approved
+      (FR-RESUME-8, FR-ANSWER-1).
+    </p>
+    <!-- Dormant aggressiveness control (FR-RESUME-9 scaffold-and-gray). -->
+    <label class="toggle-switch" aria-disabled="true">
+      <input type="range" min="0" max="100" value="20" disabled /> Aggressiveness (grayed)
+    </label>
+  </main>
+</body>
+</html>

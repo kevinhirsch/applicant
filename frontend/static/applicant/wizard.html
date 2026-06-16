@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!--
+  Applicant — OOBE Setup Wizard shell (FR-OOBE, FR-UI-5).
+  Reuses the vendored Odysseus design system (../style.css): .admin-card,
+  .adm-provider-picker, .admin-model-form, .admin-btn-add, .toggle-switch.
+  The wizard begins with the LLM-settings gate: until LLM is configured the rest
+  of the app returns 409 (FR-UI-5). Subsequent steps (channels, fonts, intake)
+  light up as their backends land (FR-OOBE-2).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Setup</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <main class="admin-card" id="wizard-root" style="max-width:720px;margin:40px auto;padding:24px;">
+    <h1>Applicant setup</h1>
+    <p class="admin-empty">Zero-CLI setup (NFR-ZEROCLI-1). Complete each step in order.</p>
+
+    <!-- STEP 1 — LLM settings gate (FR-UI-5). The only step active in Phase 0. -->
+    <section class="admin-card" id="step-llm" style="margin-top:16px;padding:16px;">
+      <h2>1. LLM provider <span class="admin-badge">required</span></h2>
+      <div class="adm-provider-picker" id="provider-picker">
+        <label>Provider
+          <select id="llm-provider">
+            <option value="">Select…</option>
+            <option value="openrouter">OpenRouter (cloud)</option>
+            <option value="ollama">Ollama (local/network)</option>
+            <option value="openai-compatible">OpenAI-compatible</option>
+          </select>
+        </label>
+      </div>
+      <form class="admin-model-form" id="llm-form">
+        <label>Base URL <input id="llm-base-url" type="text" placeholder="https://…/v1" /></label>
+        <label>API key <input id="llm-api-key" type="password" placeholder="(optional for local)" /></label>
+        <label>Model <input id="llm-model" type="text" placeholder="e.g. llama3.1 or anthropic/claude" /></label>
+        <button class="admin-btn-add" type="submit">Save LLM settings</button>
+      </form>
+      <p id="llm-status" class="admin-empty">Gate: <strong>closed</strong></p>
+    </section>
+
+    <!-- STEP 2..4 — dormant until their backends land (FR-OOBE-2, FR-UI-2). -->
+    <section class="admin-card" id="step-channels" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
+      <h2>2. Notification channels <span class="admin-badge admin-badge-off">Phase 1</span></h2>
+      <label class="toggle-switch"><input type="checkbox" disabled /> Discord</label>
+      <label class="toggle-switch"><input type="checkbox" disabled /> Email (Apprise)</label>
+    </section>
+    <section class="admin-card" id="step-fonts" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
+      <h2>3. Fonts <span class="admin-badge admin-badge-off">Phase 0/3</span></h2>
+    </section>
+    <section class="admin-card" id="step-intake" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
+      <h2>4. Workday-ready intake <span class="admin-badge admin-badge-off">Phase 0</span></h2>
+    </section>
+  </main>
+  <script src="js/wizard.js"></script>
+</body>
+</html>

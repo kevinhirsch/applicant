@@ -1,0 +1,121 @@
+"""Storage port (FR-ATTR, FR-LOG, FR-DUR, FR-CRIT-4).
+
+Repository protocols, one per aggregate. Everything is campaign-scoped (FR-CRIT-4).
+The default adapter is Postgres/JSONB (``adapters.storage``); contract tests prove
+any adapter honors these protocols. A ``UnitOfWork`` groups repositories under one
+transaction.
+
+These Protocols deliberately use ``object`` / entity types from the core so the
+core never imports SQLAlchemy.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from applicant.core.entities.application import Application
+from applicant.core.entities.attribute import Attribute
+from applicant.core.entities.campaign import Campaign
+from applicant.core.entities.decision import Decision
+from applicant.core.entities.generated_document import GeneratedDocument
+from applicant.core.entities.job_posting import JobPosting
+from applicant.core.entities.outcome_event import OutcomeEvent
+from applicant.core.entities.pending_action import PendingAction
+from applicant.core.entities.resume_variant import ResumeVariant
+from applicant.core.ids import (
+    ApplicationId,
+    AttributeId,
+    CampaignId,
+    GeneratedDocumentId,
+    JobPostingId,
+    PendingActionId,
+    ResumeVariantId,
+)
+
+
+@runtime_checkable
+class CampaignRepository(Protocol):
+    def add(self, campaign: Campaign) -> None: ...
+    def get(self, campaign_id: CampaignId) -> Campaign | None: ...
+    def list(self) -> list[Campaign]: ...
+
+
+@runtime_checkable
+class AttributeRepository(Protocol):
+    def add(self, attribute: Attribute) -> None: ...
+    def get(self, attribute_id: AttributeId) -> Attribute | None: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[Attribute]: ...
+
+
+@runtime_checkable
+class JobPostingRepository(Protocol):
+    def add(self, posting: JobPosting) -> None: ...
+    def get(self, posting_id: JobPostingId) -> JobPosting | None: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]: ...
+
+
+@runtime_checkable
+class ApplicationRepository(Protocol):
+    def add(self, application: Application) -> None: ...
+    def get(self, application_id: ApplicationId) -> Application | None: ...
+    def update(self, application: Application) -> None: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[Application]: ...
+
+
+@runtime_checkable
+class ResumeVariantRepository(Protocol):
+    def add(self, variant: ResumeVariant) -> None: ...
+    def get(self, variant_id: ResumeVariantId) -> ResumeVariant | None: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[ResumeVariant]: ...
+
+
+@runtime_checkable
+class GeneratedDocumentRepository(Protocol):
+    def add(self, document: GeneratedDocument) -> None: ...
+    def get(self, document_id: GeneratedDocumentId) -> GeneratedDocument | None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[GeneratedDocument]: ...
+
+
+@runtime_checkable
+class DecisionRepository(Protocol):
+    def add(self, decision: Decision) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[Decision]: ...
+
+
+@runtime_checkable
+class OutcomeEventRepository(Protocol):
+    def add(self, event: OutcomeEvent) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[OutcomeEvent]: ...
+
+
+@runtime_checkable
+class PendingActionRepository(Protocol):
+    def add(self, action: PendingAction) -> None: ...
+    def get(self, action_id: PendingActionId) -> PendingAction | None: ...
+    def list_open(self, campaign_id: CampaignId) -> list[PendingAction]: ...
+    def resolve(self, action_id: PendingActionId) -> None: ...
+
+
+@runtime_checkable
+class StoragePort(Protocol):
+    """Aggregate of all repositories under one unit of work.
+
+    Adapters expose each repository and a transactional boundary. Implementations
+    may be Postgres-backed (default) or in-memory (tests).
+    """
+
+    campaigns: CampaignRepository
+    attributes: AttributeRepository
+    postings: JobPostingRepository
+    applications: ApplicationRepository
+    resume_variants: ResumeVariantRepository
+    documents: GeneratedDocumentRepository
+    decisions: DecisionRepository
+    outcomes: OutcomeEventRepository
+    pending_actions: PendingActionRepository
+
+    def commit(self) -> None: ...
+    def rollback(self) -> None: ...
+    def healthcheck(self) -> bool:
+        """True if the backing store is reachable (tolerated False in tests)."""
+        ...

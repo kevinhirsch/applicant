@@ -1,0 +1,55 @@
+# Applicant stack: api + postgres + searxng (ollama optional, commented).
+# Validate with: docker compose -f docker/docker-compose.yml config
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://applicant:applicant@postgres:5432/applicant
+      APP_STATIC_DIR: frontend/static
+      ORCHESTRATOR_BACKEND: shim
+      LOG_FORMAT: json
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: applicant
+      POSTGRES_PASSWORD: applicant
+      POSTGRES_DB: applicant
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U applicant -d applicant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Optional local LLM (uncomment to run fully local, NFR-LOCAL-1):
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   restart: unless-stopped
+
+volumes:
+  pgdata:
+  # ollama:

@@ -1,0 +1,78 @@
+[project]
+name = "applicant"
+version = "0.1.0"
+description = "Applicant — autonomous, human-in-the-loop job-application agent (hexagonal core)."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "MIT" }
+authors = [{ name = "Applicant" }]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2",
+    "alembic",
+    "psycopg[binary]",
+    "pydantic",
+    "pydantic-settings",
+    "structlog",
+    "httpx",
+    # Durable orchestration backbone (FR-DUR-3). Installs cleanly on 3.11.
+    # The DEFAULT durable_orchestration adapter is a DB/file-backed checkpoint
+    # shim (works without a running Postgres, so the test suite is green);
+    # the DBOS-backed adapter is selected in real deployments.
+    "dbos",
+    # LangGraph is the reasoning loop *within* durable steps (architecture §3.15).
+    "langgraph",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-bdd",
+    "pytest-asyncio",
+    "httpx",
+    "ruff",
+]
+
+# uv's native dev group so `uv sync --dev` installs the test toolchain.
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-bdd",
+    "pytest-asyncio",
+    "httpx",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/applicant"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+bdd_features_base_dir = "tests/bdd/features"
+markers = [
+    "unit: pure-core / fast unit tests (no I/O)",
+    "contract: adapter contract tests against a port",
+    "integration: app-boot / cross-component integration tests",
+    "bdd: pytest-bdd acceptance scenarios (master spec §10 anchors)",
+]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# E501: line length handled by formatter; B008: FastAPI Depends() default is idiomatic;
+# UP042: str-Enum mixin is intentional (JSON-serializable enums across the wire).
+ignore = ["E501", "B008", "UP042"]

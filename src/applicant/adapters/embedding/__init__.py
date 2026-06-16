@@ -1,0 +1,1 @@
+"""Embedding adapters (EmbeddingPort)."""

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!--
+  Applicant — Digest surface (DORMANT placeholder, FR-DIG / FR-UI-2).
+  Grayed out and present until the Phase 1 DigestReview backend lands. Reuses the
+  vendored Odysseus style (../style.css). No dead UI ships as if live.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Digest (dormant)</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;opacity:.5;" aria-disabled="true">
+    <h1>Daily digest <span class="admin-badge admin-badge-off">dormant — Phase 1</span></h1>
+    <p class="admin-empty">
+      One row per role: summary, link, work mode, fit/viability score, why-suggested,
+      approve/decline-with-feedback (FR-DIG-3/4/5). Wires to the DigestReview port.
+    </p>
+    <table class="admin-card" style="width:100%;">
+      <thead><tr><th>Role</th><th>Work mode</th><th>Score</th><th>Why</th><th>Action</th></tr></thead>
+      <tbody><tr><td colspan="5" class="admin-empty">No data (dormant).</td></tr></tbody>
+    </table>
+  </main>
+</body>
+</html>
