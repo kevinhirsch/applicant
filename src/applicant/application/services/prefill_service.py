@@ -142,22 +142,23 @@ class PrefillService:
         # 3. Account-creation page (if any) → pre-fill, then hand off (FR-PREFILL-4).
         if self._browser.is_account_create_page(aid):
             app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
+            # FR-PREFILL-6: run a cautious detection check BEFORE filling the account
+            # page — a CAPTCHA/Cloudflare/etc. there must pause + hand off, never fill.
+            # The account context's legal hand-off is the account human step (the user
+            # takes over the live session to clear the challenge + create the account).
+            if cautious:
+                event = self._check_detection(aid)
+                if event is not None:
+                    result.detection_signal = event.signal_type
+                    return self._account_handoff(
+                        app, result, session.remote_view_url, signal_type=event.signal_type
+                    )
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
                 return blocked
             self._capture_screenshot(aid, result)
             # The engine never clicks the account-creating submit — hand off.
-            app = app.with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
-            result.account_handoff = True
-            result.state = app.status
-            result.pending_action_id = self._emit_waiting(
-                application=app,
-                kind="account_human_step",
-                title="Complete account creation",
-                session_url=session.remote_view_url,
-            )
-            self._persist(app)
-            return result
+            return self._account_handoff(app, result, session.remote_view_url)
 
         # 4. No account needed → straight to pre-filling.
         return self._prefill_pages(app, attributes, result, cautious=cautious)
@@ -265,18 +266,18 @@ class PrefillService:
             if cautious:
                 event = self._check_detection(aid)
                 if event is not None:
-                    app = app.with_status(ApplicationState.BLOCKED_DETECTION)
-                    result.state = app.status
-                    result.detection_signal = event.signal_type
-                    result.pending_action_id = self._emit_waiting(
-                        application=app,
-                        kind="detection_blocker",
-                        title="Detection blocker — take over",
-                        session_url=result.sandbox_session_url,
-                        payload={"signal_type": event.signal_type},
-                    )
-                    self._persist(app)
-                    return result
+                    return self._blocked_detection(app, result, event)
+
+            # FR-PREFILL-4: a mid-flow account-creation page (not just the first page)
+            # must hand off to the human — the engine NEVER fills/advances past an
+            # account-create step on its own. We pre-fill what we can (still in
+            # PREFILLING), then hand off (PREFILLING -> AWAITING_ACCOUNT_HUMAN_STEP).
+            if self._browser.is_account_create_page(aid):
+                blocked = self._fill_current_page(app, attributes, result)
+                if blocked is not None:
+                    return blocked
+                self._capture_screenshot(aid, result)
+                return self._account_handoff(app, result, result.sandbox_session_url)
 
             # If this is the final-submit page, all fillable pages are done.
             if self._browser.is_final_submit_page(aid):
@@ -291,6 +292,50 @@ class PrefillService:
             # Advance; if there is no next page we are done filling.
             if self._browser.advance(aid) is None:
                 return self._reach_final_approval(app, result)
+
+    def _blocked_detection(self, app, result, event) -> PrefillResult:
+        """Pause + hand off on a detection signal (cautious mode, FR-PREFILL-6)."""
+        app = app.with_status(ApplicationState.BLOCKED_DETECTION)
+        result.state = app.status
+        result.detection_signal = event.signal_type
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="detection_blocker",
+            title="Detection blocker — take over",
+            session_url=result.sandbox_session_url,
+            payload={"signal_type": event.signal_type},
+        )
+        self._persist(app)
+        return result
+
+    def _account_handoff(
+        self, app, result, session_url, *, signal_type: str | None = None
+    ) -> PrefillResult:
+        """Land AWAITING_ACCOUNT_HUMAN_STEP — the engine never creates an account.
+
+        Shared by the first-page account step and a mid-flow account-creation page
+        (FR-PREFILL-4): both pre-fill what they can, then hand off to the human. When
+        a detection signal triggered the hand-off (FR-PREFILL-6), ``signal_type`` is
+        recorded on the pending action so the take-over surfaces the cause.
+        """
+        app = app.with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+        result.account_handoff = True
+        result.state = app.status
+        payload = {"signal_type": signal_type} if signal_type else None
+        title = (
+            "Detection on account page — take over"
+            if signal_type
+            else "Complete account creation"
+        )
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="account_human_step",
+            title=title,
+            session_url=session_url,
+            payload=payload,
+        )
+        self._persist(app)
+        return result
 
     def _reach_final_approval(self, app, result) -> PrefillResult:
         app = app.with_status(ApplicationState.MATERIAL_PREP)
@@ -560,10 +605,25 @@ class PrefillService:
             pass
 
     def _check_detection(self, aid):
+        """Forward the FULL signal dict so cautious mode sees every supported signal.
+
+        ``classify_signals`` recognizes HTTP status (403/429), body/markup challenge
+        markers (Cloudflare/CAPTCHA), anomalous redirects (url vs expected_host), and
+        the explicitly-extracted signal tuple — not just ``signals`` (FR-PREFILL-6).
+        """
         state = self._browser.current_state(aid)
-        if not state.detection_signals:
-            return None
-        return self._detection.evaluate(aid, {"signals": state.detection_signals})
+        page_signals: dict = {"signals": state.detection_signals}
+        status = getattr(state, "status", None)
+        if status is not None:
+            page_signals["status"] = status
+        body = getattr(state, "body", None)
+        if body is not None:
+            page_signals["body"] = body
+        page_signals["url"] = state.url
+        expected = getattr(state, "expected_host", None)
+        if expected is not None:
+            page_signals["expected_host"] = expected
+        return self._detection.evaluate(aid, page_signals)
 
     # --- side effects -----------------------------------------------------
     def _emit_waiting(

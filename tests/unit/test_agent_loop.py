@@ -108,7 +108,16 @@ def _approve_posting(storage, cid, *, title="Engineer"):
     return pid
 
 
-def _loop(storage, orch, *, prefill=None, submission=None, capacity=None, digest=None):
+def _loop(
+    storage,
+    orch,
+    *,
+    prefill=None,
+    submission=None,
+    capacity=None,
+    digest=None,
+    sandbox=None,
+):
     return AgentLoop(
         storage=storage,
         agent_run_service=AgentRunService(storage),
@@ -117,6 +126,7 @@ def _loop(storage, orch, *, prefill=None, submission=None, capacity=None, digest
         prefill_service=prefill,
         submission_service=submission,
         capacity_service=capacity,
+        sandbox=sandbox,
         orchestrator=orch,
     )
 
@@ -261,3 +271,148 @@ def test_pivot_yields_slot_when_blocked(tmp_path):
     # The blocked app yielded: the sandbox queue is not permanently full.
     qstate = orch.queue_state("sandbox_concurrency")
     assert len(qstate["active"]) <= 1
+
+
+# --- Fix #3: sandbox slot must not leak when the pipeline raises ----------
+class _BoomPrefill:
+    """Pre-fill that raises, modelling a pipeline exception mid-step."""
+
+    def prefill_application(self, application, url, attributes=None, *, cautious=True):
+        raise RuntimeError("boom")
+
+
+@pytest.mark.unit
+def test_pipeline_exception_does_not_leak_sandbox_slot(tmp_path):
+    """FR-DUR-2/4: a raising pipeline releases its slot so capacity recovers."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage, target=30)
+    _approve_posting(storage, cid, title="A")
+    # Capacity cap of 1: if the failing app leaks its slot, no further app can start.
+    capacity = CapacityService(orch, sandbox_concurrency=1)
+    loop = _loop(storage, orch, prefill=_BoomPrefill(), capacity=capacity)
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    with pytest.raises(RuntimeError):
+        loop.run_once(cid, now=now)
+
+    # The slot was released despite the exception — the queue is empty again.
+    qstate = orch.queue_state("sandbox_concurrency")
+    assert qstate["active"] == []
+    # And a brand-new application can now be admitted (no deadlock).
+    assert capacity.admit_sandbox("next-app") is True
+
+
+# --- Fix #4: sandbox session torn down on terminal completion ------------
+@pytest.mark.unit
+def test_sandbox_torn_down_on_completion(tmp_path):
+    """FR-SANDBOX-1/4: a terminal pipeline destroys the app's live sandbox session."""
+    from applicant.adapters.sandbox.local_sandbox import LocalSandbox
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+    sandbox = LocalSandbox()
+    prefill = _FakePrefill()
+    submission = _FakeSubmission()
+    capacity = CapacityService(orch, sandbox_concurrency=3)
+    loop = _loop(
+        storage, orch, prefill=prefill, submission=submission, capacity=capacity,
+        sandbox=sandbox,
+    )
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)
+    app = storage.applications.list_for_campaign(cid)[0]
+    # Provision a live sandbox for this application (as real pre-fill would).
+    sandbox.provision(app.id)
+    assert sandbox.active_count() == 1
+
+    # Deliver the approval and tick again so the pipeline reaches a terminal state.
+    orch.send(f"application:{app.id}", "final_approval", {"decision": "finished_by_engine"})
+    loop.run_once(cid, now=now)
+
+    assert str(app.id) in submission.recorded
+    # The ephemeral session was destroyed on teardown — nothing leaks across apps.
+    assert sandbox.active_count() == 0
+
+
+# --- Fix #5: the loop delivers the digest at most once per UTC day --------
+@pytest.mark.unit
+def test_digest_delivered_once_per_day_across_ticks(tmp_path):
+    """FR-DIG-1: 3 ticks in one day -> exactly 1 digest delivery (no per-tick re-send)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    digest = _FakeDigest()
+    loop = _loop(storage, orch, prefill=_FakePrefill(), digest=digest)
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)
+    loop.run_once(cid, now=now)
+    loop.run_once(cid, now=now)
+    assert digest.delivered == 1
+
+    # A NEW day delivers again (per-day, not once-ever).
+    loop.run_once(cid, now=now + timedelta(days=1))
+    assert digest.delivered == 2
+
+
+# --- Fix #6: throughput cap survives a restart (persisted ledger) ---------
+@pytest.mark.unit
+def test_throughput_cap_survives_restart(tmp_path):
+    """FR-AGENT-1: a fresh AgentLoop over the same storage still counts the prior day."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage, target=100)  # clamps to 30/day
+    for i in range(40):
+        _approve_posting(storage, cid, title=f"Role-{i}")
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop1 = _loop(storage, orch, prefill=_FakePrefill())
+    loop1.run_once(cid, now=now)
+    assert loop1.acted_today(cid, now) == 30
+
+    # Simulate a restart: a BRAND-NEW loop over the SAME storage (in-memory ledger
+    # is gone) must still see the 30 already acted on today, so the cap holds.
+    loop2 = _loop(storage, orch, prefill=_FakePrefill())
+    assert loop2.acted_today(cid, now) == 30
+    result = loop2.run_once(cid, now=now)
+    assert result.budget_exhausted is True
+    assert result.pipelines_started == []
+    assert loop2.acted_today(cid, now) == 30
+
+
+# --- Fix #2: recovery rebuilds a live context (real outcome recorded) -----
+@pytest.mark.unit
+def test_recovery_redrive_records_real_outcome(tmp_path):
+    """FR-DUR-1/FR-LOG-1/4: a recovered+approved workflow completes through the
+    real submission service (not a silent ``{"recorded": True}``)."""
+    storage = InMemoryStorage()
+    ckpt = str(tmp_path / "ck")
+    orch = CheckpointShimOrchestrator(ckpt)
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+
+    prefill = _FakePrefill()
+    submission = _FakeSubmission()
+    loop = _loop(storage, orch, prefill=prefill, submission=submission)
+
+    # First tick: the app pre-fills and parks at the final-approval gate (awaiting).
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    app = storage.applications.list_for_campaign(cid)[0]
+    wf_id = f"application:{app.id}"
+
+    # The user approves while the worker is "down": the decision is durably stored.
+    orch.send(wf_id, "final_approval", {"decision": "finished_by_engine"})
+
+    # Restart: a fresh orchestrator + loop over the same dir/storage recovers it.
+    orch2 = CheckpointShimOrchestrator(ckpt)
+    loop2 = _loop(storage, orch2, prefill=prefill, submission=submission)
+    assert wf_id in orch2.recover_pending()
+
+    outcome = loop2.redrive_recovered(wf_id)
+    # The recovered workflow completed through the REAL submission service.
+    assert outcome["status"] == "done"
+    assert str(app.id) in submission.recorded

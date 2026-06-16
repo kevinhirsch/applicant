@@ -81,6 +81,20 @@ def test_latex_escape_helper_strips_emdash_and_escapes():
     assert "\\&" in out and "\\%" in out
 
 
+def test_latex_escape_backslash_is_single_pass_not_recursive():
+    """FR-RESUME-3: a literal backslash escapes to \\textbackslash{} WITHOUT the
+    introduced braces being re-escaped (single non-recursive pass)."""
+    # Before the fix this produced an invalid, double-escaped string
+    # (e.g. "a\\textbackslash\\{\\}b").
+    assert latex_escape("a\\b") == "a\\textbackslash{}b"
+    # Braces present in the SOURCE text are still escaped normally.
+    assert latex_escape("100% {x}") == "100\\% \\{x\\}"
+    # Backslash + braces together stay correct (no re-escaping cascade).
+    assert latex_escape("\\{") == "\\textbackslash{}\\{"
+    # Em-dash handling is unaffected (FR-RESUME-5).
+    assert "—" not in latex_escape("a — b")
+
+
 def test_conversion_is_emdash_free(converter):
     text = _RESUME_TEXT + "\nProfile: builder — shipper — closer\n"
     tex = converter.convert_text(text).tex_source

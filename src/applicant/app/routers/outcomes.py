@@ -16,7 +16,7 @@ from applicant.app.container import Container
 from applicant.app.deps import get_container, require_llm_configured
 from applicant.core.entities.application import Application
 from applicant.core.entities.outcome_event import OutcomeSource
-from applicant.core.errors import ReviewRequired
+from applicant.core.errors import IllegalStateTransition, ReviewRequired
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -50,6 +50,11 @@ def detect_submission(
         event = container.submission_service.record_submission(app, source=OutcomeSource.AUTO)
     except ReviewRequired as exc:
         # FR-RESUME-8: never auto-submit material that has not passed the review gate.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except IllegalStateTransition as exc:
+        # FR-LOG-4/§7: an app in EMERGENCY_DATA_HANDOFF may only transition via the
+        # user (→SUBMITTED_BY_USER); an AUTO/FINISHED_BY_ENGINE detect is illegal.
+        # Surface it as a 409 conflict rather than letting it escape as a 500.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     _close_conversion_loop(container, app)
     return {

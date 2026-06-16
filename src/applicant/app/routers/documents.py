@@ -67,6 +67,8 @@ class ScreeningAnswerIn(BaseModel):
     true_source: str
     # None -> classify (factual vs essay vs sensitive); else force essay/factual.
     essay: bool | None = None
+    # Explicit stored EEO answer, used ONLY for sensitive fields (never AI-guessed).
+    explicit_answer: str | None = None
 
 
 class AggressivenessIn(BaseModel):
@@ -170,6 +172,7 @@ def generate_screening_answer(
         body.question,
         body.true_source,
         essay=body.essay,
+        explicit_answer=body.explicit_answer,
     )
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved, "content": doc.content}
 

@@ -142,3 +142,85 @@ def test_exploration_reserves_unseen_source(learning, campaign):
     )
     assert explore  # at least one under-used source reserved (FR-LEARN-6)
     assert "jobspy:indeed" in exploit
+
+
+@pytest.mark.unit
+def test_exploration_budget_zero_disables_exploration(learning, campaign):
+    # FR-LEARN-6: exploration_budget == 0.0 must explore NOTHING (was forced >=1).
+    from dataclasses import replace
+
+    model = replace(learning.model_for(campaign.id), exploration_budget=0.0)
+    exploit, explore = learning.exploration_split(model, ["A", "B", "C"])
+    assert explore == []
+    assert set(exploit) == {"A", "B", "C"}
+
+
+@pytest.mark.unit
+def test_exploration_split_keeps_all_cold_sources(learning, campaign):
+    # FR-DISC-5: cold/unseen sources beyond the explore cap must not be dropped —
+    # every source appears in exploit ∪ explore.
+    from dataclasses import replace
+
+    model = learning.model_for(campaign.id)
+    model = learning.record_source_yield(model, {"indeed": 50})
+    model = replace(model, exploration_budget=0.2)
+    all_sources = ["indeed", "linkedin", "searxng", "rss"]
+    exploit, explore = learning.exploration_split(model, all_sources)
+    assert set(exploit) | set(explore) == set(all_sources)
+
+
+@pytest.mark.unit
+def test_source_ranking_favors_conversion_over_volume(learning, campaign):
+    # FR-DISC-5: a high-volume zero-conversion source must NOT outrank a low-volume
+    # converting one (ranking is by conversion, not raw match volume).
+    model = learning.model_for(campaign.id)
+    for _ in range(5):  # A: 50 matches/run x 5 runs, zero conversions
+        model = learning.record_source_funnel(model, {"A": {"matches": 50}})
+    model = learning.record_source_funnel(
+        model, {"B": {"matches": 5, "approvals": 2, "submissions": 2}}
+    )
+    ranking = learning.source_ranking(model)
+    assert ranking.index("B") < ranking.index("A")
+
+
+@pytest.mark.unit
+def test_source_ranking_tie_break_is_deterministic(learning, campaign):
+    # DETERMINISM: equal-yield sources must order deterministically (score DESC,
+    # then source name ASC) so set/dict iteration order can't make the ranking flaky.
+    names = ["zeta", "alpha", "mike", "bravo", "yankee"]
+    # Build many independent models with the SAME tied stats, in shuffled insert
+    # order, and assert every ranking is identical (name-ascending tie-break).
+    rankings = []
+    for seed in range(8):
+        model = learning.model_for(campaign.id)
+        order = names[seed % len(names):] + names[: seed % len(names)]
+        funnel = {n: {"matches": 4, "approvals": 1, "submissions": 1} for n in order}
+        model = learning.record_source_funnel(model, funnel)
+        rankings.append(learning.source_ranking(model))
+    assert all(r == rankings[0] for r in rankings)
+    assert rankings[0] == sorted(names)  # tied -> pure name-ascending order
+
+
+@pytest.mark.unit
+def test_concurrent_record_source_event_no_lost_update(learning, campaign):
+    # FR-LEARN-1/FR-DUR-2: concurrent funnel updates for the same campaign must both
+    # persist — the per-campaign lock prevents a lost read-modify-write update.
+    import threading
+
+    barrier = threading.Barrier(2)
+
+    def record(leg: str) -> None:
+        barrier.wait()  # maximize overlap of the load->fold->persist window
+        learning.record_source_event(campaign.id, "indeed", leg, count=1)
+
+    t1 = threading.Thread(target=record, args=("approvals",))
+    t2 = threading.Thread(target=record, args=("submissions",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    reloaded = learning.load_model(campaign.id)
+    stats = reloaded.source_yield_stats["indeed"]
+    assert stats["approvals"] == 1
+    assert stats["submissions"] == 1  # neither update was dropped

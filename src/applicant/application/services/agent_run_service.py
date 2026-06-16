@@ -79,7 +79,10 @@ class AgentRunService:
         runs = self._storage.agent_runs.list_for_campaign(campaign_id)
         if not runs:
             return None
-        return max(runs, key=lambda r: r.timestamp).intent_sentence
+        # FR-AGENT-7: tie-break on monotonic insertion ``seq`` so the truly-latest
+        # run wins even when two runs share an identical timestamp (max(timestamp)
+        # alone is unstable for equal keys).
+        return max(runs, key=lambda r: (r.timestamp, r.seq)).intent_sentence
 
     # --- run-mode stop condition (FR-AGENT-2) -----------------------------
     def should_continue(

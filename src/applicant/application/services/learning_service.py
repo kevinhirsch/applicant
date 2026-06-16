@@ -23,6 +23,8 @@ State lives on the immutable ``LearningModel`` entity; every method returns a ne
 from __future__ import annotations
 
 import dataclasses
+import threading
+from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
 from applicant.core.entities.attribute import Attribute
@@ -51,6 +53,21 @@ _DECAY = 0.7
 _W_MATCH = 1.0
 _W_APPROVAL = 5.0
 _W_SUBMISSION = 12.0
+
+
+#: Per-campaign locks guarding the non-atomic load -> fold -> persist of shared
+#: learning state (FR-LEARN-1/FR-DUR-2). Keyed by campaign id and shared across all
+#: LearningService instances in-process so concurrent record paths (approvals/
+#: submissions vs. discovery matches) can't lose an update under 24/7 + DBOS queues.
+#: Hermetic + sufficient for the default lane; the SQL lane should additionally use a
+#: row-locked transaction.
+_CAMPAIGN_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+_LOCKS_GUARD = threading.Lock()
+
+
+def _campaign_lock(campaign_id: CampaignId) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _CAMPAIGN_LOCKS[str(campaign_id)]
 
 
 class LearningService:
@@ -151,6 +168,21 @@ class LearningService:
             acc["submissions"] = int(acc.get("submissions", 0)) + submissions
         return replace(model, source_weights=weights, source_yield_stats=stats)
 
+    def record_funnel_atomic(
+        self, campaign_id: CampaignId, funnels: dict[str, dict]
+    ) -> LearningModel:
+        """Atomically load -> fold a funnel -> persist for a campaign.
+
+        FR-LEARN-1/FR-DUR-2: the per-campaign lock serializes this read-modify-write
+        with the approval/submission path (``record_source_event``) so concurrent
+        match/approval/submission folds can't lose-update the shared learning state.
+        """
+        with _campaign_lock(campaign_id):
+            model = self.load_model(campaign_id)
+            model = self.record_source_funnel(model, funnels)
+            self.persist_model(model)
+        return model
+
     def record_source_event(
         self, campaign_id: CampaignId, source_key: str, leg: str, count: int = 1
     ) -> LearningModel:
@@ -162,14 +194,39 @@ class LearningService:
         """
         if leg not in ("matches", "approvals", "submissions") or not source_key:
             return self.load_model(campaign_id)
-        model = self.load_model(campaign_id)
-        model = self.record_source_funnel(model, {source_key: {leg: int(count)}})
-        self.persist_model(model)
-        return model
+        return self.record_funnel_atomic(campaign_id, {source_key: {leg: int(count)}})
+
+    def _conversion_score(self, model: LearningModel, key: str) -> float:
+        """Conversion-weighted yield score for a source (FR-DISC-5).
+
+        Ranks by *conversion*, not raw volume: a source's score is its weighted
+        conversion RATE — (approvals*wa + submissions*ws) per match — so a
+        high-volume zero-conversion source can never outrank a low-volume converting
+        one. Sources with no recorded matches fall back to their decayed weight so
+        cold/seen-but-empty sources still order sensibly. Exploration (separately)
+        still probes zero-data sources.
+        """
+        stats = model.source_yield_stats.get(key, {})
+        matches = int(stats.get("matches", 0))
+        approvals = int(stats.get("approvals", 0))
+        submissions = int(stats.get("submissions", 0))
+        if matches <= 0:
+            # No volume to normalize against — rank converting legs directly, else
+            # fall back to the decayed weight (keeps cold sources ordered).
+            converted = approvals * _W_APPROVAL + submissions * _W_SUBMISSION
+            return converted or model.source_weights.get(key, 0.0)
+        return (approvals * _W_APPROVAL + submissions * _W_SUBMISSION) / matches
 
     def source_ranking(self, model: LearningModel) -> list[str]:
-        """Sources ordered by learned yield weight, highest first (FR-DISC-5)."""
-        return [k for k, _ in sorted(model.source_weights.items(), key=lambda kv: -kv[1])]
+        """Sources ordered by learned conversion-weighted yield, highest first.
+
+        FR-DISC-5: reweight toward conversion and down-weight low-yield sources, so
+        raw match volume alone can't dominate the ranking.
+        """
+        keys = set(model.source_weights) | set(model.source_yield_stats)
+        # Total, deterministic order: score DESC, then source name ASC so equal-yield
+        # sources have a stable tie-break (set iteration order is otherwise unstable).
+        return sorted(keys, key=lambda k: (-self._conversion_score(model, k), k))
 
     def exploration_split(
         self, model: LearningModel, all_sources: list[str]
@@ -185,9 +242,18 @@ class LearningService:
         # Anything with weight but ranked low is also fair game for exploration.
         explore = unseen[:] or ranked[-1:] if ranked else unseen
         budget = max(0.0, min(1.0, model.exploration_budget))
-        max_explore = max(1, int(round(len(all_sources) * budget))) if all_sources else 0
+        # FR-LEARN-6: a zero budget disables exploration entirely; only floor the
+        # cap to 1 when there *is* a positive budget so exploration is never a no-op.
+        if not all_sources or budget <= 0.0:
+            max_explore = 0
+        else:
+            max_explore = max(1, int(round(len(all_sources) * budget)))
         explore = explore[:max_explore]
-        exploit = [s for s in (ranked or all_sources) if s not in explore]
+        # FR-DISC-5: every enabled source must land in exploit OR explore — cold /
+        # unseen sources beyond the explore cap must not be silently dropped. Build
+        # exploit from ranked order first, then any remaining enabled sources.
+        ordered = ranked + [s for s in all_sources if s not in ranked]
+        exploit = [s for s in ordered if s not in explore]
         return exploit, explore
 
     # --- converting-role signature (FR-LEARN-5) ---------------------------

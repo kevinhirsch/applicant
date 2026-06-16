@@ -19,7 +19,7 @@ from applicant.adapters.browser.patchright_browser import PatchrightBrowser
 from applicant.adapters.detection.detection_monitor import DetectionMonitor
 from applicant.adapters.sandbox.local_sandbox import LocalSandbox
 from applicant.adapters.storage.in_memory import InMemoryStorage
-from applicant.application.services.prefill_service import PrefillService
+from applicant.application.services.prefill_service import PrefillResult, PrefillService
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.ids import (
@@ -387,3 +387,179 @@ class TestStealthWiring:
     def test_caveat_is_surfaced(self):
         # FR-STEALTH-5: the honest best-effort caveat is available to the UX.
         assert "best-effort" in PatchrightBrowser().caveat
+
+
+# === FR-PREFILL-6: full detection-signal forwarding ========================
+@pytest.mark.unit
+class TestDetectionSignalForwarding:
+    def _reach_first_app_page(self, service, app, attrs):
+        """Run to the account hand-off, then resume onto the first app page."""
+        service.prefill_application(app, WORKDAY_URL, attrs)
+        return (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+        )
+
+    def test_http_403_triggers_cautious_pause(self):
+        # FR-PREFILL-6: a 403 status (not in detection_signals) pauses cautiously.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        service._browser.advance(app.id)  # account -> first app page
+        service._browser.inject_page_signals(app.id, status=403)
+        resumed = (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        result = service._continue_pages(
+            resumed, _full_answers(cid), service_result(app), cautious=True
+        )
+        assert result.state == ApplicationState.BLOCKED_DETECTION
+        assert result.detection_signal == "blocked_403"
+
+    def test_anomalous_redirect_triggers_cautious_pause(self):
+        # FR-PREFILL-6: url vs expected_host mismatch pauses cautiously.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        service._browser.advance(app.id)
+        service._browser.inject_page_signals(
+            app.id, expected_host="acme.myworkdayjobs.com", url="https://phish.evil/x"
+        )
+        resumed = (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        result = service._continue_pages(
+            resumed, _full_answers(cid), service_result(app), cautious=True
+        )
+        assert result.state == ApplicationState.BLOCKED_DETECTION
+        assert result.detection_signal == "anomalous_redirect"
+
+    def test_body_marker_triggers_cautious_pause(self):
+        # FR-PREFILL-6: a Cloudflare/CAPTCHA body marker pauses cautiously.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        service._browser.advance(app.id)
+        service._browser.inject_page_signals(
+            app.id, body="Checking your browser before accessing — Cloudflare"
+        )
+        resumed = (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        result = service._continue_pages(
+            resumed, _full_answers(cid), service_result(app), cautious=True
+        )
+        assert result.state == ApplicationState.BLOCKED_DETECTION
+        assert result.detection_signal == "cloudflare"
+
+    def test_detection_on_account_page_pauses_instead_of_filling(self):
+        # FR-PREFILL-6: a detection signal on the account page (step 3) pauses + hands
+        # off; it must NOT fill the account-creation form.
+        cid = CampaignId(new_id())
+        storage2 = InMemoryStorage()
+        app2 = _app(cid)
+
+        class _CaptchaAccountBrowser:
+            def __init__(self):
+                self._inner = PatchrightBrowser()
+                self._filled = False
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def open(self, aid, url):
+                state = self._inner.open(aid, url)
+                self._inner.inject_page_signals(aid, body="Please complete the captcha")
+                return state
+
+            def fill_field(self, aid, selector, value):
+                self._filled = True
+                return self._inner.fill_field(aid, selector, value)
+
+        browser = _CaptchaAccountBrowser()
+        svc = PrefillService(
+            storage=storage2,
+            browser=browser,
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+        )
+        out = svc.prefill_application(app2, WORKDAY_URL, _full_answers(cid), cautious=True)
+        # Pauses + hands off (the user takes over to clear the challenge + create the
+        # account); crucially the account page is NOT filled (FR-PREFILL-6).
+        assert out.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+        assert out.detection_signal == "captcha"
+        assert browser._filled is False, "account page must NOT be filled under detection"
+
+
+# === FR-PREFILL-4: a mid-flow account-creation page hands off ==============
+@pytest.mark.unit
+def test_mid_flow_account_creation_triggers_handoff():
+    from applicant.adapters.browser.ats import FakePage
+    from applicant.ports.driven.browser_automation import DetectedField
+
+    cid = CampaignId(new_id())
+    storage = InMemoryStorage()
+
+    class _MidAccountAts:
+        name = "midacct"
+
+        def tenant_key(self, url):
+            return "midacct:host"
+
+        def pages(self, url):
+            return [
+                FakePage(url=f"{url}/p1", fields=(
+                    DetectedField(selector="#first-name", label="First Name", field_type="text"),
+                )),
+                # An account-creation step appears MID-FLOW (not the first page).
+                FakePage(url=f"{url}/create-account", is_account_create=True, fields=(
+                    DetectedField(selector="#email", label="Email Address", field_type="text"),
+                )),
+                FakePage(url=f"{url}/review", is_final_submit=True),
+            ]
+
+    def factory(ats, fingerprint, *, user_data_dir=""):
+        from applicant.adapters.browser.page_source import FakePageSource
+
+        return FakePageSource(_MidAccountAts())
+
+    browser = PatchrightBrowser(source_factory=factory)
+    service = PrefillService(
+        storage=storage,
+        browser=browser,
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=None,
+    )
+    app = _app(cid)
+    attrs = [
+        _attr(cid, "First Name", "Kevin"),
+        _attr(cid, "Email Address", "kevin@kevinhirsch.com"),
+    ]
+    # First page is NOT account-create, so prefill proceeds, then hits the mid-flow
+    # account page and must hand off (AWAITING_ACCOUNT_HUMAN_STEP), not fill past it.
+    result = service.prefill_application(app, "https://midacct.example/job/1", attrs)
+    assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+    assert result.account_handoff is True
+
+
+def service_result(app):
+    """Build a fresh PrefillResult for a continue-pages call."""
+    return PrefillResult(application_id=app.id, state=app.status)

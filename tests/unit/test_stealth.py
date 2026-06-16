@@ -164,11 +164,11 @@ class TestEgressPolicy:
         from applicant.adapters.browser.stealth import EGRESS_RESIDENTIAL_PROXY
 
         policy = EgressPolicy.from_settings(
-            mode="residential-proxy", proxy_url="http://home:8080"
+            mode="residential-proxy", proxy_url="http://home:8080", residential=True
         )
         assert policy.mode == EGRESS_RESIDENTIAL_PROXY
         assert policy.launch_proxy() == {"server": "http://home:8080"}
-        policy.validate()  # no raise
+        policy.validate()  # no raise (operator attested the proxy is residential)
 
 
 @pytest.mark.unit
@@ -202,8 +202,9 @@ class TestEgressThreadedIntoLaunch:
         captured: dict = {}
 
         class _FakeSource:
-            def __init__(self, fingerprint, *, proxy=None):
+            def __init__(self, fingerprint, *, proxy=None, user_data_dir=""):
                 captured["proxy"] = proxy
+                captured["user_data_dir"] = user_data_dir
 
             def open(self, url):  # noqa: D401
                 captured["opened"] = url

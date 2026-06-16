@@ -59,6 +59,24 @@ def test_list_models_ollama_style():
     assert llm.list_models() == ["llama3.1:8b", "qwen2.5:14b"]
 
 
+def test_list_models_ollama_strips_v1_suffix():
+    # FR-LLM-2: an Ollama base ending in /v1 must still hit /api/tags (not /v1/api/tags).
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}]})
+
+    llm = OpenAICompatibleLLM(
+        provider="ollama",
+        base_url="http://gpu:11434/v1",
+        model="llama3.1:8b",
+        transport=httpx.MockTransport(handler),
+    )
+    assert llm.list_models() == ["llama3.1:8b"]
+    assert seen["path"] == "/api/tags"
+
+
 def test_list_models_no_auth_header_for_ollama():
     seen: dict = {}
 
@@ -253,6 +271,32 @@ def test_structured_output_prompt_fallback():
     )
     res = llm.complete([ChatMessage(role="user", content="rate")], json_schema=_SCHEMA)
     assert res.structured == {"score": 3}
+    assert state["calls"] == 2
+
+
+def test_structured_output_fallback_revalidates_schema():
+    # FR-LLM-4a: when the prompt fallback returns parseable JSON that is missing a
+    # required key, it must NOT be returned as structured (re-validate the fallback).
+    state = {"calls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            # Native attempt: invalid (missing required "score").
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": '{"wrong": 1}'}}]}
+            )
+        # Fallback: parseable JSON but STILL missing the required "score" key.
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": '{"other": 2}'}}]}
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="m",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="rate")], json_schema=_SCHEMA)
+    assert res.structured is None
     assert state["calls"] == 2
 
 

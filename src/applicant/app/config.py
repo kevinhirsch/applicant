@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # threaded into the real browser launch. A datacenter exit is refused.
     egress_mode: str = Field(default="direct", alias="EGRESS_MODE")  # direct | residential-proxy
     egress_proxy_url: str = Field(default="", alias="EGRESS_PROXY_URL")
+    # FR-STEALTH-4: explicit operator attestation that the configured proxy is a
+    # RESIDENTIAL exit. Default False so a residential-proxy that is NOT attested
+    # residential refuses to launch (the datacenter-egress refusal is reachable via
+    # config). Set True only when the operator vouches the proxy is residential.
+    egress_residential: bool = Field(default=False, alias="EGRESS_RESIDENTIAL")
 
     @property
     def llm_configured(self) -> bool:

@@ -28,6 +28,14 @@ class RemoteViewPort(Protocol):
         """Return a one-click live-session URL for ``session_id``."""
         ...
 
+    def token_valid(self, session_id: str, token: str) -> bool:
+        """Whether ``token`` is the live, unexpired, non-revoked session token."""
+        ...
+
+    def invalidate(self, session_id: str) -> None:
+        """Drop all token/takeover state for ``session_id`` (called on teardown)."""
+        ...
+
     def authorize_takeover(self, session_id: str) -> None:
         """Hand control to the user (live takeover)."""
         ...

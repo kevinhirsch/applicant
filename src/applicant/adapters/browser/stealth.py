@@ -286,6 +286,15 @@ class EgressPolicy:
                 "Residential-proxy egress required but no proxy is configured; "
                 "refusing to launch (would egress from the datacenter) (FR-STEALTH-4)."
             )
+        if self.mode == EGRESS_RESIDENTIAL_PROXY and not self.residential:
+            # A residential-proxy that is NOT operator-attested residential must
+            # refuse to launch: we cannot assume an arbitrary proxy is residential
+            # (it may well be a datacenter exit — the biggest legitimacy tell).
+            raise DatacenterEgressRefused(
+                "Residential-proxy mode requires an operator-attested residential "
+                "proxy (set EGRESS_RESIDENTIAL=true). Refusing to launch with an "
+                "un-attested proxy that may egress from a datacenter (FR-STEALTH-4)."
+            )
 
     @property
     def is_direct_residential(self) -> bool:
@@ -303,16 +312,20 @@ class EgressPolicy:
         return None
 
     @classmethod
-    def from_settings(cls, *, mode: str, proxy_url: str) -> EgressPolicy:
-        """Build a policy from app settings (EGRESS_MODE / EGRESS_PROXY_URL).
+    def from_settings(
+        cls, *, mode: str, proxy_url: str, residential: bool = False
+    ) -> EgressPolicy:
+        """Build a policy from app settings (FR-STEALTH-4).
 
-        A configured proxy is treated as operator-attested residential (the
-        ``residential-proxy`` mode is the operator's attestation); selecting that
-        mode without a proxy is refused by :meth:`validate`.
+        ``residential`` is the explicit operator attestation (EGRESS_RESIDENTIAL):
+        it must be ``True`` for a ``residential-proxy`` exit to be accepted. When a
+        proxy is configured but NOT attested residential, :meth:`validate` refuses to
+        launch — so the datacenter-egress refusal is reachable through prod wiring.
+        The ``direct`` mode (the host's own connection) is residential by definition.
         """
+        mode_norm = (mode or EGRESS_DIRECT).strip() or EGRESS_DIRECT
         url = (proxy_url or "").strip() or None
-        return cls(
-            proxy_url=url,
-            residential=True,
-            mode=(mode or EGRESS_DIRECT).strip() or EGRESS_DIRECT,
-        )
+        # `direct` uses the host's own (residential) connection; a proxied exit is
+        # residential only when the operator explicitly attests it.
+        attested = True if mode_norm == EGRESS_DIRECT else bool(residential)
+        return cls(proxy_url=url, residential=attested, mode=mode_norm)

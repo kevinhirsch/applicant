@@ -59,6 +59,33 @@ def test_intent_sentence_recorded_and_retrievable(svc, campaign):
 
 
 @pytest.mark.unit
+def test_latest_intent_tie_breaks_on_seq_for_equal_timestamps(svc, storage, campaign):
+    # FR-AGENT-7: with two runs sharing an identical timestamp, the later-recorded
+    # run's intent must win (deterministic tie-break on monotonic seq).
+    from applicant.core.entities.agent_run import AgentRun
+    from applicant.core.ids import AgentRunId, new_id
+
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    earlier = AgentRun(
+        id=AgentRunId(new_id()),
+        campaign_id=campaign.id,
+        intent_sentence="earlier intent",
+        timestamp=ts,
+    )
+    later = AgentRun(
+        id=AgentRunId(new_id()),
+        campaign_id=campaign.id,
+        intent_sentence="later intent",
+        timestamp=ts,
+    )
+    assert later.seq > earlier.seq
+    storage.agent_runs.add(earlier)
+    storage.agent_runs.add(later)
+    storage.commit()
+    assert svc.latest_intent(campaign.id) == "later intent"
+
+
+@pytest.mark.unit
 def test_continuous_mode_always_continues(svc, campaign):
     assert svc.should_continue(campaign) is True
 

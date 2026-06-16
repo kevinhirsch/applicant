@@ -173,3 +173,26 @@ def test_approve_expires_other_channels():
     assert notifier.is_active(key)
     digest.approve(aid)
     assert not notifier.is_active(key)
+
+
+def test_acting_on_digest_item_expires_digest_ready_ping():
+    # FR-NOTIF-3: the digest-ready ping is keyed per campaign (digest:<campaign_id>);
+    # acting on any digest item must expire that same ping. Before the fix expiry was
+    # keyed on decision:<application_id>, which never matched the ready ping's key.
+    storage, digest, *_rest, notifier = _wire()
+    notif_svc = NotificationService(notifier)
+    cid = _seed_campaign(storage, with_posting=False)
+    aid = ApplicationId(new_id())
+    storage.applications.add(
+        Application(id=aid, campaign_id=cid, posting_id=JobPostingId(""))
+    )
+    storage.commit()
+
+    # The "your digest is ready" ping is now pending for this campaign.
+    notif_svc.notify_digest_ready(str(cid), count=1)
+    ready_key = f"digest:{cid}"
+    assert notifier.is_active(ready_key)
+
+    # Acting on a digest item (approve) expires the campaign's ready ping.
+    digest.approve(aid)
+    assert not notifier.is_active(ready_key)

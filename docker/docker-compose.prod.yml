@@ -20,6 +20,11 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:-applicant}@postgres:5432/${POSTGRES_DB:-applicant}
       APP_STATIC_DIR: frontend/static
       ORCHESTRATOR_BACKEND: ${ORCHESTRATOR_BACKEND:-shim}
+      # FR-INSTALL-3/FR-DUR-3: the default ``shim`` backend persists durable
+      # workflow + mailbox state to CHECKPOINT_DIR. Point it at a stable path backed
+      # by a named volume (below) so checkpoint state survives container recreation
+      # on `up`/recreate. (Set ORCHESTRATOR_BACKEND=dbos to co-reside state in PG.)
+      CHECKPOINT_DIR: ${CHECKPOINT_DIR:-/data/checkpoints}
       # 24/7 scheduler ON in prod: ticks each campaign's run loop, delivers the
       # daily digest, and advances the notification escalation ladder (NFR-247-1).
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
@@ -32,6 +37,10 @@ services:
       LOG_FORMAT: json
     ports:
       - "8000:8000"
+    volumes:
+      # Durable checkpoint store for the shim backend (FR-INSTALL-3/FR-DUR-3):
+      # survives container recreation so approvals/in-flight workflows are not lost.
+      - checkpoints:/data/checkpoints
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,4 +90,5 @@ services:
 volumes:
   pgdata:
   pgbackups:  # DB backups for update.sh rollback (FR-INSTALL-2)
+  checkpoints:  # durable shim checkpoint/mailbox state (FR-INSTALL-3/FR-DUR-3)
   # ollama:

@@ -64,6 +64,24 @@ class NotificationService:
         self._notification.expire(self.dedup_key(decision_ref))
         log.info("notification_acted", decision_ref=decision_ref)
 
+    def digest_dedup_key(self, campaign_id: str) -> str:
+        """Dedup key the digest-ready ping uses (FR-NOTIF-3/FR-DIG-2).
+
+        Must match :meth:`notify_digest_ready` so acting on a digest item expires
+        the very ping that announced it.
+        """
+        return f"digest:{campaign_id}"
+
+    def acted_digest(self, campaign_id: str) -> None:
+        """Acting on any digest item expires the campaign's digest-ready ping.
+
+        FR-NOTIF-3: the ready ping is keyed per campaign (``digest:<campaign_id>``),
+        so once the user acts on any row in that campaign's digest the announcement
+        is no longer pending and is expired.
+        """
+        self._notification.expire(self.digest_dedup_key(campaign_id))
+        log.info("digest_notification_acted", campaign_id=campaign_id)
+
     # --- errors (FR-NOTIF-5) ----------------------------------------------
     def notify_error(self, *, title: str, body: str, dedup_key: str | None = None) -> str:
         """Errors surface immediately, any hour, across every channel (FR-NOTIF-5)."""

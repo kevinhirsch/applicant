@@ -120,6 +120,9 @@ class FakePageSource:
             fields=page.fields,
             screenshot_ref=None,
             detection_signals=page.detection_signals,
+            status=page.status,
+            body=page.body,
+            expected_host=page.expected_host,
         )
 
     def detect_fields(self) -> list[DetectedField]:
@@ -160,6 +163,34 @@ class FakePageSource:
         self._pages[self._index] = replace(
             page, detection_signals=(*page.detection_signals, signal)
         )
+
+    def inject_page_signals(
+        self,
+        *,
+        status: int | None = None,
+        body: str | None = None,
+        expected_host: str | None = None,
+        url: str | None = None,
+    ) -> None:
+        """Seam/test helper: set HTTP status / body / expected_host on the page.
+
+        Models what the live driver observes (a 403/429 response, raw markup with a
+        Cloudflare/CAPTCHA marker, or a redirect to an unexpected host) so cautious
+        mode can be exercised against every classify_signals input (FR-PREFILL-6).
+        """
+        from dataclasses import replace
+
+        page = self._page
+        changes: dict = {}
+        if status is not None:
+            changes["status"] = status
+        if body is not None:
+            changes["body"] = body
+        if expected_host is not None:
+            changes["expected_host"] = expected_host
+        if url is not None:
+            changes["url"] = url
+        self._pages[self._index] = replace(page, **changes)
 
     def simulate_confirmation(self, *, text: str = "Application submitted") -> None:
         """Seam/test helper: turn the current page into a confirmation page.

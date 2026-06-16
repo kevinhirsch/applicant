@@ -162,6 +162,10 @@ class OpenAICompatibleLLM:
         tier = self._ladder.at(tier_index)
         base = _normalize_base(tier.base_url)
         if _ollama_provider(tier.provider, tier.base_url):
+            # Ollama base may include a trailing /v1 (OpenAI-compat shim) — strip it,
+            # exactly as _call_ollama does, so /api/tags is hit (FR-LLM-2).
+            if base.endswith("/v1"):
+                base = base[: -len("/v1")]
             url = f"{base}/api/tags"
         else:
             # OpenAI-compatible: tolerate base_url with or without /v1.
@@ -300,7 +304,13 @@ class OpenAICompatibleLLM:
                     {"role": m.role, "content": m.content} for m in fb_messages
                 ]
                 text, raw = self._post_openai(tier, url, payload)
+                # Re-validate the fallback against the schema (FR-LLM-4a): a
+                # malformed-but-parseable object must not be returned as structured.
                 structured = _extract_json(text)
+                if structured is not None and not _validate_against_schema(
+                    structured, json_schema
+                ):
+                    structured = None
 
         return LLMResult(
             text=text,

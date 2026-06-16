@@ -300,6 +300,55 @@ def test_screening_sensitive_declines_without_explicit_answer(svc):
 
 
 @pytest.mark.unit
+def test_screening_sensitive_never_leaks_true_source(svc):
+    # FR-ATTR-6/NFR-PRIV-1: a SENSITIVE answer must NEVER echo the flattened
+    # true_source (attribute cloud / resume). Without an explicit EEO answer it
+    # declines; the PII in true_source must not appear in the answer.
+    from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
+
+    cid = CampaignId(new_id())
+    pii = "SSN 123-45-6789, 8 years at Acme, lives in Berlin."
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "What is your race/ethnicity?", pii, essay=None
+    )
+    assert doc.content == DECLINE_TO_SELF_IDENTIFY
+    assert "Acme" not in doc.content and "Berlin" not in doc.content
+
+
+@pytest.mark.unit
+def test_screening_sensitive_uses_explicit_answer_only(svc):
+    # FR-ATTR-6: a SENSITIVE answer comes ONLY from the explicit stored EEO answer.
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid,
+        new_id(),
+        "What is your gender?",
+        "Lots of irrelevant PII here.",
+        essay=None,
+        explicit_answer="Prefer not to say",
+    )
+    assert doc.content == "Prefer not to say"
+    assert "PII" not in doc.content
+
+
+@pytest.mark.unit
+def test_screening_gender_diversity_essay_is_not_declined(svc):
+    # FR-ATTR-6/NFR-PRIV-1: a gender-DIVERSITY essay is an essay, not an EEO field;
+    # it must not return the canned decline.
+    from applicant.core.rules.sensitive_fields import DECLINE_TO_SELF_IDENTIFY
+
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid,
+        new_id(),
+        "How do you foster gender diversity on a team?",
+        "I have built inclusive teams and mentored junior engineers.",
+        essay=None,
+    )
+    assert doc.content != DECLINE_TO_SELF_IDENTIFY
+
+
+@pytest.mark.unit
 def test_deferred_question_handoff_from_phase2(svc):
     # Phase 2 prefill defers essay screening questions to this entry point.
     cid = CampaignId(new_id())

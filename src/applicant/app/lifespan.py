@@ -26,13 +26,23 @@ def _redrive_pending(container) -> int:
     them, so here we actually re-start each (idempotent — completed steps return
     their checkpointed result without re-running). On DBOS recovery is automatic,
     so this is a best-effort no-op there.
+
+    Crucially, recovery rebuilds a LIVE ``PipelineContext`` per recovered application
+    via the agent loop (FR-DUR-1/FR-LOG-1/4): re-starting with no context would let a
+    recovered+approved application reach ``_submit`` with no submission service and
+    silently drop the real outcome (no OutcomeEvent, no terminal §7 state, no
+    teardown). The agent loop binds the same services used for fresh runs.
     """
     orch = container.orchestrator
+    loop = getattr(container, "agent_loop", None)
     recovered = orch.recover_pending()
     redriven = 0
     for wf_id in recovered:
         try:
-            orch.start_workflow(WORKFLOW_NAME, wf_id)
+            if loop is not None:
+                loop.redrive_recovered(wf_id)
+            else:  # pragma: no cover - loop is always wired in the container
+                orch.start_workflow(WORKFLOW_NAME, wf_id)
             redriven += 1
         except Exception as exc:  # pragma: no cover - defensive (already-running etc.)
             log.info("redrive_skipped", workflow_id=wf_id, reason=str(exc))
