@@ -85,6 +85,7 @@ class CheckpointShimOrchestrator:
         self._workflows: dict[str, Callable[..., Any]] = {}
         self._mailbox: dict[tuple[str, str], list[Any]] = {}
         self._queues: dict[str, _Queue] = {}
+        self._scheduled: dict[str, Callable[..., Any]] = {}
 
     # --- checkpoint persistence -------------------------------------------
     def _path(self, workflow_id: str) -> Path:
@@ -197,6 +198,28 @@ class CheckpointShimOrchestrator:
                 return nxt
             break
         return None
+
+    def enqueue(
+        self, queue_name: str, workflow_name: str, workflow_id: str, *args: Any, **kwargs: Any
+    ) -> _ShimHandle:
+        """Admit onto the queue, then start the workflow (uniform with DBOS enqueue).
+
+        On the shim there is no separate dispatcher, so admission is synchronous via
+        ``acquire`` and the workflow runs inline; on DBOS ``enqueue`` defers dispatch
+        to the durable queue runtime (FR-DUR-2).
+        """
+        self.acquire(queue_name, workflow_id)
+        return self.start_workflow(workflow_name, workflow_id, *args, **kwargs)
+
+    def schedule(self, name: str, cron: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Register a cron-scheduled function (FR-DUR-3 scheduling).
+
+        The shim has no cron runtime — the asyncio scheduler task in ``app/lifespan``
+        drives the cadence instead — so this records the function and returns it so
+        the call site is uniform across both adapters.
+        """
+        self._scheduled[name] = fn
+        return fn
 
     def queue_state(self, queue_name: str) -> dict[str, list[str]]:
         """Introspection: active + waiting work-ids for a queue (tests/debug)."""
