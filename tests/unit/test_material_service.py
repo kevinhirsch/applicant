@@ -9,8 +9,6 @@ the Phase 0 ConversionService choice (FR-RESUME-3a).
 
 from __future__ import annotations
 
-import dataclasses
-
 import pytest
 
 from applicant.adapters.embedding.local_embedding import LocalEmbedding
