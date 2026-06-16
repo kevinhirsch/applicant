@@ -443,11 +443,36 @@ class PrefillService:
         return result
 
     def _capture_screenshot(self, aid, result: PrefillResult) -> None:
-        """Capture a per-page screenshot + record its page URL (FR-LOG-2)."""
+        """Capture a per-page screenshot, record its page URL, and ARCHIVE it (FR-LOG-2).
+
+        Each page screenshot is persisted to ``application_screenshots`` as it is
+        captured during the live pre-fill walk, so a completed application has its
+        per-page screenshots in storage (retrievable via the storage port / the
+        outcomes log endpoint) — not just held in the in-memory ``PrefillResult``.
+        """
         ref = self._browser.screenshot(aid)
         url = self._browser.current_state(aid).url
         result.screenshots.append(ref)
         result.screenshot_pages.append(url)
+        self._archive_screenshot(aid, ref, url)
+
+    def _archive_screenshot(self, aid, page_ref: str, page_url: str) -> None:
+        """Persist one per-page screenshot to the storage port (FR-LOG-2)."""
+        from applicant.core.entities.application_screenshot import ApplicationScreenshot
+        from applicant.core.ids import ScreenshotId
+
+        try:
+            self._storage.screenshots.add(
+                ApplicationScreenshot(
+                    id=ScreenshotId(new_id()),
+                    application_id=aid,
+                    page_ref=page_ref,
+                    page_url=page_url,
+                )
+            )
+            self._storage.commit()
+        except Exception:  # pragma: no cover - never let archival break the pre-fill loop
+            pass
 
     def _check_detection(self, aid):
         state = self._browser.current_state(aid)

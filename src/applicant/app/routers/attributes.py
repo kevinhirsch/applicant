@@ -152,13 +152,24 @@ def bind_field(body: BindFieldIn, container: Container = Depends(get_container))
 
 @router.post("/acquire-missing", status_code=201)
 def acquire_missing(body: AcquireMissingIn, container: Container = Depends(get_container)) -> dict:
-    """Store a detail the user supplied for a previously-missing attribute (FR-ATTR-5)."""
+    """Store a detail the user supplied for a previously-missing attribute (FR-ATTR-5).
+
+    Beyond storing the value (reused per campaign), this RESUMES any application
+    stalled at BLOCKED_MISSING_ATTR through the pre-fill flow using the stored value
+    — closing the FR-ATTR-5 soft-error -> resolve -> resume -> reuse loop.
+    """
     try:
-        attr = _svc(container).acquire_missing(
+        summary = _svc(container).resume_after_missing_attr(
             body.campaign_id, body.name, body.value, confirm=body.confirm  # type: ignore[arg-type]
         )
     except ConfirmationRequired as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SensitiveFieldViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"id": attr.id, "name": attr.name, "value": attr.value}
+    attr = summary["attribute"]
+    return {
+        "id": attr["id"],
+        "name": attr["name"],
+        "value": attr["value"],
+        "resumed": summary["resumed"],
+    }

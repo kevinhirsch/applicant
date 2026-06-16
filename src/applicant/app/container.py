@@ -15,7 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from applicant.adapters.credentials.pg_credential_store import PgCredentialStore
+from applicant.adapters.credentials.pg_credential_store import (
+    InMemoryCredentialStore,
+    PgCredentialStore,
+)
 from applicant.adapters.detection.detection_monitor import DetectionMonitor
 from applicant.adapters.discovery.factory import build_default_discovery
 from applicant.adapters.embedding.local_embedding import LocalEmbedding
@@ -160,7 +163,15 @@ def build_container(settings: Settings | None = None) -> Container:
         SqlAlchemyAppConfigStore(session) if session is not None else InMemoryAppConfigStore()
     )
 
-    credentials = PgCredentialStore(settings.credential_keyfile)
+    # Credential vault (FR-VAULT-1/3): when a real DB is configured, persist sealed
+    # records to Postgres (survives restarts, FR-VAULT-3); otherwise (hermetic boot /
+    # no DB) use the libsodium-sealed in-memory fallback so the app still boots.
+    if session_factory is not None:
+        credentials = PgCredentialStore(
+            settings.credential_keyfile, session_factory=session_factory
+        )
+    else:
+        credentials = InMemoryCredentialStore(settings.credential_keyfile)
 
     # Onboarding service (FR-ONBOARD): resumable intake + attribute-cloud bootstrap.
     resume_parser = ResumeParser()
@@ -299,7 +310,7 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_period=settings.llm_rate_period or None,
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
-    submission_service = SubmissionService(storage, browser)
+    submission_service = SubmissionService(storage, browser, learning=learning_service)
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -309,6 +320,9 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         llm=llm,
     )
+    # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
+    # newly-stored value (wired additively to avoid a construction cycle).
+    attribute_cloud_service.set_prefill_service(prefill_service)
     from applicant.application.services.material_service import MaterialService
 
     material_service = MaterialService(
@@ -320,6 +334,7 @@ def build_container(settings: Settings | None = None) -> Container:
         conversion_service=conversion_service,
         notifications=notification_service,
         pending_actions=pending_actions_service,
+        learning=learning_service,
     )
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.

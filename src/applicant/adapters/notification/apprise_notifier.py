@@ -256,6 +256,28 @@ class AppriseNotifier:
         self._fire_due(delivery, self._now_secs())
         return handle
 
+    def send_email(self, *, subject: str, html: str, deep_link: str | None = None) -> bool:
+        """Send a rendered email body directly to the EMAIL channel (FR-DIG-2).
+
+        Used by the digest delivery so the daily digest email is actually SENT, not
+        merely rendered for pull. Bypasses the escalation ladder (this is a direct,
+        already-decided send) but stays behind the same offline-safe boundary: the
+        body is captured in memory and only goes over the wire when ``send_real`` is
+        on (NOTIFICATIONS_LIVE). Returns True if the email channel is configured.
+        """
+        if not self._apprise:
+            return False
+        self._dispatch(
+            NotificationChannel.EMAIL.value,
+            Notification(
+                title=subject,
+                body=html,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+            ),
+        )
+        return True
+
     def advance(self, now: datetime | None = None) -> list[str]:
         """Fire any escalation rungs now due across active deliveries (FR-NOTIF-2).
 

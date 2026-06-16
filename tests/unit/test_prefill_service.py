@@ -108,6 +108,23 @@ class TestMaximalPrefill:
         assert len(result.screenshots) == len(result.screenshot_pages)
         assert any("application/personal" in u for u in result.screenshot_pages)
 
+    def test_per_page_screenshots_are_archived_to_storage(self):
+        # FR-LOG-2: running the pre-fill flow PERSISTS each page screenshot to the
+        # storage port as it is captured (not just held in the PrefillResult), so a
+        # completed application has its per-page screenshots retrievable via storage.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        app = _app(cid)
+        result = _resume_full(service, app, _full_answers(cid))
+        archived = storage.screenshots.list_for_application(app.id)
+        assert archived, "screenshots persisted to storage during pre-fill"
+        # At least every shot captured on the resumed pass is archived (the account
+        # pass also archives into the same storage), each carrying its page URL.
+        assert len(archived) >= len(result.screenshots)
+        assert all(s.page_url for s in archived)
+        assert any("application/personal" in s.page_url for s in archived)
+
     def test_factual_screening_question_is_filled(self):
         cid = CampaignId(new_id())
         service = _service(InMemoryStorage())

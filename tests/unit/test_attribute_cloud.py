@@ -85,3 +85,108 @@ def test_missing_attribute_soft_error_then_acquire():
     svc.acquire_missing(cid, "Visa status", "Citizen")
     assert svc.get_by_name(cid, "Visa status").value == "Citizen"
     assert not any(i.kind == "missing_attr" for i in pending.list_pending(cid))
+
+
+def test_resume_after_missing_attr_resumes_prefill_and_reuses_value():
+    # FR-ATTR-5 end-to-end: missing attr blocks pre-fill -> user resolves ->
+    # the pre-fill RESUMES using the stored value -> the value is reused next time
+    # without re-asking. Proves resume_after_missing_attr is wired (it had no caller).
+    from applicant.adapters.browser.patchright_browser import PatchrightBrowser
+    from applicant.adapters.detection.detection_monitor import DetectionMonitor
+    from applicant.adapters.sandbox.local_sandbox import LocalSandbox
+    from applicant.application.services.prefill_service import PrefillService
+    from applicant.core.entities.application import Application
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import (
+        ApplicationId,
+        AttributeId,
+        JobPostingId,
+    )
+    from applicant.core.state_machine import ApplicationState
+
+    storage = InMemoryStorage()
+    pending = PendingActionsService(storage)
+    prefill = PrefillService(
+        storage=storage,
+        browser=PatchrightBrowser(),
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=None,
+    )
+    svc = AttributeCloudService(storage, pending_actions=pending, prefill=prefill)
+    cid = CampaignId(new_id())
+
+    def _attr(name, value, sensitive=False):
+        return Attribute(
+            id=AttributeId(new_id()), campaign_id=cid, name=name, value=value,
+            is_sensitive=sensitive,
+        )
+
+    # Full answers EXCEPT Phone (the missing required attribute).
+    answers = [
+        _attr("Email Address", "kevin@kevinhirsch.com"),
+        _attr("Password", "S3cretP@ss"),
+        _attr("Verify Password", "S3cretP@ss"),
+        _attr("First Name", "Kevin"),
+        _attr("Last Name", "Hirsch"),
+        _attr("Address", "1 Main St"),
+        _attr("Current Job Title", "Engineer"),
+        _attr("Years of Experience", "8"),
+        _attr("Are you authorized to work?", "Yes"),
+        _attr("Are you willing to relocate?", "Yes"),
+        _attr("Gender", "Female", sensitive=True),
+    ]
+    for a in answers:
+        storage.attributes.add(a)
+    storage.commit()
+
+    url = "https://acme.myworkdayjobs.com/job/123"
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.APPROVED, root_url=url,
+    )
+    # Reach the account page + resume past it; the personal page needs Phone -> blocks.
+    prefill.prefill_application(app, url, answers)
+    resumed = (
+        app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+        .with_status(ApplicationState.ACCOUNT_PREFILL)
+        .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+    )
+    blocked = prefill.resume_after_account(resumed, answers)
+    assert blocked.state is ApplicationState.BLOCKED_MISSING_ATTR
+    assert blocked.missing_attribute == "Phone"
+    # Persist the blocked app so resume_after_missing_attr can find it.
+    storage.applications.add(storage.applications.get(app.id) or app)
+    storage.commit()
+
+    # User resolves the missing attribute -> stored + pre-fill RESUMES using it.
+    summary = svc.resume_after_missing_attr(cid, "Phone", "555-0100")
+    assert summary["attribute"]["value"] == "555-0100"
+    assert summary["resumed"], "the stalled application resumed"
+    landed = summary["resumed"][0]["state"]
+    assert landed == ApplicationState.AWAITING_FINAL_APPROVAL.value
+    # The value is stored + reused (no re-ask): a brand-new application now fills the
+    # Phone field straight through to final approval, never re-asking for it.
+    assert svc.get_by_name(cid, "Phone").value == "555-0100"
+    prefill2 = PrefillService(
+        storage=storage,
+        browser=PatchrightBrowser(),
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=None,
+    )
+    app2 = Application(
+        id=ApplicationId(new_id()), campaign_id=cid,
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.APPROVED, root_url=url,
+    )
+    attrs_now = storage.attributes.list_for_campaign(cid)
+    prefill2.prefill_application(app2, url, attrs_now)
+    resumed2 = (
+        app2.with_status(ApplicationState.SANDBOX_PROVISIONING)
+        .with_status(ApplicationState.ACCOUNT_PREFILL)
+        .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+    )
+    reused = prefill2.resume_after_account(resumed2, attrs_now)
+    assert reused.state is ApplicationState.AWAITING_FINAL_APPROVAL  # no re-ask

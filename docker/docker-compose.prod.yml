@@ -23,6 +23,12 @@ services:
       # 24/7 scheduler ON in prod: ticks each campaign's run loop, delivers the
       # daily digest, and advances the notification escalation ladder (NFR-247-1).
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      # Real production paths ON (OFF by default in config.py / the test lane):
+      # live job-board discovery (FR-DISC-4), real notification send over Discord/
+      # SMTP (FR-NOTIF-1), and the wired internal SearXNG metasearch (FR-DISC-2).
+      DISCOVERY_LIVE: ${DISCOVERY_LIVE:-true}
+      NOTIFICATIONS_LIVE: ${NOTIFICATIONS_LIVE:-true}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       LOG_FORMAT: json
     ports:
       - "8000:8000"

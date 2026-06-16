@@ -142,18 +142,27 @@ class DigestService:
         return self.build_digest_payload(campaign_id, criteria)
 
     def deliver(self, campaign_id: CampaignId, criteria=None) -> dict:
-        """Deliver the digest: build payloads + fire the Discord 'ready' ping (FR-DIG-2).
+        """Deliver the digest: SEND the email + webpage + a Discord 'ready' ping (FR-DIG-2).
 
-        Also materializes a digest-approval pending action per viable row so the
-        portal lists them (FR-UI-3). Returns the assembled payloads + the notify
-        handle so callers/tests can assert delivery.
+        The rendered email body is actually pushed through the notification port's
+        email channel (no longer pull-only) alongside the webpage payload and the
+        Discord/in-app ready ping. Also materializes a digest-approval pending action
+        per viable row so the portal lists them (FR-UI-3). Returns the assembled
+        payloads + the notify handle + whether the email was sent.
         """
         payload = self.build_digest_payload(campaign_id, criteria)
         email = self.render_email(campaign_id, criteria)
         handle = None
+        email_sent = False
         if self._notification_service is not None:
             handle = self._notification_service.notify_digest_ready(
                 str(campaign_id), count=len(payload["rows"])
+            )
+            # Actually send the rendered email body to the email channel (FR-DIG-2).
+            email_sent = self._notification_service.send_digest_email(
+                subject=email["subject"],
+                html=email["html"],
+                deep_link=f"/digest?campaign={campaign_id}",
             )
         if self._pending is not None:
             for row in payload["rows"]:
@@ -167,6 +176,7 @@ class DigestService:
         return {
             "payload": payload,
             "email": email,
+            "email_sent": email_sent,
             "notify_handle": handle,
             "delivered_channels": (
                 self._notification.configured_channels()
@@ -230,8 +240,39 @@ class DigestService:
                 self._pending.resolve_by_dedup(
                     campaign_id, f"digest_approval:{decision.application_id}"
                 )
+        if decision.type is DecisionType.APPROVE:
+            self._record_approval_yield(decision)
         if decision.type is DecisionType.DECLINE:
             self._learn_from_decline(decision)
+
+    def _record_approval_yield(self, decision: Decision) -> None:
+        """Record the APPROVALS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6).
+
+        A digest approval is keyed on the posting id; resolve its source so the
+        learned per-source weight reflects real approvals, not just raw matches.
+        """
+        if self._learning is None:
+            return
+        source_key, campaign_id = self._source_for_decision(decision.application_id)
+        if source_key and campaign_id is not None:
+            self._learning.record_source_event(campaign_id, source_key, "approvals")
+
+    def _source_for_decision(self, decision_id: ApplicationId):
+        """Resolve (source_key, campaign_id) for a digest/application decision id."""
+        from applicant.core.ids import JobPostingId
+
+        app = self._storage.applications.get(decision_id)
+        if app is not None and app.posting_id is not None:
+            posting = self._storage.postings.get(app.posting_id)
+            if posting is not None:
+                return posting.source_key, posting.campaign_id
+        try:
+            posting = self._storage.postings.get(JobPostingId(str(decision_id)))
+        except Exception:
+            posting = None
+        if posting is not None:
+            return posting.source_key, posting.campaign_id
+        return None, None
 
     def _learn_from_decline(self, decision: Decision) -> None:
         campaign_id = self._campaign_for_decision(decision.application_id)

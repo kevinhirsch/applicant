@@ -427,11 +427,28 @@ class JobSpySearxngDiscovery:
                 self._enabled[key] = bool(on)
 
     # --- aggregation (FR-DISC-3) ------------------------------------------
-    def search(self, campaign_id: CampaignId, criteria: SearchCriteria) -> list[JobPosting]:
-        """Aggregate + normalize + dedup across enabled sources (zero LLM tokens)."""
+    def search(
+        self,
+        campaign_id: CampaignId,
+        criteria: SearchCriteria,
+        *,
+        sources: list[str] | None = None,
+    ) -> list[JobPosting]:
+        """Aggregate + normalize + dedup across enabled sources (zero LLM tokens).
+
+        ``sources`` (optional) is an ordered, pre-allocated subset of source keys to
+        query this run — used by ``DiscoveryService`` to apply learned source-yield
+        ranking + the exploration budget (FR-DISC-5/FR-LEARN-6). Any key passed must
+        still be enabled; absent it, every enabled source is queried (legacy path).
+        """
+        if sources is None:
+            keys = self.enabled_sources()
+        else:
+            enabled = set(self.enabled_sources())
+            keys = [k for k in sources if k in enabled]
         seen: set[str] = set()
         aggregated: list[JobPosting] = []
-        for key in self.enabled_sources():
+        for key in keys:
             for posting in self._sources[key].fetch(campaign_id, criteria):
                 if posting.source_url in seen:
                     continue

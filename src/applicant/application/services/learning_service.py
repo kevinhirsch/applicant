@@ -151,6 +151,22 @@ class LearningService:
             acc["submissions"] = int(acc.get("submissions", 0)) + submissions
         return replace(model, source_weights=weights, source_yield_stats=stats)
 
+    def record_source_event(
+        self, campaign_id: CampaignId, source_key: str, leg: str, count: int = 1
+    ) -> LearningModel:
+        """Record ONE funnel leg (matches/approvals/submissions) for a source + persist.
+
+        Wires the approvals + submissions legs of the FR-DISC-5 funnel into the live
+        approval/submission paths (they were previously computed but never recorded
+        beyond ``matches``). Returns the updated model. Unknown legs are ignored.
+        """
+        if leg not in ("matches", "approvals", "submissions") or not source_key:
+            return self.load_model(campaign_id)
+        model = self.load_model(campaign_id)
+        model = self.record_source_funnel(model, {source_key: {leg: int(count)}})
+        self.persist_model(model)
+        return model
+
     def source_ranking(self, model: LearningModel) -> list[str]:
         """Sources ordered by learned yield weight, highest first (FR-DISC-5)."""
         return [k for k, _ in sorted(model.source_weights.items(), key=lambda kv: -kv[1])]
@@ -175,12 +191,15 @@ class LearningService:
         return exploit, explore
 
     # --- converting-role signature (FR-LEARN-5) ---------------------------
-    def record_converting_role(self, model: LearningModel, jd_text: str) -> LearningModel:
+    def record_converting_role(
+        self, model: LearningModel, jd_text: str, *, title: str | None = None
+    ) -> LearningModel:
         """Fold a converted role's JD into the running converting-role centroid.
 
         Cheap: an incremental mean over the local embedding vector. Discovery and
         scoring read ``converting_role_signature`` to bias toward roles that look like
-        what actually converts (FR-LEARN-5).
+        what actually converts (FR-LEARN-5). When a ``title`` is supplied it is also
+        accumulated so discovery can bias its search titles toward the converting role.
         """
         if not jd_text.strip():
             return model
@@ -192,7 +211,16 @@ class LearningService:
         else:
             merged = list(vec)
         sig = {"vector": merged}
+        titles = list(model.converting_role_signature.get("titles", []))
+        if title and title.strip() and title.strip() not in titles:
+            titles.append(title.strip())
+        if titles:
+            sig["titles"] = titles
         return replace(model, converting_role_signature=sig, converting_samples=n + 1)
+
+    def converting_titles(self, model: LearningModel) -> list[str]:
+        """Titles of roles that actually converted, for discovery bias (FR-LEARN-5)."""
+        return list(model.converting_role_signature.get("titles", []))
 
     def converting_alignment(self, model: LearningModel, jd_text: str) -> float:
         """Cosine-ish alignment in [0,1] of a JD to the converting-role signature.

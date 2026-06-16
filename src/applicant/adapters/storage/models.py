@@ -276,6 +276,29 @@ class AppConfigModel(Base):
     value: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+# 20 ------------------------------------------------------------------------
+class CredentialModel(Base):
+    """Sealed per-site/tenant credential set (FR-VAULT-1/3, FR-CRIT-4, NFR-PRIV-1).
+
+    Holds the libsodium-SEALED ``username``/``secret`` blobs (base64) + metadata.
+    NEVER stores plaintext. Campaign-scoped (FR-CRIT-4) and keyed per tenant/site so
+    Workday's per-tenant credential sets are first-class. The row survives restarts so
+    24/7 unattended operation (FR-VAULT-3) does not lose banked credentials.
+    """
+
+    __tablename__ = "credentials"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(
+        ForeignKey("campaigns.id"), nullable=False, index=True
+    )
+    tenant_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    sealed_username: Mapped[str] = mapped_column(Text, nullable=False)
+    sealed_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 # derived -------------------------------------------------------------------
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
@@ -310,5 +333,6 @@ ALL_TABLES = [
     ToolSettingModel,
     DormantSurfaceBacklogModel,
     AppConfigModel,
+    CredentialModel,
     PendingActionModel,
 ]

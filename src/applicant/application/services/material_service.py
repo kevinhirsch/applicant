@@ -72,6 +72,9 @@ VARIANT_CAP = 8
 #: Two variants whose targeted-JD signatures embed above this similarity are
 #: treated as the same cluster (FR-RESUME-6 cluster/cap, reuses the embedding port).
 CLUSTER_SIMILARITY = 0.92
+#: How much the converting-role signature alignment biases variant selection
+#: (FR-LEARN-5). A small tiebreak so JD coverage still dominates the choice.
+_CONVERTING_BIAS_WEIGHT = 0.25
 
 
 @dataclass(frozen=True)
@@ -109,6 +112,7 @@ class MaterialService:
         conversion_service=None,
         notifications=None,
         pending_actions=None,
+        learning=None,
         review_base_url: str = "/applicant/review.html",
     ) -> None:
         self._storage = storage
@@ -117,6 +121,9 @@ class MaterialService:
         self._docx_tailoring = docx_tailoring  # docx fallback engine
         self._embedding = embedding  # local embedding port (variant clustering)
         self._conversion = conversion_service  # per-campaign engine choice (Phase 0)
+        # Optional LearningService so variant selection can prefer variants whose
+        # traits match the converting-role signature (FR-LEARN-5).
+        self._learning = learning
         # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
         self._notifications = notifications
         self._pending_actions = pending_actions
@@ -313,12 +320,19 @@ class MaterialService:
         candidates = [
             v for v in self._storage.resume_variants.list_for_campaign(campaign_id) if v.approved
         ]
+        # Converting-role bias (FR-LEARN-5): prefer variants whose traits (their
+        # targeted-JD signature) align with the signature of roles that actually
+        # convert. The bias is a small tiebreak weight so coverage still dominates.
+        sig_align = self._converting_alignment_for(campaign_id)
         best: SelectionResult | None = None
+        best_rank = -1.0
         for v in candidates:
             src = variant_sources.get(str(v.id), base_source)
             fit = self.score_fit(v, posting_id, jd_terms, src)
-            if best is None or fit.coverage > best.fit.coverage:
+            rank = fit.coverage + _CONVERTING_BIAS_WEIGHT * sig_align(v)
+            if best is None or rank > best_rank:
                 best = SelectionResult(variant=v, fit=fit, generated=False)
+                best_rank = rank
         if best is not None and best.fit.coverage * 100 >= threshold:
             return best
 
@@ -339,6 +353,33 @@ class MaterialService:
         self._storage.commit()
         fit = self.score_fit(new_variant, posting_id, jd_terms, reframed)
         return SelectionResult(variant=new_variant, fit=fit, generated=True)
+
+    def _converting_alignment_for(self, campaign_id: CampaignId):
+        """Return ``variant -> alignment[0,1]`` vs the converting-role signature.
+
+        Variants whose traits (their ``targeted_jd_signature``) look like the roles
+        that actually convert score higher (FR-LEARN-5). When no learning/signature
+        is available the bias is uniformly 0.0 so selection falls back to coverage.
+        """
+        if self._learning is None:
+            return lambda _v: 0.0
+        try:
+            model = self._learning.load_model(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return lambda _v: 0.0
+        if not model.converting_role_signature.get("vector"):
+            return lambda _v: 0.0
+
+        def _align(variant: ResumeVariant) -> float:
+            sig = (variant.targeted_jd_signature or "").replace(",", " ").strip()
+            if not sig:
+                return 0.0
+            try:
+                return self._learning.converting_alignment(model, sig)
+            except Exception:  # pragma: no cover - defensive
+                return 0.0
+
+        return _align
 
     def approve_variant(self, variant_id: ResumeVariantId) -> ResumeVariant:
         """Mark a variant USER-APPROVED so it becomes a reusable parent (FR-RESUME-6).

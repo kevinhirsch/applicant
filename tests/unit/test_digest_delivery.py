@@ -82,6 +82,51 @@ def test_deliver_builds_payloads_and_pings_discord():
     assert any(a.kind == "digest_approval" for a in storage.pending_actions.list_open(cid))
 
 
+def test_deliver_sends_email_body_to_email_channel():
+    # FR-DIG-2: the rendered digest email is actually SENT through the notifier's
+    # email channel (not pull-only), in addition to the webpage + Discord ping.
+    storage = InMemoryStorage()
+    embedding = LocalEmbedding()
+    # Email channel configured (apprise_urls) so the email send has a target.
+    notifier = AppriseNotifier(
+        discord_webhook_url="https://discord.test/wh",
+        apprise_urls="mailto://user:pass@smtp.test",
+    )
+    learning = LearningService(storage, embedding)
+    criteria = CriteriaService(storage, llm=None)
+    notif_svc = NotificationService(notifier)
+    pending = PendingActionsService(storage)
+    scoring = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
+    digest = DigestService(
+        storage,
+        notifier,
+        scoring,
+        learning=learning,
+        criteria=criteria,
+        notification_service=notif_svc,
+        pending_actions=pending,
+    )
+    cid = _seed_campaign(storage)
+    crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
+    result = digest.deliver(cid, crit)
+
+    assert result["email_sent"] is True
+    # The notifier captured an EMAIL dispatch carrying the rendered HTML body.
+    email_sends = [c for c in notifier.captured() if c.channel == "email"]
+    assert email_sends, "the digest email was dispatched to the email channel"
+    assert email_sends[0].body == result["email"]["html"]
+    assert email_sends[0].title == result["email"]["subject"]
+
+
+def test_deliver_without_email_channel_does_not_send():
+    # Offline-safe default lane (Discord-only notifier, no email channel): no email.
+    storage, digest, *_, notifier = _wire()
+    cid = _seed_campaign(storage)
+    result = digest.deliver(cid)
+    assert result["email_sent"] is False
+    assert not [c for c in notifier.captured() if c.channel == "email"]
+
+
 def test_empty_day_email_and_note():
     storage, digest, *_ = _wire()
     cid = _seed_campaign(storage, with_posting=False)
