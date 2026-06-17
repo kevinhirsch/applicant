@@ -146,6 +146,11 @@ class SetupService:
         # when the native proxmox-windows backend is selected (FR-OOBE, FR-SANDBOX-1).
         self._sandbox_backend = sandbox_backend
 
+    @property
+    def sandbox_backend(self) -> str:
+        """The selected sandbox backend (``local`` | ``proxmox-windows``)."""
+        return self._sandbox_backend
+
     # --- persistence helpers ---------------------------------------------
     def _load_tiers(self) -> list[dict[str, Any]]:
         rec = self._store.get(_LADDER_KEY)

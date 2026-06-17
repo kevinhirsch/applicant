@@ -20,6 +20,8 @@ def test_collect_sandbox_connection_and_readback(client):
     # Not configured initially.
     g0 = client.get("/api/setup/sandbox-connection").json()
     assert g0["configured"] is False
+    # The selected backend is surfaced for the wizard (default 'local').
+    assert g0["backend"] == "local"
 
     body = {
         "proxmox_api_url": "https://pve.local:8006",

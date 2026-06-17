@@ -228,6 +228,7 @@ def test_channels(container=Depends(get_container)) -> dict:
 def get_sandbox_connection(svc=Depends(get_setup_service)) -> dict:
     """Return the persisted Proxmox Windows connection (NO secrets) for the UI (FR-OOBE)."""
     return {
+        "backend": svc.sandbox_backend,
         "connection": svc.get_sandbox_connection(),
         "configured": svc.sandbox_connection_configured(),
         "backend_ready": svc.is_sandbox_backend_ready(),

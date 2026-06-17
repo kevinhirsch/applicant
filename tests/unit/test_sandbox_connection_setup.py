@@ -57,6 +57,14 @@ class TestSandboxConnectionStep:
         assert svc.is_sandbox_backend_ready() is True
         assert WizardStep.SANDBOX.value in svc.status().steps_complete
 
+    def test_sandbox_backend_property_surfaced(self, tmp_path):
+        # The selected backend is exposed so the front-door wizard can show the
+        # right affordance (built-in vs native Windows VM).
+        local, _ = self._svc(backend="local", tmp_path=tmp_path)
+        win, _ = self._svc(backend="proxmox-windows", tmp_path=tmp_path)
+        assert local.sandbox_backend == "local"
+        assert win.sandbox_backend == "proxmox-windows"
+
     def test_configure_collects_and_ungates(self, tmp_path):
         svc, _ = self._svc(tmp_path=tmp_path)
         svc.configure_sandbox_connection(_conn())
