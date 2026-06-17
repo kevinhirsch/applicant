@@ -54,6 +54,34 @@ _W_MATCH = 1.0
 _W_APPROVAL = 5.0
 _W_SUBMISSION = 12.0
 
+#: #12: cap the per-campaign ``feature_stats`` JSONB blob so it does not grow
+#: unbounded as it is rewritten on every fold. Keep only the top-N features by total
+#: count; raw free-text feedback tokens (a ``free_text:`` namespace) are dropped
+#: entirely — they are an unbounded vocabulary that bloats the blob without biasing.
+_FEATURE_STATS_CAP = 200
+_RAW_FEEDBACK_PREFIX = "free_text:"
+
+
+def cap_feature_stats(
+    stats: dict[str, dict], *, cap: int = _FEATURE_STATS_CAP
+) -> dict[str, dict]:
+    """Drop raw-feedback features + keep the top-N by total count (#12)."""
+    if not stats:
+        return {}
+    # Drop the unbounded raw free-text token namespace outright.
+    pruned = {k: v for k, v in stats.items() if not k.startswith(_RAW_FEEDBACK_PREFIX)}
+    if len(pruned) <= cap:
+        return pruned
+
+    def _total(slot: dict) -> int:
+        try:
+            return sum(int(c) for c in slot.values())
+        except Exception:  # pragma: no cover - defensive
+            return 0
+
+    top = sorted(pruned.items(), key=lambda kv: -_total(kv[1]))[:cap]
+    return dict(top)
+
 
 #: Per-campaign locks guarding the non-atomic load -> fold -> persist of shared
 #: learning state (FR-LEARN-1/FR-DUR-2). Keyed by campaign id and shared across all
@@ -110,7 +138,9 @@ class LearningService:
                     "converting_role_signature": model.converting_role_signature,
                     "converting_samples": model.converting_samples,
                     "exploration_budget": model.exploration_budget,
-                    "feature_stats": model.feature_stats,
+                    # #12: cap the feature_stats blob before it is written so the
+                    # JSONB column does not grow without bound over 24/7 folds.
+                    "feature_stats": cap_feature_stats(model.feature_stats),
                 }
             )
             self._storage.campaigns.add(
@@ -442,4 +472,5 @@ class LearningService:
             slot = stats.setdefault(feat, {})
             label = f"{val}:{bucket}"
             slot[label] = slot.get(label, 0) + 1
-        return replace(model, feature_stats=stats)
+        # #12: bound the blob at fold time so it never grows unbounded across decisions.
+        return replace(model, feature_stats=cap_feature_stats(stats))

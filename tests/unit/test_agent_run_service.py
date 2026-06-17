@@ -103,3 +103,52 @@ def test_fixed_duration_stops_after_elapsed(svc, campaign):
     started = datetime(2026, 1, 1, tzinfo=UTC)
     assert svc.should_continue(c, started_at=started, now=started + timedelta(minutes=30)) is True
     assert svc.should_continue(c, started_at=started, now=started + timedelta(minutes=90)) is False
+
+
+# === #11: indexed seq/latest + retention ====================================
+@pytest.mark.unit
+def test_next_seq_uses_indexed_max_seq(svc, campaign, storage):
+    """#11: start_run derives seq from AgentRunRepository.max_seq (single MAX query),
+    not a full run-history scan."""
+    calls = {"n": 0}
+
+    def _max_seq(campaign_id):
+        calls["n"] += 1
+        return 41
+    storage.agent_runs.max_seq = _max_seq
+
+    run = svc.start_run(campaign.id, "doing a thing")
+    assert run.seq == 42  # 1 + max_seq
+    assert calls["n"] >= 1
+
+
+@pytest.mark.unit
+def test_latest_intent_uses_indexed_latest(svc, campaign, storage):
+    """#11: latest_intent uses AgentRunRepository.latest (ORDER BY ... LIMIT 1)."""
+    from applicant.core.entities.agent_run import AgentRun
+    from applicant.core.ids import AgentRunId
+
+    sentinel = AgentRun(
+        id=AgentRunId(new_id()),
+        campaign_id=campaign.id,
+        intent_sentence="the newest intent",
+        run_mode=campaign.run_mode,
+        throughput_target=campaign.throughput_target,
+    )
+    storage.agent_runs.latest = lambda campaign_id: sentinel
+    assert svc.latest_intent(campaign.id) == "the newest intent"
+
+
+@pytest.mark.unit
+def test_start_run_prunes_old_runs_via_retention(svc, campaign, storage):
+    """#11: recording a run prunes runs beyond the rolling retention window."""
+    pruned = {"keep": None, "calls": 0}
+
+    def _prune(campaign_id, *, keep):
+        pruned["keep"] = keep
+        pruned["calls"] += 1
+    storage.agent_runs.prune_old = _prune
+
+    svc.start_run(campaign.id, "intent")
+    assert pruned["calls"] == 1
+    assert pruned["keep"] == AgentRunService.RUN_RETENTION

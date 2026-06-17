@@ -125,3 +125,32 @@ def test_in_app_inbox_feeds_portal():
     n = AppriseNotifier(in_app=True, clock=clock)
     n.notify(Notification(title="hi", body="there", dedup_key="i1"))
     assert any(c.title == "hi" for c in n.inbox())
+
+
+# === #15: digest-ready ping per-(campaign, UTC-day) idempotency ============
+def test_digest_ready_ping_once_per_day_across_fresh_loops():
+    """#15: 3 same-day calls (as a fresh AgentLoop per tick would make) -> exactly 1
+    digest-ready ping; a NEW UTC day pings again."""
+    calls: list[str] = []
+
+    class _CountingNotifier:
+        def notify(self, n):
+            calls.append(n.dedup_key)
+            return f"handle-{len(calls)}"
+
+        def expire(self, k):  # pragma: no cover - not exercised
+            pass
+
+    svc = NotificationService(_CountingNotifier())
+    cid = "camp-1"
+    day = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+
+    # Three same-day ticks (the shared service survives the loop being rebuilt).
+    svc.notify_digest_ready(cid, count=3, now=day)
+    svc.notify_digest_ready(cid, count=3, now=day.replace(hour=10))
+    svc.notify_digest_ready(cid, count=3, now=day.replace(hour=11))
+    assert len(calls) == 1  # exactly one ready ping that day
+
+    # A new UTC day fires again.
+    svc.notify_digest_ready(cid, count=2, now=day + timedelta(days=1))
+    assert len(calls) == 2

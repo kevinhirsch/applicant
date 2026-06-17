@@ -331,7 +331,9 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_period=settings.llm_rate_period or None,
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
-    submission_service = SubmissionService(storage, browser, learning=learning_service)
+    submission_service = SubmissionService(
+        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service
+    )
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -344,6 +346,13 @@ def build_container(settings: Settings | None = None) -> Container:
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
     attribute_cloud_service.set_prefill_service(prefill_service)
+    # #6: bridge onboarding intake into the engine (criteria + attribute cloud),
+    # wired additively after both services exist (avoids a construction cycle).
+    onboarding_service.set_criteria_service(criteria_service)
+    onboarding_service.set_attribute_cloud_service(attribute_cloud_service)
+    # #6: seed initial criteria at campaign creation (campaign_service is built before
+    # criteria_service, so wire it additively here).
+    campaign_service.set_criteria_service(criteria_service)
     from applicant.application.services.material_service import MaterialService
 
     material_service = MaterialService(
@@ -369,6 +378,7 @@ def build_container(settings: Settings | None = None) -> Container:
         discovery_service=discovery_service,
         scoring_service=scoring_service,
         digest_service=digest_service,
+        criteria_service=criteria_service,
         prefill_service=prefill_service,
         material_service=material_service,
         submission_service=submission_service,
@@ -407,7 +417,9 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=pas,
         )
-        sub = SubmissionService(tick_storage, browser, learning=ls)
+        sub = SubmissionService(
+            tick_storage, browser, learning=ls, advanced_learning=adv
+        )
         pf = PrefillService(
             storage=tick_storage,
             browser=browser,
@@ -435,6 +447,7 @@ def build_container(settings: Settings | None = None) -> Container:
             discovery_service=ds,
             scoring_service=ss,
             digest_service=dg,
+            criteria_service=cs,
             prefill_service=pf,
             material_service=mat,
             submission_service=sub,

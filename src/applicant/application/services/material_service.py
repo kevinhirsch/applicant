@@ -57,6 +57,7 @@ from applicant.core.rules.sensitive_fields import (
 )
 from applicant.core.rules.truthfulness import (
     VoiceProfile,
+    candidate_claim_tokens,
     extract_voice_profile,
     find_banned_phrases,
     normalize_emdashes,
@@ -117,7 +118,7 @@ class MaterialService:
         pending_actions=None,
         learning=None,
         advanced_learning=None,
-        review_base_url: str = "/applicant/review.html",
+        review_base_url: str = "/review",
     ) -> None:
         self._storage = storage
         self._llm = llm
@@ -238,12 +239,34 @@ class MaterialService:
         a JD term with no basis in the source is NEVER injected. This is the code
         embodiment of the interview-backtrack test: nothing is added that the
         candidate could not defend.
+
+        The reframing is real (not a verbatim no-op): JD terms that ARE supported by
+        the true source are re-emphasized in a leading "Relevant to this role:" line
+        so the material is re-oriented toward the JD, while unsupported JD terms are
+        dropped entirely (never injected). The em-dash post-filter always runs on the
+        reframed output.
         """
-        # Only JD terms already supported by the true source may be surfaced; an
-        # unsupported term is never injected. Re-emphasis keeps the real text
-        # verbatim (a content no-op) so nothing the candidate cannot defend is
-        # added. The em-dash post-filter always runs on the reframed output.
-        return normalize_emdashes(true_source)
+        source = normalize_emdashes(true_source)
+        if not jd_terms:
+            return source
+        supported_tokens = {t.lower() for t in candidate_claim_tokens(source)}
+        # Surface ONLY JD terms the candidate can actually defend (whole-token or
+        # whole-phrase support in the true source) — never inject an unsupported term.
+        emphasized: list[str] = []
+        for term in jd_terms:
+            term_norm = term.strip()
+            if not term_norm:
+                continue
+            term_tokens = {t.lower() for t in candidate_claim_tokens(term_norm)}
+            if term_tokens and term_tokens <= supported_tokens:
+                emphasized.append(term_norm)
+        if not emphasized:
+            return source
+        # Re-emphasis line uses ONLY the supported JD terms themselves (each already
+        # present in the true source), so it surfaces/re-orders truthfully without
+        # introducing any new claim token the candidate could not defend (#17).
+        lead = ", ".join(emphasized) + "."
+        return normalize_emdashes(lead + "\n" + source)
 
     def detect_fabrication(self, true_source: str, generated: str) -> list[str]:
         """Return generated claims not supported by the candidate's TRUE history.
@@ -346,8 +369,15 @@ class MaterialService:
         # No good reuse -> intelligently fork from the best parent (best coverage).
         parent = best.variant if best else None
         parent_source = variant_sources.get(str(parent.id), base_source) if parent else base_source
-        reframed = self.reframe_truthfully(parent_source, jd_terms)
-        self.assert_no_fabrication(parent_source, reframed)
+        # Generate the forked body through the same LLM-capable path the cover-letter /
+        # essay generators use (deterministic truthful fallback when no LLM). #17: the
+        # generated body — including any LLM-injected claim — is run through the
+        # fabrication gate against the candidate's TRUE source (``base_source``, the
+        # flattened real attribute set + history), NOT against the parent variant's own
+        # text (which would be a vacuous source-to-self comparison).
+        generated = self._generate_text(parent_source, jd_terms, kind="resume_variant")
+        report = self.apply_post_filter(generated)
+        self.assert_no_fabrication(base_source, report.text)
         new_variant = ResumeVariant(
             id=ResumeVariantId(new_id()),
             campaign_id=campaign_id,
@@ -358,7 +388,7 @@ class MaterialService:
         )
         self._storage.resume_variants.add(new_variant)
         self._storage.commit()
-        fit = self.score_fit(new_variant, posting_id, jd_terms, reframed)
+        fit = self.score_fit(new_variant, posting_id, jd_terms, report.text)
         return SelectionResult(variant=new_variant, fit=fit, generated=True)
 
     def _converting_alignment_for(self, campaign_id: CampaignId):
@@ -698,6 +728,10 @@ class MaterialService:
                     redline_state=session.redline_state,
                 )
             )
+        # FR-NOTIF-3/4 (#5): the review action resolves the material_review pending
+        # action + expires its escalation ladder so the ping/portal item does not
+        # linger after the user acted.
+        self._resolve_review_action(doc)
         return approved
 
     def decline(self, document_id: GeneratedDocumentId) -> GeneratedDocument:
@@ -716,7 +750,29 @@ class MaterialService:
                     redline_state=session.redline_state,
                 )
             )
+        # A decline is also a review ACTION: clear its pending action + ping (#5).
+        self._resolve_review_action(doc)
         return doc
+
+    def _resolve_review_action(self, doc: GeneratedDocument) -> None:
+        """Resolve the material_review pending action + expire its ladder (#5).
+
+        Both ``approve`` and ``decline`` are review actions. Without this, the
+        ``material_review:{doc.id}`` pending action stayed open forever and the
+        escalation ladder kept re-pinging. Best-effort: a notifier/storage hiccup
+        must never break the recorded approve/decline.
+        """
+        dedup_key = f"material_review:{doc.id}"
+        if self._pending_actions is not None:
+            try:
+                self._pending_actions.resolve_by_dedup(doc.campaign_id, dedup_key)
+            except Exception:  # pragma: no cover - defensive
+                pass
+        if self._notifications is not None:
+            try:
+                self._notifications.acted(dedup_key)
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     # === review gate before submission (FR-RESUME-8) =====================
     def ensure_application_submittable(self, application_id: ApplicationId) -> None:

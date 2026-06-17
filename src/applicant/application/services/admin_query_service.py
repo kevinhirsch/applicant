@@ -27,11 +27,26 @@ class AdminQueryService:
         self._orch = orchestrator
 
     # --- per-application history (FR-LOG-3 / FR-UI-6) ----------------------
-    def application_history(self, campaign_id: CampaignId) -> list[dict]:
+    def application_history(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[dict]:
+        """Per-application history (#14): batch screenshots + outcomes by campaign.
+
+        Was O(N) per-application ``list_for_application`` calls for screenshots AND
+        outcomes (a 2*N query storm). Now fetches both ONCE per campaign via the batch
+        repo methods (``screenshots.list_for_campaign`` / ``outcomes.list_for_campaign``)
+        and groups in memory, falling back to per-app where the batch method is absent.
+        ``limit`` bounds the rows returned.
+        """
+        apps = self._storage.applications.list_for_campaign(campaign_id)
+        if limit is not None:
+            apps = apps[:limit]
+        shots_by_app = self._batch_screenshots(campaign_id, apps)
+        outcomes_by_app = self._batch_outcomes(campaign_id, apps)
         rows: list[dict] = []
-        for a in self._storage.applications.list_for_campaign(campaign_id):
-            shots = self._storage.screenshots.list_for_application(a.id)
-            outcomes = self._storage.outcomes.list_for_application(a.id)
+        for a in apps:
+            shots = shots_by_app.get(str(a.id), [])
+            outcomes = outcomes_by_app.get(str(a.id), [])
             rows.append(
                 {
                     "application_id": str(a.id),
@@ -46,6 +61,20 @@ class AdminQueryService:
                 }
             )
         return rows
+
+    def _batch_screenshots(self, campaign_id: CampaignId, apps) -> dict[str, list]:
+        """Group per-app screenshots from one campaign-wide query (#14)."""
+        out: dict[str, list] = {}
+        for s in self._storage.screenshots.list_for_campaign(campaign_id):
+            out.setdefault(str(s.application_id), []).append(s)
+        return out
+
+    def _batch_outcomes(self, campaign_id: CampaignId, apps) -> dict[str, list]:
+        """Group per-app outcomes from one campaign-wide query (#14)."""
+        out: dict[str, list] = {}
+        for o in self._storage.outcomes.list_for_campaign(campaign_id):
+            out.setdefault(str(o.application_id), []).append(o)
+        return out
 
     # --- per-page screenshots (FR-OBS-2) ----------------------------------
     def screenshots(self, application_id: ApplicationId) -> list[dict]:
@@ -95,9 +124,13 @@ class AdminQueryService:
         return recent_logs(limit)
 
     # --- variant library (FR-UI-6 / FR-RESUME-6) --------------------------
-    def variant_library(self, campaign_id: CampaignId) -> list[dict]:
+    def variant_library(
+        self, campaign_id: CampaignId, *, limit: int | None = None
+    ) -> list[dict]:
         variants = self._storage.resume_variants.list_for_campaign(campaign_id)
         by_id = {str(v.id): v for v in variants}
+        if limit is not None:
+            variants = variants[:limit]
 
         def depth(v) -> int:
             d, cur = 0, v

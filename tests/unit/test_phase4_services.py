@@ -261,3 +261,63 @@ def test_live_surfaces_have_no_lingering_dormant_class_in_their_panel():
         section_open = debug_html.rfind("<section", 0, idx)
         section_tag = debug_html[section_open:idx]
         assert "applicant-dormant" not in section_tag
+
+
+# === #14: admin history batches screenshots/outcomes + supports limit =======
+def test_admin_history_batches_via_campaign_queries():
+    """#14: application_history uses screenshots.list_for_campaign +
+    outcomes.list_for_campaign (one query each) instead of per-application N+1."""
+    storage, cid, aid = _storage_with_app()
+
+    calls = {"shots_campaign": 0, "outcomes_campaign": 0, "shots_app": 0, "outcomes_app": 0}
+
+    real_shot_app = storage.screenshots.list_for_application
+    real_out_app = storage.outcomes.list_for_application
+
+    def _shots_campaign(campaign_id):
+        calls["shots_campaign"] += 1
+        return [s for a in storage.applications.list_for_campaign(campaign_id)
+                for s in real_shot_app(a.id)]
+
+    def _outcomes_campaign(campaign_id):
+        calls["outcomes_campaign"] += 1
+        return [o for a in storage.applications.list_for_campaign(campaign_id)
+                for o in real_out_app(a.id)]
+
+    def _shot_app(aid):
+        calls["shots_app"] += 1
+        return real_shot_app(aid)
+
+    def _out_app(aid):
+        calls["outcomes_app"] += 1
+        return real_out_app(aid)
+
+    storage.screenshots.list_for_campaign = _shots_campaign
+    storage.outcomes.list_for_campaign = _outcomes_campaign
+    storage.screenshots.list_for_application = _shot_app
+    storage.outcomes.list_for_application = _out_app
+
+    svc = AdminQueryService(storage, CheckpointShimOrchestrator())
+    rows = svc.application_history(cid)
+    assert len(rows) == 1 and rows[0]["screenshot_count"] == 1
+    # Batched: exactly one campaign-wide query each, no per-application calls.
+    assert calls["shots_campaign"] == 1 and calls["outcomes_campaign"] == 1
+    assert calls["shots_app"] == 0 and calls["outcomes_app"] == 0
+
+
+def test_admin_history_respects_limit():
+    """#14: application_history bounds returned rows by limit."""
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    for _i in range(5):
+        storage.applications.add(
+            Application(
+                id=ApplicationId(new_id()),
+                campaign_id=cid,
+                posting_id=JobPostingId(new_id()),
+                status=ApplicationState.PREFILLING,
+            )
+        )
+    storage.commit()
+    svc = AdminQueryService(storage, CheckpointShimOrchestrator())
+    assert len(svc.application_history(cid, limit=2)) == 2

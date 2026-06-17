@@ -11,6 +11,7 @@ core never imports SQLAlchemy.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol, runtime_checkable
 
 from applicant.core.entities.agent_run import AgentRun
@@ -41,6 +42,7 @@ from applicant.core.ids import (
     ResumeVariantId,
     RevisionSessionId,
 )
+from applicant.core.state_machine import ApplicationState
 
 
 @runtime_checkable
@@ -62,6 +64,9 @@ class JobPostingRepository(Protocol):
     def add(self, posting: JobPosting) -> None: ...
     def get(self, posting_id: JobPostingId) -> JobPosting | None: ...
     def list_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]: ...
+    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
+        """Postings in ``campaign_id`` whose ``viability_score`` is None (need scoring)."""
+        ...
 
 
 @runtime_checkable
@@ -70,6 +75,17 @@ class ApplicationRepository(Protocol):
     def get(self, application_id: ApplicationId) -> Application | None: ...
     def update(self, application: Application) -> None: ...
     def list_for_campaign(self, campaign_id: CampaignId) -> list[Application]: ...
+    def get_by_posting(
+        self, campaign_id: CampaignId, posting_id: JobPostingId
+    ) -> Application | None:
+        """The application for ``posting_id`` within ``campaign_id`` (or None)."""
+        ...
+
+    def list_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> list[Application]:
+        """Applications in ``campaign_id`` whose status is in ``statuses``."""
+        ...
 
 
 @runtime_checkable
@@ -99,13 +115,27 @@ class RevisionSessionRepository(Protocol):
 class DecisionRepository(Protocol):
     def add(self, decision: Decision) -> None: ...
     def list_for_application(self, application_id: ApplicationId) -> list[Decision]: ...
+    def list_approved_postings_for_campaign(
+        self, campaign_id: CampaignId
+    ) -> list[JobPostingId]:
+        """Posting ids in ``campaign_id`` with an APPROVED decision (single join, no N+1)."""
+        ...
 
 
 @runtime_checkable
 class OutcomeEventRepository(Protocol):
     def add(self, event: OutcomeEvent) -> None: ...
     def list_for_application(self, application_id: ApplicationId) -> list[OutcomeEvent]: ...
-    def list_for_campaign(self, campaign_id: CampaignId) -> list[OutcomeEvent]: ...
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[OutcomeEvent]: ...
+    def exists_terminal_for_application(self, application_id: ApplicationId) -> bool:
+        """True if a terminal (submitted/converted) outcome exists (idempotent submit)."""
+        ...
 
 
 @runtime_checkable
@@ -114,6 +144,15 @@ class ApplicationScreenshotRepository(Protocol):
 
     def add(self, shot: ApplicationScreenshot) -> None: ...
     def list_for_application(self, application_id: ApplicationId) -> list[ApplicationScreenshot]: ...
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ApplicationScreenshot]:
+        """All screenshots whose application belongs to ``campaign_id`` (batch load)."""
+        ...
 
 
 @runtime_checkable
@@ -139,6 +178,11 @@ class PendingActionRepository(Protocol):
     def get(self, action_id: PendingActionId) -> PendingAction | None: ...
     def list_open(self, campaign_id: CampaignId) -> list[PendingAction]: ...
     def resolve(self, action_id: PendingActionId) -> None: ...
+    def find_open_by_dedup(
+        self, campaign_id: CampaignId, dedup_key: str
+    ) -> PendingAction | None:
+        """Open action in ``campaign_id`` matching ``dedup_key`` (direct indexed lookup)."""
+        ...
 
 
 @runtime_checkable
@@ -167,7 +211,37 @@ class AgentRunRepository(Protocol):
 
     def add(self, run: AgentRun) -> None: ...
     def get(self, run_id: AgentRunId) -> AgentRun | None: ...
-    def list_for_campaign(self, campaign_id: CampaignId) -> list[AgentRun]: ...
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AgentRun]: ...
+    def count_pipelines_started_on(self, campaign_id: CampaignId, day: date) -> int:
+        """Total pipelines started for ``campaign_id`` on ``day`` (UTC date).
+
+        Sums each run's ``stats["pipelines_started"]`` for the day (NOT a count of run
+        rows), so the per-day throughput cap reflects applications actually acted on.
+        """
+        ...
+
+    def latest(self, campaign_id: CampaignId) -> AgentRun | None:
+        """Most recent run for ``campaign_id`` (by timestamp, seq tie-break)."""
+        ...
+
+    def max_seq(self, campaign_id: CampaignId) -> int:
+        """Highest ``seq`` among runs for ``campaign_id`` (0 if none)."""
+        ...
+
+    def prune_old(self, campaign_id: CampaignId, *, keep: int) -> int:
+        """Keep the newest ``keep`` runs for ``campaign_id``; delete the rest.
+
+        Retention for 24/7 ticking (#11): newness is ordered by ``(timestamp, seq)`` so
+        pruning is deterministic and stable across both lanes. Returns the number of
+        runs deleted.
+        """
+        ...
 
 
 @runtime_checkable

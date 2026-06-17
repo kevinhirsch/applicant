@@ -73,6 +73,19 @@ class ScreeningAnswerIn(BaseModel):
     explicit_answer: str | None = None
 
 
+class DeferredEssayIn(BaseModel):
+    # #4: resolve a deferred essay screening question pre-fill recorded during the
+    # FR-PREFILL-3 walk — generate + route the answer to review.
+    campaign_id: str
+    application_id: str
+    true_source: str
+    label: str = ""
+    question: str | None = None
+    selector: str | None = None
+    url: str | None = None
+    explicit_answer: str | None = None
+
+
 class AggressivenessIn(BaseModel):
     # FR-RESUME-9 truthful-framing dial; the UI control ships grayed (FR-UI-2).
     aggressiveness: int = 20
@@ -176,6 +189,46 @@ def generate_screening_answer(
         essay=body.essay,
         explicit_answer=body.explicit_answer,
     )
+    return {"id": doc.id, "type": doc.type.value, "approved": doc.approved, "content": doc.content}
+
+
+@router.post(
+    "/deferred-essay",
+    status_code=201,
+    dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
+)
+def generate_deferred_essay(
+    body: DeferredEssayIn, container: Container = Depends(get_container)
+) -> dict:
+    """Generate + review the answer for a DEFERRED essay screening question (#4).
+
+    Phase 2 pre-fill records essay screening questions it must not auto-answer as
+    ``agent_question`` pending actions; this endpoint resolves one by generating the
+    answer (classified, filtered, fabrication-gated) and routing it to review, and
+    clears the originating pending action so the portal item does not linger.
+    """
+    deferred = {
+        "label": body.label or body.question or "",
+        "question": body.question,
+        "selector": body.selector,
+        "url": body.url,
+        "explicit_answer": body.explicit_answer,
+    }
+    doc = _material_service(container).generate_for_deferred_question(
+        body.campaign_id,  # type: ignore[arg-type]
+        body.application_id,  # type: ignore[arg-type]
+        deferred,
+        body.true_source,
+    )
+    # Resolve the originating agent_question pending action by its dedup key (#4/#7).
+    if body.selector:
+        try:
+            container.pending_actions_service.resolve_by_dedup(
+                body.campaign_id,  # type: ignore[arg-type]
+                f"agent_question:{body.application_id}:{body.selector}",
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved, "content": doc.content}
 
 

@@ -28,6 +28,11 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+#: "Effectively forever" wait for the approval gate (FR-DUR-3). DBOS ``recv``
+#: requires a numeric timeout, so a very large finite value stands in for an
+#: indefinite wait without spuriously timing out a pending approval (~10 years).
+_INDEFINITE_WAIT_SECONDS = 315_360_000.0
+
 
 class _DbosHandle:
     def __init__(self, workflow_id: str, handle: Any) -> None:
@@ -47,6 +52,7 @@ class DbosOrchestrator:
 
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
+        self._configured = False
         self._launched = False
         self._dbos: Any = None
         self._workflows: dict[str, Callable[..., Any]] = {}
@@ -62,8 +68,17 @@ class DbosOrchestrator:
         # decorated functions stay referenced and are not garbage-collected.
         self._scheduled: dict[str, Callable[..., Any]] = {}
 
-    def _ensure_launched(self) -> None:
-        if self._launched:
+    def _ensure_configured(self) -> None:
+        """CONFIGURE phase: instantiate DBOS so decorators register (NO launch yet).
+
+        Registration (``@DBOS.workflow`` / ``@DBOS.scheduled`` / ``Queue(...)``) MUST
+        happen before ``DBOS.launch()`` or queues are never dispatched and workflows
+        are not recovered. So configuration (creating the singleton + applying the
+        decorators) is split from launching: register* / create_queue / schedule run
+        here without launching; only the execution methods (start/enqueue/send/recv/
+        run_step/recover) actually ``launch()`` via :meth:`_ensure_launched`.
+        """
+        if self._configured:
             return
         # Deferred import: only touch DBOS / Postgres when actually used.
         from dbos import DBOS, DBOSConfig
@@ -73,14 +88,30 @@ class DbosOrchestrator:
             "database_url": self._database_url,
         }
         DBOS(config=config)
-        DBOS.launch()
         self._dbos = DBOS
+        self._configured = True
+
+    def _ensure_launched(self) -> None:
+        """LAUNCH phase: launch DBOS exactly once, AFTER everything is registered.
+
+        DBOS recovers pending workflows automatically at ``launch()``, so this is the
+        single transition from the configure phase to a running runtime.
+        """
+        if self._launched:
+            return
+        self._ensure_configured()
+        self._dbos.launch()
         self._launched = True
 
     def register_workflow(self, name: str, fn: Callable[..., Any]) -> None:
-        """Register ``fn`` as a DBOS durable workflow under ``name`` (FR-DUR-1)."""
-        self._ensure_launched()
-        from dbos import DBOS
+        """Register ``fn`` as a DBOS durable workflow under ``name`` (FR-DUR-1).
+
+        CONFIGURE-only: applies the ``@DBOS.workflow`` decorator (which requires the
+        DBOS singleton to exist) but does NOT launch — so multiple workflows can be
+        registered before the single ``launch()``.
+        """
+        self._ensure_configured()
+        DBOS = self._dbos
 
         self._workflows[name] = fn
 
@@ -95,43 +126,61 @@ class DbosOrchestrator:
     def start_workflow(self, name: str, workflow_id: str, *args: Any, **kwargs: Any) -> _DbosHandle:
         """Start (or resume, by idempotent ``workflow_id``) a durable workflow."""
         self._ensure_launched()
-        from dbos import DBOS, SetWorkflowID
+        from dbos import SetWorkflowID
 
         shim = self._wf_shims.get(name)
         if shim is None:
             raise KeyError(f"workflow not registered: {name}")
         with SetWorkflowID(workflow_id):
-            handle = DBOS.start_workflow(shim, workflow_id, *args, **kwargs)
+            handle = self._dbos.start_workflow(shim, workflow_id, *args, **kwargs)
         return _DbosHandle(workflow_id, handle)
 
     def run_step(self, workflow_id: str, step_name: str, fn: Callable[[], Any]) -> Any:
-        """Run an idempotent, checkpointed DBOS step (mid-step resumption)."""
-        self._ensure_launched()
-        from dbos import DBOS
+        """Run an idempotent, checkpointed DBOS step (mid-step resumption).
 
-        return DBOS.run_step(fn, name=step_name)
+        Real DBOS ``run_step`` takes STEP OPTIONS then the function:
+        ``DBOS.run_step({"name": ...}, fn)`` (the old ``run_step(fn, name=...)`` was
+        the wrong signature). The step is KEYED by ``(workflow_id, step_name)`` so two
+        concurrent applications reusing fixed step names ("prefill"/"submit") do NOT
+        collide on the same checkpoint key.
+        """
+        self._ensure_launched()
+        DBOS = self._dbos
+
+        # Distinct, deterministic key per workflow so identical step names across
+        # concurrent workflows checkpoint independently.
+        step_key = f"{workflow_id}:{step_name}"
+        return DBOS.run_step({"name": step_key}, fn)
 
     def send(self, workflow_id: str, topic: str, payload: Any) -> None:
         """Deliver an approval-gate message to a waiting workflow (FR-DUR-3)."""
         self._ensure_launched()
-        from dbos import DBOS
-
-        DBOS.send(workflow_id, payload, topic=topic)
+        self._dbos.send(workflow_id, payload, topic=topic)
 
     def recv(self, workflow_id: str, topic: str, timeout: float | None = None) -> Any:
-        """Durably wait for a message on ``topic`` (survives a crash)."""
-        self._ensure_launched()
-        from dbos import DBOS
+        """Durably wait for a message on ``topic`` (survives a crash).
 
-        return DBOS.recv(topic=topic, timeout_seconds=timeout or 60.0)
+        ``timeout=None`` means wait INDEFINITELY for the approval gate (the old code
+        silently substituted 60s, so an approval-gate wait would spuriously time out).
+        A very large finite timeout stands in for "effectively forever" since DBOS
+        ``recv`` requires a numeric ``timeout_seconds``.
+        """
+        self._ensure_launched()
+        DBOS = self._dbos
+
+        timeout_seconds = timeout if timeout is not None else _INDEFINITE_WAIT_SECONDS
+        return DBOS.recv(topic=topic, timeout_seconds=timeout_seconds)
 
     def recover_pending(self) -> list[str]:
-        """Resume all interrupted workflows on startup; return their ids (FR-DUR-1)."""
-        self._ensure_launched()
-        from dbos import DBOS
+        """Resume interrupted workflows on startup; return their ids (FR-DUR-1).
 
-        handles = DBOS.recover_pending_workflows()
-        return [h.workflow_id for h in handles]
+        DBOS 2.x has NO ``recover_pending_workflows()`` — calling it AttributeErrors
+        on the real path. DBOS recovers pending workflows AUTOMATICALLY at
+        ``launch()``, so recovery is implicit: ensure we are launched and return ``[]``
+        (recovery has already been kicked off by the runtime).
+        """
+        self._ensure_launched()
+        return []
 
     # --- durable queue concept (concurrency caps / rate limits) ----------
     def create_queue(
@@ -150,8 +199,11 @@ class DbosOrchestrator:
         admission gate. The in-memory ``_queue_admit`` bookkeeping mirrors the same
         cap so the synchronous ``acquire``/``release`` contract stays uniform across
         both adapters (the shim has no Postgres-backed queue runtime).
+
+        CONFIGURE-only: ``Queue(...)`` MUST be created before ``launch()`` or DBOS
+        never dispatches it. So this only configures (no launch).
         """
-        self._ensure_launched()
+        self._ensure_configured()
         from dbos import Queue
 
         limiter = None
@@ -232,9 +284,12 @@ class DbosOrchestrator:
         it on the schedule with crash-safe, exactly-once semantics, and STORES the
         decorated function so it stays registered for the process lifetime (the
         scheduler tick is driven this way on the DBOS path).
+
+        CONFIGURE-only: ``@DBOS.scheduled`` MUST register before ``launch()`` or the
+        schedule never fires. So this only configures (no launch).
         """
-        self._ensure_launched()
-        from dbos import DBOS
+        self._ensure_configured()
+        DBOS = self._dbos
 
         @DBOS.scheduled(cron)
         @DBOS.workflow(name=f"applicant.sched.{name}")
