@@ -1,4 +1,4 @@
-"""Proactive awareness subsystem (Phase 2, Smokey parity).
+"""Proactive awareness subsystem (Phase 2, Applicant parity).
 
 The pure decision logic lives in ``engine`` (no DB/LLM/IO) so it is fully
 unit-testable; the live loop, collectors, and notification dispatch are wired

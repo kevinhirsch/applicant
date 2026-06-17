@@ -1,5 +1,5 @@
 # routes/entity_routes.py
-"""HTTP API for the Entity / Relationship store (Phase 1, Smokey parity).
+"""HTTP API for the Entity / Relationship store (Phase 1, Applicant parity).
 
 Owner-scoped; writes require the existing ``can_manage_memory`` privilege.
 The agent reaches these via the generic ``app_api`` loopback tool, so no

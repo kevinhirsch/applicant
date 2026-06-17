@@ -1,4 +1,4 @@
-"""Risk-tier action policy (Smokey parity, ADR-010 analogue).
+"""Risk-tier action policy (Applicant parity, ADR-010 analogue).
 
 Classifies agent/awareness actions into risk tiers and decides when an action
 needs explicit confirmation. Applicant already gates *capabilities* via
