@@ -49,3 +49,6 @@ workspace/.local/
 
 # Claude Code local state (agent worktrees, session settings) — never track
 .claude/
+
+# Ephemeral UI-audit telemetry (screenshots, node_modules, browsers)
+.audit-telemetry/

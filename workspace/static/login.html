@@ -178,28 +178,30 @@
   }
   .pw-toggle:hover { color: var(--fg); background: none; }
   .pw-toggle svg { display: block; }
-  .remember-toggle {
-    position: absolute !important; right: 13px; top: 50%; transform: translateY(-50%);
-    background: none; border: none; padding: 2px; cursor: pointer;
-    width: 14px !important; height: 14px !important; display: flex !important;
-    align-items: center; justify-content: center;
-    font-size: 0; margin: 0; color: transparent;
+  /* Remember-me — a clearly labelled checkbox row below the password, instead
+     of an unlabelled dot tucked inside the username field. */
+  .remember-row {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 1rem; cursor: pointer; width: max-content;
+    font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 65%, transparent);
+    user-select: none;
   }
-  .remember-toggle .remember-check { display: none; }
-  .remember-toggle .remember-dot {
-    display: block; width: 10px; height: 10px; min-width: 10px; min-height: 10px;
-    border-radius: 50%;
-    border: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
-    background: transparent;
-    transition: all 0.15s;
+  .remember-row .remember-check { display: none; }
+  .remember-row .remember-dot {
+    display: block; width: 15px; height: 15px; min-width: 15px; min-height: 15px;
+    border-radius: 4px; position: relative;
+    border: 1.5px solid color-mix(in srgb, var(--fg) 35%, transparent);
+    background: transparent; transition: all 0.15s;
   }
-  .remember-toggle .remember-check:checked + .remember-dot {
-    border-color: transparent;
-    background: color-mix(in srgb, var(--fg) 40%, transparent);
+  .remember-row .remember-check:checked + .remember-dot {
+    border-color: var(--red); background: var(--red);
   }
-  .remember-toggle:hover .remember-dot {
-    border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  .remember-row .remember-check:checked + .remember-dot::after {
+    content: ''; position: absolute; left: 4.5px; top: 1.5px;
+    width: 3px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
   }
+  .remember-row:hover .remember-dot { border-color: color-mix(in srgb, var(--fg) 55%, transparent); }
   .logo-boat { width: 1.6rem; height: 1.6rem; margin-right: 0.4rem; vertical-align: -0.15em; color: var(--red); }
   .version-label {
     position: fixed; bottom: 12px; right: 16px;
@@ -235,10 +237,6 @@
     <label for="username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
-      <label class="remember-toggle" id="rememberToggle" title="Remember me">
-        <input type="checkbox" class="remember-check" id="remember" checked>
-        <span class="remember-dot"></span>
-      </label>
     </div>
 
     <label for="password">Password</label>
@@ -258,6 +256,12 @@
         </button>
       </div>
     </div>
+
+    <label class="remember-row" id="rememberToggle" title="Keep me signed in on this device">
+      <input type="checkbox" class="remember-check" id="remember" checked>
+      <span class="remember-dot"></span>
+      <span class="remember-text">Remember me</span>
+    </label>
 
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
