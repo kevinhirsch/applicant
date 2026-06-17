@@ -9,6 +9,24 @@ ENV PYTHONUNBUFFERED=1 \
 # Install uv (the project toolchain).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# System packages for the resume-render pipeline (FR-RESUME-3/4). The renderer
+# auto-detects these via shutil.which() and silently degrades (no real PDF) when
+# absent, so they must be in the image — both render paths are reachable depending
+# on the user's onboarding accept/reject choice:
+#   * LaTeX (primary): xelatex/lualatex + fontspec / moderncv / fontawesome5
+#   * docx (fallback): LibreOffice headless (soffice --convert-to pdf)
+# Targeted texlive subset (not texlive-full) to keep the image ~2GB instead of ~4GB.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-writer \
+        fonts-liberation \
+        texlive-xetex \
+        texlive-luatex \
+        texlive-latex-extra \
+        texlive-fonts-recommended \
+        texlive-fonts-extra \
+        lmodern \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install dependencies first (better layer caching).
