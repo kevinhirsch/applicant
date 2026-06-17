@@ -1487,6 +1487,14 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <span>Search</span>
           </button>
+          <button class="settings-nav-item" data-settings-tab="fonts">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            <span>Fonts</span>
+          </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="sandbox">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span>Automation</span>
+          </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 2: Comms (Integrations → Email → Reminders).
                Integrations leads here because it's where the underlying
@@ -1502,6 +1510,10 @@
           <button class="settings-nav-item" data-settings-tab="reminders">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             <span>Reminders</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="notifications">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>
+            <span>Notifications</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 3: UX (Appearance → Shortcuts) -->
@@ -2129,6 +2141,39 @@
               <span id="set-reminder-test-msg" style="font-size:11px;"></span>
               <button class="admin-btn-add" id="set-reminder-test-btn" style="margin-left:auto;">Send Test Reminder</button>
             </div>
+          </div>
+        </div>
+
+        <!-- ═══ NOTIFICATIONS TAB ═══
+             Applicant's own notification channels (Discord webhook + email/SMTP
+             for the daily digest and approval requests). The card body is rendered
+             by the SAME wizard renderer that used to live in OOBE step 2
+             (applicantOnboarding.js _renderChannels) via mountApplicantSettingsStep. -->
+        <div data-settings-panel="notifications" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>Applicant notifications</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">How Applicant reaches you — Discord and/or email — for your daily digest and approval requests. Optional: in-app notifications always work.</div>
+            <div id="ao-settings-notifications"></div>
+          </div>
+        </div>
+
+        <!-- ═══ FONTS TAB ═══
+             Reuses applicantOnboarding.js _renderFonts (the OOBE fonts step). -->
+        <div data-settings-panel="fonts" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>Resume fonts</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Check which fonts your resume needs and add any that are missing, so your generated resume keeps its look.</div>
+            <div id="ao-settings-fonts"></div>
+          </div>
+        </div>
+
+        <!-- ═══ AUTOMATION SANDBOX TAB ═══
+             Reuses applicantOnboarding.js _renderSandbox (the OOBE sandbox step). -->
+        <div data-settings-panel="sandbox" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Automation sandbox</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Where Applicant runs the browser it drives — and that you take over when a human step is needed. Most people keep the built-in sandbox.</div>
+            <div id="ao-settings-sandbox"></div>
           </div>
         </div>
 

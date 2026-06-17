@@ -33,7 +33,36 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      mountRelocatedSetupStep(tab);
     });
+  });
+}
+
+// The Notifications, Fonts and Automation-sandbox settings tabs REUSE the exact
+// OOBE wizard renderers (applicantOnboarding.js _renderChannels/_renderFonts/
+// _renderSandbox) rather than reimplementing them. mountApplicantSettingsStep()
+// renders the relevant step into the panel's host div. Mounted lazily on tab open
+// (the renderers fetch their own current state from the engine each time).
+const RELOCATED_SETUP_STEPS = {
+  notifications: { step: 'channels', host: 'ao-settings-notifications' },
+  fonts: { step: 'fonts', host: 'ao-settings-fonts' },
+  sandbox: { step: 'sandbox', host: 'ao-settings-sandbox' },
+};
+
+function mountRelocatedSetupStep(tab) {
+  const cfg = RELOCATED_SETUP_STEPS[tab];
+  if (!cfg) return;
+  const host = document.getElementById(cfg.host);
+  if (!host) return;
+  const mount = window.mountApplicantSettingsStep;
+  if (typeof mount !== 'function') {
+    host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Setup module unavailable — reload and try again.</p>';
+    return;
+  }
+  // Re-render fresh each open so the form reflects the latest saved state.
+  host.innerHTML = '';
+  Promise.resolve(mount(cfg.step, host)).catch(() => {
+    host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load this section.</p>';
   });
 }
 
@@ -4320,6 +4349,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  mountRelocatedSetupStep(activeTab);
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }

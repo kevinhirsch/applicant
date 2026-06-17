@@ -53,15 +53,16 @@ let _busy = false;
 // The `sandbox` step is satisfied (and so skipped on the local default) unless the
 // native Windows VM backend is selected and still needs its connection collected —
 // the engine reports this via `steps_complete` containing 'sandbox'.
+// Slimmed to only the critical-to-quality steps. Notifications, the automation
+// sandbox and fonts moved into Settings (reusing the EXACT same renderers below —
+// see the exported _renderChannels/_renderSandbox/_renderFonts), so nothing is
+// unreachable; the engine no longer gates automated work on channels.
 const STEPS = [
   // B1: a welcome / preview step. It is "done" once the user has made any setup
   // progress, so the resumable wizard skips it on re-opens but a brand-new user
   // always lands here first.
-  { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.channels_configured || s.onboarding_complete || (Array.isArray(s.steps_complete) && s.steps_complete.length))) },
+  { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.onboarding_complete || (Array.isArray(s.steps_complete) && s.steps_complete.length))) },
   { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
-  { key: 'channels',   title: 'Notifications',    done: (s) => !!(s && s.channels_configured) },
-  { key: 'sandbox',    title: 'Automation sandbox', done: (s) => !!(s && Array.isArray(s.steps_complete) && s.steps_complete.includes('sandbox')) },
-  { key: 'fonts',      title: 'Fonts',            done: (s) => !!(s && s.fonts_ready) },
   { key: 'onboarding', title: 'Your profile',     done: (s) => !!(s && s.onboarding_complete) },
 ];
 
@@ -197,13 +198,19 @@ function _renderRail() {
   }).join('');
 }
 
+// When a step renderer is reused OUTSIDE the wizard (Settings), these point at the
+// settings panel's body/foot elements instead of the wizard's fixed ao-body/ao-foot.
+// Null = wizard mode (the default). See mountSettingsStep() below.
+let _bodyTarget = null;
+let _footTarget = null;
+
 function _setBody(html) {
-  const body = document.getElementById('ao-body');
+  const body = _bodyTarget || document.getElementById('ao-body');
   if (body) body.innerHTML = html;
 }
 
 function _setFoot(html) {
-  const foot = document.getElementById('ao-foot');
+  const foot = _footTarget || document.getElementById('ao-foot');
   if (foot) foot.innerHTML = html;
 }
 
@@ -233,9 +240,6 @@ async function _renderStep() {
   try {
     if (step.key === 'welcome') return _renderWelcome();
     if (step.key === 'llm') return await _renderLLM();
-    if (step.key === 'channels') return await _renderChannels();
-    if (step.key === 'sandbox') return await _renderSandbox();
-    if (step.key === 'fonts') return await _renderFonts();
     if (step.key === 'onboarding') return await _renderOnboarding();
   } catch (e) {
     _setBody(_err(esc(e.message || 'Something went wrong.')));
@@ -248,6 +252,9 @@ async function _advanceAndContinue(stepKey) {
   // Mark the engine step complete (best-effort) then move forward (linearly).
   try { _status = await _post(`${SETUP}/advance/${stepKey}`); }
   catch { await _refreshStatus().catch(() => {}); }
+  // Settings reuse: a relocated step renderer is being driven from a Settings
+  // panel (no wizard overlay open) — save only, never drive wizard navigation.
+  if (!_overlay) return;
   await _nextStep();
 }
 
@@ -302,9 +309,9 @@ function _renderWelcome() {
       <h2 style="margin:0 0 6px;font-size:0.95em;">What you'll set up</h2>
       <ol style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
         <li>Connect a model — a local model or a cloud provider.</li>
-        <li>Notifications — how Applicant reaches you for updates and approvals.</li>
         <li>Your profile — the comprehensive part, so applications need far fewer interruptions later.</li>
       </ol>
+      <p style="margin:8px 0 0;font-size:0.82rem;opacity:0.7;">Notifications, fonts and the automation sandbox are optional — set them up any time in Settings.</p>
     </div>
     <div class="admin-card">
       <h2 style="margin:0 0 6px;font-size:0.95em;">How Applicant works — and what it never does</h2>
@@ -1200,7 +1207,6 @@ async function _finish() {
   const s = _status || {};
   const missing = [];
   if (!s.llm_configured) missing.push({ key: 'llm', label: 'connect a model' });
-  if (!s.channels_configured) missing.push({ key: 'channels', label: 'add a notification channel' });
   if (!s.onboarding_complete) missing.push({ key: 'onboarding', label: 'finish your profile' });
 
   if (!missing.length) {
@@ -1269,7 +1275,7 @@ export async function maybeLaunchOnboarding() {
   try { status = await _refreshStatus(); }
   catch { return false; } // engine unreachable -> don't block; the user can still log in
   if (!status) return false;
-  const complete = status.llm_configured && status.channels_configured && status.onboarding_complete;
+  const complete = status.llm_configured && status.onboarding_complete;
   if (complete) return false; // nothing to do
 
   _overlay = _buildOverlay();
@@ -1301,4 +1307,57 @@ if (typeof window !== 'undefined') window.launchApplicantSetup = launchOnboardin
 export const neverDoesList = NEVER_DOES.slice();
 try { if (typeof window !== 'undefined') window.applicantNeverDoesList = neverDoesList; } catch { /* no-op */ }
 
-export default { maybeLaunchOnboarding, launchOnboarding, neverDoesList };
+// ── Settings reuse of the relocated steps ───────────────────────────────────
+//
+// The Notifications, Automation-sandbox and Fonts steps were lifted out of the
+// OOBE wizard and into Settings. Rather than reimplement them, Settings calls the
+// SAME renderers (_renderChannels / _renderSandbox / _renderFonts) used by the
+// wizard — this helper mounts one of them into a Settings panel by pointing the
+// shared _setBody/_setFoot at the panel's own body/foot elements and flipping on
+// the absent wizard overlay so the renderer saves through the engine proxies
+// without trying to drive navigation.
+//
+// `container` is the panel element; we create/reuse `.ao-settings-body` and
+// `.ao-settings-foot` children inside it so the renderer's body+foot land there.
+// (The renderers detect "Settings, not wizard" at save time via the absent
+// _overlay, so they save through the engine proxies without driving navigation.)
+const _SETTINGS_RENDERERS = {
+  channels: _renderChannels,
+  sandbox: _renderSandbox,
+  fonts: _renderFonts,
+};
+
+export async function mountSettingsStep(stepKey, container) {
+  const render = _SETTINGS_RENDERERS[stepKey];
+  if (!render || !container) return false;
+  let body = container.querySelector('.ao-settings-body');
+  let foot = container.querySelector('.ao-settings-foot');
+  if (!body) {
+    body = document.createElement('div');
+    body.className = 'ao-settings-body';
+    container.appendChild(body);
+  }
+  if (!foot) {
+    foot = document.createElement('div');
+    foot.className = 'ao-settings-foot ao-foot';
+    container.appendChild(foot);
+  }
+  const prevBody = _bodyTarget;
+  const prevFoot = _footTarget;
+  _bodyTarget = body;
+  _footTarget = foot;
+  try {
+    await render();
+  } finally {
+    // Restore so a later wizard launch keeps targeting its own DOM. Only the
+    // synchronous body/foot build reads these targets; later click handlers
+    // address their own elements by id.
+    _bodyTarget = prevBody;
+    _footTarget = prevFoot;
+  }
+  return true;
+}
+
+if (typeof window !== 'undefined') window.mountApplicantSettingsStep = mountSettingsStep;
+
+export default { maybeLaunchOnboarding, launchOnboarding, neverDoesList, mountSettingsStep };

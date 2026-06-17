@@ -217,7 +217,8 @@ def work_not_allowed(p1bctx):
 
 @then("automated work is still gated on remaining setup")
 def work_still_gated(p1bctx):
-    # Onboarding is still incomplete, so automated work remains blocked (FR-OOBE-3).
+    # Onboarding is still incomplete, so automated work remains blocked
+    # (FR-ONBOARD-2). Channels are optional now and do not affect this.
     status = p1bctx["client"].get("/api/setup/status").json()
     assert status["automated_work_allowed"] is False
 

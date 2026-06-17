@@ -274,8 +274,10 @@ def build_container(settings: Settings | None = None) -> Container:
         return False
 
     # Setup service so the persisted ladder can configure the LLM adapter; its
-    # automated-work gate now consults the real onboarding + channels gates. The
-    # channels gate reads the wizard-persisted channel config OR env defaults.
+    # automated-work gate now requires ONLY the LLM + onboarding gates (channels
+    # and the sandbox moved into Settings and are optional). The channels gate is
+    # still wired so the status payload reports channel state for the Settings UI;
+    # it reads the wizard-persisted channel config OR env defaults.
     setup_service = SetupService(
         llm_configured=settings.llm_configured,
         config_store=config_store,

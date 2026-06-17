@@ -58,13 +58,15 @@ def fake_clock():
 
 
 def open_automated_work_gate(client) -> None:
-    """Open the full automated-work gate on a TestClient app (FR-ONBOARD-2, FR-OOBE-3).
+    """Open the full automated-work gate on a TestClient app (FR-UI-5, FR-ONBOARD-2).
 
     The ``require_automated_work`` dependency 409s until the LLM is configured AND
-    notification channels are configured AND onboarding is complete. This helper
-    satisfies all three so tests that exercise gated routers (discovery, digest,
-    agent-runs, remote) set up the real preconditions instead of relying on the gate
-    being unenforced.
+    onboarding is complete. (Notification channels and the automation sandbox moved
+    to Settings and are now OPTIONAL — they no longer gate automated work.) This
+    helper satisfies the required preconditions so tests that exercise gated routers
+    (discovery, digest, agent-runs, remote) set up real state instead of relying on
+    the gate being unenforced. It also configures channels for completeness, though
+    that is no longer required to ungate work.
     """
     # 1. LLM gate (FR-UI-5).
     r = client.post(
@@ -72,7 +74,7 @@ def open_automated_work_gate(client) -> None:
         json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
     )
     assert r.status_code == 204
-    # 2. Notification channels (FR-OOBE-3).
+    # 2. Notification channels (optional now, but set for completeness).
     r = client.post("/api/setup/channels", json={"discord_webhook_url": "https://discord.test/wh"})
     assert r.status_code == 204
     # 3. Onboarding completion (FR-ONBOARD-2): force the real onboarding gate True.

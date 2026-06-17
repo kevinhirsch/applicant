@@ -7,7 +7,8 @@ Feature: Channel setup gates automated work in the OOBE wizard
     Then the wizard reports the channels step complete
     And the configured notifier reports Discord and email channels
 
-  Scenario: Automated work is blocked until channels are configured
+  Scenario: Automated work stays gated on onboarding regardless of channels
+    # Channels are OPTIONAL now (they moved to Settings); onboarding still gates work.
     Given the LLM gate has been opened through the wizard
     Then automated work is not yet allowed
     When Discord and email channels are configured through the API
