@@ -459,6 +459,11 @@ function _watchForAssistantActivation() {
 
 function _boot() {
   _watchForAssistantActivation();
+  // Lane C — load the engine-backed Job Assistant surface (self-contained,
+  // wires its own rail-assistant launcher). Additive; the native personal
+  // assistant above is unaffected. Lazy + best-effort so a load failure here
+  // never blocks the native assistant.
+  import('./applicantChat.js').catch(() => {});
 }
 
 if (document.readyState === 'loading') {

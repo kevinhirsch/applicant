@@ -678,6 +678,9 @@ app.include_router(setup_contacts_routes())
 # engine-backed sections progressively. Read-only; does not touch auth/users.
 from routes.applicant_routes import setup_applicant_routes
 app.include_router(setup_applicant_routes())
+# Lane C — Chat/Agent ↔ engine assistant + job actions (additive; auth-protected).
+from routes.applicant_chat_routes import setup_applicant_chat_routes
+app.include_router(setup_applicant_chat_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
