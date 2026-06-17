@@ -26,7 +26,20 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
+ENV_FILE="${REPO_ROOT}/.env"
 APPLY=0
+
+# --- Persisted settings: load any saved .env FIRST so re-runs and updates reuse
+# the SAME database password. Postgres bakes its password into the data volume on
+# first init; if a later run fell back to a different default the app could no
+# longer authenticate. Explicit environment variables still win over the file.
+if [[ -f "${ENV_FILE}" ]]; then
+  while IFS='=' read -r _k _v; do
+    [[ "${_k}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue   # skip blanks/comments
+    # Only adopt a saved value when the variable isn't already set in the env.
+    [[ -n "${!_k:-}" ]] || export "${_k}=${_v}"
+  done <"${ENV_FILE}"
+fi
 
 # --- Editable defaults (override via environment; FR-INSTALL-1) -------------
 export POSTGRES_USER="${POSTGRES_USER:-applicant}"
@@ -65,6 +78,20 @@ fi
 # --- 2. Validate the production compose file --------------------------------
 log "Validating compose file: ${COMPOSE_FILE}"
 docker compose -f "${COMPOSE_FILE}" config >/dev/null
+
+# --- 2b. Persist the DB credentials so every later run/update reuses them ----
+# Write the .env ONCE (first apply). This is what keeps `update.sh` authenticating
+# against the password Postgres baked into its volume at first init.
+if [[ "${APPLY}" -eq 1 && ! -f "${ENV_FILE}" ]]; then
+  log "Persisting database credentials to ${ENV_FILE} (re-used by every update)…"
+  ( umask 077; cat >"${ENV_FILE}" <<EOF
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=${POSTGRES_DB}
+APP_URL=${APP_URL}
+EOF
+  )
+fi
 
 # --- 3. Bring up the stack --------------------------------------------------
 log "Building the api image locally (not published to any registry)…"
