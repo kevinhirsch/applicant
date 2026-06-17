@@ -34442,4 +34442,27 @@ body.theme-frosted .modal {
 #applicant-onboarding-overlay .ao-intake-progress { font-size: 0.78rem; opacity: 0.6; margin: 6px 0; }
 /* UNIQUE: the `?` help marker layers onto the workspace-standard
    `.preset-hint-icon` (see _tip()); only the inline placement is wizard-local. */
-#applicant-onboarding-overlay .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; }
+#applicant-onboarding-overlay .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; position: relative; }
+/* UNIQUE: an immediate, reliable hover/focus bubble for the wizard's `?` icons
+   (native `title` is slow + easy to miss). Reads the help text from data-tip. */
+#applicant-onboarding-overlay .ao-tip:hover::after,
+#applicant-onboarding-overlay .ao-tip:focus::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
+  width: max-content; max-width: 280px; white-space: normal; text-align: left;
+  background: var(--popover-bg, var(--card-bg, #20232a)); color: var(--text, #e8e8e8);
+  border: 1px solid var(--border, #444); border-radius: 6px; padding: 7px 9px;
+  font-size: 11px; font-weight: 400; line-height: 1.4; letter-spacing: normal;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.38); z-index: 10001; pointer-events: none;
+}
+/* Persistent Back / Skip bar — always present so no step traps the user. */
+#applicant-onboarding-overlay .ao-nav {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border, #444);
+}
+/* Inline how-to cards (e.g. the Notifications setup help). */
+#applicant-onboarding-overlay .ao-help { font-size: 12px; line-height: 1.5; }
+#applicant-onboarding-overlay .ao-help h2 { font-size: 0.9rem; margin: 0 0 6px; }
+#applicant-onboarding-overlay .ao-help code {
+  background: var(--card-bg, #2a2a2a); padding: 1px 5px; border-radius: 4px; font-size: 11px;
+}
