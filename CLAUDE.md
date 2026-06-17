@@ -1,40 +1,111 @@
-# CLAUDE.md — working mandate for Applicant (engine + front-door)
+# CLAUDE.md
 
-Applicant = the job-application **engine** (`src/applicant/`, hexagonal FastAPI, internal `api:8000`)
-behind a white-labeled **front-door workspace UI** (`workspace/`, the public app on `${APP_PORT}`),
-wired by the bridge (`workspace/src/applicant_engine.py` → engine; engine→workspace callback via
-`workspace/routes/applicant_internal_routes.py`). The authority for behavior is
-`docs/spec/master-spec.md` (FR-/NFR- requirements).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+**Applicant** is an autonomous job-application engine behind a white-labeled front-door UI. It is a
+**two-app system** in one repo:
+
+- **Engine** — `src/applicant/`: a hexagonal FastAPI app (`create_app()` → `applicant.app.main:app`),
+  Postgres + Alembic, the autonomous agent/pre-fill/discovery/digest/learning logic. Runs as the
+  internal `api` service (never published to the host).
+- **Front-door** — `workspace/`: a vendored, white-labeled multi-user AI-workspace app (FastAPI +
+  vanilla-JS ES modules, no build step) that is the **only** public surface (`applicant-ui` service
+  on `${APP_PORT}` → container 7000). It proxies to the engine; it does not duplicate engine logic.
+
+The authority for behavior is `docs/spec/master-spec.md` (FR-/NFR- requirements). `workspace/CLAUDE.md`
+documents the vendored app's internals.
+
+## Commands
+
+Engine (repo root; uses `uv`, Python 3.11):
+```bash
+uv sync                                            # install deps (incl. dev: ruff, pytest)
+uv run pytest -q                                   # full engine suite (testpaths=tests; integration tests are @pytest.mark.integration)
+uv run pytest tests/unit/test_x.py::test_name      # single test (or: -k "keyword")
+uv run pytest -m "not integration"                 # default-style run (hermetic only)
+uv run ruff check .                                # lint (workspace/ is extend-excluded)
+uv run python -c "from applicant.app.main import app"   # import/boot smoke
+uv run alembic heads                               # MUST be a single head
+uv run alembic upgrade head                        # apply migrations
+```
+
+Front-door (workspace): runs under the **root** `uv` env for the Applicant proxy tests; the vendored
+app has its own heavier deps not installed here, so only run the `applicant_*` tests:
+```bash
+uv run pytest -q workspace/tests/test_applicant_*.py    # front-door proxy/lane tests
+python -m compileall -q workspace/app.py workspace/routes workspace/src   # workspace syntax
+node --check workspace/static/js/<file>.js              # front-end has no bundler — node --check only
+```
+
+Deploy / stack:
+```bash
+docker compose -f docker/docker-compose.prod.yml config         # validate compose
+bash scripts/proxmox-deploy.sh                                  # one-liner: create Proxmox VM + provision
+bash scripts/install.sh --apply                                 # bring up the Compose stack (dry-run without --apply)
+bash scripts/update.sh --apply                                  # git-sync → backup → build → migrate → restart → heartbeat
+```
+Stack services: `applicant-ui` (public) + `api` (internal) + `postgres` + `searxng` + `chromadb` +
+`ntfy` (+ optional `takeover-desktop`). CI (`.github/workflows/ci.yml`) gates every PR on: ruff,
+engine pytest, the front-door proxy tests, single Alembic head, workspace compileall, `node --check`
+on all workspace JS, `docker compose config`, and the white-label codename denylist.
+
+## Architecture (the big picture)
+
+**Engine — hexagonal** (`src/applicant/`): `core/` (domain entities + rules — pure, no IO),
+`ports/` (driving/driven Protocols), `adapters/` (browser/stealth, sandbox, storage, notification,
+resume_tailoring, discovery, workspace-callback — swappable per NFR-EXT-1), `application/services/`
+(use-cases), `app/` (FastAPI: `routers/`, `container.py` DI, per-request DB session, `config.py`,
+lifespan), `observability/`. Durable orchestration (DBOS or the default in-process "shim") survives
+restarts; an in-process scheduler drives the 24/7 loop. Safety is enforced in the core: review-before-
+submit and the pre-fill stop-boundary mean the engine **cannot** self-authorize a final submit.
+
+**The bridge (bidirectional):**
+- workspace → engine: `workspace/src/applicant_engine.py` (`ApplicantEngineClient`, `ENGINE_URL`,
+  default `http://api:8000`). The ~12 `workspace/routes/applicant_*_routes.py` are thin auth-protected,
+  owner-scoped proxies over it (`/api/applicant/*`).
+- engine → workspace (callback): `workspace/routes/applicant_internal_routes.py`, a token-gated
+  (`APPLICANT_INTERNAL_TOKEN`) channel at `/api/applicant/internal/*` the engine calls via
+  `WORKSPACE_URL` (calendar interviews, deep-research, Cookbook local models). Token unset ⇒ disabled.
+
+**Front-door surfacing:** each engine capability is reachable through proxy → JS (`workspace/static/js/
+applicant*.js`) → nav. `workspace/src/applicant_features.py` computes per-section state (active /
+locked / disabled) from the engine's setup-status + dormant-surface registry, so sections light up as
+configured and there is no dead UI. The Pending-Actions **Portal** is the post-login home base; the
+OOBE/onboarding **wizard** (`applicantOnboarding.js`) takes precedence when setup is incomplete and is
+launchable from Settings (`window.launchApplicantSetup`). The daily loop is digest → review (redline,
+`documentLibrary.js`) → approve/decline → final-submit (Portal/live takeover, `applicantRemote.js`).
 
 ## Binding working principles (read before building anything)
 
-1. **Lift and shift first — never rebuild what exists.** If logic or UI for something already
-   exists anywhere in the tree, **copy that component into the new location first**, get it working
-   there unchanged, and only **then adapt it by extension and removal** until it meets the spec for
-   the new context. Do NOT write a fresh from-scratch implementation when a working one exists.
-   (Example: the OOBE "Connect a model" step must reuse the existing Local/Remote endpoint manager
-   — `workspace/static/js/admin.js` `initEndpointForm`/`loadEndpoints` over the workspace's own
-   `/api/model-endpoints` in `workspace/routes/model_routes.py` — not a new form.)
+1. **Lift and shift first — never rebuild what exists.** If logic or UI for something already exists
+   anywhere in the tree, **copy that component into the new location first**, get it working unchanged,
+   and only **then adapt it by extension and removal** to meet the spec for the new context. Do NOT
+   write a fresh from-scratch implementation when a working one exists. (E.g. the OOBE "Connect a
+   model" step reuses the existing Local/Remote endpoint manager — `workspace/static/js/admin.js`
+   `initEndpointForm`/`loadEndpoints` over the workspace's own `/api/model-endpoints` in
+   `workspace/routes/model_routes.py` — not a new form.)
 
-2. **Reachability is the definition of done.** A requirement is not done because the engine
-   implements it and tests pass — it is done when it is **reachable/operable in the white-labeled
-   front-door**. Always verify the whole chain: spec → engine endpoint → workspace proxy
-   (`workspace/routes/applicant_*`) → JS (`workspace/static/js/`) → nav/section
-   (`workspace/src/applicant_features.py`). The traceability docs verify only the engine; do not
-   trust them for reachability.
+2. **Reachability is the definition of done.** A requirement is not done because the engine implements
+   it and tests pass — it is done when it is **reachable/operable in the white-labeled front-door**.
+   Verify the whole chain: spec → engine endpoint → workspace proxy → JS → nav/section. The
+   traceability docs verify only the engine; do not trust them for reachability.
 
-3. **White-label, always.** Zero references to the upstream fork's vendor/persona codenames,
-   and zero `FR-`/`NFR-` jargon, in user-facing strings (and in shipped artifacts generally).
-   The product is **Applicant**. Plain language + tooltips. The CI **white-label check**
-   (`.github/workflows/ci.yml`) holds the codename denylist and fails the build on any match.
+3. **White-label, always.** Zero references to the upstream fork's vendor/persona codenames, and zero
+   `FR-`/`NFR-` jargon, in user-facing strings (and shipped artifacts generally). The product is
+   **Applicant**. Plain language + tooltips. The CI **white-label check** holds the codename denylist
+   and fails the build on any match.
 
 4. **Front-door proxies; the engine owns logic.** Workspace `/api/applicant/*` routes are thin
-   auth-protected, owner-scoped proxies over the engine client; business logic lives in the engine.
-   Reuse the engine's gates (e.g. `require_automated_work`) rather than re-implementing them.
+   auth-protected, owner-scoped proxies over the engine client; reuse the engine's gates (e.g.
+   `require_automated_work`) rather than re-implementing them. UI styling reuses the workspace design
+   system (`.cal-btn`, `.admin-card`, `.settings-*`, `.memory-*`) — don't hand-roll button sizes or
+   undefined classes.
 
-5. **Green increments.** Before merge: `uv run pytest -q`, `uv run ruff check .`,
-   `uv run python -c "from applicant.app.main import app"` boots, single Alembic head, and
-   `docker compose -f docker/docker-compose.prod.yml config` validate. Keep PRs focused.
+5. **Green increments.** Before merge: `uv run pytest -q`, the front-door `test_applicant_*` tests,
+   `uv run ruff check .`, the boot smoke, a single Alembic head, and `docker compose ... config`
+   must pass — i.e. everything CI gates. Keep PRs focused; develop on a branch and open a PR.
 
 See `workspace/CLAUDE.md` for the vendored app's internals and `docs/spec/master-spec.md` for the
 requirement set.
