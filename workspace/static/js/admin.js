@@ -2163,6 +2163,10 @@ export async function getSelectedLlmEndpoint() {
     base_url: ep.base_url || '',
     model: ep.models[0],
     has_key: !!ep.has_key,
+    // Carry the server-detected provider + local/api category so consumers can
+    // infer the engine type from the endpoint object, not a URL regex.
+    provider: ep.provider || '',
+    category: ep.category || '',
   };
 }
 

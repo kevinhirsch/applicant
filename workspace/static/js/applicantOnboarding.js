@@ -54,6 +54,10 @@ let _busy = false;
 // native Windows VM backend is selected and still needs its connection collected —
 // the engine reports this via `steps_complete` containing 'sandbox'.
 const STEPS = [
+  // B1: a welcome / preview step. It is "done" once the user has made any setup
+  // progress, so the resumable wizard skips it on re-opens but a brand-new user
+  // always lands here first.
+  { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.channels_configured || s.onboarding_complete || (Array.isArray(s.steps_complete) && s.steps_complete.length))) },
   { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
   { key: 'channels',   title: 'Notifications',    done: (s) => !!(s && s.channels_configured) },
   { key: 'sandbox',    title: 'Automation sandbox', done: (s) => !!(s && Array.isArray(s.steps_complete) && s.steps_complete.includes('sandbox')) },
@@ -67,6 +71,15 @@ const INTAKE_SECTIONS = [
   'identity', 'work_authorization', 'location', 'target_roles', 'compensation',
   'work_history', 'education', 'references', 'key_attributes', 'eeo',
   'base_resume', 'campaign_criteria',
+];
+
+// The honest "what Applicant never does" list (B1). Exported via the module so
+// other surfaces (e.g. the Portal empty state, D4) reuse the EXACT same wording.
+const NEVER_DOES = [
+  'Never submits an application without your approval.',
+  'Pauses and asks whenever something is uncertain.',
+  'Never solves CAPTCHAs — it hands those to you.',
+  'Never guesses your voluntary self-identification (EEO) answers.',
 ];
 
 // ── small helpers ───────────────────────────────────────────────────────────
@@ -218,6 +231,7 @@ async function _renderStep() {
   // endpoint manager to its Settings home so it isn't left detached in the DOM.
   if (step.key !== 'llm') _restoreEndpointManager();
   try {
+    if (step.key === 'welcome') return _renderWelcome();
     if (step.key === 'llm') return await _renderLLM();
     if (step.key === 'channels') return await _renderChannels();
     if (step.key === 'sandbox') return await _renderSandbox();
@@ -268,6 +282,40 @@ function _renderNav() {
   if (back) back.onclick = () => { if (!_busy) _prevStep(); };
   const skip = document.getElementById('ao-skip');
   if (skip) skip.onclick = () => { if (!_busy) _nextStep(); };
+}
+
+// ── STEP 0: Welcome (B1) ─────────────────────────────────────────────────────
+//
+// A short, honest preview of the journey and a plain-language list of what
+// Applicant never does. Reuses the shared `.admin-card` framing + `.ao-step-*`
+// classes so it matches every other step. The persistent Skip/Back nav already
+// lets the user move on; this step just adds an explicit "Let's go" foot button.
+function _renderWelcome() {
+  _setBody(`
+    <h2 class="ao-step-title">Welcome to Applicant</h2>
+    <p class="ao-step-desc">
+      A few quick steps, about 10–15 minutes. The profile part is longer on
+      purpose — the more you tell Applicant now, the fewer interruptions your
+      applications need later.
+    </p>
+    <div class="admin-card">
+      <h2 style="margin:0 0 6px;font-size:0.95em;">What you'll set up</h2>
+      <ol style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
+        <li>Connect a model — a local model or a cloud provider.</li>
+        <li>Notifications — how Applicant reaches you for updates and approvals.</li>
+        <li>Your profile — the comprehensive part, so applications need far fewer interruptions later.</li>
+      </ol>
+    </div>
+    <div class="admin-card">
+      <h2 style="margin:0 0 6px;font-size:0.95em;">How Applicant works — and what it never does</h2>
+      <ul style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
+        ${NEVER_DOES.map((t) => `<li>${esc(t)}</li>`).join('')}
+      </ul>
+    </div>
+  `);
+  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-welcome-next">Let's get started</button>`);
+  const btn = document.getElementById('ao-welcome-next');
+  if (btn) btn.onclick = () => { if (!_busy) _nextStep(); };
 }
 
 // ── STEP 1: LLM ─────────────────────────────────────────────────────────────
@@ -337,8 +385,13 @@ async function _renderLLM() {
       // that 500s). Best-effort: a local model needs no key; a cloud provider's key
       // already lives with the saved endpoint, so we send what we have and surface a
       // clear message if the engine rejects it.
-      const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0|::1|11434/.test(chosen.base_url || '');
-      const provider = isLocal ? 'ollama' : 'openai';
+      //
+      // B4: infer the provider from the SELECTED ENDPOINT OBJECT (the server's
+      // detected `provider` / local-vs-api `category`), not a regex on the URL.
+      const provider = _inferProvider(chosen);
+      // B3: only advance when the engine gate actually opens. If the save fails,
+      // keep the user on this step with a clear retry and leave it marked
+      // not-done so the resumable wizard reopens here.
       try {
         await _post(`${SETUP}/llm`, {
           provider,
@@ -349,9 +402,12 @@ async function _renderLLM() {
       } catch (gateErr) {
         if (msgEl) {
           msgEl.innerHTML = _err(esc(
-            `Saved your model, but the application engine could not be configured automatically: ${gateErr.message || 'unknown error'}. You can continue; if job features stay locked, re-open this step.`,
-          ));
+            `Could not connect this model to the application engine: ${gateErr.message || 'unknown error'}. `,
+          ) + 'Check the model is enabled and reachable, then try again.');
         }
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Try again'; }
+        _busy = false;
+        return; // stay on the LLM step; it remains not-done
       }
       _restoreEndpointManager();
       await _advanceAndContinue('llm');
@@ -362,6 +418,24 @@ async function _renderLLM() {
       _busy = false;
     }
   };
+}
+
+// B4: infer the engine provider/type from the selected endpoint object returned
+// by getSelectedLlmEndpoint() (server-detected `provider` + local/api
+// `category`), with a conservative fallback only if those are absent.
+function _inferProvider(chosen) {
+  const prov = (chosen && chosen.provider ? String(chosen.provider) : '').toLowerCase();
+  if (prov) {
+    // Local runtimes the engine treats as Ollama-compatible.
+    if (prov === 'ollama' || prov === 'llamacpp' || prov === 'lmstudio' || prov === 'local') return 'ollama';
+    if (prov === 'openai') return 'openai';
+    if (prov === 'anthropic') return 'anthropic';
+    // Most cloud providers are OpenAI-compatible from the engine's perspective.
+    return 'openai';
+  }
+  // No detected provider — fall back to the local/api category from the object.
+  if (chosen && chosen.category === 'local') return 'ollama';
+  return 'openai';
 }
 
 // ── STEP 2: Notification channels (gating) ──────────────────────────────────
@@ -1120,12 +1194,50 @@ async function _nextIntakeOrComplete() {
 
 async function _finish() {
   _restoreEndpointManager();
-  _setBody('<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p>Applicant is ready to start working for you.</p></div>');
-  _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
-  document.getElementById('ao-finish').onclick = _dismiss;
+  // B2: be honest. Refresh status and only say "You're all set" when the gating
+  // steps are actually complete; otherwise tell the truth and offer jump-backs.
+  try { await _refreshStatus(); } catch { /* use last-known status */ }
+  const s = _status || {};
+  const missing = [];
+  if (!s.llm_configured) missing.push({ key: 'llm', label: 'connect a model' });
+  if (!s.channels_configured) missing.push({ key: 'channels', label: 'add a notification channel' });
+  if (!s.onboarding_complete) missing.push({ key: 'onboarding', label: 'finish your profile' });
+
+  if (!missing.length) {
+    _setBody('<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p>Applicant is ready to start working for you.</p></div>');
+    _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
+    document.getElementById('ao-finish').onclick = _dismiss;
+    const nav = document.getElementById('ao-nav');
+    if (nav) nav.innerHTML = '';
+    _renderRail();
+    return;
+  }
+
+  const list = missing.map((m) => m.label).join(', ').replace(/, ([^,]*)$/, ' and $1');
+  const jumpBtns = missing.map((m) =>
+    `<button class="cal-btn ao-finish-jump" data-step="${esc(m.key)}" style="margin:4px 6px 0 0;">${esc(m.label.replace(/^./, (c) => c.toUpperCase()))}</button>`
+  ).join('');
+  _setBody(`
+    <div style="padding:24px 0;text-align:center;">
+      <h2 style="margin:0 0 8px;">Almost there</h2>
+      <p style="max-width:440px;margin:0 auto 12px;">
+        To let Applicant start, ${esc(list)}.
+      </p>
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;">${jumpBtns}</div>
+    </div>`);
+  _setFoot('');
   const nav = document.getElementById('ao-nav');
   if (nav) nav.innerHTML = '';
   _renderRail();
+  // Jump straight back to an unfinished step.
+  document.querySelectorAll('.ao-finish-jump').forEach((btn) => {
+    btn.onclick = async () => {
+      if (_busy) return;
+      const key = btn.dataset.step;
+      const idx = STEPS.findIndex((st) => st.key === key);
+      if (idx >= 0) { _stepIndex = idx; await _renderStep(); }
+    };
+  });
 }
 
 function _dismiss() {
@@ -1184,4 +1296,9 @@ export async function launchOnboarding() {
 // Expose a global so the Settings panel can relaunch setup without importing this module.
 if (typeof window !== 'undefined') window.launchApplicantSetup = launchOnboarding;
 
-export default { maybeLaunchOnboarding, launchOnboarding };
+// The honest "what Applicant never does" list, exported so other surfaces reuse
+// the EXACT same wording (D4: the Portal empty state).
+export const neverDoesList = NEVER_DOES.slice();
+try { if (typeof window !== 'undefined') window.applicantNeverDoesList = neverDoesList; } catch { /* no-op */ }
+
+export default { maybeLaunchOnboarding, launchOnboarding, neverDoesList };

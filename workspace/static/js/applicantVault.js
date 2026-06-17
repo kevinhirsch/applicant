@@ -207,11 +207,26 @@ async function _onSave() {
 
 // ── public surface ──────────────────────────────────────────────────────────
 
+// Resolve a default campaign when the vault is opened proactively (e.g. from the
+// Settings "Saved sign-ins" entry) without a caller-supplied campaign, so a user
+// can add a Workday sign-in upfront. Best-effort; degrades to the existing
+// "Choose a job search first" note if none can be found.
+async function _resolveDefaultCampaign() {
+  if (_campaignId) return _campaignId;
+  try {
+    const list = await _fetchJSON('/api/applicant/setup/campaigns');
+    const arr = Array.isArray(list) ? list : (list && list.campaigns) || [];
+    if (arr.length && arr[0] && arr[0].id) _campaignId = String(arr[0].id);
+  } catch { /* leave unset; UI shows the choose-a-job-search note */ }
+  return _campaignId;
+}
+
 /** Open the vault UI, scoped to a job search (campaign). */
 export async function openApplicantVault(campaignId) {
   if (campaignId) _campaignId = String(campaignId);
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
+  if (!_campaignId) await _resolveDefaultCampaign();
   await _loadTenants().catch(() => {});
 }
 

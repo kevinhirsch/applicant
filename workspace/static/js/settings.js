@@ -2104,6 +2104,26 @@ function initAll() {
       }
     });
   }
+  // Discoverable entries (E1/E2): Saved sign-ins (vault) and Live session, so a
+  // user can add a Workday sign-in upfront or reopen a closed live session.
+  const openVaultBtn = el('settings-open-vault');
+  if (openVaultBtn) {
+    openVaultBtn.addEventListener('click', () => {
+      if (typeof window.openApplicantVault === 'function') {
+        if (modalEl) modalEl.classList.add('hidden');
+        window.openApplicantVault();
+      }
+    });
+  }
+  const openRemoteBtn = el('settings-open-remote');
+  if (openRemoteBtn) {
+    openRemoteBtn.addEventListener('click', () => {
+      if (typeof window.openApplicantRemoteSession === 'function') {
+        if (modalEl) modalEl.classList.add('hidden');
+        window.openApplicantRemoteSession();
+      }
+    });
+  }
   initDefaultChat();
   initTeacherModel();
   initUtilityModel();

@@ -306,6 +306,49 @@ async function _confirm(message, opts) {
   try { return window.confirm(message); } catch { return false; }
 }
 
+// ── shared engine calls + confirm copy (reused by the Portal lane) ───────────
+//
+// The Portal's inline final-approval affordance (D2) calls the SAME engine
+// endpoints as this modal. Rather than duplicate the fetch + the irreversible
+// confirm wording, we expose thin helpers and the confirm-message builders here
+// and the Portal imports them. There is still exactly one client path to each
+// stop-boundary endpoint.
+
+/** Submit-self: the user finished the submit themselves. Terminal. */
+export function submitSelf(applicationId) {
+  return _post(`${API}/applications/${encodeURIComponent(applicationId)}/submit-self`);
+}
+
+/** Authorize the engine to click the final submit, just this once. Terminal. */
+export function authorizeEngineFinish(applicationId) {
+  return _post(`${API}/applications/${encodeURIComponent(applicationId)}/authorize-engine-finish`);
+}
+
+/** The honest best-effort / egress caveat copy (best-effort; never throws). */
+export async function fetchCaveat() {
+  try { return await _fetchJSON(`${API}/caveat`); }
+  catch { return null; }
+}
+
+// D5: the authorize confirm must echo the role/company and a "materials
+// approved ✓" reminder before the irreversible submit. `ctx` carries the human
+// label (role/company) when the caller has it.
+function _authorizeConfirmMessage(ctx) {
+  const who = ctx && ctx.label ? `“${ctx.label}”` : 'this application';
+  return (
+    `Authorize the assistant to click the final submit for ${who}, just this once?\n\n`
+    + 'Materials approved ✓ — this submits immediately and cannot be undone.'
+  );
+}
+
+function _submitSelfConfirmMessage(ctx) {
+  const who = ctx && ctx.label ? `“${ctx.label}”` : 'this application';
+  return (
+    `Open the live session to submit ${who} yourself. Mark it submitted only `
+    + 'after you have clicked submit there.'
+  );
+}
+
 async function _onSubmitSelf() {
   if (_busy || !_needSession()) return;
   const ok = await _confirm(
@@ -316,7 +359,7 @@ async function _onSubmitSelf() {
   const appId = _activeSession.application_id;
   _busy = true;
   try {
-    await _post(`${API}/applications/${encodeURIComponent(appId)}/submit-self`);
+    await submitSelf(appId);
     _toast('Recorded — thanks for finishing it yourself');
   } catch (e) {
     _toast(e.message || 'Could not record the submission');
@@ -328,14 +371,13 @@ async function _onSubmitSelf() {
 async function _onAuthorizeFinish() {
   if (_busy || !_needSession()) return;
   const ok = await _confirm(
-    'Authorize the assistant to click the final submit for this application, '
-    + 'just this once? It will submit immediately.',
+    _authorizeConfirmMessage(_activeSession),
     { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
   if (!ok) return;
   const appId = _activeSession.application_id;
   _busy = true;
   try {
-    await _post(`${API}/applications/${encodeURIComponent(appId)}/authorize-engine-finish`);
+    await authorizeEngineFinish(appId);
     _toast('Authorized — the assistant submitted the application');
   } catch (e) {
     _toast(e.message || 'Could not authorize the submission');
@@ -386,9 +428,19 @@ export function closeRemoteSession() {
   if (frame) frame.removeAttribute('src'); // stop the stream when closed
 }
 
+// Expose the confirm-copy builders so the Portal lane echoes the SAME
+// role/company + "materials approved ✓" reminder (D5) it would see here.
+export function authorizeConfirmMessage(ctx) { return _authorizeConfirmMessage(ctx); }
+export function submitSelfConfirmMessage(ctx) { return _submitSelfConfirmMessage(ctx); }
+
 const applicantRemoteModule = {
   openApplicantRemoteSession,
   closeRemoteSession,
+  submitSelf,
+  authorizeEngineFinish,
+  fetchCaveat,
+  authorizeConfirmMessage,
+  submitSelfConfirmMessage,
 };
 
 // The cross-lane portal seam: open the live session for a given application.
