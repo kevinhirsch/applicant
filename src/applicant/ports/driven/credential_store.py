@@ -31,6 +31,17 @@ class Credential:
     secret: str
     source: str = MODE_MANUAL
 
+    def __repr__(self) -> str:
+        """Redacted repr so the secret (and username) never leak via str/log/traceback.
+
+        The default dataclass repr would render ``secret=`` (and ``username=``) in
+        plaintext; if a ``Credential`` is ever interpolated into an exception or a
+        free-text log line that the structlog value-redactor cannot pattern-match
+        (e.g. a short/low-entropy secret), the plaintext would leak (NFR-PRIV-1,
+        FR-VAULT-3). Only the non-sensitive ``tenant_key`` + ``source`` are shown.
+        """
+        return f"Credential(tenant_key={self.tenant_key!r}, source={self.source!r})"
+
 
 @runtime_checkable
 class CredentialStorePort(Protocol):
