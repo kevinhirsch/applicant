@@ -102,29 +102,12 @@ class AgentRunService:
     def _prune_old_runs(self, campaign_id: CampaignId) -> None:
         """Prune agent runs beyond the rolling retention window (#11).
 
-        Prefers the indexed ``AgentRunRepository.prune_old`` when available; otherwise
-        falls back to fetching + resolving the oldest excess via ``delete`` if the repo
-        exposes one. Best-effort: retention must never break recording a run.
+        Uses the indexed ``AgentRunRepository.prune_old`` (keeps the newest
+        ``RUN_RETENTION`` runs per campaign, deletes the rest). Best-effort: retention
+        must never break recording a run.
         """
-        repo = self._storage.agent_runs
-        pruner = getattr(repo, "prune_old", None)
-        if pruner is not None:
-            try:
-                pruner(campaign_id, keep=self.RUN_RETENTION)
-                self._storage.commit()
-            except Exception:  # pragma: no cover - defensive
-                pass
-            return
-        deleter = getattr(repo, "delete", None)
-        if deleter is None:
-            return
         try:
-            runs = sorted(
-                repo.list_for_campaign(campaign_id),
-                key=lambda r: (r.timestamp, getattr(r, "seq", 0)),
-            )
-            for stale in runs[: max(0, len(runs) - self.RUN_RETENTION)]:
-                deleter(stale.id)
+            self._storage.agent_runs.prune_old(campaign_id, keep=self.RUN_RETENTION)
             self._storage.commit()
         except Exception:  # pragma: no cover - defensive
             pass
@@ -132,24 +115,13 @@ class AgentRunService:
     def _next_seq(self, campaign_id: CampaignId) -> int:
         """Next monotonic seq = 1 + max persisted seq for the campaign (FR-AGENT-7, #11).
 
-        Prefers the indexed ``AgentRunRepository.max_seq`` (a single MAX query) over
-        loading the campaign's ENTIRE run history every ``start_run``. Falls back to
-        the full scan where the method is not yet present.
+        Uses the indexed ``AgentRunRepository.max_seq`` (a single MAX query) instead of
+        loading the campaign's ENTIRE run history every ``start_run``.
         """
-        repo = self._storage.agent_runs
-        max_seq = getattr(repo, "max_seq", None)
-        if max_seq is not None:
-            try:
-                return int(max_seq(campaign_id) or 0) + 1
-            except Exception:  # pragma: no cover - defensive
-                return 1
         try:
-            runs = repo.list_for_campaign(campaign_id)
+            return int(self._storage.agent_runs.max_seq(campaign_id) or 0) + 1
         except Exception:  # pragma: no cover - defensive
-            runs = []
-        if not runs:
             return 1
-        return max(int(getattr(r, "seq", 0)) for r in runs) + 1
 
     def list_runs(self, campaign_id: CampaignId) -> list[AgentRun]:
         return self._storage.agent_runs.list_for_campaign(campaign_id)
@@ -157,24 +129,11 @@ class AgentRunService:
     def latest_intent(self, campaign_id: CampaignId) -> str | None:
         """Most-recent run's intent (FR-AGENT-7, #11).
 
-        Prefers the indexed ``AgentRunRepository.latest`` (single ORDER BY ... LIMIT 1)
-        over scanning every run. Falls back to a scan + (timestamp, seq) tie-break.
+        Uses the indexed ``AgentRunRepository.latest`` (ORDER BY (timestamp, seq) ...
+        LIMIT 1) instead of scanning every run.
         """
-        repo = self._storage.agent_runs
-        latest = getattr(repo, "latest", None)
-        if latest is not None:
-            try:
-                run = latest(campaign_id)
-            except Exception:  # pragma: no cover - defensive
-                run = None
-            return run.intent_sentence if run is not None else None
-        runs = repo.list_for_campaign(campaign_id)
-        if not runs:
-            return None
-        # FR-AGENT-7: tie-break on monotonic insertion ``seq`` so the truly-latest
-        # run wins even when two runs share an identical timestamp (max(timestamp)
-        # alone is unstable for equal keys).
-        return max(runs, key=lambda r: (r.timestamp, r.seq)).intent_sentence
+        run = self._storage.agent_runs.latest(campaign_id)
+        return run.intent_sentence if run is not None else None
 
     # --- run-mode stop condition (FR-AGENT-2) -----------------------------
     def should_continue(

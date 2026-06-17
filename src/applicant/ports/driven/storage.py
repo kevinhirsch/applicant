@@ -219,7 +219,11 @@ class AgentRunRepository(Protocol):
         offset: int = 0,
     ) -> list[AgentRun]: ...
     def count_pipelines_started_on(self, campaign_id: CampaignId, day: date) -> int:
-        """Number of runs for ``campaign_id`` whose timestamp falls on ``day`` (UTC date)."""
+        """Total pipelines started for ``campaign_id`` on ``day`` (UTC date).
+
+        Sums each run's ``stats["pipelines_started"]`` for the day (NOT a count of run
+        rows), so the per-day throughput cap reflects applications actually acted on.
+        """
         ...
 
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
@@ -228,6 +232,15 @@ class AgentRunRepository(Protocol):
 
     def max_seq(self, campaign_id: CampaignId) -> int:
         """Highest ``seq`` among runs for ``campaign_id`` (0 if none)."""
+        ...
+
+    def prune_old(self, campaign_id: CampaignId, *, keep: int) -> int:
+        """Keep the newest ``keep`` runs for ``campaign_id``; delete the rest.
+
+        Retention for 24/7 ticking (#11): newness is ordered by ``(timestamp, seq)`` so
+        pruning is deterministic and stable across both lanes. Returns the number of
+        runs deleted.
+        """
         ...
 
 

@@ -121,17 +121,9 @@ class PendingActionsService:
         self._storage.commit()
 
     def _find_open_by_dedup(self, campaign_id: CampaignId, dedup_key: str):
-        """Indexed open-by-dedup lookup (#13) with a scan fallback.
+        """Indexed open-by-dedup lookup (#13).
 
-        Prefers the parallel-lane ``PendingActionRepository.find_open_by_dedup`` so
-        dedup is an indexed query, not an O(open) scan per digest row. When the repo
-        does not yet expose it, fall back to scanning the open actions.
+        Uses ``PendingActionRepository.find_open_by_dedup`` so dedup is an indexed
+        query, not an O(open) scan per digest row.
         """
-        repo = self._storage.pending_actions
-        finder = getattr(repo, "find_open_by_dedup", None)
-        if finder is not None:
-            return finder(campaign_id, dedup_key)
-        for action in repo.list_open(campaign_id):
-            if (action.payload or {}).get("dedup_key") == dedup_key:
-                return action
-        return None
+        return self._storage.pending_actions.find_open_by_dedup(campaign_id, dedup_key)

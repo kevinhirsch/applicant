@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from applicant.adapters.storage import models as m
@@ -541,9 +541,17 @@ class DecisionRepo:
     def list_approved_postings_for_campaign(
         self, campaign_id: CampaignId
     ) -> list[JobPostingId]:
-        """Posting ids with an APPROVED decision (single join, no N+1)."""
-        rows = self._s.execute(
-            select(m.ApplicationModel.posting_id)
+        """Posting ids with an APPROVED decision (distinct, ordered).
+
+        A decision's ``application_id`` may be either a real application id (resolve to
+        its ``posting_id`` via the join) OR a posting id directly — the digest UI
+        approves a digest ROW, whose id is the posting id, before any application row
+        exists (see DigestService._campaign_for_decision). Both legs are honored so a
+        freshly approved digest item is found.
+        """
+        # Leg 1: decision references a real application -> use its posting_id.
+        via_app = (
+            select(m.ApplicationModel.posting_id.label("posting_id"))
             .join(
                 m.DecisionModel,
                 m.DecisionModel.application_id == m.ApplicationModel.id,
@@ -551,8 +559,20 @@ class DecisionRepo:
             .where(m.ApplicationModel.campaign_id == campaign_id)
             .where(m.DecisionModel.type == DecisionType.APPROVE.value)
             .where(m.ApplicationModel.posting_id.is_not(None))
-            .distinct()
-            .order_by(m.ApplicationModel.posting_id)
+        )
+        # Leg 2: decision references the posting id directly (no application yet).
+        via_posting = (
+            select(m.JobPostingModel.id.label("posting_id"))
+            .join(
+                m.DecisionModel,
+                m.DecisionModel.application_id == m.JobPostingModel.id,
+            )
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+            .where(m.DecisionModel.type == DecisionType.APPROVE.value)
+        )
+        union = via_app.union(via_posting).subquery()
+        rows = self._s.execute(
+            select(union.c.posting_id).distinct().order_by(union.c.posting_id)
         ).all()
         return [JobPostingId(r[0]) for r in rows]
 
@@ -847,19 +867,25 @@ class AgentRunRepo:
         return [_agent_run_to_entity(r) for r in rows]
 
     def count_pipelines_started_on(self, campaign_id: CampaignId, day: date) -> int:
-        """Runs for ``campaign_id`` whose timestamp falls on the UTC ``day``."""
+        """Total pipelines started for ``campaign_id`` on the UTC ``day``.
+
+        Sums each run's ``stats["pipelines_started"]`` (NOT a count of run rows) so the
+        per-day throughput cap reflects how many applications were actually acted on,
+        even when one tick starts many. ``stats`` lives inside the JSON blob, so the
+        sum is computed in Python (mirrors the in-memory lane)."""
         start = datetime.combine(day, time.min)
         end = datetime.combine(day, time.max)
-        return int(
-            self._s.scalar(
-                select(func.count())
-                .select_from(m.AgentRunModel)
-                .where(m.AgentRunModel.campaign_id == campaign_id)
-                .where(m.AgentRunModel.timestamp >= start)
-                .where(m.AgentRunModel.timestamp <= end)
-            )
-            or 0
-        )
+        rows = self._s.scalars(
+            select(m.AgentRunModel)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .where(m.AgentRunModel.timestamp >= start)
+            .where(m.AgentRunModel.timestamp <= end)
+        ).all()
+        total = 0
+        for r in rows:
+            run = _agent_run_to_entity(r)
+            total += int((run.stats or {}).get("pipelines_started", 0))
+        return total
 
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
         """Most recent run (timestamp DESC, seq tie-break per FR-AGENT-7)."""
@@ -878,6 +904,25 @@ class AgentRunRepo:
             select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
         ).all()
         return max((_agent_run_to_entity(r).seq for r in rows), default=0)
+
+    def prune_old(self, campaign_id: CampaignId, *, keep: int) -> int:
+        """Keep the newest ``keep`` runs for ``campaign_id``; delete the rest.
+
+        Newness is ordered by ``(timestamp, seq)``. ``seq`` lives inside the JSON blob,
+        so ordering is resolved in Python (mirrors the in-memory lane) before the stale
+        rows are deleted. Returns the number of runs deleted."""
+        if keep < 0:
+            keep = 0
+        rows = self._s.scalars(
+            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
+        ).all()
+        ordered = sorted(
+            rows, key=lambda r: (r.timestamp, _agent_run_to_entity(r).seq)
+        )
+        stale = ordered[: max(0, len(ordered) - keep)]
+        for row in stale:
+            self._s.delete(row)
+        return len(stale)
 
 
 class DetectionEventRepo:

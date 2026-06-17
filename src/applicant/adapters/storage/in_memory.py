@@ -193,11 +193,17 @@ class _RevisionRepo:
 
 
 class _DecisionRepo:
-    def __init__(self, applications: _ApplicationRepo) -> None:
+    def __init__(
+        self, applications: _ApplicationRepo, postings: _PostingRepo
+    ) -> None:
         self._l: list[Decision] = []
         # Resolve a decision's posting/campaign through its application (mirrors the
-        # SQL join in ``list_approved_postings_for_campaign``).
+        # SQL join in ``list_approved_postings_for_campaign``). A digest-approval
+        # decision, however, is keyed directly on the POSTING id (before any
+        # application exists — see DigestService._campaign_for_decision), so we resolve
+        # against postings too.
         self._applications = applications
+        self._postings = postings
 
     def add(self, d: Decision) -> None:
         self._l.append(d)
@@ -208,16 +214,26 @@ class _DecisionRepo:
     def list_approved_postings_for_campaign(
         self, cid: CampaignId
     ) -> list[JobPostingId]:
-        """Posting ids with an APPROVED decision (distinct, ordered)."""
+        """Posting ids with an APPROVED decision (distinct, ordered).
+
+        A decision's ``application_id`` may be either a real application id (resolve to
+        its ``posting_id``) OR a posting id directly — the digest UI approves a digest
+        ROW, whose id is the posting id, before any application row exists. Both legs
+        are honored so a freshly approved digest item is found.
+        """
         posting_ids: set[str] = set()
         for d in self._l:
             if d.type != DecisionType.APPROVE:
                 continue
             app = self._applications.get(d.application_id)
-            if app is None or app.campaign_id != cid:
+            if app is not None:
+                if app.campaign_id == cid and app.posting_id:
+                    posting_ids.add(str(app.posting_id))
                 continue
-            if app.posting_id:
-                posting_ids.add(str(app.posting_id))
+            # Not an application id — try resolving it as a posting id directly.
+            posting = self._postings.get(JobPostingId(str(d.application_id)))
+            if posting is not None and posting.campaign_id == cid:
+                posting_ids.add(str(posting.id))
         return [JobPostingId(p) for p in sorted(posting_ids)]
 
 
@@ -413,8 +429,13 @@ class _AgentRunRepo:
         return out
 
     def count_pipelines_started_on(self, cid: CampaignId, day: date) -> int:
+        """Total pipelines started for ``cid`` on the UTC ``day``.
+
+        Sums each run's ``stats["pipelines_started"]`` (NOT a count of run rows) so the
+        per-day throughput cap reflects how many applications were actually acted on,
+        even when one tick starts many (mirrors the SQL lane)."""
         return sum(
-            1
+            int((r.stats or {}).get("pipelines_started", 0))
             for r in self._d.values()
             if r.campaign_id == cid and r.timestamp.date() == day
         )
@@ -429,6 +450,19 @@ class _AgentRunRepo:
         return max(
             (r.seq for r in self._d.values() if r.campaign_id == cid), default=0
         )
+
+    def prune_old(self, cid: CampaignId, *, keep: int) -> int:
+        """Keep the newest ``keep`` runs for ``cid`` by (timestamp, seq); delete the rest."""
+        runs = sorted(
+            (r for r in self._d.values() if r.campaign_id == cid),
+            key=lambda r: (r.timestamp, r.seq),
+        )
+        if keep < 0:
+            keep = 0
+        stale = runs[: max(0, len(runs) - keep)]
+        for r in stale:
+            self._d.pop(str(r.id), None)
+        return len(stale)
 
 
 class _DetectionEventRepo:
@@ -476,7 +510,7 @@ class InMemoryStorage:
         self.resume_variants = _VariantRepo()
         self.documents = _DocumentRepo()
         self.revisions = _RevisionRepo()
-        self.decisions = _DecisionRepo(self.applications)
+        self.decisions = _DecisionRepo(self.applications, self.postings)
         self.outcomes = _OutcomeRepo(self.applications)
         self.screenshots = _ScreenshotRepo(self.applications)
         self.pending_actions = _PendingRepo()

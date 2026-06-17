@@ -63,29 +63,17 @@ class AdminQueryService:
         return rows
 
     def _batch_screenshots(self, campaign_id: CampaignId, apps) -> dict[str, list]:
-        """Group per-app screenshots from one campaign-wide query (#14, scan fallback)."""
-        repo = self._storage.screenshots
-        batch = getattr(repo, "list_for_campaign", None)
+        """Group per-app screenshots from one campaign-wide query (#14)."""
         out: dict[str, list] = {}
-        if batch is not None:
-            for s in batch(campaign_id):
-                out.setdefault(str(s.application_id), []).append(s)
-            return out
-        for a in apps:
-            out[str(a.id)] = repo.list_for_application(a.id)
+        for s in self._storage.screenshots.list_for_campaign(campaign_id):
+            out.setdefault(str(s.application_id), []).append(s)
         return out
 
     def _batch_outcomes(self, campaign_id: CampaignId, apps) -> dict[str, list]:
-        """Group per-app outcomes from one campaign-wide query (#14, scan fallback)."""
-        repo = self._storage.outcomes
-        batch = getattr(repo, "list_for_campaign", None)
+        """Group per-app outcomes from one campaign-wide query (#14)."""
         out: dict[str, list] = {}
-        if batch is not None:
-            for o in batch(campaign_id):
-                out.setdefault(str(o.application_id), []).append(o)
-            return out
-        for a in apps:
-            out[str(a.id)] = repo.list_for_application(a.id)
+        for o in self._storage.outcomes.list_for_campaign(campaign_id):
+            out.setdefault(str(o.application_id), []).append(o)
         return out
 
     # --- per-page screenshots (FR-OBS-2) ----------------------------------

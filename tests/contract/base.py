@@ -392,20 +392,25 @@ class StoragePortContract:
         r1 = AgentRun(
             id=AgentRunId("r1"), campaign_id=cid, intent_sentence="one",
             timestamp=datetime(2026, 6, 17, 1, tzinfo=UTC),
+            stats={"pipelines_started": 3},
         )
         r2 = AgentRun(
             id=AgentRunId("r2"), campaign_id=cid, intent_sentence="two",
             timestamp=datetime(2026, 6, 17, 5, tzinfo=UTC),
+            stats={"pipelines_started": 4},
         )
         r_other_day = AgentRun(
             id=AgentRunId("r3"), campaign_id=cid, intent_sentence="prev",
             timestamp=datetime(2026, 6, 16, 5, tzinfo=UTC),
+            stats={"pipelines_started": 9},
         )
         adapter.agent_runs.add(r1)
         adapter.agent_runs.add(r2)
         adapter.agent_runs.add(r_other_day)
         adapter.commit()
-        assert adapter.agent_runs.count_pipelines_started_on(cid, day.date()) == 2
+        # count_pipelines_started_on SUMS stats["pipelines_started"] for the day
+        # (3 + 4 from r1/r2 today; r_other_day is excluded), not a count of run rows.
+        assert adapter.agent_runs.count_pipelines_started_on(cid, day.date()) == 7
         latest = adapter.agent_runs.latest(cid)
         assert latest is not None and latest.id == AgentRunId("r2")
         assert adapter.agent_runs.max_seq(cid) == max(r1.seq, r2.seq, r_other_day.seq)
@@ -431,6 +436,40 @@ class StoragePortContract:
         assert [r.id for r in all_runs] == [AgentRunId(f"run-{i}") for i in range(5)]
         page = adapter.agent_runs.list_for_campaign(cid, limit=2, offset=1)
         assert [r.id for r in page] == [AgentRunId("run-1"), AgentRunId("run-2")]
+
+    def test_agent_run_prune_old_keeps_newest(self, adapter):
+        from datetime import UTC, datetime
+
+        cid = CampaignId(new_id())
+        other = CampaignId(new_id())
+        # 6 runs for cid (ascending timestamp) + 1 for another campaign (untouched).
+        for i in range(6):
+            adapter.agent_runs.add(
+                AgentRun(
+                    id=AgentRunId(f"p-{i}"), campaign_id=cid,
+                    timestamp=datetime(2026, 6, 17, i, tzinfo=UTC),
+                )
+            )
+        adapter.agent_runs.add(
+            AgentRun(
+                id=AgentRunId("p-other"), campaign_id=other,
+                timestamp=datetime(2026, 6, 17, 0, tzinfo=UTC),
+            )
+        )
+        adapter.commit()
+
+        deleted = adapter.agent_runs.prune_old(cid, keep=2)
+        adapter.commit()
+        assert deleted == 4
+        kept = adapter.agent_runs.list_for_campaign(cid)
+        # The newest 2 (by timestamp, seq) survive; the older 4 are gone.
+        assert [r.id for r in kept] == [AgentRunId("p-4"), AgentRunId("p-5")]
+        # A different campaign's runs are never pruned.
+        assert [r.id for r in adapter.agent_runs.list_for_campaign(other)] == [
+            AgentRunId("p-other")
+        ]
+        # Pruning again is a no-op once within the window.
+        assert adapter.agent_runs.prune_old(cid, keep=2) == 0
 
     def test_pending_find_open_by_dedup(self, adapter):
         cid = CampaignId(new_id())

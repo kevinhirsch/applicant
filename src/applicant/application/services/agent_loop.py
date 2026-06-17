@@ -44,7 +44,6 @@ from applicant.application.workflows.application_pipeline import (
     PipelineContext,
 )
 from applicant.core.entities.application import Application
-from applicant.core.entities.decision import DecisionType
 from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, new_id
 from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
@@ -151,28 +150,13 @@ class AgentLoop:
     def _persisted_acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
         """Sum durably-recorded ``pipelines_started`` over today's agent runs (#11).
 
-        Prefers the indexed ``AgentRunRepository.count_pipelines_started_on`` (a single
-        aggregate query for the day) over scanning the ENTIRE agent-run history every
-        tick. Falls back to a today-filtered scan where the method is not yet present.
+        Uses the indexed ``AgentRunRepository.count_pipelines_started_on`` (a single
+        aggregate query for the day) instead of scanning the ENTIRE agent-run history
+        every tick.
         """
-        repo = self._storage.agent_runs
-        counter = getattr(repo, "count_pipelines_started_on", None)
-        today = now.date()
-        if counter is not None:
-            try:
-                return int(counter(campaign_id, today))
-            except Exception:  # pragma: no cover - defensive
-                return 0
-        try:
-            runs = repo.list_for_campaign(campaign_id)
-        except Exception:  # pragma: no cover - defensive
-            return 0
-        total = 0
-        for run in runs:
-            ts = getattr(run, "timestamp", None)
-            if ts is not None and ts.date() == today:
-                total += int((run.stats or {}).get("pipelines_started", 0))
-        return total
+        return int(
+            self._storage.agent_runs.count_pipelines_started_on(campaign_id, now.date())
+        )
 
     def _record_acted(self, campaign_id: CampaignId, now: datetime, n: int = 1) -> None:
         key = (str(campaign_id), now.date())
@@ -332,19 +316,10 @@ class AgentLoop:
     def _unscored_postings(self, campaign_id: CampaignId) -> list:
         """Postings not yet viability-scored this campaign (#8).
 
-        Prefers the indexed ``JobPostingRepository.list_unscored_for_campaign`` so the
-        loop scores only the fresh backlog. Falls back to filtering the full list by
-        an unset ``viability_score`` where the repo method is not yet available.
+        Uses the indexed ``JobPostingRepository.list_unscored_for_campaign`` so the loop
+        scores only the fresh backlog instead of re-scanning the full posting history.
         """
-        repo = self._storage.postings
-        lister = getattr(repo, "list_unscored_for_campaign", None)
-        if lister is not None:
-            return list(lister(campaign_id))
-        return [
-            p
-            for p in repo.list_for_campaign(campaign_id)
-            if getattr(p, "viability_score", None) is None
-        ]
+        return list(self._storage.postings.list_unscored_for_campaign(campaign_id))
 
     # --- approvals -> applications -> durable pipeline --------------------
     def _process_approvals(self, campaign, result: TickResult, now: datetime) -> None:
@@ -420,14 +395,12 @@ class AgentLoop:
                 continue
 
     def _resumable_apps(self, campaign_id: CampaignId) -> list[Application]:
-        """Apps in a resumable state via the indexed repo, scan fallback (#9)."""
-        repo = self._storage.applications
-        lister = getattr(repo, "list_by_status", None)
-        if lister is not None:
-            return list(lister(campaign_id, _IN_FLIGHT_RESUMABLE))
-        return [
-            a for a in repo.list_for_campaign(campaign_id) if a.status in _IN_FLIGHT_RESUMABLE
-        ]
+        """Apps in a resumable state via the indexed ``list_by_status`` (#9)."""
+        return list(
+            self._storage.applications.list_by_status(
+                campaign_id, tuple(_IN_FLIGHT_RESUMABLE)
+            )
+        )
 
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
@@ -756,33 +729,19 @@ class AgentLoop:
     def _approved_posting_ids(self, campaign_id: CampaignId) -> list[JobPostingId]:
         """Posting ids the user approved in the digest (#10).
 
-        Prefers the indexed ``DecisionRepository.list_approved_postings_for_campaign``
-        (one query) over the prior N+1 — a decisions lookup per posting plus a full
-        postings scan. Falls back to the per-posting scan where the repo method is not
-        yet available.
+        Uses the indexed ``DecisionRepository.list_approved_postings_for_campaign``
+        (one query) instead of the prior N+1 — a decisions lookup per posting plus a
+        full postings scan.
         """
-        repo = self._storage.decisions
-        lister = getattr(repo, "list_approved_postings_for_campaign", None)
-        if lister is not None:
-            seen: set[str] = set()
-            out: list[JobPostingId] = []
-            for pid in lister(campaign_id):
-                if str(pid) not in seen:
-                    out.append(JobPostingId(str(pid)))
-                    seen.add(str(pid))
-            return out
-        approved: list[JobPostingId] = []
-        seen = set()
-        postings = {str(p.id) for p in self._storage.postings.list_for_campaign(campaign_id)}
-        for posting in self._storage.postings.list_for_campaign(campaign_id):
-            decisions = self._storage.decisions.list_for_application(
-                ApplicationId(str(posting.id))
-            )
-            if any(d.type is DecisionType.APPROVE for d in decisions):
-                if str(posting.id) not in seen and str(posting.id) in postings:
-                    approved.append(posting.id)
-                    seen.add(str(posting.id))
-        return approved
+        seen: set[str] = set()
+        out: list[JobPostingId] = []
+        for pid in self._storage.decisions.list_approved_postings_for_campaign(
+            campaign_id
+        ):
+            if str(pid) not in seen:
+                out.append(JobPostingId(str(pid)))
+                seen.add(str(pid))
+        return out
 
     def _ensure_application(
         self, campaign_id: CampaignId, posting_id: JobPostingId
@@ -814,15 +773,8 @@ class AgentLoop:
     def _app_by_posting(
         self, campaign_id: CampaignId, posting_id: JobPostingId
     ) -> Application | None:
-        """Fetch the application for a posting via the indexed repo, scan fallback (#10)."""
-        repo = self._storage.applications
-        getter = getattr(repo, "get_by_posting", None)
-        if getter is not None:
-            return getter(campaign_id, posting_id)
-        for app in repo.list_for_campaign(campaign_id):
-            if str(app.posting_id) == str(posting_id):
-                return app
-        return None
+        """Fetch the application for a posting via the indexed ``get_by_posting`` (#10)."""
+        return self._storage.applications.get_by_posting(campaign_id, posting_id)
 
     def _posting_url(self, posting_id: JobPostingId) -> str | None:
         posting = self._storage.postings.get(posting_id)
