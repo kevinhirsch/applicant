@@ -131,6 +131,7 @@ class ApplicantEngineClient:
         json: Any = None,
         params: Optional[dict] = None,
         files: Any = None,
+        data: Any = None,
         expect_json: bool = True,
     ) -> Any:
         """Issue one request and normalise every failure to :class:`EngineError`.
@@ -142,7 +143,7 @@ class ApplicantEngineClient:
         """
         try:
             resp = await self._client.request(
-                method, path, json=json, params=params, files=files
+                method, path, json=json, params=params, files=files, data=data
             )
         except httpx.TimeoutException as exc:
             raise EngineError(
@@ -203,6 +204,70 @@ class ApplicantEngineClient:
         result = await self._request("GET", "/api/dormant-surfaces")
         return result if isinstance(result, list) else []
 
+    # -- setup wizard: LLM + channels + step advance (FR-OOBE-2/3) --------
+
+    async def setup_configure_llm(self, body: dict) -> Any:
+        """Set the LLM provider/model/key directly (FR-LLM-2). 204 -> None."""
+        return await self._request("POST", "/api/setup/llm", json=body)
+
+    async def setup_configure_llm_from_endpoint(self, body: dict) -> Any:
+        """Set the chat model from a saved endpoint + chosen model. 204 -> None."""
+        return await self._request("POST", "/api/setup/llm/from-endpoint", json=body)
+
+    async def setup_get_tiers(self) -> Any:
+        return await self._request("GET", "/api/setup/llm/tiers")
+
+    async def setup_set_tiers(self, body: dict) -> Any:
+        return await self._request("PUT", "/api/setup/llm/tiers", json=body)
+
+    async def setup_get_channels(self) -> Any:
+        return await self._request("GET", "/api/setup/channels")
+
+    async def setup_configure_channels(self, body: dict) -> Any:
+        """Set notification channels (Discord/email via Apprise). 204 -> None."""
+        return await self._request("POST", "/api/setup/channels", json=body)
+
+    async def setup_test_channels(self) -> Any:
+        return await self._request("POST", "/api/setup/channels/test")
+
+    async def setup_advance(self, step: str) -> Any:
+        return await self._request("POST", f"/api/setup/advance/{step}")
+
+    # -- model endpoints: paste a base URL, auto-list its models ----------
+
+    async def list_model_endpoints(self, refresh: bool = False) -> Any:
+        return await self._request(
+            "GET", "/api/model-endpoints", params={"refresh": str(bool(refresh)).lower()}
+        )
+
+    async def add_model_endpoint(self, data: dict) -> Any:
+        """Add a model source and live-list its models (engine reads form data)."""
+        return await self._request("POST", "/api/model-endpoints", data=data)
+
+    async def test_model_endpoint(self, data: dict) -> Any:
+        """Probe a model source without saving (engine reads form data)."""
+        return await self._request("POST", "/api/model-endpoints/test", data=data)
+
+    async def model_endpoint_models(self, endpoint_id: str, refresh: bool = False) -> Any:
+        return await self._request(
+            "GET",
+            f"/api/model-endpoints/{endpoint_id}/models",
+            params={"refresh": str(bool(refresh)).lower()},
+        )
+
+    # -- fonts: detect/install for resume fidelity (FR-FONT) -------------
+
+    async def list_fonts(self) -> Any:
+        return await self._request("GET", "/api/fonts")
+
+    async def detect_fonts(self, files: Any) -> Any:
+        """Detect required/missing fonts for an uploaded resume."""
+        return await self._request("POST", "/api/fonts/detect", files=files)
+
+    async def install_font(self, files: Any, data: Any) -> Any:
+        """Install an uploaded font file (multipart name + file)."""
+        return await self._request("POST", "/api/fonts/install", files=files, data=data)
+
     # -- campaigns --------------------------------------------------------
 
     async def list_campaigns(self) -> Any:
@@ -251,6 +316,18 @@ class ApplicantEngineClient:
 
     async def onboarding_complete(self, campaign_id: str) -> Any:
         return await self._request("POST", f"/api/onboarding/{campaign_id}/complete")
+
+    async def onboarding_base_resume(self, campaign_id: str, files: Any) -> Any:
+        """Upload the base resume; engine parses + reconciles (FR-ONBOARD-3)."""
+        return await self._request(
+            "POST", f"/api/onboarding/{campaign_id}/base-resume", files=files
+        )
+
+    async def onboarding_confirm_conflict(self, campaign_id: str, body: dict) -> Any:
+        """Apply a flagged integral change after explicit confirmation (FR-FB-3)."""
+        return await self._request(
+            "POST", f"/api/onboarding/{campaign_id}/confirm-conflict", json=body
+        )
 
     # -- attributes (Lane B) ---------------------------------------------
 

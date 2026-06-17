@@ -1,0 +1,445 @@
+"""Hermetic tests for the Applicant SETUP/ONBOARDING proxy (applicant_setup_routes).
+
+Zero network: the engine client is replaced with a fake async-context-manager so
+every route is exercised without an engine. Covers the happy path (engine JSON
+passed through), the typed-error translation (timeout -> 502, HTTP status passed
+through), request-body + multipart forwarding, the auth gate, and the owner-scoped
+config-privilege gate.
+"""
+
+import pytest
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+import routes.applicant_setup_routes as setup_routes
+from routes.applicant_setup_routes import setup_applicant_setup_routes
+from src.applicant_engine import EngineError
+
+
+class _FakeEngine:
+    """Stand-in for ApplicantEngineClient. Records (method, args), returns a
+    canned result or raises a canned EngineError. Async context manager."""
+
+    last_call = None
+
+    def __init__(self, *, result=None, error: EngineError | None = None):
+        self._result = result
+        self._error = error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def _dispatch(self, name, *args):
+        type(self).last_call = (name, args)
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+    # Methods the proxy calls, all routed through _dispatch.
+    async def setup_status(self):
+        return await self._dispatch("setup_status")
+
+    async def setup_advance(self, step):
+        return await self._dispatch("setup_advance", step)
+
+    async def setup_configure_llm(self, body):
+        return await self._dispatch("setup_configure_llm", body)
+
+    async def setup_configure_llm_from_endpoint(self, body):
+        return await self._dispatch("setup_configure_llm_from_endpoint", body)
+
+    async def list_model_endpoints(self, refresh=False):
+        return await self._dispatch("list_model_endpoints", refresh)
+
+    async def add_model_endpoint(self, data):
+        return await self._dispatch("add_model_endpoint", data)
+
+    async def test_model_endpoint(self, data):
+        return await self._dispatch("test_model_endpoint", data)
+
+    async def model_endpoint_models(self, endpoint_id, refresh=False):
+        return await self._dispatch("model_endpoint_models", endpoint_id, refresh)
+
+    async def setup_get_channels(self):
+        return await self._dispatch("setup_get_channels")
+
+    async def setup_configure_channels(self, body):
+        return await self._dispatch("setup_configure_channels", body)
+
+    async def setup_test_channels(self):
+        return await self._dispatch("setup_test_channels")
+
+    async def list_fonts(self):
+        return await self._dispatch("list_fonts")
+
+    async def detect_fonts(self, files):
+        return await self._dispatch("detect_fonts", files)
+
+    async def install_font(self, files, data):
+        return await self._dispatch("install_font", files, data)
+
+    async def list_campaigns(self):
+        return await self._dispatch("list_campaigns")
+
+    async def create_campaign(self, name):
+        return await self._dispatch("create_campaign", name)
+
+    async def onboarding_state(self, campaign_id):
+        return await self._dispatch("onboarding_state", campaign_id)
+
+    async def onboarding_section(self, campaign_id, body):
+        return await self._dispatch("onboarding_section", campaign_id, body)
+
+    async def onboarding_base_resume(self, campaign_id, files):
+        return await self._dispatch("onboarding_base_resume", campaign_id, files)
+
+    async def onboarding_confirm_conflict(self, campaign_id, body):
+        return await self._dispatch("onboarding_confirm_conflict", campaign_id, body)
+
+    async def onboarding_complete(self, campaign_id):
+        return await self._dispatch("onboarding_complete", campaign_id)
+
+    async def conversion_engine(self, campaign_id):
+        return await self._dispatch("conversion_engine", campaign_id)
+
+    async def conversion_preview(self, campaign_id, source):
+        return await self._dispatch("conversion_preview", campaign_id, source)
+
+    async def conversion_accept(self, campaign_id):
+        return await self._dispatch("conversion_accept", campaign_id)
+
+    async def conversion_reject(self, campaign_id):
+        return await self._dispatch("conversion_reject", campaign_id)
+
+
+def _patch_engine(monkeypatch, *, result=None, error: EngineError | None = None):
+    _FakeEngine.last_call = None
+    monkeypatch.setattr(
+        setup_routes,
+        "ApplicantEngineClient",
+        lambda *a, **k: _FakeEngine(result=result, error=error),
+    )
+
+
+def _make_client(*, authed: bool = True):
+    app = FastAPI()
+    if authed:
+        @app.middleware("http")
+        async def _set_user(request: Request, call_next):
+            request.state.current_user = "tester"
+            return await call_next(request)
+    app.include_router(setup_applicant_setup_routes())
+    return TestClient(app, raise_server_exceptions=True)
+
+
+# ── happy path ────────────────────────────────────────────────────────────
+
+
+def test_status_passes_engine_json_through(monkeypatch):
+    payload = {"llm_configured": False, "channels_configured": False, "onboarding_complete": False}
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/status")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("setup_status", ())
+
+
+def test_advance_forwards_step(monkeypatch):
+    _patch_engine(monkeypatch, result={"current_step": "channels"})
+    resp = _make_client().post("/api/applicant/setup/advance/llm")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("setup_advance", ("llm",))
+
+
+def test_configure_llm_forwards_body(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {"provider": "openai", "base_url": "u", "api_key": "k", "model": "m", "context_window": 8192}
+    resp = _make_client().post("/api/applicant/setup/llm", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_llm"
+    assert args[0]["model"] == "m"
+
+
+def test_llm_from_endpoint_forwards_body(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/llm/from-endpoint", json={"endpoint_id": "e1", "model": "m2"}
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_llm_from_endpoint"
+    assert args[0] == {"endpoint_id": "e1", "model": "m2"}
+
+
+def test_add_model_endpoint_forwards_form(monkeypatch):
+    _patch_engine(monkeypatch, result={"id": "e1", "models": ["a", "b"]})
+    resp = _make_client().post(
+        "/api/applicant/setup/model-endpoints",
+        data={"base_url": "http://x", "api_key": "k", "name": "n", "model_type": "llm"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "e1"
+    name, args = _FakeEngine.last_call
+    assert name == "add_model_endpoint"
+    assert args[0]["base_url"] == "http://x"
+
+
+def test_test_model_endpoint_forwards_form(monkeypatch):
+    _patch_engine(monkeypatch, result={"ok": True, "models": []})
+    resp = _make_client().post(
+        "/api/applicant/setup/model-endpoints/test", data={"base_url": "http://x", "api_key": ""}
+    )
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call[0] == "test_model_endpoint"
+
+
+def test_model_endpoint_models(monkeypatch):
+    _patch_engine(monkeypatch, result=["m1", "m2"])
+    resp = _make_client().get("/api/applicant/setup/model-endpoints/e1/models")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("model_endpoint_models", ("e1", False))
+
+
+def test_channels_get_and_save(monkeypatch):
+    _patch_engine(monkeypatch, result={"discord_configured": False})
+    assert _make_client().get("/api/applicant/setup/channels").status_code == 200
+    assert _FakeEngine.last_call == ("setup_get_channels", ())
+
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels",
+        json={"discord_webhook_url": "https://d", "apprise_urls": ""},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_channels"
+    assert args[0]["discord_webhook_url"] == "https://d"
+
+
+def test_channels_test(monkeypatch):
+    _patch_engine(monkeypatch, result={"sent": True, "channels": ["discord"]})
+    resp = _make_client().post("/api/applicant/setup/channels/test")
+    assert resp.status_code == 200
+    assert resp.json()["channels"] == ["discord"]
+
+
+def test_fonts_list_detect_install(monkeypatch):
+    _patch_engine(monkeypatch, result={"installed": ["Arial"]})
+    assert _make_client().get("/api/applicant/setup/fonts").status_code == 200
+    assert _FakeEngine.last_call == ("list_fonts", ())
+
+    _patch_engine(monkeypatch, result={"required": ["X"], "missing": ["X"], "installed": []})
+    resp = _make_client().post(
+        "/api/applicant/setup/fonts/detect",
+        files={"file": ("resume.docx", b"data", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call[0] == "detect_fonts"
+
+    _patch_engine(monkeypatch, result={"installed": ["X"], "confirmed": True})
+    resp = _make_client().post(
+        "/api/applicant/setup/fonts/install",
+        data={"name": "X"},
+        files={"file": ("X.ttf", b"fontbytes", "font/ttf")},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "install_font"
+    assert args[1] == {"name": "X"}
+
+
+def test_campaigns_list_and_create(monkeypatch):
+    _patch_engine(monkeypatch, result=[{"id": "c1", "name": "Search"}])
+    assert _make_client().get("/api/applicant/setup/campaigns").status_code == 200
+    assert _FakeEngine.last_call == ("list_campaigns", ())
+
+    _patch_engine(monkeypatch, result={"id": "c2", "name": "New"})
+    resp = _make_client().post("/api/applicant/setup/campaigns", json={"name": "New"})
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("create_campaign", ("New",))
+
+
+def test_onboarding_state_section_complete(monkeypatch):
+    _patch_engine(monkeypatch, result={"campaign_id": "c1", "complete": False, "sections_complete": []})
+    assert _make_client().get("/api/applicant/setup/onboarding/c1").status_code == 200
+    assert _FakeEngine.last_call == ("onboarding_state", ("c1",))
+
+    _patch_engine(monkeypatch, result={"campaign_id": "c1", "sections_complete": ["identity"]})
+    resp = _make_client().post(
+        "/api/applicant/setup/onboarding/c1/section",
+        json={"section": "identity", "data": {"email": "a@b.c"}},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "onboarding_section"
+    assert args[0] == "c1"
+    assert args[1] == {"section": "identity", "data": {"email": "a@b.c"}}
+
+    _patch_engine(monkeypatch, result={"campaign_id": "c1", "complete": True})
+    resp = _make_client().post("/api/applicant/setup/onboarding/c1/complete")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("onboarding_complete", ("c1",))
+
+
+def test_base_resume_upload_and_confirm(monkeypatch):
+    _patch_engine(monkeypatch, result={"attribute_count": 5, "conflicts": [], "requires_confirmation": False})
+    resp = _make_client().post(
+        "/api/applicant/setup/onboarding/c1/base-resume",
+        files={"file": ("cv.docx", b"resume", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["attribute_count"] == 5
+    assert _FakeEngine.last_call[0] == "onboarding_base_resume"
+
+    _patch_engine(monkeypatch, result={"campaign_id": "c1"})
+    resp = _make_client().post(
+        "/api/applicant/setup/onboarding/c1/confirm-conflict",
+        json={"attribute": "email", "value": "a@b.c"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "onboarding_confirm_conflict"
+    assert args[1] == {"attribute": "email", "value": "a@b.c"}
+
+
+def test_conversion_preview_accept_reject(monkeypatch):
+    _patch_engine(monkeypatch, result={"page_count": 1, "fidelity_ok": True, "notes": []})
+    resp = _make_client().post("/api/applicant/setup/conversion/c1/preview", json={"source": ""})
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("conversion_preview", ("c1", ""))
+
+    _patch_engine(monkeypatch, result={"engine": "latex"})
+    assert _make_client().post("/api/applicant/setup/conversion/c1/accept").status_code == 200
+    assert _FakeEngine.last_call == ("conversion_accept", ("c1",))
+
+    _patch_engine(monkeypatch, result={"engine": "docx"})
+    assert _make_client().post("/api/applicant/setup/conversion/c1/reject").status_code == 200
+    assert _FakeEngine.last_call == ("conversion_reject", ("c1",))
+
+
+# ── error translation ───────────────────────────────────────────────────────
+
+
+def test_engine_http_status_passed_through(monkeypatch):
+    """A 409 onboarding-incomplete from the engine surfaces as a 409 to the UI."""
+    err = EngineError("incomplete", status=409, detail={"missing_sections": ["eeo"]})
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post("/api/applicant/setup/onboarding/c1/complete")
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["error"] == "engine_error"
+    assert body["engine_status"] == 409
+    assert body["detail"] == {"missing_sections": ["eeo"]}
+
+
+def test_engine_400_bad_llm_passed_through(monkeypatch):
+    err = EngineError("bad", status=400, detail="invalid model")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post(
+        "/api/applicant/setup/llm",
+        json={"provider": "x", "model": "m"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "invalid model"
+
+
+def test_engine_timeout_becomes_502(monkeypatch):
+    err = EngineError("timed out", is_timeout=True)
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().get("/api/applicant/setup/status")
+    assert resp.status_code == 502
+    assert "timed out" in resp.json()["message"].lower()
+
+
+def test_engine_connection_error_becomes_502(monkeypatch):
+    err = EngineError("connection refused")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().get("/api/applicant/setup/fonts")
+    assert resp.status_code == 502
+    assert resp.json()["message"] == "The application engine is unavailable."
+
+
+# ── auth gate ────────────────────────────────────────────────────────────────
+
+
+def test_requires_authentication(monkeypatch):
+    class _Configured:
+        is_configured = True
+
+    def _boom(*a, **k):  # pragma: no cover - must not run
+        raise AssertionError("engine must not be called when unauthenticated")
+
+    monkeypatch.setattr(setup_routes, "ApplicantEngineClient", _boom)
+
+    app = FastAPI()
+    app.state.auth_manager = _Configured()
+    app.include_router(setup_applicant_setup_routes())
+    client = TestClient(app)
+
+    assert client.get("/api/applicant/setup/status").status_code == 401
+
+
+# ── owner-scoped config privilege gate (mutations require can_configure) ──────
+
+
+class _PrivAuthManager:
+    is_configured = True
+
+    def __init__(self, privileges):
+        self._privs = privileges
+
+    def get_privileges(self, _user):
+        return dict(self._privs)
+
+
+def _make_priv_client(privileges, *, user="restricted"):
+    app = FastAPI()
+    app.state.auth_manager = _PrivAuthManager(privileges)
+
+    @app.middleware("http")
+    async def _set_user(request: Request, call_next):
+        request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(setup_applicant_setup_routes())
+    return TestClient(app)
+
+
+def test_config_writes_require_can_configure(monkeypatch):
+    def _boom(*a, **k):  # pragma: no cover - must not run when forbidden
+        raise AssertionError("engine must not be called when privilege is denied")
+
+    monkeypatch.setattr(setup_routes, "ApplicantEngineClient", _boom)
+    client = _make_priv_client({"can_configure": False})
+
+    writes = [
+        ("POST", "/api/applicant/setup/advance/llm", None, None),
+        ("POST", "/api/applicant/setup/llm", {"provider": "x", "model": "m"}, None),
+        ("POST", "/api/applicant/setup/channels", {"discord_webhook_url": "d"}, None),
+        ("POST", "/api/applicant/setup/channels/test", None, None),
+        ("POST", "/api/applicant/setup/campaigns", {"name": "n"}, None),
+        ("POST", "/api/applicant/setup/onboarding/c1/complete", None, None),
+    ]
+    for method, path, body, _ in writes:
+        resp = client.request(method, path, json=body)
+        assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"
+
+
+def test_reads_allowed_without_config_privilege(monkeypatch):
+    _patch_engine(monkeypatch, result={"llm_configured": True})
+    client = _make_priv_client({"can_configure": False})
+    assert client.get("/api/applicant/setup/status").status_code == 200
+    assert client.get("/api/applicant/setup/channels").status_code == 200
+
+
+def test_config_writes_allowed_with_privilege(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    client = _make_priv_client({"can_configure": True})
+    resp = client.post("/api/applicant/setup/channels", json={"discord_webhook_url": "d"})
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call[0] == "setup_configure_channels"
