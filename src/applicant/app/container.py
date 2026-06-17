@@ -118,6 +118,12 @@ class Container:
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
+    # CONC-REQ-1: builds a PER-REQUEST SqlAlchemyStorage(session_factory()) + the
+    # storage-bound services for it, so concurrent sync requests (run in FastAPI's
+    # threadpool) never interleave on one non-thread-safe Session. ``None`` when no DB
+    # is configured (in-memory storage is thread-safe enough for the no-DB lane and is
+    # shared). Each call returns a dict including ``_session`` to close in ``finally``.
+    request_services_factory: Any = None
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -494,7 +500,96 @@ def build_container(settings: Settings | None = None) -> Container:
             "final_approval_service": final_approval_service,
         }
 
+    # CONC-REQ-1: build the storage-bound services for ONE request from a per-request
+    # storage. Stateless adapters (llm/embedding/notifier/orchestrator/sandbox/...) and
+    # session-free services (setup/notification ladder/capacity/final-approval) are
+    # reused; everything that touches the Session is rebuilt against ``req_storage``.
+    def _build_request_services(req_storage) -> dict:
+        rs_config_store = (
+            SqlAlchemyAppConfigStore(getattr(req_storage, "_session", None))
+            if getattr(req_storage, "_session", None) is not None
+            else InMemoryAppConfigStore()
+        )
+        rs_ls = LearningService(req_storage, embedding)
+        rs_adv = AdvancedLearningService(base=rs_ls, storage=req_storage)
+        rs_criteria = CriteriaService(req_storage, llm)
+        rs_pas = PendingActionsService(req_storage)
+        rs_scoring = ScoringService(
+            req_storage, llm, embedding, learning=rs_ls, tool_registry=tool_registry
+        )
+        rs_conversion = ConversionService(
+            latex_tailor=latex_tailor, config_store=rs_config_store
+        )
+        rs_digest = DigestService(
+            req_storage,
+            notification,
+            rs_scoring,
+            learning=rs_ls,
+            criteria=rs_criteria,
+            notification_service=notification_service,
+            pending_actions=rs_pas,
+        )
+        rs_attr = AttributeCloudService(
+            req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
+        )
+        rs_feedback = FeedbackService(
+            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv
+        )
+        rs_chat = ChatService(
+            attribute_service=rs_attr,
+            criteria_service=rs_criteria,
+            llm=llm,
+            learning=rs_ls,
+            storage=req_storage,
+        )
+        rs_admin = AdminQueryService(req_storage, orchestrator)
+        rs_submission = SubmissionService(
+            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
+        )
+        rs_prefill = PrefillService(
+            storage=req_storage,
+            browser=browser,
+            detection=detection,
+            sandbox=sandbox,
+            credentials=credentials,
+            notification=notification,
+            llm=llm,
+        )
+        rs_attr.set_prefill_service(rs_prefill)
+        rs_material = MaterialService(
+            req_storage,
+            llm=llm,
+            resume_tailoring=latex_tailor,
+            embedding=embedding,
+            docx_tailoring=docx_tailor,
+            conversion_service=rs_conversion,
+            notifications=notification_service,
+            pending_actions=rs_pas,
+            learning=rs_ls,
+            advanced_learning=rs_adv,
+        )
+        rs_campaign = CampaignService(req_storage)
+        rs_campaign.set_criteria_service(rs_criteria)
+        return {
+            "storage": req_storage,
+            "pending_actions_service": rs_pas,
+            "digest_service": rs_digest,
+            "attribute_cloud_service": rs_attr,
+            "feedback_service": rs_feedback,
+            "chat_service": rs_chat,
+            "admin_query_service": rs_admin,
+            "submission_service": rs_submission,
+            "prefill_service": rs_prefill,
+            "material_service": rs_material,
+            "criteria_service": rs_criteria,
+            "campaign_service": rs_campaign,
+            "conversion_service": rs_conversion,
+            "scoring_service": rs_scoring,
+            "learning_service": rs_ls,
+        }
+
     tick_services_factory = None
+    request_services_factory = None
     if session_factory is not None:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
 
@@ -502,6 +597,12 @@ def build_container(settings: Settings | None = None) -> Container:
             tick_session = session_factory()
             services = _build_tick_services(SqlAlchemyStorage(tick_session))
             services["_session"] = tick_session
+            return services
+
+        def request_services_factory():  # noqa: F811 - per-request isolated session
+            req_session = session_factory()
+            services = _build_request_services(SqlAlchemyStorage(req_session))
+            services["_session"] = req_session
             return services
 
     scheduler = Scheduler(
@@ -558,4 +659,5 @@ def build_container(settings: Settings | None = None) -> Container:
         material_service=material_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
+        request_services_factory=request_services_factory,
     )

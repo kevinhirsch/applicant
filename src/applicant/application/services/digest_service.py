@@ -23,6 +23,7 @@ import html
 
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
+from applicant.core.errors import InvalidInput
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
 from applicant.observability.logging import get_logger
 
@@ -269,7 +270,9 @@ class DigestService:
         text is rejected so the learning loop never closes on silent declines.
         """
         if not feedback_text or not feedback_text.strip():
-            raise ValueError(
+            # FR-FB-1 (MINOR): raise the domain ``InvalidInput`` so the global handler
+            # maps it (422), instead of a plain ``ValueError`` that would surface as 500.
+            raise InvalidInput(
                 "Decline feedback is required (FR-FB-1): say briefly why this role "
                 "is not a fit so the next run learns."
             )

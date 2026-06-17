@@ -53,6 +53,14 @@ BROWSER_CHANNEL_CHROME = "chrome"
 BROWSER_CHANNEL_CHROMIUM = "chromium"
 BROWSER_CHANNELS = (BROWSER_CHANNEL_CHROME, BROWSER_CHANNEL_CHROMIUM)
 
+#: Browser egress modes (FR-STEALTH-4). ``direct`` uses the host's own residential
+#: connection; ``residential-proxy`` threads an attested residential proxy into the
+#: real browser launch. A typo must be rejected at load (item 12) — not silently
+#: treated as ``direct`` (which would unknowingly egress without the intended proxy).
+EGRESS_MODE_DIRECT = "direct"
+EGRESS_MODE_RESIDENTIAL_PROXY = "residential-proxy"
+EGRESS_MODES = (EGRESS_MODE_DIRECT, EGRESS_MODE_RESIDENTIAL_PROXY)
+
 
 def resolve_takeover_image(desktop: str, override: str = "") -> str:
     """Resolve a takeover DE to its container image (FR-SANDBOX-2).
@@ -190,6 +198,20 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"TAKEOVER_DESKTOP={v!r} is invalid; choose one of {TAKEOVER_DESKTOPS} "
                 "(default 'cinnamon')."
+            )
+        return norm
+
+    @field_validator("egress_mode")
+    @classmethod
+    def _validate_egress_mode(cls, v: str) -> str:
+        # Item 12 (SECURITY): accept ONLY the two valid egress modes (strip/lower) so a
+        # typo (e.g. "residential_proxy"/"diretc") is rejected at load instead of being
+        # silently coerced to direct egress.
+        norm = (v or "").strip().lower()
+        if norm not in EGRESS_MODES:
+            raise ValueError(
+                f"EGRESS_MODE={v!r} is invalid; choose one of {EGRESS_MODES} "
+                "(default 'direct')."
             )
         return norm
 

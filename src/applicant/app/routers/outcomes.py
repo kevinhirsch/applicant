@@ -12,8 +12,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import (
+    get_storage,
+    get_submission_service,
+    require_llm_configured,
+)
 from applicant.core.entities.application import Application
 from applicant.core.entities.outcome_event import OutcomeSource
 from applicant.core.errors import IllegalStateTransition, ReviewRequired
@@ -39,15 +42,17 @@ def index() -> dict:
 
 @router.post("/applications/{application_id}/detect", status_code=200)
 def detect_submission(
-    application_id: str, container: Container = Depends(get_container)
+    application_id: str,
+    submission=Depends(get_submission_service),
+    storage=Depends(get_storage),
 ) -> dict:
     """Auto-detect a final submission in the controlled session (FR-LOG-4)."""
-    detected = container.submission_service.detect_submission(application_id)  # type: ignore[arg-type]
+    detected = submission.detect_submission(application_id)  # type: ignore[arg-type]
     if not detected:
         return {"application_id": application_id, "detected": False}
-    app = _load_or_stub(container, application_id)
+    app = _load_or_stub(storage, application_id)
     try:
-        event = container.submission_service.record_submission(app, source=OutcomeSource.AUTO)
+        event = submission.record_submission(app, source=OutcomeSource.AUTO)
     except ReviewRequired as exc:
         # FR-RESUME-8: never auto-submit material that has not passed the review gate.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -70,13 +75,14 @@ def detect_submission(
 def mark_submitted(
     application_id: str,
     body: MarkSubmittedIn | None = None,
-    container: Container = Depends(get_container),
+    submission=Depends(get_submission_service),
+    storage=Depends(get_storage),
 ) -> dict:
     """One-tap mark-submitted when auto-detection cannot confirm (FR-LOG-4)."""
-    app = _load_or_stub(container, application_id)
+    app = _load_or_stub(storage, application_id)
     attrs = body.attributes_used if body else None
     try:
-        event = container.submission_service.mark_submitted(app, attributes_used=attrs)
+        event = submission.mark_submitted(app, attributes_used=attrs)
     except ReviewRequired as exc:
         # FR-RESUME-8: review-before-submission applies to the one-tap path too.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -85,12 +91,12 @@ def mark_submitted(
 
 
 @router.get("/applications/{application_id}/log")
-def get_log(application_id: str, container: Container = Depends(get_container)) -> dict:
+def get_log(application_id: str, submission=Depends(get_submission_service)) -> dict:
     """Retrieve the logged application detail + screenshots + outcomes (FR-LOG-3)."""
-    return container.submission_service.get_log(application_id)  # type: ignore[arg-type]
+    return submission.get_log(application_id)  # type: ignore[arg-type]
 
 
-def _load_or_stub(container: Container, application_id: str) -> Application:
+def _load_or_stub(storage, application_id: str) -> Application:
     """Load the application for a terminal submission, enforcing the §7 gate.
 
     A PERSISTED application may only record an outcome from a legal ``from`` state
@@ -106,7 +112,7 @@ def _load_or_stub(container: Container, application_id: str) -> Application:
     """
     from applicant.core.state_machine import ApplicationState
 
-    app = container.storage.applications.get(application_id)  # type: ignore[arg-type]
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
     legal_from = {
         ApplicationState.AWAITING_FINAL_APPROVAL,
         ApplicationState.EMERGENCY_DATA_HANDOFF,
