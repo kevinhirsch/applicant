@@ -678,6 +678,9 @@ app.include_router(setup_contacts_routes())
 # engine-backed sections progressively. Read-only; does not touch auth/users.
 from routes.applicant_routes import setup_applicant_routes
 app.include_router(setup_applicant_routes())
+# Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
+from routes.applicant_email_routes import setup_applicant_email_routes
+app.include_router(setup_applicant_email_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
