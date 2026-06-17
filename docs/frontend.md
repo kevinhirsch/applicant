@@ -1,85 +1,142 @@
-# Frontend: how to add a surface
+# Front door: the white-labeled workspace UI
 
-Applicant's own surfaces live under `frontend/static/applicant/` and are served by
-the `ui` router (`src/applicant/app/routers/ui.py`). They are deliberately
-**vanilla, no-build** — they reuse the vendored MIT Applicant design system the same
-way Applicant itself does (hand-authored HTML + ES modules, no bundler, no new
-runtime deps). Two requirements govern the look:
+Applicant's user interface is **not** served by the engine. It is a separate,
+white-labeled **workspace** web app (`workspace/`) that runs as the public
+`applicant-ui` service on `${APP_PORT}` (→ container `7000`) and talks to the engine
+(internal `api:8000`) across the bridge. This doc covers how the front door is wired
+and how to add or change an Applicant surface in it.
 
-- **FR-UI-1 — pixel-faithful clone.** Surfaces reuse the vendored design-system
-  classes from `../style.css`. Do not restyle the design system; do not fork its
-  files. Our only stylesheet is `applicant.css`.
-- **FR-UI-2 — scaffold-and-gray.** A surface (or section) whose backend is not yet
-  wired is present but dormant, grayed via `.applicant-dormant`, never shown as if
-  live.
+> The engine still carries a small in-network `frontend/static/` shell for migration
+> purposes, but it is **not** the front door and serves no operator-facing UI. Do not
+> add new surfaces there.
 
-## The shared module: `js/applicant-ui.js`
+Two requirements govern the look and behavior:
 
-One small ES module centralizes what every surface needs, so each page is just its
-content plus a one-line import. It exports (and bundles as `ApplicantUI`):
+- **FR-UI-1 — white-labeled, no-build clone.** Surfaces reuse the workspace's existing
+  vanilla, no-build design system (hand-authored HTML + ES modules, no bundler). No
+  vendor/persona codename and no `FR-`/`NFR-` jargon in user-facing strings — the
+  product is **Applicant**.
+- **FR-UI-2 — progressive activation, never dead UI.** A surface whose engine backing
+  isn't configured yet is present but greyed/locked, never shown as if live. State is
+  computed, not hand-toggled (see [Feature activation](#feature-activation)).
 
-- `apiFetch(path, opts)` — JSON `fetch` with shared error handling **and the
-  LLM-gate redirect (FR-UI-5)**: a `409` from the setup / automated-work gate routes
-  the user to the wizard (the wizard itself is exempt — it is how the gate opens).
-  Returns parsed JSON, or `null` for `204`.
-- `mountShell({ active })` / `mount({ active })` — inject the shared Applicant-styled
-  nav into a `#applicant-nav` container (opt-in: surfaces without that container
-  render unchanged), marking the active link.
-- `el(tag, attrs, children)` — the tiny DOM builder shared by every surface's glue.
-- Design-system component helpers that reuse the vendored CSS: `openModal` /
-  `closeModal` (toggle `.hidden` on a `.modal`), `bindToggle` (wire a
-  `.toggle-switch` input, reverting on failure), and `toast` (the `.toast` notice).
+## How a surface is wired (the three layers)
 
-The surface list lives in one place — the `SURFACES` array in `applicant-ui.js`.
+Every Applicant surface is the same chain — **engine router → workspace proxy → JS glue
+→ nav/section**. "Reachable through that whole chain" is the definition of done
+(see the working principles in [extending.md](extending.md)), not "the engine
+implements it and tests pass."
 
-## Recipe: add a new surface
+1. **Proxy route** — `workspace/routes/applicant_*_routes.py`. A thin,
+   auth-protected, owner-scoped FastAPI route under `/api/applicant/*` that forwards
+   to the engine client. It contains **no business logic** — the engine owns that.
 
-1. **HTML fragment** — `frontend/static/applicant/<name>.html`: the page content
-   only, using existing design-system classes (`.admin-card`, `.admin-btn`,
-   `.admin-badge`, `.toggle-switch`, …). Link both stylesheets in `<head>`:
+   | Route file | Surface(s) it proxies |
+   |---|---|
+   | `applicant_routes.py` | `GET /api/applicant/features` — the feature-state payload |
+   | `applicant_setup_routes.py` | OOBE wizard: LLM, channels, fonts, intake, base-résumé + LaTeX accept/reject |
+   | `applicant_documents_routes.py` | Documents / résumé library + redline revision loop |
+   | `applicant_memory_routes.py` | Profile: attribute cloud + learned/AI attributes + résumé-conversion learning |
+   | `applicant_chat_routes.py` | Chat/assistant, campaign list/create, pending list, remote résumé actions |
+   | `applicant_email_routes.py` | Daily digest per campaign, approve/decline-with-feedback, feedback survey |
+   | `applicant_portal_routes.py` | Pending-actions portal (aggregated across all campaigns) |
+   | `applicant_remote_routes.py` | Live remote session: view URL, takeover, submit-self, authorize-engine-finish |
+   | `applicant_vault_routes.py` | Credential vault: list tenants, bank credentials, capture from takeover |
+   | `applicant_admin_routes.py` | Activity/debug observability: history, screenshots, logs, workflow state, variants, mark-submitted |
+   | `applicant_ops_routes.py` | Operator controls: run mode, throughput, intent, discovery-source toggles, Update trigger |
+   | `applicant_internal_routes.py` | **Engine → workspace** callback channel (token-gated; not an operator surface) |
 
-   ```html
-   <link rel="stylesheet" href="../style.css" />   <!-- vendored, do not edit -->
-   <link rel="stylesheet" href="applicant.css" />  <!-- our shared styles -->
-   ```
+2. **Engine client + feature layer** — `workspace/src/applicant_engine.py` is the httpx
+   client that every proxy calls; it reads `ENGINE_URL` (default `http://api:8000`) and
+   raises a typed `EngineError` on any failure, so a proxy never leaks a broken page.
+   `workspace/src/applicant_features.py` computes section state (below).
 
-   End the body with a module script:
+3. **Glue module** — `workspace/static/js/applicant*.js`. One ES module per surface,
+   driving its proxy routes:
 
-   ```html
-   <script type="module" src="./js/<name>.js"></script>
-   ```
+   | JS module | Surface | State |
+   |---|---|---|
+   | `applicantOnboarding.js` | OOBE setup wizard (blocking overlay) | active |
+   | `applicantPortal.js` | Pending-actions portal (home base) | active |
+   | `applicantChat.js` | Job assistant (chat + job actions) | active |
+   | `applicantRemote.js` | Live remote view / takeover | active |
+   | `applicantVault.js` | Credential vault | active |
+   | `applicantDebug.js` | Activity / debug (observability + ops) | active |
+   | `emailLibrary/applicantDigest.js` | Daily digest panel (injected into the email surface) | active |
 
-2. **Glue module** — `frontend/static/applicant/js/<name>.js`:
+   Profile (memory: attribute + criteria editors) and documents redline are wired
+   through their proxy routes and the existing workspace document/memory surfaces.
 
-   ```js
-   import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
-   document.addEventListener("DOMContentLoaded", () => {
-     ApplicantUI.mountShell({ active: "<name>" });
-     // ... use apiFetch / el / ApplicantUI.toast / bindToggle ...
-   });
-   ```
+## Feature activation
 
-   Use `apiFetch` for every call so the surface shares the gate redirect and
-   graceful-degradation behavior. Never present a failed fetch as live data
-   (FR-UI-2) — show a note instead.
+`workspace/src/applicant_features.py` is the progressive-activation layer (serving
+`GET /api/applicant/features`). It does **not** hand-toggle sections — it derives each
+section's state from the engine:
 
-3. **Nav entry** — add `{ key, href, label }` to `SURFACES` in `applicant-ui.js`.
+- reads the engine's setup/gate status (`GET /api/setup/status`) and dormant-surface
+  registry (`GET /api/dormant-surfaces`),
+- evaluates each section's gate predicate (`onboarding_complete`, `llm_configured`,
+  `channels_configured`),
+- resolves a state string per section:
 
-4. **Route** — add a handler in `src/applicant/app/routers/ui.py` that serves the
-   new file (mirror the existing `wizard` / `digest` / … handlers).
+  | State | Meaning |
+  |---|---|
+  | `active` | engine reachable AND this section's backing is configured/live |
+  | `configured` | backing configured but the engine is momentarily unreachable |
+  | `locked` | backing not yet configured (e.g. onboarding incomplete) — greyed |
+  | `disabled` | present-but-disabled by product decision (no engine backing) |
 
-5. **Dormant?** If the backend is not wired yet, wrap the section in
-   `class="applicant-dormant" aria-disabled="true"` and badge it
-   `.admin-badge-off` so it is visibly grayed (FR-UI-2), exactly like the existing
-   dormant sections in `digest.html` / `debug.html`.
+The layer is read-only and never raises: if the engine can't be reached it degrades to
+`configured`/`locked` so the nav still renders. Each section entry carries the DOM
+`nav_ids` the frontend greys/locks (sidebar rail + toolbar/overflow buttons).
 
-## Styling rules
+The Applicant section map (`APPLICANT_SECTIONS`):
 
-- All `applicant-*` / `review-*` / `chat-*` rules live in **`applicant.css`** — one
-  source of truth. No per-file `<style>` blocks.
-- `applicant.css` also defines the two `.admin-*` classes the canonical MIT CSS is
-  missing — `.admin-btn` (sibling of `.admin-btn-add`) and `.admin-badge-on`
-  (sibling of `.admin-badge-off`) — so surfaces using the bare classes render like
-  their suffixed siblings.
-- Never edit the vendored design system: `style.css`, `app.js`, `js/`, `lib/`,
-  `fonts/`, `css/`, `index.html`, `login.html`, `sw.js`, `manifest.json`.
+| Key | Title | Gate predicate | `present_but_disabled` |
+|---|---|---|---|
+| `documents` | Documents / résumé library | `onboarding_complete` | no |
+| `memory` | Memory / skills (attributes + learning) | `onboarding_complete` | no |
+| `chat` | Chat / assistant (job actions) | `llm_configured` | no |
+| `email` | Email / notifications & digests | `channels_configured` | no |
+| `debug` | Activity / debug | `llm_configured` | no |
+| `compare` | Compare | — | **yes** |
+
+**Compare ships disabled.** It has no engine backing; the feature map sets
+`present_but_disabled: True`, so it is always reported `disabled` — visible in the nav,
+greyed, never wired.
+
+**Calendar, Deep-Research, and Cookbook** remain native workspace surfaces; they are
+*not* Applicant sections. Where the engine needs them it calls back through the
+token-gated internal channel (`applicant_internal_routes.py`), not through a new
+operator-facing surface.
+
+## Recipe: add a new Applicant surface
+
+1. **Engine first.** Add/confirm the engine router under
+   `src/applicant/app/routers/` that owns the logic.
+2. **Proxy route** — add a `workspace/routes/applicant_<name>_routes.py` that forwards
+   to a method on the engine client (`workspace/src/applicant_engine.py`),
+   auth-protected and owner-scoped. Keep it thin — no logic.
+3. **Feature entry** — add a section to `APPLICANT_SECTIONS` in
+   `workspace/src/applicant_features.py` with its `nav_ids`, gate `requires`
+   predicate, and any `dormant_keys`. Leave it to compute its own state.
+4. **Glue module** — add `workspace/static/js/applicant<Name>.js` that drives the proxy
+   routes, reads `/api/applicant/features` for its section state, and renders greyed
+   when not `active`. Reuse the workspace design-system classes; no new bundler/deps.
+5. **Lift and shift first.** If a working component for this already exists anywhere in
+   the tree, copy it into place and adapt it — do not rebuild from scratch (the
+   binding working principle in [extending.md](extending.md)).
+6. **Verify reachability.** The surface is done only when it is reachable/operable in
+   the front door across the whole chain — not when the engine implements it.
+
+## Styling and white-label rules
+
+- Reuse the workspace's existing design-system classes; no per-surface bundler or new
+  runtime dependencies (FR-UI-1).
+- No vendor/persona codename and no internal requirement jargon (`FR-`/`NFR-`) in any
+  user-facing string — the product is **Applicant** everywhere (FR-UI-1).
+- Never present a failed engine call as live data: when a section isn't `active`, render
+  it greyed/locked rather than as if wired (FR-UI-2).
+- The workspace keeps its own coarse feature mechanism (`/api/auth/features` +
+  `data/features.json`) for its native app features — that is untouched; the
+  Applicant feature layer is a separate, derived read-only layer.
