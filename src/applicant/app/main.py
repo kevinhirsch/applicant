@@ -7,8 +7,11 @@ hexagon.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from applicant.app.config import Settings, get_settings
 from applicant.app.container import build_container
@@ -82,8 +85,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
 
     @app.get("/healthz", tags=["ops"])
-    def healthz() -> dict:
-        return {"status": "ok", "version": __version__}
+    def healthz() -> JSONResponse:
+        """Readiness probe used by the prod healthcheck + install/update heartbeat.
+
+        Returns 200 ``{"status":"ok"}`` only when the engine can actually serve:
+        a trivial ``SELECT 1`` succeeds against the configured database AND the
+        credential-vault key directory is writable. Any failure returns 503
+        ``{"status":"degraded", ...}`` so the UI's ``depends_on: service_healthy``
+        and the deploy heartbeat hold until the engine is genuinely ready, instead
+        of going green while the DB is unreachable.
+
+        Kept fast and dependency-light: one cheap query + one filesystem check. When
+        no real DB is wired (the in-memory boot/test path, ``engine is None``) the
+        DB check is treated as satisfied — that path has no Postgres to probe.
+        """
+        checks: dict[str, str] = {}
+        ok = True
+
+        # 1) Database reachability (the thing that actually matters at deploy time).
+        engine = getattr(app.state.container, "engine", None)
+        if engine is not None:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                checks["database"] = "ok"
+            except Exception as exc:  # noqa: BLE001 - report, never leak a traceback
+                ok = False
+                checks["database"] = f"error: {type(exc).__name__}"
+        else:
+            checks["database"] = "in-memory"
+
+        # 2) Credential-vault key directory must be writable (else sealed secrets
+        #    can't be read/written — a silent data-loss class). Cheap dir check.
+        keydir = os.path.dirname(settings.credential_keyfile) or "."
+        if os.path.isdir(keydir) and os.access(keydir, os.W_OK):
+            checks["credential_keydir"] = "ok"
+        elif not os.path.exists(keydir) and os.access(
+            os.path.dirname(keydir) or ".", os.W_OK
+        ):
+            # Not yet created but its parent is writable (first boot creates it 0700).
+            checks["credential_keydir"] = "pending"
+        else:
+            ok = False
+            checks["credential_keydir"] = "not-writable"
+
+        if ok:
+            return JSONResponse(
+                status_code=200,
+                content={"status": "ok", "version": __version__, "checks": checks},
+            )
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "version": __version__, "checks": checks},
+        )
 
     return app
 

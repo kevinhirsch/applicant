@@ -151,7 +151,8 @@ class Settings(BaseSettings):
     )
 
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
-    sandbox_concurrency: int = Field(default=3, alias="SANDBOX_CONCURRENCY")
+    # ge=1: a 0/negative cap would admit nothing; reject it at load.
+    sandbox_concurrency: int = Field(default=3, ge=1, alias="SANDBOX_CONCURRENCY")
     llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables
     llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
 

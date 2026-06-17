@@ -8,6 +8,7 @@ the full prod compose still validates (`docker compose ... config`, docker-gated
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,9 +43,13 @@ def test_takeover_desktop_service_parameterized_and_hardened():
 def test_prod_compose_config_validates():
     if shutil.which("docker") is None:  # integration-gated: no Docker in the hermetic lane
         pytest.skip("docker not available; compose validation is integration-gated.")
+    # POSTGRES_PASSWORD is now REQUIRED (no weak default baked into the data volume);
+    # provide one for validation exactly as CI + install.sh do.
+    env = {**os.environ, "POSTGRES_PASSWORD": "ci-validate", "APP_PORT": "8000"}
     proc = subprocess.run(
         ["docker", "compose", "-f", str(_COMPOSE), "config"],
         capture_output=True,
         text=True,
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr

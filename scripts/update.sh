@@ -64,30 +64,54 @@ run() {
 }
 
 # Heartbeat: block until the front-door UI answers /api/health on the public
-# port, then confirm the internal engine's /healthz. Non-zero if never green.
+# port AND the internal engine's /healthz reports green. Non-zero unless BOTH are
+# healthy — the engine /healthz now runs a real DB check, so a degraded engine
+# (e.g. DB unreachable after the restart) MUST fail the update, not be reported as
+# a soft warning while the run still "succeeds".
 heartbeat() {
-  local port="$1" tries=60 i
-  log "Heartbeat: waiting for the UI on :${port}/api/health …"
+  local port="$1" tries=60 i ui_ok=0
+  log "Heartbeat: waiting for the UI on :${port}/api/health and the engine /healthz …"
   for ((i = 1; i <= tries; i++)); do
     if curl -fsS -o /dev/null "http://localhost:${port}/api/health" 2>/dev/null; then
-      log "UI is up (/api/health 200)."
+      ui_ok=1
       if docker compose -f "${COMPOSE_FILE}" exec -T api \
            python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status==200 else 1)" 2>/dev/null; then
-        log "Engine is healthy (/healthz). Stack is green."
-      else
-        log "Engine /healthz not green yet (UI is up); check: docker compose -f ${COMPOSE_FILE} ps"
+        log "UI is up (/api/health 200) and the engine is healthy (/healthz). Stack is green."
+        return 0
       fi
-      return 0
     fi
     sleep 5
   done
-  echo "Heartbeat FAILED: UI did not become healthy on :${port} after $((tries * 5))s." >&2
+  if [[ "${ui_ok}" -eq 1 ]]; then
+    echo "Heartbeat FAILED: the UI is up but the engine /healthz never went green after $((tries * 5))s (DB unreachable?)." >&2
+  else
+    echo "Heartbeat FAILED: UI did not become healthy on :${port} after $((tries * 5))s." >&2
+  fi
   docker compose -f "${COMPOSE_FILE}" ps || true
   return 1
 }
 
 TS="$(date +%Y%m%d-%H%M%S)"
 DUMP_FILE="${BACKUP_DIR}/applicant-${TS}.sql"
+
+# Restore a specific dump into the running postgres over STDIN. Shared by the manual
+# --rollback path and the AUTO-rollback that fires when a migration fails mid-update.
+# Feed the dump to the container's psql over STDIN (host-side redirect). Do NOT use
+# `psql -f "${file}"`: -f opens the file INSIDE the postgres container, where this
+# host path does not exist, so the restore would fail with "No such file or
+# directory". The dump is written host-side via `pg_dump > file`, so the restore must
+# read it host-side and pipe it in the same way. The dumps use --clean --if-exists,
+# so a restore DROPs+recreates objects idempotently (no leftover partial-migration
+# schema). Use ON_ERROR_STOP so a broken restore is reported as a failure.
+restore_dump() {
+  local file="$1"
+  if [[ "${APPLY}" -eq 1 ]]; then
+    docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
+      psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "${DB_NAME}" <"${file}"
+  else
+    echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} psql -v ON_ERROR_STOP=1 -U ${DB_USER} -d ${DB_NAME} <${file}"
+  fi
+}
 
 # --- rollback path ----------------------------------------------------------
 if [[ "${ROLLBACK}" -eq 1 ]]; then
@@ -98,17 +122,7 @@ if [[ "${ROLLBACK}" -eq 1 ]]; then
     exit 1
   fi
   log "Latest backup: ${LATEST}"
-  # Feed the dump to the container's psql over STDIN (host-side redirect). Do NOT
-  # use `psql -f "${LATEST}"`: -f opens the file INSIDE the postgres container,
-  # where this host path does not exist, so the restore would fail with "No such
-  # file or directory". The backup is written host-side via `pg_dump > file`, so
-  # the restore must read it host-side and pipe it in the same way.
-  if [[ "${APPLY}" -eq 1 ]]; then
-    docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
-      psql -U "${DB_USER}" -d "${DB_NAME}" <"${LATEST}"
-  else
-    echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} <${LATEST}"
-  fi
+  restore_dump "${LATEST}"
   log "Rollback complete (or dry-run printed above)."
   exit 0
 fi
@@ -144,8 +158,11 @@ log "1/5 Backing up the database to ${DUMP_FILE}"
 # Back up BEFORE migrate so rollback is always possible (FR-INSTALL-2). A failed or
 # empty backup MUST abort the update — never proceed to migrate with no valid dump.
 if [[ "${APPLY}" -eq 1 ]]; then
+  # --clean --if-exists: the dump DROPs objects (guarded by IF EXISTS) before
+  # recreating them, so restoring it onto a partially-migrated DB is idempotent and
+  # leaves no half-applied schema behind.
   if ! docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
-      pg_dump -U "${DB_USER}" "${DB_NAME}" >"${DUMP_FILE}"; then
+      pg_dump --clean --if-exists -U "${DB_USER}" "${DB_NAME}" >"${DUMP_FILE}"; then
     echo "Backup failed (pg_dump errored); aborting before migrate." >&2
     rm -f "${DUMP_FILE}"
     exit 1
@@ -158,15 +175,32 @@ if [[ "${APPLY}" -eq 1 ]]; then
   log "Backup OK ($(wc -c <"${DUMP_FILE}") bytes)."
 else
   # Dry-run: print the command WITHOUT redirecting anything into the dump file.
-  echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
+  echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
 fi
 
 log "2/5 Pulling base images + rebuilding local images (front-door UI + engine api) from synced source"
 run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
 run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
 
-log "3/5 Running database migrations"
-run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
+log "3/5 Running database migrations (BLOCKING — gates the new stack)"
+# Fail-closed: migrate as a BLOCKING one-off (`run --rm`, which does NOT serve
+# traffic) BEFORE the new stack is brought up to serve. If `alembic upgrade head`
+# fails, AUTO-RESTORE the dump we just took (so the DB is returned to its pre-update
+# state) and abort non-zero — never leave a half-migrated schema being served.
+if [[ "${APPLY}" -eq 1 ]]; then
+  if ! docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head; then
+    echo "Migration FAILED — auto-restoring the pre-update backup and aborting." >&2
+    if restore_dump "${DUMP_FILE}"; then
+      echo "Auto-rollback complete: DB restored from ${DUMP_FILE}. The new stack was NOT started." >&2
+    else
+      echo "Auto-rollback FAILED to restore ${DUMP_FILE}; restore manually: scripts/update.sh --rollback --apply" >&2
+    fi
+    exit 1
+  fi
+else
+  echo "    (would run) docker compose -f ${COMPOSE_FILE} run --rm api uv run alembic upgrade head"
+  echo "    (on failure, would auto-restore ${DUMP_FILE} and abort before serving)"
+fi
 
 log "4/5 Restarting the stack on the freshly built image"
 run docker compose -f "${COMPOSE_FILE}" up -d --build

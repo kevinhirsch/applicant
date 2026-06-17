@@ -50,7 +50,18 @@ fi
 
 # --- Editable defaults (override via environment; FR-INSTALL-1) -------------
 export POSTGRES_USER="${POSTGRES_USER:-applicant}"
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-applicant}"
+# No weak default password. On first install (none provided and none persisted in
+# .env above) GENERATE a strong random one; it is written to .env below and reused by
+# every later run/update. The prod compose REQUIRES this be set, so a weak/blank
+# fallback is never baked into the Postgres data volume on first init.
+if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    POSTGRES_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
+  else
+    POSTGRES_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+  fi
+fi
+export POSTGRES_PASSWORD
 export POSTGRES_DB="${POSTGRES_DB:-applicant}"
 # Stage-2.5 reverse channel: the SHARED secret that authenticates the engine's
 # callbacks into the front-door UI's /api/applicant/internal/* routes. Generated

@@ -68,6 +68,11 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+      # Wait for the engine to report a REAL healthy /healthz (DB reachable) before
+      # the public front door starts serving — closes the window where the UI is up
+      # but the engine it proxies to is not yet ready.
+      api:
+        condition: service_healthy
     healthcheck:
       # Auth-exempt liveness endpoint on the UI app (returns {"status":"healthy"}).
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:7000/api/health', timeout=5).status==200 else 1)\""]
@@ -91,8 +96,16 @@ services:
     # Without this, `docker compose up` fails with "pull access denied for applicant/api".
     pull_policy: build
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:-applicant}@postgres:5432/${POSTGRES_DB:-applicant}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (install.sh/proxmox-deploy.sh generate a strong one)}@postgres:5432/${POSTGRES_DB:-applicant}
       APP_STATIC_DIR: frontend/static
+      # Credential vault master key (FR-VAULT-3). MUST live on a PERSISTED volume:
+      # the container layer is ephemeral, so a key written there is regenerated on
+      # every `up --build` and ALL previously sealed secrets become permanently
+      # undecryptable. Point it at the ``secrets`` named volume mounted below.
+      CREDENTIAL_KEYFILE: ${CREDENTIAL_KEYFILE:-/data/secrets/master.key}
+      # Runtime font installs (FR-FONT-1/2) — persist on a named volume so installed
+      # fonts survive container recreation instead of being lost on every update.
+      FONTS_DIR: ${FONTS_DIR:-/data/fonts}
       ORCHESTRATOR_BACKEND: ${ORCHESTRATOR_BACKEND:-shim}
       # FR-INSTALL-3/FR-DUR-3: the default ``shim`` backend persists durable
       # workflow + mailbox state to CHECKPOINT_DIR. Point it at a stable path backed
@@ -124,6 +137,11 @@ services:
       # Durable checkpoint store for the shim backend (FR-INSTALL-3/FR-DUR-3):
       # survives container recreation so approvals/in-flight workflows are not lost.
       - checkpoints:/data/checkpoints
+      # Credential vault master key (FR-VAULT-3): persisted so the key — and thus the
+      # ability to decrypt every sealed credential — survives `up --build`/recreate.
+      - secrets:/data/secrets
+      # Runtime-installed fonts (FR-FONT-1/2): persisted across container recreation.
+      - fonts:/data/fonts
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,7 +157,10 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-applicant}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-applicant}
+      # No weak default: a missing password aborts compose loudly instead of baking a
+      # guessable one into the data volume on first init. install.sh / proxmox-deploy.sh
+      # generate a strong value and persist it to .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (install.sh/proxmox-deploy.sh generate a strong one)}
       POSTGRES_DB: ${POSTGRES_DB:-applicant}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -180,6 +201,11 @@ services:
       - seccomp:unconfined
     expose:
       - "3000"
+    # Publish the web stream to the host so the human can actually reach the takeover
+    # desktop. Only takes effect under `--profile takeover` (the service itself is
+    # gated to that profile), so the port is not opened in the default stack.
+    ports:
+      - "${TAKEOVER_PORT:-3001}:3000"
     restart: unless-stopped
 
   # Internal-only search backend (not published to the host in prod). Shared by
@@ -241,6 +267,8 @@ volumes:
   pgdata:
   pgbackups:  # DB backups for update.sh rollback (FR-INSTALL-2)
   checkpoints:  # durable shim checkpoint/mailbox state (FR-INSTALL-3/FR-DUR-3)
+  secrets:       # credential vault master key (FR-VAULT-3) — MUST persist across update
+  fonts:         # runtime-installed fonts (FR-FONT-1/2) — persist across update
   ui-data:       # front-door UI app data (its own sqlite, prefs, caches)
   ui-logs:       # front-door UI app logs
   chromadb-data: # UI vector store

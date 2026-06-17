@@ -71,7 +71,15 @@ def _load_or_create_master_key(keyfile: str) -> bytes:
                 f"expected {SecretBox.KEY_SIZE} (corrupt or wrong file)"
             )
         return key
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    # Create the containing dir 0700 (owner-only) so the master key can never be read
+    # by another user even transiently. On a persisted volume this is the directory
+    # that survives container recreation (FR-VAULT-3); tighten it if it pre-exists.
+    keydir = os.path.dirname(path) or "."
+    os.makedirs(keydir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(keydir, 0o700)
+    except OSError:  # pragma: no cover - platform/permission dependent
+        pass
     key = os.urandom(SecretBox.KEY_SIZE)
     # Write with 0600 so only the owner can read the master key (FR-VAULT-3).
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
