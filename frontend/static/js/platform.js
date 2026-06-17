@@ -76,7 +76,7 @@ export function onNarrowChange(fn) {
 // ============================================
 // Game freshness (Lane G15)
 // ============================================
-// THE one dispatcher for `orwell:gamechanged`. The game panels (status HUD,
+// THE one dispatcher for `applicant:gamechanged`. The game panels (status HUD,
 // social, cast, finale, diary gate, engine banner, decision re-arm) already
 // subscribe; what they lacked was a dispatcher at every mutation seam — the
 // only inline dispatch was unreachable, so post-action UI waited out a
@@ -91,14 +91,14 @@ export function onNarrowChange(fn) {
 const GAMECHANGED_DEBOUNCE_MS = 250;
 let _gameChangedTimer = null;
 
-export function orwellGameChanged(reason) {
+export function applicantGameChanged(reason) {
   if (_gameChangedTimer) clearTimeout(_gameChangedTimer);
   _gameChangedTimer = setTimeout(() => {
     _gameChangedTimer = null;
     try {
-      window.dispatchEvent(new CustomEvent('orwell:gamechanged', { detail: { reason: String(reason || '') } }));
+      window.dispatchEvent(new CustomEvent('applicant:gamechanged', { detail: { reason: String(reason || '') } }));
     } catch (_) { /* fail open — every panel keeps its poll fallback */ }
   }, GAMECHANGED_DEBOUNCE_MS);
 }
 
-if (typeof window !== 'undefined') window.orwellGameChanged = orwellGameChanged;
+if (typeof window !== 'undefined') window.applicantGameChanged = applicantGameChanged;

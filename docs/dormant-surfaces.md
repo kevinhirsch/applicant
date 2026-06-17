@@ -2,7 +2,7 @@
 
 Mandated by **FR-UI-2** (§3.19) and the scaffold-and-gray principle (§2): surfaces not yet wired are **grayed out, visually present but dormant** — never shipped as if live. This is the backlog of one stub spec per dormant surface. Each entry states: what it will do, the requirement ID(s) it satisfies, and what "wiring" remains. Backed by the `dormant_surface_backlog` table (§8).
 
-The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are built with the same CSS classes/components but disabled until their backend lands and the wiring is completed.
+The clone follows the Applicant design system (FR-UI-1); dormant surfaces are built with the same CSS classes/components but disabled until their backend lands and the wiring is completed.
 
 **Status (post-Phase 4).** As phases landed, surfaces whose backend now exists were switched from grayed to **live** in `src/applicant/dormant.py` (the `status` field) and in the `dormant_surface_backlog` table. The table below tracks each surface; `src/applicant/dormant.py` is the machine-readable source of truth, and `tests/unit/test_phase4_services.py` asserts registry/UI consistency (FR-UI-2).
 
@@ -31,7 +31,7 @@ The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are bui
 
 ## 2. Digest surface (in-app)
 
-- **Surface:** An in-app rendering of the daily digest table (the digest itself is delivered via email/webpage + Discord and is exempt from the Odysseus style, FR-DIG-2).
+- **Surface:** An in-app rendering of the daily digest table (the digest itself is delivered via email/webpage + Discord and is exempt from the Applicant style, FR-DIG-2).
 - **What it will do:** Show digest rows (summary, link, work mode, fit/viability score, why-suggested, approve/decline-with-feedback) inside the main app.
 - **Requirement ID(s):** FR-DIG-1/3/4/5; FR-UI-6.
 - **Wiring remaining:** Bind to the DigestReview driving port and the decisions table; reconcile in-app rendering with the style-exempt email/webpage digest. Live once Phase 1 digest lands.
@@ -52,7 +52,7 @@ The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are bui
 
 ## 5. Tool-toggle registry
 
-- **Surface:** The per-tool on/off panel (Odysseus per-tool pattern).
+- **Surface:** The per-tool on/off panel (Applicant per-tool pattern).
 - **What it will do:** Toggle agent tools: Discovery, Scoring, Pre-fill, Account-Creation, Web-Research, Resume-Tailoring, Cover-Letter-Generation, Screening-Answer-Generation, Chat, Notifications.
 - **Requirement ID(s):** FR-UI-4.
 - **Wiring remaining:** Bind to the ToolRegistry driven port and tool_settings table; enforce toggles at tool dispatch. Live in Phase 4.

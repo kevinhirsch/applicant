@@ -1,20 +1,20 @@
-// Orwell decision guardrail (C20 / audit U1+U2) — confirm-on-binding, per ADR 0003.
+// Applicant decision guardrail (C20 / audit U1+U2) — confirm-on-binding, per ADR 0003.
 //
 // NOT a decision-card dashboard: play stays in conversation. This is the light guardrail on
 // the COMMITMENT — when the engine pauses the loop on a pending player decision, a small card
 // presents the engine's own prompt + LEGAL options, enforces the pick count, and requires one
-// explicit Confirm. The confirmed selection posts ENGINE-DIRECT (POST /api/orwell/decision →
+// explicit Confirm. The confirmed selection posts ENGINE-DIRECT (POST /api/applicant/decision →
 // submitDecision), so a hedge in prose can never bind through this surface; the engine still
 // validates legality and stays idempotent. Dismissing the card (×) is always allowed — the
 // player may instead talk it out with the game master, which drives the same validated seam.
 //
-// Input: chat.js dispatches `orwell:pending` with {pending} parsed from advanceGame /
+// Input: chat.js dispatches `applicant:pending` with {pending} parsed from advanceGame /
 // submitDecision tool results (Vault-free PendingDecisionView: kind, prompt, options[],
 // appeals?, juror?, pick). Vault-free by construction; fail-open everywhere.
 (function () {
   "use strict";
 
-  const CARD_ID = "orwell-decision-card";
+  const CARD_ID = "applicant-decision-card";
 
   // PendingDecisionView.kind → the SubmitDecisionReq wire field carrying the pick.
   // Mirrors GameSessionAdapter.toDecisionInput: `vote` carries every single-pick kind
@@ -41,9 +41,9 @@
   }
 
   function ensureStyles() {
-    if (document.getElementById("orwell-decision-css")) return;
+    if (document.getElementById("applicant-decision-css")) return;
     const st = document.createElement("style");
-    st.id = "orwell-decision-css";
+    st.id = "applicant-decision-css";
     st.textContent = `
       #${CARD_ID} {
         margin: .6rem auto; max-width: 640px; border-radius: 12px; padding: .8rem .9rem;
@@ -266,7 +266,7 @@
       confirm.disabled = true;
       confirm.textContent = "Locking in…";
       try {
-        const r = await fetch("/api/orwell/decision", {
+        const r = await fetch("/api/applicant/decision", {
           method: "POST", credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -274,7 +274,7 @@
         if (!r.ok) throw new Error("HTTP " + r.status);
         // G15: a bound decision mutates the game — nudge every panel through the
         // shared debounced dispatcher NOW, not at the next 20–30s poll.
-        if (window.orwellGameChanged) window.orwellGameChanged("decision:" + kind);
+        if (window.applicantGameChanged) window.applicantGameChanged("decision:" + kind);
         card.classList.add("odec-done");
         card.innerHTML = `<div class="odec-head"><span class="odec-title">✓ Locked in.</span></div>`;
         // The play continues in conversation: prefill (never auto-send) so the model
@@ -287,7 +287,7 @@
         }
         setTimeout(removeCard, 4000);
       } catch (_) {
-        if (window.OrwellReport) window.OrwellReport.fail("decision", "submit-post", _); // G11: fail open, never silent
+        if (window.ApplicantReport) window.ApplicantReport.fail("decision", "submit-post", _); // G11: fail open, never silent
         confirm.disabled = false;
         confirm.textContent = "Confirm — this is binding";
         let err = card.querySelector(".odec-err");
@@ -311,20 +311,20 @@
   // refreshing mid-decision left the player with no card and no signal.
   async function rearmFromStatus() {
     try {
-      const r = await fetch("/api/orwell/status", { credentials: "same-origin" });
+      const r = await fetch("/api/applicant/status", { credentials: "same-origin" });
       if (!r.ok) return;
       const st = await r.json();
       if (st && st.pending && st.pending.kind) {
-        window.dispatchEvent(new CustomEvent("orwell:pending", { detail: { pending: st.pending } }));
+        window.dispatchEvent(new CustomEvent("applicant:pending", { detail: { pending: st.pending } }));
       }
     } catch (_) { /* fail open */ }
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", rearmFromStatus, { once: true });
   } else { rearmFromStatus(); }
-  window.addEventListener("orwell:gamechanged", rearmFromStatus);
+  window.addEventListener("applicant:gamechanged", rearmFromStatus);
 
-  window.addEventListener("orwell:pending", (e) => {
+  window.addEventListener("applicant:pending", (e) => {
     try {
       render(e.detail && e.detail.pending);
     } catch (_) { /* fail open — the conversation path always remains */ }

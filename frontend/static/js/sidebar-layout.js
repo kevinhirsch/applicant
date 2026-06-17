@@ -599,7 +599,7 @@ const RAIL_MIRRORS = [
   { rail: 'rail-diary-room', source: 'sidebar-diary-room-btn', activate: true },
   { rail: 'rail-cast', source: 'sidebar-cast-btn', activate: true },
   {
-    rail: 'rail-game-status', source: 'orwell-status', section: 'orwell-status',
+    rail: 'rail-game-status', source: 'applicant-status', section: 'applicant-status',
     iconSel: '.os-hdr svg',
     // The status HUD's header carries no svg of its own (it leads with live
     // text). Until it grows one — at which point the clone path adopts it

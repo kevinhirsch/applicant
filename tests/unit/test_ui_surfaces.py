@@ -88,7 +88,7 @@ def test_surface_js_has_no_requirement_ids(client, route):
 
 
 def test_vendored_and_applicant_stylesheets_resolve(client):
-    """The vendored Odysseus stylesheet and our own stylesheet both resolve."""
+    """The vendored Applicant stylesheet and our own stylesheet both resolve."""
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/static/applicant/applicant.css").status_code == 200
 

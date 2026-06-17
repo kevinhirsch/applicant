@@ -1,4 +1,4 @@
-// Orwell presence strip (feature 0049 / C28) — the AMBIENT ground for lingering play.
+// Applicant presence strip (feature 0049 / C28) — the AMBIENT ground for lingering play.
 //
 // Renders the engine's Vault-free whereabouts() — the player's room, who is in it, and who is
 // one room over — as a light, dismissible strip. It AUGMENTS the chat and never replaces it
@@ -6,8 +6,8 @@
 // game — the player still mills, asks "who's here?", and talks in PROSE, and the engine grounds
 // the narration. Fail-open everywhere: no strip on empty/error/pre-game.
 //
-//   • GET /api/orwell/state        → gate on an active game (started)
-//   • GET /api/orwell/whereabouts  → { room, present[], nearby[{room, present[]}] } | null
+//   • GET /api/applicant/state        → gate on an active game (started)
+//   • GET /api/applicant/whereabouts  → { room, present[], nearby[{room, present[]}] } | null
 //
 // Dismissing hides the strip until the player's ROOM changes (new ground re-surfaces it) —
 // ambient information, never a nag.
@@ -15,8 +15,8 @@
   "use strict";
 
   const POLL_MS = 25000;
-  const ID = "orwell-presence";
-  const DISMISS_KEY = "orwell-presence-dismissed-room";
+  const ID = "applicant-presence";
+  const DISMISS_KEY = "applicant-presence-dismissed-room";
   const ready = (fn) =>
     document.readyState === "loading"
       ? document.addEventListener("DOMContentLoaded", fn, { once: true })
@@ -63,7 +63,7 @@
       el.style.display = "none";
     });
     document.body.appendChild(el);
-    if (window.OrwellSlots) window.OrwellSlots.register(el, "bottom-center", { key: "presence" });
+    if (window.ApplicantSlots) window.ApplicantSlots.register(el, "bottom-center", { key: "presence" });
     return el;
   }
 
@@ -89,14 +89,14 @@
   async function tick() {
     try {
       if (document.hidden) return; // a hidden tab polls nothing (C18)
-      const state = await getJSON("/api/orwell/state");
+      const state = await getJSON("/api/applicant/state");
       if (!state || !state.started) { render(null); return; }
-      const data = await getJSON("/api/orwell/whereabouts");
+      const data = await getJSON("/api/applicant/whereabouts");
       render(data ? data.whereabouts : null);
       _failures = 0;
     } catch (_) {
       _failures += 1;
-      if (window.OrwellReport) window.OrwellReport.fail("presence", "whereabouts-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("presence", "whereabouts-poll", _); // G11: fail open, never silent
       render(null); // fail OPEN: the strip simply isn't there
     } finally {
       timer = setTimeout(tick, _pollDelay());

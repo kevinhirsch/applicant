@@ -41,7 +41,7 @@ gated. They are environment dependencies, not requirement gaps.
 (OpenAI-compatible + Ollama) with tier ladder and escalation, zero-CLI setup wizard
 (LLM-gate first), resumable onboarding intake, resume parser bootstrapping the attribute
 cloud, font management, durable orchestration port (file-backed `shim` default + DBOS
-adapter), structlog observability with correlation IDs + redaction, vendored Odysseus UI
+adapter), structlog observability with correlation IDs + redaction, vendored Applicant UI
 shell with grayed dormant surfaces, truthfulness / em-dash / confirmation-gate core rules.
 **Exit criteria:** met — boots with no Postgres, full suite hermetic, mid-step resumption proven.
 

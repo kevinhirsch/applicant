@@ -1,6 +1,6 @@
 """Model-endpoint service — add a model source (local or cloud) and auto-list its models.
 
-This backs the setup page's "Add Models" section, ported from the Orwell settings
+This backs the setup page's "Add Models" section, ported from the Applicant settings
 flow. The user adds an endpoint by base URL (+ an optional API key); the server then
 calls that address and lists the models available there. The browser never sees the
 raw API key — the server does the live model fetch and the key is sealed in the
@@ -84,7 +84,7 @@ class ModelEndpointService:
         self._credentials = credentials
         self._transport = transport
         self._timeout = timeout
-        # base_url -> (expires_at, models). Brief cache, like the Orwell flow.
+        # base_url -> (expires_at, models). Brief cache, like the Applicant flow.
         self._cache: dict[str, tuple[float, list[str]]] = {}
 
     # --- persistence -----------------------------------------------------

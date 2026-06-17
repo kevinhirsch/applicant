@@ -1,6 +1,6 @@
 """Model-endpoint router — add a model source and auto-list its models.
 
-Backs the setup page's "Add Models" section (ported from the Orwell settings flow):
+Backs the setup page's "Add Models" section (ported from the Applicant settings flow):
 the user pastes a base URL (local Ollama or a cloud API) plus an optional key, and
 the server lists the models available at that address. The contract matches what the
 ported settings JS expects:
@@ -77,7 +77,7 @@ def test_endpoint(
 
 @router.patch("/{endpoint_id}")
 def patch_endpoint(endpoint_id: str, container=Depends(get_container)) -> JSONResponse:
-    """Toggle an endpoint enabled/disabled (matches the Orwell PATCH toggle)."""
+    """Toggle an endpoint enabled/disabled (matches the Applicant PATCH toggle)."""
     svc = _service(container)
     if svc.get_endpoint(endpoint_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown endpoint")

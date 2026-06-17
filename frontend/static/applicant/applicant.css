@@ -1,7 +1,7 @@
 /*
  * Applicant — our own surface styles (single source of truth).
  *
- * The look comes from the vendored Odysseus design system (../style.css); this
+ * The look comes from the vendored Applicant design system (../style.css); this
  * stylesheet only adds the handful of `applicant-*` / `review-*` / `chat-*` rules
  * that our surfaces need, plus the two `.admin-*` classes the canonical CSS is
  * missing (.admin-btn / .admin-badge-on). Every value here is copied verbatim from

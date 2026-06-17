@@ -1,12 +1,12 @@
-// Orwell social surface (feature 0036 / C10, refit by H5/G7) — NPC approaches as
+// Applicant social surface (feature 0036 / C10, refit by H5/G7) — NPC approaches as
 // SIDEBAR CHROME, over the engine's Vault-free routes (the Diary Room lives in the
-// sidebar too — orwellDiaryRoom.js). Built as a self-contained, fail-open sibling to
-// orwellStatusPanel.js: it only shows while a game is in progress AND a houseguest
+// sidebar too — applicantDiaryRoom.js). Built as a self-contained, fail-open sibling to
+// applicantStatusPanel.js: it only shows while a game is in progress AND a houseguest
 // actually wants the player, renders ONLY what the routes return, and never disturbs
 // the chat if the engine is down.
 //
-//   • GET  /api/orwell/state        → gate on an active game (started)
-//   • GET  /api/orwell/initiatives  → houseguests who want to approach (name + motive)
+//   • GET  /api/applicant/state        → gate on an active game (started)
+//   • GET  /api/applicant/initiatives  → houseguests who want to approach (name + motive)
 //
 // Vault-free by construction (the engine withholds all hidden state); fail-open everywhere.
 //
@@ -28,11 +28,11 @@
   "use strict";
 
   const POLL_MS = 20000;
-  const ID = "orwell-social";
+  const ID = "applicant-social";
   const MAX_APPROACHES = 3;            // a few houseguests may want you at once — a living house (U7)
-  // E71: dismissals are scoped per user (and cleared per game via orwell:gamechanged),
+  // E71: dismissals are scoped per user (and cleared per game via applicant:gamechanged),
   // so one account's waved-off approaches never bleed into another's session.
-  const DISMISS_KEY = "orwell-social-dismissed:" +
+  const DISMISS_KEY = "applicant-social-dismissed:" +
     ((document.body && document.body.dataset.user) || "");
   const ready = (fn) =>
     document.readyState === "loading"
@@ -54,7 +54,7 @@
   // ceremony (the week-1 HOH result) must have resolved. The engine's E89 gate already returns an
   // empty list pre-first-ceremony; this is the FE's own belt, so even if the engine FAILS OPEN and
   // ships approaches early (a "wants a word with you" at the premiere), the UI still shows nothing.
-  // Derived from /api/orwell/state alone: pre-ceremony beats are setup/premiere/character-creation
+  // Derived from /api/applicant/state alone: pre-ceremony beats are setup/premiere/character-creation
   // and the week-1 HOH competition itself; once noms (or any later beat / a later week) is reached,
   // the first ceremony has resolved.
   function firstCeremonyResolved(st) {
@@ -84,9 +84,9 @@
   // back through the seam below without re-notifying.
   function setPendingApproach(id) {
     pendingApproachId = id;
-    try { window.dispatchEvent(new CustomEvent("orwell:approachpending", { detail: { id } })); } catch (_) {}
+    try { window.dispatchEvent(new CustomEvent("applicant:approachpending", { detail: { id } })); } catch (_) {}
   }
-  window._orwellPendingApproach = {
+  window._applicantPendingApproach = {
     get: () => pendingApproachId,
     restore: (id) => { pendingApproachId = id; }, // G17 boot restore: silent on purpose
   };
@@ -120,7 +120,7 @@
     if (el) el.style.display = "none";
   }
 
-  // H5: the section is sidebar chrome, mirroring orwellStatusPanel.js's ensure/mount
+  // H5: the section is sidebar chrome, mirroring applicantStatusPanel.js's ensure/mount
   // pattern (ruling #3/E64) — static flow, full sidebar width, the status panel's
   // visual standard. display is CONTENT-DRIVEN: renderApproaches() shows the section
   // only while it holds at least one live chip, so an empty "The House" box can never
@@ -133,8 +133,8 @@
     el.setAttribute("aria-label", "House approaches");
     el.innerHTML = `
       <style>
-        /* H5: sidebar chrome, not a window — the orwell-status visual standard. */
-        #orwell-social {
+        /* H5: sidebar chrome, not a window — the applicant-status visual standard. */
+        #applicant-social {
           display: none;
           margin: var(--space-2) var(--space-2) 0;
           padding: var(--space-2) var(--space-3);
@@ -144,47 +144,47 @@
           font-family: 'Fira Code', ui-monospace, monospace;
           font-size: var(--fs-xs); line-height: 1.5;
         }
-        #orwell-social .osoc-hd {
+        #applicant-social .osoc-hd {
           color: color-mix(in srgb, var(--fg, #9cdef2) 78%, var(--panel, #111));
           margin: 0 0 .3rem; font-weight: 600; letter-spacing: .03em;
         }
-        #orwell-social .osoc-chip {
+        #applicant-social .osoc-chip {
           display: flex; align-items: center; gap: .35rem; margin: .25rem 0;
           background: rgba(255,255,255,.05); border: 1px solid var(--border, #355a66);
           border-radius: 8px; padding: .25rem .4rem;
         }
-        #orwell-social .osoc-chip .osoc-go {
+        #applicant-social .osoc-chip .osoc-go {
           flex: 1; cursor: pointer; text-align: left; min-height: 24px;
           border: none; background: none; color: inherit; font: inherit; padding: 0;
         }
-        #orwell-social .osoc-chip .osoc-go b { color: var(--fg, #9cdef2); }
-        #orwell-social .osoc-chip .osoc-x {
+        #applicant-social .osoc-chip .osoc-go b { color: var(--fg, #9cdef2); }
+        #applicant-social .osoc-chip .osoc-x {
           cursor: pointer; opacity: .55; border: none; background: none; color: inherit;
           font-size: .9rem; line-height: 1; padding: .2rem .35rem; min-width: 24px; min-height: 24px;
         }
         /* E60: the chip's framing VARIES by the engine's coarse motive — a warm overture (bond)
            reads differently from someone sizing the player up (probe). A left accent rail carries
            the difference without leaking any number. */
-        #orwell-social .osoc-chip.osoc-motive-bond  { border-left: 3px solid color-mix(in srgb, #4caf50 70%, var(--border, #355a66)); }
-        #orwell-social .osoc-chip.osoc-motive-probe { border-left: 3px solid color-mix(in srgb, #e0a96c 70%, var(--border, #355a66)); }
-        #orwell-social .osoc-chip.osoc-motive-neutral { border-left: 3px solid var(--border, #355a66); }
-        #orwell-social .osoc-chip.osoc-chip-pending {
+        #applicant-social .osoc-chip.osoc-motive-bond  { border-left: 3px solid color-mix(in srgb, #4caf50 70%, var(--border, #355a66)); }
+        #applicant-social .osoc-chip.osoc-motive-probe { border-left: 3px solid color-mix(in srgb, #e0a96c 70%, var(--border, #355a66)); }
+        #applicant-social .osoc-chip.osoc-motive-neutral { border-left: 3px solid var(--border, #355a66); }
+        #applicant-social .osoc-chip.osoc-chip-pending {
           border-color: var(--accent, #e06c75); opacity: .85;
         }
-        #orwell-social .osoc-chip.osoc-chip-pending .osoc-go b {
+        #applicant-social .osoc-chip.osoc-chip-pending .osoc-go b {
           color: var(--accent, #e06c75);
         }
       </style>
       <div class="osoc-hd" id="osoc-appr-hd">Wants a word</div>
       <div id="osoc-appr"></div>`;
     // E88 (ruling #4): the Diary Room is NOT here — it is a standing sidebar
-    // button + a composer mode (orwellDiaryRoom.js). This section is approaches only.
+    // button + a composer mode (applicantDiaryRoom.js). This section is approaches only.
     //
     // Mount INSIDE the sidebar, directly under the game-status section (or under the
     // session list before the status panel has mounted — the two orderings converge:
     // sessions → status → approaches). Never document.body, never floating.
     const sidebar = document.getElementById("sidebar");
-    const anchor = document.getElementById("orwell-status") ||
+    const anchor = document.getElementById("applicant-status") ||
                    document.getElementById("sessions-section");
     if (anchor && anchor.parentElement) {
       anchor.parentElement.insertBefore(el, anchor.nextSibling);
@@ -234,13 +234,13 @@
   // Hook into the send button and Enter-to-submit on the composer.
   const _wireComposer = () => {
     const form = document.getElementById("chat-form") || document.querySelector("form");
-    if (form && !form._orwellSocialWired) {
-      form._orwellSocialWired = true;
+    if (form && !form._applicantSocialWired) {
+      form._applicantSocialWired = true;
       form.addEventListener("submit", onMessageSend);
     }
     const btn = document.getElementById("send-btn") || document.querySelector("[id$='-send']");
-    if (btn && !btn._orwellSocialWired) {
-      btn._orwellSocialWired = true;
+    if (btn && !btn._applicantSocialWired) {
+      btn._applicantSocialWired = true;
       btn.addEventListener("click", onMessageSend);
     }
   };
@@ -302,13 +302,13 @@
 
   // Seam for the headless browser gate: mount the section on demand (display stays
   // content-driven — H5: an empty section never shows).
-  window._orwellSocialEnsure = () => { ensureSection(); return true; };
+  window._applicantSocialEnsure = () => { ensureSection(); return true; };
 
   // E60/E89 test seam (headless browser keep-set): drive the belt + motive framing WITHOUT a live
   // engine. `resolved` sets the FE belt; `list` is fed to renderApproaches exactly as a (possibly
   // fail-open) initiatives payload would be — so the smoke can prove the belt suppresses chips even
   // when approaches arrive early, and that bond/probe motives render distinct chips once it opens.
-  window._orwellSocialDriveApproaches = (resolved, list) => {
+  window._applicantSocialDriveApproaches = (resolved, list) => {
     ensureSection();
     _ceremonyResolved = !!resolved;
     dismissed = new Set(); // a clean slate so the smoke isn't suppressed by prior dismissals
@@ -321,7 +321,7 @@
       classes: chips.map((c) => (c.className.match(/osoc-motive-\w+/) || [null])[0]),
     };
   };
-  window._orwellFirstCeremonyResolved = (st) => firstCeremonyResolved(st);
+  window._applicantFirstCeremonyResolved = (st) => firstCeremonyResolved(st);
 
 
   // --- Poll loop ----------------------------------------------------------------
@@ -329,11 +329,11 @@
   async function refresh() {
     let st;
     try {
-      st = await getJSON("/api/orwell/state");
+      st = await getJSON("/api/applicant/state");
     } catch (_) {
       // ENGINE HICCUP (not "no game"): keep a shown section up (U5) — just don't refresh
       // approaches. Only hide when we've never shown it (nothing to keep).
-      if (window.OrwellReport) window.OrwellReport.fail("social", "state-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("social", "state-poll", _); // G11: fail open, never silent
       _failures += 1;
       if (!_shown) hidePanel();
       return;
@@ -355,11 +355,11 @@
     // engine fails open, renderApproaches([]) still suppresses everything against the belt.
     if (!_ceremonyResolved) { renderApproaches([]); return; }
     try {
-      const data = await getJSON("/api/orwell/initiatives");
+      const data = await getJSON("/api/applicant/initiatives");
       renderApproaches(data && data.initiatives);
     } catch (_) {
       // initiatives hiccup: leave the existing chips, never blank them on a transient error
-      if (window.OrwellReport) window.OrwellReport.fail("social", "initiatives-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("social", "initiatives-poll", _); // G11: fail open, never silent
     }
   }
 
@@ -373,8 +373,8 @@
     timer = setTimeout(tick, _pollDelay());
   }
 
-  window.orwellRefreshSocial = refresh;
+  window.applicantRefreshSocial = refresh;
   // A new game starts a clean slate — forget who we waved off in the last one.
-  window.addEventListener("orwell:gamechanged", () => { clearDismissed(); refresh(); });
+  window.addEventListener("applicant:gamechanged", () => { clearDismissed(); refresh(); });
   ready(start);
 })();

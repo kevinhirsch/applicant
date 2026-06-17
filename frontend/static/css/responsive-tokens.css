@@ -85,8 +85,8 @@ html {
     padding-top: var(--safe-top);
   }
   /* Any fixed top banner (engine status) sits below the status bar. */
-  .orwell-banner,
-  #orwell-engine-banner {
+  .applicant-banner,
+  #applicant-engine-banner {
     top: var(--safe-top) !important;
   }
 }
@@ -99,11 +99,11 @@ html {
 
 /* --- E97: ONE animation contract for every slotted game panel — open is a
        fade+scale-in; reduced motion disables it entirely. */
-@keyframes orwell-pop {
+@keyframes applicant-pop {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: none; }
 }
-.orwell-anim-in { animation: orwell-pop 0.18s ease-out; }
+.applicant-anim-in { animation: applicant-pop 0.18s ease-out; }
 @media (prefers-reduced-motion: reduce) {
-  .orwell-anim-in { animation: none; }
+  .applicant-anim-in { animation: none; }
 }

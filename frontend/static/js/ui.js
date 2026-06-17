@@ -165,8 +165,8 @@ function _activateSpaceCard(card) {
 }
 
 function _initHoverCardSpaceToggle() {
-  if (document._orwellHoverCardSpaceToggle) return;
-  document._orwellHoverCardSpaceToggle = true;
+  if (document._applicantHoverCardSpaceToggle) return;
+  document._applicantHoverCardSpaceToggle = true;
   document.addEventListener('pointerover', (e) => {
     _lastPointerClientX = e.clientX;
     _lastPointerClientY = e.clientY;
@@ -1275,7 +1275,7 @@ if (!window._odyEscExpandGuard) {
     // MODAL outranks every non-modal window (it owns the higher z band), so the
     // top kit window parks on Escape only when no modal is open — menus, then
     // modals, then windows.
-    if (!pickTopModal() && window.OrwellWindowKit && window.OrwellWindowKit.dismissTop()) {
+    if (!pickTopModal() && window.ApplicantWindowKit && window.ApplicantWindowKit.dismissTop()) {
       e.stopImmediatePropagation(); e.preventDefault();
       return;
     }

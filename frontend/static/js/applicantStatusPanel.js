@@ -1,7 +1,7 @@
-// Orwell status panel — the game's standing readout, docked in the sidebar (E64).
+// Applicant status panel — the game's standing readout, docked in the sidebar (E64).
 //
 // Polls the engine's public ceremony status (week / phase / HOH / nominees / veto)
-// via GET /api/orwell/status and renders a permanent section inside #sidebar
+// via GET /api/applicant/status and renders a permanent section inside #sidebar
 // whenever a game is in progress. It shows ONLY ceremony-level public facts the
 // engine projects — no stats, souls, or hidden state ever reach it (the Vault
 // Wall holds on the engine side). It FAILS OPEN: if the engine is unreachable or
@@ -17,7 +17,7 @@ import { onNarrowChange } from './platform.js';
   "use strict";
 
   const POLL_MS = 20000;
-  const ID = "orwell-status";
+  const ID = "applicant-status";
   const ready = (fn) =>
     document.readyState === "loading"
       ? document.addEventListener("DOMContentLoaded", fn, { once: true })
@@ -26,7 +26,7 @@ import { onNarrowChange } from './platform.js';
   let timer = null;
 
   async function fetchStatus() {
-    const r = await fetch("/api/orwell/status", { credentials: "same-origin" });
+    const r = await fetch("/api/applicant/status", { credentials: "same-origin" });
     if (!r.ok) throw new Error("status " + r.status);
     return r.json();
   }
@@ -35,7 +35,7 @@ import { onNarrowChange } from './platform.js';
   // the memory wall. Best-effort: if /state fails the panel still shows the ceremony rows.
   async function fetchState() {
     try {
-      const r = await fetch("/api/orwell/state", { credentials: "same-origin" });
+      const r = await fetch("/api/applicant/state", { credentials: "same-origin" });
       if (!r.ok) return null;
       return await r.json();
     } catch (_) { return null; }
@@ -68,7 +68,7 @@ import { onNarrowChange } from './platform.js';
     if (!_applyCollapsed || _collapseKeyApplied === _gameKey) return;
     _collapseKeyApplied = _gameKey;
     try {
-      _applyCollapsed(localStorage.getItem(storageKey("orwell-status-collapsed")) === "1");
+      _applyCollapsed(localStorage.getItem(storageKey("applicant-status-collapsed")) === "1");
     } catch (_) {}
   }
 
@@ -102,7 +102,7 @@ import { onNarrowChange } from './platform.js';
     el.innerHTML = `
       <style>
         /* E64: sidebar chrome, not a window — static flow, full sidebar width. */
-        #orwell-status {
+        #applicant-status {
           display: none;
           margin: var(--space-2) var(--space-2) 0;
           padding: var(--space-2) var(--space-3);
@@ -112,34 +112,34 @@ import { onNarrowChange } from './platform.js';
           font-family: 'Fira Code', ui-monospace, monospace;
           font-size: var(--fs-xs); line-height: 1.5;
         }
-        #orwell-status .os-hdr {
+        #applicant-status .os-hdr {
           display: flex; align-items: baseline; gap: .4rem;
           margin-bottom: .3rem; font-weight: 600; letter-spacing: .03em;
           cursor: pointer; user-select: none;
         }
-        #orwell-status .os-ttl { display: flex; align-items: baseline; gap: .4rem; flex: 1; min-width: 0; flex-wrap: wrap; }
-        #orwell-status .os-hdr .os-phase { opacity: .65; font-weight: 400; text-transform: capitalize; }
-        #orwell-status .os-chev { opacity: .55; margin-left: auto; transition: transform .15s; }
-        #orwell-status.os-collapsed .os-chev { transform: rotate(-90deg); }
-        #orwell-status.os-collapsed .os-body { display: none; }
-        #orwell-status .os-row { display: flex; gap: .4rem; }
-        #orwell-status .os-row .os-k { color: color-mix(in srgb, var(--fg, #9cdef2) 78%, var(--panel, #111)); min-width: 4.2em; }
-        #orwell-status .os-row .os-v { flex: 1; }
-        #orwell-status .os-noms { color: var(--red, #e06c75); }
+        #applicant-status .os-ttl { display: flex; align-items: baseline; gap: .4rem; flex: 1; min-width: 0; flex-wrap: wrap; }
+        #applicant-status .os-hdr .os-phase { opacity: .65; font-weight: 400; text-transform: capitalize; }
+        #applicant-status .os-chev { opacity: .55; margin-left: auto; transition: transform .15s; }
+        #applicant-status.os-collapsed .os-chev { transform: rotate(-90deg); }
+        #applicant-status.os-collapsed .os-body { display: none; }
+        #applicant-status .os-row { display: flex; gap: .4rem; }
+        #applicant-status .os-row .os-k { color: color-mix(in srgb, var(--fg, #9cdef2) 78%, var(--panel, #111)); min-width: 4.2em; }
+        #applicant-status .os-row .os-v { flex: 1; }
+        #applicant-status .os-noms { color: var(--red, #e06c75); }
         /* Offline dot (U5): the feed reconnecting, not gone — last-known stays visible. */
-        #orwell-status .os-stale { color: #e0a500; margin-left: .35rem; font-size: .7em; vertical-align: middle; }
+        #applicant-status .os-stale { color: #e0a500; margin-left: .35rem; font-size: .7em; vertical-align: middle; }
         /* Memory wall (C21): the roster a real houseguest can see. Public facts only. */
-        #orwell-status .os-you { margin: .35rem 0 .1rem; font-weight: 600; }
-        #orwell-status .os-you .os-badge {
+        #applicant-status .os-you { margin: .35rem 0 .1rem; font-weight: 600; }
+        #applicant-status .os-you .os-badge {
           display: inline-block; margin-left: .4rem; padding: 0 .4em; border-radius: .5em;
           font-size: .72em; font-weight: 700; letter-spacing: .02em;
           background: var(--accent, var(--red, #e06c75)); color: #fff;
         }
-        #orwell-status .os-roster-h { opacity: .55; font-size: .8em; margin: .4rem 0 .15rem; }
-        #orwell-status .os-roster { display: flex; flex-direction: column; gap: .05rem; max-height: 30vh; overflow: auto; }
-        #orwell-status .os-hg { display: flex; justify-content: space-between; gap: .5rem; }
-        #orwell-status .os-hg.os-out { color: color-mix(in srgb, var(--fg, #9cdef2) 62%, var(--panel, #111)); text-decoration: line-through; }
-        #orwell-status .os-hg .os-seat { opacity: .6; font-size: .78em; text-decoration: none; }
+        #applicant-status .os-roster-h { opacity: .55; font-size: .8em; margin: .4rem 0 .15rem; }
+        #applicant-status .os-roster { display: flex; flex-direction: column; gap: .05rem; max-height: 30vh; overflow: auto; }
+        #applicant-status .os-hg { display: flex; justify-content: space-between; gap: .5rem; }
+        #applicant-status .os-hg.os-out { color: color-mix(in srgb, var(--fg, #9cdef2) 62%, var(--panel, #111)); text-decoration: line-through; }
+        #applicant-status .os-hg .os-seat { opacity: .6; font-size: .78em; text-decoration: none; }
       </style>
       <div class="os-hdr" role="button" tabindex="0" aria-expanded="true" title="Collapse">
         <span class="os-ttl"><span id="os-week">Week —</span><span class="os-phase" id="os-phase"></span><span class="os-stale" id="os-stale" hidden title="Reconnecting to the feed…" aria-label="feed offline">●</span></span>
@@ -171,7 +171,7 @@ import { onNarrowChange } from './platform.js';
     const setCollapsed = (on) => {
       el.classList.toggle("os-collapsed", !!on);
       hdr.setAttribute("aria-expanded", on ? "false" : "true");
-      try { localStorage.setItem(storageKey("orwell-status-collapsed"), on ? "1" : ""); } catch (_) {}
+      try { localStorage.setItem(storageKey("applicant-status-collapsed"), on ? "1" : ""); } catch (_) {}
     };
     const toggle = () => setCollapsed(!el.classList.contains("os-collapsed"));
     hdr.addEventListener("click", toggle);
@@ -179,7 +179,7 @@ import { onNarrowChange } from './platform.js';
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
     });
     try {
-      if (localStorage.getItem(storageKey("orwell-status-collapsed")) === "1") setCollapsed(true);
+      if (localStorage.getItem(storageKey("applicant-status-collapsed")) === "1") setCollapsed(true);
     } catch (_) {}
     // F1: the read above ran under the key render() computed BEFORE this build;
     // expose the setter + record the key so a later key change re-applies.
@@ -329,7 +329,7 @@ import { onNarrowChange } from './platform.js';
     } catch (_) {
       // ENGINE HICCUP (not "no game"): if we've shown the panel, keep the last-known
       // values up and flag the feed as reconnecting — don't blink the readout out.
-      if (window.OrwellReport) window.OrwellReport.fail("status-panel", "status-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("status-panel", "status-poll", _); // G11: fail open, never silent
       _failures += 1;
       if (_shown) markStale(true);
       else hidePanel();
@@ -343,7 +343,7 @@ import { onNarrowChange } from './platform.js';
   }
 
   // Seam for the headless browser gate: build + show the panel on demand.
-  window._orwellStatusEnsure = () => { const el = ensurePanel(); el.style.display = "block"; return true; };
+  window._applicantStatusEnsure = () => { const el = ensurePanel(); el.style.display = "block"; return true; };
 
   function start() {
     refresh();
@@ -356,8 +356,8 @@ import { onNarrowChange } from './platform.js';
   }
 
   // Let onboarding (or any flow that changes the game) trigger an immediate refresh.
-  window.orwellRefreshStatus = refresh;
-  window.addEventListener("orwell:gamechanged", refresh);
+  window.applicantRefreshStatus = refresh;
+  window.addEventListener("applicant:gamechanged", refresh);
   // The sidebar drawer handles narrow layouts; nothing to repark (E64). Kept as a
   // no-op subscription so a future narrow-specific treatment has its hook.
   onNarrowChange(() => {});

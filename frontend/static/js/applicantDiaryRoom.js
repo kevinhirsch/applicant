@@ -1,17 +1,17 @@
-// Orwell Diary Room — a standing sidebar button + a COMPOSER MODE (E88, ruling #4).
+// Applicant Diary Room — a standing sidebar button + a COMPOSER MODE (E88, ruling #4).
 //
 // The Diary Room is not a window. The entry point is a permanent sidebar nav
 // button (alongside New Chat / Search) that shows while a game is active;
 // clicking it puts the CHAT COMPOSER into Diary-Room mode: a visible
 // in-composer indicator, a private placeholder, and the send intercepted to
-// POST /api/orwell/diary-room (the player's own OOC knowledge — no in-game
+// POST /api/applicant/diary-room (the player's own OOC knowledge — no in-game
 // pathway to any houseguest). Exit on send, Escape, or the indicator's ×.
 // Chat-first per ADR 0003: the confessional is typed where everything else is.
 (function () {
   "use strict";
 
   const BTN_ID = "sidebar-diary-room-btn";
-  const PILL_ID = "orwell-dr-pill";
+  const PILL_ID = "applicant-dr-pill";
   let drMode = false;
   let _returnPlaceholder = null;
 
@@ -53,7 +53,7 @@
     const btn = ensureButton();
     if (!btn) return;
     try {
-      const r = await fetch("/api/orwell/state", { credentials: "same-origin" });
+      const r = await fetch("/api/applicant/state", { credentials: "same-origin" });
       const st = r.ok ? await r.json() : null;
       btn.style.display = st && st.started ? "" : "none";
       if (!(st && st.started) && drMode) exitDRMode();
@@ -75,10 +75,10 @@
       "background:color-mix(in srgb, var(--accent, #e06c75) 18%, transparent);" +
       "border:1px solid var(--accent, #e06c75);font-size:var(--fs-xs);";
     pill.innerHTML = `<span>📔 Diary Room — private &amp; out-of-character; the house never hears this.</span>
-      <button type="button" id="orwell-dr-exit" aria-label="Leave the Diary Room" title="Leave the Diary Room"
+      <button type="button" id="applicant-dr-exit" aria-label="Leave the Diary Room" title="Leave the Diary Room"
         style="border:none;background:none;color:inherit;cursor:pointer;font-size:1em;padding:0 2px;">×</button>`;
     form.parentElement.insertBefore(pill, form);
-    pill.querySelector("#orwell-dr-exit").addEventListener("click", exitDRMode);
+    pill.querySelector("#applicant-dr-exit").addEventListener("click", exitDRMode);
     return pill;
   }
 
@@ -86,7 +86,7 @@
   // WITH the draft — it must hear every mode change the moment it happens, so a
   // confessional-in-progress can never be stored as (or restored into) house-bound text.
   function notifyModeChange() {
-    try { window.dispatchEvent(new CustomEvent("orwell:drmode", { detail: { active: drMode } })); } catch (_) {}
+    try { window.dispatchEvent(new CustomEvent("applicant:drmode", { detail: { active: drMode } })); } catch (_) {}
   }
 
   function enterDRMode() {
@@ -95,7 +95,7 @@
     if (!box || !pill) return;
     drMode = true;
     pill.style.display = "flex";
-    document.body.classList.add("orwell-dr-mode");
+    document.body.classList.add("applicant-dr-mode");
     _returnPlaceholder = box.placeholder;
     box.placeholder = "Tell the producers what you're really thinking…";
     box.focus();
@@ -107,13 +107,13 @@
     const pill = document.getElementById(PILL_ID);
     drMode = false;
     if (pill) pill.style.display = "none";
-    document.body.classList.remove("orwell-dr-mode");
+    document.body.classList.remove("applicant-dr-mode");
     if (box && _returnPlaceholder !== null) { box.placeholder = _returnPlaceholder; _returnPlaceholder = null; }
     notifyModeChange();
   }
 
   async function submitDR(entry) {
-    const r = await fetch("/api/orwell/diary-room", {
+    const r = await fetch("/api/applicant/diary-room", {
       method: "POST", credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ entry }),
@@ -126,8 +126,8 @@
   function wireComposer() {
     const form = composerForm();
     const box = composerBox();
-    if (!form || form._orwellDRWired || !box) return;
-    form._orwellDRWired = true;
+    if (!form || form._applicantDRWired || !box) return;
+    form._applicantDRWired = true;
     form.addEventListener("submit", async (e) => {
       if (!drMode) return;
       e.preventDefault();
@@ -153,14 +153,14 @@
   }
 
   // The one seam every flow uses (smoke gate, future prompts): enter the composer mode.
-  window._orwellOpenDiaryRoom = () => { ensureButton(); wireComposer(); enterDRMode(); return true; };
-  window._orwellDiaryRoomActive = () => drMode;
+  window._applicantOpenDiaryRoom = () => { ensureButton(); wireComposer(); enterDRMode(); return true; };
+  window._applicantDiaryRoomActive = () => drMode;
 
   function start() {
     ensureButton();
     wireComposer();
     refreshGate();
-    window.addEventListener("orwell:gamechanged", refreshGate);
+    window.addEventListener("applicant:gamechanged", refreshGate);
     setInterval(() => { if (!document.hidden) refreshGate(); }, 30000);
   }
 

@@ -1,5 +1,5 @@
 /* ============================================================================
-   orwellHouseThemes.css — the 0052 HOUSE treatment (ruling #13 + addendum).
+   applicantHouseThemes.css — the 0052 HOUSE treatment (ruling #13 + addendum).
    Active only under body.house-theme (set by theme.js when a house preset
    applies). Three contracts:
 
@@ -15,14 +15,14 @@
 
 /* ---- FROST (capability-gated; fallback = the existing solid panel) --------
    Covers BOTH window families at once (Lane G4): the legacy modal family
-   (.modal-content) and the OrwellWindow kit (.ow-window — usually also
-   .orwell-slotted, but pinned by family name so unslotted kit windows frost
+   (.modal-content) and the ApplicantWindow kit (.ow-window — usually also
+   .applicant-slotted, but pinned by family name so unslotted kit windows frost
    identically). The fallback mix derives from the shared --win-bg token so
    the frost always composites from the same ground both families paint. */
 @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
   body.house-theme #sidebar,
-  body.house-theme .orwell-slotted,
-  body.house-theme #orwell-status,
+  body.house-theme .applicant-slotted,
+  body.house-theme #applicant-status,
   body.house-theme #minimized-dock,
   body.house-theme .settings-modal-content,
   body.house-theme .modal-content,
@@ -57,7 +57,7 @@ body.house-theme button {
     60% { filter: brightness(1.15); }
     100% { filter: none; transform: none; }
   }
-  body.house-theme--telescreen .orwell-anim-in {
+  body.house-theme--telescreen .applicant-anim-in {
     animation: house-crt-bloom 0.28s ease-out;
   }
 
@@ -72,7 +72,7 @@ body.house-theme button {
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: none; }
   }
-  body.house-theme--sequester .orwell-anim-in {
+  body.house-theme--sequester .applicant-anim-in {
     animation: house-velvet-settle 0.26s ease-out;
   }
 
@@ -81,7 +81,7 @@ body.house-theme button {
     from { opacity: 0; transform: scale(1.03); }
     to { opacity: 1; transform: none; }
   }
-  body.house-theme--room-101 .orwell-anim-in {
+  body.house-theme--room-101 .applicant-anim-in {
     animation: house-clamp 0.14s ease-in;
   }
 }

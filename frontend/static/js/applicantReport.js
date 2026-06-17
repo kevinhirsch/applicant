@@ -1,21 +1,21 @@
-// Orwell failure ring, browser side (Lane G11) — the standard sink for fail-open catches.
+// Applicant failure ring, browser side (Lane G11) — the standard sink for fail-open catches.
 //
 // The house style for user-facing feature failure is fail-OPEN: the panel simply isn't
 // there, the chip doesn't render, the portrait stays a placeholder. Correct UX —
 // structurally SILENT: every failure renders as absence, and nobody learns anything
 // (the image-gen complaint, generalized). This module fixes the silence WITHOUT
-// changing the UX: a fail-open catch adds ONE line — OrwellReport.fail(surface,
+// changing the UX: a fail-open catch adds ONE line — ApplicantReport.fail(surface,
 // errorClass, detail) — and the failure lands in the G1b LIVE ring (POST
-// /api/orwell/fe-report → logger.info("[fe-fail] …")), visible on /admin/status.
+// /api/applicant/fe-report → logger.info("[fe-fail] …")), visible on /admin/status.
 //
 // Contract: throttled client-side (max ~10/min), rate-limited server-side, and it
 // NEVER throws — reporting a failure must never become one. Loaded as a plain
-// script BEFORE the orwell panels, so window.OrwellReport exists when they run;
-// call sites still guard (`window.OrwellReport && …`) in case this file 404s.
+// script BEFORE the applicant panels, so window.ApplicantReport exists when they run;
+// call sites still guard (`window.ApplicantReport && …`) in case this file 404s.
 (function () {
   "use strict";
 
-  const ENDPOINT = "/api/orwell/fe-report";
+  const ENDPOINT = "/api/applicant/fe-report";
   const MAX_PER_MIN = 10; // client-side throttle; the route enforces its own on top
   let stamps = [];        // send timestamps inside the sliding minute
 
@@ -48,5 +48,5 @@
     } catch (_) { /* never throws — the report is an addition, never new behavior */ }
   }
 
-  window.OrwellReport = { fail };
+  window.ApplicantReport = { fail };
 })();
