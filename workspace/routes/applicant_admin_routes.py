@@ -45,6 +45,10 @@ class MarkSubmittedIn(BaseModel):
     attributes_used: dict | None = None
 
 
+class ToggleToolIn(BaseModel):
+    enabled: bool
+
+
 # --- helpers ----------------------------------------------------------------
 
 
@@ -103,6 +107,41 @@ def setup_applicant_admin_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             available = await engine.engine_available()
         return {"engine_available": available}
+
+    # -- tool registry (enable/disable the engine's tools) ----------------
+    # The engine owns a real tool registry (GET /api/admin/tools, toggle via
+    # POST /api/admin/tools/{key}?enabled=). The shared engine client is owned by
+    # another lane, so — like the criteria proxy — we issue these through the
+    # client's own request seam so every failure is still a typed EngineError.
+
+    @router.get("/tools")
+    async def list_tools(request: Request) -> dict:
+        """List the engine's tools with their enabled state for the toggle panel.
+
+        Soft-degrades: a down/unconfigured engine reports ``engine_available:
+        false`` so the panel renders an offline note instead of erroring.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine._request("GET", "/api/admin/tools"),
+                {"tools": []},
+            )
+
+    @router.post("/tools/{tool_key}")
+    async def toggle_tool(tool_key: str, request: Request, body: ToggleToolIn) -> dict:
+        """Enable or disable one engine tool (persisted + enforced at dispatch)."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine._request(
+                    "POST",
+                    f"/api/admin/tools/{tool_key}",
+                    params={"enabled": body.enabled},
+                )
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
 
     # -- read-only debug/observability surface (all soft-degrade) ---------
 

@@ -194,6 +194,38 @@ def test_criteria_integral_edit_is_confirmation_gated(client):
 
 
 @pytest.mark.integration
+def test_signature_endpoint_returns_summary_and_budget(client):
+    # FR-LEARN-5/6: the learned converting-role signature + exploration budget are
+    # readable per-campaign. A fresh campaign has an empty signature and the
+    # default budget — the surface still answers cleanly.
+    cid = "c-sig"
+    r = client.get(f"/api/criteria/{cid}/signature")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["campaign_id"] == cid
+    assert isinstance(body["signature"], dict)
+    assert "exploration_budget" in body
+
+
+@pytest.mark.integration
+def test_exploration_budget_set_and_read_back(client):
+    # FR-LEARN-6: setting the explore/exploit budget persists and reads back.
+    # Use a real campaign so the learning state has a row to persist onto.
+    cid = client.post("/api/campaigns", json={"name": "Budget test"}).json()["id"]
+    ok = client.put(f"/api/criteria/{cid}/exploration-budget", json={"exploration_budget": 0.4})
+    assert ok.status_code == 200
+    assert ok.json()["exploration_budget"] == 0.4
+    back = client.get(f"/api/criteria/{cid}/signature").json()
+    assert back["exploration_budget"] == 0.4
+
+
+@pytest.mark.integration
+def test_exploration_budget_rejects_out_of_range(client):
+    bad = client.put("/api/criteria/c-bad/exploration-budget", json={"exploration_budget": 5})
+    assert bad.status_code == 400
+
+
+@pytest.mark.integration
 def test_attribute_integral_edit_is_confirmation_gated(client):
     # FR-FB-3: an integral attribute upsert without confirm 409s; with confirm 201.
     cid = "c-attr"

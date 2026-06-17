@@ -2104,10 +2104,20 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         panel.appendChild(hist);
       }
 
-      // "Ask for a change" box — drives the engine turn loop (free-text).
+      // "Ask for a change" box — drives the engine turn loop. The kind selector
+      // lets the user explicitly ADD text, SUBTRACT (remove) text, or just
+      // describe a free-text change. The spec stresses the loop must be able to
+      // subtract text, so "Remove text" is a first-class choice here.
       const ask = document.createElement('div');
-      ask.style.cssText = 'display:flex;gap:6px;align-items:flex-start;';
+      ask.style.cssText = 'display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;';
       ask.innerHTML =
+        '<select class="memory-search-input doclib-applicant-kind" ' +
+          'title="Choose whether to add text, remove text, or just describe a change." ' +
+          'style="flex:0 0 auto;width:auto;min-height:38px;">' +
+          '<option value="free_text">Describe a change</option>' +
+          '<option value="add">Add text</option>' +
+          '<option value="subtract">Remove text</option>' +
+        '</select>' +
         '<textarea class="memory-search-input doclib-applicant-instruction" rows="2" ' +
           'placeholder="Ask for a change, e.g. “shorten the summary” or “mention my Python experience”" ' +
           'title="Describe the change in plain language. The engine revises the document and shows the result here." ' +
@@ -2116,17 +2126,38 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       panel.appendChild(ask);
 
       const instruction = ask.querySelector('.doclib-applicant-instruction');
+      const kindSel = ask.querySelector('.doclib-applicant-kind');
       const sendBtn = ask.querySelector('.doclib-applicant-send');
+      // Keep the prompt aligned with the selected kind so the user knows what to
+      // type (the text to add, or the text/phrasing to remove).
+      const _kindPlaceholder = {
+        free_text: 'Ask for a change, e.g. “shorten the summary” or “mention my Python experience”',
+        add: 'Text to add, e.g. “Led a team of 5 engineers.”',
+        subtract: 'Text or phrasing to remove, e.g. “the second bullet about internships”',
+      };
+      kindSel.addEventListener('change', () => {
+        instruction.placeholder = _kindPlaceholder[kindSel.value] || _kindPlaceholder.free_text;
+      });
       sendBtn.addEventListener('click', async () => {
         const text = (instruction.value || '').trim();
-        if (!text) { if (uiModule) uiModule.showError('Describe the change you want first.'); return; }
+        const kind = kindSel.value || 'free_text';
+        if (!text) {
+          if (uiModule) {
+            uiModule.showError(
+              kind === 'add' ? 'Type the text to add first.'
+                : kind === 'subtract' ? 'Say what to remove first.'
+                : 'Describe the change you want first.'
+            );
+          }
+          return;
+        }
         sendBtn.disabled = true;
         sendBtn.textContent = 'Working…';
         try {
           const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/turn`, {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind: 'free_text', instruction: text }),
+            body: JSON.stringify({ kind, instruction: text }),
           });
           if (!res.ok) throw new Error(await _applicantErrText(res));
           const next = await res.json();

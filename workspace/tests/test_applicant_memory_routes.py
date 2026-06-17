@@ -364,6 +364,42 @@ def test_edit_criteria_sends_changes_and_excludes_campaign_id():
 
 
 # ---------------------------------------------------------------------------
+# learned converting-role signature (FR-LEARN-5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_signature_hits_engine_and_passes_through():
+    def handler(request):
+        if request.url.path == "/api/criteria/camp-1/signature" and request.method == "GET":
+            return httpx.Response(200, json={
+                "campaign_id": "camp-1",
+                "signature": {"role": ["backend engineer"], "skill": ["python"]},
+                "samples": 4,
+                "exploration_budget": 0.1,
+            })
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/signature")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["signature"]["role"] == ["backend engineer"]
+    assert body["samples"] == 4
+
+
+def test_get_signature_uses_explicit_campaign():
+    def handler(request):
+        if request.url.path == "/api/criteria/c9/signature" and request.method == "GET":
+            return httpx.Response(200, json={"campaign_id": "c9", "signature": {}, "samples": 0})
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/signature?campaign_id=c9")
+    assert resp.status_code == 200
+    assert resp.json()["campaign_id"] == "c9"
+
+
+# ---------------------------------------------------------------------------
 # error translation
 # ---------------------------------------------------------------------------
 

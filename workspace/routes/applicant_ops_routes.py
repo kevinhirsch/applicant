@@ -57,6 +57,10 @@ class ToggleSourceIn(BaseModel):
     enabled: bool
 
 
+class ExplorationBudgetIn(BaseModel):
+    exploration_budget: float
+
+
 # --- helpers ----------------------------------------------------------------
 
 
@@ -187,7 +191,14 @@ def setup_applicant_ops_routes() -> APIRouter:
 
     @router.get("/discovery/{campaign_id}")
     async def list_sources(campaign_id: str, request: Request) -> dict:
-        """List job-discovery sources with on/off state + learned yield stats."""
+        """List job-discovery sources with on/off state + learned yield stats.
+
+        Also carries the campaign's ``exploration_budget`` (the explore/exploit
+        knob, FR-LEARN-6) so the Sources panel can show + edit it alongside the
+        per-source toggles. The budget is read from the learning surface on the
+        engine's criteria router; if that read fails it is simply omitted (the
+        source list still renders).
+        """
         _require_admin(request)
         async with ApplicantEngineClient() as engine:
             try:
@@ -195,11 +206,43 @@ def setup_applicant_ops_routes() -> APIRouter:
             except EngineError as exc:
                 logger.debug("list_sources: engine unavailable: %s", exc)
                 return {"engine_available": False, "campaign_id": campaign_id, "items": []}
+            budget = None
+            try:
+                sig = await engine._request("GET", f"/api/criteria/{campaign_id}/signature")
+                if isinstance(sig, dict):
+                    budget = sig.get("exploration_budget")
+            except EngineError as exc:
+                logger.debug("list_sources: exploration_budget unavailable: %s", exc)
         out = data if isinstance(data, dict) else {"items": data or []}
         out.setdefault("campaign_id", campaign_id)
         out.setdefault("items", [])
+        if budget is not None:
+            out["exploration_budget"] = budget
         out["engine_available"] = True
         return out
+
+    # NB: this specific route is declared BEFORE the {source_key} catch-all below
+    # so "exploration-budget" is not swallowed as a source key.
+    @router.put("/discovery/{campaign_id}/exploration-budget")
+    async def set_exploration_budget(
+        campaign_id: str, body: ExplorationBudgetIn, request: Request
+    ) -> dict:
+        """Set the explore/exploit budget for a campaign (FR-LEARN-6).
+
+        Routed through the engine's criteria/learning surface, which clamps + persists
+        it. A bad value comes back as the engine's own 400.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine._request(
+                    "PUT",
+                    f"/api/criteria/{campaign_id}/exploration-budget",
+                    json={"exploration_budget": body.exploration_budget},
+                )
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
 
     @router.put("/discovery/{campaign_id}/{source_key}")
     async def toggle_source(
