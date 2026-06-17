@@ -125,8 +125,9 @@ def test_final_approval_escalation_ladder_deterministic():
 
 @pytest.mark.unit
 def test_final_approval_redline_link_seam():
-    # FR-NOTIF-4: review notifications link to the (Phase 3) redline surface.
-    assert redline_link("app-1") == "/redline?application=app-1"
+    # FR-NOTIF-4 (#7): review notifications link to the SERVED review surface
+    # (/review?application=...) — the old /redline path was unserved.
+    assert redline_link("app-1") == "/review?application=app-1"
 
 
 @pytest.mark.unit

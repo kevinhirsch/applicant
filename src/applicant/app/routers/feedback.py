@@ -11,8 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import get_feedback_service, require_llm_configured
 
 router = APIRouter(
     prefix="/api/feedback", tags=["feedback"], dependencies=[Depends(require_llm_configured)]
@@ -36,9 +35,9 @@ def index() -> dict:
 
 
 @router.post("/freetext", status_code=201)
-def freetext(body: FreeTextIn, container: Container = Depends(get_container)) -> dict:
+def freetext(body: FreeTextIn, feedback=Depends(get_feedback_service)) -> dict:
     """Free-text/chat feedback folded into learning (FR-FB-2)."""
-    return container.feedback_service.submit_freetext(
+    return feedback.submit_freetext(
         body.campaign_id,  # type: ignore[arg-type]
         body.text,
         criteria_delta=body.criteria_delta,
@@ -46,8 +45,8 @@ def freetext(body: FreeTextIn, container: Container = Depends(get_container)) ->
 
 
 @router.post("/survey", status_code=201)
-def survey(body: SurveyIn, container: Container = Depends(get_container)) -> dict:
+def survey(body: SurveyIn, feedback=Depends(get_feedback_service)) -> dict:
     """Guided survey folded into learning + attribute cloud (FR-FB-2/3)."""
-    return container.feedback_service.submit_survey(
+    return feedback.submit_survey(
         body.campaign_id, body.answers  # type: ignore[arg-type]
     )

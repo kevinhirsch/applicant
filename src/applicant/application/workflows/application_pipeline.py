@@ -63,6 +63,10 @@ class PipelineContext:
     material_warranted: Callable[[], bool] | None = None
     #: -> dict: generate material + route to MATERIAL_REVIEW (returns a small summary).
     prepare_material: Callable[[], dict] | None = None
+    #: -> bool: whether ALL generated material for the app is now approved. Re-evaluated
+    #: OUTSIDE the checkpointed ``material`` step on every re-drive (#1) so a stale
+    #: cached "not approved" can never park the pipeline before the recv gate forever.
+    material_approved: Callable[[], bool] | None = None
     #: -> str|None: notify the user the app awaits final approval (returns notify handle).
     request_final_approval: Callable[[], Any] | None = None
     #: -> dict: record the submission/outcome once approval is delivered.
@@ -128,10 +132,22 @@ def run_pipeline(
     out["material"] = material_result
     # Material routed to review is itself a human-in-the-loop gate (MATERIAL_REVIEW):
     # yield and resume after the user approves the redline.
-    if material_result.get("warranted") and not material_result.get("review_approved"):
-        out["status"] = "handoff"
-        out["handoff_state"] = "MATERIAL_REVIEW"
-        return out
+    #
+    # #1: re-evaluate approval OUTSIDE the checkpointed ``material`` step. The step's
+    # result is cached on first run with ``review_approved=False`` (nothing approved
+    # yet); serving that cache forever would park the pipeline before the recv gate
+    # permanently. On every re-drive, ``ctx.material_approved`` re-reads approval from
+    # storage so an actual approval advances the workflow. Falls back to the
+    # checkpointed flag only when no live re-check callable is wired (the resumption
+    # test's side_effects-only mode).
+    if material_result.get("warranted"):
+        approved = material_result.get("review_approved")
+        if ctx is not None and ctx.material_approved is not None:
+            approved = ctx.material_approved()
+        if not approved:
+            out["status"] = "handoff"
+            out["handoff_state"] = "MATERIAL_REVIEW"
+            return out
 
     # 3. Request final approval (escalation ladder) + durably wait (FR-NOTIF-2). -
     def _request_approval() -> dict:

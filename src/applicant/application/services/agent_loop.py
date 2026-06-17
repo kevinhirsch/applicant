@@ -333,17 +333,26 @@ class AgentLoop:
             # Only act on applications that have not yet started the pipeline.
             if app.status is not ApplicationState.APPROVED:
                 continue
-            self._record_acted(campaign.id, now, 1)
-            self._start_pipeline(campaign, app, result)
+            # #9: record the daily-acted budget ONLY after the pipeline actually
+            # started. _start_pipeline returns False when admission is deferred (full
+            # sandbox capacity); counting before would burn budget for work that never
+            # started and could wrongly exhaust the day's cap.
+            if self._start_pipeline(campaign, app, result):
+                self._record_acted(campaign.id, now, 1)
         result.budget_remaining = self.remaining_budget(campaign, now)
 
-    def _start_pipeline(self, campaign, app: Application, result: TickResult) -> None:
+    def _start_pipeline(self, campaign, app: Application, result: TickResult) -> bool:
+        """Start the durable pipeline for ``app``. Returns True iff it actually started.
+
+        Returns False when admission is deferred (sandbox capacity full) so the caller
+        does NOT charge the daily-acted budget for work that never started (#9).
+        """
         wf_id = self._workflow_id(app.id)
         # Pivot/yield admission (FR-DUR-4): cap concurrent sandboxes. If we cannot
         # admit now, leave the app APPROVED — a later tick retries when a slot frees.
         if self._capacity is not None and not self._capacity.admit_sandbox(str(app.id)):
             log.info("sandbox_admission_deferred", application_id=str(app.id))
-            return
+            return False
         ctx = self._build_context(campaign, app)
         try:
             outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
@@ -359,6 +368,7 @@ class AgentLoop:
             raise
         result.pipelines_started.append(str(app.id))
         self._apply_outcome(app, outcome, result)
+        return True
 
     def _resume_in_flight(
         self, campaign_id: CampaignId, result: TickResult, now: datetime
@@ -507,6 +517,12 @@ class AgentLoop:
             # a MATERIAL_REVIEW hand-off until the user approves the redline.
             return self._prepare_material_for(campaign, app)
 
+        def _material_approved() -> bool:
+            # #1: re-read approval from storage on EVERY re-drive (outside the
+            # checkpointed material step) so an approval actually advances the pipeline.
+            current = self._storage.applications.get(aid) or app
+            return self._review_approved(current)
+
         def _request_approval() -> Any:
             current = self._storage.applications.get(aid) or app
             if self._final_approval is not None:
@@ -550,6 +566,7 @@ class AgentLoop:
             prefill=_prefill,
             material_warranted=_material_warranted,
             prepare_material=_prepare_material,
+            material_approved=_material_approved,
             request_final_approval=_request_approval,
             submit=_submit,
             teardown=_teardown,
@@ -568,8 +585,18 @@ class AgentLoop:
             return self._prefill.resume_after_account(current, attrs)
         if status is ApplicationState.BLOCKED_MISSING_ATTR:
             return self._prefill.resume_after_missing_attr(current, attrs)
-        # BLOCKED_QUESTION / BLOCKED_DETECTION re-drive through the normal loop; a fresh
-        # APPROVED app starts the full pre-fill.
+        if status is ApplicationState.BLOCKED_DETECTION:
+            # #2: BLOCKED_DETECTION may legally transition ONLY -> PREFILLING (§7).
+            # Routing it through the full-restart ``prefill_application`` (which first
+            # moves to SANDBOX_PROVISIONING) raised IllegalStateTransition and stranded
+            # the app. Resume via the PREFILLING path WITHOUT tearing down the session
+            # the user just cleared. Non-cautious so the just-cleared signal does not
+            # immediately re-block the resume.
+            resume = getattr(self._prefill, "resume_after_detection", None)
+            if callable(resume):
+                return resume(current, attrs, cautious=False)
+        # BLOCKED_QUESTION re-drives through the normal loop; a fresh APPROVED app
+        # starts the full pre-fill.
         return self._prefill.prefill_application(current, url, attrs)
 
     # --- material generation (#3) ----------------------------------------
@@ -606,13 +633,17 @@ class AgentLoop:
         posting = self._storage.postings.get(app.posting_id) if app.posting_id else None
         jd_terms = self._jd_terms(posting)
         true_source = self._true_source(campaign, app, posting)
-        summary: dict[str, Any] = {"review_approved": False}
+        summary: dict[str, Any] = {}
         try:
             sel = self._material.select_or_generate(
-                campaign.id, app.posting_id, jd_terms, true_source
+                campaign.id, app.posting_id, jd_terms, true_source, application_id=app.id
             )
             summary["variant_id"] = str(sel.variant.id)
             summary["variant_generated"] = sel.generated
+            # #1: LINK the chosen/generated variant to the application so the review
+            # gate (ensure_application_submittable) can see an unapproved generated
+            # variant and the next call's review-approval check covers it.
+            self._link_variant(app, sel.variant.id)
         except Exception as exc:  # pragma: no cover - defensive: never crash the tick
             log.warning("material_variant_failed", application_id=str(app.id), error=str(exc))
         # Cover letter on demand (FR-RESUME-10) when the role/campaign warrants one.
@@ -633,7 +664,43 @@ class AgentLoop:
                 summary["deferred_essays"] = summary.get("deferred_essays", 0) + 1
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("material_deferred_failed", application_id=str(app.id), error=str(exc))
+        # #1: ALWAYS recompute review_approved from storage on every call — True only
+        # once ALL generated material (documents AND the linked generated variant) is
+        # approved. The old hardcoded ``False`` (cached under a constant checkpoint key)
+        # parked the pipeline before the recv gate forever; recomputing here + the
+        # pipeline's re-check-on-re-drive means an approval actually advances the flow.
+        summary["review_approved"] = self._review_approved(app)
         return summary
+
+    def _link_variant(self, app: Application, variant_id) -> None:
+        """Persist the chosen/generated resume variant on the application row (#1/#4)."""
+        current = self._storage.applications.get(app.id) or app
+        if getattr(current, "resume_variant_id", None) == variant_id:
+            return
+        updated = dataclasses.replace(current, resume_variant_id=variant_id)
+        self._storage.applications.update(updated)
+        self._storage.commit()
+
+    def _review_approved(self, app: Application) -> bool:
+        """True only when ALL generated material for ``app`` is approved (#1).
+
+        Covers BOTH generated documents (cover letters / screening answers) AND the
+        app's linked generated resume variant. Computed from storage every call so a
+        just-approved item advances the pipeline past MATERIAL_REVIEW.
+        """
+        try:
+            for d in self._storage.documents.list_for_application(app.id):
+                if not d.approved:
+                    return False
+        except Exception:  # pragma: no cover - defensive
+            return False
+        current = self._storage.applications.get(app.id) or app
+        variant_id = getattr(current, "resume_variant_id", None)
+        if variant_id is not None:
+            variant = self._storage.resume_variants.get(variant_id)
+            if variant is not None and not variant.approved:
+                return False
+        return True
 
     def _true_source(self, campaign, app: Application, posting) -> str:
         """Flatten the candidate's TRUE source for truthful generation (#3)."""
@@ -716,7 +783,12 @@ class AgentLoop:
                 # Not yet scored (e.g. first tick before discovery scored it). Fall
                 # back to a one-off score so the gate is never under-counted.
                 try:
-                    scoring = self._scoring.score_posting(posting)
+                    # #8: score against the campaign's criteria (was: empty default
+                    # criteria, a uniform neutral score that ignored onboarding/learned
+                    # criteria).
+                    scoring = self._scoring.score_posting(
+                        posting, self._criteria_for(campaign_id)
+                    )
                     if self._scoring.is_viable(scoring):
                         count += 1
                 except Exception:  # pragma: no cover - defensive

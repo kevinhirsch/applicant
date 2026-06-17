@@ -50,7 +50,7 @@ from applicant.core.rules.materials import (
     classify_screening_question,
     should_generate_cover_letter,
 )
-from applicant.core.rules.review_gate import ReviewableMaterial, ensure_submittable
+from applicant.core.rules.review_gate import ensure_submittable
 from applicant.core.rules.sensitive_fields import (
     DECLINE_TO_SELF_IDENTIFY,
     decide_sensitive_fill,
@@ -332,6 +332,7 @@ class MaterialService:
         *,
         threshold: int = FIT_THRESHOLD,
         variant_sources: dict[str, str] | None = None,
+        application_id: ApplicationId | None = None,
     ) -> SelectionResult:
         """Reuse an approved variant scoring >= threshold, else fork from the best parent.
 
@@ -389,6 +390,11 @@ class MaterialService:
         self._storage.resume_variants.add(new_variant)
         self._storage.commit()
         fit = self.score_fit(new_variant, posting_id, jd_terms, report.text)
+        # #1 (FR-RESUME-1/8): a GENERATED variant is unreviewed output — materialize a
+        # material_review pending action + the review-ready notification (mirroring
+        # generate_cover_letter / generate_screening_answer) so there is something for
+        # the user to approve and the pipeline parks at MATERIAL_REVIEW until they do.
+        self._announce_variant_review_ready(new_variant, application_id)
         return SelectionResult(variant=new_variant, fit=fit, generated=True)
 
     def _converting_alignment_for(self, campaign_id: CampaignId):
@@ -432,6 +438,9 @@ class MaterialService:
         approved = dataclasses.replace(v, approved=True)
         self._storage.resume_variants.add(approved)
         self._storage.commit()
+        # #1: approving the variant is a review action — clear its material_review
+        # pending action + expire its ping so the portal item does not linger.
+        self._resolve_variant_review_action(approved)
         self.cluster_and_cap(v.campaign_id)
         return approved
 
@@ -563,8 +572,12 @@ class MaterialService:
             decision = decide_sensitive_fill(question, explicit_answer)
             answer = decision.value or DECLINE_TO_SELF_IDENTIFY
         else:
-            # Factual: answer directly from the true source, no embellishment.
-            answer = true_source.strip()
+            # Factual: answer SCOPED to the question (FR-ANSWER-1, NFR-PRIV-1). In the
+            # live loop ``true_source`` is the WHOLE flattened attribute cloud + history,
+            # so echoing it verbatim would dump the resume/PII into the form field (#5).
+            # Extract only the attribute/value relevant to the question; never the whole
+            # cloud. Return a safe minimal answer when nothing matches.
+            answer = self._scope_factual_answer(campaign_id, question, true_source)
         report = self.apply_post_filter(answer)
         # Sensitive answers are policy-driven (explicit EEO answer or the canned
         # decline), not generated from true_source, so the fabrication guard (which
@@ -776,13 +789,16 @@ class MaterialService:
 
     # === review gate before submission (FR-RESUME-8) =====================
     def ensure_application_submittable(self, application_id: ApplicationId) -> None:
-        """Raise ``ReviewRequired`` if any generated doc is unapproved."""
-        docs = self._storage.documents.list_for_application(application_id)
-        materials = [
-            ReviewableMaterial(identifier=str(d.id), is_generated=True, approved=d.approved)
-            for d in docs
-        ]
-        ensure_submittable(materials)
+        """Raise ``ReviewRequired`` if any generated material is unapproved.
+
+        #4: the gate now also covers the app's linked GENERATED resume variant (not
+        just generated documents), so an unapproved variant can't be submitted unreviewed.
+        """
+        from applicant.application.services.submission_service import (
+            _reviewable_materials_for,
+        )
+
+        ensure_submittable(_reviewable_materials_for(self._storage, application_id))
 
     # === redline rendering passthrough ===================================
     def render_redline(self, variant_id: ResumeVariantId, base_source: str, new_source: str):
@@ -827,6 +843,124 @@ class MaterialService:
                     deep_link=deep_link,
                 )
             except Exception:
+                pass
+
+    # --- factual screening-answer scoping (FR-ANSWER-1, NFR-PRIV-1, #5) ----
+    def _scope_factual_answer(
+        self, campaign_id: CampaignId, question: str, true_source: str
+    ) -> str:
+        """Scope a factual answer to the QUESTION; never echo the whole true_source (#5).
+
+        Strategy, in order:
+          1. If a stored, non-sensitive attribute matches the question, answer with
+             ITS value only (the precise fact the question asks for).
+          2. Otherwise pick the single most question-relevant line of ``true_source``
+             (the line sharing the most question tokens) — not the whole blob.
+          3. If ``true_source`` is already a single short line (the BDD/contract lane's
+             one-fact source), return it as-is.
+          4. If nothing matches, return a safe minimal answer (empty) so the caller can
+             defer/leave it for the user rather than leaking unrelated PII.
+        """
+        source = (true_source or "").strip()
+        if not source:
+            return ""
+        # 1. Stored-attribute match (the precise fact, no surrounding PII).
+        attr_value = self._attribute_value_for_question(campaign_id, question)
+        if attr_value:
+            return attr_value
+        lines = [ln.strip() for ln in source.splitlines() if ln.strip()]
+        # 3. Single-line source (already question-scoped): return it directly.
+        if len(lines) <= 1:
+            return source
+        # 2. Most question-relevant line by token overlap.
+        q_tokens = _word_tokens(question)
+        best_line = ""
+        best_overlap = 0
+        for ln in lines:
+            overlap = len(q_tokens & _word_tokens(ln))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_line = ln
+        if best_overlap > 0:
+            return best_line
+        # 4. Nothing matched — do NOT dump the whole cloud; defer with a safe minimal.
+        return ""
+
+    def _attribute_value_for_question(
+        self, campaign_id: CampaignId, question: str
+    ) -> str | None:
+        """Return a stored NON-sensitive attribute value whose name/alias the question names."""
+        from applicant.core.rules.sensitive_fields import is_sensitive_field
+
+        try:
+            attrs = self._storage.attributes.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return None
+        q_tokens = _word_tokens(question)
+        if not q_tokens:
+            return None
+        for a in attrs:
+            if is_sensitive_field(a.name):
+                continue
+            names = {a.name, *getattr(a, "aliases", ())}
+            for nm in names:
+                nm_tokens = _word_tokens(nm)
+                if nm_tokens and nm_tokens <= q_tokens and a.value:
+                    return str(a.value)
+        return None
+
+    def _announce_variant_review_ready(
+        self, variant: ResumeVariant, application_id: ApplicationId | None
+    ) -> None:
+        """Materialize a material_review pending action + ping for a GENERATED variant (#1).
+
+        Mirrors ``_announce_review_ready`` (which serves GeneratedDocuments) so a
+        generated resume variant is reviewable/approvable: the portal item + the ping
+        deep-link to the variant review surface. Best-effort — generation never blocks
+        if a channel is unavailable.
+        """
+        title = "Resume variant ready for review"
+        deep_link = f"{self._review_base_url}?variant_id={variant.id}"
+        dedup_key = f"material_review:{variant.id}"
+        if self._pending_actions is not None:
+            try:
+                self._pending_actions.materialize(
+                    variant.campaign_id,
+                    "material_review",
+                    title,
+                    application_id=application_id,
+                    payload={
+                        "variant_id": str(variant.id),
+                        "document_type": "resume_variant",
+                        "review_url": deep_link,
+                    },
+                    dedup_key=dedup_key,
+                )
+            except Exception:  # pragma: no cover - defensive
+                pass
+        if self._notifications is not None:
+            try:
+                self._notifications.notify_decision(
+                    dedup_key,
+                    title=title,
+                    body="Tap to open the redline review.",
+                    deep_link=deep_link,
+                )
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    def _resolve_variant_review_action(self, variant: ResumeVariant) -> None:
+        """Resolve a variant's material_review pending action + expire its ping (#1/#5)."""
+        dedup_key = f"material_review:{variant.id}"
+        if self._pending_actions is not None:
+            try:
+                self._pending_actions.resolve_by_dedup(variant.campaign_id, dedup_key)
+            except Exception:  # pragma: no cover - defensive
+                pass
+        if self._notifications is not None:
+            try:
+                self._notifications.acted(dedup_key)
+            except Exception:  # pragma: no cover - defensive
                 pass
 
     # --- internals --------------------------------------------------------
@@ -891,6 +1025,13 @@ class MaterialService:
         )
         self._storage.documents.add(updated)
         self._storage.commit()
+
+
+def _word_tokens(text: str) -> set[str]:
+    """Lowercase alphanumeric word tokens of length >= 2 (for question scoping, #5)."""
+    import re
+
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 2}
 
 
 _SYSTEM_PROMPT = (

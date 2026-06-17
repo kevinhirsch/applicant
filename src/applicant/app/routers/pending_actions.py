@@ -11,8 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import get_pending_actions_service, require_llm_configured
 
 router = APIRouter(
     prefix="/api/pending-actions",
@@ -27,9 +26,9 @@ def index() -> dict:
 
 
 @router.get("/{campaign_id}")
-def list_pending(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+def list_pending(campaign_id: str, pending_actions=Depends(get_pending_actions_service)) -> dict:
     """List open pending actions for the campaign (FR-UI-3) — the 24/7 home base."""
-    actions = container.pending_actions_service.list_pending(campaign_id)  # type: ignore[arg-type]
+    actions = pending_actions.list_pending(campaign_id)  # type: ignore[arg-type]
     return {
         "campaign_id": campaign_id,
         "count": len(actions),
@@ -48,6 +47,6 @@ def list_pending(campaign_id: str, container: Container = Depends(get_container)
 
 
 @router.post("/{action_id}/resolve", status_code=204)
-def resolve(action_id: str, container: Container = Depends(get_container)) -> None:
+def resolve(action_id: str, pending_actions=Depends(get_pending_actions_service)) -> None:
     """Resolve a pending action once the user has acted (FR-UI-3)."""
-    container.pending_actions_service.resolve(action_id)  # type: ignore[arg-type]
+    pending_actions.resolve(action_id)  # type: ignore[arg-type]
