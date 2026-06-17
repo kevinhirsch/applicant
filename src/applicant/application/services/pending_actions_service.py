@@ -43,7 +43,7 @@ class PendingActionsService:
         """Create (or reuse) a pending action. ``dedup_key`` avoids duplicates."""
         if dedup_key is not None:
             for existing in self._storage.pending_actions.list_open(campaign_id):
-                if existing.payload.get("dedup_key") == dedup_key:
+                if (existing.payload or {}).get("dedup_key") == dedup_key:
                     return existing
         merged_payload = dict(payload or {})
         if dedup_key is not None:
@@ -103,6 +103,6 @@ class PendingActionsService:
     def resolve_by_dedup(self, campaign_id: CampaignId, dedup_key: str) -> None:
         """Resolve a materialized item by its dedup key (idempotency aid)."""
         for action in self._storage.pending_actions.list_open(campaign_id):
-            if action.payload.get("dedup_key") == dedup_key:
+            if (action.payload or {}).get("dedup_key") == dedup_key:
                 self._storage.pending_actions.resolve(action.id)
         self._storage.commit()

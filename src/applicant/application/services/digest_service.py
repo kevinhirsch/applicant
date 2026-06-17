@@ -24,6 +24,9 @@ import html
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running (FR-DIG-6)."
 
@@ -180,27 +183,10 @@ class DigestService:
         """
         payload = self.build_digest_payload(campaign_id, criteria)
         email = self.render_email(campaign_id, criteria)
-        handle = None
-        email_sent = False
-        if self._notification_service is not None:
-            handle = self._notification_service.notify_digest_ready(
-                str(campaign_id), count=len(payload["rows"])
-            )
-            # Actually send the rendered email body to the email channel (FR-DIG-2).
-            # IDEM-1: a per-(campaign, UTC day) dedup key makes the email send
-            # idempotent so a re-driven/duplicate delivery never sends two digest
-            # emails for the same campaign+day.
-            from datetime import UTC, datetime
-
-            dedup_key = (
-                f"digest_email:{campaign_id}:{datetime.now(UTC).date().isoformat()}"
-            )
-            email_sent = self._notification_service.send_digest_email(
-                subject=email["subject"],
-                html=email["html"],
-                deep_link=f"/digest?campaign={campaign_id}",
-                dedup_key=dedup_key,
-            )
+        # Materialize the durable per-row pending actions BEFORE any external ping
+        # (FR-UI-3): the portal items must survive even if a notifier/email send
+        # raises, so the "ready" ping never points at a digest with no acted-on
+        # rows persisted.
         if self._pending is not None:
             for row in payload["rows"]:
                 self._pending.digest_approval(
@@ -210,6 +196,30 @@ class DigestService:
                     link=row["link"],
                     score=row["viability_score"],
                 )
+        handle = None
+        email_sent = False
+        if self._notification_service is not None:
+            try:
+                handle = self._notification_service.notify_digest_ready(
+                    str(campaign_id), count=len(payload["rows"])
+                )
+                # Actually send the rendered email body to the email channel (FR-DIG-2).
+                # IDEM-1: a per-(campaign, UTC day) dedup key makes the email send
+                # idempotent so a re-driven/duplicate delivery never sends two digest
+                # emails for the same campaign+day.
+                from datetime import UTC, datetime
+
+                dedup_key = (
+                    f"digest_email:{campaign_id}:{datetime.now(UTC).date().isoformat()}"
+                )
+                email_sent = self._notification_service.send_digest_email(
+                    subject=email["subject"],
+                    html=email["html"],
+                    deep_link=f"/digest?campaign={campaign_id}",
+                    dedup_key=dedup_key,
+                )
+            except Exception:  # external send must not break digest delivery
+                log.warning("digest_deliver_notify_failed", exc_info=True)
         return {
             "payload": payload,
             "email": email,
@@ -264,26 +274,43 @@ class DigestService:
 
     # --- close the learning + criteria + idempotency loop -----------------
     def _close_loop(self, decision: Decision) -> None:
-        # Idempotency: acting expires the other channels (FR-NOTIF-3).
+        """Run the post-commit side effects guarded so none can 500 the request.
+
+        The ``Decision`` is already committed by the caller. Notifier idempotency,
+        pending-action resolution, and learning/criteria are best-effort: a
+        downstream failure must NOT leave the loop half-closed or surface a 500
+        (mirrors SubmissionService's "learning must never break the action"). Each
+        independent side effect is isolated so one failure can't skip the others.
+        """
         campaign_id = self._campaign_for_decision(decision.application_id)
+        # Idempotency: acting expires the other channels (FR-NOTIF-3).
         if self._notification_service is not None:
-            self._notification_service.acted(str(decision.application_id))
-            # Acting on any digest item also expires the campaign's digest-ready
-            # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
-            if campaign_id is not None:
-                self._notification_service.acted_digest(str(campaign_id))
+            try:
+                self._notification_service.acted(str(decision.application_id))
+                # Acting on any digest item also expires the campaign's digest-ready
+                # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
+                if campaign_id is not None:
+                    self._notification_service.acted_digest(str(campaign_id))
+            except Exception:  # pragma: no cover - defensive; notifier must not 500
+                log.warning("digest_close_loop_notify_failed", exc_info=True)
         # Resolve the digest-approval pending item (FR-UI-3). The digest row id the
         # user acts on is the POSTING id (the same id ``deliver`` keys the pending
         # action on), not an application row — so resolve by the decision id end-to-end
         # and find the campaign via the posting (it has no applications row yet).
         if self._pending is not None and campaign_id is not None:
-            self._pending.resolve_by_dedup(
-                campaign_id, f"digest_approval:{decision.application_id}"
-            )
-        if decision.type is DecisionType.APPROVE:
-            self._record_approval_yield(decision)
-        if decision.type is DecisionType.DECLINE:
-            self._learn_from_decline(decision)
+            try:
+                self._pending.resolve_by_dedup(
+                    campaign_id, f"digest_approval:{decision.application_id}"
+                )
+            except Exception:  # pragma: no cover - defensive
+                log.warning("digest_close_loop_pending_failed", exc_info=True)
+        try:
+            if decision.type is DecisionType.APPROVE:
+                self._record_approval_yield(decision)
+            if decision.type is DecisionType.DECLINE:
+                self._learn_from_decline(decision)
+        except Exception:  # learning must never break the recorded decision
+            log.warning("digest_close_loop_learning_failed", exc_info=True)
 
     def _record_approval_yield(self, decision: Decision) -> None:
         """Record the APPROVALS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6).

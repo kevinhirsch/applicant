@@ -73,13 +73,26 @@ class FinalApprovalService:
         """
         self._orch.send(workflow_id, FINAL_APPROVAL_TOPIC, {"decision": decision})
         if self._notifications is not None:
-            self._notifications.acted(f"final_approval:{application_id}")
+            try:
+                self._notifications.acted(f"final_approval:{application_id}")
+            except Exception:  # ping idempotency must not break decision delivery
+                log.warning(
+                    "final_approval_decision_notify_failed", application_id=application_id
+                )
         log.info("final_approval_decision", application_id=application_id, decision=decision)
 
     def acted(self, application_id: str) -> None:
-        """User acted (submitted / authorized) — expire the other channels (FR-NOTIF-3)."""
+        """User acted (submitted / authorized) — expire the other channels (FR-NOTIF-3).
+
+        Guarded: this fires AFTER the submission/conversion is already recorded, so a
+        flaky notifier must never 500 an action that already succeeded — it only
+        affects reminder idempotency.
+        """
         if self._notifications is not None:
-            self._notifications.acted(f"final_approval:{application_id}")
+            try:
+                self._notifications.acted(f"final_approval:{application_id}")
+            except Exception:  # notifier failure must not break a recorded submission
+                log.warning("final_approval_acted_notify_failed", application_id=application_id)
 
     def escalate(self, now=None) -> list[str]:
         """Step the escalation ladder (re-notify due rungs) (FR-NOTIF-2).

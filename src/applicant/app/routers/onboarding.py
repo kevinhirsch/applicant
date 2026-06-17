@@ -148,21 +148,40 @@ async def ingest_base_resume(
     # SECURITY: sanitize the path-param campaign_id to a flat segment so a
     # traversal value cannot escape the uploads dir (arbitrary file write).
     dest = _safe_dest(uploads, f"{campaign_id}{suffix}")
-    dest.write_bytes(await _read_capped(file, MAX_RESUME_UPLOAD_BYTES))
+    body = await _read_capped(file, MAX_RESUME_UPLOAD_BYTES)
+    # Reject an empty upload up front (400): a zero-byte file has nothing to parse
+    # and would otherwise crash the parser with an opaque 500.
+    if not body.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty base-resume upload: nothing to parse.",
+        )
+    dest.write_bytes(body)
 
-    result = svc.ingest_base_resume(campaign_id, str(dest))
+    # A corrupt/unparseable file is a client problem, not a server fault: map parser
+    # failures to 422 instead of leaking a 500 with a traceback.
+    try:
+        result = svc.ingest_base_resume(campaign_id, str(dest))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not parse the uploaded base resume: {exc}",
+        ) from exc
+    conflicts = getattr(result, "conflicts", None) or []
     return {
-        "auto_applied": result.auto_applied,
-        "attribute_count": result.attribute_count,
+        "auto_applied": getattr(result, "auto_applied", []),
+        "attribute_count": getattr(result, "attribute_count", 0),
         "conflicts": [
             {
-                "attribute": c.attribute,
-                "interview_value": c.interview_value,
-                "parsed_value": c.parsed_value,
+                "attribute": getattr(c, "attribute", None),
+                "interview_value": getattr(c, "interview_value", None),
+                "parsed_value": getattr(c, "parsed_value", None),
             }
-            for c in result.conflicts
+            for c in conflicts
         ],
-        "requires_confirmation": bool(result.conflicts),
+        "requires_confirmation": bool(conflicts),
     }
 
 

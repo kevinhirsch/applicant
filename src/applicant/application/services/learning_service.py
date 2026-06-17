@@ -269,7 +269,12 @@ class LearningService:
         """
         if not jd_text.strip():
             return model
-        vec = self._embedding.embed([jd_text])[0]
+        vecs = self._embedding.embed([jd_text])
+        if not vecs or not vecs[0]:
+            # An empty/degenerate embedding can't be folded into the centroid;
+            # leave the model unchanged rather than corrupt it / crash.
+            return model
+        vec = vecs[0]
         n = model.converting_samples
         prior = model.converting_role_signature.get("vector")
         if prior and len(prior) == len(vec):
@@ -296,7 +301,14 @@ class LearningService:
         sig = model.converting_role_signature.get("vector")
         if not sig or not jd_text.strip():
             return 0.0
-        vec = self._embedding.embed([jd_text])[0]
+        vecs = self._embedding.embed([jd_text])
+        if not vecs or not vecs[0]:
+            return 0.0
+        vec = vecs[0]
+        # Mismatched dimensions can't be compared meaningfully (mirrors the
+        # length guard in record_converting_role): no bias rather than a crash.
+        if len(sig) != len(vec):
+            return 0.0
         dot = sum(a * b for a, b in zip(sig, vec, strict=False))
         na = sum(a * a for a in sig) ** 0.5
         nb = sum(b * b for b in vec) ** 0.5

@@ -52,3 +52,20 @@ class OnboardingIncomplete(DomainError):
 
 class LLMNotConfigured(DomainError):
     """A gated capability was used before the LLM was configured (FR-UI-5, FR-OOBE-1)."""
+
+
+class NotFound(DomainError):
+    """A requested entity (campaign, document, posting, ...) does not exist.
+
+    Maps to HTTP 404 at the delivery edge. Raised by services in place of plain
+    ``KeyError``/``ValueError`` for not-found lookups so the global handler can
+    return a canonical 404 instead of a leaked 500.
+    """
+
+
+class InvalidInput(DomainError):
+    """A request carried an invalid/unrecognized value (bad kind/mode/enum).
+
+    Maps to HTTP 422 at the delivery edge. Raised in place of a plain
+    ``ValueError`` for client-supplied bad input so it never leaks a 500.
+    """

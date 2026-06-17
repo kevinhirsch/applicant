@@ -89,7 +89,17 @@ async def detect_required(file: UploadFile = File(...), svc=Depends(get_font_ser
     suffix = Path(file.filename or "resume.txt").suffix or ".txt"
     dest = _safe_dest(uploads, f"fontdetect{suffix}")
     dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
-    return _report_dict(svc.report_for_document(str(dest)))
+    # A corrupt/unreadable upload is a client problem: map adapter/OS errors to 422
+    # instead of leaking a 500.
+    try:
+        return _report_dict(svc.report_for_document(str(dest)))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not detect fonts for the uploaded document: {exc}",
+        ) from exc
 
 
 @router.post("/install")
@@ -104,5 +114,14 @@ async def install_font(
     suffix = Path(file.filename or f"{name}.ttf").suffix or ".ttf"
     dest = _safe_dest(uploads, f"{name}{suffix}")
     dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
-    report = svc.install(str(dest), name)
+    # Bad font bytes / OS install failures are 4xx, not a server 500.
+    try:
+        report = svc.install(str(dest), name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not install the uploaded font: {exc}",
+        ) from exc
     return {"installed": report.installed, "confirmed": name in report.installed}

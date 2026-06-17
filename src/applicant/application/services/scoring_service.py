@@ -104,6 +104,8 @@ class ScoringService:
             return 0.0
         try:
             model = self._learning.load_model(campaign_id)
+            # Keep the alignment call inside the guard: a flaky embedding must not
+            # 500 GET /api/digest/{id} or scoring — fall back to no bias instead.
+            return self._learning.converting_alignment(model, jd_text)
         except Exception:
             return 0.0
-        return self._learning.converting_alignment(model, jd_text)

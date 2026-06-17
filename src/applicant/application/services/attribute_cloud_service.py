@@ -213,7 +213,7 @@ class AttributeCloudService:
             # regardless of which site/field surfaced it (FR-ATTR-5).
             prefix = f"missing_attr:{attribute_name}:"
             for action in self._pending.list_pending(campaign_id):
-                if str(action.payload.get("dedup_key", "")).startswith(prefix):
+                if str((action.payload or {}).get("dedup_key", "")).startswith(prefix):
                     self._pending.resolve(action.id)
         return attr
 

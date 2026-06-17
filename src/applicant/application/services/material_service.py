@@ -32,7 +32,7 @@ from applicant.core.entities.revision_session import (
     RevisionStatus,
     RevisionTurn,
 )
-from applicant.core.errors import TruthfulnessViolation
+from applicant.core.errors import InvalidInput, NotFound, TruthfulnessViolation
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -394,7 +394,7 @@ class MaterialService:
 
         v = self._storage.resume_variants.get(variant_id)
         if v is None:
-            raise ValueError(f"no such variant {variant_id}")
+            raise NotFound(f"no such variant {variant_id}")
         approved = dataclasses.replace(v, approved=True)
         self._storage.resume_variants.add(approved)
         self._storage.commit()
@@ -611,7 +611,7 @@ class MaterialService:
         introduce an unsupported claim.
         """
         if kind not in ("add", "subtract", "free_text"):
-            raise ValueError(f"unknown revision turn kind: {kind!r}")
+            raise InvalidInput(f"unknown revision turn kind: {kind!r}")
         session = self.open_revision(document_id)
         if session.status is not RevisionStatus.OPEN:
             return session
@@ -645,7 +645,7 @@ class MaterialService:
         """Approve the material through the review gate (FR-RESUME-8)."""
         doc = self._storage.documents.get(document_id)
         if doc is None:
-            raise ValueError(f"no such document {document_id}")
+            raise NotFound(f"no such document {document_id}")
         # Final post-filter before approval (defence in depth).
         content = self.apply_post_filter(doc.content or "").text
         approved = GeneratedDocument(
@@ -676,7 +676,7 @@ class MaterialService:
         """Decline the material (stays unapproved; blocks submission)."""
         doc = self._storage.documents.get(document_id)
         if doc is None:
-            raise ValueError(f"no such document {document_id}")
+            raise NotFound(f"no such document {document_id}")
         session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
             self._save_session(
