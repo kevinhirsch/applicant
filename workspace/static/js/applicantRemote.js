@@ -72,10 +72,10 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.innerHTML = `
     <div class="modal-content" style="max-width:980px;width:96%;display:flex;flex-direction:column;max-height:92vh;">
-      <div class="modal-header" style="display:flex;align-items:center;gap:10px;">
-        <h2 style="margin:0;font-size:1.05em;flex:1;">Live application session</h2>
-        <select id="applicant-remote-picker" title="Choose which live session to watch"
-                style="max-width:46%;display:none;"></select>
+      <div class="modal-header" style="gap:10px;">
+        <h4>Live application session</h4>
+        <select id="applicant-remote-picker" class="settings-select" title="Choose which live session to watch"
+                style="flex:0 1 auto;max-width:46%;display:none;"></select>
         <button id="applicant-remote-close" class="modal-close" title="Close">×</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;overflow:auto;">
@@ -98,7 +98,7 @@ function _ensureModalEl() {
         </div>
 
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-          <button id="applicant-remote-takeover" class="primary-btn"
+          <button id="applicant-remote-takeover" class="cal-btn cal-btn-primary"
                   title="Take live control of the browser to do a step yourself">Take control</button>
           <button id="applicant-remote-open-tab" class="memory-toolbar-btn"
                   title="Open the live session full-screen in a new tab">Open in new tab</button>
@@ -126,9 +126,9 @@ function _ensureModalEl() {
             submit. Choose how to finish — nothing is submitted until you decide.
           </p>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
-            <button id="applicant-remote-submit-self" class="primary-btn"
+            <button id="applicant-remote-submit-self" class="cal-btn"
                     title="You will click submit yourself in the live session">I'll submit it myself</button>
-            <button id="applicant-remote-authorize" class="primary-btn"
+            <button id="applicant-remote-authorize" class="cal-btn cal-btn-primary"
                     title="Let the assistant click the final submit, just this once">Authorize the assistant to finish</button>
           </div>
           <p style="margin:0;opacity:0.55;font-size:11px;">

@@ -71,8 +71,8 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.innerHTML = `
     <div class="modal-content" style="max-width:560px;width:96%;display:flex;flex-direction:column;max-height:90vh;">
-      <div class="modal-header" style="display:flex;align-items:center;gap:10px;">
-        <h2 style="margin:0;font-size:1.05em;flex:1;">Saved sign-ins</h2>
+      <div class="modal-header">
+        <h4>Saved sign-ins</h4>
         <button id="applicant-vault-close" class="modal-close" title="Close">×</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;overflow:auto;">
@@ -84,19 +84,19 @@ function _ensureModalEl() {
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <label style="font-size:12px;opacity:0.8;">Site / employer
-            <input id="applicant-vault-tenant" type="text" placeholder="acme.workday.com"
+            <input id="applicant-vault-tenant" class="settings-select" type="text" placeholder="acme.workday.com"
                    title="The job site or employer tenant this sign-in is for"
                    style="width:100%;margin-top:4px;">
           </label>
           <label style="font-size:12px;opacity:0.8;">Username or email
-            <input id="applicant-vault-username" type="text" autocomplete="off"
+            <input id="applicant-vault-username" class="settings-select" type="text" autocomplete="off"
                    placeholder="you@example.com" style="width:100%;margin-top:4px;">
           </label>
           <label style="font-size:12px;opacity:0.8;">Password
-            <input id="applicant-vault-secret" type="password" autocomplete="new-password"
+            <input id="applicant-vault-secret" class="settings-select" type="password" autocomplete="new-password"
                    placeholder="••••••••" style="width:100%;margin-top:4px;">
           </label>
-          <button id="applicant-vault-save" class="primary-btn" style="align-self:flex-start;"
+          <button id="applicant-vault-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
                   title="Encrypt and save this sign-in">Save sign-in</button>
         </div>
 

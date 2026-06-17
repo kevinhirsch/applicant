@@ -153,7 +153,7 @@ function _ensurePanel(modal) {
   panel = _el('div', {
     cls: 'admin-card applicant-digest-panel',
     attrs: { id: 'applicant-digest-panel' },
-    style: 'flex:0 0 auto;margin-bottom:8px;padding:10px 12px;',
+    style: 'flex:0 0 auto;',
   });
   panel.innerHTML = `
     <div class="applicant-digest-head" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -665,7 +665,6 @@ function _askSurvey() {
           cls: 'memory-toolbar-btn',
           text: c.label,
           attrs: { type: 'button' },
-          style: 'font-size:11px;',
         });
         chip.addEventListener('click', () => {
           // Toggle: clicking the selected chip clears it (skip the question).

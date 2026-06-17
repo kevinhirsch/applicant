@@ -34472,3 +34472,20 @@ body.theme-frosted .modal {
   cursor: pointer; font-size: 12px; opacity: 0.75; padding: 4px 0; user-select: none; list-style: revert;
 }
 #applicant-onboarding-overlay .ao-adv > summary:hover { opacity: 1; }
+
+/* ===== Applicant shared-button text-fit (Portal / Chat / Remote / Vault) =====
+   The shared `.cal-btn` is a fixed-height (28px) inline-flex pill with no
+   white-space rule, so a long label (e.g. "Authorize Applicant to submit
+   this") wrapped to a second line and was clipped by the fixed height. These
+   Applicant action buttons can carry sentence-length labels, so keep each
+   label on one line and let the button grow to fit it; the button ROWS already
+   use `flex-wrap:wrap`, so whole buttons wrap to the next line cleanly instead
+   of the text clipping. Scoped to Applicant surfaces — the vendored app's own
+   short-label `.cal-btn` usages are untouched. */
+#applicant-portal-modal .cal-btn,
+#applicant-chat-modal .cal-btn,
+#applicant-remote-modal .cal-btn,
+#applicant-vault-modal .cal-btn {
+  white-space: nowrap;
+  max-width: 100%;
+}

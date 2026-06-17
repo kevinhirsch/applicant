@@ -279,13 +279,14 @@ async function loadSuggestedAttributes() {
   list.innerHTML = '';
   items.forEach((it) => {
     const row = document.createElement('div');
-    row.style.cssText = 'padding:10px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;gap:8px';
+    row.className = 'admin-card';
+    row.style.cssText = 'margin-bottom:0;display:flex;align-items:center;gap:8px';
     row.innerHTML = `<div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:13px">${escapeHtml(it.name)}</div>
         <div style="font-size:12px;opacity:0.75;word-break:break-word">${escapeHtml(it.value || '')}</div>
       </div>`;
     const add = document.createElement('button');
-    add.className = 'primary-btn'; add.textContent = 'Add'; add.title = 'Confirm and save this detail';
+    add.className = 'admin-btn-add'; add.textContent = 'Add'; add.title = 'Confirm and save this detail';
     add.addEventListener('click', () => confirmSuggestedAttribute(it));
     const skip = document.createElement('button');
     skip.className = 'memory-toolbar-btn'; skip.textContent = 'Dismiss'; skip.title = 'Ignore this suggestion';
@@ -624,7 +625,7 @@ async function previewProfileLearning() {
   if (actions) {
     actions.innerHTML = '';
     const accept = document.createElement('button');
-    accept.className = 'primary-btn';
+    accept.className = 'admin-btn-add';
     accept.textContent = 'Use the typeset version';
     accept.addEventListener('click', () => decideProfileLearning('accept'));
     const reject = document.createElement('button');
