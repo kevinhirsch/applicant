@@ -56,7 +56,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -112,6 +114,209 @@ def internal_owner(request: Request) -> str:
     return (request.headers.get(INTERNAL_OWNER_HEADER) or "").strip()
 
 
+# ======================================================================== #
+# LANE A — calendar interview detection (self-contained; merge-trivial).    #
+# Everything below this banner up to the matching banner is lane A's only.  #
+# ======================================================================== #
+
+#: How far ahead to scan the owner's calendar for interviews.
+CALENDAR_INTERVIEW_HORIZON_DAYS = 30
+#: Hard cap on returned interview events (bounded payload).
+CALENDAR_INTERVIEW_MAX = 25
+
+#: Phrases that strongly indicate a hiring-process event. Matched
+#: case-insensitively on a whole-word boundary against title + notes so
+#: "interview"/"phone screen"/"onsite" hit while incidental substrings
+#: ("screenshot", "winterview") do not. Ordered loosely most→least specific
+#: so the FIRST match becomes the surfaced ``detected_kind``.
+_INTERVIEW_SIGNALS: tuple[str, ...] = (
+    "phone screen",
+    "hiring manager",
+    "technical interview",
+    "coding interview",
+    "system design",
+    "take-home",
+    "take home",
+    "panel interview",
+    "final round",
+    "onsite interview",
+    "on-site interview",
+    "recruiter screen",
+    "recruiter call",
+    "recruiter chat",
+    "interview",
+    "onsite",
+    "on-site",
+    "screening",
+    "panel",
+    "recruiter",
+    "hiring",
+)
+
+#: Tokens that, on their own, are too generic to flag an event — they only
+#: count toward detection when paired with a hiring word (handled in
+#: :func:`_detect_interview`). Kept separate so a plain "Team screen share"
+#: or "1:1" does not get mislabelled as an interview.
+_WEAK_SIGNALS: tuple[str, ...] = ("screen", "round", "call")
+
+#: "<Company> interview", "interview with <Company>", "interview @ <Company>",
+#: "interview at <Company>" — best-effort company extraction from the title.
+# Signal/connector words are case-insensitive; the company group stays
+# case-SENSITIVE (scoped ``(?i:...)``) so it only captures a real capitalized
+# proper noun ("Acme Corp") and not connective words ("with the team").
+_COMPANY_WITH = re.compile(
+    r"(?i:\b(?:interview|screen|call|onsite|chat)\b[^A-Za-z0-9]+(?:with|w/|@|at))\s+"
+    r"([A-Z][\w&.\-]*(?:\s+[A-Z][\w&.\-]*){0,3})",
+)
+_COMPANY_LEADING = re.compile(
+    r"^\s*([A-Z][\w&.\-]*(?:\s+[A-Z][\w&.\-]*){0,3})\s+"
+    r"(?i:interview|phone\s+screen|screen|onsite|on-site|panel)\b",
+)
+
+#: A meeting link in the notes/location (zoom/meet/teams/webex/generic https).
+_LINK_RE = re.compile(
+    r"https?://[^\s<>\"')]+",
+    re.IGNORECASE,
+)
+
+
+def _detect_interview(title: str, notes: str) -> str | None:
+    """Return the matched interview ``kind`` for an event, or None.
+
+    Heuristic: a strong signal phrase anywhere in title+notes flags the event.
+    A weak signal ("screen"/"round"/"call") only flags when it co-occurs with a
+    hiring word ("interview"/"recruiter"/"hiring"/"candidate"/"position"/"role")
+    so generic meetings ("screen share", "standup call") are NOT flagged.
+    """
+    hay = f"{title or ''}\n{notes or ''}".lower()
+    if not hay.strip():
+        return None
+    for phrase in _INTERVIEW_SIGNALS:
+        if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", hay):
+            return phrase
+    # Weak signals need corroboration from a hiring-context word.
+    hiring_ctx = re.search(
+        r"\b(recruit\w*|hiring|candidate|position|role|job application|"
+        r"applicant tracking|greenhouse|lever|workday)\b",
+        hay,
+    )
+    if hiring_ctx:
+        for weak in _WEAK_SIGNALS:
+            if re.search(rf"(?<![a-z]){re.escape(weak)}(?![a-z])", hay):
+                return weak
+    return None
+
+
+def _detect_company(title: str, notes: str) -> str | None:
+    """Best-effort company name from the event title (None when unclear)."""
+    title = (title or "").strip()
+    m = _COMPANY_WITH.search(title) or _COMPANY_WITH.search(notes or "")
+    if m:
+        cand = m.group(1).strip(" .-")
+        if cand:
+            return cand
+    m = _COMPANY_LEADING.match(title)
+    if m:
+        cand = m.group(1).strip(" .-")
+        # Avoid echoing the signal word itself as a "company".
+        if cand and cand.lower() not in {"interview", "phone", "panel", "onsite"}:
+            return cand
+    return None
+
+
+def _extract_link(*fields: str) -> str:
+    """First http(s) link found across the given fields (location/notes)."""
+    for f in fields:
+        if not f:
+            continue
+        m = _LINK_RE.search(f)
+        if m:
+            return m.group(0).rstrip(".,);")
+    return ""
+
+
+def detect_interviews(events: list[dict]) -> list[dict]:
+    """Filter+annotate raw event dicts down to auto-detected interviews.
+
+    Each input event is a dict with at least ``title``/``summary``,
+    ``start``/``dtstart``, optionally ``end``/``dtend``, ``location``,
+    ``notes``/``description``. Output is the clean engine-facing shape:
+    ``{title, start, end, location, link, detected_company, detected_kind,
+    all_day, calendar}``. Pure (no IO) so it is unit-testable in isolation.
+    """
+    out: list[dict] = []
+    for ev in events:
+        title = ev.get("title") or ev.get("summary") or ""
+        notes = ev.get("notes") or ev.get("description") or ""
+        kind = _detect_interview(title, notes)
+        if not kind:
+            continue
+        location = ev.get("location") or ""
+        link = ev.get("link") or _extract_link(location, notes)
+        out.append(
+            {
+                "title": title,
+                "start": ev.get("start") or ev.get("dtstart") or "",
+                "end": ev.get("end") or ev.get("dtend") or "",
+                "all_day": bool(ev.get("all_day")),
+                "location": location,
+                "link": link,
+                "detected_company": _detect_company(title, notes),
+                "detected_kind": kind,
+                "calendar": ev.get("calendar") or "",
+            }
+        )
+        if len(out) >= CALENDAR_INTERVIEW_MAX:
+            break
+    return out
+
+
+def _read_owner_calendar_events(owner: str) -> list[dict]:
+    """Owner-scoped read of upcoming (next ~30d) events from the native calendar.
+
+    Returns raw event dicts (title/notes/start/end/location/calendar). Isolated
+    in this thin function so tests can monkeypatch it and exercise the route
+    without a live DB. Owner "" means single-user/no-scope (mirrors the native
+    calendar's FALLBACK_OWNER behaviour) — never trust an owner from the body.
+    """
+    from core.database import CalendarCal, CalendarEvent, SessionLocal
+
+    now = datetime.utcnow()
+    horizon = now + timedelta(days=CALENDAR_INTERVIEW_HORIZON_DAYS)
+    db = SessionLocal()
+    try:
+        q = db.query(CalendarEvent).join(CalendarCal).filter(
+            CalendarEvent.dtstart >= now,
+            CalendarEvent.dtstart <= horizon,
+            CalendarEvent.status != "cancelled",
+        )
+        if owner:
+            q = q.filter(CalendarCal.owner == owner)
+        rows = q.order_by(CalendarEvent.dtstart).limit(200).all()
+        events: list[dict] = []
+        for e in rows:
+            suffix = "Z" if getattr(e, "is_utc", False) and not e.all_day else ""
+            events.append(
+                {
+                    "title": e.summary or "",
+                    "notes": e.description or "",
+                    "location": e.location or "",
+                    "start": (e.dtstart.isoformat() + suffix) if e.dtstart else "",
+                    "end": (e.dtend.isoformat() + suffix) if e.dtend else "",
+                    "all_day": bool(e.all_day),
+                    "calendar": e.calendar.name if e.calendar else "",
+                }
+            )
+        return events
+    finally:
+        db.close()
+
+
+# ======================================================================== #
+# END LANE A                                                                #
+# ======================================================================== #
+
+
 def setup_applicant_internal_routes() -> APIRouter:
     router = APIRouter(prefix=INTERNAL_PREFIX, tags=["applicant-internal"])
 
@@ -133,14 +338,23 @@ def setup_applicant_internal_routes() -> APIRouter:
 
     @router.get("/calendar/interviews")
     async def calendar_interviews(request: Request):
-        """LANE A placeholder — auto-detected interview calendar events.
+        """LANE A — auto-detected interview calendar events for the owner.
 
-        Contract: owner-scoped (``internal_owner``) list of interview events the
-        workspace auto-detected from the owner's calendar, shaped as
-        ``{"interviews": [...]}``. 501 until lane A lands.
+        Owner-scoped (``internal_owner``): reads the requesting owner's native
+        workspace calendar, filters upcoming events (next
+        ``CALENDAR_INTERVIEW_HORIZON_DAYS`` days, capped at
+        ``CALENDAR_INTERVIEW_MAX``) to those auto-detected as interview-like via
+        :func:`detect_interviews`, and returns ``{"interviews": [...]}``. A DB
+        hiccup degrades to an empty list rather than 500ing the engine.
         """
         verify_internal_token(request)
-        raise HTTPException(status_code=501, detail="calendar/interviews not implemented (lane A)")
+        owner = internal_owner(request)
+        try:
+            raw = _read_owner_calendar_events(owner)
+        except Exception as exc:  # never 500 the engine's callback
+            logger.warning("calendar_interviews read failed: %s", exc)
+            return {"interviews": []}
+        return {"interviews": detect_interviews(raw)}
 
     @router.post("/research")
     async def research(request: Request):

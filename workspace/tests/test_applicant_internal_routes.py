@@ -76,7 +76,8 @@ def test_owner_scoping_reflected(client, monkeypatch):
 def test_lane_placeholders_return_501_with_token(client, monkeypatch):
     _enable(monkeypatch)
     h = {INTERNAL_TOKEN_HEADER: TOKEN}
-    assert client.get("/api/applicant/internal/calendar/interviews", headers=h).status_code == 501
+    # Lane A (calendar/interviews) is now implemented (see
+    # test_applicant_internal_calendar.py). Remaining lanes are still 501.
     assert client.post("/api/applicant/internal/research", headers=h, json={"query": "x"}).status_code == 501
     assert client.get("/api/applicant/internal/local-models", headers=h).status_code == 501
 
