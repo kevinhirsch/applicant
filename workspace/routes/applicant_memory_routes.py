@@ -243,6 +243,19 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    @router.delete("/attributes/{attribute_id}")
+    async def delete_attribute(
+        request: Request, attribute_id: str, campaign_id: Optional[str] = None
+    ) -> dict:
+        """Remove a stored attribute by hand (FR-ATTR-3)."""
+        require_privilege(request, "can_manage_memory")
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                return await engine.delete_attribute(cid, attribute_id)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
     @router.post("/attributes/bind")
     async def bind_attribute(request: Request, body: BindAttributeIn) -> dict:
         """Pin an attribute to a specific application-form field (FR-ATTR-2)."""

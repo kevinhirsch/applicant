@@ -86,6 +86,19 @@ def list_attributes(campaign_id: str, attr_svc=Depends(get_attribute_cloud_servi
     }
 
 
+# CRIT-profile: explicit attribute delete (FR-ATTR-3). The service already exposes
+# AttributeCloudService.delete; this surfaces it on the router so the Profile UI can
+# remove an attribute card. No confirmation gate (deleting a stored fact is reversible
+# by re-adding it) — matches the spec's attribute edit/delete affordance.
+@router.delete("/{campaign_id}/{attribute_id}", status_code=200)
+def delete_attribute(
+    campaign_id: str, attribute_id: str, attr_svc=Depends(get_attribute_cloud_service)
+) -> dict:
+    attr_svc.delete(campaign_id, attribute_id)  # type: ignore[arg-type]
+    return {"deleted": True, "id": attribute_id}
+# CRIT-profile: end
+
+
 @router.post("", status_code=201)
 def upsert_attribute(body: UpsertAttributeIn, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
     """Add/update an attribute through the confirmation + sensitive-field gates."""

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import (
+    get_container,  # CRIT-profile: container singleton for the banned-phrase list
     get_material_service,
     get_pending_actions_service,
     get_storage,
@@ -26,6 +27,7 @@ from applicant.app.deps import (
 from applicant.application.services.material_service import MaterialService
 from applicant.core.errors import NotFound, ReviewRequired
 from applicant.core.ids import GeneratedDocumentId, ResumeVariantId
+from applicant.core.rules.truthfulness import BANNED_PHRASES  # CRIT-profile
 
 router = APIRouter(
     prefix="/api/documents", tags=["documents"], dependencies=[Depends(require_llm_configured)]
@@ -94,6 +96,12 @@ class DeferredEssayIn(BaseModel):
 class AggressivenessIn(BaseModel):
     # FR-RESUME-9 truthful-framing dial; the UI control ships grayed (FR-UI-2).
     aggressiveness: int = 20
+
+
+# CRIT-profile: UI-editable banned-phrase ("no-AI-look") list (FR-RESUME-5).
+class BannedPhrasesIn(BaseModel):
+    phrases: list[str] = []
+# CRIT-profile: end
 
 
 class RedlineIn(BaseModel):
@@ -246,6 +254,33 @@ def set_aggressiveness(body: AggressivenessIn, material=Depends(get_material_ser
     """Set the truthful-framing dial (FR-RESUME-9). The UI control is grayed (FR-UI-2)."""
     value = material.set_aggressiveness(body.aggressiveness)
     return {"aggressiveness": value, "dormant_ui": True}
+
+
+# CRIT-profile: banned-phrase ("no-AI-look") list editor (FR-RESUME-5).
+# The list supplements the curated core seed and is stripped from every generated
+# artifact before review. It is held on the CONTAINER-SINGLETON material service so
+# an edit persists in-process across requests (the per-request service is a fresh,
+# storage-bound instance and would not retain the list). ``seed_phrases`` is the
+# read-only curated baseline so the UI can show "always removed" vs "your additions".
+@router.get("/banned-phrases", status_code=200)
+def get_banned_phrases(container: Container = Depends(get_container)) -> dict:
+    material = container.material_service
+    custom = list(material.banned_phrases) if material is not None else []
+    return {"phrases": custom, "seed_phrases": list(BANNED_PHRASES)}
+
+
+@router.post("/banned-phrases", status_code=200)
+def set_banned_phrases(
+    body: BannedPhrasesIn, container: Container = Depends(get_container)
+) -> dict:
+    material = container.material_service
+    if material is not None:
+        material.set_banned_phrases(body.phrases)
+        custom = list(material.banned_phrases)
+    else:
+        custom = []
+    return {"phrases": custom, "seed_phrases": list(BANNED_PHRASES)}
+# CRIT-profile: end
 
 
 @router.post("/{document_id}/review", status_code=201)
