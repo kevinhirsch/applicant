@@ -681,6 +681,9 @@ app.include_router(setup_applicant_routes())
 # Lane A — engine resume/cover-letter library + redline review (/api/applicant/documents/*).
 from routes.applicant_documents_routes import setup_applicant_documents_routes
 app.include_router(setup_applicant_documents_routes())
+# Lane B — Memory/Profile: attribute cloud + conversion-learning engine proxy.
+from routes.applicant_memory_routes import setup_applicant_memory_routes
+app.include_router(setup_applicant_memory_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
