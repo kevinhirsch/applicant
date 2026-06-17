@@ -18,6 +18,7 @@ a scheduled tick and tests can step it directly.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime
 
 from applicant.observability.logging import get_logger
@@ -34,6 +35,11 @@ class NotificationService:
         # so this per-day marker survives the loop's empty ``_digest_sent`` and makes
         # the ready ping fire exactly once per campaign per UTC day even in prod.
         self._digest_ready_sent: dict[tuple[str, date], str] = {}
+        # CONC: this service is shared across the scheduler's fresh-per-tick loops, and
+        # the scheduler tick now runs OFF the event loop (worker thread), so the
+        # read-modify-write of ``_digest_ready_sent`` must be guarded against two
+        # overlapping ticks racing the same per-day marker.
+        self._digest_ready_lock = threading.Lock()
 
     def dedup_key(self, decision_ref: str) -> str:
         """Stable cross-channel idempotency key for a decision (FR-NOTIF-3)."""
@@ -118,7 +124,12 @@ class NotificationService:
         """
         day = (now or datetime.now(UTC)).date()
         key = (str(campaign_id), day)
-        prior = self._digest_ready_sent.get(key)
+        # CONC: guard the per-day marker read against concurrent ticks. The external
+        # ``notify`` call stays OUTSIDE the lock (no IO under a lock); a re-check under
+        # the lock after notifying keeps the once-per-(campaign, day) guarantee even if
+        # two ticks raced past the first check.
+        with self._digest_ready_lock:
+            prior = self._digest_ready_sent.get(key)
         if prior is not None:
             return prior
         body = (
@@ -135,11 +146,15 @@ class NotificationService:
                 dedup_key=f"digest:{campaign_id}",
             )
         )
-        self._digest_ready_sent[key] = handle
-        # Prune stale days so the marker map does not grow unbounded over 24/7 ops.
-        self._digest_ready_sent = {
-            k: v for k, v in self._digest_ready_sent.items() if k[1] == day
-        }
+        with self._digest_ready_lock:
+            existing = self._digest_ready_sent.get(key)
+            if existing is not None:
+                return existing
+            self._digest_ready_sent[key] = handle
+            # Prune stale days so the marker map does not grow unbounded over 24/7 ops.
+            self._digest_ready_sent = {
+                k: v for k, v in self._digest_ready_sent.items() if k[1] == day
+            }
         return handle
 
     # --- digest email (FR-DIG-2) ------------------------------------------

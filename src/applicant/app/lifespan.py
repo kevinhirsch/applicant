@@ -59,7 +59,16 @@ async def _scheduler_loop(container) -> None:
     interval = container.settings.scheduler_interval_seconds
     while True:
         try:
-            container.scheduler.tick(datetime.now(UTC))
+            # ROBUST: the tick is fully synchronous and long-blocking (sync DB,
+            # runs whole pipelines inline via ``start_workflow(...).result()``,
+            # notifications). Running it directly on the event loop blocks ALL HTTP
+            # handling for the tick's duration, so run it off the loop in a worker
+            # thread. The scheduler builds a fresh per-tick storage/session
+            # (``tick_services_factory``) and guards each campaign with a
+            # per-campaign lock, so moving off-loop corrupts no non-thread-safe state.
+            await asyncio.to_thread(container.scheduler.tick, datetime.now(UTC))
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             log.warning("scheduler_tick_error", error=str(exc))
         await asyncio.sleep(interval)
@@ -110,8 +119,12 @@ async def lifespan(app: FastAPI):
         scheduler_task.cancel()
         try:
             await scheduler_task
-        except (asyncio.CancelledError, Exception):  # pragma: no cover - shutdown
+        except asyncio.CancelledError:  # pragma: no cover - shutdown (expected)
             pass
+        except Exception as exc:  # pragma: no cover - shutdown
+            # Don't silently swallow the scheduler's final exception — log it so a
+            # crash on the last tick is visible in shutdown diagnostics.
+            log.warning("scheduler_stop_error", error=str(exc))
         log.info("scheduler_stopped")
     if getattr(container, "engine", None) is not None:
         container.engine.dispose()

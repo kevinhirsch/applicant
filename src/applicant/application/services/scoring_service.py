@@ -89,8 +89,15 @@ class ScoringService:
         return self._score(posting, criteria)
 
     def is_viable(self, scoring: ViabilityScoring) -> bool:
-        """True if the scaled (0..100) score meets the configurable threshold."""
-        return scoring.score * 100.0 >= self._threshold
+        """True if the scaled (0..100) score meets the configurable threshold.
+
+        ROBUST: coalesce a missing score to 0.0 and re-clamp into [0, 1] before the
+        comparison so a None/out-of-range score (e.g. from a nullable persisted value)
+        can never raise ``TypeError`` on ``>=`` or let an >1.0 score pass the gate.
+        """
+        score = getattr(scoring, "score", None) or 0.0
+        score = max(0.0, min(1.0, score))
+        return score * 100.0 >= self._threshold
 
     def _score(self, posting: JobPosting, criteria: SearchCriteria | None) -> ViabilityScoring:
         # Honor the Scoring tool toggle at dispatch (FR-UI-4).
