@@ -9,12 +9,47 @@ ENV PYTHONUNBUFFERED=1 \
 # Install uv (the project toolchain).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# System packages for the resume-render pipeline (FR-RESUME-3/4). The renderer
+# auto-detects these via shutil.which() and silently degrades (no real PDF) when
+# absent, so they must be in the image — both render paths are reachable depending
+# on the user's onboarding accept/reject choice:
+#   * LaTeX (primary): xelatex/lualatex + fontspec / moderncv / fontawesome5
+#   * docx (fallback): LibreOffice headless (soffice --convert-to pdf)
+# Targeted texlive subset (not texlive-full) to keep the image ~2GB instead of ~4GB.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libreoffice-writer \
+        fonts-liberation \
+        texlive-xetex \
+        texlive-luatex \
+        texlive-latex-extra \
+        texlive-fonts-recommended \
+        texlive-fonts-extra \
+        lmodern \
+    && rm -rf /var/lib/apt/lists/*
+
+# Real Google Chrome for the pre-fill / Workday automation (FR-PREFILL-1, FR-STEALTH-1).
+# The engine drives it via patchright (the 'browser' extra) with channel=chrome
+# (config default BROWSER_CHANNEL=chrome). Real Chrome — not bundled Chromium —
+# minimizes automation tells for stealth; the .deb pulls its own runtime libs.
+# The default local sandbox launches this headful-via-patchright inside THIS
+# container (no CDP endpoint), so the binary must live in the engine image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget gnupg ca-certificates \
+    && wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
+    && rm -f /tmp/google-chrome.deb \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Install dependencies first (better layer caching).
+# Install dependencies first (better layer caching). Include the 'browser' extra
+# (patchright) so the real PatchrightBrowser the engine wires unconditionally
+# (container.py) can actually drive Chrome — without it, the first pre-fill fails
+# with "No browser driver installed". channel=chrome uses the system Chrome above,
+# so no separate `patchright install chromium` download is needed.
 COPY pyproject.toml uv.lock* README.md ./
 COPY src ./src
-RUN uv sync --no-dev --frozen || uv sync --no-dev
+RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
 # App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
