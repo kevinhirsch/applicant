@@ -123,10 +123,18 @@ async def _resolve_campaign(engine: ApplicantEngineClient, explicit: Optional[st
     An explicit id (query/body) always wins. Otherwise we take the engine's first
     campaign. Raises 409 if there is no campaign yet (onboarding not started) so
     the UI can prompt the user instead of sending requests to a missing campaign.
+
+    The campaign lookup itself talks to the engine, so a down/unreachable engine
+    surfaces here as an :class:`EngineError`. Translate it through the same clean
+    HTTP mapping every other engine call uses (503 / engine status) so a resolve
+    on an offline engine degrades gracefully instead of escaping as a raw 500.
     """
     if explicit:
         return explicit
-    campaigns = await engine.list_campaigns()
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        _raise_engine_http(exc)
     if isinstance(campaigns, list) and campaigns:
         first = campaigns[0]
         cid = first.get("id") if isinstance(first, dict) else None
