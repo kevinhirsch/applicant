@@ -167,6 +167,52 @@ def test_admin_variant_library_reports_lineage():
     assert lib[str(child.id)]["approved"] is True
 
 
+def test_admin_variant_lineage_depth_is_capped():
+    # LOW resilience fix: a very long parent-id chain must not walk unbounded — the
+    # reported lineage_depth is clamped to MAX_LINEAGE_DEPTH.
+    from applicant.application.services.admin_query_service import MAX_LINEAGE_DEPTH
+
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    chain_len = MAX_LINEAGE_DEPTH + 10
+    prev_id = None
+    leaf_id = None
+    for _ in range(chain_len):
+        vid = ResumeVariantId(new_id())
+        storage.resume_variants.add(
+            ResumeVariant(
+                id=vid, campaign_id=cid, storage_path="v.tex", parent_id=prev_id
+            )
+        )
+        prev_id = vid
+        leaf_id = vid
+    storage.commit()
+    svc = AdminQueryService(storage, CheckpointShimOrchestrator())
+    lib = {v["variant_id"]: v for v in svc.variant_library(cid)}
+    assert lib[str(leaf_id)]["lineage_depth"] == MAX_LINEAGE_DEPTH
+
+
+def test_admin_variant_lineage_cycle_does_not_hang():
+    # A corrupt 2-node parent cycle must terminate (cycle guard), not loop forever.
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    a_id = ResumeVariantId(new_id())
+    b_id = ResumeVariantId(new_id())
+    storage.resume_variants.add(
+        ResumeVariant(id=a_id, campaign_id=cid, storage_path="a.tex", parent_id=b_id)
+    )
+    storage.resume_variants.add(
+        ResumeVariant(id=b_id, campaign_id=cid, storage_path="b.tex", parent_id=a_id)
+    )
+    storage.commit()
+    svc = AdminQueryService(storage, CheckpointShimOrchestrator())
+    lib = {v["variant_id"]: v for v in svc.variant_library(cid)}
+    # Bounded (cycle guard breaks the walk); never exceeds the cap.
+    from applicant.application.services.admin_query_service import MAX_LINEAGE_DEPTH
+
+    assert lib[str(a_id)]["lineage_depth"] <= MAX_LINEAGE_DEPTH
+
+
 # === Tool-toggle enforcement at service dispatch (FR-UI-4) ================
 def test_discovery_dispatch_blocked_when_tool_disabled():
     import pytest

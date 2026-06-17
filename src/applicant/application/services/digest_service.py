@@ -31,6 +31,12 @@ log = get_logger(__name__)
 
 EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running (FR-DIG-6)."
 
+#: Cap on how many role rows the digest EMAIL renders inline. A campaign can
+#: surface 1000+ viable roles; rendering one HTML row each makes a multi-MB email
+#: that mail clients truncate and that is slow to build. We render the top-N by
+#: viability score (desc) and append a footer pointing at the portal for the rest.
+MAX_EMAIL_ROWS = 50
+
 #: URL schemes safe to emit as a clickable anchor href in the digest. Anything
 #: else (``javascript:``, ``data:``, ``vbscript:`` ...) is neutralized so a
 #: scraped ``source_url`` cannot smuggle a script-executing link (SECURITY).
@@ -151,11 +157,22 @@ class DigestService:
         if payload["empty"]:
             lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
         else:
+            all_rows = payload["rows"]
+            total = len(all_rows)
+            # Cap the inline table to the top-N rows by viability score (desc) so a
+            # campaign with 1000+ viable roles never renders a multi-MB email. The
+            # remainder is reachable in the portal (footer line below). ``sorted`` is
+            # stable, so ties keep build_digest order. Scores may be float or int.
+            top_rows = sorted(
+                all_rows,
+                key=lambda r: float(r.get("viability_score") or 0),
+                reverse=True,
+            )[:MAX_EMAIL_ROWS]
             lines.append(
                 "<table border='1' cellpadding='6'><tr><th>Role</th><th>Work mode</th>"
                 "<th>Score</th><th>Why suggested</th><th>Link</th></tr>"
             )
-            for r in payload["rows"]:
+            for r in top_rows:
                 # SECURITY: every interpolated cell is untrusted scraped data
                 # (title/company/rationale/work-mode/url) so escape it and bound
                 # the href to an http/https allowlist — no stored XSS in the
@@ -171,6 +188,14 @@ class DigestService:
                     f"<td><a href='{href}'>open</a></td></tr>"
                 )
             lines.append("</table>")
+            # Footer: when more roles cleared the bar than we rendered, point the
+            # reader at the portal for the rest instead of bloating the email.
+            if total > MAX_EMAIL_ROWS:
+                remaining = total - MAX_EMAIL_ROWS
+                lines.append(
+                    f"<p><em>Showing the top {MAX_EMAIL_ROWS} of {total} matches "
+                    f"by score — view the remaining {remaining} in the portal.</em></p>"
+                )
         return {
             "subject": "Your daily digest"
             if not payload["empty"]

@@ -20,6 +20,12 @@ from __future__ import annotations
 from applicant.core.ids import ApplicationId, CampaignId
 from applicant.observability.logging import recent_logs
 
+#: Hard cap on how far the variant-lineage walk follows parent-id chains. The
+#: cycle guard alone bounds a closed loop, but a very long *acyclic* chain (or a
+#: chain spanning rows outside this page's ``by_id`` map) could still walk deep; this
+#: cap keeps ``depth()`` O(1)-ish per variant regardless of lineage length.
+MAX_LINEAGE_DEPTH = 20
+
 
 class AdminQueryService:
     def __init__(self, storage, orchestrator) -> None:
@@ -137,6 +143,8 @@ class AdminQueryService:
             seen = set()
             while cur.parent_id is not None and str(cur.parent_id) in by_id:
                 if str(cur.id) in seen:  # cycle guard
+                    break
+                if d >= MAX_LINEAGE_DEPTH:  # depth cap: don't walk an unbounded chain
                     break
                 seen.add(str(cur.id))
                 cur = by_id[str(cur.parent_id)]

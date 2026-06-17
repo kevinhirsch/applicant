@@ -16,11 +16,6 @@ dependencies = [
     "pydantic-settings",
     "structlog",
     "httpx",
-    # Durable orchestration backbone (FR-DUR-3). Installs cleanly on 3.11.
-    # The DEFAULT durable_orchestration adapter is a DB/file-backed checkpoint
-    # shim (works without a running Postgres, so the test suite is green);
-    # the DBOS-backed adapter is selected in real deployments.
-    "dbos",
     # LangGraph is the reasoning loop *within* durable steps (architecture §3.15).
     "langgraph",
     # Base-resume parsing for the onboarding attribute-cloud bootstrap (FR-ONBOARD-3).
@@ -53,6 +48,16 @@ dependencies = [
 # and `patchright install chromium` to drive the real adapter (integration-only).
 browser = [
     "patchright",
+]
+# Durable orchestration backbone (FR-DUR-3). The DEFAULT runtime backend is the
+# file-backed checkpoint SHIM (``ORCHESTRATOR_BACKEND=shim``), which needs NO extra
+# package and works without a running Postgres — so air-gapped / offline installs
+# boot on the shim out of the box. DBOS is only required when a deployment opts into
+# ``ORCHESTRATOR_BACKEND=dbos`` (needs a live Postgres). The adapter imports ``dbos``
+# lazily, so the engine boots fine without it installed. Install with
+# ``uv sync --extra durable-orchestration`` to enable the DBOS backend.
+durable-orchestration = [
+    "dbos",
 ]
 dev = [
     "pytest",

@@ -54,7 +54,6 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "apprise" },
-    { name = "dbos" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -84,6 +83,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+durable-orchestration = [
+    { name = "dbos" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -99,7 +101,7 @@ dev = [
 requires-dist = [
     { name = "alembic" },
     { name = "apprise" },
-    { name = "dbos" },
+    { name = "dbos", marker = "extra == 'durable-orchestration'" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'dev'" },
@@ -123,7 +125,7 @@ requires-dist = [
     { name = "structlog" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["browser", "dev"]
+provides-extras = ["browser", "durable-orchestration", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
