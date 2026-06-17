@@ -195,7 +195,9 @@ def test_throughput_hard_cap_refuses_31st_per_day(tmp_path):
 
     prefill = _FakePrefill()
     loop = _loop(storage, orch, prefill=prefill)
-    now = datetime(2026, 6, 16, tzinfo=UTC)
+    # ``acted_today`` derives the persisted count from agent_runs whose timestamp is
+    # the real wall clock, so anchor ``now`` to today's UTC date (robust to date roll).
+    now = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     result = loop.run_once(cid, now=now)
 
     # Exactly the hard cap of 30 applications were acted on; the rest are refused.
@@ -369,7 +371,9 @@ def test_throughput_cap_survives_restart(tmp_path):
     for i in range(40):
         _approve_posting(storage, cid, title=f"Role-{i}")
 
-    now = datetime(2026, 6, 16, tzinfo=UTC)
+    # Anchor to today's UTC date: the persisted count comes from agent_runs stamped
+    # with the real wall clock, so a hardcoded past date would never match (date roll).
+    now = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     loop1 = _loop(storage, orch, prefill=_FakePrefill())
     loop1.run_once(cid, now=now)
     assert loop1.acted_today(cid, now) == 30

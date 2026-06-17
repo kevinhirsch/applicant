@@ -32,7 +32,7 @@ from applicant.core.entities.revision_session import (
     RevisionStatus,
     RevisionTurn,
 )
-from applicant.core.errors import TruthfulnessViolation
+from applicant.core.errors import InvalidInput, NotFound, TruthfulnessViolation
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -116,6 +116,7 @@ class MaterialService:
         notifications=None,
         pending_actions=None,
         learning=None,
+        advanced_learning=None,
         review_base_url: str = "/applicant/review.html",
     ) -> None:
         self._storage = storage
@@ -127,6 +128,9 @@ class MaterialService:
         # Optional LearningService so variant selection can prefer variants whose
         # traits match the converting-role signature (FR-LEARN-5).
         self._learning = learning
+        # Optional AdvancedLearningService so a redline add/subtract/free-text turn
+        # folds the user's revision feedback into learning (FR-LEARN-3 / FR-RESUME-8).
+        self._advanced_learning = advanced_learning
         # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
         self._notifications = notifications
         self._pending_actions = pending_actions
@@ -394,7 +398,7 @@ class MaterialService:
 
         v = self._storage.resume_variants.get(variant_id)
         if v is None:
-            raise ValueError(f"no such variant {variant_id}")
+            raise NotFound(f"no such variant {variant_id}")
         approved = dataclasses.replace(v, approved=True)
         self._storage.resume_variants.add(approved)
         self._storage.commit()
@@ -611,7 +615,7 @@ class MaterialService:
         introduce an unsupported claim.
         """
         if kind not in ("add", "subtract", "free_text"):
-            raise ValueError(f"unknown revision turn kind: {kind!r}")
+            raise InvalidInput(f"unknown revision turn kind: {kind!r}")
         session = self.open_revision(document_id)
         if session.status is not RevisionStatus.OPEN:
             return session
@@ -630,6 +634,10 @@ class MaterialService:
                 self.assert_no_fabrication(true_source, new_content)
             if doc is not None:
                 self._persist_content(doc, new_content)
+            # FR-LEARN-3 / FR-RESUME-8: fold this revision turn into learning so the
+            # user's add/subtract/free-text edits bias future material generation. Best
+            # effort under the per-campaign lock; learning must never break the turn.
+            self._fold_revision_feedback(doc, kind, instruction)
 
         turn = RevisionTurn(kind=kind, instruction=instruction, ai_response=ai_response)
         session = RevisionSession(
@@ -641,11 +649,31 @@ class MaterialService:
         )
         return self._save_session(session)
 
+    def _fold_revision_feedback(self, doc, kind: str, instruction: str) -> None:
+        """Fold one redline turn into the learning model (FR-LEARN-3, best-effort)."""
+        if self._advanced_learning is None or doc is None:
+            return
+        campaign_id = getattr(doc, "campaign_id", None)
+        if campaign_id is None or not (instruction or "").strip():
+            return
+        if kind in ("add", "subtract"):
+            edits = [{"op": kind, "text": instruction}]
+            free_text = ""
+        else:
+            edits = []
+            free_text = instruction
+        try:
+            self._advanced_learning.fold_revision_feedback_atomic(
+                campaign_id, edits=edits, free_text=free_text
+            )
+        except Exception:  # pragma: no cover - learning must never break the turn
+            pass
+
     def approve(self, document_id: GeneratedDocumentId) -> GeneratedDocument:
         """Approve the material through the review gate (FR-RESUME-8)."""
         doc = self._storage.documents.get(document_id)
         if doc is None:
-            raise ValueError(f"no such document {document_id}")
+            raise NotFound(f"no such document {document_id}")
         # Final post-filter before approval (defence in depth).
         content = self.apply_post_filter(doc.content or "").text
         approved = GeneratedDocument(
@@ -676,7 +704,7 @@ class MaterialService:
         """Decline the material (stays unapproved; blocks submission)."""
         doc = self._storage.documents.get(document_id)
         if doc is None:
-            raise ValueError(f"no such document {document_id}")
+            raise NotFound(f"no such document {document_id}")
         session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
             self._save_session(

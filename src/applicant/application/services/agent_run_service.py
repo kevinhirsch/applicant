@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.campaign import Campaign, RunMode, clamp_throughput
+from applicant.core.errors import InvalidInput, NotFound
 from applicant.core.ids import AgentRunId, CampaignId, new_id
 
 
@@ -39,10 +40,19 @@ class AgentRunService:
         """Set run mode + throughput (clamped to the hard cap) on the campaign."""
         campaign = self._storage.campaigns.get(campaign_id)
         if campaign is None:
-            raise KeyError(f"campaign not found: {campaign_id}")
+            raise NotFound(f"campaign not found: {campaign_id}")
         patch: dict = {}
         if run_mode is not None:
-            patch["run_mode"] = RunMode(run_mode) if isinstance(run_mode, str) else run_mode
+            if isinstance(run_mode, str):
+                try:
+                    patch["run_mode"] = RunMode(run_mode)
+                except ValueError as exc:
+                    raise InvalidInput(
+                        f"invalid run_mode {run_mode!r}: expected one of "
+                        f"{[m.value for m in RunMode]}"
+                    ) from exc
+            else:
+                patch["run_mode"] = run_mode
         if throughput_target is not None:
             patch["throughput_target"] = clamp_throughput(throughput_target)
         if schedule is not None:
@@ -58,19 +68,41 @@ class AgentRunService:
     def start_run(
         self, campaign_id: CampaignId, intent_sentence: str, *, stats: dict | None = None
     ) -> AgentRun:
-        """Record an agent run with its single-sentence next-action intent."""
+        """Record an agent run with its single-sentence next-action intent.
+
+        Raises :class:`NotFound` when the campaign does not exist (consistent with
+        ``configure_run``) so a run is never silently recorded against a missing
+        campaign.
+        """
         campaign = self._storage.campaigns.get(campaign_id)
+        if campaign is None:
+            raise NotFound(f"campaign not found: {campaign_id}")
         run = AgentRun(
             id=AgentRunId(new_id()),
             campaign_id=campaign_id,
             intent_sentence=intent_sentence,
-            run_mode=campaign.run_mode if campaign else RunMode.CONTINUOUS,
-            throughput_target=campaign.throughput_target if campaign else 15,
+            run_mode=campaign.run_mode,
+            throughput_target=campaign.throughput_target,
             stats=dict(stats or {}),
+            # FR-AGENT-7: derive the tie-break ``seq`` from the max PERSISTED seq for
+            # this campaign so it stays monotonic across restarts. The process-local
+            # ``itertools.count`` resets to 1 on restart, which would let a brand-new
+            # run at an equal timestamp lose the tie-break to a stale persisted run.
+            seq=self._next_seq(campaign_id),
         )
         self._storage.agent_runs.add(run)
         self._storage.commit()
         return run
+
+    def _next_seq(self, campaign_id: CampaignId) -> int:
+        """Next monotonic seq = 1 + max persisted seq for the campaign (FR-AGENT-7)."""
+        try:
+            runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            runs = []
+        if not runs:
+            return 1
+        return max(int(getattr(r, "seq", 0)) for r in runs) + 1
 
     def list_runs(self, campaign_id: CampaignId) -> list[AgentRun]:
         return self._storage.agent_runs.list_for_campaign(campaign_id)

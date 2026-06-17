@@ -53,6 +53,21 @@ class _CountingDigest:
         return {"payload": {"rows": []}}
 
 
+class _DeliveringLoop:
+    """Models AgentLoop: delivers the digest once per (campaign, UTC day) on tick."""
+
+    def __init__(self, digest):
+        self._digest = digest
+        self._sent: set[tuple[str, object]] = set()
+
+    def tick(self, campaign_id, now=None):
+        key = (str(campaign_id), now.date())
+        if key not in self._sent:
+            self._digest.deliver(campaign_id)
+            self._sent.add(key)
+        return None
+
+
 def _campaign(storage, *, active=True):
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C", active=active))
@@ -75,10 +90,13 @@ def test_tick_advances_each_active_campaign():
 
 @pytest.mark.unit
 def test_daily_digest_delivered_once_per_day():
+    """IDEM-1: the digest is delivered once per (campaign, UTC day) by the LOOP; the
+    scheduler no longer ALSO delivers it (that double-sent the digest email/ping)."""
     storage = InMemoryStorage()
     _campaign(storage)
     digest = _CountingDigest()
-    sched = Scheduler(storage=storage, agent_loop=_RecordingLoop(), digest_service=digest)
+    loop = _DeliveringLoop(digest)
+    sched = Scheduler(storage=storage, agent_loop=loop, digest_service=digest)
 
     day = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
     sched.tick(day)

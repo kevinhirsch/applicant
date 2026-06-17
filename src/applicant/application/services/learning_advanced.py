@@ -351,6 +351,42 @@ class AdvancedLearningService:
                 model = self._base.record_decision(model, approved=True, features=feats)
         return model
 
+    def fold_revision_feedback_atomic(
+        self, campaign_id, *, edits: list[dict] | None = None, free_text: str = ""
+    ) -> LearningModel:
+        """Atomically load -> fold redline revision feedback -> persist (FR-LEARN-3).
+
+        Storage-backed close-the-loop for the material-revision/redline turn endpoint:
+        serializes the load->fold->persist under the shared per-campaign lock (Batch F)
+        so it can't lose-update against a concurrent funnel/decline/approval fold.
+        """
+        from applicant.application.services.learning_service import _campaign_lock
+
+        with _campaign_lock(campaign_id):
+            model = self._base.load_model(campaign_id)
+            model = self.fold_revision_feedback(model, edits=edits, free_text=free_text)
+            self._base.persist_model(model)
+        return model
+
+    def fold_soft_error_resolution_atomic(
+        self, campaign_id, *, attribute_name: str, site_key: str = ""
+    ) -> LearningModel:
+        """Atomically load -> fold a soft-error resolution -> persist (FR-LEARN-4).
+
+        Storage-backed close-the-loop for the missing-attribute resolve flow
+        (FR-ATTR-5): the system learns the field is commonly required for the site.
+        Serialized under the shared per-campaign lock (Batch F).
+        """
+        from applicant.application.services.learning_service import _campaign_lock
+
+        with _campaign_lock(campaign_id):
+            model = self._base.load_model(campaign_id)
+            model = self.fold_soft_error_resolution(
+                model, attribute_name=attribute_name, site_key=site_key
+            )
+            self._base.persist_model(model)
+        return model
+
     def fold_soft_error_resolution(
         self, model: LearningModel, *, attribute_name: str, site_key: str = ""
     ) -> LearningModel:

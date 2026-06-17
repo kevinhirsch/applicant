@@ -110,12 +110,18 @@ def _close_conversion_loop(container: Container, app: Application) -> None:
 
 
 def _load_or_stub(container: Container, application_id: str) -> Application:
-    """Load the application or synthesize a minimal record so logging never fails.
+    """Load the application for a terminal submission, enforcing the §7 gate.
 
-    A submission can be recorded for an application the in-memory boot has not
-    persisted (e.g. tests / emergency handoff). When the persisted state cannot
-    legally transition to a terminal submission, or the row is absent, synthesize a
-    minimal record in AWAITING_FINAL_APPROVAL so the §7 terminal transition is legal.
+    A PERSISTED application may only record an outcome from a legal ``from`` state
+    for the terminal transition (AWAITING_FINAL_APPROVAL or EMERGENCY_DATA_HANDOFF).
+    If the persisted row is in a non-legal pre-state (PREFILLING / BLOCKED_* / ...),
+    raise ``IllegalStateTransition`` (->409) rather than fabricating a passing
+    AWAITING_FINAL_APPROVAL record that lets an outcome be recorded for an app that
+    never legally reached the gate (#3).
+
+    When NO row exists (tests / in-memory boot that never persisted), synthesize a
+    minimal AWAITING_FINAL_APPROVAL record so logging still works — that is a
+    genuinely-absent record, not an override of a real persisted status.
     """
     from applicant.core.state_machine import ApplicationState
 
@@ -124,15 +130,14 @@ def _load_or_stub(container: Container, application_id: str) -> Application:
         ApplicationState.AWAITING_FINAL_APPROVAL,
         ApplicationState.EMERGENCY_DATA_HANDOFF,
     }
-    if app is not None and app.status in legal_from:
-        return app
+    if app is not None:
+        if app.status in legal_from:
+            return app
+        # Persisted but in an illegal pre-state for the gate — do NOT synthesize.
+        raise IllegalStateTransition(app.status, ApplicationState.SUBMITTED_BY_USER)
     return Application(
         id=ApplicationId(application_id),
-        campaign_id=app.campaign_id if app is not None else CampaignId(""),
-        posting_id=app.posting_id if app is not None else JobPostingId(""),
+        campaign_id=CampaignId(""),
+        posting_id=JobPostingId(""),
         status=ApplicationState.AWAITING_FINAL_APPROVAL,
-        role_name=app.role_name if app is not None else None,
-        job_title=app.job_title if app is not None else None,
-        work_mode=app.work_mode if app is not None else None,
-        root_url=app.root_url if app is not None else None,
     )

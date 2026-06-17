@@ -43,7 +43,7 @@ class PendingActionsService:
         """Create (or reuse) a pending action. ``dedup_key`` avoids duplicates."""
         if dedup_key is not None:
             for existing in self._storage.pending_actions.list_open(campaign_id):
-                if existing.payload.get("dedup_key") == dedup_key:
+                if (existing.payload or {}).get("dedup_key") == dedup_key:
                     return existing
         merged_payload = dict(payload or {})
         if dedup_key is not None:
@@ -62,15 +62,23 @@ class PendingActionsService:
 
     # --- convenience constructors -----------------------------------------
     def digest_approval(
-        self, campaign_id: CampaignId, application_id: ApplicationId, title: str, **payload
+        self, campaign_id: CampaignId, *, posting_id: str, title: str, **payload
     ) -> PendingAction:
+        """Materialize a digest-approval item keyed on the POSTING id.
+
+        A digest row has no Application row yet, so the posting id lives in the
+        payload and ``application_id`` stays ``None`` (the FK column only holds real
+        ``applications.id`` values). The dedup key keys on the posting id so the
+        resolve path can clear it by posting id when the user approves.
+        """
+        body = {"posting_id": str(posting_id), **payload}
         return self.materialize(
             campaign_id,
             KIND_DIGEST_APPROVAL,
             title,
-            application_id=application_id,
-            payload=payload,
-            dedup_key=f"digest_approval:{application_id}",
+            application_id=None,
+            payload=body,
+            dedup_key=f"digest_approval:{posting_id}",
         )
 
     def missing_attribute(
@@ -103,6 +111,6 @@ class PendingActionsService:
     def resolve_by_dedup(self, campaign_id: CampaignId, dedup_key: str) -> None:
         """Resolve a materialized item by its dedup key (idempotency aid)."""
         for action in self._storage.pending_actions.list_open(campaign_id):
-            if action.payload.get("dedup_key") == dedup_key:
+            if (action.payload or {}).get("dedup_key") == dedup_key:
                 self._storage.pending_actions.resolve(action.id)
         self._storage.commit()

@@ -269,7 +269,12 @@ class LearningService:
         """
         if not jd_text.strip():
             return model
-        vec = self._embedding.embed([jd_text])[0]
+        vecs = self._embedding.embed([jd_text])
+        if not vecs or not vecs[0]:
+            # An empty/degenerate embedding can't be folded into the centroid;
+            # leave the model unchanged rather than corrupt it / crash.
+            return model
+        vec = vecs[0]
         n = model.converting_samples
         prior = model.converting_role_signature.get("vector")
         if prior and len(prior) == len(vec):
@@ -296,7 +301,14 @@ class LearningService:
         sig = model.converting_role_signature.get("vector")
         if not sig or not jd_text.strip():
             return 0.0
-        vec = self._embedding.embed([jd_text])[0]
+        vecs = self._embedding.embed([jd_text])
+        if not vecs or not vecs[0]:
+            return 0.0
+        vec = vecs[0]
+        # Mismatched dimensions can't be compared meaningfully (mirrors the
+        # length guard in record_converting_role): no bias rather than a crash.
+        if len(sig) != len(vec):
+            return 0.0
         dot = sum(a * b for a, b in zip(sig, vec, strict=False))
         na = sum(a * a for a in sig) ** 0.5
         nb = sum(b * b for b in vec) ** 0.5
@@ -362,6 +374,48 @@ class LearningService:
         if result.applied:
             self._storage.commit()
         return result
+
+    def ingest_decline_atomic(
+        self,
+        campaign_id: CampaignId,
+        *,
+        feedback_text: str,
+        criteria_delta: dict | None = None,
+    ) -> LearningModel:
+        """Atomically load -> fold decline feedback -> persist for a campaign (CONC-4).
+
+        FR-LEARN-1/FR-DUR-2: the per-campaign lock serializes this read-modify-write of
+        the shared ``campaign.learning_state`` with the funnel path
+        (``record_funnel_atomic``/``record_source_event``) so a concurrent source-event
+        fold can't lose-update the decline feedback (or vice-versa).
+        """
+        with _campaign_lock(campaign_id):
+            model = self.load_model(campaign_id)
+            model = self.ingest_decline_feedback(
+                model, feedback_text=feedback_text, criteria_delta=criteria_delta
+            )
+            self.persist_model(model)
+        return model
+
+    def fold_decision_atomic(
+        self, campaign_id: CampaignId, *, approved: bool, features: dict | None = None
+    ) -> LearningModel:
+        """Atomically load -> fold an approve/decline decision -> persist (CONC-4).
+
+        FR-LEARN-1/2/FR-DUR-2: the per-campaign lock serializes this read-modify-write
+        of the shared ``campaign.learning_state`` with the funnel + decline folds so a
+        concurrent record can't lose-update the per-feature taste signal. Used to fold
+        the digest APPROVE branch's positive taste (FR-LEARN-2), redline-revision
+        feedback (FR-LEARN-3), chat taste (FR-LEARN-3), and soft-error resolutions
+        (FR-LEARN-4) without bypassing the shared lock.
+        """
+        if not features:
+            return self.load_model(campaign_id)
+        with _campaign_lock(campaign_id):
+            model = self.load_model(campaign_id)
+            model = self.record_decision(model, approved=approved, features=features)
+            self.persist_model(model)
+        return model
 
     def ingest_decline_feedback(
         self, model: LearningModel, *, feedback_text: str, criteria_delta: dict | None = None

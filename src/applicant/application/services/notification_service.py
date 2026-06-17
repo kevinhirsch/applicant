@@ -116,7 +116,12 @@ class NotificationService:
 
     # --- digest email (FR-DIG-2) ------------------------------------------
     def send_digest_email(
-        self, *, subject: str, html: str, deep_link: str | None = None
+        self,
+        *,
+        subject: str,
+        html: str,
+        deep_link: str | None = None,
+        dedup_key: str | None = None,
     ) -> bool:
         """Send the rendered digest email body through the email channel (FR-DIG-2).
 
@@ -124,11 +129,14 @@ class NotificationService:
         notifier's email channel. Offline-safe — the notifier captures it in memory
         and only sends over SMTP when NOTIFICATIONS_LIVE is on. Returns True when the
         notifier accepted it (email channel configured).
+
+        IDEM-1: ``dedup_key`` (per campaign + UTC day) makes the send idempotent so a
+        re-driven delivery never dispatches a second digest email for the same day.
         """
         send = getattr(self._notification, "send_email", None)
         if send is None:
             return False
-        sent = send(subject=subject, html=html, deep_link=deep_link)
+        sent = send(subject=subject, html=html, deep_link=deep_link, dedup_key=dedup_key)
         if sent:
             log.info("digest_email_sent", subject=subject)
         return bool(sent)

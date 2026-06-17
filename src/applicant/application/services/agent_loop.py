@@ -87,6 +87,7 @@ class AgentLoop:
         final_approval_service=None,
         sandbox=None,
         orchestrator=None,
+        setup_service=None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -102,6 +103,14 @@ class AgentLoop:
         self._final_approval = final_approval_service
         self._sandbox = sandbox
         self._orch = orchestrator
+        # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. No NEW automated work
+        # (discovery / digest delivery / pipeline starts) may run until onboarding is
+        # complete AND channels are configured AND the LLM gate is open. Enforced here
+        # in the 24/7 loop, not only at the HTTP layer (``require_automated_work``).
+        # Already-in-flight workflows may still be re-driven (recovery), but the loop
+        # never starts new work while the gate is closed. When unset (legacy tests),
+        # the gate is treated as open so behavior is unchanged.
+        self._setup = setup_service
         # (campaign_id, date) -> count of applications acted on that day (FR-AGENT-1).
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
@@ -164,10 +173,31 @@ class AgentLoop:
         # restart) is the single source of truth between ticks — no double counting.
         key = (str(campaign_id), now.date())
         self._acted.pop(key, None)
+        # CONC-3: prune per-day dedup ledgers older than today so the in-memory maps
+        # do not grow unbounded over 24/7 operation.
+        self._prune_daily(now.date())
         try:
             return self._tick(campaign_id, now)
         finally:
             self._acted.pop(key, None)
+
+    def _automated_work_allowed(self) -> bool:
+        """True when the loop may start NEW automated work (FR-ONBOARD-2/FR-OOBE-3).
+
+        When no ``setup_service`` is wired (legacy/unit tests that drive the loop
+        directly) the gate is treated as open so existing behavior is unchanged.
+        """
+        if self._setup is None:
+            return True
+        try:
+            return bool(self._setup.is_automated_work_allowed())
+        except Exception:  # pragma: no cover - defensive: gate failure closes the gate
+            return False
+
+    def _prune_daily(self, today: date) -> None:
+        """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
+        self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
+        self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
 
     def _tick(self, campaign_id: CampaignId, now: datetime) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
@@ -190,7 +220,17 @@ class AgentLoop:
 
         # First resume any already-started pipelines that may now be unblocked, so a
         # tick advances in-flight work even when the budget is exhausted (FR-DUR-1/4).
+        # This is recovery re-drive (NOT new automated work) so it runs even while the
+        # automated-work gate is closed.
         self._resume_in_flight(campaign_id, result)
+
+        # FR-ONBOARD-2 / FR-OOBE-3: no NEW automated work until onboarding is complete
+        # AND channels are configured AND the LLM gate is open. With the gate closed we
+        # re-drove in-flight work above but start nothing new: no discovery, no digest
+        # delivery, no pipeline starts.
+        if not self._automated_work_allowed():
+            result.reason = "automated_work_gated"
+            return result
 
         # 2. Throughput cap (FR-AGENT-1): stop discovery + new pre-fill when spent.
         if result.budget_remaining <= 0:
@@ -284,11 +324,21 @@ class AgentLoop:
             return
         for app in self._storage.applications.list_for_campaign(campaign_id):
             if app.status in _IN_FLIGHT_RESUMABLE:
-                campaign = self._storage.campaigns.get(campaign_id)
-                wf_id = self._workflow_id(app.id)
-                ctx = self._build_context(campaign, app)
-                outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
-                self._apply_outcome(app, outcome, result)
+                # A resume that raises must NOT leak the sandbox slot nor abort the
+                # whole tick (it would stall every other app). Mirror _start_pipeline:
+                # release the slot + tear down the session, log, and continue.
+                try:
+                    campaign = self._storage.campaigns.get(campaign_id)
+                    wf_id = self._workflow_id(app.id)
+                    ctx = self._build_context(campaign, app)
+                    outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
+                    self._apply_outcome(app, outcome, result)
+                except Exception:
+                    if self._capacity is not None:
+                        self._capacity.release_sandbox(str(app.id))
+                    self._teardown_sandbox(app.id)
+                    log.warning("resume_failed_slot_released", application_id=str(app.id))
+                    continue
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:
         """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).
@@ -331,6 +381,9 @@ class AgentLoop:
             # Terminal: release the sandbox slot so the next waiter is admitted.
             if self._capacity is not None:
                 self._capacity.release_sandbox(str(app.id))
+            # DUR-2: a done workflow is complete — clear its checkpoint so it is not
+            # re-driven on every restart (unbounded growth + duplicate outcomes).
+            self._clear_checkpoint(app.id)
         elif status in ("handoff", "awaiting_final_approval"):
             handoff_state = outcome.get("handoff_state", status)
             result.handoffs.append(str(app.id))
@@ -398,8 +451,13 @@ class AgentLoop:
                 if choice == "submitted_by_user"
                 else OutcomeSource.AUTO
             )
-            # Move into the AWAITING_FINAL_APPROVAL gate first (legal §7 transition).
-            gated = self._force_status(current, ApplicationState.AWAITING_FINAL_APPROVAL)
+            # Land the AWAITING_FINAL_APPROVAL gate via a VALIDATED transition: pre-fill
+            # already walked PREFILLING->MATERIAL_PREP->MATERIAL_REVIEW->AWAITING_FINAL_APPROVAL
+            # legally, so ``current`` is normally already at the gate (a no-op here). If
+            # the persisted state is an ILLEGAL pre-state for the gate, this raises
+            # IllegalStateTransition (->409 via the global handler) instead of silently
+            # force-setting the status and letting material skip MATERIAL_REVIEW (#2).
+            gated = self._advance_to(current, ApplicationState.AWAITING_FINAL_APPROVAL)
             event = self._submission.record_submission(gated, source=source)
             return {"recorded": True, "outcome": event.type}
 
@@ -445,6 +503,18 @@ class AgentLoop:
 
     def _workflow_id(self, application_id: ApplicationId) -> str:
         return f"application:{application_id}"
+
+    def _clear_checkpoint(self, application_id: ApplicationId) -> None:
+        """Remove a terminal workflow's durable checkpoint (DUR-2). Defensive."""
+        if self._orch is None:
+            return
+        clear = getattr(self._orch, "clear", None)
+        if clear is None:
+            return
+        try:
+            clear(self._workflow_id(application_id))
+        except Exception:  # pragma: no cover - clearing must never break teardown
+            log.warning("checkpoint_clear_failed", application_id=str(application_id))
 
     def _viable_count(self, campaign_id: CampaignId) -> int:
         if self._scoring is None:
@@ -512,8 +582,29 @@ class AgentLoop:
         return updated
 
     def _force_status(self, app: Application, to: ApplicationState) -> Application:
-        """Set the status directly (used to land a legal gate state for submission)."""
+        """Set the status directly (only for states pre-fill already validated).
+
+        Used by ``_sync_status`` to mirror the §7 state pre-fill itself walked through
+        legal transitions. NOT used to land the final-approval gate — that goes through
+        ``_advance_to`` so an illegal pre-state can never be silently force-set (#2).
+        """
         updated = dataclasses.replace(app, status=to)
+        self._storage.applications.update(updated)
+        self._storage.commit()
+        return updated
+
+    def _advance_to(self, app: Application, to: ApplicationState) -> Application:
+        """Move ``app`` to ``to`` through a VALIDATED §7 transition.
+
+        A no-op when already at ``to``. Otherwise routes through
+        ``Application.with_status`` so an illegal pre-state raises
+        ``IllegalStateTransition`` rather than being force-set (state-machine
+        integrity on submit, #2).
+        """
+        current = self._storage.applications.get(app.id) or app
+        if current.status is to:
+            return current
+        updated = current.with_status(to)  # raises IllegalStateTransition if illegal
         self._storage.applications.update(updated)
         self._storage.commit()
         return updated

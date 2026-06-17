@@ -42,13 +42,19 @@ class MissingAttributeError:
 
 
 class AttributeCloudService:
-    def __init__(self, storage, *, pending_actions=None, prefill=None) -> None:
+    def __init__(
+        self, storage, *, pending_actions=None, prefill=None, advanced_learning=None
+    ) -> None:
         self._storage = storage
         self._pending = pending_actions
         # Optional PrefillService so resolving a missing attribute can RESUME the
         # stalled pre-fill using the newly-stored value (FR-ATTR-5). Set additively
         # by the container after both services exist (avoids a construction cycle).
         self._prefill = prefill
+        # Optional AdvancedLearningService so resolving a missing-attribute soft error
+        # folds a soft-error-resolution signal — the system learns that field is
+        # commonly required for that site (FR-ATTR-5 / FR-LEARN-4).
+        self._advanced_learning = advanced_learning
 
     def set_prefill_service(self, prefill) -> None:
         """Wire the pre-fill service after construction (FR-ATTR-5 resume path)."""
@@ -208,14 +214,31 @@ class AttributeCloudService:
     ) -> Attribute:
         """Store a detail the user supplied for a missing attribute (FR-ATTR-5)."""
         attr = self.upsert(campaign_id, attribute_name, value, confirm=confirm)
+        site_key = ""
         if self._pending is not None:
             # Resolve any open missing-attr soft error for this attribute name,
             # regardless of which site/field surfaced it (FR-ATTR-5).
             prefix = f"missing_attr:{attribute_name}:"
             for action in self._pending.list_pending(campaign_id):
-                if str(action.payload.get("dedup_key", "")).startswith(prefix):
+                if str((action.payload or {}).get("dedup_key", "")).startswith(prefix):
+                    site_key = site_key or str((action.payload or {}).get("site_key", ""))
                     self._pending.resolve(action.id)
+        # FR-ATTR-5 / FR-LEARN-4: learn that this field is commonly required here.
+        self._fold_soft_error_resolution(campaign_id, attribute_name, site_key)
         return attr
+
+    def _fold_soft_error_resolution(
+        self, campaign_id: CampaignId, attribute_name: str, site_key: str
+    ) -> None:
+        """Fold a resolved missing-attribute soft error into learning (best-effort)."""
+        if self._advanced_learning is None or not attribute_name:
+            return
+        try:
+            self._advanced_learning.fold_soft_error_resolution_atomic(
+                campaign_id, attribute_name=attribute_name, site_key=site_key
+            )
+        except Exception:  # pragma: no cover - learning must never break the resolve
+            pass
 
     def resume_after_missing_attr(
         self,

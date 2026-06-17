@@ -71,6 +71,15 @@ def application_outcomes(application_id: str, container: Container = Depends(get
     }
 
 
+@router.get("/detections/{campaign_id}")
+def application_detections(
+    campaign_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Persisted automation-detection signal history (FR-OBS-2 / FR-PREFILL-6)."""
+    events = container.admin_query_service.detection_events(campaign_id)  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "detections": events, "status": "live"}
+
+
 @router.get("/workflow/{application_id}")
 def workflow_state(application_id: str, container: Container = Depends(get_container)) -> dict:
     """Durable-workflow (DBOS) state for one application (FR-OBS-2 / FR-DUR-1).

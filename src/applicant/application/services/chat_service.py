@@ -90,10 +90,16 @@ class ChatService:
         attribute_service,
         criteria_service=None,
         llm=None,
+        learning=None,
+        storage=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
         self._llm = llm
+        # Optional LearningService so a chat taste statement folds a cheap signal into
+        # the per-campaign learning model (FR-LEARN-3: every input feeds learning).
+        self._learning = learning
+        self._storage = storage
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -190,7 +196,34 @@ class ChatService:
         if parsed is not None:
             proposals.append(self._maybe_autoapply(campaign_id, parsed))
         reply = self._reply_text(campaign_id, message, gaps)
+        # FR-LEARN-3: fold a cheap chat taste signal so every input feeds learning.
+        self._fold_chat_taste(campaign_id, message)
         return ChatTurnResult(message=reply, gaps=gaps, proposed_changes=proposals)
+
+    # --- chat taste folding (FR-LEARN-3) ----------------------------------
+    def _fold_chat_taste(self, campaign_id: CampaignId, message: str) -> None:
+        """Fold a cheap, local taste signal from the chat message (best-effort)."""
+        if self._learning is None:
+            return
+        features = {
+            f"chat:{tok}": tok
+            for tok in message.lower().split()
+            if len(tok) > 3
+        }
+        if not features:
+            return
+        try:
+            atomic = getattr(self._learning, "fold_decision_atomic", None)
+            if atomic is not None:
+                atomic(campaign_id, approved=True, features=features)
+            else:  # pragma: no cover - all wired learning services expose the atomic API
+                model = self._learning.load_model(campaign_id)
+                model = self._learning.record_decision(
+                    model, approved=True, features=features
+                )
+                self._learning.persist_model(model)
+        except Exception:  # pragma: no cover - learning must never break the chat turn
+            pass
 
     # --- confirmation commit (FR-FB-3) ------------------------------------
     def confirm_change(

@@ -182,12 +182,18 @@ class OpenAICompatibleLLM:
 
     @staticmethod
     def _parse_models(data: dict[str, Any]) -> list[str]:
+        if not isinstance(data, dict):
+            return []
         # Ollama: {"models": [{"name": "llama3.1:8b", ...}, ...]}
         if isinstance(data.get("models"), list):
-            return [m.get("name", m.get("model", "")) for m in data["models"] if m]
+            return [
+                m.get("name", m.get("model", ""))
+                for m in data["models"]
+                if isinstance(m, dict)
+            ]
         # OpenAI/OpenRouter: {"data": [{"id": "gpt-4o", ...}, ...]}
         if isinstance(data.get("data"), list):
-            return [m.get("id", "") for m in data["data"] if m]
+            return [m.get("id", "") for m in data["data"] if isinstance(m, dict)]
         return []
 
     # --- FR-LLM-3/4: tier ladder + escalation -----------------------------
@@ -228,7 +234,10 @@ class OpenAICompatibleLLM:
                     ) from None
                 idx = nxt
                 continue
-            except (httpx.HTTPError, LLMNotConfigured) as exc:
+            except (httpx.HTTPError, LLMNotConfigured, ValueError) as exc:
+                # ValueError covers json.JSONDecodeError (a ValueError subclass): a
+                # non-JSON 200 (proxy/CDN HTML) must climb the ladder / exhaust
+                # gracefully, never crash the caller (FR-LLM-4).
                 last_error = exc
                 log.warning("llm_tier_failed", tier=idx + 1, error=str(exc))
                 idx += 1
@@ -330,10 +339,12 @@ class OpenAICompatibleLLM:
                 raise _Overflow()
             resp.raise_for_status()
             raw = resp.json()
-        choices = raw.get("choices") or []
+        choices = raw.get("choices") if isinstance(raw, dict) else None
         text = ""
-        if choices:
-            text = (choices[0].get("message") or {}).get("content") or ""
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict):
+                text = message.get("content") or ""
         return text, raw
 
     def _call_ollama(
@@ -368,7 +379,14 @@ class OpenAICompatibleLLM:
             resp = client.post(url, headers=self._headers(tier), json=payload)
             resp.raise_for_status()
             raw = resp.json()
-        text = (raw.get("message") or {}).get("content") or raw.get("response") or ""
+        if not isinstance(raw, dict):
+            raw = {}
+        message = raw.get("message")
+        text = (
+            (message.get("content") if isinstance(message, dict) else None)
+            or raw.get("response")
+            or ""
+        )
         structured = _extract_json(text) if json_schema is not None else None
         return LLMResult(
             text=text,

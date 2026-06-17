@@ -54,6 +54,23 @@ class AdminQueryService:
             for s in self._storage.screenshots.list_for_application(application_id)
         ]
 
+    # --- detection-event history (FR-OBS-2 / FR-PREFILL-6) ----------------
+    def detection_events(self, campaign_id: CampaignId) -> list[dict]:
+        """Persisted detection signals for a campaign's debug history surface."""
+        repo = getattr(self._storage, "detection_events", None)
+        if repo is None:
+            return []
+        return [
+            {
+                "id": str(e.id),
+                "application_id": str(e.application_id),
+                "signal_type": e.signal_type,
+                "detail": e.detail,
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            }
+            for e in repo.list_for_campaign(campaign_id)
+        ]
+
     # --- durable-workflow state (FR-OBS-2 / FR-DUR-1) ---------------------
     def workflow_state(self, application_id: ApplicationId) -> dict:
         workflow_id = f"application:{application_id}"

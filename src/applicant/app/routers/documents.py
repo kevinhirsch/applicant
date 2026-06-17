@@ -41,6 +41,8 @@ def _material_service(container: Container) -> MaterialService:
         conversion_service=container.conversion_service,
         notifications=container.notification_service,
         pending_actions=container.pending_actions_service,
+        learning=container.learning_service,
+        advanced_learning=container.advanced_learning_service,
     )
 
 

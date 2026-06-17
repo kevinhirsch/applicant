@@ -51,9 +51,27 @@ def open_session(body: OpenSessionIn, container: Container = Depends(get_contain
     }
 
 
+def _require_session(container: Container, session_id: str):
+    """Look the session up in the sandbox registry, 404 if it doesn't exist.
+
+    SECURITY: minting a live-session token / authorizing a takeover for an
+    arbitrary, never-provisioned id would hand out a valid deep-link token for a
+    session the caller never owns. Only live sessions may be acted on.
+    """
+    get = getattr(container.sandbox, "get", None)
+    session = get(session_id) if callable(get) else None
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown sandbox session: {session_id}",
+        )
+    return session
+
+
 @router.get("/sessions/{session_id}/view-url")
 def view_url(session_id: str, container: Container = Depends(get_container)) -> dict:
     """Return the live-session URL for an existing session (FR-SANDBOX-2)."""
+    _require_session(container, session_id)
     return {
         "session_id": session_id,
         "view_url": container.sandbox.remote_view().view_url(session_id),
@@ -63,6 +81,7 @@ def view_url(session_id: str, container: Container = Depends(get_container)) -> 
 @router.post("/sessions/{session_id}/takeover", status_code=204)
 def authorize_takeover(session_id: str, container: Container = Depends(get_container)) -> None:
     """Hand live control of the session to the user (FR-SANDBOX-3)."""
+    _require_session(container, session_id)
     container.sandbox.remote_view().authorize_takeover(session_id)
 
 

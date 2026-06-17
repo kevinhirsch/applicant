@@ -19,11 +19,33 @@ approve/decline-with-feedback decisions that close the learning loop:
 
 from __future__ import annotations
 
+import html
+
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running (FR-DIG-6)."
+
+#: URL schemes safe to emit as a clickable anchor href in the digest. Anything
+#: else (``javascript:``, ``data:``, ``vbscript:`` ...) is neutralized so a
+#: scraped ``source_url`` cannot smuggle a script-executing link (SECURITY).
+_SAFE_URL_SCHEMES = ("http://", "https://")
+
+
+def _safe_href(url) -> str:
+    """Return an http/https-only, HTML-escaped href, or ``#`` if disallowed.
+
+    The link comes from untrusted scraped rows (JobSpy/SearXNG/RSS) so a
+    ``javascript:``/``data:`` scheme must never reach the emitted anchor.
+    """
+    raw = str(url or "").strip()
+    if raw.lower().startswith(_SAFE_URL_SCHEMES):
+        return html.escape(raw, quote=True)
+    return "#"
 
 
 class DigestService:
@@ -115,17 +137,26 @@ class DigestService:
         payload = self.build_digest_payload(campaign_id, criteria)
         lines = ["<h1>Your daily digest</h1>"]
         if payload["empty"]:
-            lines.append(f"<p><em>{payload['note']}</em></p>")
+            lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
         else:
             lines.append(
                 "<table border='1' cellpadding='6'><tr><th>Role</th><th>Work mode</th>"
                 "<th>Score</th><th>Why suggested</th><th>Link</th></tr>"
             )
             for r in payload["rows"]:
+                # SECURITY: every interpolated cell is untrusted scraped data
+                # (title/company/rationale/work-mode/url) so escape it and bound
+                # the href to an http/https allowlist — no stored XSS in the
+                # emailed/rendered digest.
+                summary = html.escape(str(r["summary"] or ""))
+                work_mode = html.escape(str(r["work_mode"] or "-"))
+                score = html.escape(str(r["viability_score"]))
+                why = html.escape(str(r["why_suggested"] or ""))
+                href = _safe_href(r["link"])
                 lines.append(
-                    f"<tr><td>{r['summary']}</td><td>{r['work_mode'] or '-'}</td>"
-                    f"<td>{r['viability_score']}</td><td>{r['why_suggested']}</td>"
-                    f"<td><a href='{r['link']}'>open</a></td></tr>"
+                    f"<tr><td>{summary}</td><td>{work_mode}</td>"
+                    f"<td>{score}</td><td>{why}</td>"
+                    f"<td><a href='{href}'>open</a></td></tr>"
                 )
             lines.append("</table>")
         return {
@@ -152,27 +183,48 @@ class DigestService:
         """
         payload = self.build_digest_payload(campaign_id, criteria)
         email = self.render_email(campaign_id, criteria)
-        handle = None
-        email_sent = False
-        if self._notification_service is not None:
-            handle = self._notification_service.notify_digest_ready(
-                str(campaign_id), count=len(payload["rows"])
-            )
-            # Actually send the rendered email body to the email channel (FR-DIG-2).
-            email_sent = self._notification_service.send_digest_email(
-                subject=email["subject"],
-                html=email["html"],
-                deep_link=f"/digest?campaign={campaign_id}",
-            )
+        # Materialize the durable per-row pending actions BEFORE any external ping
+        # (FR-UI-3): the portal items must survive even if a notifier/email send
+        # raises, so the "ready" ping never points at a digest with no acted-on
+        # rows persisted.
         if self._pending is not None:
             for row in payload["rows"]:
+                # The digest row is a POSTING, not an Application — no application row
+                # exists yet. Store the posting id in the payload and leave
+                # ``application_id=None`` so we never write a posting id into the
+                # ``pending_actions.application_id`` FK (would IntegrityError on
+                # Postgres: no matching ``applications.id``).
                 self._pending.digest_approval(
                     campaign_id,
-                    ApplicationId(str(row["posting_id"])),
-                    f"Review: {row['summary']}",
+                    posting_id=str(row["posting_id"]),
+                    title=f"Review: {row['summary']}",
                     link=row["link"],
                     score=row["viability_score"],
                 )
+        handle = None
+        email_sent = False
+        if self._notification_service is not None:
+            try:
+                handle = self._notification_service.notify_digest_ready(
+                    str(campaign_id), count=len(payload["rows"])
+                )
+                # Actually send the rendered email body to the email channel (FR-DIG-2).
+                # IDEM-1: a per-(campaign, UTC day) dedup key makes the email send
+                # idempotent so a re-driven/duplicate delivery never sends two digest
+                # emails for the same campaign+day.
+                from datetime import UTC, datetime
+
+                dedup_key = (
+                    f"digest_email:{campaign_id}:{datetime.now(UTC).date().isoformat()}"
+                )
+                email_sent = self._notification_service.send_digest_email(
+                    subject=email["subject"],
+                    html=email["html"],
+                    deep_link=f"/digest?campaign={campaign_id}",
+                    dedup_key=dedup_key,
+                )
+            except Exception:  # external send must not break digest delivery
+                log.warning("digest_deliver_notify_failed", exc_info=True)
         return {
             "payload": payload,
             "email": email,
@@ -227,26 +279,47 @@ class DigestService:
 
     # --- close the learning + criteria + idempotency loop -----------------
     def _close_loop(self, decision: Decision) -> None:
-        # Idempotency: acting expires the other channels (FR-NOTIF-3).
+        """Run the post-commit side effects guarded so none can 500 the request.
+
+        The ``Decision`` is already committed by the caller. Notifier idempotency,
+        pending-action resolution, and learning/criteria are best-effort: a
+        downstream failure must NOT leave the loop half-closed or surface a 500
+        (mirrors SubmissionService's "learning must never break the action"). Each
+        independent side effect is isolated so one failure can't skip the others.
+        """
         campaign_id = self._campaign_for_decision(decision.application_id)
+        # Idempotency: acting expires the other channels (FR-NOTIF-3).
         if self._notification_service is not None:
-            self._notification_service.acted(str(decision.application_id))
-            # Acting on any digest item also expires the campaign's digest-ready
-            # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
-            if campaign_id is not None:
-                self._notification_service.acted_digest(str(campaign_id))
+            try:
+                self._notification_service.acted(str(decision.application_id))
+                # Acting on any digest item also expires the campaign's digest-ready
+                # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
+                if campaign_id is not None:
+                    self._notification_service.acted_digest(str(campaign_id))
+            except Exception:  # pragma: no cover - defensive; notifier must not 500
+                log.warning("digest_close_loop_notify_failed", exc_info=True)
         # Resolve the digest-approval pending item (FR-UI-3). The digest row id the
         # user acts on is the POSTING id (the same id ``deliver`` keys the pending
         # action on), not an application row — so resolve by the decision id end-to-end
         # and find the campaign via the posting (it has no applications row yet).
         if self._pending is not None and campaign_id is not None:
-            self._pending.resolve_by_dedup(
-                campaign_id, f"digest_approval:{decision.application_id}"
-            )
-        if decision.type is DecisionType.APPROVE:
-            self._record_approval_yield(decision)
-        if decision.type is DecisionType.DECLINE:
-            self._learn_from_decline(decision)
+            try:
+                self._pending.resolve_by_dedup(
+                    campaign_id, f"digest_approval:{decision.application_id}"
+                )
+            except Exception:  # pragma: no cover - defensive
+                log.warning("digest_close_loop_pending_failed", exc_info=True)
+        try:
+            if decision.type is DecisionType.APPROVE:
+                self._record_approval_yield(decision)
+                # FR-LEARN-2: fold the approved posting's features as a POSITIVE taste
+                # decision so feature_stats accrues ``...:approve`` buckets, not just
+                # the source-yield approvals leg + decline buckets.
+                self._learn_from_approval(decision)
+            if decision.type is DecisionType.DECLINE:
+                self._learn_from_decline(decision)
+        except Exception:  # learning must never break the recorded decision
+            log.warning("digest_close_loop_learning_failed", exc_info=True)
 
     def _record_approval_yield(self, decision: Decision) -> None:
         """Record the APPROVALS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6).
@@ -259,6 +332,62 @@ class DigestService:
         source_key, campaign_id = self._source_for_decision(decision.application_id)
         if source_key and campaign_id is not None:
             self._learning.record_source_event(campaign_id, source_key, "approvals")
+
+    def _learn_from_approval(self, decision: Decision) -> None:
+        """Fold the approved posting's features as a POSITIVE taste decision (FR-LEARN-2).
+
+        Mirrors how a decline folds a NEGATIVE taste signal, but ``approved=True`` so
+        per-feature ``...:approve`` buckets accrue for the flavor of role the user keeps
+        approving. Routed through the per-campaign-locked atomic fold (Batch F) so this
+        load->fold->persist can't lose-update against a concurrent funnel/decline fold.
+        """
+        if self._learning is None:
+            return
+        posting, campaign_id = self._posting_for_decision(decision.application_id)
+        if posting is None or campaign_id is None:
+            return
+        features = self._posting_features(posting)
+        if not features:
+            return
+        atomic = getattr(self._learning, "fold_decision_atomic", None)
+        if atomic is not None:
+            atomic(campaign_id, approved=True, features=features)
+        else:  # pragma: no cover - all wired learning services expose the atomic API
+            model = self._learning.load_model(campaign_id)
+            model = self._learning.record_decision(model, approved=True, features=features)
+            self._learning.persist_model(model)
+
+    @staticmethod
+    def _posting_features(posting) -> dict:
+        """Cheap, deterministic taste features for an approved posting (FR-LEARN-2/7)."""
+        features: dict[str, str] = {}
+        title = (getattr(posting, "title", None) or "").strip().lower()
+        if title:
+            features[f"role:{title}"] = title
+        work_mode = (getattr(posting, "work_mode", None) or "").strip().lower()
+        if work_mode:
+            features[f"work_mode:{work_mode}"] = work_mode
+        source_key = (getattr(posting, "source_key", None) or "").strip().lower()
+        if source_key:
+            features[f"source:{source_key}"] = source_key
+        return features
+
+    def _posting_for_decision(self, decision_id: ApplicationId):
+        """Resolve (posting, campaign_id) for a digest/application decision id."""
+        from applicant.core.ids import JobPostingId
+
+        app = self._storage.applications.get(decision_id)
+        if app is not None and app.posting_id is not None:
+            posting = self._storage.postings.get(app.posting_id)
+            if posting is not None:
+                return posting, posting.campaign_id
+        try:
+            posting = self._storage.postings.get(JobPostingId(str(decision_id)))
+        except Exception:
+            posting = None
+        if posting is not None:
+            return posting, posting.campaign_id
+        return None, None
 
     def _source_for_decision(self, decision_id: ApplicationId):
         """Resolve (source_key, campaign_id) for a digest/application decision id."""
@@ -282,14 +411,25 @@ class DigestService:
         if campaign_id is None:
             return
         # Fold the feedback into the learning model (FR-DIG-5, FR-LEARN-3).
+        # CONC-4: route through the per-campaign-locked atomic fold so this
+        # load->fold->persist of the shared learning_state can't lose-update against a
+        # concurrent funnel record (approval/submission/match) for the same campaign.
         if self._learning is not None:
-            model = self._learning.load_model(campaign_id)
-            model = self._learning.ingest_decline_feedback(
-                model,
-                feedback_text=decision.feedback_text,
-                criteria_delta=decision.criteria_delta,
-            )
-            self._learning.persist_model(model)
+            atomic = getattr(self._learning, "ingest_decline_atomic", None)
+            if atomic is not None:
+                atomic(
+                    campaign_id,
+                    feedback_text=decision.feedback_text,
+                    criteria_delta=decision.criteria_delta,
+                )
+            else:  # pragma: no cover - all wired learning services expose the atomic API
+                model = self._learning.load_model(campaign_id)
+                model = self._learning.ingest_decline_feedback(
+                    model,
+                    feedback_text=decision.feedback_text,
+                    criteria_delta=decision.criteria_delta,
+                )
+                self._learning.persist_model(model)
         # Bias the NEXT run's criteria from the structured delta (FR-DIG-5, FR-CRIT-3).
         if self._criteria is not None and decision.criteria_delta:
             self._criteria.apply_learned_adjustment(

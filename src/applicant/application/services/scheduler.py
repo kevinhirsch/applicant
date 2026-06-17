@@ -39,61 +39,109 @@ class Scheduler:
         digest_service=None,
         notification_service=None,
         final_approval_service=None,
+        tick_services_factory=None,
+        setup_service=None,
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
         self._digest = digest_service
         self._notifications = notification_service
         self._final_approval = final_approval_service
-        # (campaign_id, UTC date) -> True once the dedicated daily digest was sent.
+        # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. Each per-campaign loop tick
+        # consults this and starts NO new work (discovery/digest/pipeline) while the
+        # gate is closed — only in-flight recovery re-drive proceeds. The scheduler
+        # holds the gate too so a tick is a fast no-op for new work before onboarding +
+        # channels + LLM are satisfied; the escalation ladder still advances (it only
+        # escalates already-emitted notifications, not new work).
+        self._setup = setup_service
+        # CONC-2: when set, called ONCE per tick to build a fresh, isolated
+        # storage/session + storage-bound services so the 24/7 scheduler thread never
+        # shares the request-scoped (non-thread-safe) SQLAlchemy Session. Returns a
+        # dict with at least ``storage``/``agent_loop`` and an optional ``_session`` to
+        # close after the tick. When None (in-memory / no DB), the shared singletons are
+        # used (no Session to isolate).
+        self._tick_services_factory = tick_services_factory
+        # (campaign_id, UTC date) -> True. Retained for compatibility / introspection;
+        # the loop now owns digest delivery (IDEM-1). CONC-3 prunes stale days.
         self._daily_sent: dict[tuple[str, date], bool] = {}
+        # The per-day dedup pruning guard (CONC-3) drains old days.
+        self._last_pruned_date: date | None = None
 
     def tick(self, now: datetime | None = None) -> dict:
-        """Advance every active campaign + daily digest + the escalation ladder."""
+        """Advance every active campaign + daily digest + the escalation ladder.
+
+        CONC-2: storage-bound work runs against a per-tick session when a factory is
+        configured; the ladder advance (no storage) always uses the shared notifier.
+        """
         now = now or datetime.now(UTC)
+        # CONC-3: prune stale per-day dedup entries so the maps don't grow unbounded
+        # over 24/7 operation.
+        self._prune_daily_sent(now)
+
+        services = self._tick_services_factory() if self._tick_services_factory else None
+        loop = services["agent_loop"] if services else self._loop
+        storage = services["storage"] if services else self._storage
+        session = services.get("_session") if services else None
+
         ticked: list[str] = []
-        digests_delivered: list[str] = []
+        try:
+            for campaign in self._active_campaigns(storage):
+                # (a) advance the per-campaign run loop one step. IDEM-1: the loop
+                # itself delivers the daily digest at most once per (campaign, UTC day)
+                # via its own ``_digest_sent`` guard, so the scheduler no longer
+                # ALSO delivers it (that double-delivered the digest email + ready ping).
+                try:
+                    loop.tick(campaign.id, now)
+                    ticked.append(str(campaign.id))
+                except Exception as exc:  # pragma: no cover - defensive
+                    log.warning(
+                        "campaign_tick_failed", campaign_id=str(campaign.id), error=str(exc)
+                    )
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
-        for campaign in self._active_campaigns():
-            # (a) advance the per-campaign run loop one step.
-            try:
-                self._loop.tick(campaign.id, now)
-                ticked.append(str(campaign.id))
-            except Exception as exc:  # pragma: no cover - defensive
-                log.warning("campaign_tick_failed", campaign_id=str(campaign.id), error=str(exc))
-            # (b) ensure the DAILY digest is delivered once per UTC day (FR-DIG-1).
-            if self._deliver_daily_digest(campaign.id, now):
-                digests_delivered.append(str(campaign.id))
-
-        # (c) advance the notification escalation ladder (FR-NOTIF-2).
+        # (c) advance the notification escalation ladder (FR-NOTIF-2). The ladder is
+        # in the (shared) notifier, not the DB, so it uses the shared service.
         fired = self._advance_ladders(now)
 
         log.info(
             "scheduler_tick",
             campaigns=len(ticked),
-            daily_digests=len(digests_delivered),
             ladder_fired=len(fired),
         )
         return {
             "ticked": ticked,
-            "daily_digests": digests_delivered,
+            # Retained for compatibility: digest delivery now happens inside the loop
+            # tick (IDEM-1), so the scheduler reports none of its own.
+            "daily_digests": [],
             "ladder_fired": fired,
         }
 
-    # --- daily digest guard (FR-DIG-1) ------------------------------------
-    def _deliver_daily_digest(self, campaign_id, now: datetime) -> bool:
-        if self._digest is None:
-            return False
-        key = (str(campaign_id), now.date())
-        if self._daily_sent.get(key):
-            return False
-        try:
-            self._digest.deliver(campaign_id)
-            self._daily_sent[key] = True
+    def _automated_work_allowed(self) -> bool:
+        """True when automated work may begin (FR-ONBOARD-2/FR-OOBE-3).
+
+        Treated as open when no ``setup_service`` is wired (legacy/unit tests).
+        """
+        if self._setup is None:
             return True
-        except Exception as exc:  # pragma: no cover - defensive
-            log.warning("daily_digest_failed", campaign_id=str(campaign_id), error=str(exc))
+        try:
+            return bool(self._setup.is_automated_work_allowed())
+        except Exception:  # pragma: no cover - defensive: gate failure closes the gate
             return False
+
+    def _prune_daily_sent(self, now: datetime) -> None:
+        """CONC-3: drop daily-digest dedup entries from days other than today."""
+        today = now.date()
+        if self._last_pruned_date == today:
+            return
+        self._daily_sent = {
+            key: v for key, v in self._daily_sent.items() if key[1] == today
+        }
+        self._last_pruned_date = today
 
     # --- escalation ladder (FR-NOTIF-2) -----------------------------------
     def _advance_ladders(self, now: datetime) -> list[str]:
@@ -109,5 +157,6 @@ class Scheduler:
             fired.extend(self._final_approval.escalate(now))
         return fired
 
-    def _active_campaigns(self):
-        return [c for c in self._storage.campaigns.list() if getattr(c, "active", True)]
+    def _active_campaigns(self, storage=None):
+        store = storage or self._storage
+        return [c for c in store.campaigns.list() if getattr(c, "active", True)]
