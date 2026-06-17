@@ -102,6 +102,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
+    "/api/applicant/research",  # manual deep-research trigger (engine-backed; can be multi-minute)
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
     "/api/model-endpoints", # /probe sub-route also iterates models
@@ -744,6 +745,13 @@ app.include_router(setup_applicant_admin_routes())
 from routes.applicant_ops_routes import setup_applicant_ops_routes
 app.include_router(setup_applicant_ops_routes())
 # end CRIT-ops
+
+# Manual deep-research trigger — owner-scoped proxy over the engine's manual
+# research run + budget (/api/applicant/research/*). The agent auto-escalates to
+# research already; this gives the user a front-door "Research this" affordance
+# (wired from the Daily updates row in static/js/emailLibrary/applicantDigest.js).
+from routes.applicant_research_routes import setup_applicant_research_routes
+app.include_router(setup_applicant_research_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
