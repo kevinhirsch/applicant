@@ -24,6 +24,9 @@ COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
 ENV_FILE="${REPO_ROOT}/.env"
 BACKUP_DIR="${APPLICANT_BACKUP_DIR:-${REPO_ROOT}/.backups}"
 
+# Append-only, line-based build output (no redraw frames) so update logs stay readable.
+export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
+
 # Load persisted DB credentials so backup/migrate/restart authenticate with the
 # SAME password Postgres baked into its data volume at first install. Without this
 # the migration step fails ("password authentication failed"). Explicit env wins.

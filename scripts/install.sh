@@ -29,6 +29,10 @@ COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
 ENV_FILE="${REPO_ROOT}/.env"
 APPLY=0
 
+# Append-only, line-based build output (no redraw frames) so the cloud-init log
+# and any `tail`/`tail -f` of it stays readable instead of dumping progress frames.
+export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
+
 # --- Persisted settings: load any saved .env FIRST so re-runs and updates reuse
 # the SAME database password. Postgres bakes its password into the data volume on
 # first init; if a later run fell back to a different default the app could no

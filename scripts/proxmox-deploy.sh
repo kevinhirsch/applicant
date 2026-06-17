@@ -104,9 +104,23 @@ if [[ "$MODE" == "advanced" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Root password (preset) + SSH key auto-import (FR-INSTALL-1)
+# Root password (operator-set) + SSH key auto-import
 # ---------------------------------------------------------------------------
-VM_PASS="$(openssl rand -base64 18)"
+# Prompt the operator to SET the VM root password (console + SSH login). Leaving
+# it blank generates a strong random one. Confirm on entry to avoid typos.
+VM_PASS=""; VM_PASS_SOURCE="set"
+while true; do
+  VM_PASS="$(whiptail --title "Root password" --passwordbox \
+    "Set the root password for VM ${VMID} (console + SSH login).\n\nLeave blank to generate a strong random password." \
+    11 70 3>&1 1>&2 2>&3)" || die "Cancelled."
+  if [[ -z "$VM_PASS" ]]; then
+    VM_PASS="$(openssl rand -base64 18)"; VM_PASS_SOURCE="generated"; break
+  fi
+  VM_PASS2="$(whiptail --title "Root password" --passwordbox "Confirm the root password:" 9 70 3>&1 1>&2 2>&3)" || die "Cancelled."
+  [[ "$VM_PASS" == "$VM_PASS2" ]] && break
+  whiptail --title "Root password" --msgbox "Passwords did not match — please try again." 8 60
+done
+
 DB_PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
 
 SSHKEYS_FILE=""
@@ -125,7 +139,7 @@ whiptail --title "Confirm" --yesno \
 "Create VM ${VMID} (${NAME})
   cores=${CORES}  ram=${RAM}MB  disk=${DISK}G
   disk-storage=${IMG_STORE}  bridge=${BRIDGE}  ip=dhcp
-  root password: preset (shown at the end)
+  root password: $([[ "$VM_PASS_SOURCE" == "set" ]] && echo "the one you entered" || echo "generated (shown at the end)")
   SSH keys: $([[ -n "$SSHKEYS_FILE" ]] && echo "auto-imported" || echo "none")
 and deploy ${APP_NAME} from ${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}?" 14 72 || die "Cancelled."
 
@@ -213,7 +227,7 @@ cat <<EOF
 $([[ -n "$IP" ]] && msg_ok "${APP_NAME} VM is up." || msg_info "VM created; still provisioning.")
 
   ${GN}VM:${CL}            ${VMID} (${NAME})
-  ${GN}Root password:${CL} ${VM_PASS}
+  ${GN}Root password:${CL} $([[ "$VM_PASS_SOURCE" == "set" ]] && echo "(the password you set)" || echo "${VM_PASS}")
 EOF
 if [[ -n "$IP" ]]; then
 cat <<EOF
@@ -233,3 +247,31 @@ fi
 echo
 echo "  Update later:  qm guest exec ${VMID} -- bash -lc 'cd /opt/${REPO_NAME} && bash scripts/update.sh --apply'"
 echo
+
+# ---------------------------------------------------------------------------
+# Live-follow first-boot provisioning over SSH (no copy/paste, auto-stops)
+# ---------------------------------------------------------------------------
+# Stream the cloud-init log to THIS terminal in real time until provisioning
+# finishes (cloud-init touches /opt/${REPO_NAME}/.provisioned at the end), then
+# stop on its own. Set NO_FOLLOW=1 to skip. Uses the IP discovered above — no
+# hardcoded address. SSH auth uses the auto-imported key, else the root password
+# you just set.
+if [[ -n "$IP" && "${NO_FOLLOW:-0}" != "1" ]]; then
+  echo "  Following first-boot provisioning live (Ctrl-C to detach; it stops itself when done)…"
+  echo
+  # Wait briefly for sshd to come up on the freshly booted VM.
+  for _ in $(seq 1 30); do
+    ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new \
+        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+        "root@${IP}" true 2>/dev/null && break
+    sleep 3
+  done
+  ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+      "root@${IP}" \
+      "tail -n +1 -F /var/log/cloud-init-output.log & TP=\$!; \
+       until [ -f /opt/${REPO_NAME}/.provisioned ] || grep -q 'Cloud-init.*finished' /var/log/cloud-init-output.log 2>/dev/null; do sleep 2; done; \
+       sleep 2; kill \$TP 2>/dev/null" 2>/dev/null || \
+    echo "  (Could not auto-attach over SSH — run: ssh root@${IP} 'tail -f /var/log/cloud-init-output.log')"
+  echo
+  msg_ok "Provisioning finished. Open http://${IP}:${APP_PORT} and complete setup in the browser."
+fi
