@@ -33,9 +33,18 @@ import { neverDoesList } from './applicantOnboarding.js';
 
 const API = '/api/applicant/portal';
 const BADGE_POLL_MS = 60000;
+// localStorage marker: the newest notification timestamp (ms) the user has
+// already been toasted about, so a backlog on first load doesn't spam and only
+// genuinely-new arrivals pop a toast on later polls.
+const NOTIF_SEEN_KEY = 'applicant_notif_last_toast_ts';
 
 let _modalEl = null;
 let _items = [];
+// Informational notifications (digest ready / submitted / errors) folded into
+// the queue alongside action-required rows. Action-required notifications are
+// NOT folded — they are already represented by the pending-action rows above
+// and clear when their action resolves, so folding them would double-track.
+let _notifs = [];
 let _loading = false;
 let _badgePollIv = null;
 
@@ -78,6 +87,74 @@ function _post(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
   });
+}
+
+// ── Notification center (informational notifications + toasts) ────────────────
+//
+// The engine's in-app notifier captures every notification (the same ones that
+// fan out to Discord/email when configured). We fold the INFORMATIONAL ones
+// (digest ready / submitted / errors — anything that is NOT an open action) into
+// the same queue as dismissible rows, and pop a transient browser toast (reusing
+// ui.js's showToast) when a genuinely-new one arrives. The action-required ones
+// are skipped here because the pending-action rows already represent them and
+// they clear on resolve.
+
+function _notifSeenTs() {
+  try {
+    const v = Number(window.localStorage.getItem(NOTIF_SEEN_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch { return 0; }
+}
+
+function _setNotifSeenTs(ts) {
+  try { window.localStorage.setItem(NOTIF_SEEN_KEY, String(ts || 0)); } catch { /* no-op */ }
+}
+
+function _notifTs(n) {
+  const t = n && n.created_at ? Date.parse(n.created_at) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+// Informational = not an open action (those are the pending-action rows already).
+function _isInformational(n) {
+  return !!n && n.kind !== 'action' && !n.links_action;
+}
+
+// Fire a transient toast for each notification newer than the last-toasted
+// marker, then advance the marker. On the very first load (no marker yet) we
+// seed the marker to the newest item WITHOUT toasting, so a backlog never spams.
+function _toastNew(notifs) {
+  const infos = (notifs || []).filter(_isInformational);
+  const newest = infos.reduce((mx, n) => Math.max(mx, _notifTs(n)), 0);
+  let seen;
+  try { seen = window.localStorage.getItem(NOTIF_SEEN_KEY); } catch { seen = null; }
+  if (seen === null) {
+    // First ever load — settle the backlog into the queue silently.
+    _setNotifSeenTs(newest);
+    return;
+  }
+  const since = _notifSeenTs();
+  const fresh = infos
+    .filter((n) => _notifTs(n) > since)
+    .sort((a, b) => _notifTs(a) - _notifTs(b));
+  // Cap the toast burst so a flurry never floods the corner.
+  for (const n of fresh.slice(-3)) {
+    const label = n.title || n.body || 'New notification';
+    _toast(label);
+    _maybeDesktopNotify(n);
+  }
+  if (newest > since) _setNotifSeenTs(newest);
+}
+
+// Optional desktop notification, mirroring calendar.js/tasks.js: only when the
+// user has already granted permission. Never prompts, never blocks.
+function _maybeDesktopNotify(n) {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const body = (n.body && n.body !== n.title) ? String(n.body).slice(0, 140) : '';
+    // eslint-disable-next-line no-new
+    new Notification(n.title || 'Applicant', body ? { body } : undefined);
+  } catch { /* desktop notifications are best-effort */ }
 }
 
 // ── Action taxonomy ──────────────────────────────────────────────────────────
@@ -384,12 +461,48 @@ function _renderRowInner(item) {
   }
 }
 
+// An informational notification rendered as a dismissible queue row. It mirrors
+// the action-row shell (.admin-card) but the affordance is a single "Dismiss"
+// that calls the seen endpoint, since there is nothing to act on.
+const _NOTIF_KIND_LABEL = {
+  error: 'Heads up',
+  digest: 'Update',
+  info: 'Update',
+};
+
+function _renderNotifRow(n) {
+  const accent = n.kind === 'error' ? 'var(--color-danger,#e06c6c)' : 'var(--border)';
+  const tag = _NOTIF_KIND_LABEL[n.kind] || 'Update';
+  const body = (n.body && n.body !== n.title) ? `<div style="opacity:0.7;font-size:11px;margin-top:2px;word-break:break-word;">${esc(n.body)}</div>` : '';
+  return `
+    <div class="admin-card applicant-portal-notif" data-notif-id="${esc(n.id)}" style="border-left:2px solid ${accent};">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+        <div style="font-size:13px;min-width:0;">
+          <div style="font-weight:600;word-break:break-word;">${esc(n.title || tag)}</div>
+          <div style="opacity:0.55;font-size:11px;margin-top:1px;">${esc(tag)}</div>
+          ${body}
+        </div>
+        <button type="button" class="cal-btn applicant-portal-dismiss" data-notif-id="${esc(n.id)}" title="Dismiss this notification" style="flex-shrink:0;">Dismiss</button>
+      </div>
+    </div>`;
+}
+
+function _infoNotifs() {
+  return (_notifs || []).filter(_isInformational);
+}
+
 function _renderList(body) {
-  if (!_items.length) { _renderEmpty(body); return; }
-  const rows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
-  body.innerHTML = `
-    <div style="font-size:11px;opacity:0.7;margin:2px 2px 2px;">${_items.length} item${_items.length === 1 ? '' : 's'} need your attention</div>
-    ${rows}`;
+  const infos = _infoNotifs();
+  if (!_items.length && !infos.length) { _renderEmpty(body); return; }
+  const actionRows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
+  const notifRows = infos.map((n) => _renderNotifRow(n)).join('');
+  const actionHdr = _items.length
+    ? `<div style="font-size:11px;opacity:0.7;margin:2px 2px 2px;">${_items.length} item${_items.length === 1 ? '' : 's'} need your attention</div>`
+    : '';
+  const notifHdr = infos.length
+    ? `<div style="font-size:11px;opacity:0.7;margin:10px 2px 2px;">Recent updates</div>`
+    : '';
+  body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}`;
   _wireRows(body);
 }
 
@@ -438,8 +551,10 @@ function _removeRow(host, id) {
   const row = host.querySelector(`.applicant-portal-row[data-action-id="${CSS.escape(id)}"]`);
   if (row) row.remove();
   _items = _items.filter((it) => String(it.id) !== String(id));
-  _setBadge(_items.length);
-  if (!host.querySelector('.applicant-portal-row')) _renderEmpty(host);
+  _setBadge(_items.length + _infoNotifs().length);
+  if (!host.querySelector('.applicant-portal-row') && !host.querySelector('.applicant-portal-notif')) {
+    _renderEmpty(host);
+  }
 }
 
 async function _doResolve(id) {
@@ -581,6 +696,34 @@ function _wireRows(host) {
       }
     });
   });
+
+  // Dismiss an informational notification → seen endpoint → drop the row.
+  host.querySelectorAll('.applicant-portal-dismiss').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.notifId;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '…';
+      try {
+        await _post(`${API}/notifications/${encodeURIComponent(id)}/seen`, {});
+        _removeNotifRow(host, id);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not dismiss that');
+      }
+    });
+  });
+}
+
+function _removeNotifRow(host, id) {
+  const row = host.querySelector(`.applicant-portal-notif[data-notif-id="${CSS.escape(id)}"]`);
+  if (row) row.remove();
+  _notifs = _notifs.filter((n) => String(n.id) !== String(id));
+  _setBadge(_items.length + _infoNotifs().length);
+  if (!host.querySelector('.applicant-portal-row') && !host.querySelector('.applicant-portal-notif')) {
+    _renderEmpty(host);
+  }
 }
 
 // ── Count badge ────────────────────────────────────────────────────────────────
@@ -601,14 +744,36 @@ function _setBadge(n) {
   badge.textContent = n > 99 ? '99+' : String(n);
 }
 
+// Fetch the in-app notifications, toast any genuinely-new ones, and keep
+// ``_notifs`` current for the queue. Never throws — a down engine just yields an
+// empty set so the action rows still render. Returns the informational count.
+async function _loadNotifs() {
+  try {
+    const data = await _fetchJSON(`${API}/notifications`);
+    if (data && data.engine_available === false) { _notifs = []; return 0; }
+    _notifs = (data && data.items) || [];
+    _toastNew(_notifs);
+  } catch {
+    _notifs = [];
+  }
+  return _infoNotifs().length;
+}
+
 async function refreshBadge() {
+  // Poll both feeds so new notifications toast and the badge reflects everything
+  // waiting (open actions + undismissed informational notifications), even when
+  // the modal is closed.
+  let pendingCount = 0;
   try {
     const data = await _fetchJSON(`${API}/pending`);
     if (data && data.engine_available === false) { _setBadge(0); return; }
-    _setBadge((data && data.count) || 0);
+    pendingCount = (data && data.count) || 0;
   } catch {
     _setBadge(0);
+    return;
   }
+  const infoCount = await _loadNotifs();
+  _setBadge(pendingCount + infoCount);
 }
 
 // ── Today's digest (home-base embed, C1) ────────────────────────────────────────
@@ -721,7 +886,11 @@ async function _load(showSpinner) {
       return;
     }
     _items = (data && data.items) || [];
-    _setBadge(_items.length);
+    // Fold the informational notifications in alongside the action rows, and
+    // toast any genuinely-new ones. Independent of the pending fetch, so a slow
+    // inbox never blocks the action rows.
+    await _loadNotifs();
+    _setBadge(_items.length + _infoNotifs().length);
     if (body) _renderList(body);
   } catch (e) {
     if (body) _renderOffline(body);

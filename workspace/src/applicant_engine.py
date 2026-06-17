@@ -405,6 +405,16 @@ class ApplicantEngineClient:
     async def resolve_pending_action(self, action_id: str) -> Any:
         return await self._request("POST", f"/api/pending-actions/{action_id}/resolve")
 
+    # -- notification center (in-app inbox) ------------------------------
+
+    async def list_notifications(self) -> Any:
+        return await self._request("GET", "/api/notifications")
+
+    async def dismiss_notification(self, notification_id: str) -> Any:
+        return await self._request(
+            "POST", f"/api/notifications/{notification_id}/seen"
+        )
+
     # -- digest / notifications (Lane D) ---------------------------------
 
     async def digest(self, campaign_id: str) -> Any:

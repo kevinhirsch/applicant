@@ -107,6 +107,16 @@ def get_discovery_service(container: Container = Depends(get_container)):
     return container.discovery_service
 
 
+def get_notification_service(container: Container = Depends(get_container)):
+    """The shared notification service (container singleton).
+
+    Singleton (not per-request) so its in-app inbox + escalation ladder persist
+    across requests — the notification center reads the same live sink the
+    scheduler/agent loop write into.
+    """
+    return container.notification_service
+
+
 def get_storage(
     container: Container = Depends(get_container),
     services: dict | None = Depends(get_request_services),
