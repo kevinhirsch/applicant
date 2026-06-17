@@ -100,12 +100,82 @@ def test_request_final_approval_notifies(client):
 
 
 @pytest.mark.integration
-def test_submit_self_logs_and_records(client):
+def test_submit_self_delivers_decision_through_gate(client):
+    """#1: submit-self delivers the decision THROUGH the durable final-approval gate.
+
+    The endpoint no longer records the outcome out-of-band; it ``send``s the decision
+    to the workflow's ``recv`` gate so the parked pipeline runs submit/teardown. We
+    prove the decision landed in the workflow mailbox and the ladder was expired.
+    """
     from tests.conftest import open_automated_work_gate
 
     open_automated_work_gate(client)
+    container = client.app.state.container
     aid = new_id()
     r = client.post(f"/api/remote/applications/{aid}/submit-self")
     assert r.status_code == 201 and r.json()["result"] == "submitted_by_user"
-    log = client.get(f"/api/outcomes/applications/{aid}/log").json()
-    assert log["status"] == "SUBMITTED_BY_USER"
+    assert r.json()["gate"] == "delivered"
+    # The decision was delivered to the durable gate (the pipeline's recv unblocks).
+    decision = container.orchestrator.recv(
+        f"application:{aid}", "final_approval", timeout=0.0
+    )
+    assert decision == {"decision": "submitted_by_user"}
+
+
+# === #4: resume the human account step via a real endpoint ==================
+@pytest.mark.integration
+def test_resume_account_step_endpoint(client):
+    """#4: an app parked at AWAITING_ACCOUNT_HUMAN_STEP is resumed via a real
+    endpoint (resume_after_account), continuing the LIVE session rather than orphaning
+    it / full-restarting."""
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
+    from applicant.core.ids import new_id as nid
+    from applicant.core.state_machine import ApplicationState
+    from tests.conftest import open_automated_work_gate
+
+    open_automated_work_gate(client)
+    container = client.app.state.container
+    storage = container.storage
+    cid = CampaignId(nid())
+    aid = ApplicationId(nid())
+    url = "https://acme.myworkdayjobs.com/job/1"
+    storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=cid,
+            posting_id=JobPostingId(nid()),
+            status=ApplicationState.APPROVED,
+            root_url=url,
+        )
+    )
+    storage.commit()
+    # Drive pre-fill to the account-creation hand-off (leaves the live session open).
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId
+
+    def _a(name, value):
+        return Attribute(id=AttributeId(nid()), campaign_id=cid, name=name, value=value)
+
+    attrs = [
+        _a("Email Address", "kevin@kevinhirsch.com"),
+        _a("Password", "S3cretP@ss"),
+        _a("Verify Password", "S3cretP@ss"),
+        _a("First Name", "Kevin"),
+        _a("Last Name", "Hirsch"),
+        _a("Phone", "555-0100"),
+    ]
+    app = storage.applications.get(aid)
+    # PrefillService persists where it landed itself; just verify the parked state.
+    container.prefill_service.prefill_application(app, url, attrs)
+    assert storage.applications.get(aid).status is ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
+    r = client.post(f"/api/remote/applications/{aid}/resume-account-step")
+    assert r.status_code == 200
+    # The app progressed past the account step (it is no longer awaiting it).
+    refreshed = storage.applications.get(aid)
+    assert refreshed.status is not ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
+    # Resuming an app NOT at the account step is a 409.
+    r2 = client.post(f"/api/remote/applications/{aid}/resume-account-step")
+    assert r2.status_code == 409

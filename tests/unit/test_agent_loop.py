@@ -420,3 +420,429 @@ def test_recovery_redrive_records_real_outcome(tmp_path):
     # The recovered workflow completed through the REAL submission service.
     assert outcome["status"] == "done"
     assert str(app.id) in submission.recorded
+
+
+# --- Fix #1: final-approval decision reaches the durable recv gate ---------
+@pytest.mark.unit
+def test_decision_through_gate_completes_pipeline_once(tmp_path):
+    """#1: delivering the decision THROUGH FinalApprovalService.submit_decision drives
+    the parked pipeline to completion — submit + teardown run, capacity is released,
+    and exactly ONE OutcomeEvent is recorded (no double-recording)."""
+    from applicant.application.services.final_approval_service import FinalApprovalService
+    from applicant.application.services.submission_service import SubmissionService
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+    from applicant.core.state_machine import ApplicationState
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+
+    # A prefill that lands the app at AWAITING_FINAL_APPROVAL (the gate), persisted so
+    # the REAL SubmissionService can transition it terminally.
+    class _PersistPrefill:
+        def prefill_application(self, application, url, attributes=None, *, cautious=True):
+            persisted = storage.applications.get(application.id) or application
+            updated = Application(
+                id=persisted.id,
+                campaign_id=persisted.campaign_id,
+                posting_id=persisted.posting_id,
+                status=ApplicationState.AWAITING_FINAL_APPROVAL,
+                job_title=persisted.job_title,
+                work_mode=persisted.work_mode,
+                root_url=persisted.root_url,
+            )
+            storage.applications.update(updated)
+            storage.commit()
+            return _PrefillResult(ApplicationState.AWAITING_FINAL_APPROVAL)
+
+    submission = SubmissionService(storage)
+    capacity = CapacityService(orch, sandbox_concurrency=2)
+    fa = FinalApprovalService(orch)
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        prefill_service=_PersistPrefill(),
+        submission_service=submission,
+        capacity_service=capacity,
+        final_approval_service=fa,
+        orchestrator=orch,
+    )
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)
+    app = storage.applications.list_for_campaign(cid)[0]
+    aid = app.id
+    # Pipeline parked at the recv gate (no outcome yet).
+    assert storage.outcomes.list_for_application(aid) == []
+
+    # Deliver the decision THROUGH the gate (what the remote endpoint now does).
+    fa.submit_decision(f"application:{aid}", str(aid), "finished_by_engine")
+
+    # Next tick: _resume_in_flight re-drives the workflow; the recv unblocks and the
+    # pipeline runs submit + teardown.
+    loop.run_once(cid, now=now)
+
+    refreshed = storage.applications.get(aid)
+    assert refreshed.status is ApplicationState.FINISHED_BY_ENGINE
+    events = storage.outcomes.list_for_application(aid)
+    assert len(events) == 1  # exactly one OutcomeEvent (submit ran once, no dup)
+    # Capacity was released (teardown ran): a fresh app can be admitted.
+    assert capacity.admit_sandbox(ApplicationId(new_id())) is True
+
+
+# --- Fix #2: conversion learning folds on the submission service path ------
+@pytest.mark.unit
+def test_record_submission_folds_conversion_learning():
+    """#2: SubmissionService.record_submission folds the converting-role signature so
+    EVERY submit path (incl. remote) updates learning, not only the outcomes router."""
+    from applicant.adapters.embedding.local_embedding import LocalEmbedding
+    from applicant.application.services.learning_advanced import AdvancedLearningService
+    from applicant.application.services.learning_service import LearningService
+    from applicant.application.services.submission_service import SubmissionService
+    from applicant.core.entities.application import Application
+    from applicant.core.entities.outcome_event import OutcomeSource
+    from applicant.core.ids import ApplicationId
+    from applicant.core.state_machine import ApplicationState
+
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid, title="Staff Engineer")
+    learning = LearningService(storage, LocalEmbedding())
+    advanced = AdvancedLearningService(base=learning, storage=storage)
+    sub = SubmissionService(storage, learning=learning, advanced_learning=advanced)
+
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=pid,
+        status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        job_title="Staff Engineer",
+        work_mode="remote",
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    before = learning.load_model(cid)
+    assert before.converting_samples == 0
+
+    sub.record_submission(app, source=OutcomeSource.AUTO)
+
+    after = learning.load_model(cid)
+    assert after.converting_samples == 1
+    assert after.converting_role_signature  # a converting-role signature was folded
+
+
+# === Scale-in: per-tick scoring, N+1 elimination, retention (#8/#9/#10/#11) ==
+class _CountingScoring(_FakeScoring):
+    """Tracks score_viability calls so we can prove only the unscored backlog is scored."""
+
+    def __init__(self):
+        self.scored: list = []
+
+    def score_viability(self, pid, criteria=None):
+        self.scored.append(str(pid))
+        return None
+
+    @property
+    def threshold(self):
+        return 70
+
+
+@pytest.mark.unit
+def test_only_unscored_postings_are_scored_each_tick(tmp_path):
+    """#8: the loop scores only postings.list_unscored_for_campaign, not the whole
+    history every tick (proven by extending the fake with the indexed method)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    # Two postings: one already scored (viability_score set), one fresh.
+    p_scored = JobPostingId(new_id())
+    p_fresh = JobPostingId(new_id())
+    storage.postings.add(
+        JobPosting(id=p_scored, campaign_id=cid, title="Scored", company="A",
+                   source_url="u", viability_score=0.9)
+    )
+    storage.postings.add(
+        JobPosting(id=p_fresh, campaign_id=cid, title="Fresh", company="A", source_url="u")
+    )
+
+    # Extend the in-memory repo with the parallel-lane indexed method (test-only).
+    def _list_unscored(campaign_id):
+        return [
+            p for p in storage.postings.list_for_campaign(campaign_id)
+            if getattr(p, "viability_score", None) is None
+        ]
+    storage.postings.list_unscored_for_campaign = _list_unscored
+
+    scoring = _CountingScoring()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=scoring,
+        digest_service=_FakeDigest(),
+        prefill_service=_FakePrefill(),
+        orchestrator=orch,
+    )
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    # ONLY the fresh (unscored) posting was scored this tick.
+    assert scoring.scored == [str(p_fresh)]
+
+
+@pytest.mark.unit
+def test_resume_in_flight_backs_off_human_gated_app(tmp_path):
+    """#9: a human-gated app is not re-driven every tick — the per-app backoff skips
+    a re-drive until the backoff window elapses."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+    prefill = _FakePrefill(state=ApplicationState.BLOCKED_QUESTION)
+    loop = _loop(storage, orch, prefill=prefill)
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)  # starts pipeline -> BLOCKED_QUESTION (handoff)
+    app = storage.applications.list_for_campaign(cid)[0]
+
+    # Count start_workflow invocations on the (now blocked) app across resume ticks.
+    starts = {"n": 0}
+    real_start = orch.start_workflow
+
+    def _counting_start(name, wf_id, **kw):
+        if wf_id == f"application:{app.id}":
+            starts["n"] += 1
+        return real_start(name, wf_id, **kw)
+    orch.start_workflow = _counting_start
+
+    # Two ticks 60s apart: within the 300s backoff -> at most ONE re-drive, not two.
+    loop.run_once(cid, now=now + timedelta(seconds=60))
+    first = starts["n"]
+    loop.run_once(cid, now=now + timedelta(seconds=120))
+    assert starts["n"] == first  # backoff suppressed the second re-drive
+
+    # After the backoff window, the app is re-driven again.
+    loop.run_once(cid, now=now + timedelta(seconds=600))
+    assert starts["n"] == first + 1
+
+
+@pytest.mark.unit
+def test_approved_postings_use_indexed_decision_lookup(tmp_path):
+    """#10: the loop uses DecisionRepository.list_approved_postings_for_campaign +
+    ApplicationRepository.get_by_posting instead of the per-posting N+1 scan."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid)
+
+    calls = {"approved": 0, "get_by_posting": 0}
+
+    def _list_approved(campaign_id):
+        calls["approved"] += 1
+        return [pid]
+    storage.decisions.list_approved_postings_for_campaign = _list_approved
+
+    def _get_by_posting(campaign_id, posting_id):
+        calls["get_by_posting"] += 1
+        for a in storage.applications.list_for_campaign(campaign_id):
+            if str(a.posting_id) == str(posting_id):
+                return a
+        return None
+    storage.applications.get_by_posting = _get_by_posting
+
+    loop = _loop(storage, orch, prefill=_FakePrefill())
+    result = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert calls["approved"] >= 1  # indexed approved-postings lookup was used
+    assert calls["get_by_posting"] >= 1  # indexed app-by-posting lookup was used
+    assert len(result.pipelines_started) == 1
+
+
+@pytest.mark.unit
+def test_acted_today_uses_count_pipelines_started_on(tmp_path):
+    """#11: the throughput ledger uses count_pipelines_started_on, not a full
+    agent_runs scan."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+
+    calls = {"n": 0}
+
+    def _count(campaign_id, day):
+        calls["n"] += 1
+        return 7
+    storage.agent_runs.count_pipelines_started_on = _count
+
+    loop = _loop(storage, orch, prefill=_FakePrefill())
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    assert loop.acted_today(cid, now) == 7
+    assert calls["n"] >= 1
+
+
+# === #3: the loop generates material and routes it to review ================
+@pytest.mark.unit
+def test_loop_generates_material_routed_to_review(tmp_path):
+    """#3: running the loop to an approved posting GENERATES material (a resume
+    variant) and routes it to review (MATERIAL_REVIEW handoff), instead of the old
+    no-op that always returned review_approved=False with nothing generated."""
+    from applicant.adapters.embedding.local_embedding import LocalEmbedding
+    from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
+    from applicant.application.services.material_service import MaterialService
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid, title="Python Engineer")
+
+    material = MaterialService(
+        storage, llm=None, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        prefill_service=_FakePrefill(),  # lands AWAITING_FINAL_APPROVAL (non-handoff)
+        material_service=material,
+        orchestrator=orch,
+    )
+    result = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+
+    app = storage.applications.list_for_campaign(cid)[0]
+    # Material routed to review -> the pipeline handed off at MATERIAL_REVIEW.
+    assert str(app.id) in result.handoffs
+    # A resume variant was generated for the campaign (unapproved, awaiting review).
+    variants = storage.resume_variants.list_for_campaign(cid)
+    assert variants and any(v.approved is False for v in variants)
+
+
+# === #4: blocked-state resumption chooses the right resume_after_* ===========
+class _ResumeSpyPrefill:
+    """Records which pre-fill entry point the loop chose for the app's §7 state."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def prefill_application(self, application, url, attributes=None, *, cautious=True):
+        self.calls.append("prefill_application")
+        return _PrefillResult(ApplicationState.AWAITING_FINAL_APPROVAL)
+
+    def resume_after_account(self, application, attributes=None, *, cautious=True):
+        self.calls.append("resume_after_account")
+        return _PrefillResult(ApplicationState.AWAITING_FINAL_APPROVAL)
+
+    def resume_after_missing_attr(self, application, attributes, *, cautious=True):
+        self.calls.append("resume_after_missing_attr")
+        return _PrefillResult(ApplicationState.AWAITING_FINAL_APPROVAL)
+
+
+@pytest.mark.unit
+def test_loop_resumes_account_step_not_full_restart(tmp_path):
+    """#4: an app parked at AWAITING_ACCOUNT_HUMAN_STEP is RESUMED via
+    resume_after_account on re-drive, not restarted with prefill_application."""
+
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid)
+    # Persist an app already parked at the account-human-step.
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=pid,
+        status=ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP,
+        root_url="http://x",
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    spy = _ResumeSpyPrefill()
+    submission = _FakeSubmission()
+    loop = _loop(storage, orch, prefill=spy, submission=submission)
+    # Drive the in-flight (blocked) app: _resume_in_flight rebuilds the context and the
+    # pipeline's prefill step picks the right resume entry point.
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert "resume_after_account" in spy.calls
+    assert "prefill_application" not in spy.calls
+
+
+@pytest.mark.unit
+def test_loop_resumes_missing_attr_not_full_restart(tmp_path):
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid)
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=pid,
+        status=ApplicationState.BLOCKED_MISSING_ATTR,
+        root_url="http://x",
+    )
+    storage.applications.add(app)
+    storage.commit()
+
+    spy = _ResumeSpyPrefill()
+    loop = _loop(storage, orch, prefill=spy, submission=_FakeSubmission())
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert "resume_after_missing_attr" in spy.calls
+    assert "prefill_application" not in spy.calls
+
+
+# === #6: the loop passes campaign criteria to discovery + scoring ===========
+@pytest.mark.unit
+def test_loop_passes_criteria_to_discovery_and_scoring(tmp_path):
+    """#6: discovery + scoring receive the campaign's criteria (from get_criteria),
+    not empty defaults."""
+    from applicant.core.entities.search_criteria import SearchCriteria
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    pid = JobPostingId(new_id())
+    storage.postings.add(
+        JobPosting(id=pid, campaign_id=cid, title="Fresh", company="A", source_url="u")
+    )
+
+    the_criteria = SearchCriteria(campaign_id=cid, titles=("Staff Engineer",))
+
+    class _CritSvc:
+        def get_criteria(self, campaign_id):
+            return the_criteria
+
+    seen = {"discovery": None, "scoring": None}
+
+    class _DiscoverySpy:
+        def run_discovery(self, campaign_id, criteria=None):
+            seen["discovery"] = criteria
+            return []
+
+    class _ScoringSpy(_FakeScoring):
+        def score_viability(self, pid, criteria=None):
+            seen["scoring"] = criteria
+            return None
+
+        @property
+        def threshold(self):
+            return 70
+
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        discovery_service=_DiscoverySpy(),
+        scoring_service=_ScoringSpy(),
+        digest_service=_FakeDigest(),
+        criteria_service=_CritSvc(),
+        prefill_service=_FakePrefill(),
+        orchestrator=orch,
+    )
+    loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert seen["discovery"] is the_criteria
+    assert seen["scoring"] is the_criteria

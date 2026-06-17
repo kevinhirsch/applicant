@@ -92,12 +92,59 @@ class AgentRunService:
         )
         self._storage.agent_runs.add(run)
         self._storage.commit()
+        self._prune_old_runs(campaign_id)
         return run
 
-    def _next_seq(self, campaign_id: CampaignId) -> int:
-        """Next monotonic seq = 1 + max persisted seq for the campaign (FR-AGENT-7)."""
+    #: Rolling window of agent runs kept per campaign (#11 retention). Older runs are
+    #: pruned so the ``agent_runs`` table does not grow unbounded under 24/7 ticking.
+    RUN_RETENTION = 500
+
+    def _prune_old_runs(self, campaign_id: CampaignId) -> None:
+        """Prune agent runs beyond the rolling retention window (#11).
+
+        Prefers the indexed ``AgentRunRepository.prune_old`` when available; otherwise
+        falls back to fetching + resolving the oldest excess via ``delete`` if the repo
+        exposes one. Best-effort: retention must never break recording a run.
+        """
+        repo = self._storage.agent_runs
+        pruner = getattr(repo, "prune_old", None)
+        if pruner is not None:
+            try:
+                pruner(campaign_id, keep=self.RUN_RETENTION)
+                self._storage.commit()
+            except Exception:  # pragma: no cover - defensive
+                pass
+            return
+        deleter = getattr(repo, "delete", None)
+        if deleter is None:
+            return
         try:
-            runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+            runs = sorted(
+                repo.list_for_campaign(campaign_id),
+                key=lambda r: (r.timestamp, getattr(r, "seq", 0)),
+            )
+            for stale in runs[: max(0, len(runs) - self.RUN_RETENTION)]:
+                deleter(stale.id)
+            self._storage.commit()
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    def _next_seq(self, campaign_id: CampaignId) -> int:
+        """Next monotonic seq = 1 + max persisted seq for the campaign (FR-AGENT-7, #11).
+
+        Prefers the indexed ``AgentRunRepository.max_seq`` (a single MAX query) over
+        loading the campaign's ENTIRE run history every ``start_run``. Falls back to
+        the full scan where the method is not yet present.
+        """
+        repo = self._storage.agent_runs
+        max_seq = getattr(repo, "max_seq", None)
+        if max_seq is not None:
+            try:
+                return int(max_seq(campaign_id) or 0) + 1
+            except Exception:  # pragma: no cover - defensive
+                return 1
+        try:
+            runs = repo.list_for_campaign(campaign_id)
         except Exception:  # pragma: no cover - defensive
             runs = []
         if not runs:
@@ -108,7 +155,20 @@ class AgentRunService:
         return self._storage.agent_runs.list_for_campaign(campaign_id)
 
     def latest_intent(self, campaign_id: CampaignId) -> str | None:
-        runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+        """Most-recent run's intent (FR-AGENT-7, #11).
+
+        Prefers the indexed ``AgentRunRepository.latest`` (single ORDER BY ... LIMIT 1)
+        over scanning every run. Falls back to a scan + (timestamp, seq) tie-break.
+        """
+        repo = self._storage.agent_runs
+        latest = getattr(repo, "latest", None)
+        if latest is not None:
+            try:
+                run = latest(campaign_id)
+            except Exception:  # pragma: no cover - defensive
+                run = None
+            return run.intent_sentence if run is not None else None
+        runs = repo.list_for_campaign(campaign_id)
         if not runs:
             return None
         # FR-AGENT-7: tie-break on monotonic insertion ``seq`` so the truly-latest

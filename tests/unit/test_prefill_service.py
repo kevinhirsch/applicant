@@ -563,3 +563,36 @@ def test_mid_flow_account_creation_triggers_handoff():
 def service_result(app):
     """Build a fresh PrefillResult for a continue-pages call."""
     return PrefillResult(application_id=app.id, state=app.status)
+
+
+# === #7: prefill blocked-state pings use a ref NotificationService can expire =
+@pytest.mark.unit
+def test_resolving_prefill_block_expires_its_ping():
+    """#7: a prefill blocked-state ping uses the consistent ``decision:prefill:...``
+    key so resolving the block via NotificationService.acted expires it. The old
+    un-prefixed ``{app}:{kind}`` key could never be expired by ``acted``."""
+    from applicant.adapters.notification.apprise_notifier import AppriseNotifier
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.prefill_service import ping_dedup_key, ping_ref
+
+    storage = InMemoryStorage()
+    notifier = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
+    service = PrefillService(
+        storage=storage,
+        browser=PatchrightBrowser(),
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=None,
+        notification=notifier,
+    )
+    cid = CampaignId(new_id())
+    app = _app(cid)
+    # Drive to the account-creation hand-off -> emits an account_human_step ping.
+    service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+
+    key = ping_dedup_key(app.id, "account_human_step")
+    assert notifier.is_active(key)  # the blocked-state ping is pending
+
+    # Resolving the block expires the SAME ping via the shared decision: ref.
+    NotificationService(notifier).acted(ping_ref(app.id, "account_human_step"))
+    assert not notifier.is_active(key)

@@ -156,3 +156,41 @@ def test_confirm_conflict_applies_integral_change(svc_and_storage, tmp_path):
     attrs = {a.name: a for a in storage.attributes.list_for_campaign(CampaignId(CID))}
     assert attrs["full_name"].value == "Jane Q Candidate"
     assert attrs["full_name"].is_integral is True
+
+
+# === #6: onboarding intake bridges into the engine ==========================
+@pytest.mark.unit
+def test_campaign_criteria_intake_flows_into_get_criteria(svc_and_storage):
+    """#6: saving the CAMPAIGN_CRITERIA section flows the criteria into the
+    CriteriaService so the loop's get_criteria sees it (not stranded in onboarding)."""
+    from applicant.application.services.criteria_service import CriteriaService
+
+    svc, storage, _store = svc_and_storage
+    criteria = CriteriaService(storage, llm=None)
+    svc.set_criteria_service(criteria)
+
+    svc.save_section(
+        CID,
+        IntakeSection.CAMPAIGN_CRITERIA,
+        {"titles": ["Staff Engineer"], "keywords": ["python"], "salary_floor": "150000"},
+    )
+
+    got = criteria.get_criteria(CampaignId(CID))
+    assert "Staff Engineer" in got.titles
+    assert "python" in got.keywords
+    assert got.salary_floor == 150000
+
+
+@pytest.mark.unit
+def test_typed_intake_section_upserts_attributes(svc_and_storage):
+    """#6: a typed intake section upserts into the attribute cloud."""
+    from applicant.application.services.attribute_cloud_service import AttributeCloudService
+
+    svc, storage, _store = svc_and_storage
+    attrs = AttributeCloudService(storage)
+    svc.set_attribute_cloud_service(attrs)
+
+    svc.save_section(CID, IntakeSection.IDENTITY, {"full_name": "Jane Q"})
+
+    stored = storage.attributes.list_for_campaign(CampaignId(CID))
+    assert any(a.name == "full_name" and a.value == "Jane Q" for a in stored)

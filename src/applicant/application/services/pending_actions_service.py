@@ -40,11 +40,16 @@ class PendingActionsService:
         payload: dict | None = None,
         dedup_key: str | None = None,
     ) -> PendingAction:
-        """Create (or reuse) a pending action. ``dedup_key`` avoids duplicates."""
+        """Create (or reuse) a pending action. ``dedup_key`` avoids duplicates.
+
+        #13: dedup uses ``PendingActionRepository.find_open_by_dedup`` (indexed lookup)
+        when the storage adapter provides it, instead of scanning every open action per
+        materialize. Falls back to the scan where the method is not yet present.
+        """
         if dedup_key is not None:
-            for existing in self._storage.pending_actions.list_open(campaign_id):
-                if (existing.payload or {}).get("dedup_key") == dedup_key:
-                    return existing
+            existing = self._find_open_by_dedup(campaign_id, dedup_key)
+            if existing is not None:
+                return existing
         merged_payload = dict(payload or {})
         if dedup_key is not None:
             merged_payload["dedup_key"] = dedup_key
@@ -110,7 +115,23 @@ class PendingActionsService:
 
     def resolve_by_dedup(self, campaign_id: CampaignId, dedup_key: str) -> None:
         """Resolve a materialized item by its dedup key (idempotency aid)."""
-        for action in self._storage.pending_actions.list_open(campaign_id):
-            if (action.payload or {}).get("dedup_key") == dedup_key:
-                self._storage.pending_actions.resolve(action.id)
+        action = self._find_open_by_dedup(campaign_id, dedup_key)
+        if action is not None:
+            self._storage.pending_actions.resolve(action.id)
         self._storage.commit()
+
+    def _find_open_by_dedup(self, campaign_id: CampaignId, dedup_key: str):
+        """Indexed open-by-dedup lookup (#13) with a scan fallback.
+
+        Prefers the parallel-lane ``PendingActionRepository.find_open_by_dedup`` so
+        dedup is an indexed query, not an O(open) scan per digest row. When the repo
+        does not yet expose it, fall back to scanning the open actions.
+        """
+        repo = self._storage.pending_actions
+        finder = getattr(repo, "find_open_by_dedup", None)
+        if finder is not None:
+            return finder(campaign_id, dedup_key)
+        for action in repo.list_open(campaign_id):
+            if (action.payload or {}).get("dedup_key") == dedup_key:
+                return action
+        return None

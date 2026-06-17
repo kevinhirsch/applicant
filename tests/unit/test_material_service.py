@@ -170,6 +170,53 @@ def test_fabrication_rejected_on_generation(svc):
         svc.assert_no_fabrication("Python and SQL.", "Expert in Kubernetes.")
 
 
+# === #17: LLM-injected fabrication on select_or_generate is gated ==========
+class _FabricatingLLM:
+    """An LLM that injects an unsupported skill into the generated variant body."""
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMResult
+
+        # The model adds a skill the candidate never had (a fabrication).
+        return LLMResult(
+            text="Seasoned expert in Kubernetes and Rust.", tier=1, model="fake"
+        )
+
+
+@pytest.mark.unit
+def test_select_or_generate_rejects_llm_injected_fabrication(storage):
+    """#17: a generated variant whose LLM body claims an unsupported skill raises
+    TruthfulnessViolation (the fabrication gate now runs on generated variant bodies
+    against the candidate's TRUE source, not source-to-self)."""
+    svc = MaterialService(
+        storage, llm=_FabricatingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    # No approved parent clears threshold -> fork + generate via the (fabricating) LLM.
+    with pytest.raises(TruthfulnessViolation):
+        svc.select_or_generate(
+            cid, JobPostingId(new_id()), ["Kubernetes", "Rust"], BASE
+        )
+
+
+@pytest.mark.unit
+def test_reframe_truthfully_reemphasizes_supported_terms_only(svc):
+    """#17: reframe surfaces ONLY JD terms the source supports, never injecting an
+    unsupported one (and it is no longer a verbatim no-op)."""
+    src = "I built Python pipelines and wrote SQL."
+    out = svc.reframe_truthfully(src, ["Python", "Go"])
+    assert out != src  # real reframing, not a verbatim no-op
+    assert out.startswith("Python.")  # supported term re-emphasized up front
+    assert "Python" in out  # supported term surfaced
+    # An unsupported JD term ("Go") is never injected into the reframed text.
+    assert "Go" not in out
+    # And the reframed output never trips the fabrication gate against the true source.
+    svc.assert_no_fabrication(src, out)
+
+
 @pytest.mark.unit
 def test_fabrication_rejected_on_revision_turn(svc, storage):
     cid = CampaignId(new_id())
@@ -266,6 +313,72 @@ def test_cover_letter_review_ready_notifies_and_materializes():
     assert sent and str(doc.id) in (sent[-1].deep_link or "")
     pending = PendingActionsService(storage).list_pending(cid)
     assert any(p.kind == "material_review" for p in pending)
+
+
+@pytest.mark.unit
+def test_review_deep_link_targets_served_review_surface():
+    """#5: the review deep link points at the SERVED /review surface, not the
+    unserved /applicant/review.html default."""
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.pending_actions_service import PendingActionsService
+
+    storage = InMemoryStorage()
+    sent: list = []
+
+    class _Spy:
+        def notify(self, n):
+            sent.append(n)
+            return "h"
+
+        def expire(self, k):
+            pass
+
+    svc = MaterialService(
+        storage,
+        resume_tailoring=LatexTailor(),
+        notifications=NotificationService(_Spy()),
+        pending_actions=PendingActionsService(storage),
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(cid, new_id(), "Built Python pipelines.", ["Python"], role_requires=True)
+    assert sent[-1].deep_link.startswith(f"/review?document_id={doc.id}")
+
+
+@pytest.mark.unit
+def test_approve_resolves_review_action_and_expires_ladder():
+    """#5: approving a generated doc clears its material_review pending action AND
+    expires the escalation ladder (the deep-link ref)."""
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.pending_actions_service import PendingActionsService
+
+    storage = InMemoryStorage()
+    expired: list = []
+
+    class _Spy:
+        def notify(self, n):
+            return "h"
+
+        def expire(self, k):
+            expired.append(k)
+
+    pas = PendingActionsService(storage)
+    svc = MaterialService(
+        storage,
+        resume_tailoring=LatexTailor(),
+        notifications=NotificationService(_Spy()),
+        pending_actions=pas,
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(cid, new_id(), "Built Python pipelines.", ["Python"], role_requires=True)
+    # Before approval: the material_review pending action is open.
+    assert any(p.kind == "material_review" for p in pas.list_pending(cid))
+
+    svc.approve(doc.id)
+
+    # After approval: the pending action is resolved and the ladder ref expired.
+    assert not any(p.kind == "material_review" for p in pas.list_pending(cid))
+    # NotificationService.acted("material_review:{id}") expires "decision:material_review:{id}".
+    assert any(f"material_review:{doc.id}" in k for k in expired)
 
 
 # === screening classification routing (FR-ANSWER-1) =======================

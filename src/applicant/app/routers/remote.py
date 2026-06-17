@@ -19,15 +19,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_automated_work, require_llm_configured
+from applicant.app.deps import get_container, require_llm_configured
+from applicant.application.services.final_approval_service import (
+    DECISION_ENGINE_FINISH,
+    DECISION_SUBMIT_SELF,
+)
 from applicant.core.entities.outcome_event import OutcomeSource
 from applicant.core.errors import PrefillBoundaryViolation, ReviewRequired
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
+from applicant.core.state_machine import ApplicationState
 
 router = APIRouter(
     prefix="/api/remote",
     tags=["remote"],
-    dependencies=[Depends(require_llm_configured), Depends(require_automated_work)],
+    dependencies=[Depends(require_llm_configured)],
 )
 
 
@@ -100,19 +105,57 @@ def request_final_approval(
     return {"application_id": application_id, "notification": handle, "gate": "awaiting"}
 
 
+@router.post("/applications/{application_id}/resume-account-step", status_code=200)
+def resume_account_step(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Resume pre-fill after the user completed the human account-creation step (#4).
+
+    An app parked at AWAITING_ACCOUNT_HUMAN_STEP (the engine never creates accounts,
+    FR-PREFILL-4) is resumed via ``PrefillService.resume_after_account`` so it
+    continues from where it stalled instead of restarting the whole pre-fill. The
+    account-step pending action + its ping are cleared on resume (#7).
+    """
+    app = container.storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
+    if app.status is not ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application is not awaiting the account step (state={app.status.value}).",
+        )
+    attrs = container.storage.attributes.list_for_campaign(app.campaign_id)
+    # PrefillService persists the §7 state it lands at internally; do not re-apply a
+    # transition to the stale ``app`` object here (it would raise on a block state).
+    result = container.prefill_service.resume_after_account(app, attrs)
+    # Clear the account-step ping on resume (#7).
+    try:
+        container.pending_actions_service.resolve_by_dedup(
+            app.campaign_id, f"account_human_step:{application_id}"
+        )
+        container.notification_service.acted(f"prefill:{application_id}:account_human_step")
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return {"application_id": application_id, "state": result.state.value}
+
+
 @router.post("/applications/{application_id}/submit-self", status_code=201)
 def submit_self(application_id: str, container: Container = Depends(get_container)) -> dict:
-    """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4)."""
-    try:
-        event = _record_submission(container, application_id, source=OutcomeSource.MANUAL)
-    except ReviewRequired as exc:
-        # FR-RESUME-8: even self-submit cannot record over unapproved material.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    # Acting on one channel expires the other escalation rungs (FR-NOTIF-3).
-    container.final_approval_service.acted(application_id)
+    """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4).
+
+    #1: the decision is delivered THROUGH the durable final-approval gate
+    (``final_approval_service.submit_decision``) so the parked pipeline's
+    submit/teardown steps run (recording the outcome, releasing capacity) instead of
+    recording out-of-band and leaving the pipeline stuck at ``recv`` forever. The
+    pipeline's submit step records the single OutcomeEvent — no double-recording here.
+    """
+    event = _deliver_decision(
+        container, application_id, DECISION_SUBMIT_SELF, OutcomeSource.MANUAL
+    )
     return {
         "application_id": application_id,
         "result": "submitted_by_user",
+        "gate": "delivered",
         "outcome_id": event.id,
     }
 
@@ -125,14 +168,15 @@ def authorize_engine_finish(
 
     The click is routed through the core boundary with the authorization flag set;
     without authorization the boundary would raise (proving the engine cannot
-    self-authorize). On success an auto-sourced OutcomeEvent is recorded.
+    self-authorize). #1: the decision is then delivered THROUGH the durable gate so
+    the pipeline's submit/teardown steps run (one OutcomeEvent, capacity released).
     """
     try:
         ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     # FR-PREFILL-5: actually CLICK the final submit (boundary-gated, authorized) before
-    # recording the conversion — otherwise the real driver would mark a submission
+    # delivering the decision — otherwise the real driver would mark a submission
     # without ever performing the click.
     try:
         container.browser.click_final_submit(  # type: ignore[arg-type]
@@ -140,26 +184,43 @@ def authorize_engine_finish(
         )
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    try:
-        event = _record_submission(container, application_id, source=OutcomeSource.AUTO)
-    except ReviewRequired as exc:
-        # FR-RESUME-8: engine-finish is the highest-risk auto path; gate it hard.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    container.final_approval_service.acted(application_id)
+    event = _deliver_decision(
+        container, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
+    )
     return {
         "application_id": application_id,
         "result": "finished_by_engine",
+        "gate": "delivered",
         "outcome_id": event.id,
     }
 
 
-def _record_submission(container: Container, application_id: str, *, source: OutcomeSource):
-    """Route the terminal submission through the SubmissionService (FR-LOG-1/2/4).
+def _deliver_decision(
+    container: Container, application_id: str, decision: str, source: OutcomeSource
+):
+    """Deliver the user's terminal decision through the durable final-approval gate (#1).
 
-    Logs the application detail + archives screenshots + records the OutcomeEvent so
-    both live-session paths (user-submit / engine-finish) feed conversion learning.
+    Two things happen, in order:
+
+    1. ``submit_decision`` ``send``s the decision to the workflow's ``recv`` gate and
+       expires the escalation ladder. A parked durable pipeline (re-driven by the
+       scheduler tick) then resumes past the gate and runs its submit + teardown steps
+       — so the pipeline no longer stalls at ``recv`` forever and capacity/teardown
+       finally release (the bug this fixes).
+    2. The terminal OutcomeEvent is recorded synchronously so the user-facing action
+       is immediate. ``record_submission`` is IDEMPOTENT (IDEM-3): if the durable
+       pipeline's own submit step also runs, it finds this event and returns it
+       WITHOUT recording a second one — exactly one OutcomeEvent either way.
+
+    FR-RESUME-8: ``record_submission`` enforces the review gate (``ReviewRequired`` ->
+    409) so the user can never submit over unreviewed material.
     """
     from applicant.app.routers.outcomes import _load_or_stub
 
     app = _load_or_stub(container, application_id)
-    return container.submission_service.record_submission(app, source=source)
+    workflow_id = f"application:{application_id}"
+    container.final_approval_service.submit_decision(workflow_id, application_id, decision)
+    try:
+        return container.submission_service.record_submission(app, source=source)
+    except ReviewRequired as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
