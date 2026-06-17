@@ -723,6 +723,9 @@ app.include_router(setup_applicant_email_routes())
 # Gated in AuthMiddleware by the shared APPLICANT_INTERNAL_TOKEN (NOT loopback,
 # since the engine calls from a sibling container). Disabled when no token is set.
 from routes.applicant_internal_routes import setup_applicant_internal_routes
+# Lane B (research): expose the native deep-research handler to the internal
+# /research callback so the engine can run owner-scoped research synchronously.
+app.state.research_handler = research_handler
 app.include_router(setup_applicant_internal_routes())
 
 # ========= ROUTES (kept in app.py) =========

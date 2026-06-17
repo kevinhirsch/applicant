@@ -23,6 +23,7 @@ re-hit the provider on every open.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -79,11 +80,21 @@ class ModelEndpointService:
         credentials: Any | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 30.0,
+        workspace: Any | None = None,
+        cookbook_local_host: str = "applicant-ui",
     ) -> None:
         self._store = config_store
         self._credentials = credentials
         self._transport = transport
         self._timeout = timeout
+        # Lane C: optional engine -> workspace callback client. When configured
+        # (shared secret set), Cookbook-served local models are merged into the
+        # endpoint list as auto-discovered, read-only endpoints. None/unavailable
+        # => the engine just shows user-configured endpoints (graceful degrade).
+        self.workspace = workspace
+        # Host the engine uses to reach a workspace-local ("localhost") serve over
+        # the docker network (see ``_rewrite_local_host``).
+        self.cookbook_local_host = cookbook_local_host
         # base_url -> (expires_at, models). Brief cache, like the Applicant flow.
         self._cache: dict[str, tuple[float, list[str]]] = {}
 
@@ -105,8 +116,10 @@ class ModelEndpointService:
         ``online=False`` with an empty model list so the dropdowns stay usable.
         """
         out: list[dict[str, Any]] = []
+        configured_bases: set[str] = set()
         for rec in self._load():
             models, online, error = self._models_for(rec, refresh=refresh)
+            configured_bases.add(_normalize_base(rec.get("base_url", "")))
             out.append(
                 {
                     "id": rec["id"],
@@ -120,6 +133,10 @@ class ModelEndpointService:
                     "ping_error": error,
                 }
             )
+        # Lane C: append Cookbook-served local endpoints (auto-discovered). They
+        # never clobber a user-configured endpoint with the same base URL — the
+        # user's record wins; the Cookbook one is dropped.
+        out.extend(self._cookbook_endpoints(configured_bases, refresh=refresh))
         return out
 
     def get_endpoint(self, endpoint_id: str) -> dict[str, Any] | None:
@@ -127,6 +144,93 @@ class ModelEndpointService:
             if rec["id"] == endpoint_id:
                 return rec
         return None
+
+    # --- Lane C: Cookbook-served local endpoints (auto-discovered) --------
+    def _rewrite_local_host(self, base_url: str) -> str:
+        """Rewrite a workspace-local ("localhost") host to a docker-reachable one.
+
+        The workspace reports a Cookbook serve's base URL from the UI's vantage
+        point — typically ``http://localhost:PORT`` because the serve runs on the
+        workspace host. The engine is a *sibling container*, so ``localhost`` would
+        point at the engine itself. We swap a loopback host for
+        ``cookbook_local_host`` (the front-door container that runs local serves)
+        so the engine reaches the same process over the private docker network. A
+        serve with an explicit remote host is already network-addressable and is
+        left untouched.
+
+        Assumption: Cookbook local serves run inside / alongside the
+        ``applicant-ui`` container and bind a port reachable from the ``api``
+        container at ``http://applicant-ui:PORT`` (override via COOKBOOK_LOCAL_HOST).
+        """
+        host = (self.cookbook_local_host or "").strip()
+        if not host:
+            return base_url
+        return re.sub(
+            r"^(https?://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(?=[:/]|$)",
+            rf"\1{host}",
+            base_url,
+            count=1,
+        )
+
+    def _cookbook_endpoints(
+        self, configured_bases: set[str], *, refresh: bool
+    ) -> list[dict[str, Any]]:
+        """Auto-discovered Cookbook endpoints from the workspace callback channel.
+
+        Returns ``[]`` (graceful degrade) when the channel is off
+        (``workspace.available()`` False), unreachable, or nothing is served.
+        Each returned record is clearly labeled (``category="cookbook"``,
+        ``source="cookbook"``) and read-only (no stored credentials / id is
+        derived, not persisted). Never raises — a flaky workspace must not break
+        the user's own endpoint list.
+        """
+        ws = self.workspace
+        if ws is None or not getattr(ws, "available", lambda: False)():
+            return []
+        try:
+            payload = ws.local_models()
+        except Exception as exc:  # WorkspaceError or anything else
+            log.warning("cookbook_local_models_unavailable", error=str(exc))
+            return []
+        models = (payload or {}).get("models") if isinstance(payload, dict) else None
+        if not isinstance(models, list):
+            return []
+
+        out: list[dict[str, Any]] = []
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            raw_base = _normalize_base(m.get("base_url", ""))
+            if not raw_base:
+                continue
+            base = self._rewrite_local_host(raw_base)
+            norm = _normalize_base(base)
+            # Never clobber a user-configured endpoint with the same address.
+            if norm in configured_bases:
+                continue
+            configured_bases.add(norm)
+            model_id = m.get("model_id") or m.get("name") or ""
+            label = m.get("name") or model_id or base
+            # Probe the (rewritten) endpoint so the dropdown shows live models;
+            # tolerate offline (serve still warming up) without dropping it.
+            live, online, error = self._fetch_models(base, "", refresh=refresh)
+            listed = live or ([model_id] if model_id else [])
+            out.append(
+                {
+                    "id": f"cookbook:{norm}",
+                    "name": f"{label} (Cookbook)",
+                    "base_url": base,
+                    "is_enabled": True,
+                    "online": online,
+                    "category": "cookbook",
+                    "source": "cookbook",
+                    "read_only": True,
+                    "has_key": False,
+                    "models": listed,
+                    "ping_error": error,
+                }
+            )
+        return out
 
     # --- mutations -------------------------------------------------------
     def add_endpoint(

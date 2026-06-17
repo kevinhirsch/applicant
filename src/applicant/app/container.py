@@ -121,6 +121,10 @@ class Container:
     material_service: Any = None
     # Setup-page model sources (add a local/cloud endpoint; auto-list its models).
     model_endpoint_service: Any = None
+    # Lane B (Stage 2.5): capped/deduped/cached deep-research tool over the
+    # WorkspacePort — the agent escalates to it on a company/role knowledge gap and
+    # the manual-trigger research router calls it for user-initiated runs.
+    research_service: Any = None
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
@@ -313,6 +317,12 @@ def build_container(settings: Settings | None = None) -> Container:
         base_url=settings.workspace_url,
         token=settings.applicant_internal_token,
     )
+    # Lane C (Cookbook auto-register): let the model-endpoint service surface the
+    # workspace's Cookbook-served local models as auto-discovered LLM endpoints.
+    # Injected post-construction (workspace is built after the service) so the
+    # service stays decoupled and the dependency is optional/None in tests.
+    model_endpoint_service.workspace = workspace
+    model_endpoint_service.cookbook_local_host = settings.cookbook_local_host
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (
@@ -369,6 +379,9 @@ def build_container(settings: Settings | None = None) -> Container:
         llm=llm,
         learning=learning_service,
         storage=storage,
+        # Stage 2.5 lane A: inject the workspace callback so the assistant can
+        # surface auto-detected upcoming interviews (degrades silently when off).
+        workspace=workspace,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -424,6 +437,13 @@ def build_container(settings: Settings | None = None) -> Container:
         advanced_learning=advanced_learning_service,
     )
 
+    # Lane B (Stage 2.5): the capped deep-research tool over the WorkspacePort. One
+    # instance per container so its per-campaign budget + dedupe cache are shared by
+    # both the agent loop (auto-escalate) and the manual-trigger router.
+    from applicant.application.services.research_service import ResearchService
+
+    research_service = ResearchService(workspace=workspace)
+
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
     from applicant.application.services.agent_loop import AgentLoop
     from applicant.application.services.scheduler import Scheduler
@@ -445,6 +465,7 @@ def build_container(settings: Settings | None = None) -> Container:
         sandbox=sandbox,
         orchestrator=orchestrator,
         setup_service=setup_service,
+        research_service=research_service,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -514,6 +535,7 @@ def build_container(settings: Settings | None = None) -> Container:
             sandbox=sandbox,
             orchestrator=orchestrator,
             setup_service=setup_service,
+            research_service=research_service,
         )
         return {
             "storage": tick_storage,
@@ -564,6 +586,7 @@ def build_container(settings: Settings | None = None) -> Container:
             llm=llm,
             learning=rs_ls,
             storage=req_storage,
+            workspace=workspace,  # Stage 2.5 lane A (see main ChatService build)
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         rs_submission = SubmissionService(
@@ -682,6 +705,7 @@ def build_container(settings: Settings | None = None) -> Container:
         prefill_service=prefill_service,
         material_service=material_service,
         model_endpoint_service=model_endpoint_service,
+        research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
         request_services_factory=request_services_factory,

@@ -69,8 +69,22 @@ class WorkspacePort(Protocol):
         """LANE A — auto-detected interview calendar events for ``owner``."""
         ...
 
-    def run_research(self, *, query: str, owner: str | None = None) -> dict:
-        """LANE B — run deep research for ``owner``; returns the run/report."""
+    def run_research(
+        self,
+        *,
+        query: str,
+        owner: str | None = None,
+        company: str | None = None,
+        role: str | None = None,
+        context: str | None = None,
+        max_time: int | None = None,
+    ) -> dict:
+        """LANE B — run deep research for ``owner``; returns the run/report.
+
+        Optional ``company`` / ``role`` / ``context`` are folded into the query by
+        the workspace so the report is tailored to the application; ``max_time``
+        bounds the synchronous run (clamped workspace-side).
+        """
         ...
 
     def local_models(self, *, owner: str | None = None) -> dict:
