@@ -133,9 +133,31 @@ class HttpWorkspaceClient:
         """LANE A — auto-detected interview calendar events for ``owner``."""
         return self._request("GET", "/calendar/interviews", owner=owner)
 
-    def run_research(self, *, query: str, owner: str | None = None) -> dict:
-        """LANE B — run deep research for ``owner``; returns the run/report."""
-        return self._request("POST", "/research", owner=owner, json={"query": query})
+    def run_research(
+        self,
+        *,
+        query: str,
+        owner: str | None = None,
+        company: str | None = None,
+        role: str | None = None,
+        context: str | None = None,
+        max_time: int | None = None,
+    ) -> dict:
+        """LANE B — run deep research for ``owner``; returns the run/report.
+
+        Optional ``company`` / ``role`` / ``context`` / ``max_time`` are sent in
+        the body; the workspace folds them into the query and bounds the run.
+        """
+        body: dict[str, Any] = {"query": query}
+        if company:
+            body["company"] = company
+        if role:
+            body["role"] = role
+        if context:
+            body["context"] = context
+        if max_time is not None:
+            body["max_time"] = max_time
+        return self._request("POST", "/research", owner=owner, json=body)
 
     def local_models(self, *, owner: str | None = None) -> dict:
         """LANE C — list Cookbook-served local models."""
