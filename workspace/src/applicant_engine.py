@@ -587,6 +587,21 @@ class ApplicantEngineClient:
         """Tenant keys that have stored credentials (no secrets returned)."""
         return await self._request("GET", f"/api/credentials/{campaign_id}/tenants")
 
+    # -- manual deep-research trigger (engine routers/research.py) ----------
+    # The agent auto-escalates to research already; these expose the engine's
+    # SAME capped/deduped/cached path as an explicit, user-initiated run + a
+    # budget read. ``run`` returns the structured report (200 with
+    # ``unavailable: true`` + ``reason`` when the channel is off / budget is
+    # exhausted — a degraded state, not an error).
+
+    async def research_run(self, campaign_id: str, body: dict) -> Any:
+        """Run (or reuse) deep research for a campaign — the manual trigger."""
+        return await self._request("POST", f"/api/research/{campaign_id}/run", json=body)
+
+    async def research_budget(self, campaign_id: str) -> Any:
+        """Read a campaign's research budget + channel availability."""
+        return await self._request("GET", f"/api/research/{campaign_id}/budget")
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

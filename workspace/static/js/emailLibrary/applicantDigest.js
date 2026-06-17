@@ -67,6 +67,8 @@ const _ICON_PASS =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 const _ICON_LINK =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+const _ICON_SEARCH =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
 // --- feature gate ----------------------------------------------------------
 
@@ -98,6 +100,26 @@ async function _api(path, { method = 'GET', body = null } = {}) {
     opts.body = JSON.stringify(body);
   }
   const r = await fetch(`${API_BASE}/api/applicant/email${path}`, opts);
+  let payload = null;
+  try { payload = await r.json(); } catch (_) { payload = null; }
+  if (!r.ok) {
+    const detail = (payload && (payload.detail || payload.message)) || `Request failed (${r.status})`;
+    const err = new Error(typeof detail === 'string' ? detail : 'Request failed');
+    err.status = r.status;
+    throw err;
+  }
+  return payload;
+}
+
+// Same shape as _api but against the manual deep-research proxy
+// (/api/applicant/research/*) instead of the email/digest proxy.
+async function _apiResearch(path, { method = 'GET', body = null } = {}) {
+  const opts = { method, credentials: 'same-origin', headers: {} };
+  if (body != null) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(`${API_BASE}/api/applicant/research${path}`, opts);
   let payload = null;
   try { payload = await r.json(); } catch (_) { payload = null; }
   if (!r.ok) {
@@ -266,6 +288,18 @@ function _buildRow(panel, row) {
   pass.addEventListener('click', () => _onPass(panel, card, row, pass));
   actions.appendChild(pass);
 
+  // Manual deep-research trigger: kick a research run on this company/role and
+  // show the report. The agent researches on its own when it hits a gap; this is
+  // the user-initiated counterpart, sharing the same capped/cached engine path.
+  const research = _el('button', {
+    cls: 'memory-toolbar-btn applicant-digest-research',
+    html: `${_ICON_SEARCH}Research`,
+    title: 'Run a quick background-research brief on this company/role',
+    attrs: { type: 'button' },
+  });
+  research.addEventListener('click', () => _onResearch(panel, row, research));
+  actions.appendChild(research);
+
   card.appendChild(actions);
   return card;
 }
@@ -329,6 +363,161 @@ async function _onPass(panel, card, row, btn) {
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
     showToast(e.message || 'Could not save that right now.');
   }
+}
+
+// Build a short research query from a digest row (title + company), so the run
+// is about the right thing even when the engine has no extra context yet.
+function _researchQuery(row) {
+  const role = row.title || row.role || '';
+  const company = row.company || '';
+  if (role && company) return `${role} at ${company}`;
+  return role || company || 'this role';
+}
+
+async function _onResearch(panel, row, btn) {
+  const campaignId = _currentCampaign(panel);
+  if (!campaignId) { showToast('Pick a job search first.'); return; }
+  const company = row.company || '';
+  const role = row.title || row.role || '';
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `${_ICON_SEARCH}Researching…`;
+  try {
+    const report = await _apiResearch(`/${encodeURIComponent(campaignId)}/run`, {
+      method: 'POST',
+      body: {
+        query: _researchQuery(row),
+        company: company || null,
+        role: role || null,
+      },
+    });
+    _showReport(report, { company, role });
+  } catch (e) {
+    showToast(
+      e.status === 503 || e.status === 504
+        ? 'The assistant is offline right now. Try again shortly.'
+        : (e.message || 'Could not run research right now.'),
+    );
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// Show a research report in a small self-contained modal (same lightweight modal
+// shell as the survey above; no new modal system). Handles the engine's degraded
+// 200 payload (unavailable:true + reason) gracefully and shows budget remaining.
+function _showReport(report, { company = '', role = '' } = {}) {
+  let overlay = document.getElementById('applicant-research-overlay');
+  if (overlay) overlay.remove();
+
+  overlay = _el('div', { cls: 'modal', attrs: { id: 'applicant-research-overlay' } });
+  const box = _el('div', { cls: 'modal-content styled-confirm-box' });
+  box.style.cssText = 'max-width:560px;';
+
+  const header = _el('div', { cls: 'modal-header' });
+  const heading = [role, company].filter(Boolean).join(' · ');
+  header.appendChild(_el('h4', { text: heading ? `Research — ${heading}` : 'Research brief' }));
+  box.appendChild(header);
+
+  const bodyEl = _el('div', { cls: 'modal-body' });
+  bodyEl.style.cssText = 'max-height:60vh;overflow:auto;';
+  const data = report || {};
+
+  // Budget line (when the engine reported it).
+  if (data.budget_remaining != null) {
+    bodyEl.appendChild(_el('div', {
+      cls: 'memory-count',
+      text: `${data.budget_remaining} research run${data.budget_remaining === 1 ? '' : 's'} left for this job search${data.cached ? ' · served from a recent brief (no run used)' : ''}`,
+      style: 'font-size:10px;opacity:0.7;margin-bottom:8px;',
+    }));
+  }
+
+  if (data.unavailable) {
+    // Channel off / budget exhausted — a graceful state, not an error.
+    const reasons = {
+      workspace_unavailable: 'Background research isn’t set up yet. Connect it in setup to enable research briefs.',
+      budget_exhausted: 'You’ve used up this job search’s research runs for now. They refresh over time.',
+      empty_query: 'There wasn’t enough to research on this role.',
+      research_failed: 'The research run didn’t complete this time. Please try again shortly.',
+    };
+    bodyEl.appendChild(_el('p', {
+      text: reasons[data.reason] || 'Research isn’t available for this one right now.',
+      style: 'margin:4px 0;font-size:13px;opacity:0.85;',
+    }));
+  } else {
+    if (data.summary) {
+      bodyEl.appendChild(_el('p', {
+        text: data.summary,
+        style: 'margin:4px 0 12px;font-size:13px;line-height:1.5;',
+      }));
+    }
+    const findings = Array.isArray(data.key_findings) ? data.key_findings : [];
+    if (findings.length) {
+      bodyEl.appendChild(_el('div', {
+        text: 'Key findings',
+        style: 'font-weight:600;font-size:12px;margin:8px 0 4px;',
+      }));
+      const ul = _el('ul', { style: 'margin:0 0 10px;padding-left:18px;font-size:12px;line-height:1.5;' });
+      for (const f of findings) ul.appendChild(_el('li', { text: String(f) }));
+      bodyEl.appendChild(ul);
+    }
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    if (sources.length) {
+      bodyEl.appendChild(_el('div', {
+        text: 'Sources',
+        style: 'font-weight:600;font-size:12px;margin:8px 0 4px;',
+      }));
+      const list = _el('div', { style: 'display:flex;flex-direction:column;gap:3px;' });
+      for (const s of sources) {
+        const url = (s && (s.url || s.link)) || '';
+        const label = (s && (s.title || s.name)) || url || 'Source';
+        if (url && _isWebUrl(url)) {
+          list.appendChild(_el('a', {
+            text: label,
+            attrs: { href: url, target: '_blank', rel: 'noopener noreferrer' },
+            style: 'font-size:12px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+            title: url,
+          }));
+        } else {
+          list.appendChild(_el('div', { text: label, style: 'font-size:12px;opacity:0.8;' }));
+        }
+      }
+      bodyEl.appendChild(list);
+    }
+    if (!data.summary && !findings.length && !sources.length) {
+      bodyEl.appendChild(_el('p', {
+        text: 'No findings came back for this one.',
+        style: 'margin:4px 0;font-size:13px;opacity:0.8;',
+      }));
+    }
+  }
+  box.appendChild(bodyEl);
+
+  const footer = _el('div', { cls: 'modal-footer' });
+  const closeBtn = _el('button', {
+    cls: 'confirm-btn confirm-btn-primary', text: 'Close', attrs: { type: 'button' },
+  });
+  footer.appendChild(closeBtn);
+  box.appendChild(footer);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function cleanup() {
+    closeBtn.removeEventListener('click', onClose);
+    overlay.removeEventListener('click', onBackdrop);
+    document.removeEventListener('keydown', onKey);
+    try { overlay.remove(); } catch (_) {}
+  }
+  function onClose() { cleanup(); }
+  function onBackdrop(e) { if (e.target === overlay) cleanup(); }
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(); }
+  }
+  closeBtn.addEventListener('click', onClose);
+  overlay.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKey);
+  closeBtn.focus();
 }
 
 async function _onFeedback(panel, campaignId) {
