@@ -43,3 +43,6 @@ workspace/logs/
 workspace/.ssh/
 workspace/.cache/
 workspace/.local/
+
+# DB dumps from scripts/update.sh — never commit PII backups
+.backups/
