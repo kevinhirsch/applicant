@@ -1344,6 +1344,53 @@ function initializeEventListeners() {
     })
     .catch(() => {});
 
+  // Applicant section gating (Stage-2 foundation) — activate engine-backed
+  // sections progressively from /api/applicant/features. A section reports one
+  // of: active | configured | locked | disabled. Anything that isn't "active"
+  // gets greyed + click-guarded so an unwired surface can't fire its (missing)
+  // engine handler. The state is derived server-side from the engine setup
+  // status + dormant-surface registry; this only reflects it in the nav. It is
+  // additive — it never touches auth, user management, or the toggles above.
+  window._applicantFeaturesReady = fetch(`${API_BASE}/api/applicant/features`, { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(features => {
+      const sections = (features && features.sections) || {};
+      Object.values(sections).forEach(section => {
+        const active = section.state === 'active';
+        const reason = section.present_but_disabled
+          ? `${section.title} is not available in this build`
+          : `${section.title} unlocks once the Applicant engine is configured`;
+        (section.nav_ids || []).forEach(id => {
+          const e = el(id);
+          if (!e) return;
+          if (active) {
+            e.classList.remove('applicant-locked');
+            e.removeAttribute('aria-disabled');
+            if (e.dataset.applicantLockTitle) {
+              e.title = e.dataset.applicantLockTitle;
+              delete e.dataset.applicantLockTitle;
+            }
+          } else {
+            e.classList.add('applicant-locked');
+            e.setAttribute('aria-disabled', 'true');
+            if (!e.dataset.applicantLockTitle) {
+              e.dataset.applicantLockTitle = e.title || '';
+            }
+            e.title = reason;
+            // Capture-phase guard: stop the click before the element's own
+            // launcher handler (registered in bubble phase) can run. CSS
+            // pointer-events:none already blocks mouse clicks; this also covers
+            // keyboard activation and any programmatic dispatch.
+            if (!e._applicantGuard) {
+              e._applicantGuard = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+              e.addEventListener('click', e._applicantGuard, true);
+            }
+          }
+        });
+      });
+    })
+    .catch(() => {});
+
   // Hide Gallery when image generation is disabled in settings
   const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
   sessionStorage.removeItem('ody-prefetch-settings');
