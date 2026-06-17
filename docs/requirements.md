@@ -1,6 +1,6 @@
 # Requirements Catalog
 
-Source of truth: [`docs/spec/master-spec.md`](spec/master-spec.md) (Consolidated v4.4). This catalog enumerates **every** requirement ID in the master spec with its MoSCoW priority, a one-line summary, and the work-package phase (0-4, per §9) where it lands. No ID is omitted; where a requirement spans phases, the **primary** delivery phase is listed and secondary phases are noted in the summary.
+Source of truth: [`docs/spec/master-spec.md`](spec/master-spec.md) (Consolidated v4.4). This catalog enumerates **every** requirement ID in the master spec with its MoSCoW priority, a one-line summary, and the work-package phase where it lands (engine phases 0–4 per §9, plus the front-door Phase 5; see [work-packages.md](work-packages.md)). No ID is omitted; where a requirement spans phases, the phases are listed and secondary phases noted in the summary. Where the as-built system differs from the spec's original implementation wording (notably FR-UI-1), the summary carries an **As built** note pointing to the master-spec [Reconciliation note](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring).
 
 Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong recommendation, deviate only with rationale; **MAY** = optional/forward-looking.
 
@@ -54,7 +54,7 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 | ID | Priority | One-line summary | Phase |
 |---|---|---|---|
 | FR-DIG-1 | MUST | Produce a daily digest per campaign when matches are aggregated. | 1 |
-| FR-DIG-2 | MUST | Delivery via email/webpage + Discord "ready" notification; digest exempt from Odysseus visual style. | 1 |
+| FR-DIG-2 | MUST | Delivery via email/webpage + Discord "ready" notification; digest exempt from Applicant visual style. | 1 |
 | FR-DIG-3 | MUST | Table, one row per role: summary, link, work mode, fit/viability score, approve/decline controls. | 1 |
 | FR-DIG-4 | MUST | Brief "why this role was suggested" rationale. | 1 |
 | FR-DIG-5 | MUST | Decline-with-feedback free-text feeding FR-LEARN and next-run criteria. | 1 |
@@ -142,7 +142,7 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 | ID | Priority | One-line summary | Phase |
 |---|---|---|---|
 | FR-SANDBOX-1 | MUST | Each active application runs in an isolated browser sandbox on the host. | 2 |
-| FR-SANDBOX-2 | MUST | One-click live remote session (Neko/WebRTC default); remote-view provider is its own swappable sub-port. | 2 |
+| FR-SANDBOX-2 | MUST | One-click live remote session; remote-view provider is its own swappable sub-port. **As built:** webtop full-desktop default (`REMOTE_VIEW_BACKEND=webtop`), Neko/noVNC selectable. | 2 |
 | FR-SANDBOX-3 | MUST | From live session, user submits themselves or authorizes the engine to finish (FR-PREFILL-5). | 2 |
 | FR-SANDBOX-4 | MUST | Multi-session, independently controllable, ephemeral per application. | 2 |
 
@@ -200,12 +200,12 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 
 | ID | Priority | One-line summary | Phase |
 |---|---|---|---|
-| FR-UI-1 | MUST | Pixel-perfect Odysseus clone: vendor its static/ verbatim (MIT notice preserved), served from FastAPI, wired to our APIs; extensible. | 0 |
-| FR-UI-2 | MUST | Unwired surfaces grayed out but present; produce a Dormant Surface Wiring Backlog (one stub spec each); no dead UI shipped as live. | 0 (shell), 4 (backlog) |
-| FR-UI-3 | MUST | Pending-actions portal: primary surface listing everything awaiting user input, each actionable. | 1 |
-| FR-UI-4 | MUST | Many agent tools toggled on/off in UI; initial registry (Discovery, Scoring, Pre-fill, ... Notifications). | 4 |
-| FR-UI-5 | MUST | First UI deliverable = setup wizard beginning with the LLM-settings gate, gating features until configured. | 0 |
-| FR-UI-6 | MUST | UI exposes criteria editing, attribute-cloud editor, history retrieval, variant library + redline surface, debug surface, chatbot, onboarding wizard, Update button. | 1-4 (spans) |
+| FR-UI-1 | MUST | White-labeled Applicant UI, extensible, wired to the engine. **As built:** the owner's vendored **workspace** front door (`workspace/`), white-labeled, in front of the engine — not an engine-served clone of an external repo (see master-spec [Reconciliation note](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring)). | 0/5 |
+| FR-UI-2 | MUST | No dead UI: engine dormant registry + front-door progressive activation (`workspace/src/applicant_features.py`) greys/locks/activates each section. | 0 (registry), 4, 5 (activation) |
+| FR-UI-3 | MUST | Pending-actions portal: primary surface listing everything awaiting user input, each actionable. Reachable: `applicant_portal_routes.py` + `applicantPortal.js`. | 1/5 |
+| FR-UI-4 | MUST | Many agent tools toggled on/off in UI; initial registry (Discovery, Scoring, Pre-fill, ... Notifications). Reachable via Activity/debug. | 4/5 |
+| FR-UI-5 | MUST | First UI deliverable = setup wizard beginning with the LLM-settings gate, gating features until configured. Reachable: `applicant_setup_routes.py` + `applicantOnboarding.js`. | 0/5 |
+| FR-UI-6 | MUST | UI exposes criteria editing, attribute-cloud editor, history retrieval, variant library + redline surface, debug surface, chatbot, onboarding wizard, Update button — each reachable as a front-door surface (see [traceability.md](traceability.md#front-door-reachability)). | 1-5 (spans) |
 
 ### FR-CHAT — Chatbot (§3.20)
 
@@ -234,7 +234,7 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 |---|---|---|---|
 | FR-INSTALL-1 | MUST | One-liner install script (Proxmox-helper style) → Proxmox VM; editable defaults, root password preset, auto-import SSH keys. | 4 |
 | FR-INSTALL-2 | MUST | Matching one-liner update script: backs up DB, runs migrations, supports rollback; invokable via in-UI Update button. | 4 |
-| FR-INSTALL-3 | MUST | Ships whole stack (FastAPI+frontend, Postgres+DBOS, SearXNG, Apprise, on-demand Neko, font-install) in the VM via Docker Compose. | 4 |
+| FR-INSTALL-3 | MUST | Ships the whole two-app stack via Docker Compose. **As built:** public `applicant-ui` (workspace front door) + internal `api` (engine) + postgres + searxng + chromadb + ntfy (+ optional takeover-desktop / ollama). | 4/5 |
 
 ## Non-functional requirements (§4)
 

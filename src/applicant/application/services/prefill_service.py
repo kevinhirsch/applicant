@@ -193,15 +193,20 @@ class PrefillService:
                 event = self._check_detection(aid)
                 if event is not None:
                     result.detection_signal = event.signal_type
+                    # #3 (FR-PREFILL-5): pass the BOUND session url (carries ``&app=``
+                    # continuity) — not the pre-binding ``session.remote_view_url``
+                    # snapshot — so the takeover link lands on the same application.
                     return self._account_handoff(
-                        app, result, session.remote_view_url, signal_type=event.signal_type
+                        app, result, result.sandbox_session_url, signal_type=event.signal_type
                     )
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
                 return blocked
             self._capture_screenshot(aid, result)
             # The engine never clicks the account-creating submit — hand off.
-            return self._account_handoff(app, result, session.remote_view_url)
+            # #3: use the bound ``result.sandbox_session_url`` (with ``&app=``), not the
+            # pre-binding ``session.remote_view_url``.
+            return self._account_handoff(app, result, result.sandbox_session_url)
 
         # 4. No account needed → straight to pre-filling.
         return self._prefill_pages(app, attributes, result, cautious=cautious)
@@ -227,6 +232,33 @@ class PrefillService:
         )
         # Advance past the account page to the next application page.
         self._browser.advance(application.id)
+        return self._continue_pages(app, attributes, result, cautious=cautious)
+
+    def resume_after_detection(
+        self,
+        application: Application,
+        attributes: list[Attribute] | None = None,
+        *,
+        cautious: bool = True,
+    ) -> PrefillResult:
+        """Continue pre-filling after the user cleared a detection challenge (FR-PREFILL-6).
+
+        #2: an app parked at BLOCKED_DETECTION may legally transition ONLY ->
+        PREFILLING (§7). The old re-drive routed through ``prefill_application`` whose
+        first move is ``with_status(SANDBOX_PROVISIONING)`` — an ILLEGAL transition
+        from BLOCKED_DETECTION that raised IllegalStateTransition (swallowed; the app
+        stranded with no resolver). This resumes via the legal PREFILLING transition
+        and does NOT tear down / re-provision the live session the user just cleared.
+        Subsequent re-drives are non-cautious so the same (now-cleared) signal does not
+        immediately re-block the resume.
+        """
+        attributes = attributes or []
+        app = application.with_status(ApplicationState.PREFILLING)
+        result = PrefillResult(
+            application_id=application.id,
+            state=app.status,
+            sandbox_session_url=application.sandbox_session_url,
+        )
         return self._continue_pages(app, attributes, result, cautious=cautious)
 
     def resume_after_missing_attr(

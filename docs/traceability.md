@@ -2,31 +2,45 @@
 
 Mandated by master spec §13: **Requirement ID → Work Package (phase) → BDD Feature(s) → adapter/contract test.** Any requirement lacking a downstream feature and test is a **GAP** to flag, not drop.
 
-**Status (2026-06, post production-hardening re-audit): all five phases (0–4) are merged
-to `main`; the production-hardening remediation that followed the honest re-audit is also
-merged.** Every row below was **re-verified against the actual `src/` code** (file:line),
-not against prior reports — earlier versions of this matrix overstated ("all delivered"
-while safety gates were unenforced, no run loop existed, credentials/screenshots were not
-persisted). Each status now names the satisfying code surface AND the covering test that was
-read to confirm real, wired behavior. The suite is green
-(`uv run pytest -q`: **613 passed, 14 skipped**). See
-[delivery-status.md](delivery-status.md) for the per-phase summary and the remediation log.
+> **Why this matrix was distrusted, and what changed.** Earlier versions verified the
+> **engine only** and treated "the engine implements it + tests pass" as done. That
+> overstated reality twice over: (1) some MUST behaviors were present-but-not-enforced,
+> never driven, or not persisted (fixed in the production-hardening remediation); and
+> (2) it implied front-door reachability that did not exist — the engine is internal-only
+> and the operator never touches it directly. A requirement is delivered **only when it is
+> reachable/operable in the white-labeled workspace front door** (`workspace/`), across
+> the chain spec → engine router → workspace proxy → JS → nav/section. This matrix now
+> reports **both** dimensions: per-row **engine delivery** (with file:line + test), and a
+> **front-door reachability** summary (the [section below](#front-door-reachability)) that
+> names the workspace surface exposing each requirement family. Where the distinction
+> matters (engine-internal vs. operator-reachable), it is called out.
+
+**Status (2026-06): all phases (0–5) are merged to `main`** — engine phases 0–4, the
+production-hardening remediation, and the **front-door (Phase 5)** lift-and-shift onto the
+workspace + the reachability re-audit. Every engine row below was re-verified against the
+actual `src/` code (file:line), and every requirement family is confirmed reachable in the
+front door (see [Front-door reachability](#front-door-reachability)). The engine suite is
+green (`uv run pytest -q`: **613 passed, 14 skipped**).
 
 - **WP** = phase from [work-packages.md](work-packages.md) / §9.
 - **BDD Feature(s)** are the §10 acceptance anchors plus the features authored per work
   package; live under `tests/bdd/features/`.
-- **Status** column reports the *verified* delivery: the satisfying code surface (adapter /
-  service / router / core rule) at a real path plus the test surface that covers it. Core
-  domain rules are tested in the core (no adapter); adapters carry contract tests; flows
-  carry BDD scenarios.
-- **What the tests prove:** the 613 hermetic tests prove the *logic* against fakes /
+- **Status** column reports the *verified* engine delivery: the satisfying code surface
+  (adapter / service / router / core rule) at a real path plus the test surface that covers
+  it. Core domain rules are tested in the core (no adapter); adapters carry contract tests;
+  flows carry BDD scenarios.
+- **Reachability** is NOT in the per-row Status column (which is engine-only). It is
+  asserted family-by-family in [Front-door reachability](#front-door-reachability): each
+  requirement family maps to the workspace `/api/applicant/*` proxy + JS surface that
+  exposes it.
+- **What the tests prove:** the 613 hermetic engine tests prove the *logic* against fakes /
   in-memory adapters. End-to-end exercise of the integration-gated boundaries (live
   Postgres/DBOS, real browser, TeX/LibreOffice, Discord/SMTP, live job boards) requires a
   live deployment — those are environment dependencies, not requirement gaps (see the
   14 skips and the note at the bottom).
 - **GAP** rows: any requirement genuinely not delivered is flagged in **Remaining gaps**
   below. As of this re-audit none of the previously-flagged BLOCKER/DEVIATION/PARTIAL/
-  STUB-ONLY items remains open — all re-verified OK.
+  STUB-ONLY items remains open — all re-verified OK, and all are reachable in the front door.
 
 §10 seed feature names (verbatim): Zero-CLI out-of-box setup; Per-campaign attribute cloud; Resume uploads right and looks right; Screening answers go through review; Sensitive fields are never AI-guessed; Pending-actions portal; Maximal pre-fill, stop at irreducible human steps; Interactive resume review with highlighted edits; Adaptation never fabricates; Mid-step crash resumption; Conversion is approval plus submission; Discord-first with 30s hold and web pre-empt; Master aggregator in wave one; Source-yield learning with exploration.
 
@@ -219,8 +233,8 @@ read to confirm real, wired behavior. The suite is green
 
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
-| FR-UI-1 | 0 | "Pixel-perfect Odysseus clone" | Delivered — Phase 0; vendored `static/` served from FastAPI; presence test |
-| FR-UI-2 | 0/4 | "Dormant surfaces grayed with stubs" | Delivered — Phase 0 shell / Phase 4 backlog; dormant-surface backlog test — see [dormant-surfaces.md](dormant-surfaces.md) |
+| FR-UI-1 | 0/5 | "White-labeled Applicant clone" | Delivered — the operator UI is the white-labeled **workspace front door** (`workspace/`), not an engine-served page; surfaces reuse the workspace's no-build design system and proxy the engine via `/api/applicant/*`. (Phase 0 stood up an engine `frontend/static/` shell; Phase 5 moved the real front door to the workspace — see [frontend.md](frontend.md).) Front-door reachability tested in the workspace; engine routers presence-tested |
+| FR-UI-2 | 0/4/5 | "No dead UI; progressive activation" | Delivered — engine dormant registry (`src/applicant/dormant.py`) **plus** the front-door feature layer (`workspace/src/applicant_features.py`) that greys/locks/activates each section from engine setup status; backlog/consistency test — see [dormant-surfaces.md](dormant-surfaces.md) |
 | FR-UI-3 | 1 | "Pending-actions portal" | Delivered (re-verified) — real PRODUCERS now create pending actions (digest-approval in `digest_service.deliver`, missing-attr / agent-question / error / final-approval in `prefill_service`); `pending_actions` router lists + resolves them; the digest-decision resolve key bug is fixed; contract+BDD |
 | FR-UI-4 | 4 | "Per-tool toggle registry" | Delivered — Phase 4; ToolRegistry adapter + settings sink; contract test |
 | FR-UI-5 | 0 | "Zero-CLI out-of-box setup" (LLM-gate first) | Delivered — Phase 0; wizard LLM-gate; unit+BDD |
@@ -269,13 +283,57 @@ read to confirm real, wired behavior. The suite is green
 | NFR-PRIV-1 | 2 | "Encrypted PII at rest, minimal cloud PII" (SHOULD) | Delivered — Phase 2; encryption-at-rest (`pynacl`) + minimal-cloud-PII policy; encryption test |
 | NFR-TRUTH-1 | 0/3 | "Adaptation never fabricates" | Delivered — Phase 0 rule / Phase 3 impl; truthfulness guardrail in core; unit+BDD |
 
+## Front-door reachability
+
+The per-row Status above proves **engine** delivery. This section proves the second,
+previously-missing dimension: that each requirement family is **reachable/operable in the
+white-labeled workspace front door**, not just implemented behind the internal `api`. Each
+family maps to its workspace `/api/applicant/*` proxy route + JS surface (the engine
+router it forwards to is named in [frontend.md](frontend.md)).
+
+| Requirement family | Reachable via (front-door surface) | Proxy route + JS |
+|---|---|---|
+| FR-LLM (provider, model list, tier ladder, escalation) | OOBE wizard — LLM step (reuses the workspace Local/Remote model-endpoint manager) | `applicant_setup_routes.py` + `applicantOnboarding.js` (+ workspace `/api/model-endpoints`) |
+| FR-OOBE, FR-ONBOARD, FR-FONT, FR-RESUME-3a | OOBE setup / onboarding wizard (auto-launch, gated, resumable) | `applicant_setup_routes.py` + `applicantOnboarding.js` |
+| FR-DISC, FR-AGENT-1/2/7 (run controls, source toggles, intent) | Activity/debug — ops tab | `applicant_ops_routes.py` + `applicantDebug.js` |
+| FR-CRIT (criteria editor) | Profile — criteria editor | `applicant_memory_routes.py` + profile section |
+| FR-ATTR (attribute cloud, sensitive policy, missing-attr) | Profile — attribute-cloud editor + portal soft-error resolve | `applicant_memory_routes.py` / `applicant_portal_routes.py` |
+| FR-LEARN (attributes + conversion learning) | Profile — learning | `applicant_memory_routes.py` + profile section |
+| FR-DIG, FR-FB (digest approve/decline, feedback survey) | Email / digest panel + feedback survey | `applicant_email_routes.py` + `emailLibrary/applicantDigest.js` |
+| FR-UI-3 (pending-actions portal) | Pending-actions portal (home base) | `applicant_portal_routes.py` + `applicantPortal.js` |
+| FR-RESUME-8 / FR-ANSWER-1 (redline review) | Documents / résumé redline review | `applicant_documents_routes.py` + documents section |
+| FR-PREFILL-5, FR-SANDBOX-2/3 (live session, submit/authorize) | Live remote view / takeover | `applicant_remote_routes.py` + `applicantRemote.js` |
+| FR-VAULT (credential vault, both banking modes) | Credential vault | `applicant_vault_routes.py` + `applicantVault.js` |
+| FR-CHAT (chatbot + job actions) | Chat / assistant | `applicant_chat_routes.py` + `applicantChat.js` |
+| FR-LOG-3/4, FR-OBS-2, FR-UI-4 (history, screenshots, logs, workflow state, mark-submitted, tool toggles) | Activity / debug | `applicant_admin_routes.py` + `applicantDebug.js` |
+| FR-OOBE-4 / FR-INSTALL-2 (in-UI Update button) | Activity/debug — Update button | `applicant_ops_routes.py` (Update trigger) + `applicantDebug.js` |
+
+**Engine-internal, not a separate front-door surface (called out per the spec):**
+
+- **FR-DUR / FR-NOTIF ladder cadence / FR-STEALTH / NFR-ARCH / NFR-247 / NFR-TOKEN /
+  NFR-LOCAL** are engine-internal mechanisms (durable orchestration, the
+  Discord→web→email escalation, browser fingerprint/egress, the hexagon, token frugality,
+  local-first). They are *observable* in the front door (notifications arrive; the
+  Activity surface shows workflow state and the egress/stealth caveat), but they are not
+  themselves operator screens. This is the legitimate engine-vs-front-door distinction —
+  not a reachability gap.
+- **FR-UI-1 white-label:** the front door is the **owner's vendored workspace app**,
+  white-labeled as Applicant — it is *not* an engine-served clone. The spec's "vendor the
+  Applicant UI `static/`" wording is reconciled in
+  [master-spec.md](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring) and
+  [open-items.md](open-items.md).
+
 ## Coverage check
 
 - **Exhaustive:** every FR-*/NFR-* ID in [requirements.md](requirements.md) has a row
   above (110 functional + 9 non-functional family count).
-- **Re-verified delivered:** every row reports a delivered code surface (read at file:line)
-  plus a covering test. The suite is green (**613 passed; 14 skips** are integration-gated
-  boundaries — see below).
+- **Re-verified delivered (engine):** every row reports a delivered code surface (read at
+  file:line) plus a covering test. The engine suite is green (**613 passed; 14 skips** are
+  integration-gated boundaries — see below).
+- **Re-verified reachable (front door):** every operator-facing requirement family maps to
+  a workspace `/api/applicant/*` proxy + JS surface in [Front-door
+  reachability](#front-door-reachability); the only `present_but_disabled` surface is
+  Compare, which is by product decision, not a gap.
 
 ## Re-audit verification result
 
@@ -297,12 +355,20 @@ against the actual `src/` code and its test, and classified:
 
 ## Remaining gaps
 
-**None at the requirement level.** No FR-*/NFR-* is undelivered, and the previously-flagged
+**None at the requirement level, in either dimension.** No FR-*/NFR-* is undelivered in the
+engine, and every operator-facing requirement family is reachable in the workspace front
+door ([Front-door reachability](#front-door-reachability)). The previously-flagged engine
 items are all resolved (see the per-row "(re-verified)" annotations and the four blockers
 above). The earlier soft phase-placement gaps are also resolved: **FR-CHAT-1** is a
-first-class Phase 4 surface (`ChatService` + chat router, confirmation-gated per FR-FB-3,
-`tests/bdd/features/p4_chatbot.feature`), and **FR-UI-6** is a span whose sub-surfaces each
-carry their own row + test.
+first-class chat surface (`ChatService` + chat router, confirmation-gated per FR-FB-3,
+`tests/bdd/features/p4_chatbot.feature`), reachable via the front-door assistant
+(`applicant_chat_routes.py` + `applicantChat.js`); and **FR-UI-6** is a span whose
+sub-surfaces each carry their own row + test and each map to a front-door surface.
+
+The earlier overstatement — that engine delivery alone meant a requirement was done — is
+corrected: reachability is now its own audited dimension. The only deliberately-unreachable
+Applicant surface is **Compare** (`present_but_disabled`), which is a product decision, not
+a gap.
 
 **What is and isn't proven by the test suite (honest note):** the **613 hermetic tests prove
 the logic** of every requirement against fakes / in-memory adapters. They do NOT exercise the

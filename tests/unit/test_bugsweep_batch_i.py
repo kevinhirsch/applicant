@@ -287,14 +287,9 @@ def test_load_or_stub_409s_on_illegal_persisted_prestate():
     )
     storage.commit()
 
-    class _C:
-        pass
-
-    container = _C()
-    container.storage = storage
-
+    # CONC-REQ-1: _load_or_stub now takes the (per-request) storage directly.
     with pytest.raises(IllegalStateTransition):
-        _load_or_stub(container, str(aid))
+        _load_or_stub(storage, str(aid))
 
 
 # --- #4 detection events persisted from the prefill path -------------------

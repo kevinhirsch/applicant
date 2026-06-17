@@ -171,10 +171,11 @@ def test_debug_and_chat_surfaces_served(client):
 def test_criteria_and_attribute_surfaces_served(client):
     crit = client.get("/criteria").text
     assert "criteria-section" in crit
-    assert "Learned adjustments" in crit  # learned-but-overridable surfaced (FR-CRIT-3)
+    assert "Learned adjustments" in crit  # learned-but-overridable surfaced
     attrs = client.get("/attributes").text
     assert "attributes-section" in attrs
-    assert "AI-guessed" in attrs  # sensitive policy surfaced (FR-ATTR-6)
+    # Equal-opportunity policy is surfaced in plain language.
+    assert "never auto-filled" in attrs
 
 
 @pytest.mark.integration
@@ -212,6 +213,24 @@ def test_attribute_integral_edit_is_confirmation_gated(client):
         },
     )
     assert ok.status_code == 201
+
+
+# CRIT-profile: explicit attribute delete (FR-ATTR-3).
+@pytest.mark.integration
+def test_attribute_delete_removes_it(client):
+    cid = "c-attr-del"
+    made = client.post(
+        "/api/attributes",
+        json={"campaign_id": cid, "name": "Phone", "value": "+1 555 0100"},
+    )
+    assert made.status_code == 201
+    attr_id = made.json()["id"]
+    assert any(a["id"] == attr_id for a in client.get(f"/api/attributes/{cid}").json()["items"])
+
+    deleted = client.delete(f"/api/attributes/{cid}/{attr_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": attr_id}
+    assert not any(a["id"] == attr_id for a in client.get(f"/api/attributes/{cid}").json()["items"])
 
 
 # === Stealth honesty caveat + egress (FR-STEALTH-4 / FR-STEALTH-5) ========

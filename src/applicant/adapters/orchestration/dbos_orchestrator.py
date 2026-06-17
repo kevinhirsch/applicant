@@ -23,6 +23,7 @@ whereas DBOS is decorator-based. We bridge by:
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
@@ -61,6 +62,11 @@ class DbosOrchestrator:
         # acquire/release/pivot contract is uniform across both adapters (FR-DUR-2/4).
         self._queue_caps: dict[str, dict[str, Any]] = {}
         self._queue_admit: dict[str, dict[str, Any]] = {}
+        # CONC-DBOS-1: ``CapacityService`` is shared across the scheduler thread +
+        # request threads, so the non-atomic admission bookkeeping (active/waiting/
+        # admit_times) must be serialized. Mirror the shim's per-key locking with a
+        # single lock guarding create_queue / acquire / release.
+        self._admit_lock = threading.Lock()
         # Real DBOS ``Queue`` objects, kept so admission actually routes through them
         # (FR-DUR-2) rather than being created and discarded.
         self._queues: dict[str, Any] = {}
@@ -209,12 +215,18 @@ class DbosOrchestrator:
         limiter = None
         if limiter_limit is not None and limiter_period is not None:
             limiter = {"limit": limiter_limit, "period": limiter_period}
-        self._queue_caps[name] = {
-            "concurrency": concurrency,
-            "limiter_limit": limiter_limit,
-            "limiter_period": limiter_period,
-        }
-        self._queue_admit[name] = {"active": set(), "waiting": deque(), "admit_times": deque()}
+        # CONC-DBOS-1: guard the shared admission bookkeeping mutation.
+        with self._admit_lock:
+            self._queue_caps[name] = {
+                "concurrency": concurrency,
+                "limiter_limit": limiter_limit,
+                "limiter_period": limiter_period,
+            }
+            self._queue_admit[name] = {
+                "active": set(),
+                "waiting": deque(),
+                "admit_times": deque(),
+            }
         queue = Queue(name, concurrency=concurrency, limiter=limiter)
         self._queues[name] = queue
         return queue
@@ -240,7 +252,17 @@ class DbosOrchestrator:
         return _DbosHandle(workflow_id, handle)
 
     def acquire(self, queue_name: str, work_id: str) -> bool:
-        """Admit ``work_id`` onto the queue (concurrency/rate gate) (FR-DUR-2)."""
+        """Admit ``work_id`` onto the queue (concurrency/rate gate) (FR-DUR-2).
+
+        CONC-DBOS-1: guarded by ``_admit_lock`` so the scheduler + request threads
+        sharing this adapter cannot read-modify-write the admission state over each
+        other (lost/double admissions).
+        """
+        with self._admit_lock:
+            return self._acquire_locked(queue_name, work_id)
+
+    def _acquire_locked(self, queue_name: str, work_id: str) -> bool:
+        """``acquire`` body; caller MUST already hold ``_admit_lock``."""
         cap = self._queue_caps.get(queue_name, {})
         st = self._queue_admit.setdefault(
             queue_name, {"active": set(), "waiting": deque(), "admit_times": deque()}
@@ -265,17 +287,31 @@ class DbosOrchestrator:
         return False
 
     def release(self, queue_name: str, work_id: str) -> str | None:
-        """Free a slot and promote the next waiter — the pivot (FR-DUR-4)."""
-        st = self._queue_admit.get(queue_name)
-        if st is None:
+        """Free a slot and promote the next fitting waiter — the pivot (FR-DUR-4).
+
+        CONC-DBOS-1: guarded by ``_admit_lock``. PIVOT: promote the FIRST waiter
+        that currently fits (scanning the FIFO), not only the head — a rate-blocked
+        head must not stall a later admissible waiter (pivot-around-blocker).
+        """
+        with self._admit_lock:
+            st = self._queue_admit.get(queue_name)
+            if st is None:
+                return None
+            st["active"].discard(work_id)
+            waiting = st["waiting"]
+            for idx in range(len(waiting)):
+                nxt = waiting[idx]
+                if nxt in st["active"]:
+                    # Stale already-admitted duplicate: drop it and keep scanning so
+                    # a genuine waiter behind it is not blocked.
+                    del waiting[idx]
+                    return nxt
+                if self._acquire_locked(queue_name, nxt):
+                    # _acquire_locked appended a NEW waiting entry only if it could
+                    # not admit; here it admitted, so remove the original position.
+                    del waiting[idx]
+                    return nxt
             return None
-        st["active"].discard(work_id)
-        if st["waiting"]:
-            nxt = st["waiting"][0]
-            if self.acquire(queue_name, nxt):
-                st["waiting"].popleft()
-                return nxt
-        return None
 
     def schedule(self, name: str, cron: str, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Register + retain a cron-scheduled durable workflow (FR-DUR-3, scheduling).

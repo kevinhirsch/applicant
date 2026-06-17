@@ -20,17 +20,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import get_attribute_cloud_service, require_llm_configured
 from applicant.core.errors import ConfirmationRequired, SensitiveFieldViolation
 
 router = APIRouter(
     prefix="/api/attributes", tags=["attributes"], dependencies=[Depends(require_llm_configured)]
 )
-
-
-def _svc(container: Container):
-    return container.attribute_cloud_service
 
 
 class UpsertAttributeIn(BaseModel):
@@ -73,8 +68,8 @@ def index() -> dict:
 
 
 @router.get("/{campaign_id}")
-def list_attributes(campaign_id: str, container: Container = Depends(get_container)) -> dict:
-    attrs = _svc(container).list_attributes(campaign_id)  # type: ignore[arg-type]
+def list_attributes(campaign_id: str, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
+    attrs = attr_svc.list_attributes(campaign_id)  # type: ignore[arg-type]
     return {
         "campaign_id": campaign_id,
         "items": [
@@ -91,11 +86,24 @@ def list_attributes(campaign_id: str, container: Container = Depends(get_contain
     }
 
 
+# CRIT-profile: explicit attribute delete (FR-ATTR-3). The service already exposes
+# AttributeCloudService.delete; this surfaces it on the router so the Profile UI can
+# remove an attribute card. No confirmation gate (deleting a stored fact is reversible
+# by re-adding it) — matches the spec's attribute edit/delete affordance.
+@router.delete("/{campaign_id}/{attribute_id}", status_code=200)
+def delete_attribute(
+    campaign_id: str, attribute_id: str, attr_svc=Depends(get_attribute_cloud_service)
+) -> dict:
+    attr_svc.delete(campaign_id, attribute_id)  # type: ignore[arg-type]
+    return {"deleted": True, "id": attribute_id}
+# CRIT-profile: end
+
+
 @router.post("", status_code=201)
-def upsert_attribute(body: UpsertAttributeIn, container: Container = Depends(get_container)) -> dict:
+def upsert_attribute(body: UpsertAttributeIn, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
     """Add/update an attribute through the confirmation + sensitive-field gates."""
     try:
-        attr = _svc(container).upsert(
+        attr = attr_svc.upsert(
             body.campaign_id,  # type: ignore[arg-type]
             body.name,
             body.value,
@@ -119,10 +127,10 @@ def upsert_attribute(body: UpsertAttributeIn, container: Container = Depends(get
 
 
 @router.post("/ai-add", status_code=201)
-def ai_add(body: AiAddIn, container: Container = Depends(get_container)) -> dict:
+def ai_add(body: AiAddIn, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
     """AI/learning dynamically adds a non-sensitive attribute (FR-ATTR-4)."""
     try:
-        attr = _svc(container).ai_add_attribute(
+        attr = attr_svc.ai_add_attribute(
             body.campaign_id, body.name, body.value, confirm=body.confirm  # type: ignore[arg-type]
         )
     except ConfirmationRequired as exc:
@@ -131,9 +139,9 @@ def ai_add(body: AiAddIn, container: Container = Depends(get_container)) -> dict
 
 
 @router.post("/bindings", status_code=201)
-def bind_field(body: BindFieldIn, container: Container = Depends(get_container)) -> dict:
+def bind_field(body: BindFieldIn, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
     """Bind an attribute to a specific ATS form field for pre-fill (FR-ATTR-2)."""
-    mapping = _svc(container).bind_field(
+    mapping = attr_svc.bind_field(
         body.site_key,
         body.field_selector,
         attribute_id=body.attribute_id,  # type: ignore[arg-type]
@@ -151,7 +159,7 @@ def bind_field(body: BindFieldIn, container: Container = Depends(get_container))
 
 
 @router.post("/acquire-missing", status_code=201)
-def acquire_missing(body: AcquireMissingIn, container: Container = Depends(get_container)) -> dict:
+def acquire_missing(body: AcquireMissingIn, attr_svc=Depends(get_attribute_cloud_service)) -> dict:
     """Store a detail the user supplied for a previously-missing attribute (FR-ATTR-5).
 
     Beyond storing the value (reused per campaign), this RESUMES any application
@@ -159,7 +167,7 @@ def acquire_missing(body: AcquireMissingIn, container: Container = Depends(get_c
     — closing the FR-ATTR-5 soft-error -> resolve -> resume -> reuse loop.
     """
     try:
-        summary = _svc(container).resume_after_missing_attr(
+        summary = attr_svc.resume_after_missing_attr(
             body.campaign_id, body.name, body.value, confirm=body.confirm  # type: ignore[arg-type]
         )
     except ConfirmationRequired as exc:

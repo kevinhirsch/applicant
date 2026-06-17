@@ -86,6 +86,10 @@ class Container:
     notification: Any
     orchestrator: Any
     tool_registry: Any
+    # Stage 2.5 engine -> workspace callback channel (WorkspacePort). Lanes inject
+    # this to call BACK into the front-door app. ``available()`` is False when no
+    # shared secret is configured, so callers degrade gracefully.
+    workspace: Any
 
     resume_parser: Any
 
@@ -114,9 +118,21 @@ class Container:
     submission_service: Any = None
     prefill_service: Any = None
     material_service: Any = None
+    # Setup-page model sources (add a local/cloud endpoint; auto-list its models).
+    model_endpoint_service: Any = None
+    # Lane B (Stage 2.5): capped/deduped/cached deep-research tool over the
+    # WorkspacePort — the agent escalates to it on a company/role knowledge gap and
+    # the manual-trigger research router calls it for user-initiated runs.
+    research_service: Any = None
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
+    # CONC-REQ-1: builds a PER-REQUEST SqlAlchemyStorage(session_factory()) + the
+    # storage-bound services for it, so concurrent sync requests (run in FastAPI's
+    # threadpool) never interleave on one non-thread-safe Session. ``None`` when no DB
+    # is configured (in-memory storage is thread-safe enough for the no-DB lane and is
+    # shared). Each call returns a dict including ``_session`` to close in ``finally``.
+    request_services_factory: Any = None
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -287,6 +303,14 @@ def build_container(settings: Settings | None = None) -> Container:
             )
         )
 
+    # Setup-page model sources: add a local/cloud endpoint and auto-list its models.
+    from applicant.application.services.model_endpoint_service import ModelEndpointService
+
+    model_endpoint_service = ModelEndpointService(
+        config_store=config_store,
+        credentials=credentials,
+    )
+
     llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
     # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
     # + tests); live boards opt-in via DISCOVERY_LIVE (FR-DISC-4 network boundary).
@@ -338,6 +362,21 @@ def build_container(settings: Settings | None = None) -> Container:
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
+    # Stage 2.5: outbound client for the engine -> workspace callback channel. The
+    # shared secret gates it (available() is False when unset) so the default/test
+    # lane never tries to reach the workspace.
+    from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+
+    workspace = HttpWorkspaceClient(
+        base_url=settings.workspace_url,
+        token=settings.applicant_internal_token,
+    )
+    # Lane C (Cookbook auto-register): let the model-endpoint service surface the
+    # workspace's Cookbook-served local models as auto-discovered LLM endpoints.
+    # Injected post-construction (workspace is built after the service) so the
+    # service stays decoupled and the dependency is optional/None in tests.
+    model_endpoint_service.workspace = workspace
+    model_endpoint_service.cookbook_local_host = settings.cookbook_local_host
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (
@@ -394,6 +433,9 @@ def build_container(settings: Settings | None = None) -> Container:
         llm=llm,
         learning=learning_service,
         storage=storage,
+        # Stage 2.5 lane A: inject the workspace callback so the assistant can
+        # surface auto-detected upcoming interviews (degrades silently when off).
+        workspace=workspace,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -449,6 +491,13 @@ def build_container(settings: Settings | None = None) -> Container:
         advanced_learning=advanced_learning_service,
     )
 
+    # Lane B (Stage 2.5): the capped deep-research tool over the WorkspacePort. One
+    # instance per container so its per-campaign budget + dedupe cache are shared by
+    # both the agent loop (auto-escalate) and the manual-trigger router.
+    from applicant.application.services.research_service import ResearchService
+
+    research_service = ResearchService(workspace=workspace)
+
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
     from applicant.application.services.agent_loop import AgentLoop
     from applicant.application.services.scheduler import Scheduler
@@ -470,6 +519,7 @@ def build_container(settings: Settings | None = None) -> Container:
         sandbox=sandbox,
         orchestrator=orchestrator,
         setup_service=setup_service,
+        research_service=research_service,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -539,6 +589,7 @@ def build_container(settings: Settings | None = None) -> Container:
             sandbox=sandbox,
             orchestrator=orchestrator,
             setup_service=setup_service,
+            research_service=research_service,
         )
         return {
             "storage": tick_storage,
@@ -548,7 +599,97 @@ def build_container(settings: Settings | None = None) -> Container:
             "final_approval_service": final_approval_service,
         }
 
+    # CONC-REQ-1: build the storage-bound services for ONE request from a per-request
+    # storage. Stateless adapters (llm/embedding/notifier/orchestrator/sandbox/...) and
+    # session-free services (setup/notification ladder/capacity/final-approval) are
+    # reused; everything that touches the Session is rebuilt against ``req_storage``.
+    def _build_request_services(req_storage) -> dict:
+        rs_config_store = (
+            SqlAlchemyAppConfigStore(getattr(req_storage, "_session", None))
+            if getattr(req_storage, "_session", None) is not None
+            else InMemoryAppConfigStore()
+        )
+        rs_ls = LearningService(req_storage, embedding)
+        rs_adv = AdvancedLearningService(base=rs_ls, storage=req_storage)
+        rs_criteria = CriteriaService(req_storage, llm)
+        rs_pas = PendingActionsService(req_storage)
+        rs_scoring = ScoringService(
+            req_storage, llm, embedding, learning=rs_ls, tool_registry=tool_registry
+        )
+        rs_conversion = ConversionService(
+            latex_tailor=latex_tailor, config_store=rs_config_store
+        )
+        rs_digest = DigestService(
+            req_storage,
+            notification,
+            rs_scoring,
+            learning=rs_ls,
+            criteria=rs_criteria,
+            notification_service=notification_service,
+            pending_actions=rs_pas,
+        )
+        rs_attr = AttributeCloudService(
+            req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
+        )
+        rs_feedback = FeedbackService(
+            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv
+        )
+        rs_chat = ChatService(
+            attribute_service=rs_attr,
+            criteria_service=rs_criteria,
+            llm=llm,
+            learning=rs_ls,
+            storage=req_storage,
+            workspace=workspace,  # Stage 2.5 lane A (see main ChatService build)
+        )
+        rs_admin = AdminQueryService(req_storage, orchestrator)
+        rs_submission = SubmissionService(
+            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
+        )
+        rs_prefill = PrefillService(
+            storage=req_storage,
+            browser=browser,
+            detection=detection,
+            sandbox=sandbox,
+            credentials=credentials,
+            notification=notification,
+            llm=llm,
+        )
+        rs_attr.set_prefill_service(rs_prefill)
+        rs_material = MaterialService(
+            req_storage,
+            llm=llm,
+            resume_tailoring=latex_tailor,
+            embedding=embedding,
+            docx_tailoring=docx_tailor,
+            conversion_service=rs_conversion,
+            notifications=notification_service,
+            pending_actions=rs_pas,
+            learning=rs_ls,
+            advanced_learning=rs_adv,
+        )
+        rs_campaign = CampaignService(req_storage)
+        rs_campaign.set_criteria_service(rs_criteria)
+        return {
+            "storage": req_storage,
+            "pending_actions_service": rs_pas,
+            "digest_service": rs_digest,
+            "attribute_cloud_service": rs_attr,
+            "feedback_service": rs_feedback,
+            "chat_service": rs_chat,
+            "admin_query_service": rs_admin,
+            "submission_service": rs_submission,
+            "prefill_service": rs_prefill,
+            "material_service": rs_material,
+            "criteria_service": rs_criteria,
+            "campaign_service": rs_campaign,
+            "conversion_service": rs_conversion,
+            "scoring_service": rs_scoring,
+            "learning_service": rs_ls,
+        }
+
     tick_services_factory = None
+    request_services_factory = None
     if session_factory is not None:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
 
@@ -556,6 +697,12 @@ def build_container(settings: Settings | None = None) -> Container:
             tick_session = session_factory()
             services = _build_tick_services(SqlAlchemyStorage(tick_session))
             services["_session"] = tick_session
+            return services
+
+        def request_services_factory():  # noqa: F811 - per-request isolated session
+            req_session = session_factory()
+            services = _build_request_services(SqlAlchemyStorage(req_session))
+            services["_session"] = req_session
             return services
 
     scheduler = Scheduler(
@@ -586,6 +733,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         orchestrator=orchestrator,
         tool_registry=tool_registry,
+        workspace=workspace,
         resume_parser=resume_parser,
         setup_service=setup_service,
         campaign_service=campaign_service,
@@ -610,6 +758,9 @@ def build_container(settings: Settings | None = None) -> Container:
         submission_service=submission_service,
         prefill_service=prefill_service,
         material_service=material_service,
+        model_endpoint_service=model_endpoint_service,
+        research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
+        request_services_factory=request_services_factory,
     )

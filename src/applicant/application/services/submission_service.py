@@ -36,6 +36,37 @@ from applicant.observability.logging import get_logger
 log = get_logger(__name__)
 
 
+def _reviewable_materials_for(storage, application_id) -> list[ReviewableMaterial]:
+    """Build the review-gate material set for an application (FR-RESUME-8, FR-RESUME-8).
+
+    #4: the set is the union of:
+      * every generated :class:`GeneratedDocument` for the app (cover letters /
+        screening answers), and
+      * the app's GENERATED resume variant when one is linked
+        (``Application.resume_variant_id``) — without this an unapproved generated
+        variant was invisible to the gate and could be submitted unreviewed.
+    """
+    materials: list[ReviewableMaterial] = [
+        ReviewableMaterial(identifier=str(d.id), is_generated=True, approved=d.approved)
+        for d in storage.documents.list_for_application(application_id)
+    ]
+    app = storage.applications.get(application_id)
+    variant_id = getattr(app, "resume_variant_id", None) if app is not None else None
+    if variant_id is not None:
+        variant = storage.resume_variants.get(variant_id)
+        if variant is not None:
+            # A linked variant is the application's GENERATED resume output; it gates
+            # submission until approved (a pristine base reuse is approved already).
+            materials.append(
+                ReviewableMaterial(
+                    identifier=str(variant.id),
+                    is_generated=True,
+                    approved=bool(variant.approved),
+                )
+            )
+    return materials
+
+
 class SubmissionService:
     def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None) -> None:
         self._storage = storage
@@ -74,11 +105,7 @@ class SubmissionService:
         every submit path funnels through (``record_submission``/``mark_submitted``),
         so the gate cannot be bypassed per-router by a present or future caller.
         """
-        docs = self._storage.documents.list_for_application(application_id)
-        materials = [
-            ReviewableMaterial(identifier=str(d.id), is_generated=True, approved=d.approved)
-            for d in docs
-        ]
+        materials = _reviewable_materials_for(self._storage, application_id)
         ensure_submittable(materials)
 
     # --- terminal completion (FR-LOG-1/2/4, FR-LEARN-2) -------------------

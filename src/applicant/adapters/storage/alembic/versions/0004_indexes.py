@@ -31,10 +31,14 @@ def upgrade() -> None:
     # rows keep deduplicating. Use a dialect-portable JSON extraction.
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
+        # ``payload`` is a portable JSON (not jsonb) column, so the jsonb-only
+        # key-exists operator ``?`` is unavailable ("operator does not exist:
+        # json ? unknown"). ``->>`` works on json and yields NULL for a missing
+        # key, so test that instead — no jsonb cast needed.
         op.execute(
             "UPDATE pending_actions "
             "SET dedup_key = payload->>'dedup_key' "
-            "WHERE payload ? 'dedup_key'"
+            "WHERE payload->>'dedup_key' IS NOT NULL"
         )
     else:
         # SQLite (and others with json_extract): pull the same key out of JSON text.

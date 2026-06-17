@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""applicant-ollama-setup — one-command local Ollama setup for Applicant.
+
+Installs Ollama on this host, configures it to listen on 0.0.0.0:11434 so the
+Dockerized Applicant container can reach it, pulls a model, points Applicant's
+.env at the host endpoint, and restarts the stack — no manual steps.
+
+    sudo applicant ollama-setup              # default model (llama3.1)
+    sudo applicant ollama-setup qwen2.5      # pick a different model
+
+Needs root for the Ollama install + the systemd drop-in. Safe to re-run; it
+skips the install if Ollama is already present and just refreshes the config.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+OLLAMA_ENDPOINT = "http://host.docker.internal:11434/v1"
+DROPIN = Path("/etc/systemd/system/ollama.service.d/applicant.conf")
+
+
+def _step(msg: str) -> None:
+    print(f"\n==> {msg}", flush=True)
+
+
+def _sh(cmd: list[str]) -> None:
+    """Run a command from the repo root, streaming output. Abort on failure."""
+    if subprocess.run(cmd, cwd=str(REPO_ROOT)).returncode != 0:
+        sys.exit(f"\napplicant-ollama-setup: `{' '.join(cmd)}` failed; aborting.")
+
+
+def _ollama_responding() -> bool:
+    try:
+        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2).read(1)
+        return True
+    except Exception:
+        return False
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="applicant ollama-setup",
+        description="Install and wire up local Ollama for Applicant.",
+    )
+    parser.add_argument(
+        "model", nargs="?", default="llama3.1",
+        help="model to pull (default: llama3.1)",
+    )
+    args = parser.parse_args(argv)
+
+    if os.geteuid() != 0:
+        sys.exit("Needs root. Re-run:  sudo " + " ".join(sys.argv))
+
+    # 1. Install Ollama (idempotent).
+    _step("Installing Ollama (if not already present) ...")
+    if subprocess.run(["sh", "-c", "command -v ollama"], capture_output=True).returncode != 0:
+        _sh(["sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh"])
+    else:
+        print("    already installed")
+
+    # 2. Make Ollama listen beyond loopback so the container can reach it.
+    _step("Configuring Ollama to listen on 0.0.0.0:11434 ...")
+    DROPIN.parent.mkdir(parents=True, exist_ok=True)
+    DROPIN.write_text('[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\n')
+    _sh(["systemctl", "daemon-reload"])
+    _sh(["systemctl", "enable", "--now", "ollama"])
+    _sh(["systemctl", "restart", "ollama"])
+
+    _step("Waiting for Ollama to come up ...")
+    for _ in range(30):
+        if _ollama_responding():
+            break
+        time.sleep(1)
+    else:
+        sys.exit("Ollama didn't respond on :11434 — check `systemctl status ollama`.")
+
+    # 3. Pull the requested model.
+    _step(f"Pulling model: {args.model} ...")
+    _sh(["ollama", "pull", args.model])
+
+    # 4. Point Applicant's .env at the host endpoint (replace any existing line).
+    _step("Pointing Applicant at host Ollama ...")
+    env = REPO_ROOT / ".env"
+    lines = env.read_text().splitlines() if env.exists() else []
+    lines = [ln for ln in lines if not ln.startswith("OLLAMA_BASE_URL=")]
+    lines.append(f"OLLAMA_BASE_URL={OLLAMA_ENDPOINT}")
+    env.write_text("\n".join(lines) + "\n")
+
+    # 5. Restart Applicant so it picks up the endpoint.
+    _step("Restarting Applicant ...")
+    _sh(["docker", "compose", "up", "-d"])
+
+    # 6. Verify the container can actually reach host Ollama.
+    _step("Verifying the container can reach Ollama ...")
+    check = subprocess.run(
+        ["docker", "compose", "exec", "-T", "applicant", "python", "-c",
+         "import urllib.request;urllib.request.urlopen("
+         "'http://host.docker.internal:11434/api/tags',timeout=5).read(1)"],
+        cwd=str(REPO_ROOT),
+    )
+    if check.returncode == 0:
+        print(f"\n    OK — '{args.model}' is ready in Applicant's model picker.")
+    else:
+        print("\n    NOTE: the container couldn't reach Ollama yet. If this persists, "
+              "allow port 11434 from the Docker bridge in your host firewall.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -376,23 +376,21 @@ def live_panels_present(p4ctx):
 @then("the logs, screenshots, and variant-library panels are present and live")
 def live_obs_panels_present(p4ctx):
     html = p4ctx["html"]
-    # These panels are now wired (FR-OBS-2 / FR-LOG-3 / FR-RESUME-6) and carry the
-    # live badge alongside their section ids.
+    # These panels are wired; assert their section ids and user-facing headings.
     for section in ("logs-section", "screenshots-section", "variants-section"):
         assert f'id="{section}"' in html
-    for token in ("Logs", "Screenshots", "Variant library"):
+    for token in ("Activity log", "Screenshots", "Resume variants"):
         assert token in html
 
 
 @then("the genuinely dormant surfaces are present but grayed")
 def genuinely_dormant_grayed(p4ctx):
     html = p4ctx["html"]
-    # Per FR-UI-2 the still-dormant surfaces stay present-but-grayed with the
-    # off-badge (resume aggressiveness ships grayed by FR-RESUME-9; the multi-
-    # campaign switcher is grayed for MVP-1).
+    # Not-yet-available surfaces stay present-but-grayed with the off-badge
+    # (resume aggressiveness and the multiple-job-searches switcher).
     assert "applicant-dormant" in html
     assert html.count("admin-badge-off") >= 2
-    for token in ("Resume aggressiveness", "Multi-campaign switcher"):
+    for token in ("Resume aggressiveness", "Multiple job searches"):
         assert token in html
 
 

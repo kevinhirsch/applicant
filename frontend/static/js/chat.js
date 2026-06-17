@@ -235,7 +235,7 @@ import { isNarrow } from './platform.js';
       // Clear any pending transitions from + → arrow swap
       submitBtn.classList.remove('anim-spin', 'anim-spin-swap', 'anim-land', 'mic-mode', 'newchat-mode', 'newchat-expanded', 'recording');
       // Ensure arrow icon is showing before launch
-      var icons = window._orwellBtnIcons;
+      var icons = window._applicantBtnIcons;
       if (icons) submitBtn.innerHTML = icons.send;
       void submitBtn.offsetWidth;
       // Arrow launches up, then stop icon lands in
@@ -266,7 +266,7 @@ import { isNarrow } from './platform.js';
       if (window._updateSendBtnIcon) {
         setTimeout(window._updateSendBtnIcon, 50);
       } else {
-        var icons = window._orwellBtnIcons;
+        var icons = window._applicantBtnIcons;
         submitBtn.innerHTML = icons ? icons.send : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
         submitBtn.title = 'Send message';
         submitBtn.classList.remove('mic-mode', 'newchat-mode');
@@ -499,10 +499,10 @@ import { isNarrow } from './platform.js';
           const dcRes = await fetch('/api/default-chat');
           dc = await dcRes.json();
           if (dc && dc.endpoint_url && dc.model) {
-            try { window.__orwellDefaultChat = dc; } catch (_) {}
+            try { window.__applicantDefaultChat = dc; } catch (_) {}
           }
         } catch (_) {
-          dc = (typeof window !== 'undefined' && window.__orwellDefaultChat) || null;
+          dc = (typeof window !== 'undefined' && window.__applicantDefaultChat) || null;
         }
         if (dc.endpoint_url && dc.model) {
           await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
@@ -560,7 +560,7 @@ import { isNarrow } from './platform.js';
 
     // Acquire Web Lock to hint browser not to discard this tab while streaming
     if (navigator.locks) {
-      navigator.locks.request('orwell-stream-' + streamSessionId, { mode: 'exclusive', ifAvailable: true }, lock => {
+      navigator.locks.request('applicant-stream-' + streamSessionId, { mode: 'exclusive', ifAvailable: true }, lock => {
         if (!lock) return; // Another stream already holds a lock — fine
         return new Promise(resolve => { _webLockRelease = resolve; });
       }).catch(e => console.warn('web lock acquire failed:', e)); // Ignore lock errors — best-effort
@@ -649,7 +649,7 @@ import { isNarrow } from './platform.js';
       messageInput.dispatchEvent(new Event('input'));
       // G17 (refresh-persistence audit F3): a sent turn clears the persisted composer
       // draft — a refresh must never resurrect words the house already heard.
-      if (window._orwellComposerDraftClear) window._orwellComposerDraftClear();
+      if (window._applicantComposerDraftClear) window._applicantComposerDraftClear();
       // Mobile: dismiss the on-screen keyboard after sending. iOS in
       // particular ignores a bare blur() in some cases (or some other
       // listener refocuses straight after), so we temporarily mark the
@@ -1124,7 +1124,7 @@ import { isNarrow } from './platform.js';
         const docBtn = document.getElementById('export-doc-btn');
         if (docBtn) docBtn.remove();
       }
-      const _orwellToolBeats = {
+      const _applicantToolBeats = {
         'createCharacter': '\ud83c\udfac Casting',
         'getGameState': '\ud83d\udccb Production notes',
         'gameStatus': '\ud83d\udccb Production notes',
@@ -2133,7 +2133,7 @@ import { isNarrow } from './platform.js';
                   chatBox.appendChild(threadWrap);
                 }
                 threadWrap.classList.add('streaming');
-                const _beat = _orwellToolBeats[json.tool];
+                const _beat = _applicantToolBeats[json.tool];
                 const toolLabel = _beat || _toolLabels[json.tool.toLowerCase()] || json.tool;
                 if (_beat) cmd = '';  // production machinery: never show raw args
                 const node = document.createElement('div')
@@ -2244,18 +2244,18 @@ import { isNarrow } from './platform.js';
                   }
                   // For file edits the "command" is the raw JSON args — redundant
                   // next to the diff, so hide it when we have a diff to show.
-                  const _beatOut = _orwellToolBeats[json.tool];
+                  const _beatOut = _applicantToolBeats[json.tool];
                   if (_beatOut) { cmd = ''; outHtml = ''; }  // game beats: label + status only, no raw JSON
                   // C20: surface the engine's pending decision (or clear it) to the confirm
                   // guardrail. Vault-free AdvanceView only; fail-open on any parse trouble.
                   if (json.tool === 'advanceGame' || json.tool === 'submitDecision') {
                     try {
                       const _adv = JSON.parse(json.output || '{}');
-                      window.dispatchEvent(new CustomEvent('orwell:pending', { detail: { pending: _adv && _adv.pending ? _adv.pending : null } }));
+                      window.dispatchEvent(new CustomEvent('applicant:pending', { detail: { pending: _adv && _adv.pending ? _adv.pending : null } }));
                     } catch (_) {}
                   }
                   // G15: every game-MUTATING tool result nudges the panels through THE one
-                  // debounced dispatcher (platform.js orwellGameChanged) — post-action UI
+                  // debounced dispatcher (platform.js applicantGameChanged) — post-action UI
                   // refreshes event-driven instead of waiting out a 20–30s poll. (E65's
                   // inline dispatch was nested inside the advanceGame/submitDecision branch
                   // above, so the lifecycle tools it keyed on could never reach it.)
@@ -2263,9 +2263,9 @@ import { isNarrow } from './platform.js';
                   // comp result moves exactly what the status HUD shows (HOH/veto/phase).
                   if (ok && ['advanceGame', 'submitDecision', 'recordInteraction', 'createCharacter',
                              'updateCasting', 'manageSandbox', 'runCompetition'].includes(json.tool)) {
-                    if (window.orwellGameChanged) window.orwellGameChanged('tool:' + json.tool);
+                    if (window.applicantGameChanged) window.applicantGameChanged('tool:' + json.tool);
                     // E65: a new season (createCharacter success mid-session) opens a FRESH chat.
-                    if (json.tool === 'createCharacter' && window._orwellFreshSession) window._orwellFreshSession();
+                    if (json.tool === 'createCharacter' && window._applicantFreshSession) window._applicantFreshSession();
                   }
                   const cmdHtml2 = (cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
                   // Preserve the user's .open choice across the innerHTML
@@ -3215,7 +3215,7 @@ import { isNarrow } from './platform.js';
             if (_box && sessionModule.getCurrentSessionId() === _timeoutSessionId) {
               var _timeoutMsg = document.createElement('div');
               _timeoutMsg.className = 'msg msg-ai';
-              _timeoutMsg.innerHTML = '<div class="role">Orwell</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
+              _timeoutMsg.innerHTML = '<div class="role">Applicant</div><div class="body" style="opacity:0.6;font-style:italic;">Research clarification timed out. Toggle research again to start over.</div>';
               _box.appendChild(_timeoutMsg);
               uiModule.scrollHistory();
             }
@@ -5166,7 +5166,7 @@ import { isNarrow } from './platform.js';
   // streaming, history-rendered, compare-mode, all of them. Re-attaching
   // per-node listeners on every innerHTML rewrite was the source of the
   // "needs many clicks" bug.
-  if (!window.__orwell_thread_click_bound) {
+  if (!window.__applicant_thread_click_bound) {
     document.body.addEventListener('click', (e) => {
       const header = e.target.closest('.agent-thread-header');
       if (!header) return;
@@ -5174,7 +5174,7 @@ import { isNarrow } from './platform.js';
       if (!node) return;
       node.classList.toggle('open');
     });
-    window.__orwell_thread_click_bound = true;
+    window.__applicant_thread_click_bound = true;
   }
 
   export default chatModule;

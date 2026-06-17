@@ -16,10 +16,18 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured, require_tool_enabled
+from applicant.app.deps import (
+    get_container,  # CRIT-profile: container singleton for the banned-phrase list
+    get_material_service,
+    get_pending_actions_service,
+    get_storage,
+    require_llm_configured,
+    require_tool_enabled,
+)
 from applicant.application.services.material_service import MaterialService
-from applicant.core.errors import ReviewRequired
-from applicant.core.ids import GeneratedDocumentId
+from applicant.core.errors import NotFound, ReviewRequired
+from applicant.core.ids import GeneratedDocumentId, ResumeVariantId
+from applicant.core.rules.truthfulness import BANNED_PHRASES  # CRIT-profile
 
 router = APIRouter(
     prefix="/api/documents", tags=["documents"], dependencies=[Depends(require_llm_configured)]
@@ -27,11 +35,10 @@ router = APIRouter(
 
 
 def _material_service(container: Container) -> MaterialService:
-    # Composed from the frozen container's adapters: storage + llm + both tailoring
-    # engines + the local embedding port (variant clustering, FR-RESUME-6) + the
-    # Phase 0 ConversionService (per-campaign engine choice, FR-RESUME-3a) + the
-    # Phase 1 notification ladder + pending-actions home base (review-ready linkage,
-    # FR-NOTIF-4).
+    # CONC-REQ-1: prefer the PER-REQUEST material service (its storage is bound to a
+    # request-scoped Session). Composed from the frozen container's adapters.
+    if container.material_service is not None:
+        return container.material_service
     return MaterialService(
         container.storage,
         container.llm,
@@ -91,6 +98,12 @@ class AggressivenessIn(BaseModel):
     aggressiveness: int = 20
 
 
+# CRIT-profile: UI-editable banned-phrase ("no-AI-look") list (FR-RESUME-5).
+class BannedPhrasesIn(BaseModel):
+    phrases: list[str] = []
+# CRIT-profile: end
+
+
 class RedlineIn(BaseModel):
     variant_id: str
     base_source: str
@@ -118,9 +131,11 @@ def index() -> dict:
 
 
 @router.get("/applications/{application_id}")
-def list_for_application(application_id: str, container: Container = Depends(get_container)) -> dict:
+def list_for_application(
+    application_id: str, storage=Depends(get_storage)
+) -> dict:
     """List generated docs for an application + whether the review gate is open."""
-    docs = container.storage.documents.list_for_application(application_id)  # type: ignore[arg-type]
+    docs = storage.documents.list_for_application(application_id)  # type: ignore[arg-type]
     return {
         "application_id": application_id,
         "items": [
@@ -136,9 +151,9 @@ def list_for_application(application_id: str, container: Container = Depends(get
     status_code=200,
     dependencies=[Depends(require_tool_enabled("resume_tailoring"))],
 )
-def redline(body: RedlineIn, container: Container = Depends(get_container)) -> dict:
+def redline(body: RedlineIn, material=Depends(get_material_service)) -> dict:
     """Render the add/subtract redline for the review surface (FR-RESUME-8)."""
-    result = _material_service(container).render_redline(
+    result = material.render_redline(
         body.variant_id, body.base_source, body.new_source  # type: ignore[arg-type]
     )
     return {
@@ -154,12 +169,12 @@ def redline(body: RedlineIn, container: Container = Depends(get_container)) -> d
     status_code=201,
     dependencies=[Depends(require_tool_enabled("cover_letter_generation"))],
 )
-def generate_cover_letter(body: CoverLetterIn, container: Container = Depends(get_container)) -> dict:
+def generate_cover_letter(body: CoverLetterIn, material=Depends(get_material_service)) -> dict:
     """Generate a cover letter ON DEMAND (FR-RESUME-10), routed to review.
 
     Returns ``{"generated": false}`` when the role does not warrant one.
     """
-    doc = _material_service(container).generate_cover_letter(
+    doc = material.generate_cover_letter(
         body.campaign_id,  # type: ignore[arg-type]
         body.application_id,  # type: ignore[arg-type]
         body.true_source,
@@ -178,10 +193,10 @@ def generate_cover_letter(body: CoverLetterIn, container: Container = Depends(ge
     dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
 )
 def generate_screening_answer(
-    body: ScreeningAnswerIn, container: Container = Depends(get_container)
+    body: ScreeningAnswerIn, material=Depends(get_material_service)
 ) -> dict:
     """Generate a screening answer (FR-ANSWER-1): factual vs essay vs sensitive."""
-    doc = _material_service(container).generate_screening_answer(
+    doc = material.generate_screening_answer(
         body.campaign_id,  # type: ignore[arg-type]
         body.application_id,  # type: ignore[arg-type]
         body.question,
@@ -198,7 +213,9 @@ def generate_screening_answer(
     dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
 )
 def generate_deferred_essay(
-    body: DeferredEssayIn, container: Container = Depends(get_container)
+    body: DeferredEssayIn,
+    material=Depends(get_material_service),
+    pending_actions=Depends(get_pending_actions_service),
 ) -> dict:
     """Generate + review the answer for a DEFERRED essay screening question (#4).
 
@@ -214,7 +231,7 @@ def generate_deferred_essay(
         "url": body.url,
         "explicit_answer": body.explicit_answer,
     }
-    doc = _material_service(container).generate_for_deferred_question(
+    doc = material.generate_for_deferred_question(
         body.campaign_id,  # type: ignore[arg-type]
         body.application_id,  # type: ignore[arg-type]
         deferred,
@@ -223,7 +240,7 @@ def generate_deferred_essay(
     # Resolve the originating agent_question pending action by its dedup key (#4/#7).
     if body.selector:
         try:
-            container.pending_actions_service.resolve_by_dedup(
+            pending_actions.resolve_by_dedup(
                 body.campaign_id,  # type: ignore[arg-type]
                 f"agent_question:{body.application_id}:{body.selector}",
             )
@@ -233,24 +250,51 @@ def generate_deferred_essay(
 
 
 @router.post("/aggressiveness", status_code=200)
-def set_aggressiveness(body: AggressivenessIn, container: Container = Depends(get_container)) -> dict:
+def set_aggressiveness(body: AggressivenessIn, material=Depends(get_material_service)) -> dict:
     """Set the truthful-framing dial (FR-RESUME-9). The UI control is grayed (FR-UI-2)."""
-    value = _material_service(container).set_aggressiveness(body.aggressiveness)
+    value = material.set_aggressiveness(body.aggressiveness)
     return {"aggressiveness": value, "dormant_ui": True}
 
 
+# CRIT-profile: banned-phrase ("no-AI-look") list editor (FR-RESUME-5).
+# The list supplements the curated core seed and is stripped from every generated
+# artifact before review. It is held on the CONTAINER-SINGLETON material service so
+# an edit persists in-process across requests (the per-request service is a fresh,
+# storage-bound instance and would not retain the list). ``seed_phrases`` is the
+# read-only curated baseline so the UI can show "always removed" vs "your additions".
+@router.get("/banned-phrases", status_code=200)
+def get_banned_phrases(container: Container = Depends(get_container)) -> dict:
+    material = container.material_service
+    custom = list(material.banned_phrases) if material is not None else []
+    return {"phrases": custom, "seed_phrases": list(BANNED_PHRASES)}
+
+
+@router.post("/banned-phrases", status_code=200)
+def set_banned_phrases(
+    body: BannedPhrasesIn, container: Container = Depends(get_container)
+) -> dict:
+    material = container.material_service
+    if material is not None:
+        material.set_banned_phrases(body.phrases)
+        custom = list(material.banned_phrases)
+    else:
+        custom = []
+    return {"phrases": custom, "seed_phrases": list(BANNED_PHRASES)}
+# CRIT-profile: end
+
+
 @router.post("/{document_id}/review", status_code=201)
-def open_review(document_id: str, container: Container = Depends(get_container)) -> dict:
+def open_review(document_id: str, material=Depends(get_material_service)) -> dict:
     """Open the interactive review session for a document (FR-RESUME-8)."""
-    session = _material_service(container).open_revision(GeneratedDocumentId(document_id))
+    session = material.open_revision(GeneratedDocumentId(document_id))
     return _session_payload(session)
 
 
 @router.post("/{document_id}/turn", status_code=201)
-def submit_turn(document_id: str, body: TurnIn, container: Container = Depends(get_container)) -> dict:
+def submit_turn(document_id: str, body: TurnIn, material=Depends(get_material_service)) -> dict:
     """Apply an add/subtract/free-text revision turn (FR-RESUME-8)."""
     try:
-        session = _material_service(container).apply_turn(
+        session = material.apply_turn(
             GeneratedDocumentId(document_id),
             body.kind,
             body.instruction,
@@ -262,24 +306,44 @@ def submit_turn(document_id: str, body: TurnIn, container: Container = Depends(g
 
 
 @router.post("/{document_id}/approve", status_code=201)
-def approve(document_id: str, container: Container = Depends(get_container)) -> dict:
+def approve(document_id: str, material=Depends(get_material_service)) -> dict:
     """Approve the material, passing the review gate (FR-RESUME-8)."""
-    doc = _material_service(container).approve(GeneratedDocumentId(document_id))
+    doc = material.approve(GeneratedDocumentId(document_id))
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved}
 
 
+@router.post("/variants/{variant_id}/approve", status_code=201)
+def approve_variant(variant_id: str, material=Depends(get_material_service)) -> dict:
+    """Approve a GENERATED resume variant through the review gate (#1, FR-RESUME-1/6/8).
+
+    A generated variant routed to review (its material_review pending action + ping)
+    is approved here, mirroring document approval. Approval clears the variant's
+    pending action + ping and lets the parked pipeline advance past MATERIAL_REVIEW.
+    """
+    try:
+        variant = material.approve_variant(ResumeVariantId(variant_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return {
+        "id": variant.id,
+        "type": "resume_variant",
+        "approved": variant.approved,
+        "campaign_id": variant.campaign_id,
+    }
+
+
 @router.post("/{document_id}/decline", status_code=201)
-def decline(document_id: str, container: Container = Depends(get_container)) -> dict:
+def decline(document_id: str, material=Depends(get_material_service)) -> dict:
     """Decline the material (stays unapproved, blocks submission)."""
-    doc = _material_service(container).decline(GeneratedDocumentId(document_id))
+    doc = material.decline(GeneratedDocumentId(document_id))
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved}
 
 
 @router.post("/applications/{application_id}/ensure-submittable")
-def ensure_submittable(application_id: str, container: Container = Depends(get_container)) -> dict:
+def ensure_submittable(application_id: str, material=Depends(get_material_service)) -> dict:
     """Enforce the review gate before submission (FR-RESUME-8). 409 if unapproved."""
     try:
-        _material_service(container).ensure_application_submittable(application_id)  # type: ignore[arg-type]
+        material.ensure_application_submittable(application_id)  # type: ignore[arg-type]
     except ReviewRequired as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {"application_id": application_id, "submittable": True}

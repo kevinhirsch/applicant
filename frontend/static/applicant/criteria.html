@@ -1,27 +1,26 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Criteria editor surface (FR-CRIT-1/2/3, FR-FB-3, FR-UI-6).
-  The campaign search criteria are human-readable + editable at all times
-  (FR-CRIT-2); learned adjustments are shown and user-overridable (FR-CRIT-3);
-  integral edits route through the confirmation gate (FR-FB-3) — the API 409s and
-  this surface re-asks for confirmation. Reuses the vendored Odysseus style.
+  Applicant — search criteria. What this job search looks for, in plain language
+  and editable any time. Learned adjustments are shown and can be overridden,
+  and some changes ask for your confirmation before saving.
+  Reuses the shared Applicant design system.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Applicant — Criteria editor</title>
-  <link rel="stylesheet" href="../style.css" />
-  <link rel="stylesheet" href="applicant.css" />
+  <title>Applicant — Search criteria</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
 </head>
 <body data-campaign-id="">
   <div id="applicant-nav"></div>
   <main>
     <section class="admin-card applicant-section" id="criteria-section">
-      <h1>Criteria editor <span class="admin-badge admin-badge-on">live</span></h1>
+      <h1>Search criteria</h1>
       <p class="admin-empty">
-        Edit what this campaign looks for. Criteria are human-readable and editable
-        any time (FR-CRIT-2); integral edits ask for confirmation (FR-FB-3).
+        Edit what this search looks for. You can change your criteria any time;
+        some changes ask for your confirmation before saving.
       </p>
       <form id="criteria-form" class="applicant-form">
         <label>Plain-language summary
@@ -38,15 +37,15 @@
     </section>
 
     <section class="admin-card applicant-section" id="learned-section">
-      <h2>Learned adjustments <span class="admin-badge admin-badge-on">live</span></h2>
+      <h2>Learned adjustments</h2>
       <p class="admin-empty">
-        Adjustments the engine has learned (FR-CRIT-3) — always shown and
-        overridable. Clear them to revert to your stated criteria.
+        Adjustments Applicant has learned from your feedback — always shown and
+        yours to override. Clear them to go back to your stated criteria.
       </p>
       <pre id="learned-json" class="applicant-log">—</pre>
       <button class="admin-btn" id="c-clear-learned" type="button">Clear learned adjustments</button>
     </section>
   </main>
-  <script type="module" src="./js/criteria.js"></script>
+  <script type="module" src="/static/applicant/js/criteria.js"></script>
 </body>
 </html>

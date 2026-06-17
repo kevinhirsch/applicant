@@ -1,29 +1,27 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Redline / document review surface (FR-RESUME-1/8/9, FR-ANSWER-1, FR-NOTIF-4).
-  Live in Phase 3: a real review surface with resume / cover-letter / screening-answer
-  tabs, the redline (additions + deletions highlighted), the interactive
-  add/subtract/free-text revision loop, and approve/decline. No submission until
-  approved. Reuses the vendored Odysseus style (../style.css).
+  Applicant — document review. Review resumes, cover letters, and screening
+  answers, see exactly what changed, request revisions, and approve or decline.
+  Nothing is submitted until you approve it.
+  Reuses the shared Applicant design system.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Applicant — Document review</title>
-  <link rel="stylesheet" href="../style.css" />
-  <link rel="stylesheet" href="applicant.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
 </head>
 <body data-document-id="" data-variant-id="" data-application-id="">
   <main class="admin-card" style="max-width:880px;margin:40px auto;padding:24px;">
-    <h1>Document review <span class="admin-badge admin-badge-on">Phase 3</span></h1>
+    <h1>Document review</h1>
     <p class="admin-empty">
-      Redline with add+subtract highlights; interactive add/subtract/free-text
-      revision loop; approve/decline/revise. No submission until approved
-      (FR-RESUME-1/8, FR-ANSWER-1).
+      See exactly what changed (additions and removals highlighted), request
+      revisions, then approve or decline. Nothing is submitted until you approve it.
     </p>
 
-    <!-- Material tabs: resume variant / cover letter / screening answers (FR-RESUME-1). -->
+    <!-- Tabs: resume / cover letter / screening answers. -->
     <div class="review-tabs" role="tablist" id="material-tabs">
       <button class="admin-btn admin-btn-sm review-tab" role="tab" data-type="resume" aria-selected="true">Resume</button>
       <button class="admin-btn admin-btn-sm review-tab" role="tab" data-type="cover_letter" aria-selected="false">Cover letter</button>
@@ -31,15 +29,15 @@
     </div>
     <ul id="material-list" class="admin-empty"></ul>
 
-    <!-- FR-RESUME-9 aggressiveness control: GRAYED scaffold (not yet load-bearing). -->
-    <label class="toggle-switch applicant-grayed" aria-disabled="true" title="Coming soon (FR-RESUME-9)">
+    <!-- Aggressiveness control — not available yet. -->
+    <label class="toggle-switch applicant-grayed" aria-disabled="true" title="Coming soon">
       <input id="aggressiveness" type="range" min="0" max="100" value="20" disabled />
-      Aggressiveness (grayed)
+      Aggressiveness (coming soon)
     </label>
 
     <section style="margin-top:16px;">
-      <h2>Redline</h2>
-      <div id="redline-view" aria-live="polite">Loading redline...</div>
+      <h2>Changes</h2>
+      <div id="redline-view" aria-live="polite">Loading changes...</div>
     </section>
 
     <section style="margin-top:16px;">
@@ -59,6 +57,6 @@
       <span id="review-status" class="admin-empty"></span>
     </section>
   </main>
-  <script type="module" src="js/review.js"></script>
+  <script type="module" src="/static/applicant/js/review.js"></script>
 </body>
 </html>

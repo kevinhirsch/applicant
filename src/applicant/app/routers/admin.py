@@ -16,7 +16,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import (
+    get_admin_query_service,
+    get_container,
+    get_storage,
+    require_llm_configured,
+)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_llm_configured)])
 
@@ -52,7 +57,7 @@ def toggle_tool(
 # === Debug surface (FR-OBS-2 / FR-LOG-3) ===================================
 @router.get("/history/{campaign_id}")
 def application_history(
-    campaign_id: str, limit: int = 200, container: Container = Depends(get_container)
+    campaign_id: str, limit: int = 200, admin_query=Depends(get_admin_query_service)
 ) -> dict:
     """Per-application history for the debug surface (FR-OBS-2 / FR-LOG-3 / FR-UI-6).
 
@@ -60,16 +65,18 @@ def application_history(
     captured-screenshot count, and recorded outcome events. ``limit`` bounds the rows
     so a long-running campaign's history never returns an unbounded list (#14).
     """
-    rows = container.admin_query_service.application_history(
-        campaign_id, limit=limit  # type: ignore[arg-type]
+    # #13: clamp the caller-supplied limit so a huge ``?limit=`` cannot force an
+    # unbounded scan/response.
+    rows = admin_query.application_history(
+        campaign_id, limit=min(limit, 1000)  # type: ignore[arg-type]
     )
     return {"campaign_id": campaign_id, "applications": rows}
 
 
 @router.get("/outcomes/{application_id}")
-def application_outcomes(application_id: str, container: Container = Depends(get_container)) -> dict:
+def application_outcomes(application_id: str, storage=Depends(get_storage)) -> dict:
     """Outcome-event trail for one application (submission/conversion, FR-LOG-4)."""
-    events = container.storage.outcomes.list_for_application(application_id)  # type: ignore[arg-type]
+    events = storage.outcomes.list_for_application(application_id)  # type: ignore[arg-type]
     return {
         "application_id": application_id,
         "outcomes": [{"type": e.type, "source": e.source.value} for e in events],
@@ -78,49 +85,50 @@ def application_outcomes(application_id: str, container: Container = Depends(get
 
 @router.get("/detections/{campaign_id}")
 def application_detections(
-    campaign_id: str, container: Container = Depends(get_container)
+    campaign_id: str, admin_query=Depends(get_admin_query_service)
 ) -> dict:
     """Persisted automation-detection signal history (FR-OBS-2 / FR-PREFILL-6)."""
-    events = container.admin_query_service.detection_events(campaign_id)  # type: ignore[arg-type]
+    events = admin_query.detection_events(campaign_id)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "detections": events, "status": "live"}
 
 
 @router.get("/workflow/{application_id}")
-def workflow_state(application_id: str, container: Container = Depends(get_container)) -> dict:
+def workflow_state(application_id: str, admin_query=Depends(get_admin_query_service)) -> dict:
     """Durable-workflow (DBOS) state for one application (FR-OBS-2 / FR-DUR-1).
 
     Reports completed idempotent steps and whether the workflow is pending recovery,
     introspected from the durable orchestrator.
     """
-    return container.admin_query_service.workflow_state(application_id)  # type: ignore[arg-type]
+    return admin_query.workflow_state(application_id)  # type: ignore[arg-type]
 
 
 @router.get("/screenshots/{application_id}")
 def application_screenshots(
-    application_id: str, container: Container = Depends(get_container)
+    application_id: str, admin_query=Depends(get_admin_query_service)
 ) -> dict:
     """Per-page screenshots for the debug surface (FR-OBS-2).
 
     Reads the application_screenshots store captured during pre-fill/sandbox runs.
     """
-    shots = container.admin_query_service.screenshots(application_id)  # type: ignore[arg-type]
+    shots = admin_query.screenshots(application_id)  # type: ignore[arg-type]
     return {"application_id": application_id, "screenshots": shots, "status": "live"}
 
 
 @router.get("/logs")
-def logs(limit: int = 100, container: Container = Depends(get_container)) -> dict:
+def logs(limit: int = 100, admin_query=Depends(get_admin_query_service)) -> dict:
     """Recent structured logs for the debug surface (FR-LOG-3 / FR-OBS-2).
 
     Tails the structlog ring buffer; entries are already secret-redacted (NFR-PRIV-1).
     """
-    entries = container.admin_query_service.logs(limit)
+    # #13: clamp the caller-supplied limit (bounds the tail size).
+    entries = admin_query.logs(min(limit, 1000))
     return {"entries": entries, "status": "live"}
 
 
 @router.get("/variants/{campaign_id}")
-def variant_library(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+def variant_library(campaign_id: str, admin_query=Depends(get_admin_query_service)) -> dict:
     """Resume-variant library: lineage / scores / approval state (FR-UI-6 / FR-RESUME-6)."""
-    variants = container.admin_query_service.variant_library(campaign_id)  # type: ignore[arg-type]
+    variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "variants": variants}
 
 

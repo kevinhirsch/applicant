@@ -19,7 +19,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured
+from applicant.app.deps import (
+    get_container,
+    get_pending_actions_service,
+    get_prefill_service,
+    get_storage,
+    get_submission_service,
+    require_llm_configured,
+)
 from applicant.application.services.final_approval_service import (
     DECISION_ENGINE_FINISH,
     DECISION_SUBMIT_SELF,
@@ -45,10 +52,49 @@ def index() -> dict:
     return {"surface": "remote", "phase": 2, "status": "live"}
 
 
+# CRIT-auto: read-only list of the live sandbox sessions so a front-door surface
+# can render a session picker for multiple concurrent takeovers (FR-SANDBOX-4).
+# Uses the existing sandbox introspection (active_sessions); no new state.
+@router.get("/sessions")
+def list_sessions(container: Container = Depends(get_container)) -> dict:
+    active = getattr(container.sandbox, "active_sessions", None)
+    sessions = active() if callable(active) else []
+    remote_view = container.sandbox.remote_view()
+    out = []
+    for s in sessions:
+        out.append(
+            {
+                "session_id": s.session_id,
+                "application_id": str(s.application_id),
+                "view_url": remote_view.view_url(s.session_id),
+                "has_takeover": bool(
+                    getattr(remote_view, "has_takeover", lambda _sid: False)(s.session_id)
+                ),
+            }
+        )
+    return {"sessions": out, "count": len(out)}
+
+
 @router.post("/sessions", status_code=201)
 def open_session(body: OpenSessionIn, container: Container = Depends(get_container)) -> dict:
-    """Provision a sandbox and return its one-click live-session URL (FR-SANDBOX-2)."""
-    session = container.sandbox.provision(body.application_id)  # type: ignore[arg-type]
+    """Provision a sandbox and return its one-click live-session URL (FR-SANDBOX-2).
+
+    #11/SECURITY: provisioning hits the live sandbox control plane (e.g. neko-rooms),
+    which can raise a non-:class:`DomainError` (connection refused / timeout) when the
+    backend is down. A bare exception would surface as a 500; wrap it as a 503 so the
+    caller learns the sandbox service is unavailable, not that the request was malformed.
+    """
+    from applicant.core.errors import DomainError
+
+    try:
+        session = container.sandbox.provision(body.application_id)  # type: ignore[arg-type]
+    except DomainError:
+        raise  # a real rule violation maps through the global handler
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Sandbox provisioning is unavailable: {exc}",
+        ) from exc
     return {
         "session_id": session.session_id,
         "application_id": session.application_id,
@@ -100,14 +146,25 @@ def request_final_approval(
     seam (FR-NOTIF-4); the durable ``recv`` gate is awaited by the workflow worker.
     """
     session = container.sandbox.for_application(application_id)  # type: ignore[arg-type]
-    url = session.remote_view_url if session else None
+    # #10: build the live-session link from the remote-view sub-port (which carries
+    # the bound ``&app=`` continuity) instead of the pre-binding snapshot
+    # ``session.remote_view_url`` (FR-SANDBOX-2/3, FR-PREFILL-5).
+    url = (
+        container.sandbox.remote_view().view_url(session.session_id)
+        if session
+        else None
+    )
     handle = container.final_approval_service.request_approval(application_id, session_url=url)
     return {"application_id": application_id, "notification": handle, "gate": "awaiting"}
 
 
 @router.post("/applications/{application_id}/resume-account-step", status_code=200)
 def resume_account_step(
-    application_id: str, container: Container = Depends(get_container)
+    application_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+    prefill=Depends(get_prefill_service),
+    pending_actions=Depends(get_pending_actions_service),
 ) -> dict:
     """Resume pre-fill after the user completed the human account-creation step (#4).
 
@@ -116,7 +173,7 @@ def resume_account_step(
     continues from where it stalled instead of restarting the whole pre-fill. The
     account-step pending action + its ping are cleared on resume (#7).
     """
-    app = container.storage.applications.get(application_id)  # type: ignore[arg-type]
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
     if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
     if app.status is not ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
@@ -124,13 +181,13 @@ def resume_account_step(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Application is not awaiting the account step (state={app.status.value}).",
         )
-    attrs = container.storage.attributes.list_for_campaign(app.campaign_id)
+    attrs = storage.attributes.list_for_campaign(app.campaign_id)
     # PrefillService persists the §7 state it lands at internally; do not re-apply a
     # transition to the stale ``app`` object here (it would raise on a block state).
-    result = container.prefill_service.resume_after_account(app, attrs)
+    result = prefill.resume_after_account(app, attrs)
     # Clear the account-step ping on resume (#7).
     try:
-        container.pending_actions_service.resolve_by_dedup(
+        pending_actions.resolve_by_dedup(
             app.campaign_id, f"account_human_step:{application_id}"
         )
         container.notification_service.acted(f"prefill:{application_id}:account_human_step")
@@ -139,8 +196,50 @@ def resume_account_step(
     return {"application_id": application_id, "state": result.state.value}
 
 
+@router.post("/applications/{application_id}/resume-detection-step", status_code=200)
+def resume_detection_step(
+    application_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+    prefill=Depends(get_prefill_service),
+    pending_actions=Depends(get_pending_actions_service),
+) -> dict:
+    """Resume pre-fill after the user cleared a detection challenge (#2, FR-PREFILL-6).
+
+    An app parked at BLOCKED_DETECTION is resumed via
+    ``PrefillService.resume_after_detection`` — a LEGAL BLOCKED_DETECTION -> PREFILLING
+    transition (§7). The old re-drive routed through the full-restart pre-fill (whose
+    first move is SANDBOX_PROVISIONING) which raised IllegalStateTransition and left the
+    app stranded with no resolver. The detection-blocker pending action + its ping are
+    cleared on resume (#7); the live session the user just cleared is NOT torn down.
+    """
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
+    if app.status is not ApplicationState.BLOCKED_DETECTION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application is not blocked on detection (state={app.status.value}).",
+        )
+    attrs = storage.attributes.list_for_campaign(app.campaign_id)
+    result = prefill.resume_after_detection(app, attrs, cautious=False)
+    try:
+        pending_actions.resolve_by_dedup(
+            app.campaign_id, f"detection_blocker:{application_id}"
+        )
+        container.notification_service.acted(f"prefill:{application_id}:detection_blocker")
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return {"application_id": application_id, "state": result.state.value}
+
+
 @router.post("/applications/{application_id}/submit-self", status_code=201)
-def submit_self(application_id: str, container: Container = Depends(get_container)) -> dict:
+def submit_self(
+    application_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+    submission=Depends(get_submission_service),
+) -> dict:
     """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4).
 
     #1: the decision is delivered THROUGH the durable final-approval gate
@@ -150,7 +249,7 @@ def submit_self(application_id: str, container: Container = Depends(get_containe
     pipeline's submit step records the single OutcomeEvent — no double-recording here.
     """
     event = _deliver_decision(
-        container, application_id, DECISION_SUBMIT_SELF, OutcomeSource.MANUAL
+        container, storage, submission, application_id, DECISION_SUBMIT_SELF, OutcomeSource.MANUAL
     )
     return {
         "application_id": application_id,
@@ -162,7 +261,10 @@ def submit_self(application_id: str, container: Container = Depends(get_containe
 
 @router.post("/applications/{application_id}/authorize-engine-finish", status_code=201)
 def authorize_engine_finish(
-    application_id: str, container: Container = Depends(get_container)
+    application_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+    submission=Depends(get_submission_service),
 ) -> dict:
     """Authorize the engine to click the final submit, friction-free (FR-PREFILL-5).
 
@@ -185,7 +287,7 @@ def authorize_engine_finish(
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     event = _deliver_decision(
-        container, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
+        container, storage, submission, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
     )
     return {
         "application_id": application_id,
@@ -196,7 +298,12 @@ def authorize_engine_finish(
 
 
 def _deliver_decision(
-    container: Container, application_id: str, decision: str, source: OutcomeSource
+    container: Container,
+    storage,
+    submission,
+    application_id: str,
+    decision: str,
+    source: OutcomeSource,
 ):
     """Deliver the user's terminal decision through the durable final-approval gate (#1).
 
@@ -217,10 +324,10 @@ def _deliver_decision(
     """
     from applicant.app.routers.outcomes import _load_or_stub
 
-    app = _load_or_stub(container, application_id)
+    app = _load_or_stub(storage, application_id)
     workflow_id = f"application:{application_id}"
     container.final_approval_service.submit_decision(workflow_id, application_id, decision)
     try:
-        return container.submission_service.record_submission(app, source=source)
+        return submission.record_submission(app, source=source)
     except ReviewRequired as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

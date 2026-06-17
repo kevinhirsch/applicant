@@ -1,6 +1,53 @@
 # Architecture
 
-Source: master spec §2 (architectural principles), §6 (hexagonal architecture), §7 (state machine). This document is the canonical statement of the ports-and-adapters structure and the domain rules the core enforces. Covers **NFR-ARCH-1**, **FR-DUR-3**, **FR-UI-1**, and the domain-rule requirements (**FR-RESUME-2 / NFR-TRUTH-1**, **FR-PREFILL-4**, **FR-ATTR-6**, **FR-FB-3**, **FR-RESUME-8**).
+Source: master spec §2 (architectural principles), §6 (hexagonal architecture), §7 (state machine). This document is the canonical statement of the system topology and the domain rules the core enforces. Covers **NFR-ARCH-1**, **FR-DUR-3**, **FR-UI-1**, and the domain-rule requirements (**FR-RESUME-2 / NFR-TRUTH-1**, **FR-PREFILL-4**, **FR-ATTR-6**, **FR-FB-3**, **FR-RESUME-8**).
+
+## Two apps and a bridge (system topology)
+
+Applicant ships as **two cooperating apps wired by an internal bridge**, not a single
+engine-served frontend:
+
+- **Engine** (`src/applicant/`) — the hexagonal job-application engine described in the
+  rest of this document. It owns all the logic and runs as the internal-only `api`
+  service on `8000` (never published to the host), reached in-network at
+  `http://api:8000`.
+- **Front door** (`workspace/`) — a white-labeled, no-build workspace web app. It is the
+  **only** surface the operator opens, running as the public `applicant-ui` service on
+  `${APP_PORT}` (→ container `7000`). It is the engine's user interface; the engine
+  does not serve its own front-end UI. (A small in-network `frontend/static/` shell
+  remains on the engine for migration purposes only — it is not the front door, and
+  there is no engine-served setup page.)
+
+The bridge runs both ways:
+
+| Direction | Mechanism | Auth / config |
+|---|---|---|
+| Workspace → engine | `workspace/src/applicant_engine.py` — an httpx client; failures surface as a typed `EngineError` | `ENGINE_URL` (default `http://api:8000`) |
+| Engine → workspace | `workspace/routes/applicant_internal_routes.py` — the token-gated internal callback channel (calendar interview detection, deep-research runs, cookbook-served local models) | `APPLICANT_INTERNAL_TOKEN` (shared); unset → channel disabled, callers degrade gracefully. Engine reaches the UI via `WORKSPACE_URL` |
+
+The front door exposes the engine through three layers:
+
+- **Proxy routes** — `workspace/routes/applicant_*_routes.py`: thin, auth-protected,
+  owner-scoped proxies over the engine client (setup, documents, memory/profile, chat,
+  email/digest, portal, remote, vault, admin, ops). The engine owns the logic; the
+  proxies just forward.
+- **Browser glue** — `workspace/static/js/applicant*.js`: one module per surface
+  (onboarding, portal, chat, remote, vault, debug, digest).
+- **Progressive feature activation** — `workspace/src/applicant_features.py` computes
+  each section's state (`active` / `configured` / `locked` / `disabled`) from the
+  engine's setup status (`/api/setup/status`) and dormant-surface registry
+  (`/api/dormant-surfaces`), so sections light up as the engine is configured rather
+  than shipping dead UI. **Compare** is the one `present_but_disabled` section (visible,
+  greyed, never wired).
+
+**Posture:** single-operator (signup is admin-only), private LAN/VPN over HTTP. The
+internal channel, live-session/takeover URLs, and the in-UI Update button all assume a
+trusted private network.
+
+See [frontend.md](frontend.md) for how to add or change a front-door surface, and
+[dormant-surfaces.md](dormant-surfaces.md) for the surface-by-surface reachability map.
+
+The remainder of this document describes the **engine** — the hexagon behind the bridge.
 
 ## Dependency rule
 
@@ -51,7 +98,7 @@ No I/O. These hold state and enforce the domain rules.
 
 ## Driving ports (inbound / use-case facing) — §6
 
-Invoked by the UI and schedulers to drive the core.
+Invoked by the engine's API routers (`src/applicant/app/routers/`) and schedulers to drive the core. In production every one of these is reached through the workspace front door's `/api/applicant/*` proxy routes — the engine's routers are internal-only.
 
 | Driving port | Purpose |
 |---|---|
@@ -77,7 +124,7 @@ Implemented by adapters; each has a contract test.
 | **Discovery** | JobSpy master aggregator; pluggable per-source; SearXNG exploratory | FR-DISC-* |
 | **BrowserAutomation** | patchright/Playwright; browser-use/Skyvern fallback | FR-PREFILL, FR-STEALTH |
 | **DetectionMonitor** | CAPTCHA/Turnstile/Cloudflare/403/429 signals | FR-PREFILL-6 |
-| **Sandbox + RemoteView (sub-port)** | Neko + neko-rooms; RemoteView swappable Neko↔noVNC | FR-SANDBOX-1/2/4 |
+| **Sandbox + RemoteView (sub-port)** | Webtop full-desktop default (`REMOTE_VIEW_BACKEND=webtop`); RemoteView swappable webtop↔Neko↔noVNC | FR-SANDBOX-1/2/4 |
 | **ResumeTailoring** | LaTeX primary (xelatex/lualatex+fontspec, moderncv) / docx-XML fallback; redline + embedded-font export | FR-RESUME-3/4 |
 | **FontInstall** | Install uploaded fonts, refresh cache at runtime | FR-FONT-* |
 | **Embedding** | Local embedding model (dedup, variant scoring, conversion) | NFR-LOCAL-1 |

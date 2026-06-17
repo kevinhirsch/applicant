@@ -9,6 +9,40 @@ Priority language: **MUST** = non-negotiable. **SHOULD** = strong recommendation
 
 ---
 
+## Reconciliation note (front door & UI vendoring)
+
+> **Binding requirements below are unchanged.** This note records where the *as-built*
+> system differs from this spec's original implementation assumptions, so the spec stays
+> truthful (NFR-TRUTH spirit) without re-litigating requirements. It corrects facts only.
+>
+> 1. **The front door is the owner's vendored workspace app, white-labeled — not a clone of
+>    a third-party "applicant" repo.** §5/§5.1 instruct cloning and vendoring an external UI
+>    repo (`github.com/pewdiepie-archdaemon/applicant`) and serving its `static/` from the
+>    engine's FastAPI. **As built, the operator UI is the owner's own no-build *workspace*
+>    web app** (`workspace/`), white-labeled as Applicant, running as a **separate public
+>    service** (`applicant-ui` on `${APP_PORT}` → container 7000) in front of the engine.
+>    Read FR-UI-1's "vendor its `static/`, served from our FastAPI backend, wired to our
+>    APIs" as satisfied by **vendoring/white-labeling the owner's workspace app** and wiring
+>    it to the engine through the bridge — not by an engine-served clone of an external repo.
+>    The external repo is not used; the engine serves no operator UI. See
+>    [architecture.md](../architecture.md) and [frontend.md](../frontend.md). (The UI-license
+>    reconciliation is logged in [open-items.md](../open-items.md).)
+> 2. **The engine and the UI are two apps joined by a bridge.** The UI reaches the engine
+>    via `workspace/src/applicant_engine.py` (`ENGINE_URL`); the engine reaches back via the
+>    token-gated internal channel (`workspace/routes/applicant_internal_routes.py`,
+>    `APPLICANT_INTERNAL_TOKEN`). Where §3.19/§6 say "the UI/frontend", read it as the
+>    workspace front door proxying the engine's internal routers.
+> 3. **Remote-view default is the configurable webtop full desktop**
+>    (`REMOTE_VIEW_BACKEND=webtop`), with Neko (browser-only) and noVNC selectable behind
+>    the swappable RemoteView sub-port. §3.13/§5 name Neko as the default; treat that as one
+>    selectable backend, not the only one. The requirement (one-click live session, swappable
+>    sub-port) is unchanged.
+> 4. **Removed features.** Home Assistant, awareness/proactive behavior, and a
+>    "Nobody"/incognito mode are **not** part of the product. They are not in this spec and
+>    must not be documented as present.
+
+---
+
 ## 1. Vision
 
 A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-campaign **job-search campaigns**. It agentically discovers postings matching evolving, human-editable, self-learning criteria; delivers a daily **digest** the user approves/declines with feedback; and for approved roles, **pre-fills as much of every application as is technically possible** — including account-creation forms and in-form screening questions — stopping only at irreducible human steps (CAPTCHA, email/SMS verification, final submit), which the user completes via a one-click live remote session. When a role warrants it, the engine **adapts the user's resume, writes a cover letter, and drafts answers to free-text screening questions**, all of which the user **reviews and revises interactively, and must approve, before any submission**. Everything is logged; the system **learns real conversion** (approval + submission) per campaign and optimizes future discovery and document selection accordingly. Architectural template: OpenHands' runtime pattern — local agent loop, cloud LLM via API key, execution isolation behind a swappable boundary.
@@ -38,7 +72,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 ## 3. Functional requirements
 
 ### 3.1 LLM / model access — `FR-LLM`
-- **FR-LLM-1 (MUST — provider-agnostic, cloud or local):** The LLM port accepts **either** an OpenAI-compatible **cloud API** (OpenRouter → DeepSeek V4 Flash/Pro) **or** a **local/network Ollama endpoint** (e.g., `http://<gpu-host>:11434` or a Caddy HTTPS endpoint), **or both**. Both speak the OpenAI-compatible chat-completions API, so a configurable **base URL + optional key** covers all cases. Odysseus's settings already expose the local-vs-API provider toggle (reused). The system can run **fully local** (no cloud dependency) if only Ollama is configured.
+- **FR-LLM-1 (MUST — provider-agnostic, cloud or local):** The LLM port accepts **either** an OpenAI-compatible **cloud API** (OpenRouter → DeepSeek V4 Flash/Pro) **or** a **local/network Ollama endpoint** (e.g., `http://<gpu-host>:11434` or a Caddy HTTPS endpoint), **or both**. Both speak the OpenAI-compatible chat-completions API, so a configurable **base URL + optional key** covers all cases. Applicant's settings already expose the local-vs-API provider toggle (reused). The system can run **fully local** (no cloud dependency) if only Ollama is configured.
 - **FR-LLM-2 (MUST):** When a provider is configured, **auto-populate the model list** from it — OpenRouter's catalog for cloud, the Ollama host's installed models (`/v1/models` or `/api/tags`) for local. Provider/model/endpoint/key are settable (when none is set) and editable later **through the UI** as part of the out-of-box setup (`FR-OOBE`).
 - **FR-LLM-3 (MUST — tiered escalation ladder):** Instead of a fixed default/escalation pair, the user configures an **ordered, capability-ranked ladder of model tiers** (Level 1 → Level 2 → … → Level N) in the settings UI. **Each tier is assigned any model from any configured provider** — local Ollama or remote API — so tiers can mix local and cloud freely. The **user defines the order** (the system does not infer "intelligence"; the ranking is the user's assertion). Default example ladder: **L1 = Qwen ~27B (local), L2 = DeepSeek V4 Flash (cloud), L3 = DeepSeek V4 Pro (cloud)**. The ladder is reorderable and tiers can be added/removed (default 3, minimum 1). The UI MAY present this as a drag-to-rank stack or explicit Level slots — either is fine as long as the result is one ordered ladder (position = level).
 - **FR-LLM-4 (MUST — escalation = climbing the ladder):** Work starts at the **lowest sufficient tier** and **climbs to a higher tier** when needed. Triggers: **low confidence** at the current tier; **context overflow** (the task exceeds the current tier's context window — climb to the next tier whose model has *sufficient context*, not blindly +1); and configurable **per-task-type starting tiers** (default: scoring and ambiguous field-mapping start above L1). The **top tier is the ceiling**: if even it cannot satisfy the need (e.g., context still overflows), handle gracefully and surface to the user rather than failing silently. For meaningful capability escalation the ladder should include at least one cloud tier near the top — a purely-local ladder is bounded by the GPU (~27B-class, ~72K context on a 2080 Ti 22GB).
@@ -70,7 +104,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 
 ### 3.5 Daily digest — `FR-DIG`
 - **FR-DIG-1 (MUST):** Produce a daily digest per campaign when matches are aggregated.
-- **FR-DIG-2 (MUST):** Delivery is **email/webpage + a Discord notification that it's ready**. The digest is **exempt from the Odysseus visual style**.
+- **FR-DIG-2 (MUST):** Delivery is **email/webpage + a Discord notification that it's ready**. The digest is **exempt from the Applicant visual style**.
 - **FR-DIG-3 (MUST):** Table, one row per role: brief summary, link to posting, work mode, fit/viability score, and **approve / decline** controls.
 - **FR-DIG-4 (MUST):** Brief **"why this role was suggested"** rationale.
 - **FR-DIG-5 (MUST):** **Decline-with-feedback** free-text, feeding `FR-LEARN` and next-run criteria.
@@ -129,7 +163,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
   - Documents are presented as a **redline against the base — additions highlighted and subtractions/deletions highlighted**.
   - The user can **add** (free-text instruction), **subtract** (mark content to remove), or give **free-text feedback**. The AI revises in the active engine's source (**LaTeX source** on the primary path — plain text, so the additions/subtractions diff is trivial; the **docx XML** on the fallback path), applies the em-dash filter + truthfulness + voice-matching, re-renders the redline, and repeats.
   - The back-and-forth MUST be **very easy**. Submission is impossible until the user **approves** (the user may approve, decline, or send back with revisions).
-  - **Default sequencing:** bundle document approval into the final-submit approval (one stop). Heavy edits MAY trigger an earlier gate. Surface lives in the **main app, Odysseus design system** (document-editor aesthetic reusable).
+  - **Default sequencing:** bundle document approval into the final-submit approval (one stop). Heavy edits MAY trigger an earlier gate. Surface lives in the **main app, Applicant design system** (document-editor aesthetic reusable).
 - **FR-RESUME-9 (MUST — aggressiveness / job-getting optimization):** Adaptation optimizes for the **effective potential of getting the job**, within truthfulness (`FR-RESUME-2`) and visual-template/page-fit (`FR-RESUME-3`). A UI **aggressiveness/tuning control** MUST be built but **grayed out** for now; ship a stub spec to complete it later (scaffold-and-gray).
 - **FR-RESUME-10 (MUST — cover letters):** Generated on-demand when an application requests/offers one. Same truthfulness, non-AI, review, and revision rules. **Default format:** plain text for paste-in fields; for attached cover letters, the **active engine** — a LaTeX cover class (e.g. the `cover.cls` in the user's repo) on the primary path, or a styled docx matching the resume on the fallback path. A base cover-letter template MAY be supplied; otherwise generate in the user's voice.
 - **FR-ANSWER-1 (MUST — screening questions):** For in-application free-text/screening questions: **factual** ones (work authorization, availability, etc.) fill from stored attributes; **essay-style** ones ("Why do you want this role?", "Describe a time when…") get a **high-scoring answer generated in the user's professional voice** (from resume + self-framing), routed through the **same review/revision gate** as cover letters (`FR-RESUME-8`). Never auto-submitted without approval.
@@ -180,10 +214,10 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **FR-NOTIF-5 (MUST):** All errors surface immediately, any hour. Approvals/digests MAY respect optional quiet hours unless 24/7.
 
 ### 3.19 UI, pending-actions portal & tool toggles — `FR-UI`
-- **FR-UI-1 (MUST — pixel-perfect clone):** The frontend is a **pixel-by-pixel visual replica of Odysseus's design system** (vendor its `static/` — CSS, vanilla JS, fonts, icons — under MIT with notice preserved, served from our FastAPI backend, wired to our APIs). **Exact visual replica for now.** A frontend code refactor is sensible later; the clone MUST be **extensible**.
+- **FR-UI-1 (MUST — pixel-perfect clone):** The frontend is a **pixel-by-pixel visual replica of Applicant's design system** (vendor its `static/` — CSS, vanilla JS, fonts, icons — under MIT with notice preserved, served from our FastAPI backend, wired to our APIs). **Exact visual replica for now.** A frontend code refactor is sensible later; the clone MUST be **extensible**.
 - **FR-UI-2 (MUST — dormant surfaces):** Surfaces not yet wired are **grayed out, visually present but dormant**. Claude Code produces a **Dormant Surface Wiring Backlog**: one stub spec per surface. No dead UI shipped as if live.
 - **FR-UI-3 (MUST — pending-actions portal):** A **primary surface listing everything awaiting the user's input** — digest approvals, document/cover-letter/screening-answer reviews, soft errors, agent questions, and final-submit approvals — each actionable from there. This is the user's home base for the 24/7 queue of pending decisions/actions.
-- **FR-UI-4 (MUST):** Many agent tools, **toggled on/off in the UI** (Odysseus per-tool pattern). Initial registry: Discovery, Scoring, Pre-fill, Account-Creation, Web-Research, Resume-Tailoring, Cover-Letter-Generation, Screening-Answer-Generation, Chat, Notifications.
+- **FR-UI-4 (MUST):** Many agent tools, **toggled on/off in the UI** (Applicant per-tool pattern). Initial registry: Discovery, Scoring, Pre-fill, Account-Creation, Web-Research, Resume-Tailoring, Cover-Letter-Generation, Screening-Answer-Generation, Chat, Notifications.
 - **FR-UI-5 (MUST):** First UI deliverable = the **setup wizard** beginning with the **LLM-settings gate** (`FR-OOBE`, `FR-LLM-2`), gating features until configured.
 - **FR-UI-6 (MUST):** UI exposes criteria editing, the attribute-cloud editor, application history retrieval, the resume variant library + redline review/revision surface, the debug surface, the chatbot, the onboarding wizard, and the in-settings Update button.
 
@@ -224,7 +258,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 | Component | Default | License | Satisfies |
 |---|---|---|---|
 | Language / runtime | Python 3.11+ | — | all |
-| API + web | FastAPI + vendored Odysseus `static/` (vanilla HTML5/CSS/JS) | MIT | `FR-UI` |
+| API + web | FastAPI + vendored Applicant `static/` (vanilla HTML5/CSS/JS) | MIT | `FR-UI` |
 | Durable execution | **DBOS Transact** (Postgres-backed library, no separate server) | MIT | `FR-DUR` |
 | Agent reasoning (within steps) | LangGraph | MIT | `FR-AGENT`, `FR-LEARN` |
 | Browser automation | patchright/Playwright | Apache-2.0 | `FR-PREFILL`, `FR-STEALTH` |
@@ -242,7 +276,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 | LLM provider | OpenRouter (cloud: DeepSeek V4 Flash/Pro) and/or **network Ollama** (local: Qwen ~27B or other); OpenAI-compatible; **ordered capability-tier ladder** (e.g., L1 local Qwen → L2 DeepSeek Flash → L3 DeepSeek Pro), each tier any provider | — | `FR-LLM` |
 | Install/update | Proxmox-helper-script-style one-liner → VM; UI setup + Update button | — | `FR-INSTALL`, `FR-OOBE` |
 
-**Frontend note:** Odysseus is MIT, no-build vanilla HTML5/CSS/JS (one ~37k-line `style.css`, ~157 JS modules incl. `windowDrag.js`/`tileManager.js`/`modalManager.js`/`providers.js`/`models.js`/`settings.js`, custom `GohuFont.ttf`). **Clone `https://github.com/pewdiepie-archdaemon/odysseus` and vendor its `static/` directory verbatim** for pixel fidelity; new screens (setup wizard, pending-actions portal, resume redline/revision surface) are built with the same CSS classes/components. Dormant surfaces grayed with a wiring-backlog stub each. Digest exempt (separate email/webpage).
+**Frontend note:** Applicant is MIT, no-build vanilla HTML5/CSS/JS (one ~37k-line `style.css`, ~157 JS modules incl. `windowDrag.js`/`tileManager.js`/`modalManager.js`/`providers.js`/`models.js`/`settings.js`, custom `GohuFont.ttf`). **Clone `https://github.com/pewdiepie-archdaemon/applicant` and vendor its `static/` directory verbatim** for pixel fidelity; new screens (setup wizard, pending-actions portal, resume redline/revision surface) are built with the same CSS classes/components. Dormant surfaces grayed with a wiring-backlog stub each. Digest exempt (separate email/webpage).
 
 ---
 
@@ -250,8 +284,14 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 
 Both are public; clone both before building.
 
-**Odysseus — UI source (clone and vendor):** `https://github.com/pewdiepie-archdaemon/odysseus` (MIT)
+**Applicant — UI source (clone and vendor):** `https://github.com/pewdiepie-archdaemon/applicant` (MIT)
 Required for the pixel-perfect UI (`FR-UI-1`). Clone it and **vendor its `static/` directory verbatim** — the ~37k-line `style.css`, the ~157 vanilla JS modules (`windowDrag.js`, `tileManager.js`, `modalManager.js`, `providers.js`, `models.js`, `settings.js`, etc.), fonts incl. `GohuFont.ttf`, and icons. Preserve the MIT notice. Re-point its JS at our FastAPI APIs and build every new screen with the same CSS classes/components so inherited and new surfaces are indistinguishable.
+
+> **As-built (see the [Reconciliation note](#reconciliation-note-front-door--ui-vendoring)):**
+> this external repo is **not** used. The operator UI is the owner's own no-build *workspace*
+> app (`workspace/`), white-labeled as Applicant and run as a separate public service in
+> front of the engine. FR-UI-1 is satisfied by vendoring/white-labeling that workspace app
+> and wiring it to the engine through the bridge — not by an engine-served clone.
 
 **`kevinhirsch/ai-job-search` — domain inspiration (consult; do not copy wholesale):** `https://github.com/kevinhirsch/ai-job-search`
 A Claude Code job-application workspace (a fork of `MadsLorentzen/ai-job-search`). It is a **manual, CLI-driven document-prep tool, not a model for our autonomous service architecture** — but several artifacts are directly reusable:
@@ -427,7 +467,7 @@ Feature: Source-yield learning with exploration               # FR-DISC-5, FR-LE
 - **Durable execution is lightweight here** — DBOS runs in-process on the existing Postgres, no separate server.
 - **Local LLM has a real capability/context ceiling; the tier ladder is the mitigation.** A 2080 Ti 22GB runs ~27B-class dense models at roughly a 72K-token context ceiling — fine for routine agentic work, but with no headroom to escalate to something *more capable* locally. So the capability ladder (`FR-LLM-3`) should include at least one cloud tier near the top; escalation climbs the ladder on low confidence, hard task type, and **context overflow** (`FR-LLM-4`). A purely-local ladder is supported but bounded by the card. Local models also vary in tool-calling/structured-output reliability, so the adapter parses defensively and falls back to prompt-based structured output (`FR-LLM-4a`).
 - **Discovery scraping at volume** from one residential IP risks throttling on hostile boards; start with easy sources, keep a proxy hook for later.
-- **AGPL deps** (Skyvern, SearXNG, MinIO if used) carry distribution obligations — immaterial for personal self-hosted use; keep private or swap if distributed. Odysseus, JobSpy, LangGraph, Neko, patchright, FastAPI, Apprise, DBOS are permissive; preserve Odysseus's MIT notice.
+- **AGPL deps** (Skyvern, SearXNG, MinIO if used) carry distribution obligations — immaterial for personal self-hosted use; keep private or swap if distributed. Applicant, JobSpy, LangGraph, Neko, patchright, FastAPI, Apprise, DBOS are permissive; preserve Applicant's MIT notice.
 - **AI-text detectors cannot be reliably defeated;** the mandatory review/revision loop is the safeguard.
 
 ---

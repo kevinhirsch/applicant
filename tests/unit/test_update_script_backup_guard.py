@@ -70,6 +70,8 @@ def _run_update(tmp_path: Path, bin_dir: Path) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["APPLICANT_BACKUP_DIR"] = str(tmp_path / "backups")
+    # Never let the updater hard-reset this repo or run the live heartbeat in tests.
+    env["APPLICANT_SELFTEST"] = "1"
     return subprocess.run(
         ["bash", str(_SCRIPT), "--apply"],
         capture_output=True,

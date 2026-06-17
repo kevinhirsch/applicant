@@ -99,3 +99,30 @@ def test_aggressiveness_setting_is_dormant_but_wired(client):
     body = res.json()
     assert body["aggressiveness"] == 100  # clamped (FR-RESUME-9)
     assert body["dormant_ui"] is True  # UI control stays grayed (FR-UI-2)
+
+
+# CRIT-profile: banned-phrase ("no-AI-look") list editor (FR-RESUME-5).
+@pytest.mark.integration
+def test_banned_phrases_get_returns_seed_and_empty_custom(client):
+    res = client.get("/api/documents/banned-phrases")
+    assert res.status_code == 200
+    body = res.json()
+    # The curated baseline is always present, read-only.
+    assert "delve into" in body["seed_phrases"]
+    # No custom additions until the owner adds some.
+    assert body["phrases"] == []
+
+
+@pytest.mark.integration
+def test_banned_phrases_set_persists_and_round_trips(client):
+    saved = client.post(
+        "/api/documents/banned-phrases",
+        json={"phrases": ["circle back", "  ", "synergize"]},
+    )
+    assert saved.status_code == 200
+    # Blank entries are dropped by the engine; real ones are kept.
+    assert saved.json()["phrases"] == ["circle back", "synergize"]
+    # Persists across requests (held on the container-singleton material service).
+    again = client.get("/api/documents/banned-phrases")
+    assert again.json()["phrases"] == ["circle back", "synergize"]
+    assert "delve into" in again.json()["seed_phrases"]

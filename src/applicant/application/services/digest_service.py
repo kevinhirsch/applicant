@@ -10,7 +10,7 @@ approve/decline-with-feedback decisions that close the learning loop:
 - an explicit **empty-day note** when nothing cleared the bar (FR-DIG-6) so silence is
   never ambiguous, plus what was searched and why;
 - **delivery** = email payload + webpage payload + a Discord "ready" ping; the digest
-  is EXEMPT from the Odysseus visual style — it has its own template (FR-DIG-2);
+  is EXEMPT from the Applicant visual style — it has its own template (FR-DIG-2);
 - **approve** / **decline-with-feedback** record a ``Decision`` whose feedback +
   criteria-delta round-trip into ``LearningService`` and the next run's criteria via
   ``CriteriaService`` (FR-DIG-5, FR-FB-1), and notify-idempotency expires the other
@@ -23,6 +23,7 @@ import html
 
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
+from applicant.core.errors import InvalidInput
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
 from applicant.observability.logging import get_logger
 
@@ -133,7 +134,7 @@ class DigestService:
 
     # --- delivery (FR-DIG-1/2) --------------------------------------------
     def render_email(self, campaign_id: CampaignId, criteria=None, *, payload: dict | None = None) -> dict:
-        """Email payload — its OWN template, exempt from the Odysseus style (FR-DIG-2).
+        """Email payload — its OWN template, exempt from the Applicant style (FR-DIG-2).
 
         #13: accepts an already-built ``payload`` so ``deliver`` builds + scores the
         digest ONCE and passes it in, instead of ``render_email`` re-scoring the full
@@ -269,7 +270,9 @@ class DigestService:
         text is rejected so the learning loop never closes on silent declines.
         """
         if not feedback_text or not feedback_text.strip():
-            raise ValueError(
+            # FR-FB-1 (MINOR): raise the domain ``InvalidInput`` so the global handler
+            # maps it (422), instead of a plain ``ValueError`` that would surface as 500.
+            raise InvalidInput(
                 "Decline feedback is required (FR-FB-1): say briefly why this role "
                 "is not a fit so the next run learns."
             )

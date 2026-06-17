@@ -1,14 +1,13 @@
 /*
- * Applicant — assistant chatbot client (FR-CHAT-1, FR-FB-2/3).
+ * Applicant — assistant chat client.
  *
- * Posts conversational turns to /api/chat, renders the reply + identified gaps,
- * and surfaces proposed changes. Integral/sensitive proposals (requires_confirmation)
- * show a Confirm button that commits via /api/chat/confirm (FR-FB-3). Non-integral
- * proposals are auto-applied server-side and shown as applied. Degrades gracefully
- * on network error (FR-UI-2). Shares the redirect-aware fetch + DOM builder from
- * ApplicantUI (a 409 from the gate routes to the wizard).
+ * Posts messages to /api/chat, shows the reply and anything that's missing, and
+ * surfaces suggested changes. Important suggestions show a Confirm button that
+ * saves via /api/chat/confirm; routine suggestions are applied automatically and
+ * shown as applied. Handles network errors gracefully. Shares the redirect-aware
+ * fetch and DOM builder from ApplicantUI.
  */
-import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch, el } from "/static/applicant/js/applicant-ui.js";
 
   const params = new URLSearchParams(location.search);
   const campaignId = document.body.getAttribute("data-campaign-id") || params.get("campaign_id") || "";

@@ -26,8 +26,12 @@ DECISION_ENGINE_FINISH = "finished_by_engine"
 
 
 def redline_link(application_id: str) -> str:
-    """One-click link to the redline review surface (FR-NOTIF-4 seam; live in P3)."""
-    return f"/redline?application={application_id}"
+    """One-click link to the review surface (FR-NOTIF-4).
+
+    #7: returns the SERVED review surface (``/review?application=...``) instead of the
+    unserved ``/redline?...`` path, so the notification deep link actually resolves.
+    """
+    return f"/review?application={application_id}"
 
 
 class FinalApprovalService:

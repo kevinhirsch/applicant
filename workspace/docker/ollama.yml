@@ -1,0 +1,36 @@
+# Ollama as a managed Docker Compose service.
+#
+# Runs Ollama alongside Applicant and wires the app to it automatically — no
+# host install, no OLLAMA_HOST tweaking, no Settings edits. Enable it by adding
+# this overlay to COMPOSE_FILE in your .env (colon-separated, merged
+# left-to-right):
+#
+#   COMPOSE_FILE=docker-compose.yml:docker/ollama.yml
+#
+# Then `docker compose up -d`. Applicant reaches Ollama at http://ollama:11434
+# on the compose network; manage models from the UI (Settings → model
+# endpoints → Local models). The port is also published on loopback so host
+# tools (and `applicant models`) can reach it.
+#
+# For GPU, append a GPU overlay too, e.g.:
+#   COMPOSE_FILE=docker-compose.yml:docker/ollama.yml:docker/gpu.nvidia.yml
+# (the NVIDIA/AMD overlays expose devices to the applicant + ollama services).
+
+services:
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    ports:
+      - "${OLLAMA_BIND:-127.0.0.1}:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  applicant:
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434/v1
+    depends_on:
+      ollama:
+        condition: service_started
+
+volumes:
+  ollama-data:

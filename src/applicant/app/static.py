@@ -1,6 +1,6 @@
-"""StaticFiles mount helper (mirrors the Odysseus serving pattern) (FR-UI-1).
+"""StaticFiles mount helper (mirrors the Applicant serving pattern) (FR-UI-1).
 
-Serves ``frontend/static`` (the vendored Odysseus shell + our screens under
+Serves ``frontend/static`` (the vendored Applicant shell + our screens under
 ``frontend/static/applicant/``) at ``/static``.
 """
 

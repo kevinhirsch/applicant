@@ -84,7 +84,10 @@ pick_default() { local s; for s in "$@"; do [[ "$s" == "local-lvm" ]] && { echo 
 NEXTID="$(pvesh get /cluster/nextid 2>/dev/null || echo 100)"
 DEF_IMG="$(pick_default "${IMG_STORES[@]}")"
 
-VMID="$NEXTID"; NAME="applicant"; DISK="16"; CORES="2"; RAM="4096"; BRIDGE="vmbr0"; IMG_STORE="$DEF_IMG"
+# Defaults sized for the full stack (front-door UI image build + engine + postgres
+# + searxng + chromadb + ntfy). The first UI build is heavy, so the disk default is
+# generous; override any of these in the wizard's "advanced" mode.
+VMID="$NEXTID"; NAME="applicant"; DISK="32"; CORES="4"; RAM="8192"; BRIDGE="vmbr0"; IMG_STORE="$DEF_IMG"
 
 MODE="$(whiptail --title "$APP_NAME deploy (Proxmox VM)" --menu \
   "Create a Docker-ready Ubuntu Server 24.04 LTS VM and deploy $APP_NAME.\nChoose a setup mode:" 15 70 2 \
@@ -104,9 +107,23 @@ if [[ "$MODE" == "advanced" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Root password (preset) + SSH key auto-import (FR-INSTALL-1)
+# Root password (operator-set) + SSH key auto-import
 # ---------------------------------------------------------------------------
-VM_PASS="$(openssl rand -base64 18)"
+# Prompt the operator to SET the VM root password (console + SSH login). Leaving
+# it blank generates a strong random one. Confirm on entry to avoid typos.
+VM_PASS=""; VM_PASS_SOURCE="set"
+while true; do
+  VM_PASS="$(whiptail --title "Root password" --passwordbox \
+    "Set the root password for VM ${VMID} (console + SSH login).\n\nLeave blank to generate a strong random password." \
+    11 70 3>&1 1>&2 2>&3)" || die "Cancelled."
+  if [[ -z "$VM_PASS" ]]; then
+    VM_PASS="$(openssl rand -base64 18)"; VM_PASS_SOURCE="generated"; break
+  fi
+  VM_PASS2="$(whiptail --title "Root password" --passwordbox "Confirm the root password:" 9 70 3>&1 1>&2 2>&3)" || die "Cancelled."
+  [[ "$VM_PASS" == "$VM_PASS2" ]] && break
+  whiptail --title "Root password" --msgbox "Passwords did not match — please try again." 8 60
+done
+
 DB_PASS="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)"
 
 SSHKEYS_FILE=""
@@ -125,9 +142,16 @@ whiptail --title "Confirm" --yesno \
 "Create VM ${VMID} (${NAME})
   cores=${CORES}  ram=${RAM}MB  disk=${DISK}G
   disk-storage=${IMG_STORE}  bridge=${BRIDGE}  ip=dhcp
-  root password: preset (shown at the end)
+  root password: $([[ "$VM_PASS_SOURCE" == "set" ]] && echo "the one you entered" || echo "generated (shown at the end)")
   SSH keys: $([[ -n "$SSHKEYS_FILE" ]] && echo "auto-imported" || echo "none")
 and deploy ${APP_NAME} from ${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}?" 14 72 || die "Cancelled."
+
+# Guard: a pre-existing VMID would make `qm create` fail (or a stale lock can hang a
+# later step). Fail fast here — BEFORE any side effects (enabling snippets storage,
+# writing per-VMID user-data, downloading the image) — with a clear recovery hint.
+if qm status "$VMID" >/dev/null 2>&1; then
+  die "VM ${VMID} already exists. Remove it first:  qm stop ${VMID} 2>/dev/null; qm destroy ${VMID} --purge"
+fi
 
 # ---------------------------------------------------------------------------
 # Snippets storage (for cloud-init custom user-data); auto-enable on 'local' if needed
@@ -141,7 +165,7 @@ else
   pvesm set local --content "${CUR},snippets" >/dev/null 2>&1 || die "Could not enable snippets on 'local'. Enable a snippets storage manually."
   SNIP_STORE="local"
 fi
-SNIP_DIR="$(pvesh get /storage/${SNIP_STORE} --output-format json 2>/dev/null | grep -oP '"path"\s*:\s*"\K[^"]+' || echo "/var/lib/vz")"
+SNIP_DIR="$(pvesh get "/storage/${SNIP_STORE}" --output-format json 2>/dev/null | grep -oP '"path"\s*:\s*"\K[^"]+' || echo "/var/lib/vz")"
 mkdir -p "${SNIP_DIR}/snippets"
 USERDATA="${SNIP_DIR}/snippets/applicant-${VMID}.yaml"
 
@@ -149,6 +173,11 @@ cat > "$USERDATA" <<EOF
 #cloud-config
 hostname: ${NAME}
 manage_etc_hosts: true
+# Cloud images disable root login + password auth by default. Enable them so the
+# root password set in the wizard works over SSH for debugging (the guest agent
+# is the primary out-of-band channel; this just makes SSH usable too).
+ssh_pwauth: true
+disable_root: false
 package_update: true
 packages: [qemu-guest-agent, ca-certificates, curl, git]
 runcmd:
@@ -167,7 +196,10 @@ msg_ok "Cloud-init user-data written: ${SNIP_STORE}:snippets/applicant-${VMID}.y
 IMG_TMP="$(mktemp --suffix=.img)"
 msg_info "Downloading Ubuntu Server 24.04 LTS cloud image…"
 wget -qO "$IMG_TMP" "$CLOUDIMG_URL" || die "Cloud image download failed: $CLOUDIMG_URL"
-msg_ok "Cloud image downloaded."
+# A truncated/empty download makes the disk import hang/fail cryptically.
+[[ -s "$IMG_TMP" ]] && [[ "$(stat -c%s "$IMG_TMP")" -gt 100000000 ]] \
+  || die "Downloaded cloud image looks too small/empty ($(stat -c%s "$IMG_TMP" 2>/dev/null || echo 0) bytes): $CLOUDIMG_URL"
+msg_ok "Cloud image downloaded ($(( $(stat -c%s "$IMG_TMP") / 1024 / 1024 )) MB)."
 
 # ---------------------------------------------------------------------------
 # Create the VM (cloud-init), import the disk, wire networking + ci
@@ -180,8 +212,11 @@ qm create "$VMID" \
   --description "Applicant — autonomous job-application engine" >/dev/null \
   || die "qm create failed."
 
-# Import the cloud image as scsi0 (one-step import-from; PVE 7.2+).
-qm set "$VMID" --scsi0 "${IMG_STORE}:0,import-from=${IMG_TMP}" >/dev/null || die "disk import failed."
+# Import the cloud image as scsi0 (one-step import-from; PVE 7.2+). Do NOT suppress
+# output — the qemu-img convert can take a few minutes and its progress is the only
+# sign the deploy isn't frozen.
+msg_info "Importing the disk into ${IMG_STORE} (this can take a few minutes; progress below)…"
+qm set "$VMID" --scsi0 "${IMG_STORE}:0,import-from=${IMG_TMP}" || die "disk import failed."
 qm set "$VMID" --ide2 "${IMG_STORE}:cloudinit" --boot order=scsi0 >/dev/null || die "cloudinit drive failed."
 qm set "$VMID" --ipconfig0 "ip=dhcp" --ciuser root --cipassword "$VM_PASS" >/dev/null || die "cloud-init net/user failed."
 [[ -n "$SSHKEYS_FILE" ]] && { qm set "$VMID" --sshkeys "$SSHKEYS_FILE" >/dev/null || true; }
@@ -213,7 +248,7 @@ cat <<EOF
 $([[ -n "$IP" ]] && msg_ok "${APP_NAME} VM is up." || msg_info "VM created; still provisioning.")
 
   ${GN}VM:${CL}            ${VMID} (${NAME})
-  ${GN}Root password:${CL} ${VM_PASS}
+  ${GN}Root password:${CL} $([[ "$VM_PASS_SOURCE" == "set" ]] && echo "(the password you set)" || echo "${VM_PASS}")
 EOF
 if [[ -n "$IP" ]]; then
 cat <<EOF
@@ -233,3 +268,41 @@ fi
 echo
 echo "  Update later:  qm guest exec ${VMID} -- bash -lc 'cd /opt/${REPO_NAME} && bash scripts/update.sh --apply'"
 echo
+
+# ---------------------------------------------------------------------------
+# Wait for the stack to come up (patient, never blank, no SSH dependency)
+# ---------------------------------------------------------------------------
+# First boot installs Docker, clones the repo, and BUILDS the images — the first
+# build is heavy and can take 10-20+ minutes, during which the UI port refuses
+# connections (normal). Rather than a fragile SSH live-tail (cloud images can
+# reject key/password auth), poll the front-door health endpoint with a generous
+# deadline and a periodic pulse so it never looks frozen. The build keeps running
+# on the VM even if you stop waiting; the guest agent is the reliable log channel.
+if [[ -n "$IP" && "${NO_FOLLOW:-0}" != "1" ]]; then
+  cat <<EOF
+
+  First boot is provisioning the VM: installing Docker, then BUILDING the images
+  and starting the stack. The first build is heavy — expect 10-20+ minutes, and
+  http://${IP}:${APP_PORT} will refuse connections until it finishes (normal).
+
+  Watch the live log in another terminal if you like:
+    qm guest exec ${VMID} -- bash -lc 'cloud-init status --long; tail -n 40 /var/log/cloud-init-output.log'
+    ssh root@${IP} 'tail -f /var/log/cloud-init-output.log'   (root password you set)
+
+EOF
+  msg_info "Waiting for the stack at http://${IP}:${APP_PORT} (up to 30 min for the first build)…"
+  HB_OK=0; START=$(date +%s); DEADLINE=$(( START + 1800 ))
+  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+    if curl -fsS -o /dev/null "http://${IP}:${APP_PORT}/api/health" 2>/dev/null; then HB_OK=1; break; fi
+    printf '\r  …still building (%d min elapsed; Ctrl-C to stop waiting — the build continues on the VM)    ' \
+      "$(( ($(date +%s) - START) / 60 ))"
+    sleep 15
+  done
+  echo
+  if [[ "$HB_OK" -eq 1 ]]; then
+    msg_ok "Stack is green. Open http://${IP}:${APP_PORT} and complete setup in the browser."
+  else
+    msg_info "Not up yet after 30 min — it may still be building. Check:"
+    echo "    qm guest exec ${VMID} -- bash -lc 'cloud-init status --long; cd /opt/${REPO_NAME} && docker compose -f docker/docker-compose.prod.yml ps'"
+  fi
+fi

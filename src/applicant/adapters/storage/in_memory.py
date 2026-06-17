@@ -71,6 +71,9 @@ class _AttributeRepo:
     def list_for_campaign(self, cid: CampaignId) -> list[Attribute]:
         return [a for a in self._d.values() if a.campaign_id == cid]
 
+    def delete(self, aid: AttributeId) -> None:  # CRIT-profile: attribute delete (FR-ATTR-3)
+        self._d.pop(str(aid), None)
+
 
 class _PostingRepo:
     def __init__(self) -> None:

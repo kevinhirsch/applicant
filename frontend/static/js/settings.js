@@ -1634,8 +1634,8 @@ function initAppearance() {
   modalEl.querySelectorAll('[data-privacy-key]').forEach(function(chk) {
     chk.addEventListener('change', function() {
       if (chk.dataset.privacyKey !== 'sensitive-blur') return;
-      localStorage.setItem('orwell-sensitive-blur', chk.checked ? 'on' : 'off');
-      window.dispatchEvent(new CustomEvent('orwell-sensitive-blur-change', {
+      localStorage.setItem('applicant-sensitive-blur', chk.checked ? 'on' : 'off');
+      window.dispatchEvent(new CustomEvent('applicant-sensitive-blur-change', {
         detail: { enabled: chk.checked }
       }));
     });
@@ -1644,7 +1644,7 @@ function initAppearance() {
   var resetBtn = el('set-uiVisResetBtn');
   if (resetBtn) {
     resetBtn.addEventListener('click', function() {
-      localStorage.removeItem('orwell-ui-visibility');
+      localStorage.removeItem('applicant-ui-visibility');
       syncAppearanceCheckboxes();
       syncPrivacyCheckboxes();
       window.applyUIVis({});
@@ -1658,14 +1658,14 @@ function initAppearance() {
       // any dragged modal. The panels will revert to their CSS defaults on the
       // next open / next poll cycle.
       var KEYS = [
-        'orwell-status-pos', 'orwell-status-min',
-        'orwell-social-pos', 'orwell-social-min',
+        'applicant-status-pos', 'applicant-status-min',
+        'applicant-social-pos', 'applicant-social-min',
       ];
       // Also sweep any generic winsize/pos keys the drag system may have
       // written — plus the slot/kit era's keys (F3, 2026-06-11 settings-wiring
-      // audit): drag offsets persist under 'orwell-slot-offset:<key>:<user>'
-      // (orwellSlots.js) and G16's parked flags under
-      // 'orwell-win-parked:<id>:<user>' (orwellWindow.js). Prefix sweep only —
+      // audit): drag offsets persist under 'applicant-slot-offset:<key>:<user>'
+      // (applicantSlots.js) and G16's parked flags under
+      // 'applicant-win-parked:<id>:<user>' (applicantWindow.js). Prefix sweep only —
       // never enumerate per-panel keys again (the F-3 ratchet).
       var parkedIds = [];
       var _user = (document.body && document.body.dataset.user) || '';
@@ -1673,12 +1673,12 @@ function initAppearance() {
         var k = localStorage.key(i);
         if (!k) continue;
         if (k.startsWith('winpos-') || k.startsWith('winsize-') || k.startsWith('modal-pos-') ||
-            k.startsWith('orwell-slot-offset:') || k.startsWith('orwell-win-parked:')) {
+            k.startsWith('applicant-slot-offset:') || k.startsWith('applicant-win-parked:')) {
           KEYS.push(k);
         }
-        if (k.startsWith('orwell-win-parked:') && k.endsWith(':' + _user)) {
-          // 'orwell-win-parked:<id>:<user>' → the window id, for the live restore.
-          parkedIds.push(k.slice('orwell-win-parked:'.length, -(_user.length + 1)));
+        if (k.startsWith('applicant-win-parked:') && k.endsWith(':' + _user)) {
+          // 'applicant-win-parked:<id>:<user>' → the window id, for the live restore.
+          parkedIds.push(k.slice('applicant-win-parked:'.length, -(_user.length + 1)));
         }
       }
       KEYS.forEach(function(k) { try { localStorage.removeItem(k); } catch (_) {} });
@@ -1692,10 +1692,10 @@ function initAppearance() {
           });
         }).catch(function() {});
       }
-      if (window.OrwellSlots) window.OrwellSlots.restackAll();
+      if (window.ApplicantSlots) window.ApplicantSlots.restackAll();
       // Reset inline positions of the currently-visible HUD panels so they
       // snap back immediately without requiring a page reload.
-      ['orwell-status', 'orwell-social'].forEach(function(id) {
+      ['applicant-status', 'applicant-social'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) {
           el.style.left = '';
@@ -1719,7 +1719,7 @@ function syncAppearanceCheckboxes() {
 
 function syncPrivacyCheckboxes() {
   modalEl.querySelectorAll('[data-privacy-key="sensitive-blur"]').forEach(function(chk) {
-    chk.checked = localStorage.getItem('orwell-sensitive-blur') === 'on';
+    chk.checked = localStorage.getItem('applicant-sensitive-blur') === 'on';
   });
 }
 
@@ -2011,7 +2011,7 @@ async function initShortcuts() {
       });
       if (!res.ok) throw new Error(`prefs save failed: ${res.status}`);
       // Update global keybinds so they take effect immediately
-      window._orwellKeybinds = keybinds;
+      window._applicantKeybinds = keybinds;
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
     } catch (e) {
       console.error('Failed to save keybinds:', e);
@@ -2054,11 +2054,11 @@ function initAccount() {
   // the user area so you can change your pic anytime. The avatar circle updates on finalize.
   try {
     const host = el('settings-headshot');
-    if (host && window.OrwellHeadshotStudio && !host.dataset.mounted) {
+    if (host && window.ApplicantHeadshotStudio && !host.dataset.mounted) {
       host.dataset.mounted = '1';
-      window.OrwellHeadshotStudio.mount(host, {});
+      window.ApplicantHeadshotStudio.mount(host, {});
     }
-    if (window.OrwellAvatar) window.OrwellAvatar.refresh();
+    if (window.ApplicantAvatar) window.ApplicantAvatar.refresh();
   } catch (_) {}
 
   // Change password
@@ -2202,12 +2202,12 @@ function initAccount() {
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
-      // Keep "orwell-last-user" so the login form remembers the username
+      // Keep "applicant-last-user" so the login form remembers the username
       // (if "Remember me" was on). Without this the chat composer pre-loaded
       // the previous user's last model into a fresh session, which read as
       // cross-account leakage.
       try {
-        const _keepKeys = new Set(['orwell-last-user']);
+        const _keepKeys = new Set(['applicant-last-user']);
         const _toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
@@ -2254,7 +2254,7 @@ function initAll() {
 
 function notifyIntegrationsChanged() {
   try {
-    window.dispatchEvent(new CustomEvent('orwell-integrations-changed'));
+    window.dispatchEvent(new CustomEvent('applicant-integrations-changed'));
   } catch (_) {}
 }
 
@@ -2482,7 +2482,7 @@ async function initReminderSettings() {
   // regardless of channel). The hint should make that clear so
   // users don't think they have to choose between channels.
   const CHANNEL_HINTS = {
-    browser: 'Reminders appear as browser notifications inside Orwell.',
+    browser: 'Reminders appear as browser notifications inside Applicant.',
     email: 'Reminders are emailed AND shown as a browser notification.',
     ntfy: 'Reminders are pushed via ntfy AND shown as a browser notification.',
     webhook: 'Reminders are POSTed to the selected integration AND shown as a browser notification. Use {{title}} and {{message}} in the payload template.',
@@ -2491,7 +2491,7 @@ async function initReminderSettings() {
   applyReminderChannelAvailability();
   if (!channelSel.dataset.integrationRefreshWired) {
     channelSel.dataset.integrationRefreshWired = '1';
-    window.addEventListener('orwell-integrations-changed', () => {
+    window.addEventListener('applicant-integrations-changed', () => {
       refreshReminderChannelAvailability().catch(e => console.warn('Failed to refresh reminder channels', e));
     });
   }
@@ -3281,12 +3281,12 @@ const AGENT_CONFIGS = {
     namePrefix: 'codex agent',
     defaultName: 'Codex Agent',
     pluginPath: '/api/codex/plugin.zip',
-    setupDescription: 'Downloads the plugin bundle and registers it with Codex. Sets <code>ORWELL_URL</code> + <code>ORWELL_API_TOKEN</code>, fetches the plugin from <a href="/api/codex/plugin.zip" style="color:var(--accent,var(--red));">this Orwell instance</a>, and runs <code>codex plugin add orwell@personal</code>.',
-    buildSetup: (origin, token) => `export ORWELL_URL=${origin}
-export ORWELL_API_TOKEN='${token}'
+    setupDescription: 'Downloads the plugin bundle and registers it with Codex. Sets <code>APPLICANT_URL</code> + <code>APPLICANT_API_TOKEN</code>, fetches the plugin from <a href="/api/codex/plugin.zip" style="color:var(--accent,var(--red));">this Applicant instance</a>, and runs <code>codex plugin add applicant@personal</code>.',
+    buildSetup: (origin, token) => `export APPLICANT_URL=${origin}
+export APPLICANT_API_TOKEN='${token}'
 mkdir -p ~/plugins
-curl -fsSL -H "Authorization: Bearer $ORWELL_API_TOKEN" "$ORWELL_URL/api/codex/plugin.zip" -o /tmp/orwell-codex-plugin.zip
-python3 -m zipfile -e /tmp/orwell-codex-plugin.zip ~/plugins
+curl -fsSL -H "Authorization: Bearer $APPLICANT_API_TOKEN" "$APPLICANT_URL/api/codex/plugin.zip" -o /tmp/applicant-codex-plugin.zip
+python3 -m zipfile -e /tmp/applicant-codex-plugin.zip ~/plugins
 python3 - <<'PY'
 import json
 from pathlib import Path
@@ -3302,16 +3302,16 @@ data.setdefault("name", "personal")
 data.setdefault("interface", {}).setdefault("displayName", "Personal")
 plugins = data.setdefault("plugins", [])
 entry = {
-    "name": "orwell",
-    "source": {"source": "local", "path": "./plugins/orwell"},
+    "name": "applicant",
+    "source": {"source": "local", "path": "./plugins/applicant"},
     "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
     "category": "Productivity",
 }
-data["plugins"] = [item for item in plugins if item.get("name") != "orwell"] + [entry]
+data["plugins"] = [item for item in plugins if item.get("name") != "applicant"] + [entry]
 p.write_text(json.dumps(data, indent=2) + "\\n")
 PY
-codex plugin add orwell@personal
-python3 ~/plugins/orwell/scripts/orwell_api.py capabilities`,
+codex plugin add applicant@personal
+python3 ~/plugins/applicant/scripts/applicant_api.py capabilities`,
   },
   claude: {
     label: 'Claude Agent',
@@ -3319,13 +3319,13 @@ python3 ~/plugins/orwell/scripts/orwell_api.py capabilities`,
     namePrefix: 'claude agent',
     defaultName: 'Claude Agent',
     pluginPath: '/api/claude/plugin.zip',
-    setupDescription: 'Downloads the skill bundle into <code>~/.claude/skills/orwell/</code>. Sets <code>ORWELL_URL</code> + <code>ORWELL_API_TOKEN</code>, fetches the skill from <a href="/api/claude/plugin.zip" style="color:var(--accent,var(--red));">this Orwell instance</a>. Claude Code auto-loads the skill on next start.',
-    buildSetup: (origin, token) => `export ORWELL_URL=${origin}
-export ORWELL_API_TOKEN='${token}'
+    setupDescription: 'Downloads the skill bundle into <code>~/.claude/skills/applicant/</code>. Sets <code>APPLICANT_URL</code> + <code>APPLICANT_API_TOKEN</code>, fetches the skill from <a href="/api/claude/plugin.zip" style="color:var(--accent,var(--red));">this Applicant instance</a>. Claude Code auto-loads the skill on next start.',
+    buildSetup: (origin, token) => `export APPLICANT_URL=${origin}
+export APPLICANT_API_TOKEN='${token}'
 mkdir -p ~/.claude
-curl -fsSL -H "Authorization: Bearer $ORWELL_API_TOKEN" "$ORWELL_URL/api/claude/plugin.zip" -o /tmp/orwell-claude-skill.zip
-python3 -m zipfile -e /tmp/orwell-claude-skill.zip ~/.claude/
-python3 ~/.claude/skills/orwell/scripts/orwell_api.py capabilities`,
+curl -fsSL -H "Authorization: Bearer $APPLICANT_API_TOKEN" "$APPLICANT_URL/api/claude/plugin.zip" -o /tmp/applicant-claude-skill.zip
+python3 -m zipfile -e /tmp/applicant-claude-skill.zip ~/.claude/
+python3 ~/.claude/skills/applicant/scripts/applicant_api.py capabilities`,
   },
 };
 
@@ -3640,7 +3640,7 @@ async function initUnifiedIntegrations() {
       if (ntfyHint) {
         ntfyHint.style.display = isNtfy ? 'block' : 'none';
         if (isNtfy) {
-          ntfyHint.innerHTML = 'Enter the ntfy server URL Orwell can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
+          ntfyHint.innerHTML = 'Enter the ntfy server URL Applicant can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
         }
       }
       if (url) {
@@ -3896,7 +3896,7 @@ async function initUnifiedIntegrations() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = format === 'csv' ? 'orwell-contacts.csv' : 'orwell-contacts.vcf';
+        a.download = format === 'csv' ? 'applicant-contacts.csv' : 'applicant-contacts.vcf';
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -4909,7 +4909,7 @@ async function initUnifiedIntegrations() {
     formEl.innerHTML = `
       <div class="admin-card settings-gap-top">
         <h2 style="font-size:var(--fs-sm)">${esc(cfg.label)}</h2>
-        <div class="settings-hint" style="line-height:1.45;margin:-2px 0 8px;">Generates a scoped token + setup commands so ${esc(cfg.word)} on your own machine can read/write your Orwell data (todos, email, calendar, etc.). The agent runs in your terminal — it isn't streamed inside Orwell.</div>
+        <div class="settings-hint" style="line-height:1.45;margin:-2px 0 8px;">Generates a scoped token + setup commands so ${esc(cfg.word)} on your own machine can read/write your Applicant data (todos, email, calendar, etc.). The agent runs in your terminal — it isn't streamed inside Applicant.</div>
         <div class="settings-col">
           <div id="uf-codex-pending" style="display:${current ? 'none' : 'block'};font-size:var(--fs-xs);opacity:0.6;padding:6px 0;">Creating agent...</div>
           <div id="uf-codex-reveal" style="display:none;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--accent, var(--red));border-radius:6px;background:rgba(0,0,0,0.04);width:100%;box-sizing:border-box;">
@@ -4929,7 +4929,7 @@ async function initUnifiedIntegrations() {
             </div>
 
             <div style="margin-top:14px;font-weight:600;font-size:var(--fs-xs);margin-bottom:4px;">Configure access</div>
-            <div class="settings-hint" style="margin-bottom:6px;">Toggle which Orwell tools this agent can use. New agents start with chat only.</div>
+            <div class="settings-hint" style="margin-bottom:6px;">Toggle which Applicant tools this agent can use. New agents start with chat only.</div>
             <div id="uf-codex-inline-scopes"></div>
           </div>
           <div style="font-size:var(--fs-xs);font-weight:600;opacity:0.62;margin-top:10px;">${agentTokens.length ? 'Existing agents' : 'Agents'}</div>

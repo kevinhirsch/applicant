@@ -13,13 +13,16 @@ plaintext config table (FR-VAULT-3, NFR-PRIV-1).
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from applicant.adapters.storage.app_config_store import (
     AppConfigStore,
     InMemoryAppConfigStore,
 )
+from applicant.core.errors import InvalidInput
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import TierConfig, TierLadder
 from applicant.ports.driving.setup_wizard import (
@@ -32,6 +35,79 @@ from applicant.ports.driving.setup_wizard import (
 )
 
 log = get_logger(__name__)
+
+#: The cloud-instance metadata address (AWS/GCP/Azure link-local). An operator URL
+#: pointed here would let a request exfiltrate instance credentials — block it (item 12).
+_METADATA_ADDR = "169.254.169.254"
+
+
+def validate_operator_url(url: str, *, field: str = "url") -> str:
+    """SSRF guard for an OPERATOR-supplied URL (item 12, SECURITY).
+
+    Rejects:
+      * non-``http``/``https`` schemes (no ``file:``/``gopher:``/``ftp:`` etc.), and
+      * the cloud-metadata link-local address ``169.254.169.254``.
+
+    Intentionally ALLOWS localhost + private ranges: a local Ollama (``http://
+    localhost:11434``) and an internal SearXNG/Discord webhook are legitimate. Empty
+    URLs pass through (the field is simply unset). Returns the (stripped) URL.
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+    parts = urlsplit(u)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise InvalidInput(
+            f"{field} must be an http(s) URL (got scheme {parts.scheme!r})."
+        )
+    host = (parts.hostname or "").strip()
+    if not host:
+        raise InvalidInput(f"{field} must include a host.")
+    if host == _METADATA_ADDR:
+        raise InvalidInput(
+            f"{field} may not target the cloud metadata address {_METADATA_ADDR}."
+        )
+    # Also block the metadata address when given as a packed/alternate IP form.
+    # An IPv6-mapped IPv4 literal (e.g. ``::ffff:169.254.169.254`` or its packed
+    # ``::ffff:a9fe:a9fe`` form) parses as an IPv6Address that does NOT ``==`` the
+    # plain IPv4 metadata address, so normalize it back to IPv4 first — otherwise
+    # the metadata block is trivially bypassed via the mapped form (SSRF).
+    try:
+        ip = ipaddress.ip_address(host)
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if ip == ipaddress.ip_address(_METADATA_ADDR):
+            raise InvalidInput(
+                f"{field} may not target the cloud metadata address {_METADATA_ADDR}."
+            )
+    except ValueError:
+        pass  # not an IP literal (a hostname) — localhost/private hostnames are allowed
+    return u
+
+
+def validate_operator_urls(value: str, *, field: str = "url") -> str:
+    """Validate a comma-separated list of operator URLs (e.g. APPRISE_URLS).
+
+    Each comma-separated entry is SSRF-checked. Non-URL Apprise schemes (e.g.
+    ``mailto://``/``discord://``) are left untouched — only ``http(s)`` entries and
+    the metadata-address block apply. Returns the original string unchanged on success.
+    """
+    for raw in (value or "").split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        scheme = urlsplit(entry).scheme.lower()
+        if scheme in ("http", "https"):
+            validate_operator_url(entry, field=field)
+        elif scheme in ("", "file", "gopher", "ftp"):
+            # An entry that LOOKS like a URL but is a dangerous/local-file scheme.
+            if "://" in entry and scheme != "":
+                raise InvalidInput(
+                    f"{field} entry {entry!r} uses a disallowed scheme {scheme!r}."
+                )
+    return value
+
 
 _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
@@ -143,6 +219,11 @@ class SetupService:
         Configuring Discord + email marks the channels step able to complete and
         ungates automated work (FR-OOBE-3). Secrets are not logged.
         """
+        # Item 12 (SSRF): both are operator-supplied. The Discord webhook is an https
+        # URL; Apprise URLs are a comma-separated list (http(s) entries are guarded,
+        # native Apprise schemes like mailto://discord:// pass through).
+        validate_operator_url(discord_webhook_url, field="Discord webhook URL")
+        validate_operator_urls(apprise_urls, field="Apprise URL")
         rec = self.get_channels()
         if discord_webhook_url:
             rec["discord_webhook_url"] = discord_webhook_url
@@ -282,6 +363,9 @@ class SetupService:
         """Set the L1 tier (creates or replaces the first ladder rung)."""
         if not settings.provider or not settings.model:
             raise ValueError("LLM provider and model are required (FR-LLM-2).")
+        # Item 12 (SSRF): the LLM base_url is operator-supplied; reject non-http(s) /
+        # cloud-metadata targets (local Ollama / private endpoints are allowed).
+        validate_operator_url(settings.base_url, field="LLM base_url")
         tier = self._tier_to_record(
             TierSettings(
                 provider=settings.provider,
@@ -300,6 +384,32 @@ class SetupService:
         self._save_tiers(tiers)
         log.info("llm_configured", provider=settings.provider, model=settings.model)
 
+    def configure_llm_from_endpoint(
+        self, *, endpoint_resolver: Callable[[], dict[str, Any] | None], model: str
+    ) -> None:
+        """Configure the LLM from a saved model endpoint + a chosen model.
+
+        ``endpoint_resolver`` returns the endpoint's ``{base_url, api_key, name}``
+        (the caller resolves the sealed key); this maps the user's setup-page choice
+        into the LLM tier ladder so picking an endpoint + model actually wires the
+        model the rest of the app uses.
+        """
+        ep = endpoint_resolver()
+        if ep is None:
+            raise ValueError("Unknown model endpoint; add it first.")
+        if not model:
+            raise ValueError("Choose a model for the endpoint.")
+        base_url = ep.get("base_url", "")
+        provider = "ollama" if ("11434" in base_url or "ollama" in base_url.lower()) else "openai"
+        self.configure_llm(
+            LLMSettings(
+                provider=provider,
+                base_url=base_url,
+                api_key=ep.get("api_key", ""),
+                model=model,
+            )
+        )
+
     def get_tiers(self) -> list[dict[str, Any]]:
         """Return the persisted ladder as non-secret records (for the UI)."""
         return [{k: v for k, v in t.items() if k != "api_key"} for t in self._load_tiers()]
@@ -310,6 +420,9 @@ class SetupService:
             raise ValueError("At least one tier is required (FR-LLM-3).")
         if len(tiers) > _DEFAULT_MAX_TIERS:
             raise ValueError(f"At most {_DEFAULT_MAX_TIERS} tiers are supported.")
+        # Item 12 (SSRF): each tier's operator-supplied base_url is guarded.
+        for t in tiers:
+            validate_operator_url(t.base_url, field="LLM base_url")
         records = [self._tier_to_record(t, i + 1) for i, t in enumerate(tiers)]
         for r in records:
             if not r["provider"] or not r["model"]:

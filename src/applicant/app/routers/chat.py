@@ -16,8 +16,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from applicant.app.container import Container
-from applicant.app.deps import get_container, require_llm_configured, require_tool_enabled
+from applicant.app.deps import get_chat_service, require_llm_configured, require_tool_enabled
 from applicant.core.errors import ConfirmationRequired
 from applicant.core.ids import CampaignId
 
@@ -45,14 +44,14 @@ def index() -> dict:
 
 
 @router.post("", status_code=200)
-def send_message(body: ChatIn, container: Container = Depends(get_container)) -> dict:
+def send_message(body: ChatIn, chat=Depends(get_chat_service)) -> dict:
     """Conversational turn: reply + identified gaps + any proposed changes.
 
     Proposed changes carry ``requires_confirmation``; integral/sensitive changes are
     NOT auto-committed — the client must POST to ``/confirm`` (FR-FB-3). Non-integral
     proposals are auto-applied and reported with ``applied=true``.
     """
-    result = container.chat_service.converse(CampaignId(body.campaign_id), body.message)
+    result = chat.converse(CampaignId(body.campaign_id), body.message)
     return {
         "message": result.message,
         "gaps": result.gaps,
@@ -61,10 +60,10 @@ def send_message(body: ChatIn, container: Container = Depends(get_container)) ->
 
 
 @router.post("/confirm", status_code=200)
-def confirm_change(body: ConfirmIn, container: Container = Depends(get_container)) -> dict:
+def confirm_change(body: ConfirmIn, chat=Depends(get_chat_service)) -> dict:
     """Commit an integral change the user explicitly confirmed (FR-FB-3)."""
     try:
-        attr = container.chat_service.confirm_change(
+        attr = chat.confirm_change(
             CampaignId(body.campaign_id), body.name, body.value
         )
     except ConfirmationRequired as exc:  # pragma: no cover - confirm=True path

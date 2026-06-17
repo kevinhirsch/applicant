@@ -1,29 +1,26 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Assistant chatbot surface (FR-CHAT-1, FR-FB-2/3, FR-UI-6).
-
-  A conversational surface that assists the user in providing input, identifies
-  gaps in the attribute cloud / criteria, and proposes attribute/criteria updates.
-  Integral/sensitive proposals are confirmation-gated (FR-FB-3): the surface shows
-  a Confirm control and never commits an integral change without it. Backed by
-  /api/chat (LLM-degrading-gracefully + attribute/criteria services). Reuses the
-  vendored Odysseus style.
+  Applicant — assistant. A chat that helps you fill in your details, points out
+  what's missing, and suggests updates to your details and search criteria.
+  Important suggestions are confirmed with you before anything is saved.
+  Reuses the shared Applicant design system.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Applicant — Assistant</title>
-  <link rel="stylesheet" href="../style.css" />
-  <link rel="stylesheet" href="applicant.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
 </head>
 <body data-campaign-id="">
   <main>
     <section class="admin-card applicant-section" id="chat-section">
-      <h1>Assistant <span class="admin-badge admin-badge-on">Phase 4 — live</span></h1>
+      <h1>Assistant</h1>
       <p class="admin-empty">
-        Tell me about yourself or your search. I will flag gaps and propose updates;
-        anything integral I will confirm with you before it commits (FR-FB-3).
+        Tell me about yourself or your search. I'll point out anything that's
+        missing and suggest updates — anything important I'll confirm with you
+        before saving it.
       </p>
       <div id="chat-gaps" class="admin-empty"></div>
       <div id="chat-log" class="chat-log"></div>
@@ -33,6 +30,6 @@
       </form>
     </section>
   </main>
-  <script type="module" src="./js/chat.js"></script>
+  <script type="module" src="/static/applicant/js/chat.js"></script>
 </body>
 </html>

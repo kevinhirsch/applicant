@@ -846,3 +846,106 @@ def test_loop_passes_criteria_to_discovery_and_scoring(tmp_path):
     loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
     assert seen["discovery"] is the_criteria
     assert seen["scoring"] is the_criteria
+
+
+# === Lane B: auto-escalate to capped deep research while tailoring material ===
+class _CapturingMaterial:
+    """Material fake that records the true_source it was generated with."""
+
+    def __init__(self):
+        self.true_source_seen = None
+
+    def true_attribute_text(self, campaign_id, _):
+        return "TRUE: 5y python"
+
+    def select_or_generate(self, campaign_id, posting_id, jd_terms, true_source, application_id=None):
+        from types import SimpleNamespace
+
+        from applicant.core.ids import ResumeVariantId, new_id
+
+        self.true_source_seen = true_source
+        variant = SimpleNamespace(id=ResumeVariantId(new_id()), approved=False)
+        return SimpleNamespace(variant=variant, generated=True)
+
+    def cover_letter_warranted(self, *, campaign_default=False):
+        return False
+
+
+class _FakeResearch:
+    """ResearchService-shaped fake that records the escalation call."""
+
+    def __init__(self, report=None):
+        self.calls = []
+        from applicant.application.services.research_service import ResearchReport
+
+        self._report = report if report is not None else ResearchReport(
+            query="q", summary="Acme makes widgets.", key_findings=["Series C", "remote-first"]
+        )
+
+    def research(self, campaign_id, query, **kwargs):
+        self.calls.append({"campaign_id": campaign_id, "query": query, **kwargs})
+        return self._report
+
+
+@pytest.mark.unit
+def test_auto_escalates_research_and_folds_into_true_source():
+    """The loop escalates to the capped research tool on a company gap and folds
+    the report into the true_source used to generate material (Lane B)."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid, title="Python Engineer")  # company="Acme"
+
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=pid,
+        status=ApplicationState.APPROVED, root_url="http://x",
+    )
+    storage.applications.add(app)
+
+    material = _CapturingMaterial()
+    research = _FakeResearch()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=material,
+        research_service=research,
+    )
+
+    summary = loop._prepare_material_for(storage.campaigns.get(cid), app)
+
+    # Research was escalated, scoped to the campaign + company/role.
+    assert len(research.calls) == 1
+    assert research.calls[0]["company"] == "Acme"
+    assert research.calls[0]["role"] == "Python Engineer"
+    # The report was folded into the true_source that drove generation.
+    assert "Acme makes widgets." in material.true_source_seen
+    assert "Series C" in material.true_source_seen
+    assert summary.get("research_used") is True
+
+
+@pytest.mark.unit
+def test_no_research_service_is_a_noop():
+    """Without a research service wired, material generation proceeds unchanged."""
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage)
+    pid = _approve_posting(storage, cid)
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId
+
+    app = Application(
+        id=ApplicationId(new_id()), campaign_id=cid, posting_id=pid,
+        status=ApplicationState.APPROVED, root_url="http://x",
+    )
+    storage.applications.add(app)
+    material = _CapturingMaterial()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        material_service=material,
+    )
+    summary = loop._prepare_material_for(storage.campaigns.get(cid), app)
+    assert "research_used" not in summary
+    # true_source is the plain candidate source, no research block prepended.
+    assert material.true_source_seen == "TRUE: 5y python"

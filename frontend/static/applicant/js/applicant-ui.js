@@ -1,20 +1,18 @@
 /*
- * Applicant — shared UI module for our own surfaces (FR-UI-1/2/5/6).
+ * Applicant — shared UI module for our own surfaces.
  *
- * Single source of truth for the chrome/wiring shared by every Applicant surface
- * (wizard / digest / review / debug / chat). Vanilla ES module, no build step — it
- * mirrors the Odysseus "vendored, hand-authored" model. It does NOT restyle the
- * vendored design system; it only reuses its classes so every surface renders
- * identically while sharing one fetch helper, one nav, and a few component helpers.
+ * Single source of truth for the chrome and wiring shared by every Applicant
+ * screen (setup / digest / review / diagnostics / assistant). Plain ES module,
+ * no build step. It reuses the shared design-system classes so every screen
+ * renders identically while sharing one fetch helper, one nav, and a few helpers.
  *
- * Each surface becomes a thin content fragment that ends with:
- *     import { ApplicantUI } from "./js/applicant-ui.js";
- *     ApplicantUI.mount({ active: "digest" });   // injects shared nav
+ * Each screen ends with:
+ *     import { ApplicantUI } from "/static/applicant/js/applicant-ui.js";
+ *     ApplicantUI.mount({ active: "digest" });   // injects the shared nav
  * plus its own page glue (which can use ApplicantUI.apiFetch / el / toast / ...).
  */
 
-// The surfaces, in nav order. Adding a surface = add one entry here + one HTML
-// fragment (see docs/frontend.md). Keep this list aligned with the ui router.
+// The screens, in nav order. Keep this list aligned with the ui router.
 export const SURFACES = [
   { key: "wizard", href: "/wizard", label: "Setup" },
   { key: "digest", href: "/digest", label: "Digest" },
@@ -26,9 +24,9 @@ export const SURFACES = [
 ];
 
 /**
- * apiFetch(path, opts) — JSON fetch with shared error handling and the LLM-gate /
- * automated-work redirect (FR-UI-5). On a 409 from the setup gate, every surface
- * (except the wizard, which is how the user opens the gate) routes to the wizard.
+ * apiFetch(path, opts) — JSON fetch with shared error handling and the setup
+ * redirect. If setup isn't finished (HTTP 409), every screen except the setup
+ * wizard sends the user to the wizard to complete it.
  * Returns parsed JSON, or null for 204. Throws Error("HTTP <status>") otherwise.
  */
 export async function apiFetch(path, opts) {
@@ -37,8 +35,8 @@ export async function apiFetch(path, opts) {
     Object.assign({ headers: { "Content-Type": "application/json" } }, opts || {})
   );
   if (res.status === 409) {
-    // The setup/automated-work gate is closed: send the user to the wizard so
-    // they can open it. The wizard itself must not redirect to itself.
+    // Setup isn't finished yet: send the user to the wizard to complete it.
+    // The wizard itself must not redirect to itself.
     if (!_isWizard()) {
       window.location.assign("/wizard");
     }
@@ -67,7 +65,7 @@ export function el(tag, attrs, children) {
 }
 
 /**
- * mountShell({ active }) — inject the shared Odysseus-styled nav into the
+ * mountShell({ active }) — inject the shared Applicant-styled nav into the
  * #applicant-nav container (if present), marking the active link. Surfaces that
  * predate the shared nav simply omit the container and render unchanged.
  */

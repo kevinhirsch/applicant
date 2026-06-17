@@ -1,0 +1,79 @@
+name: CI
+
+# Gates every PR (and pushes to main) on the project's real invariants so the
+# regressions we hit can't reach a deploy again: lint, engine tests, the
+# front-door proxy tests, syntax of all workspace Python/JS, a single Alembic
+# head, a valid production compose file, and the white-label codename denylist.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- White-label denylist -------------------------------------------------
+      # The product is white-labeled as "Applicant"; no upstream-fork vendor/persona
+      # codename may appear in shipped artifacts. This step is the single home of the
+      # denylist (it excludes itself and lockfiles from the scan).
+      - name: White-label codename denylist
+        run: |
+          if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
+               -- ':!.github' ':!*.lock' ':!uv.lock'; then
+            echo "::error::Upstream-fork codename found above — white-label violation."
+            exit 1
+          fi
+          echo "white-label clean"
+
+      # --- Python / engine ------------------------------------------------------
+      - name: Install uv (Python 3.11 toolchain)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Engine boots (import smoke)
+        run: uv run python -c "from applicant.app.main import app"
+
+      - name: Single Alembic head
+        run: |
+          heads="$(uv run alembic heads 2>/dev/null | grep -c '(head)')"
+          echo "alembic heads with (head): ${heads}"
+          test "${heads}" -eq 1
+
+      - name: Engine test suite
+        run: uv run pytest -q
+
+      - name: Front-door proxy tests (workspace ↔ engine)
+        run: uv run pytest -q workspace/tests/test_applicant_*.py
+
+      - name: Workspace Python compiles
+        run: python -m compileall -q workspace/app.py workspace/routes workspace/src workspace/core
+
+      # --- Front-end JS syntax --------------------------------------------------
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Front-end JS syntax (node --check)
+        run: |
+          find workspace/static -name '*.js' -not -path '*/node_modules/*' -print0 \
+            | xargs -0 -r -n1 node --check
+
+      # --- Deploy artifact ------------------------------------------------------
+      - name: Production compose validates
+        run: |
+          APP_PORT=8000 POSTGRES_PASSWORD=ci-validate \
+            docker compose -f docker/docker-compose.prod.yml config >/dev/null
+          echo "compose config valid"
