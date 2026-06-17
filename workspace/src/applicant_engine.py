@@ -425,6 +425,86 @@ class ApplicantEngineClient:
     async def feedback_survey(self, body: dict) -> Any:
         return await self._request("POST", "/api/feedback/survey", json=body)
 
+    # === CRIT-ops: debug/observability + run controls + update + discovery ===
+    # Added by the crit-ops lane. Each maps 1:1 to an engine endpoint group
+    # (routers/admin.py, outcomes.py, update.py, agent_runs.py, discovery_sources.py)
+    # surfaced by the workspace Activity/Update/Run-controls proxies. Append-only.
+
+    # -- debug/observability surface (engine routers/admin.py, outcomes.py) --
+
+    async def admin_application_history(self, campaign_id: str, limit: int = 200) -> Any:
+        return await self._request(
+            "GET", f"/api/admin/history/{campaign_id}", params={"limit": limit}
+        )
+
+    async def admin_application_outcomes(self, application_id: str) -> Any:
+        return await self._request("GET", f"/api/admin/outcomes/{application_id}")
+
+    async def admin_detections(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/admin/detections/{campaign_id}")
+
+    async def admin_workflow_state(self, application_id: str) -> Any:
+        return await self._request("GET", f"/api/admin/workflow/{application_id}")
+
+    async def admin_screenshots(self, application_id: str) -> Any:
+        return await self._request("GET", f"/api/admin/screenshots/{application_id}")
+
+    async def admin_logs(self, limit: int = 100) -> Any:
+        return await self._request("GET", "/api/admin/logs", params={"limit": limit})
+
+    async def admin_variants(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/admin/variants/{campaign_id}")
+
+    async def admin_stealth(self) -> Any:
+        return await self._request("GET", "/api/admin/stealth")
+
+    async def outcome_log(self, application_id: str) -> Any:
+        return await self._request(
+            "GET", f"/api/outcomes/applications/{application_id}/log"
+        )
+
+    async def outcome_mark_submitted(self, application_id: str, body: dict | None = None) -> Any:
+        return await self._request(
+            "POST", f"/api/outcomes/applications/{application_id}/mark-submitted",
+            json=body or {},
+        )
+
+    async def outcome_detect(self, application_id: str) -> Any:
+        return await self._request(
+            "POST", f"/api/outcomes/applications/{application_id}/detect"
+        )
+
+    # -- in-UI update button (engine routers/update.py) ----------------------
+
+    async def update_status(self) -> Any:
+        return await self._request("GET", "/api/update")
+
+    async def update_trigger(self) -> Any:
+        return await self._request("POST", "/api/update/trigger")
+
+    # -- run-mode / throughput controls (engine routers/agent_runs.py) -------
+
+    async def agent_runs_list(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/agent-runs/{campaign_id}")
+
+    async def agent_run_intent(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/agent-runs/{campaign_id}/intent")
+
+    async def agent_run_configure(self, campaign_id: str, body: dict) -> Any:
+        return await self._request("PUT", f"/api/agent-runs/{campaign_id}/config", json=body)
+
+    # -- discovery-source toggles + yield (engine routers/discovery_sources.py)
+
+    async def discovery_sources_list(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/discovery-sources/{campaign_id}")
+
+    async def discovery_source_toggle(self, campaign_id: str, source_key: str, enabled: bool) -> Any:
+        return await self._request(
+            "PUT", f"/api/discovery-sources/{campaign_id}/{source_key}",
+            json={"enabled": enabled},
+        )
+    # === end CRIT-ops ========================================================
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

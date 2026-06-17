@@ -1,0 +1,465 @@
+// static/js/applicantDebug.js
+//
+// Activity / Debug — the workspace observability + operations surface wired to
+// the Applicant engine. ADDITIVE and self-contained: it opens its own modal,
+// talks to the engine through the admin/ops workspace proxies
+// (/api/applicant/admin/* and /api/applicant/ops/*), and never touches any
+// native surface.
+//
+// What it shows (all plain-language, white-labeled, read-only unless noted):
+//   • Activity   — per-application history for a campaign, with a drill-in to
+//                  that application's screenshots, workflow state and outcomes,
+//                  plus a one-click "I submitted this myself" (mark-submitted)
+//                  so manual/hand-off applications still teach the system.
+//   • Logs       — recent redacted run logs.
+//   • Variants   — the resume-variant library (lineage / score / approval).
+//   • Run        — run mode + daily target controls and the latest plain-language
+//                  "what the agent is doing right now" intent (writes config).
+//   • Sources    — turn each job-discovery source on/off + see its yield.
+//   • Update     — a one-click Update button with confirm + status.
+//
+// Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
+// feature-activation layer in app.js until the engine reports it's configured
+// (the `debug` section). We still render a graceful offline state if opened while
+// the engine is unreachable or the caller isn't an admin.
+
+import uiModule from './ui.js';
+
+const ADMIN = '/api/applicant/admin';
+const OPS = '/api/applicant/ops';
+
+let _modalEl = null;
+let _activeTab = 'activity';
+let _campaignId = null;
+
+function esc(s) {
+  try {
+    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
+  } catch { /* fall through */ }
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function _toast(msg) {
+  try { uiModule.showToast(msg); } catch { /* no-op */ }
+}
+
+async function _fetchJSON(url, opts = {}) {
+  const res = await fetch(url, { credentials: 'same-origin', ...opts });
+  let data = null;
+  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
+  if (!res.ok) {
+    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
+    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    err.status = res.status;
+    throw err;
+  }
+  return data || {};
+}
+
+function _post(url, body) {
+  return _fetchJSON(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+function _put(url, body) {
+  return _fetchJSON(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+// ── Modal scaffold ──────────────────────────────────────────────────────────
+
+const TABS = [
+  ['activity', 'Activity'],
+  ['logs', 'Logs'],
+  ['variants', 'Variants'],
+  ['run', 'Run controls'],
+  ['sources', 'Sources'],
+  ['update', 'Update'],
+];
+
+function _ensureModalEl() {
+  if (_modalEl) return _modalEl;
+  const modal = document.createElement('div');
+  modal.id = 'applicant-debug-modal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:860px;width:97%;display:flex;flex-direction:column;max-height:88vh;">
+      <div class="modal-header">
+        <h4>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          Activity
+        </h4>
+        <button class="close-btn" id="applicant-debug-close" title="Close">✖</button>
+      </div>
+      <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
+          Campaign
+          <select id="applicant-debug-campaign" style="min-width:180px;"></select>
+        </label>
+        <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
+      </div>
+      <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
+        ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
+      </div>
+      <div class="modal-body" id="applicant-debug-body" style="flex:1;overflow-y:auto;padding:14px;">
+        <div class="hwfit-loading">Loading…</div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+  modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
+    b.addEventListener('click', () => {
+      modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      _activeTab = b.dataset.tab;
+      _renderTab();
+    });
+  });
+  modal.querySelector('#applicant-debug-campaign').addEventListener('change', (e) => {
+    _campaignId = e.target.value || null;
+    _renderTab();
+  });
+  _modalEl = modal;
+  return modal;
+}
+
+function _close() {
+  if (_modalEl) {
+    _modalEl.classList.add('hidden');
+    _modalEl.style.display = 'none';
+  }
+}
+
+function _body() { return _modalEl.querySelector('#applicant-debug-body'); }
+
+function _renderOffline(msg) {
+  _body().innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
+}
+
+function _empty(msg) {
+  return `<div class="admin-toggle-sub" style="opacity:0.6;padding:8px 0;">${esc(msg)}</div>`;
+}
+
+// ── Campaign picker ───────────────────────────────────────────────────────────
+
+async function _loadCampaigns() {
+  // Reuse the chat proxy's campaign list (already auth-protected, soft-degrading).
+  let data;
+  try {
+    data = await _fetchJSON('/api/applicant/chat/campaigns');
+  } catch {
+    data = { engine_available: false, campaigns: [] };
+  }
+  const sel = _modalEl.querySelector('#applicant-debug-campaign');
+  const campaigns = (data && data.campaigns) || [];
+  sel.innerHTML = campaigns.length
+    ? campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')
+    : '<option value="">No campaigns yet</option>';
+  if (!_campaignId && campaigns.length) _campaignId = campaigns[0].id;
+  if (_campaignId) sel.value = _campaignId;
+  return data && data.engine_available !== false;
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+
+async function _renderTab() {
+  const map = {
+    activity: _renderActivity,
+    logs: _renderLogs,
+    variants: _renderVariants,
+    run: _renderRun,
+    sources: _renderSources,
+    update: _renderUpdate,
+  };
+  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  try {
+    await (map[_activeTab] || _renderActivity)();
+  } catch (e) {
+    if (e && e.status === 403) {
+      _renderOffline('This view is available to admins only.');
+    } else {
+      _renderOffline();
+    }
+  }
+}
+
+function _needCampaign() {
+  if (!_campaignId) {
+    _body().innerHTML = _empty('Pick a campaign above to see its activity.');
+    return false;
+  }
+  return true;
+}
+
+async function _renderActivity() {
+  if (!_needCampaign()) return;
+  const data = await _fetchJSON(`${ADMIN}/history/${encodeURIComponent(_campaignId)}`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const apps = data.applications || [];
+  if (!apps.length) { _body().innerHTML = _empty('No applications recorded for this campaign yet.'); return; }
+  const rows = apps.map((a) => {
+    const id = a.application_id || a.id || '';
+    const title = a.role_name || a.job_title || id || 'Application';
+    const shots = a.screenshot_count != null ? a.screenshot_count : (a.screenshots || []).length;
+    return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="min-width:0;">
+        <div style="font-weight:600;">${esc(title)}</div>
+        <div class="admin-toggle-sub" style="margin:2px 0 0;opacity:0.7;">
+          ${esc(a.status || 'unknown')} · ${esc(a.work_mode || '—')} · ${esc(shots)} screenshots${(a.outcomes || []).length ? ` · ${esc((a.outcomes || []).map((o) => o.type).join(', '))}` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button class="admin-btn applicant-debug-detail" data-app="${esc(id)}">Details</button>
+        <button class="admin-btn applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
+      </div>
+    </div>`;
+  }).join('');
+  _body().innerHTML = `<div id="applicant-debug-detail-host"></div>${rows}`;
+  _body().querySelectorAll('.applicant-debug-detail').forEach((b) => {
+    b.addEventListener('click', () => _showAppDetail(b.dataset.app));
+  });
+  _body().querySelectorAll('.applicant-debug-marksub').forEach((b) => {
+    b.addEventListener('click', () => _markSubmitted(b.dataset.app));
+  });
+}
+
+async function _showAppDetail(appId) {
+  const host = _body().querySelector('#applicant-debug-detail-host');
+  if (!host || !appId) return;
+  host.innerHTML = '<div class="hwfit-loading">Loading details…</div>';
+  let shots = { screenshots: [] }, wf = { steps: [] }, outcomes = { outcomes: [] };
+  try { shots = await _fetchJSON(`${ADMIN}/screenshots/${encodeURIComponent(appId)}`); } catch { /* soft */ }
+  try { wf = await _fetchJSON(`${ADMIN}/workflow/${encodeURIComponent(appId)}`); } catch { /* soft */ }
+  try { outcomes = await _fetchJSON(`${ADMIN}/outcomes/${encodeURIComponent(appId)}`); } catch { /* soft */ }
+  const shotList = (shots.screenshots || []);
+  const steps = (wf.completed_steps || wf.steps || []);
+  const evs = (outcomes.outcomes || []);
+  host.innerHTML = `<div class="admin-card" style="border:1px solid var(--border,#3334);">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <strong>Application ${esc(appId)}</strong>
+      <button class="admin-btn" id="applicant-debug-detail-close">Close</button>
+    </div>
+    <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Screenshots</strong> (${shotList.length})</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+      ${shotList.length ? shotList.map((s) => `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(s.page_ref || s.page || s.label || 'page')}</span>`).join(' · ') : _empty('No screenshots captured.')}
+    </div>
+    <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Workflow steps</strong></div>
+    ${steps.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${steps.map((s) => esc(typeof s === 'string' ? s : (s.name || s.step || JSON.stringify(s)))).join(' → ')}</div>${wf.pending_recovery ? '<div class="admin-toggle-sub" style="color:var(--warn,#c80);">Pending recovery</div>' : ''}` : _empty('No durable workflow recorded.')}
+    <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Outcomes</strong></div>
+    ${evs.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${evs.map((e) => `${esc(e.type)} (${esc(e.source)})`).join(', ')}</div>` : _empty('No outcomes recorded yet.')}
+  </div>`;
+  host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
+}
+
+async function _markSubmitted(appId) {
+  if (!appId) return;
+  if (!window.confirm('Record that you submitted this application yourself? This helps the system learn which details convert.')) return;
+  try {
+    await _post(`${ADMIN}/applications/${encodeURIComponent(appId)}/mark-submitted`, {});
+    _toast('Recorded — thanks, this helps the system learn.');
+    _renderActivity();
+  } catch (e) {
+    _toast(e.message || 'Could not record that right now.');
+  }
+}
+
+async function _renderLogs() {
+  const data = await _fetchJSON(`${ADMIN}/logs?limit=100`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const entries = data.entries || [];
+  if (!entries.length) { _body().innerHTML = _empty('No recent activity logs.'); return; }
+  _body().innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;margin:0;">${entries.map((e) => esc(typeof e === 'string' ? e : JSON.stringify(e))).join('\n')}</pre>`;
+}
+
+async function _renderVariants() {
+  if (!_needCampaign()) return;
+  const data = await _fetchJSON(`${ADMIN}/variants/${encodeURIComponent(_campaignId)}`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const variants = data.variants || [];
+  if (!variants.length) { _body().innerHTML = _empty('No resume variants built for this campaign yet.'); return; }
+  _body().innerHTML = variants.map((v) => {
+    const id = v.variant_id || v.id || 'Variant';
+    const scores = v.fit_scores || {};
+    const scoreVals = Object.values(scores);
+    const scoreText = scoreVals.length
+      ? `best fit ${esc(Math.max(...scoreVals.map(Number)).toFixed(2))}`
+      : (v.score != null ? `score ${esc(v.score)}` : 'not scored');
+    const approved = v.approved === true ? 'approved' : (v.approval_state || 'awaiting review');
+    return `<div class="admin-card">
+    <div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>
+    <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
+      ${esc(scoreText)} · ${esc(approved)}${v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : ''}${v.parent_id ? ` · from ${esc(v.parent_id)}` : ''}
+    </div>
+  </div>`;
+  }).join('');
+}
+
+const RUN_MODES = [
+  ['continuous', 'Around the clock'],
+  ['fixed_duration', 'Fixed window'],
+  ['until_n_viable', 'Until target reached'],
+];
+
+async function _renderRun() {
+  if (!_needCampaign()) return;
+  let intent = { intent: null };
+  let runs = { items: [] };
+  try { intent = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}/intent`); } catch { /* soft */ }
+  try { runs = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}`); } catch { /* soft */ }
+  if (intent.engine_available === false && runs.engine_available === false) { _renderOffline(); return; }
+  const last = (runs.items || [])[0] || {};
+  _body().innerHTML = `
+    <div class="admin-card">
+      <div style="font-weight:600;">What the agent is doing</div>
+      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${esc(intent.intent || 'No run yet — set a mode and target below to start.')}</div>
+    </div>
+    <div class="admin-card">
+      <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
+      <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">How it runs
+        <select id="applicant-run-mode" style="display:block;margin-top:4px;min-width:220px;">
+          ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(last.run_mode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">Applications per day (target)
+        <input type="number" id="applicant-run-target" min="0" value="${esc(last.throughput_target != null ? last.throughput_target : '')}" style="display:block;margin-top:4px;width:120px;" />
+      </label>
+      <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
+      <button class="admin-btn" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
+    </div>`;
+  _body().querySelector('#applicant-run-save').addEventListener('click', async () => {
+    const mode = _body().querySelector('#applicant-run-mode').value;
+    const tRaw = _body().querySelector('#applicant-run-target').value;
+    const body = { run_mode: mode };
+    if (tRaw !== '') body.throughput_target = parseInt(tRaw, 10);
+    try {
+      const res = await _put(`${OPS}/runs/${encodeURIComponent(_campaignId)}/config`, body);
+      _toast(`Saved. Daily target: ${res.throughput_target != null ? res.throughput_target : '—'}${res.hard_cap != null ? ` (cap ${res.hard_cap})` : ''}.`);
+      _renderRun();
+    } catch (e) {
+      _toast(e.message || 'Could not save run settings.');
+    }
+  });
+}
+
+async function _renderSources() {
+  if (!_needCampaign()) return;
+  const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const items = data.items || [];
+  if (!items.length) { _body().innerHTML = _empty('No job-discovery sources available for this campaign.'); return; }
+  _body().innerHTML = items.map((s) => {
+    const ys = s.yield_stats || {};
+    const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
+    const stat = hasFunnel
+      ? `${ys.matches != null ? ys.matches : 0} matched · ${ys.approvals != null ? ys.approvals : 0} approved · ${ys.submissions != null ? ys.submissions : 0} submitted`
+      : 'no yield data yet';
+    return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="min-width:0;">
+        <div style="font-weight:600;">${esc(s.source_key)}</div>
+        <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(stat)}</div>
+      </div>
+      <label class="admin-switch" style="flex-shrink:0;" title="Turn this source on or off">
+        <input type="checkbox" class="applicant-source-toggle" data-key="${esc(s.source_key)}"${s.enabled ? ' checked' : ''} />
+        <span class="admin-slider"></span>
+      </label>
+    </div>`;
+  }).join('');
+  _body().querySelectorAll('.applicant-source-toggle').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      try {
+        await _put(`${OPS}/discovery/${encodeURIComponent(_campaignId)}/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
+        _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
+      } catch (e) {
+        cb.checked = !cb.checked; // revert on failure
+        _toast(e.message || 'Could not change that source.');
+      }
+    });
+  });
+}
+
+async function _renderUpdate() {
+  let status = { engine_available: true };
+  try { status = await _fetchJSON(`${OPS}/update`); } catch { status = { engine_available: false }; }
+  if (status.engine_available === false) { _renderOffline(); return; }
+  _body().innerHTML = `
+    <div class="admin-card">
+      <div style="font-weight:600;">Update Applicant</div>
+      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
+        Runs the safe one-click update: backs up your data, applies the latest version, and restarts.
+        No command line needed. If updates aren't enabled on this install, it will tell you what it would do.
+      </div>
+      <button class="admin-btn" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
+      <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
+    </div>`;
+  _body().querySelector('#applicant-update-go').addEventListener('click', async () => {
+    if (!window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.')) return;
+    const out = _body().querySelector('#applicant-update-result');
+    out.textContent = 'Working…';
+    try {
+      const res = await _post(`${OPS}/update/trigger`, {});
+      out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
+    } catch (e) {
+      out.textContent = e.message || 'Could not start the update right now.';
+    }
+  });
+}
+
+// ── Open / launcher ─────────────────────────────────────────────────────────
+
+export async function openApplicantDebug() {
+  const modal = _ensureModalEl();
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  try {
+    const up = await _loadCampaigns();
+    const badge = modal.querySelector('#applicant-debug-engine');
+    if (badge) badge.textContent = up ? '' : 'Engine offline';
+    await _renderTab();
+  } catch {
+    _renderOffline();
+  }
+}
+
+function _wireLauncher() {
+  const btn = document.getElementById('tool-debug-btn');
+  if (!btn || btn._applicantDebugWired) return;
+  btn._applicantDebugWired = true;
+  btn.addEventListener('click', () => {
+    // Respect the feature-activation lock — if app.js greyed the launcher, its
+    // capture-phase guard already stopped this handler; reaching here = active.
+    openApplicantDebug();
+  });
+}
+
+function _boot() {
+  _wireLauncher();
+  let tries = 0;
+  const iv = setInterval(() => {
+    tries += 1;
+    _wireLauncher();
+    if (document.getElementById('tool-debug-btn')?._applicantDebugWired || tries > 20) {
+      clearInterval(iv);
+    }
+  }, 500);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _boot);
+} else {
+  _boot();
+}
+
+const applicantDebugModule = { openApplicantDebug };
+try { window.applicantDebugModule = applicantDebugModule; } catch { /* no-op */ }
+
+export default applicantDebugModule;
