@@ -71,6 +71,30 @@ run() {
   if [[ "${APPLY}" -eq 1 ]]; then "$@"; else echo "    (would run) $*"; fi
 }
 
+# Heartbeat: block until the front-door UI answers /api/health on the public
+# port, then confirm the internal engine's /healthz. Returns non-zero if the
+# stack never goes green so the caller can fail loudly instead of claiming success.
+heartbeat() {
+  local port="$1" tries=60 i
+  log "Heartbeat: waiting for the UI on :${port}/api/health …"
+  for ((i = 1; i <= tries; i++)); do
+    if curl -fsS -o /dev/null "http://localhost:${port}/api/health" 2>/dev/null; then
+      log "UI is up (/api/health 200)."
+      if docker compose -f "${COMPOSE_FILE}" exec -T api \
+           python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status==200 else 1)" 2>/dev/null; then
+        log "Engine is healthy (/healthz). Stack is green."
+      else
+        log "Engine /healthz not green yet (UI is up); check: docker compose -f ${COMPOSE_FILE} ps"
+      fi
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Heartbeat FAILED: UI did not become healthy on :${port} after $((tries * 5))s." >&2
+  docker compose -f "${COMPOSE_FILE}" ps || true
+  return 1
+}
+
 # --- 1. Preflight: required tooling ----------------------------------------
 log "Checking prerequisites (docker, docker compose)…"
 if ! command -v docker >/dev/null 2>&1; then
@@ -115,7 +139,13 @@ run docker compose -f "${COMPOSE_FILE}" up -d --build
 log "Running database migrations (alembic upgrade head)…"
 run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
-# --- 5. Done ----------------------------------------------------------------
+# --- 5. Heartbeat: don't claim success until the stack is actually green -----
+if [[ "${APPLY}" -eq 1 ]]; then
+  APP_PORT="${APP_URL##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+  heartbeat "${APP_PORT}" || { echo "Install did not come up healthy — see logs above." >&2; exit 1; }
+fi
+
+# --- 6. Done ----------------------------------------------------------------
 if [[ "${APPLY}" -eq 1 ]]; then
   log "Install complete. Open the Applicant UI at ${APP_URL} and finish setup in-browser (no CLI, NFR-ZEROCLI-1)."
 else

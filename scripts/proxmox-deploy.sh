@@ -273,5 +273,18 @@ if [[ -n "$IP" && "${NO_FOLLOW:-0}" != "1" ]]; then
        sleep 2; kill \$TP 2>/dev/null" 2>/dev/null || \
     echo "  (Could not auto-attach over SSH — run: ssh root@${IP} 'tail -f /var/log/cloud-init-output.log')"
   echo
-  msg_ok "Provisioning finished. Open http://${IP}:${APP_PORT} and complete setup in the browser."
+  # Heartbeat: confirm the front-door UI actually answers before declaring done.
+  # install.sh already blocks on its own heartbeat inside the VM; this is the
+  # node-side confirmation against the discovered IP (no hardcoded address).
+  msg_info "Heartbeat: checking http://${IP}:${APP_PORT}/api/health …"
+  HB_OK=0
+  for _ in $(seq 1 60); do
+    if curl -fsS -o /dev/null "http://${IP}:${APP_PORT}/api/health" 2>/dev/null; then HB_OK=1; break; fi
+    sleep 5
+  done
+  if [[ "$HB_OK" -eq 1 ]]; then
+    msg_ok "Stack is green. Open http://${IP}:${APP_PORT} and complete setup in the browser."
+  else
+    msg_info "UI not answering yet (first build can take a while). Watch: ssh root@${IP} 'cd /opt/${REPO_NAME} && docker compose -f docker/docker-compose.prod.yml ps'"
+  fi
 fi

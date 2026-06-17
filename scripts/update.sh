@@ -61,6 +61,29 @@ run() {
   if [[ "${APPLY}" -eq 1 ]]; then "$@"; else echo "    (would run) $*"; fi
 }
 
+# Heartbeat: block until the front-door UI answers /api/health on the public
+# port, then confirm the internal engine's /healthz. Non-zero if never green.
+heartbeat() {
+  local port="$1" tries=60 i
+  log "Heartbeat: waiting for the UI on :${port}/api/health …"
+  for ((i = 1; i <= tries; i++)); do
+    if curl -fsS -o /dev/null "http://localhost:${port}/api/health" 2>/dev/null; then
+      log "UI is up (/api/health 200)."
+      if docker compose -f "${COMPOSE_FILE}" exec -T api \
+           python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status==200 else 1)" 2>/dev/null; then
+        log "Engine is healthy (/healthz). Stack is green."
+      else
+        log "Engine /healthz not green yet (UI is up); check: docker compose -f ${COMPOSE_FILE} ps"
+      fi
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Heartbeat FAILED: UI did not become healthy on :${port} after $((tries * 5))s." >&2
+  docker compose -f "${COMPOSE_FILE}" ps || true
+  return 1
+}
+
 TS="$(date +%Y%m%d-%H%M%S)"
 DUMP_FILE="${BACKUP_DIR}/applicant-${TS}.sql"
 
@@ -130,6 +153,16 @@ log "4/5 Restarting the stack on the freshly built image"
 run docker compose -f "${COMPOSE_FILE}" up -d --build
 
 log "5/5 Update applied."
+
+# Heartbeat: verify the stack came back green before declaring success; if not,
+# point the operator at rollback.
+if [[ "${APPLY}" -eq 1 ]]; then
+  APP_PORT="${APP_URL##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+  if ! heartbeat "${APP_PORT}"; then
+    echo "Update did not come up healthy. Roll back with: scripts/update.sh --rollback --apply" >&2
+    exit 1
+  fi
+fi
 
 if [[ "${APPLY}" -eq 1 ]]; then
   log "Update complete. If anything looks wrong, run: scripts/update.sh --rollback --apply"
