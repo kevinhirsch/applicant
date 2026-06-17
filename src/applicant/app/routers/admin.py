@@ -65,10 +65,11 @@ def application_history(
     captured-screenshot count, and recorded outcome events. ``limit`` bounds the rows
     so a long-running campaign's history never returns an unbounded list (#14).
     """
-    # #13: clamp the caller-supplied limit so a huge ``?limit=`` cannot force an
-    # unbounded scan/response.
+    # #13: clamp the caller-supplied limit on BOTH ends — ``max(0, ...)`` floors a
+    # negative ``?limit=-5`` (which would otherwise pass a negative SQL LIMIT) and
+    # ``min(..., 1000)`` caps a huge value so it cannot force an unbounded scan.
     rows = admin_query.application_history(
-        campaign_id, limit=min(limit, 1000)  # type: ignore[arg-type]
+        campaign_id, limit=max(0, min(limit, 1000))  # type: ignore[arg-type]
     )
     return {"campaign_id": campaign_id, "applications": rows}
 
@@ -120,8 +121,9 @@ def logs(limit: int = 100, admin_query=Depends(get_admin_query_service)) -> dict
 
     Tails the structlog ring buffer; entries are already secret-redacted (NFR-PRIV-1).
     """
-    # #13: clamp the caller-supplied limit (bounds the tail size).
-    entries = admin_query.logs(min(limit, 1000))
+    # #13: clamp the caller-supplied limit on both ends — ``max(0, ...)`` floors a
+    # negative ``?limit=`` and ``min(..., 1000)`` caps the tail size.
+    entries = admin_query.logs(max(0, min(limit, 1000)))
     return {"entries": entries, "status": "live"}
 
 

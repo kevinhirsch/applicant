@@ -767,6 +767,59 @@ def test_admin_history_limit_is_clamped():
         assert captured["limit"] == 1000
 
 
+@pytest.mark.unit
+def test_admin_history_negative_limit_is_floored_to_zero():
+    """ROBUST: a negative ``?limit=`` is floored to 0, never a negative SQL LIMIT."""
+    from fastapi.testclient import TestClient
+
+    from applicant.app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post(
+            "/api/setup/llm",
+            json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+        )
+        cid = client.post("/api/campaigns", json={"name": "C"}).json()["id"]
+        captured: dict = {}
+        real = app.state.container.admin_query_service.application_history
+
+        def _spy(campaign_id, *, limit):
+            captured["limit"] = limit
+            return real(campaign_id, limit=limit)
+
+        app.state.container.admin_query_service.application_history = _spy
+        r = client.get(f"/api/admin/history/{cid}?limit=-5")
+        assert r.status_code == 200
+        assert captured["limit"] == 0
+
+
+@pytest.mark.unit
+def test_admin_logs_negative_limit_is_floored_to_zero():
+    """ROBUST: the admin logs endpoint floors a negative ``?limit=`` to 0."""
+    from fastapi.testclient import TestClient
+
+    from applicant.app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        client.post(
+            "/api/setup/llm",
+            json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+        )
+        captured: dict = {}
+        real = app.state.container.admin_query_service.logs
+
+        def _spy(limit):
+            captured["limit"] = limit
+            return real(limit)
+
+        app.state.container.admin_query_service.logs = _spy
+        r = client.get("/api/admin/logs?limit=-7")
+        assert r.status_code == 200
+        assert captured["limit"] == 0
+
+
 # ============================================================ MINOR FR-FB-1
 @pytest.mark.unit
 def test_blank_decline_feedback_raises_invalid_input():
@@ -783,3 +836,52 @@ def test_blank_decline_feedback_raises_invalid_input():
     digest = DigestService(storage, _SpyNotifier(), _Scoring())
     with pytest.raises(InvalidInput):
         digest.decline(ApplicationId(new_id()), feedback_text="   ")
+
+
+# ============================================================ ROBUST viability coalesce
+@pytest.mark.unit
+def test_build_digest_no_scoring_emits_numeric_zero_score():
+    """ROBUST: with no scoring service the digest row's viability score is a numeric
+    0.0 (not None) so a downstream numeric comparison / sort never raises TypeError."""
+    from applicant.application.services.digest_service import DigestService
+
+    storage = InMemoryStorage()
+    cid = _make_campaign(storage)
+    pid = JobPostingId(new_id())
+    storage.postings.add(
+        JobPosting(id=pid, campaign_id=cid, title="R", company="A", source_url="http://x")
+    )
+    digest = DigestService(storage, _SpyNotifier(), scoring=None)
+    rows = digest.build_digest(cid)
+    assert len(rows) == 1
+    score = rows[0]["viability_score"]
+    assert score == 0.0
+    # The load-bearing property: it is orderable / comparable against a number.
+    assert score >= 0  # would raise TypeError if score were None
+    assert sorted(rows, key=lambda r: r["viability_score"]) == rows
+
+
+@pytest.mark.unit
+def test_is_viable_coalesces_none_score_and_reclamps():
+    """ROBUST: is_viable defensively coalesces a None score to 0.0 (no TypeError) and
+    re-clamps an out-of-range score into [0, 1] before the threshold comparison."""
+    from applicant.application.services.scoring_service import ScoringService
+    from applicant.core.entities.viability_scoring import ViabilityScoring
+
+    svc = ScoringService(
+        InMemoryStorage(), llm=None, embedding=LocalEmbedding(), threshold=70
+    )
+
+    class _NoneScore:
+        score = None
+        posting_id = None
+        rationale = ""
+
+    # A None score must NOT raise and is treated as non-viable.
+    assert svc.is_viable(_NoneScore()) is False
+    # An out-of-range (>1.0) score is clamped to 1.0 -> 100 >= 70 -> viable.
+    assert svc.is_viable(ViabilityScoring(posting_id=None, score=5.0, rationale="x")) is True
+    # A legitimate above-threshold score still passes.
+    assert svc.is_viable(ViabilityScoring(posting_id=None, score=0.8, rationale="x")) is True
+    # A below-threshold score still fails.
+    assert svc.is_viable(ViabilityScoring(posting_id=None, score=0.5, rationale="x")) is False

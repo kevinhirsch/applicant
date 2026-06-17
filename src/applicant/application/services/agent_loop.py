@@ -34,6 +34,7 @@ sleeps. The daily-acted ledger is keyed by ``(campaign, UTC date)``.
 from __future__ import annotations
 
 import dataclasses
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -132,6 +133,11 @@ class AgentLoop:
         self._last_resume: dict[str, datetime] = {}
         #: minimum seconds between resume re-drives of the same parked app (#9).
         self._resume_backoff_seconds: float = 300.0
+        # CONC: the scheduler tick now runs OFF the event loop (worker thread). Guard the
+        # read-modify-write of the per-run ledgers (``_acted`` / ``_digest_sent`` /
+        # ``_last_resume``) so two overlapping ticks can't lose-update them. A single
+        # re-entrant lock (the prune/record helpers nest under tick paths).
+        self._state_lock = threading.RLock()
         # Register the durable pipeline once if an orchestrator is present.
         if self._orch is not None:
             try:
@@ -151,7 +157,9 @@ class AgentLoop:
         exceeded.
         """
         key = (str(campaign_id), now.date())
-        return self._persisted_acted_today(campaign_id, now) + self._acted.get(key, 0)
+        with self._state_lock:
+            delta = self._acted.get(key, 0)
+        return self._persisted_acted_today(campaign_id, now) + delta
 
     def _persisted_acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
         """Sum durably-recorded ``pipelines_started`` over today's agent runs (#11).
@@ -166,7 +174,8 @@ class AgentLoop:
 
     def _record_acted(self, campaign_id: CampaignId, now: datetime, n: int = 1) -> None:
         key = (str(campaign_id), now.date())
-        self._acted[key] = self._acted.get(key, 0) + n
+        with self._state_lock:
+            self._acted[key] = self._acted.get(key, 0) + n
 
     def remaining_budget(self, campaign, now: datetime) -> int:
         """Applications still allowed today under the clamped per-day cap (FR-AGENT-1)."""
@@ -184,14 +193,16 @@ class AgentLoop:
         # tick start and clear it at tick end so the persisted count (which survives
         # restart) is the single source of truth between ticks — no double counting.
         key = (str(campaign_id), now.date())
-        self._acted.pop(key, None)
+        with self._state_lock:
+            self._acted.pop(key, None)
         # CONC-3: prune per-day dedup ledgers older than today so the in-memory maps
         # do not grow unbounded over 24/7 operation.
         self._prune_daily(now.date())
         try:
             return self._tick(campaign_id, now)
         finally:
-            self._acted.pop(key, None)
+            with self._state_lock:
+                self._acted.pop(key, None)
 
     def _automated_work_allowed(self) -> bool:
         """True when the loop may start NEW automated work (FR-ONBOARD-2/FR-OOBE-3).
@@ -208,8 +219,9 @@ class AgentLoop:
 
     def _prune_daily(self, today: date) -> None:
         """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
-        self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
-        self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
+        with self._state_lock:
+            self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
+            self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
 
     def _tick(self, campaign_id: CampaignId, now: datetime) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
@@ -304,11 +316,14 @@ class AgentLoop:
             # ~60s scheduler cadence does not re-send the email + Discord ready-ping
             # on every tick.
             key = (str(campaign.id), now.date())
-            if not self._digest_sent.get(key):
+            with self._state_lock:
+                already_sent = bool(self._digest_sent.get(key))
+            if not already_sent:
                 try:
                     delivered = self._digest.deliver(campaign.id)
                     result.digest_rows = len(delivered.get("payload", {}).get("rows", []))
-                    self._digest_sent[key] = True
+                    with self._state_lock:
+                        self._digest_sent[key] = True
                 except Exception as exc:  # pragma: no cover - defensive
                     log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))
 
@@ -420,13 +435,15 @@ class AgentLoop:
 
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
-        last = self._last_resume.get(str(application_id))
+        with self._state_lock:
+            last = self._last_resume.get(str(application_id))
         if last is None:
             return True
         return (now - last).total_seconds() >= self._resume_backoff_seconds
 
     def _mark_resumed(self, application_id: ApplicationId, now: datetime) -> None:
-        self._last_resume[str(application_id)] = now
+        with self._state_lock:
+            self._last_resume[str(application_id)] = now
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:
         """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).

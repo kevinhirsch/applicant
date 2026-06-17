@@ -23,6 +23,7 @@ is unit-tested directly with an injected clock.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime
 
 from applicant.observability.logging import get_logger
@@ -66,6 +67,14 @@ class Scheduler:
         self._daily_sent: dict[tuple[str, date], bool] = {}
         # The per-day dedup pruning guard (CONC-3) drains old days.
         self._last_pruned_date: date | None = None
+        # CONC: now that the tick runs OFF the event loop (in a worker thread), two
+        # overlapping ticks could race the SAME campaign's ``loop.tick``. Guard each
+        # campaign with a non-reentrant lock and SKIP a campaign whose prior tick is
+        # still running rather than block (a slow campaign must not stall the others or
+        # let the next interval pile a second tick onto it). The registry of locks is
+        # itself guarded so two threads creating the same campaign's lock can't race.
+        self._campaign_locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     def tick(self, now: datetime | None = None) -> dict:
         """Advance every active campaign + daily digest + the escalation ladder.
@@ -90,6 +99,12 @@ class Scheduler:
                 # itself delivers the daily digest at most once per (campaign, UTC day)
                 # via its own ``_digest_sent`` guard, so the scheduler no longer
                 # ALSO delivers it (that double-delivered the digest email + ready ping).
+                # CONC: take the per-campaign lock without blocking — if a prior tick
+                # for this campaign is still running, skip it this interval.
+                lock = self._campaign_lock(campaign.id)
+                if not lock.acquire(blocking=False):
+                    log.info("campaign_tick_skipped_in_progress", campaign_id=str(campaign.id))
+                    continue
                 try:
                     loop.tick(campaign.id, now)
                     ticked.append(str(campaign.id))
@@ -97,6 +112,8 @@ class Scheduler:
                     log.warning(
                         "campaign_tick_failed", campaign_id=str(campaign.id), error=str(exc)
                     )
+                finally:
+                    lock.release()
         finally:
             if session is not None:
                 try:
@@ -120,6 +137,16 @@ class Scheduler:
             "daily_digests": [],
             "ladder_fired": fired,
         }
+
+    def _campaign_lock(self, campaign_id) -> threading.Lock:
+        """Return the per-campaign non-reentrant lock, creating it once (CONC)."""
+        key = str(campaign_id)
+        with self._locks_guard:
+            lock = self._campaign_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._campaign_locks[key] = lock
+            return lock
 
     def _automated_work_allowed(self) -> bool:
         """True when automated work may begin (FR-ONBOARD-2/FR-OOBE-3).

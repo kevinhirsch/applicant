@@ -8,6 +8,7 @@ gate (FR-UI-5) like the rest of the application surface.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import tempfile
 from pathlib import Path
@@ -156,12 +157,15 @@ async def ingest_base_resume(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Empty base-resume upload: nothing to parse.",
         )
-    dest.write_bytes(body)
+    # ROBUST: the disk write and the synchronous resume parse are blocking work; run
+    # them OFF the event loop so this ``async def`` handler never stalls all other HTTP
+    # handling while a large resume is written + parsed. Behavior is identical.
+    await asyncio.to_thread(dest.write_bytes, body)
 
     # A corrupt/unparseable file is a client problem, not a server fault: map parser
     # failures to 422 instead of leaking a 500 with a traceback.
     try:
-        result = svc.ingest_base_resume(campaign_id, str(dest))
+        result = await asyncio.to_thread(svc.ingest_base_resume, campaign_id, str(dest))
     except HTTPException:
         raise
     except Exception as exc:

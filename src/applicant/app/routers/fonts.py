@@ -7,6 +7,7 @@ runtime cache refresh), and list installed fonts. Gated behind the LLM gate.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import tempfile
 from pathlib import Path
@@ -88,11 +89,14 @@ async def detect_required(file: UploadFile = File(...), svc=Depends(get_font_ser
     uploads.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or "resume.txt").suffix or ".txt"
     dest = _safe_dest(uploads, f"fontdetect{suffix}")
-    dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
+    body = await _read_capped(file, MAX_FONT_UPLOAD_BYTES)
+    # ROBUST: the disk write + the (OS-touching) font detection are blocking; run them
+    # off the event loop so this handler never stalls all other HTTP handling.
+    await asyncio.to_thread(dest.write_bytes, body)
     # A corrupt/unreadable upload is a client problem: map adapter/OS errors to 422
     # instead of leaking a 500.
     try:
-        return _report_dict(svc.report_for_document(str(dest)))
+        return _report_dict(await asyncio.to_thread(svc.report_for_document, str(dest)))
     except HTTPException:
         raise
     except Exception as exc:
@@ -113,10 +117,13 @@ async def install_font(
     uploads.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or f"{name}.ttf").suffix or ".ttf"
     dest = _safe_dest(uploads, f"{name}{suffix}")
-    dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
+    body = await _read_capped(file, MAX_FONT_UPLOAD_BYTES)
+    # ROBUST: the disk write + the OS font install (fc-cache refresh) are blocking;
+    # run them off the event loop so this handler never stalls all other HTTP handling.
+    await asyncio.to_thread(dest.write_bytes, body)
     # Bad font bytes / OS install failures are 4xx, not a server 500.
     try:
-        report = svc.install(str(dest), name)
+        report = await asyncio.to_thread(svc.install, str(dest), name)
     except HTTPException:
         raise
     except Exception as exc:

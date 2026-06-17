@@ -94,7 +94,12 @@ class DigestService:
                 row["viability_score"] = round(scoring.score * 100)
                 row["why_suggested"] = scoring.rationale
             else:
-                row["viability_score"] = None
+                # ROBUST: ``JobPostingModel.viability_score`` is nullable and the
+                # no-scoring branch has no score yet. Emit a numeric 0.0 (not None) so
+                # any downstream numeric comparison / sort on this row's score never
+                # raises ``TypeError: '>=' not supported between ... and NoneType`` on
+                # the digest hot path. The rationale still says scoring is pending.
+                row["viability_score"] = 0.0
                 row["why_suggested"] = "scoring pending"
             rows.append(row)
         return rows
