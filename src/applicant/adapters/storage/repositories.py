@@ -17,10 +17,12 @@ from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
+from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
+from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
@@ -34,10 +36,12 @@ from applicant.core.ids import (
     ApplicationId,
     AttributeId,
     CampaignId,
+    DetectionEventId,
     DiscoverySourceId,
     FieldMappingId,
     GeneratedDocumentId,
     JobPostingId,
+    OnboardingProfileId,
     PendingActionId,
     ResumeVariantId,
     RevisionSessionId,
@@ -86,6 +90,8 @@ def _posting_to_entity(row: m.JobPostingModel) -> JobPosting:
         salary=row.salary,
         description=row.description,
         source_key=row.source_key,
+        viability_score=row.viability_score,
+        rationale=dict(row.rationale or {}),
     )
 
 
@@ -226,6 +232,26 @@ def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
     return AgentRun(**kwargs)
 
 
+def _detection_to_entity(row: m.DetectionEventModel) -> DetectionEvent:
+    return DetectionEvent(
+        id=DetectionEventId(row.id),
+        application_id=ApplicationId(row.application_id),
+        signal_type=row.signal_type,
+        detail=dict(row.signal_detail or {}),
+        timestamp=row.timestamp,
+    )
+
+
+def _onboarding_to_entity(row: m.OnboardingProfileModel) -> OnboardingProfile:
+    return OnboardingProfile(
+        id=OnboardingProfileId(row.id),
+        campaign_id=CampaignId(row.campaign_id),
+        completion_flag=row.completion_flag,
+        wizard_state=dict(row.wizard_state or {}),
+        intake=dict(row.intake or {}),
+    )
+
+
 # --- repositories ----------------------------------------------------------
 
 
@@ -302,6 +328,8 @@ class JobPostingRepo:
                 source_url=posting.source_url,
                 source_key=posting.source_key,
                 description=posting.description,
+                viability_score=posting.viability_score,
+                rationale=posting.rationale,
             )
         )
 
@@ -485,8 +513,20 @@ class OutcomeEventRepo:
         ).all()
         return [_outcome_to_entity(r) for r in rows]
 
-    def list_all(self) -> list[OutcomeEvent]:
-        rows = self._s.scalars(select(m.OutcomeEventModel)).all()
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[OutcomeEvent]:
+        """All outcome events for a campaign (join through applications).
+
+        Campaign-scoped (FR-CRIT-4): outcomes must never bleed across campaigns, so
+        learning-depth queries filter by the owning application's campaign.
+        """
+        rows = self._s.scalars(
+            select(m.OutcomeEventModel)
+            .join(
+                m.ApplicationModel,
+                m.OutcomeEventModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+        ).all()
         return [_outcome_to_entity(r) for r in rows]
 
 
@@ -582,10 +622,13 @@ class FieldMappingRepo:
         return [_field_mapping_to_entity(r) for r in rows]
 
     def find(self, site_key: str, field_selector: str) -> FieldMapping | None:
+        # Deterministic ORDER BY id so multiple matching mappings always resolve to
+        # the SAME one across runs/lanes (no nondeterministic first-row pick).
         rows = self._s.scalars(
             select(m.FieldMappingModel)
             .where(m.FieldMappingModel.site_key == site_key)
             .where(m.FieldMappingModel.field_selector == field_selector)
+            .order_by(m.FieldMappingModel.id)
         ).all()
         entities = [_field_mapping_to_entity(r) for r in rows]
         scoped = [e for e in entities if e.campaign_id is not None]
@@ -655,6 +698,66 @@ class AgentRunRepo:
         return [_agent_run_to_entity(r) for r in rows]
 
 
+class DetectionEventRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, event: DetectionEvent) -> None:
+        self._s.merge(
+            m.DetectionEventModel(
+                id=event.id,
+                application_id=event.application_id,
+                signal_type=event.signal_type,
+                signal_detail=event.detail,
+                timestamp=event.timestamp,
+            )
+        )
+
+    def list_for_application(self, application_id: ApplicationId) -> list[DetectionEvent]:
+        rows = self._s.scalars(
+            select(m.DetectionEventModel)
+            .where(m.DetectionEventModel.application_id == application_id)
+            .order_by(m.DetectionEventModel.timestamp, m.DetectionEventModel.id)
+        ).all()
+        return [_detection_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[DetectionEvent]:
+        rows = self._s.scalars(
+            select(m.DetectionEventModel)
+            .join(
+                m.ApplicationModel,
+                m.DetectionEventModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .order_by(m.DetectionEventModel.timestamp, m.DetectionEventModel.id)
+        ).all()
+        return [_detection_to_entity(r) for r in rows]
+
+
+class OnboardingProfileRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, profile: OnboardingProfile) -> None:
+        self._s.merge(
+            m.OnboardingProfileModel(
+                id=profile.id,
+                campaign_id=profile.campaign_id,
+                completion_flag=profile.completion_flag,
+                wizard_state=profile.wizard_state,
+                intake=profile.intake,
+            )
+        )
+
+    def get_for_campaign(self, campaign_id: CampaignId) -> OnboardingProfile | None:
+        row = self._s.scalars(
+            select(m.OnboardingProfileModel).where(
+                m.OnboardingProfileModel.campaign_id == campaign_id
+            )
+        ).first()
+        return _onboarding_to_entity(row) if row else None
+
+
 class SqlAlchemyStorage:
     """Concrete ``StoragePort``: aggregates repositories under one session."""
 
@@ -674,6 +777,8 @@ class SqlAlchemyStorage:
         self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)
         self.agent_runs = AgentRunRepo(session)
+        self.detection_events = DetectionEventRepo(session)
+        self.onboarding_profiles = OnboardingProfileRepo(session)
 
     def commit(self) -> None:
         self._session.commit()

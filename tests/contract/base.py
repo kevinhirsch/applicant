@@ -76,14 +76,80 @@ class StoragePortContract:
         assert len(shots) == 1
         assert shots[0].page_url.endswith("personal")
 
-    def test_outcomes_list_all(self, adapter):
-        # FR-LEARN-2: all conversion events queryable for learning depth.
-        aid = ApplicationId(new_id())
+    def test_outcomes_list_for_campaign_scoped(self, adapter):
+        # FR-LEARN-2 + FR-CRIT-4: conversion events queryable for learning depth but
+        # scoped per campaign — outcomes must NOT bleed across campaigns.
+        cid_a = CampaignId(new_id())
+        cid_b = CampaignId(new_id())
+        adapter.campaigns.add(Campaign(id=cid_a, name="A"))
+        adapter.campaigns.add(Campaign(id=cid_b, name="B"))
+        aid_a = ApplicationId(new_id())
+        aid_b = ApplicationId(new_id())
+        from applicant.core.entities.application import Application
+        from applicant.core.ids import JobPostingId
+
+        adapter.applications.add(
+            Application(id=aid_a, campaign_id=cid_a, posting_id=JobPostingId(""))
+        )
+        adapter.applications.add(
+            Application(id=aid_b, campaign_id=cid_b, posting_id=JobPostingId(""))
+        )
         adapter.outcomes.add(
-            OutcomeEvent(id=OutcomeEventId(new_id()), application_id=aid, type="submitted")
+            OutcomeEvent(id=OutcomeEventId(new_id()), application_id=aid_a, type="submitted")
+        )
+        adapter.outcomes.add(
+            OutcomeEvent(id=OutcomeEventId(new_id()), application_id=aid_b, type="rejected")
         )
         adapter.commit()
-        assert any(o.type == "submitted" for o in adapter.outcomes.list_all())
+        a_events = adapter.outcomes.list_for_campaign(cid_a)
+        assert [e.type for e in a_events] == ["submitted"]
+        assert all(e.type != "rejected" for e in a_events)
+
+    def test_detection_event_persist_and_query(self, adapter):
+        # FR-OBS-2: detection signals persisted + retrievable per app + per campaign.
+        from applicant.core.entities.application import Application
+        from applicant.core.entities.detection_event import DetectionEvent
+        from applicant.core.ids import DetectionEventId, JobPostingId
+
+        cid = CampaignId(new_id())
+        aid = ApplicationId(new_id())
+        adapter.campaigns.add(Campaign(id=cid, name="D"))
+        adapter.applications.add(
+            Application(id=aid, campaign_id=cid, posting_id=JobPostingId(""))
+        )
+        adapter.detection_events.add(
+            DetectionEvent(
+                id=DetectionEventId(new_id()),
+                application_id=aid,
+                signal_type="captcha",
+                detail={"url": "https://acme.test"},
+            )
+        )
+        adapter.commit()
+        per_app = adapter.detection_events.list_for_application(aid)
+        per_campaign = adapter.detection_events.list_for_campaign(cid)
+        assert len(per_app) == 1 and per_app[0].signal_type == "captcha"
+        assert len(per_campaign) == 1 and per_campaign[0].application_id == aid
+
+    def test_onboarding_profile_roundtrip(self, adapter):
+        # FR-ONBOARD-2: completion record persisted to its own first-class table.
+        from applicant.core.entities.onboarding_profile import OnboardingProfile
+        from applicant.core.ids import OnboardingProfileId
+
+        cid = CampaignId(new_id())
+        adapter.campaigns.add(Campaign(id=cid, name="O"))
+        adapter.onboarding_profiles.add(
+            OnboardingProfile(
+                id=OnboardingProfileId(new_id()),
+                campaign_id=cid,
+                completion_flag=True,
+                intake={"identity": {"full_name": "Kev"}},
+            )
+        )
+        adapter.commit()
+        got = adapter.onboarding_profiles.get_for_campaign(cid)
+        assert got is not None and got.completion_flag is True
+        assert got.intake["identity"]["full_name"] == "Kev"
 
     def test_pending_action_resolve(self, adapter):
         cid = CampaignId(new_id())

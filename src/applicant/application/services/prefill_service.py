@@ -623,7 +623,26 @@ class PrefillService:
         expected = getattr(state, "expected_host", None)
         if expected is not None:
             page_signals["expected_host"] = expected
-        return self._detection.evaluate(aid, page_signals)
+        event = self._detection.evaluate(aid, page_signals)
+        if event is not None:
+            self._archive_detection(event)
+        return event
+
+    def _archive_detection(self, event) -> None:
+        """Persist a classified detection signal for the FR-OBS-2 debug surface.
+
+        Cautious mode classified a signal (CAPTCHA/Cloudflare/403/429/...) — record
+        it durably so detection history is queryable, not only computed in-flight.
+        Best-effort: archival must never break the pre-fill loop.
+        """
+        repo = getattr(self._storage, "detection_events", None)
+        if repo is None:
+            return
+        try:
+            repo.add(event)
+            self._storage.commit()
+        except Exception:  # pragma: no cover - never let archival break pre-fill
+            pass
 
     # --- side effects -----------------------------------------------------
     def _emit_waiting(

@@ -84,10 +84,25 @@ class AgentRunService:
             run_mode=campaign.run_mode,
             throughput_target=campaign.throughput_target,
             stats=dict(stats or {}),
+            # FR-AGENT-7: derive the tie-break ``seq`` from the max PERSISTED seq for
+            # this campaign so it stays monotonic across restarts. The process-local
+            # ``itertools.count`` resets to 1 on restart, which would let a brand-new
+            # run at an equal timestamp lose the tie-break to a stale persisted run.
+            seq=self._next_seq(campaign_id),
         )
         self._storage.agent_runs.add(run)
         self._storage.commit()
         return run
+
+    def _next_seq(self, campaign_id: CampaignId) -> int:
+        """Next monotonic seq = 1 + max persisted seq for the campaign (FR-AGENT-7)."""
+        try:
+            runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            runs = []
+        if not runs:
+            return 1
+        return max(int(getattr(r, "seq", 0)) for r in runs) + 1
 
     def list_runs(self, campaign_id: CampaignId) -> list[AgentRun]:
         return self._storage.agent_runs.list_for_campaign(campaign_id)

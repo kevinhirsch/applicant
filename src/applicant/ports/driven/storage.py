@@ -15,13 +15,16 @@ from typing import Protocol, runtime_checkable
 
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
+from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
+from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
+from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
@@ -102,6 +105,32 @@ class DecisionRepository(Protocol):
 class OutcomeEventRepository(Protocol):
     def add(self, event: OutcomeEvent) -> None: ...
     def list_for_application(self, application_id: ApplicationId) -> list[OutcomeEvent]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[OutcomeEvent]: ...
+
+
+@runtime_checkable
+class ApplicationScreenshotRepository(Protocol):
+    """Per-page screenshots captured during pre-fill (FR-LOG-2 / FR-OBS-2)."""
+
+    def add(self, shot: ApplicationScreenshot) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[ApplicationScreenshot]: ...
+
+
+@runtime_checkable
+class DetectionEventRepository(Protocol):
+    """Automation-detection signals persisted for the FR-OBS-2 debug surface."""
+
+    def add(self, event: DetectionEvent) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[DetectionEvent]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[DetectionEvent]: ...
+
+
+@runtime_checkable
+class OnboardingProfileRepository(Protocol):
+    """Resumable onboarding intake + completion record (FR-ONBOARD-2)."""
+
+    def add(self, profile: OnboardingProfile) -> None: ...
+    def get_for_campaign(self, campaign_id: CampaignId) -> OnboardingProfile | None: ...
 
 
 @runtime_checkable
@@ -158,10 +187,13 @@ class StoragePort(Protocol):
     revisions: RevisionSessionRepository
     decisions: DecisionRepository
     outcomes: OutcomeEventRepository
+    screenshots: ApplicationScreenshotRepository
     pending_actions: PendingActionRepository
     field_mappings: FieldMappingRepository
     discovery_sources: DiscoverySourceRepository
     agent_runs: AgentRunRepository
+    detection_events: DetectionEventRepository
+    onboarding_profiles: OnboardingProfileRepository
 
     def commit(self) -> None: ...
     def rollback(self) -> None: ...

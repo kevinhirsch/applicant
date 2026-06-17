@@ -189,10 +189,15 @@ class DigestService:
         # rows persisted.
         if self._pending is not None:
             for row in payload["rows"]:
+                # The digest row is a POSTING, not an Application — no application row
+                # exists yet. Store the posting id in the payload and leave
+                # ``application_id=None`` so we never write a posting id into the
+                # ``pending_actions.application_id`` FK (would IntegrityError on
+                # Postgres: no matching ``applications.id``).
                 self._pending.digest_approval(
                     campaign_id,
-                    ApplicationId(str(row["posting_id"])),
-                    f"Review: {row['summary']}",
+                    posting_id=str(row["posting_id"]),
+                    title=f"Review: {row['summary']}",
                     link=row["link"],
                     score=row["viability_score"],
                 )

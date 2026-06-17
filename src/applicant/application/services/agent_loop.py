@@ -419,8 +419,13 @@ class AgentLoop:
                 if choice == "submitted_by_user"
                 else OutcomeSource.AUTO
             )
-            # Move into the AWAITING_FINAL_APPROVAL gate first (legal §7 transition).
-            gated = self._force_status(current, ApplicationState.AWAITING_FINAL_APPROVAL)
+            # Land the AWAITING_FINAL_APPROVAL gate via a VALIDATED transition: pre-fill
+            # already walked PREFILLING->MATERIAL_PREP->MATERIAL_REVIEW->AWAITING_FINAL_APPROVAL
+            # legally, so ``current`` is normally already at the gate (a no-op here). If
+            # the persisted state is an ILLEGAL pre-state for the gate, this raises
+            # IllegalStateTransition (->409 via the global handler) instead of silently
+            # force-setting the status and letting material skip MATERIAL_REVIEW (#2).
+            gated = self._advance_to(current, ApplicationState.AWAITING_FINAL_APPROVAL)
             event = self._submission.record_submission(gated, source=source)
             return {"recorded": True, "outcome": event.type}
 
@@ -545,8 +550,29 @@ class AgentLoop:
         return updated
 
     def _force_status(self, app: Application, to: ApplicationState) -> Application:
-        """Set the status directly (used to land a legal gate state for submission)."""
+        """Set the status directly (only for states pre-fill already validated).
+
+        Used by ``_sync_status`` to mirror the §7 state pre-fill itself walked through
+        legal transitions. NOT used to land the final-approval gate — that goes through
+        ``_advance_to`` so an illegal pre-state can never be silently force-set (#2).
+        """
         updated = dataclasses.replace(app, status=to)
+        self._storage.applications.update(updated)
+        self._storage.commit()
+        return updated
+
+    def _advance_to(self, app: Application, to: ApplicationState) -> Application:
+        """Move ``app`` to ``to`` through a VALIDATED §7 transition.
+
+        A no-op when already at ``to``. Otherwise routes through
+        ``Application.with_status`` so an illegal pre-state raises
+        ``IllegalStateTransition`` rather than being force-set (state-machine
+        integrity on submit, #2).
+        """
+        current = self._storage.applications.get(app.id) or app
+        if current.status is to:
+            return current
+        updated = current.with_status(to)  # raises IllegalStateTransition if illegal
         self._storage.applications.update(updated)
         self._storage.commit()
         return updated

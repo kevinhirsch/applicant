@@ -56,7 +56,31 @@ class ScoringService:
         posting = self._storage.postings.get(posting_id)
         if posting is None:
             return ViabilityScoring(posting_id=posting_id, score=0.0, rationale="posting not found")
-        return self._score(posting, criteria)
+        scoring = self._score(posting, criteria)
+        self._persist_score(posting, scoring)
+        return scoring
+
+    def _persist_score(self, posting: JobPosting, scoring: ViabilityScoring) -> None:
+        """Durably store the viability score + rationale on the posting (FR-DIG-4).
+
+        So the digest rationale survives restart instead of being recomputed every
+        run. Best-effort: a storage hiccup must not break scoring/digest delivery.
+        """
+        import dataclasses
+
+        try:
+            updated = dataclasses.replace(
+                posting,
+                viability_score=scoring.score,
+                rationale={
+                    "text": scoring.rationale,
+                    "viable": self.is_viable(scoring),
+                },
+            )
+            self._storage.postings.add(updated)
+            self._storage.commit()
+        except Exception:  # pragma: no cover - never let persistence break scoring
+            pass
 
     def score_posting(
         self, posting: JobPosting, criteria: SearchCriteria | None = None

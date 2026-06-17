@@ -13,10 +13,12 @@ from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision
+from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
+from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
@@ -151,8 +153,10 @@ class _DecisionRepo:
 
 
 class _OutcomeRepo:
-    def __init__(self) -> None:
+    def __init__(self, applications: _ApplicationRepo) -> None:
         self._l: list[OutcomeEvent] = []
+        # Resolve an outcome's campaign through its application (mirrors the SQL join).
+        self._applications = applications
 
     def add(self, e: OutcomeEvent) -> None:
         self._l.append(e)
@@ -160,8 +164,14 @@ class _OutcomeRepo:
     def list_for_application(self, aid: ApplicationId) -> list[OutcomeEvent]:
         return [e for e in self._l if e.application_id == aid]
 
-    def list_all(self) -> list[OutcomeEvent]:
-        return list(self._l)
+    def list_for_campaign(self, cid: CampaignId) -> list[OutcomeEvent]:
+        """All outcomes whose application belongs to ``cid`` (FR-CRIT-4 scoping)."""
+        out: list[OutcomeEvent] = []
+        for e in self._l:
+            app = self._applications.get(e.application_id)
+            if app is not None and app.campaign_id == cid:
+                out.append(e)
+        return out
 
 
 class _ScreenshotRepo:
@@ -214,11 +224,16 @@ class _FieldMappingRepo:
 
     def find(self, site_key: str, field_selector: str) -> FieldMapping | None:
         # Prefer a campaign-scoped mapping; fall back to a shared one (FR-ATTR-2).
-        matches = [
-            m
-            for m in self._d.values()
-            if m.site_key == site_key and m.field_selector == field_selector
-        ]
+        # Sort by id so multiple matches resolve deterministically (mirrors the SQL
+        # ``ORDER BY id`` so both lanes return the same mapping).
+        matches = sorted(
+            (
+                m
+                for m in self._d.values()
+                if m.site_key == site_key and m.field_selector == field_selector
+            ),
+            key=lambda m: str(m.id),
+        )
         scoped = [m for m in matches if m.campaign_id is not None]
         return (scoped or matches or [None])[0]
 
@@ -255,6 +270,40 @@ class _AgentRunRepo:
         return [r for r in self._d.values() if r.campaign_id == cid]
 
 
+class _DetectionEventRepo:
+    def __init__(self, applications: _ApplicationRepo) -> None:
+        self._l: list[DetectionEvent] = []
+        self._applications = applications
+
+    def add(self, e: DetectionEvent) -> None:
+        self._l.append(e)
+
+    def list_for_application(self, aid: ApplicationId) -> list[DetectionEvent]:
+        return sorted(
+            (e for e in self._l if e.application_id == aid),
+            key=lambda e: (e.timestamp, str(e.id)),
+        )
+
+    def list_for_campaign(self, cid: CampaignId) -> list[DetectionEvent]:
+        out = []
+        for e in self._l:
+            app = self._applications.get(e.application_id)
+            if app is not None and app.campaign_id == cid:
+                out.append(e)
+        return sorted(out, key=lambda e: (e.timestamp, str(e.id)))
+
+
+class _OnboardingProfileRepo:
+    def __init__(self) -> None:
+        self._d: dict[str, OnboardingProfile] = {}
+
+    def add(self, p: OnboardingProfile) -> None:
+        self._d[str(p.campaign_id)] = p
+
+    def get_for_campaign(self, cid: CampaignId) -> OnboardingProfile | None:
+        return self._d.get(str(cid))
+
+
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation."""
 
@@ -267,12 +316,14 @@ class InMemoryStorage:
         self.documents = _DocumentRepo()
         self.revisions = _RevisionRepo()
         self.decisions = _DecisionRepo()
-        self.outcomes = _OutcomeRepo()
+        self.outcomes = _OutcomeRepo(self.applications)
         self.screenshots = _ScreenshotRepo()
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
         self.agent_runs = _AgentRunRepo()
+        self.detection_events = _DetectionEventRepo(self.applications)
+        self.onboarding_profiles = _OnboardingProfileRepo()
 
     def commit(self) -> None:  # no-op; writes are immediate
         pass

@@ -130,8 +130,35 @@ class OnboardingService:
             return self._to_state(campaign_id, rec)
         rec["complete"] = True
         self._store(campaign_id, rec)
+        # FR-ONBOARD-2: persist the completion record to the dedicated
+        # ``onboarding_profiles`` row (not only the app-config blob) so onboarding
+        # state lives in its own first-class table and survives as a queryable record.
+        self._persist_profile(campaign_id, rec, complete=True)
         log.info("onboarding_complete", campaign_id=campaign_id)
         return self._to_state(campaign_id, rec)
+
+    def _persist_profile(self, campaign_id: str, rec: dict[str, Any], *, complete: bool) -> None:
+        """Write the onboarding completion record to ``onboarding_profiles``."""
+        repo = getattr(self._storage, "onboarding_profiles", None)
+        if repo is None:
+            return
+        from applicant.core.entities.onboarding_profile import OnboardingProfile
+        from applicant.core.ids import OnboardingProfileId
+
+        cid = CampaignId(campaign_id)
+        try:
+            existing = repo.get_for_campaign(cid)
+            profile = OnboardingProfile(
+                id=existing.id if existing else OnboardingProfileId(new_id()),
+                campaign_id=cid,
+                completion_flag=complete,
+                wizard_state={"sections_complete": rec.get("sections_complete", [])},
+                intake=dict(rec.get("intake", {})),
+            )
+            repo.add(profile)
+            self._storage.commit()
+        except Exception:  # pragma: no cover - never let persistence break the gate
+            log.warning("onboarding_profile_persist_failed", campaign_id=campaign_id)
 
     def is_complete(self, campaign_id: str) -> bool:
         return bool(self._load(campaign_id).get("complete", False))
