@@ -127,8 +127,13 @@ class PatchrightBrowser:
         ensure_action_allowed(StepKind.FILL_FIELD)
         session = self._session(application_id)
         session.human.think_delay()
-        session.human.type_cadence(value)  # advances the per-session logical clock
-        session.source.type_value(selector, value)
+        # Compute the per-keystroke cadence (FR-STEALTH-2) and ACTUALLY apply it: the
+        # plan was previously computed then discarded, so the real driver typed at a
+        # constant 80ms. Thread the dwell plan into the page source so believable,
+        # per-character timing reaches Playwright's type API.
+        plan = session.human.type_cadence(value)  # advances the per-session logical clock
+        cadence_ms = [k.delay_ms for k in plan]
+        session.source.type_value(selector, value, cadence_ms=cadence_ms)
 
     def screenshot(self, application_id: ApplicationId) -> str:
         """Capture and store a per-page screenshot; return its ref (FR-LOG-2)."""

@@ -338,3 +338,70 @@ def test_provider_context_error_climbs():
     llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
     res = llm.complete([ChatMessage(role="user", content="q")])
     assert res.tier == 2 and res.text == "ok"
+
+
+# --- FR-LLM-4a: robust JSON extraction ------------------------------------
+import pytest as _pytest  # noqa: E402
+
+from applicant.adapters.llm.openai_compatible import _extract_json  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    "text,expected",
+    [
+        # prose-prefixed JSON
+        ('Sure! Here is the result:\n{"name": "Ada", "ok": true}', {"name": "Ada", "ok": True}),
+        # a decoy {...} before the real (parseable) object
+        ("note {not json here} then {\"name\": \"Ada\"}", {"name": "Ada"}),
+        # trailing comma tolerated
+        ('{"a": 1, "b": 2,}', {"a": 1, "b": 2}),
+        # brace inside a string value must not end the object early
+        ('{"expr": "f(x) = { y }", "n": 3}', {"expr": "f(x) = { y }", "n": 3}),
+        # fenced
+        ('```json\n{"x": 9}\n```', {"x": 9}),
+    ],
+)
+def test_extract_json_robust(text, expected):
+    assert _extract_json(text) == expected
+
+
+def test_extract_json_decoy_before_real_picks_real():
+    # First balanced span is unparseable; the second parses -> returned.
+    txt = 'prefix {oops} suffix {"answer": 42, "tags": ["a","b",]}'
+    assert _extract_json(txt) == {"answer": 42, "tags": ["a", "b"]}
+
+
+def test_complete_parses_native_tool_calls():
+    schema = {"required": ["company", "role"]}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # content is null; structured payload is in tool_calls[].function.arguments
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "extract",
+                                        "arguments": '{"company": "Acme", "role": "SWE"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        )
+
+    ladder = TierLadder(
+        tiers=[TierConfig(provider="openai", base_url="https://a/v1", model="m", context_window=100_000)]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    res = llm.complete([ChatMessage(role="user", content="q")], json_schema=schema)
+    assert res.structured == {"company": "Acme", "role": "SWE"}

@@ -50,6 +50,10 @@ _MAX_INBOX = 1000
 _MAX_CAPTURED = 1000
 
 
+class NotificationDeliveryError(RuntimeError):
+    """Raised when a real Apprise dispatch fails (apprise.notify() == False)."""
+
+
 @dataclass
 class _Rung:
     """One escalation hop: a channel to fire ``due_at`` (epoch-relative seconds)."""
@@ -259,7 +263,20 @@ class AppriseNotifier:
         body = notification.body
         if notification.deep_link:
             body = f"{body}\n{notification.deep_link}"
-        client.notify(title=notification.title, body=body)
+        # Apprise returns False on a failed delivery (it does NOT raise). Ignoring
+        # the return recorded failures as "dispatched" — check it and surface the
+        # failure so the caller / logs reflect reality (FR-NOTIF-1).
+        ok = client.notify(title=notification.title, body=body)
+        if not ok:
+            log.error(
+                "notification_delivery_failed",
+                channel=channel,
+                urgency=notification.urgency.value,
+                dedup_key=notification.dedup_key,
+            )
+            raise NotificationDeliveryError(
+                f"Apprise delivery failed on the {channel} channel."
+            )
 
     # --- public API -------------------------------------------------------
     def notify(self, notification: Notification) -> str:
