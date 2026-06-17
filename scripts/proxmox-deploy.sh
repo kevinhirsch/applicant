@@ -166,6 +166,11 @@ cat > "$USERDATA" <<EOF
 #cloud-config
 hostname: ${NAME}
 manage_etc_hosts: true
+# Cloud images disable root login + password auth by default. Enable them so the
+# root password set in the wizard works over SSH for debugging (the guest agent
+# is the primary out-of-band channel; this just makes SSH usable too).
+ssh_pwauth: true
+disable_root: false
 package_update: true
 packages: [qemu-guest-agent, ca-certificates, curl, git]
 runcmd:
@@ -264,42 +269,39 @@ echo "  Update later:  qm guest exec ${VMID} -- bash -lc 'cd /opt/${REPO_NAME} &
 echo
 
 # ---------------------------------------------------------------------------
-# Live-follow first-boot provisioning over SSH (no copy/paste, auto-stops)
+# Wait for the stack to come up (patient, never blank, no SSH dependency)
 # ---------------------------------------------------------------------------
-# Stream the cloud-init log to THIS terminal in real time until provisioning
-# finishes (cloud-init touches /opt/${REPO_NAME}/.provisioned at the end), then
-# stop on its own. Set NO_FOLLOW=1 to skip. Uses the IP discovered above — no
-# hardcoded address. SSH auth uses the auto-imported key, else the root password
-# you just set.
+# First boot installs Docker, clones the repo, and BUILDS the images — the first
+# build is heavy and can take 10-20+ minutes, during which the UI port refuses
+# connections (normal). Rather than a fragile SSH live-tail (cloud images can
+# reject key/password auth), poll the front-door health endpoint with a generous
+# deadline and a periodic pulse so it never looks frozen. The build keeps running
+# on the VM even if you stop waiting; the guest agent is the reliable log channel.
 if [[ -n "$IP" && "${NO_FOLLOW:-0}" != "1" ]]; then
-  echo "  Following first-boot provisioning live (Ctrl-C to detach; it stops itself when done)…"
-  echo
-  # Wait briefly for sshd to come up on the freshly booted VM.
-  for _ in $(seq 1 30); do
-    ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=accept-new \
-        -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-        "root@${IP}" true 2>/dev/null && break
-    sleep 3
-  done
-  ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-      "root@${IP}" \
-      "tail -n +1 -F /var/log/cloud-init-output.log & TP=\$!; \
-       until [ -f /opt/${REPO_NAME}/.provisioned ] || grep -q 'Cloud-init.*finished' /var/log/cloud-init-output.log 2>/dev/null; do sleep 2; done; \
-       sleep 2; kill \$TP 2>/dev/null" 2>/dev/null || \
-    echo "  (Could not auto-attach over SSH — run: ssh root@${IP} 'tail -f /var/log/cloud-init-output.log')"
-  echo
-  # Heartbeat: confirm the front-door UI actually answers before declaring done.
-  # install.sh already blocks on its own heartbeat inside the VM; this is the
-  # node-side confirmation against the discovered IP (no hardcoded address).
-  msg_info "Heartbeat: checking http://${IP}:${APP_PORT}/api/health …"
-  HB_OK=0
-  for _ in $(seq 1 60); do
+  cat <<EOF
+
+  First boot is provisioning the VM: installing Docker, then BUILDING the images
+  and starting the stack. The first build is heavy — expect 10-20+ minutes, and
+  http://${IP}:${APP_PORT} will refuse connections until it finishes (normal).
+
+  Watch the live log in another terminal if you like:
+    qm guest exec ${VMID} -- bash -lc 'cloud-init status --long; tail -n 40 /var/log/cloud-init-output.log'
+    ssh root@${IP} 'tail -f /var/log/cloud-init-output.log'   (root password you set)
+
+EOF
+  msg_info "Waiting for the stack at http://${IP}:${APP_PORT} (up to 30 min for the first build)…"
+  HB_OK=0; START=$(date +%s); DEADLINE=$(( START + 1800 ))
+  while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     if curl -fsS -o /dev/null "http://${IP}:${APP_PORT}/api/health" 2>/dev/null; then HB_OK=1; break; fi
-    sleep 5
+    printf '\r  …still building (%d min elapsed; Ctrl-C to stop waiting — the build continues on the VM)    ' \
+      "$(( ($(date +%s) - START) / 60 ))"
+    sleep 15
   done
+  echo
   if [[ "$HB_OK" -eq 1 ]]; then
     msg_ok "Stack is green. Open http://${IP}:${APP_PORT} and complete setup in the browser."
   else
-    msg_info "UI not answering yet (first build can take a while). Watch: ssh root@${IP} 'cd /opt/${REPO_NAME} && docker compose -f docker/docker-compose.prod.yml ps'"
+    msg_info "Not up yet after 30 min — it may still be building. Check:"
+    echo "    qm guest exec ${VMID} -- bash -lc 'cloud-init status --long; cd /opt/${REPO_NAME} && docker compose -f docker/docker-compose.prod.yml ps'"
   fi
 fi
