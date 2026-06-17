@@ -678,6 +678,18 @@ app.include_router(setup_contacts_routes())
 # engine-backed sections progressively. Read-only; does not touch auth/users.
 from routes.applicant_routes import setup_applicant_routes
 app.include_router(setup_applicant_routes())
+# Lane A — engine resume/cover-letter library + redline review (/api/applicant/documents/*).
+from routes.applicant_documents_routes import setup_applicant_documents_routes
+app.include_router(setup_applicant_documents_routes())
+# Lane B — Memory/Profile: attribute cloud + conversion-learning engine proxy.
+from routes.applicant_memory_routes import setup_applicant_memory_routes
+app.include_router(setup_applicant_memory_routes())
+# Lane C — Chat/Agent ↔ engine assistant + job actions (additive; auth-protected).
+from routes.applicant_chat_routes import setup_applicant_chat_routes
+app.include_router(setup_applicant_chat_routes())
+# Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
+from routes.applicant_email_routes import setup_applicant_email_routes
+app.include_router(setup_applicant_email_routes())
 
 # ========= ROUTES (kept in app.py) =========
 

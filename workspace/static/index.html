@@ -252,6 +252,7 @@
           <button class="memory-tab active" data-memory-tab="browse"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>Memories <span id="memory-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="skills"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Skills <span id="skills-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="entities"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M12 7.5v4M10.5 13.5 6.5 16M13.5 13.5 17.5 16"/></svg>Entities <span id="entities-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
+          <button class="memory-tab" id="applicant-profile-tab" data-memory-tab="applicant-profile" title="Your job-application profile — facts the assistant pre-fills, and what it has learned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>Profile <span id="applicant-profile-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span></button>
           <button class="memory-tab" data-memory-tab="add"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Add</button>
           <button class="memory-tab" data-memory-tab="settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
         </div>
@@ -402,6 +403,55 @@
           </div>
           <div id="entities-list" style="display:flex;flex-direction:column;gap:8px"></div>
           <div id="entities-empty" style="opacity:0.5;font-size:13px;text-align:center;padding:24px 0">No entities yet. Add one, or just chat — they're learned automatically.</div>
+        </div>
+
+        <!-- ── Profile tab (job-application attribute cloud + what the assistant learned) ── -->
+        <div class="memory-tab-panel hidden" data-memory-panel="applicant-profile">
+          <div class="admin-card">
+            <h2 style="margin:0 0 6px;display:flex;align-items:center;gap:6px;">Application profile</h2>
+            <p class="memory-desc doclib-desc" style="margin:0 0 4px;">The details the assistant reuses to fill out job applications for you — name, contact, work eligibility, and so on. Add one below, or let the assistant suggest them; you stay in control of every value.</p>
+          </div>
+          <!-- engine-not-ready note: shown until the assistant's application engine is set up -->
+          <div id="applicant-profile-unready" class="admin-card hidden" style="opacity:0.85;">
+            <p class="memory-desc" style="margin:0;">This becomes available once the job-application assistant is set up. Finish its first-run setup, then reopen this tab.</p>
+          </div>
+          <div id="applicant-profile-body">
+            <div class="admin-card">
+              <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+                <div style="flex:1;min-width:140px">
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Detail</label>
+                  <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'">
+                </div>
+                <div style="flex:1;min-width:140px">
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Value</label>
+                  <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail">
+                </div>
+                <label style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed.">
+                  <input type="checkbox" id="applicant-attr-sensitive"> Sensitive
+                </label>
+                <button id="applicant-attr-add-btn" class="primary-btn" style="white-space:nowrap">+ Add</button>
+              </div>
+            </div>
+            <div class="admin-card" style="display:flex;flex-direction:column;min-height:0;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <h2 style="margin:0;font-size:1em;">Saved details <span id="applicant-attr-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal"></span></h2>
+                <span style="flex:1"></span>
+                <button id="applicant-attr-refresh-btn" class="memory-toolbar-btn" title="Reload from the assistant">Refresh</button>
+              </div>
+              <div id="applicant-attr-list" style="display:flex;flex-direction:column;gap:8px"></div>
+              <div id="applicant-attr-empty" style="opacity:0.5;font-size:13px;text-align:center;padding:20px 0">No details saved yet. Add one above.</div>
+            </div>
+            <div class="admin-card" id="applicant-learning-card">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <h2 style="margin:0;font-size:1em;">What the assistant learned</h2>
+                <span style="flex:1"></span>
+                <button id="applicant-learning-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
+              </div>
+              <p class="memory-desc doclib-desc" style="margin:0 0 6px;">When the assistant prepares your resume it picks a format. Review its choice and keep it or switch back — nothing is locked in without you.</p>
+              <div id="applicant-learning-body" style="font-size:13px;opacity:0.7">Loading…</div>
+              <div id="applicant-learning-actions" style="display:flex;gap:8px;margin-top:8px"></div>
+            </div>
+          </div>
         </div>
 
         <!-- ── Settings tab ── -->
@@ -755,6 +805,7 @@
     <button class="icon-rail-btn rail-dynamic" id="rail-chats" title="Chat ready" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="icon-rail-btn rail-dynamic" id="rail-documents" title="Documents" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
     <!-- Tool launchers — always visible, alphabetical -->
+    <button class="icon-rail-btn" id="rail-assistant" title="Job Assistant — answers about your applications and surfaces what needs you"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="icon-rail-btn" id="rail-calendar" title="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
     <button class="icon-rail-btn" id="rail-compare" title="Compare"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></button>
     <button class="icon-rail-btn" id="rail-cookbook" title="Cookbook"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg></button>

@@ -1352,6 +1352,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target === 'entities') {
         import('./entities.js').then(m => { const fn = m.initEntities || m.default?.initEntities; if (fn) fn(); });
       }
+      // Lazy-load the job-application profile (engine-backed attribute cloud + learning)
+      if (target === 'applicant-profile') {
+        import('./entities.js').then(m => { const fn = m.initApplicantProfile || m.default?.initApplicantProfile; if (fn) fn(); });
+      }
     });
   });
 
