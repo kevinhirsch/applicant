@@ -25,7 +25,11 @@ Design notes:
 * **Auth.** Mounted on the normal (cookie/token-authenticated) surface — unlike
   the read-only ``/api/applicant/features`` probe, these act on the owner's real
   application materials, so they require an authenticated session like every
-  other data route.
+  other data route. Reads + opening a review session require a logged-in user;
+  the mutating operations (turn / approve / decline / variant-approve /
+  aggressiveness) additionally require the ``can_use_documents`` privilege,
+  matching the workspace's native documents surface (``routes/document_routes.py``)
+  so a restricted user can't drive document writes through the proxy.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import require_user
+from src.auth_helpers import require_privilege, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +147,7 @@ def setup_applicant_documents_routes() -> APIRouter:
     async def submit_turn(document_id: str, body: TurnIn, request: Request) -> JSONResponse:
         """Apply one change turn to a document under review
         (engine ``POST /api/documents/{id}/turn``)."""
-        require_user(request)
+        require_privilege(request, "can_use_documents")
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.turn_document(document_id, body.model_dump())
@@ -156,7 +160,7 @@ def setup_applicant_documents_routes() -> APIRouter:
     async def approve(document_id: str, request: Request) -> JSONResponse:
         """Approve a document, passing the review gate
         (engine ``POST /api/documents/{id}/approve``)."""
-        require_user(request)
+        require_privilege(request, "can_use_documents")
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.approve_document(document_id)
@@ -169,7 +173,7 @@ def setup_applicant_documents_routes() -> APIRouter:
     async def decline(document_id: str, request: Request) -> JSONResponse:
         """Decline a document — it stays unapproved and blocks submission
         (engine ``POST /api/documents/{id}/decline``)."""
-        require_user(request)
+        require_privilege(request, "can_use_documents")
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.decline_document(document_id)
@@ -182,7 +186,7 @@ def setup_applicant_documents_routes() -> APIRouter:
     async def approve_variant(variant_id: str, request: Request) -> JSONResponse:
         """Approve a generated resume variant through the review gate
         (engine ``POST /api/documents/variants/{id}/approve``)."""
-        require_user(request)
+        require_privilege(request, "can_use_documents")
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.approve_variant(variant_id)
@@ -197,7 +201,7 @@ def setup_applicant_documents_routes() -> APIRouter:
     async def set_aggressiveness(body: AggressivenessIn, request: Request) -> JSONResponse:
         """Set the truthful-framing dial for generated wording
         (engine ``POST /api/documents/aggressiveness``)."""
-        require_user(request)
+        require_privilege(request, "can_use_documents")
         try:
             async with ApplicantEngineClient() as engine:
                 data = await engine.set_document_aggressiveness(body.aggressiveness)
