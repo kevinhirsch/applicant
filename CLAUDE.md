@@ -84,6 +84,16 @@ re-launchable from Settings (`window.launchApplicantSetup`). Daily loop: digest 
 add/subtract/free-text, `documentLibrary.js`) → approve/decline → final-submit (Portal / live takeover,
 `applicantRemote.js`).
 
+**Two static surfaces — don't confuse them.** The engine ships its *own* built-in UI under
+`frontend/static/applicant/` (setup/review/digest/chat/criteria `.html` + matching `.js`), mounted at
+`/static` with `/` and `/wizard` served by `app/routers/ui.py` (`APP_STATIC_DIR=frontend/static`,
+`app/static.py`). That is the engine's direct shell, but the `api` service is internal-only — the
+**public** surface is still the white-labeled `workspace/` front-door, so reachability (principle #2)
+means the `workspace/` chain, not `frontend/`. Resume rendering reads Jinja sources from `templates/`:
+`templates/latex/moderncv/main.tex.j2` + `cover/cover.tex.j2` (+ `OpenFonts/`) for the LaTeX path and
+`templates/docx/` (OOXML in-place edit of the user's own `.docx`) for the fallback. Both `frontend/`
+and `templates/` are `COPY`-ed into the engine image (`docker/Dockerfile`) and read at runtime.
+
 ## Runtime dependencies & deploy gotchas
 
 The engine shells out to external binaries and **detects them via `shutil.which()` — silently degrading
