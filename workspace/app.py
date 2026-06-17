@@ -678,6 +678,9 @@ app.include_router(setup_contacts_routes())
 # engine-backed sections progressively. Read-only; does not touch auth/users.
 from routes.applicant_routes import setup_applicant_routes
 app.include_router(setup_applicant_routes())
+# Lane B — Memory/Profile: attribute cloud + conversion-learning engine proxy.
+from routes.applicant_memory_routes import setup_applicant_memory_routes
+app.include_router(setup_applicant_memory_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
