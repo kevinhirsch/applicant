@@ -678,6 +678,9 @@ app.include_router(setup_contacts_routes())
 # engine-backed sections progressively. Read-only; does not touch auth/users.
 from routes.applicant_routes import setup_applicant_routes
 app.include_router(setup_applicant_routes())
+# Lane A — engine resume/cover-letter library + redline review (/api/applicant/documents/*).
+from routes.applicant_documents_routes import setup_applicant_documents_routes
+app.include_router(setup_applicant_documents_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
