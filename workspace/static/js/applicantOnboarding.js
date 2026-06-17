@@ -1147,14 +1147,18 @@ function _dismiss() {
 
 // ── public entry: maybe launch the wizard on boot ───────────────────────────
 
+// Returns true when the setup wizard was launched (setup incomplete), false
+// otherwise (setup already complete, or the engine is unreachable). Callers use
+// this to decide whether to take precedence over a post-login landing surface:
+// the wizard always wins, and the home-base Portal only opens when this is false.
 export async function maybeLaunchOnboarding() {
-  if (_overlay) return; // already open
+  if (_overlay) return true; // already open
   let status;
   try { status = await _refreshStatus(); }
-  catch { return; } // engine unreachable -> don't block; the user can still log in
-  if (!status) return;
+  catch { return false; } // engine unreachable -> don't block; the user can still log in
+  if (!status) return false;
   const complete = status.llm_configured && status.channels_configured && status.onboarding_complete;
-  if (complete) return; // nothing to do
+  if (complete) return false; // nothing to do
 
   _overlay = _buildOverlay();
   document.body.appendChild(_overlay);
@@ -1162,6 +1166,7 @@ export async function maybeLaunchOnboarding() {
   // Pre-create the campaign once the LLM gate is open so onboarding resumes cleanly.
   if (status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
   await _renderStep();
+  return true;
 }
 
 // Force-open the wizard (e.g. the "Re-run setup" button in Settings) regardless of

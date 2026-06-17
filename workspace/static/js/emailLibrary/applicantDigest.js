@@ -202,8 +202,16 @@ function _renderDigest(panel, payload) {
 
   const rows = (payload && Array.isArray(payload.rows)) ? payload.rows : [];
   if (!rows.length) {
-    const note = (payload && payload.note) ? String(payload.note)
+    // Empty-day note: surface the engine's rationale — what was searched and why
+    // (C2). Prefer the engine's ready-made `note` (which already folds in the
+    // "Searched: …" summary); otherwise build a friendly line and append the
+    // separate `searched` summary so the silence is never ambiguous.
+    let note = (payload && payload.note) ? String(payload.note)
       : 'No new roles cleared the bar today. The assistant keeps looking and will let you know.';
+    const searched = payload && payload.searched ? String(payload.searched) : '';
+    if (searched && note.indexOf(searched) === -1) {
+      note += ` Searched: ${searched}.`;
+    }
     body.appendChild(_el('div', {
       cls: 'email-loading',
       html: _esc(note),
@@ -217,7 +225,17 @@ function _renderDigest(panel, payload) {
   }
 }
 
-function _buildRow(panel, row) {
+// Build one digest row card with its full action set (Open / Approve / Pass /
+// Research), all wired to the engine. This is the single source of truth for a
+// digest row so the Email-tab panel and the Portal home base render and behave
+// identically (C1) — neither duplicates the markup or the handlers.
+//
+// `ctx` supplies what the actions need without a hard dependency on the Email
+// panel's DOM: `getCampaignId()` (for the research run) and an optional
+// `onResolved(card, row)` hook fired after an approve/pass succeeds (the Portal
+// uses it to refresh its count). When omitted the row falls back to the
+// fade-out-in-place behaviour used inside the Email panel.
+export function buildDigestRow(row, ctx = {}) {
   const card = _el('div', {
     cls: 'doclib-card applicant-digest-row',
     style: 'padding:9px 10px;margin-bottom:6px;cursor:default;',
@@ -247,12 +265,17 @@ function _buildRow(panel, row) {
   const why = row.why_suggested || row.reason || '';
   const meta = [row.work_mode, row.salary, row.source].filter(Boolean).join(' · ');
   if (why || meta) {
+    // Why-this-role rationale: allow it to wrap to two lines instead of a single
+    // truncated line (C3), so the reasoning is actually readable.
     card.appendChild(_el('div', {
       text: why || meta,
       title: why ? 'Why the assistant suggested this' : '',
-      style: 'font-size:11px;opacity:0.72;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+      style: 'font-size:11px;opacity:0.72;margin-top:2px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;',
     }));
   }
+
+  const getCampaignId = typeof ctx.getCampaignId === 'function' ? ctx.getCampaignId : () => '';
+  const onResolved = typeof ctx.onResolved === 'function' ? ctx.onResolved : null;
 
   // Actions row.
   const actions = _el('div', { style: 'display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;' });
@@ -276,7 +299,7 @@ function _buildRow(panel, row) {
     title: 'Greenlight this role for an application',
     attrs: { type: 'button' },
   });
-  approve.addEventListener('click', () => _onApprove(panel, card, row, approve));
+  approve.addEventListener('click', () => _onApprove(card, row, approve, onResolved));
   actions.appendChild(approve);
 
   const pass = _el('button', {
@@ -285,7 +308,7 @@ function _buildRow(panel, row) {
     title: 'Skip this role and tell the assistant why (helps next time)',
     attrs: { type: 'button' },
   });
-  pass.addEventListener('click', () => _onPass(panel, card, row, pass));
+  pass.addEventListener('click', () => _onPass(card, row, pass, onResolved));
   actions.appendChild(pass);
 
   // Manual deep-research trigger: kick a research run on this company/role and
@@ -297,11 +320,16 @@ function _buildRow(panel, row) {
     title: 'Run a quick background-research brief on this company/role',
     attrs: { type: 'button' },
   });
-  research.addEventListener('click', () => _onResearch(panel, row, research));
+  research.addEventListener('click', () => _onResearch(getCampaignId(), row, research));
   actions.appendChild(research);
 
   card.appendChild(actions);
   return card;
+}
+
+// Email-panel adapter: render a row bound to the panel's campaign selector.
+function _buildRow(panel, row) {
+  return buildDigestRow(row, { getCampaignId: () => _currentCampaign(panel) });
 }
 
 function _disableRow(card) {
@@ -316,7 +344,7 @@ function _fadeOutRow(card) {
 
 // --- actions ---------------------------------------------------------------
 
-async function _onApprove(panel, card, row, btn) {
+async function _onApprove(card, row, btn, onResolved) {
   const id = _rowActionId(row);
   if (!id) { showToast('This role is not ready to approve yet.'); return; }
   _disableRow(card);
@@ -324,6 +352,7 @@ async function _onApprove(panel, card, row, btn) {
     await _api(`/applications/${encodeURIComponent(id)}/approve`, { method: 'POST' });
     showToast('Approved — the assistant will take it from here.');
     _fadeOutRow(card);
+    if (onResolved) { try { onResolved(card, row); } catch (_) {} }
   } catch (e) {
     btn.disabled = false;
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
@@ -331,7 +360,7 @@ async function _onApprove(panel, card, row, btn) {
   }
 }
 
-async function _onPass(panel, card, row, btn) {
+async function _onPass(card, row, btn, onResolved) {
   const id = _rowActionId(row);
   if (!id) { showToast('This role is not ready to act on yet.'); return; }
   // Feedback is mandatory on the decline path (the engine enforces it); ask for
@@ -359,6 +388,7 @@ async function _onPass(panel, card, row, btn) {
     });
     showToast('Passed — thanks, that helps the next round.');
     _fadeOutRow(card);
+    if (onResolved) { try { onResolved(card, row); } catch (_) {} }
   } catch (e) {
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
     showToast(e.message || 'Could not save that right now.');
@@ -374,8 +404,7 @@ function _researchQuery(row) {
   return role || company || 'this role';
 }
 
-async function _onResearch(panel, row, btn) {
-  const campaignId = _currentCampaign(panel);
+async function _onResearch(campaignId, row, btn) {
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   const company = row.company || '';
   const role = row.title || row.role || '';
@@ -827,4 +856,30 @@ export async function mountApplicantDigest(modal) {
   await _loadDigest(panel, campaignId);
 }
 
-export default { mountApplicantDigest };
+// Shared digest data accessors so other surfaces (the Portal home base) can
+// render today's digest with the exact same engine calls and row renderer
+// instead of duplicating any of it (C1). All soft-degrade like the panel above.
+
+// List the owner's job searches (campaigns). Returns [] on any failure.
+export async function listCampaigns() {
+  try {
+    const data = await _api('/campaigns');
+    return (data && Array.isArray(data.campaigns)) ? data.campaigns : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+// Fetch the digest payload for one job search (campaign).
+export async function fetchDigest(campaignId) {
+  if (!campaignId) return { rows: [], empty: true };
+  return _api(`/digest/${encodeURIComponent(campaignId)}`);
+}
+
+// The remembered/last-viewed job search id, shared with the Email panel so both
+// surfaces land on the same one.
+export function rememberedCampaignId() {
+  try { return localStorage.getItem(LAST_CAMPAIGN_KEY) || ''; } catch (_) { return ''; }
+}
+
+export default { mountApplicantDigest, buildDigestRow, listCampaigns, fetchDigest, rememberedCampaignId };

@@ -111,10 +111,10 @@ function _renderOffline(body) {
 function _renderNoCampaign(body) {
   body.innerHTML = `
     <div style="padding:24px 18px;text-align:center;">
-      <div style="font-size:14px;margin-bottom:10px;">Create a workspace to get started</div>
+      <div style="font-size:14px;margin-bottom:10px;">Create a job search to get started</div>
       <div style="font-size:12px;opacity:0.7;max-width:420px;margin:0 auto 14px;">
-        A workspace groups one job search — its preferences, materials, and
-        applications. Name it anything you like.
+        A job search groups its preferences, materials, and applications. Name it
+        anything you like.
       </div>
       <div style="display:flex;gap:8px;justify-content:center;max-width:360px;margin:0 auto;">
         <input type="text" id="applicant-new-campaign" placeholder="e.g. Backend roles 2026"
@@ -131,12 +131,12 @@ function _renderNoCampaign(body) {
     btn.textContent = 'Creating…';
     try {
       const created = await _post(`${API}/campaigns`, { name });
-      _toast('Workspace created');
+      _toast('Job search created');
       await _loadCampaigns();
       if (created && created.id) _activeCampaignId = created.id;
       _renderConversation();
     } catch (e) {
-      _toast(e.message || 'Could not create the workspace');
+      _toast(e.message || 'Could not create the job search');
       btn.disabled = false;
       btn.textContent = 'Create';
     }
@@ -155,7 +155,7 @@ function _campaignPicker() {
   ).join('');
   return `
     <label class="assistant-field" style="margin-bottom:10px;">
-      <span style="font-size:11px;opacity:0.7;">Workspace</span>
+      <span style="font-size:11px;opacity:0.7;">Job search</span>
       <select id="applicant-campaign-pick" style="width:100%;">${opts}</select>
     </label>`;
 }
@@ -296,7 +296,7 @@ function _renderGaps(gaps) {
 async function _send(text) {
   const message = (text || '').trim();
   if (!message || _sending) return;
-  if (!_activeCampaignId) { _toast('Pick or create a workspace first'); return; }
+  if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
   const input = _modalEl.querySelector('#applicant-input');
   const sendBtn = _modalEl.querySelector('#applicant-send');
   _sending = true;
@@ -352,106 +352,48 @@ function _wireProposalButtons(container, proposals) {
 }
 
 // ── Pending job actions ──────────────────────────────────────────────────────
-
-// Plain-language labels + the safe action each pending-action kind offers.
-const ACTION_KINDS = {
-  final_approval: {
-    label: 'Ready for your final approval',
-    button: 'Notify me to approve',
-    endpoint: (appId) => `${API}/applications/${encodeURIComponent(appId)}/request-final-approval`,
-  },
-  account_human_step: {
-    label: 'Needs you to create an account, then it can continue',
-    button: 'I created it — continue',
-    endpoint: (appId) => `${API}/applications/${encodeURIComponent(appId)}/resume-account-step`,
-  },
-  detection_blocker: {
-    label: 'Paused on a verification check',
-    button: 'I cleared it — continue',
-    endpoint: (appId) => `${API}/applications/${encodeURIComponent(appId)}/resume-detection-step`,
-  },
-  agent_question: { label: 'The assistant has a question for you' },
-  missing_attr: { label: 'Missing a detail it needs' },
-  error: { label: 'Hit a snag that needs a look' },
-  emergency_handoff: { label: 'Needs you to take over in the live session' },
-};
-
-function _actionMeta(kind) {
-  return ACTION_KINDS[kind] || { label: (kind || 'Needs your attention').replace(/_/g, ' ') };
-}
+//
+// The Pending Portal is the single source of truth for everything awaiting the
+// user across all job searches (C4). Rather than re-render a second, divergent
+// list here (which let the same item behave differently in two places), the chat
+// surfaces a live count and a link that opens the Portal home base. The Portal
+// owns the affordances, the rendering, and the resolve/answer wiring.
 
 async function _loadPending() {
   const host = _modalEl && _modalEl.querySelector('#applicant-pending');
-  if (!host || !_activeCampaignId) return;
+  if (!host) return;
   try {
-    const data = await _fetchJSON(`${API}/pending-actions/${encodeURIComponent(_activeCampaignId)}`);
-    const items = (data && data.items) || [];
-    if (!items.length) { host.innerHTML = ''; return; }
-    const rows = items.map((a) => {
-      const meta = _actionMeta(a.kind);
-      const appId = a.application_id;
-      const actBtn = (meta.endpoint && appId)
-        ? `<button type="button" class="cal-btn applicant-action-btn" data-action-id="${esc(a.id)}" data-app-id="${esc(appId)}" data-kind="${esc(a.kind)}" style="font-size:11px;padding:2px 10px;" title="${esc(meta.label)}">${esc(meta.button)}</button>`
-        : '';
-      return `
-        <div class="applicant-pending-row" data-action-id="${esc(a.id)}" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:6px;display:flex;justify-content:space-between;gap:8px;align-items:center;">
-          <div style="font-size:12px;">
-            <div><strong>${esc(a.title || meta.label)}</strong></div>
-            <div style="opacity:0.6;font-size:11px;">${esc(meta.label)}</div>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
-            ${actBtn}
-            <button type="button" class="cal-btn applicant-resolve-btn" data-action-id="${esc(a.id)}" style="font-size:11px;padding:2px 8px;" title="Mark this as handled">Done</button>
-          </div>
-        </div>`;
-    }).join('');
+    // Cross-job-search count from the Portal proxy — the same source the rail
+    // badge and the Portal home base use, so the number always agrees.
+    const data = await _fetchJSON('/api/applicant/portal/pending');
+    if (data && data.engine_available === false) { host.innerHTML = ''; return; }
+    const count = (data && (data.count != null ? data.count : (data.items || []).length)) || 0;
+    if (!count) { host.innerHTML = ''; return; }
     host.innerHTML = `
-      <div style="font-size:11px;opacity:0.7;margin-bottom:2px;">Needs your attention (${items.length})</div>
-      ${rows}`;
-    _wirePendingButtons(host);
+      <div class="applicant-pending-link" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <div style="font-size:12px;">
+          <strong>${esc(count)} item${count === 1 ? '' : 's'} need your attention</strong>
+          <div style="opacity:0.6;font-size:11px;">Review and act on these in your Pending home base.</div>
+        </div>
+        <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="font-size:11px;padding:2px 10px;flex-shrink:0;">Open Pending</button>
+      </div>`;
+    const openBtn = host.querySelector('#applicant-open-portal');
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        try {
+          if (window.applicantPortalModule && typeof window.applicantPortalModule.openApplicantPortal === 'function') {
+            window.applicantPortalModule.openApplicantPortal();
+            return;
+          }
+        } catch { /* fall through */ }
+        const rail = document.getElementById('rail-portal');
+        if (rail) rail.click();
+      });
+    }
   } catch (e) {
     // Soft-degrade: a pending-actions failure must not break the conversation.
     host.innerHTML = '';
   }
-}
-
-function _wirePendingButtons(host) {
-  host.querySelectorAll('.applicant-action-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const meta = _actionMeta(btn.dataset.kind);
-      if (!meta.endpoint) return;
-      btn.disabled = true;
-      const original = btn.textContent;
-      btn.textContent = 'Working…';
-      try {
-        await _post(meta.endpoint(btn.dataset.appId), {});
-        _toast('Done');
-        _loadPending();
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = original;
-        _toast(e.message || 'Could not complete that');
-      }
-    });
-  });
-  host.querySelectorAll('.applicant-resolve-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.actionId;
-      btn.disabled = true;
-      btn.textContent = '…';
-      try {
-        await _post(`${API}/pending-actions/${encodeURIComponent(id)}/resolve`, {});
-        const row = host.querySelector(`.applicant-pending-row[data-action-id="${CSS.escape(id)}"]`);
-        if (row) row.remove();
-        if (!host.querySelector('.applicant-pending-row')) host.innerHTML = '';
-        _toast('Marked as handled');
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = 'Done';
-        _toast(e.message || 'Could not update that');
-      }
-    });
-  });
 }
 
 // ── Open / boot ──────────────────────────────────────────────────────────────

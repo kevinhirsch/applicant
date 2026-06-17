@@ -27,6 +27,7 @@
 // engine is unreachable.
 
 import uiModule from './ui.js';
+import digestModule from './emailLibrary/applicantDigest.js';
 
 const API = '/api/applicant/portal';
 const BADGE_POLL_MS = 60000;
@@ -162,12 +163,13 @@ function _ensureModalEl() {
         </div>
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
-        <div class="hwfit-loading">Loading…</div>
+        <div id="applicant-portal-digest"></div>
+        <div id="applicant-portal-pending"><div class="hwfit-loading">Loading…</div></div>
       </div>
     </div>`;
   document.body.appendChild(modal);
   modal.querySelector('#applicant-portal-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => _load(true));
+  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); });
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
   return modal;
@@ -486,12 +488,107 @@ async function refreshBadge() {
   }
 }
 
+// ── Today's digest (home-base embed, C1) ────────────────────────────────────────
+//
+// Reuses the Email tool's digest module wholesale: its data accessors
+// (listCampaigns/fetchDigest) and its row renderer (buildDigestRow), so a digest
+// row looks and behaves identically here and in the Email tab. We only own the
+// small section shell + the job-search picker.
+
+let _digestCampaigns = [];
+let _digestCampaignId = '';
+
+function _digestHost() {
+  return _modalEl && _modalEl.querySelector('#applicant-portal-digest');
+}
+
+function _digestSectionShell() {
+  const picker = (_digestCampaigns.length > 1)
+    ? `<select id="applicant-portal-digest-campaign" title="Choose which job search to show today's roles for"
+               style="margin-left:auto;max-width:200px;font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);"></select>`
+    : '';
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin:2px 2px 6px;">
+      <span style="font-weight:600;font-size:12px;display:flex;align-items:center;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Today's roles
+      </span>
+      ${picker}
+    </div>
+    <div id="applicant-portal-digest-body"></div>
+    <div style="border-bottom:1px solid var(--border);margin:12px 0 2px;"></div>`;
+}
+
+function _renderDigestRows(payload) {
+  const dbody = _modalEl && _modalEl.querySelector('#applicant-portal-digest-body');
+  if (!dbody) return;
+  dbody.innerHTML = '';
+  const rows = (payload && Array.isArray(payload.rows)) ? payload.rows : [];
+  if (!rows.length) {
+    // Empty-day note with the engine's search rationale (mirrors the Email tab).
+    let note = (payload && payload.note) ? String(payload.note)
+      : 'No new roles cleared the bar today. The assistant keeps looking and will let you know.';
+    const searched = payload && payload.searched ? String(payload.searched) : '';
+    if (searched && note.indexOf(searched) === -1) note += ` Searched: ${searched}.`;
+    dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.75;">${esc(note)}</div>`;
+    return;
+  }
+  const ctx = {
+    getCampaignId: () => _digestCampaignId,
+    onResolved: () => { refreshBadge(); },
+  };
+  for (const row of rows) dbody.appendChild(digestModule.buildDigestRow(row, ctx));
+}
+
+async function _loadDigest(showSpinner) {
+  const host = _digestHost();
+  if (!host) return;
+  if (showSpinner) host.innerHTML = '<div class="hwfit-loading" style="padding:8px 4px;font-size:12px;">Loading today’s roles…</div>';
+  let campaigns = [];
+  try { campaigns = await digestModule.listCampaigns(); } catch { campaigns = []; }
+  _digestCampaigns = campaigns;
+  if (!campaigns.length) {
+    // No job search yet (or engine offline) — stay quiet; the pending list /
+    // offline state already explains the connect-a-model path.
+    host.innerHTML = '';
+    return;
+  }
+  const remembered = digestModule.rememberedCampaignId();
+  const known = new Set(campaigns.map((c) => String(c.id)));
+  if (!_digestCampaignId || !known.has(_digestCampaignId)) {
+    _digestCampaignId = known.has(remembered) ? remembered : String(campaigns[0].id);
+  }
+  host.innerHTML = _digestSectionShell();
+  const sel = _modalEl.querySelector('#applicant-portal-digest-campaign');
+  if (sel) {
+    sel.innerHTML = campaigns.map((c) =>
+      `<option value="${esc(c.id)}"${String(c.id) === _digestCampaignId ? ' selected' : ''}>${esc(c.name || c.id)}</option>`
+    ).join('');
+    sel.addEventListener('change', () => {
+      _digestCampaignId = sel.value;
+      _loadDigestRows();
+    });
+  }
+  await _loadDigestRows();
+}
+
+async function _loadDigestRows() {
+  const dbody = _modalEl && _modalEl.querySelector('#applicant-portal-digest-body');
+  if (dbody) dbody.innerHTML = '<div class="hwfit-loading" style="padding:6px 4px;font-size:12px;">Loading…</div>';
+  try {
+    const payload = await digestModule.fetchDigest(_digestCampaignId);
+    _renderDigestRows(payload);
+  } catch (e) {
+    if (dbody) dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Could not load today’s roles right now.</div>`;
+  }
+}
+
 // ── Load / open ────────────────────────────────────────────────────────────────
 
 async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
-  const body = _modalEl && _modalEl.querySelector('#applicant-portal-body');
+  const body = _modalEl && _modalEl.querySelector('#applicant-portal-pending');
   if (body && showSpinner) body.innerHTML = '<div class="hwfit-loading">Loading…</div>';
   try {
     const data = await _fetchJSON(`${API}/pending`);
@@ -514,6 +611,9 @@ export async function openApplicantPortal() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  // Today's digest at the home base (C1) loads alongside the pending list; the
+  // two are independent so a slow/offline digest never blocks the pending items.
+  _loadDigest(true);
   await _load(true);
 }
 

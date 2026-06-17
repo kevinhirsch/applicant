@@ -1354,21 +1354,31 @@ function initializeEventListeners() {
   };
   window._applicantFeaturesReady = window.refreshApplicantFeatures();
 
-  // First-run setup wizard: lazy-import the module and let it decide whether to
-  // present the blocking overlay (it self-skips if setup/onboarding is already
-  // complete or the engine is unreachable). Resumable; mirrors how the other
-  // Applicant modules attach. Additive — no other boot path changes.
-  import('./js/applicantOnboarding.js')
-    .then(m => m.maybeLaunchOnboarding && m.maybeLaunchOnboarding())
-    .catch(() => {});
-
   // CRIT-portal: load the standalone Pending-Actions Portal. It self-boots (wires
   // the #rail-portal launcher, seeds + polls its live count badge, and opens its
   // own modal). The portal is NOT gated by the Applicant feature layer — it is a
   // primary home-base that aggregates across all of the owner's campaigns — so it
   // is intentionally imported here unconditionally and not added to nav gating.
-  import('./js/applicantPortal.js').catch(() => {});
+  const _portalReady = import('./js/applicantPortal.js').catch(() => null);
   // CRIT-portal end
+
+  // First-run setup wizard + home-base landing. The wizard self-skips if
+  // setup/onboarding is already complete or the engine is unreachable; it returns
+  // true only when it actually presented its blocking overlay. ORDERING: the
+  // wizard takes precedence — we only land the user on the Pending Portal home
+  // base when setup is complete (the wizard was NOT shown). This is additive and
+  // never changes any other boot path; the generic chat stays reachable from the
+  // rail. Resumable; mirrors how the other Applicant modules attach.
+  import('./js/applicantOnboarding.js')
+    .then(m => (m.maybeLaunchOnboarding ? m.maybeLaunchOnboarding() : false))
+    .then(async (wizardShown) => {
+      if (wizardShown) return; // wizard is the setup-incomplete surface; it wins.
+      const portal = await _portalReady;
+      if (portal && typeof portal.openApplicantPortal === 'function') {
+        try { await portal.openApplicantPortal(); } catch { /* non-fatal */ }
+      }
+    })
+    .catch(() => {});
 
   // Hide Gallery when image generation is disabled in settings
   const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
