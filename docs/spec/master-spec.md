@@ -9,6 +9,40 @@ Priority language: **MUST** = non-negotiable. **SHOULD** = strong recommendation
 
 ---
 
+## Reconciliation note (front door & UI vendoring)
+
+> **Binding requirements below are unchanged.** This note records where the *as-built*
+> system differs from this spec's original implementation assumptions, so the spec stays
+> truthful (NFR-TRUTH spirit) without re-litigating requirements. It corrects facts only.
+>
+> 1. **The front door is the owner's vendored workspace app, white-labeled — not a clone of
+>    a third-party "applicant" repo.** §5/§5.1 instruct cloning and vendoring an external UI
+>    repo (`github.com/pewdiepie-archdaemon/applicant`) and serving its `static/` from the
+>    engine's FastAPI. **As built, the operator UI is the owner's own no-build *workspace*
+>    web app** (`workspace/`), white-labeled as Applicant, running as a **separate public
+>    service** (`applicant-ui` on `${APP_PORT}` → container 7000) in front of the engine.
+>    Read FR-UI-1's "vendor its `static/`, served from our FastAPI backend, wired to our
+>    APIs" as satisfied by **vendoring/white-labeling the owner's workspace app** and wiring
+>    it to the engine through the bridge — not by an engine-served clone of an external repo.
+>    The external repo is not used; the engine serves no operator UI. See
+>    [architecture.md](../architecture.md) and [frontend.md](../frontend.md). (The UI-license
+>    reconciliation is logged in [open-items.md](../open-items.md).)
+> 2. **The engine and the UI are two apps joined by a bridge.** The UI reaches the engine
+>    via `workspace/src/applicant_engine.py` (`ENGINE_URL`); the engine reaches back via the
+>    token-gated internal channel (`workspace/routes/applicant_internal_routes.py`,
+>    `APPLICANT_INTERNAL_TOKEN`). Where §3.19/§6 say "the UI/frontend", read it as the
+>    workspace front door proxying the engine's internal routers.
+> 3. **Remote-view default is the configurable webtop full desktop**
+>    (`REMOTE_VIEW_BACKEND=webtop`), with Neko (browser-only) and noVNC selectable behind
+>    the swappable RemoteView sub-port. §3.13/§5 name Neko as the default; treat that as one
+>    selectable backend, not the only one. The requirement (one-click live session, swappable
+>    sub-port) is unchanged.
+> 4. **Removed features.** Home Assistant, awareness/proactive behavior, and a
+>    "Nobody"/incognito mode are **not** part of the product. They are not in this spec and
+>    must not be documented as present.
+
+---
+
 ## 1. Vision
 
 A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-campaign **job-search campaigns**. It agentically discovers postings matching evolving, human-editable, self-learning criteria; delivers a daily **digest** the user approves/declines with feedback; and for approved roles, **pre-fills as much of every application as is technically possible** — including account-creation forms and in-form screening questions — stopping only at irreducible human steps (CAPTCHA, email/SMS verification, final submit), which the user completes via a one-click live remote session. When a role warrants it, the engine **adapts the user's resume, writes a cover letter, and drafts answers to free-text screening questions**, all of which the user **reviews and revises interactively, and must approve, before any submission**. Everything is logged; the system **learns real conversion** (approval + submission) per campaign and optimizes future discovery and document selection accordingly. Architectural template: OpenHands' runtime pattern — local agent loop, cloud LLM via API key, execution isolation behind a swappable boundary.
@@ -252,6 +286,12 @@ Both are public; clone both before building.
 
 **Applicant — UI source (clone and vendor):** `https://github.com/pewdiepie-archdaemon/applicant` (MIT)
 Required for the pixel-perfect UI (`FR-UI-1`). Clone it and **vendor its `static/` directory verbatim** — the ~37k-line `style.css`, the ~157 vanilla JS modules (`windowDrag.js`, `tileManager.js`, `modalManager.js`, `providers.js`, `models.js`, `settings.js`, etc.), fonts incl. `GohuFont.ttf`, and icons. Preserve the MIT notice. Re-point its JS at our FastAPI APIs and build every new screen with the same CSS classes/components so inherited and new surfaces are indistinguishable.
+
+> **As-built (see the [Reconciliation note](#reconciliation-note-front-door--ui-vendoring)):**
+> this external repo is **not** used. The operator UI is the owner's own no-build *workspace*
+> app (`workspace/`), white-labeled as Applicant and run as a separate public service in
+> front of the engine. FR-UI-1 is satisfied by vendoring/white-labeling that workspace app
+> and wiring it to the engine through the bridge — not by an engine-served clone.
 
 **`kevinhirsch/ai-job-search` — domain inspiration (consult; do not copy wholesale):** `https://github.com/kevinhirsch/ai-job-search`
 A Claude Code job-application workspace (a fork of `MadsLorentzen/ai-job-search`). It is a **manual, CLI-driven document-prep tool, not a model for our autonomous service architecture** — but several artifacts are directly reusable:

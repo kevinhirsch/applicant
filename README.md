@@ -1,40 +1,121 @@
 # Applicant
 
-> Codename **Applicant** (placeholder — rename cascades). An autonomous, self-hosted
-> job-application engine.
+> Codename **Applicant** (placeholder — rename cascades). A self-hosted,
+> single-operator job-application system: a white-labeled workspace UI in front of
+> an autonomous job-application engine.
 
-A self-hosted engine that runs 24/7 and conducts ongoing, per-campaign job-search
-campaigns. It agentically discovers postings matching evolving, human-editable,
-self-learning criteria; delivers a daily digest the user approves/declines with
-feedback; and for approved roles pre-fills as much of every application as is
-technically possible — stopping only at irreducible human steps (CAPTCHA, email/SMS
-verification, final submit). When a role warrants it, the engine adapts the user's
-resume, writes a cover letter, and drafts screening-question answers — all reviewed
-and approved by the user before any submission. Everything is logged; the system
-learns real conversion (approval + submission) per campaign.
+Applicant runs 24/7 and conducts ongoing, per-campaign job-search campaigns. It
+agentically discovers postings matching evolving, human-editable, self-learning
+criteria; delivers a daily digest the operator approves/declines with feedback; and
+for approved roles pre-fills as much of every application as is technically possible
+— stopping only at irreducible human steps (CAPTCHA, email/SMS verification, final
+submit). When a role warrants it, the engine adapts the operator's resume, writes a
+cover letter, and drafts screening-question answers — all reviewed and approved
+before any submission. Everything is logged; the system learns real conversion
+(approval + submission) per campaign.
 
-## Engineering mandate
+## Two apps and a bridge
 
-Built with **hexagonal (ports-and-adapters) architecture, BDD, and TDD**. The pure
-core domain has no I/O; all external concerns are ports with swappable adapters.
-Every component cites the requirement IDs it satisfies.
+Applicant ships as **two cooperating apps wired by an internal bridge**:
+
+- **Front door — the white-labeled workspace UI** (`workspace/`). A no-build
+  workspace web app, white-labeled as Applicant, is the **only** surface the
+  operator opens. It runs as the public `applicant-ui` service on `${APP_PORT}`
+  (→ container `7000`). It surfaces the engine through thin, auth-protected,
+  owner-scoped proxy routes (`workspace/routes/applicant_*_routes.py`), browser glue
+  (`workspace/static/js/applicant*.js`), and a progressive feature-activation layer
+  (`workspace/src/applicant_features.py`) that greys/locks/activates each section as
+  the engine is configured — so no dead UI ever 500s when clicked.
+
+- **Engine — the job-application engine** (`src/applicant/`). A hexagonal
+  (ports-and-adapters) FastAPI service that owns all the logic: discovery, scoring,
+  digest, learning, pre-fill, material generation, the durable workflow backbone.
+  It runs as the internal-only `api` service on `8000` (never published to the
+  host) and is reached in-network at `http://api:8000`.
+
+The bridge runs in both directions:
+
+- **Workspace → engine** via `workspace/src/applicant_engine.py`, an httpx client
+  pointed at the engine by the `ENGINE_URL` env var (default `http://api:8000`).
+  All engine failures surface as a typed `EngineError`, so a proxy never leaks a
+  broken page.
+- **Engine → workspace** via the token-gated internal channel
+  (`workspace/routes/applicant_internal_routes.py`). Callbacks must present the
+  shared `APPLICANT_INTERNAL_TOKEN`; if the token is unset the channel is disabled
+  (every callback rejected) and the engine degrades gracefully. This is how
+  engine-side adjacencies (calendar interview detection, deep-research runs,
+  cookbook-served local models) reach back into the workspace.
+
+The engine still carries a small in-network `frontend/static/` shell for migration
+purposes, but it is **not** the front door — the workspace app is. There is no
+engine-served setup page; setup happens in the workspace OOBE wizard.
+
+## Posture: single-operator, private LAN/VPN
+
+Applicant is a **single-operator** product. Signup is admin-only — there is one
+owner. It is designed to run on a **private LAN or VPN over plain HTTP** (e.g. a
+home network or a Tailscale tailnet), not exposed to the public internet. The
+internal channel, the live-session/takeover URLs, and the in-UI Update button all
+assume a trusted private network. Put a reverse proxy (Caddy/nginx/Traefik) in
+front for TLS if you want it, but the baseline posture is private + HTTP.
+
+## What ships (the feature set)
+
+Every surface below is reachable in the workspace front door (proxy → JS → nav/section),
+backed by an engine router under `src/applicant/app/routers/`:
+
+- **OOBE setup / onboarding wizard** — auto-launching, gated, resumable. LLM step
+  reuses the existing Local/Remote endpoint manager → notification channels → fonts
+  → the Workday-ready intake, ending in the résumé LaTeX-conversion accept/reject
+  gate. Automated work is blocked until it completes.
+- **Pending-actions portal** — the operator's home base: one aggregated feed of
+  everything awaiting input across all campaigns (digest approvals, material
+  reviews, missing-detail soft errors, agent questions, account-creation handoffs,
+  final-submit approvals), each actionable.
+- **Documents / resume redline review** — the résumé + cover-letter library and the
+  interactive add/subtract/free-text redline revision loop. Nothing submits until
+  approved.
+- **Profile** — the per-campaign criteria editor, attribute cloud (the structured
+  facts pre-filled into applications), and learning (accept/reject AI-suggested
+  attributes and résumé-conversion learning).
+- **Chat / assistant + job actions** — a conversational assistant that fills gaps in
+  the profile/criteria (confirmation-gated) plus campaign picker, pending list, and
+  remote résumé actions.
+- **Email / digest + feedback survey** — the daily digest per campaign (approve /
+  decline-with-feedback) injected into the email surface, plus the guided feedback
+  survey.
+- **Activity / debug** — read-only observability (per-application history,
+  screenshots, redacted logs, durable-workflow state, the variant library) plus
+  operator controls: run mode / throughput, discovery-source toggles, mark-submitted,
+  and the in-UI **Update** button.
+- **Live remote view / takeover** — the one-click live session view with takeover,
+  submit-self, and authorize-engine-finish controls. The engine never self-authorizes
+  the final submit.
+- **Credential vault** — per-tenant credentials banked and sealed at rest by the
+  engine (libsodium); manual entry plus auto-capture during a live account-creation.
+
+Engine-side adjacencies (**Calendar**, **Deep-Research**, **Cookbook**) reach the
+engine via the internal callback channel rather than as separate Applicant surfaces.
+**Compare** ships **present-but-disabled** — visible in the nav, greyed, never wired
+to the engine.
 
 ## Documentation
 
-The full build specification lives under [`docs/`](docs/):
+The full build specification and developer docs live under [`docs/`](docs/):
 
 | Doc | Purpose |
 |---|---|
-| [`docs/spec/master-spec.md`](docs/spec/master-spec.md) | The single source of truth (v4.4, verbatim) |
+| [`docs/spec/master-spec.md`](docs/spec/master-spec.md) | The binding requirements (v4.4), with a reconciliation note |
 | [`docs/requirements.md`](docs/requirements.md) | Catalog of every FR-*/NFR-* requirement ID |
-| [`docs/architecture.md`](docs/architecture.md) | Hexagonal map: core, driving ports, driven ports, domain rules |
-| [`docs/state-machine.md`](docs/state-machine.md) | Application lifecycle state machine |
-| [`docs/data-model.md`](docs/data-model.md) | Postgres/JSONB schema (campaign-scoped, multi-ready) |
-| [`docs/work-packages.md`](docs/work-packages.md) | Phases 0–4, requirement-tagged, with exit criteria |
-| [`docs/traceability.md`](docs/traceability.md) | Requirement → Work Package → BDD Feature → contract test |
-| [`docs/delivery-status.md`](docs/delivery-status.md) | Per-phase delivery summary + exit-criteria status |
-| [`docs/extending.md`](docs/extending.md) | How to add a new ATS adapter or discovery source |
-| [`docs/dormant-surfaces.md`](docs/dormant-surfaces.md) | Dormant Surface Wiring Backlog |
+| [`docs/architecture.md`](docs/architecture.md) | Two-app architecture: engine hexagon + workspace front door + bridge |
+| [`docs/frontend.md`](docs/frontend.md) | The workspace front door: proxies, JS glue, feature activation |
+| [`docs/dormant-surfaces.md`](docs/dormant-surfaces.md) | Surface-by-surface front-door reachability + the one disabled surface |
+| [`docs/state-machine.md`](docs/state-machine.md) | Application lifecycle state machine (engine) |
+| [`docs/data-model.md`](docs/data-model.md) | Engine Postgres/JSONB schema (campaign-scoped, multi-ready) |
+| [`docs/work-packages.md`](docs/work-packages.md) | Phases 0–5, requirement-tagged, with exit criteria |
+| [`docs/traceability.md`](docs/traceability.md) | Requirement → delivered (engine) AND reachable (front door) |
+| [`docs/delivery-status.md`](docs/delivery-status.md) | Per-phase delivery summary + reachability re-audit |
+| [`docs/extending.md`](docs/extending.md) | Working principles + how to add an ATS adapter or discovery source |
 | [`docs/onboarding-intake.md`](docs/onboarding-intake.md) | Workday-ready onboarding intake schema |
 | [`docs/voice-and-truthfulness.md`](docs/voice-and-truthfulness.md) | Non-AI-looking + truthfulness guardrails |
 | [`docs/open-items.md`](docs/open-items.md) | Open items and defaults |
@@ -44,55 +125,66 @@ The full build specification lives under [`docs/`](docs/):
 
 # Deployment
 
-Applicant ships the whole stack — FastAPI + the vendored frontend, PostgreSQL,
-SearXNG, the on-demand **takeover desktop** (a full Ubuntu desktop, see below),
-font-install — as a Docker Compose deployment (FR-INSTALL-1/3). No `make` needed.
-Everything after install is configured **in-browser** (zero-CLI, NFR-ZEROCLI-1).
+Applicant ships the whole two-app stack as a Docker Compose deployment
+(FR-INSTALL-1/3). The production stack (`docker/docker-compose.prod.yml`) brings up:
 
-The host is a **lean, headless Ubuntu Server 24.04 LTS** VM (the Proxmox deployer
-builds it from the Ubuntu noble cloud image). The desktop the user takes over lives
-in a separate container, not on the host.
+| Service | Role | Network |
+|---|---|---|
+| `applicant-ui` | Front-door workspace UI (built from `workspace/`) | **Public** on `${APP_PORT}` → container `7000` |
+| `api` | Job-application engine | **Internal only** (`http://api:8000`) |
+| `postgres` | Engine persistence + durable workflow state (16) | Internal |
+| `searxng` | Metasearch for discovery (shared) | Internal |
+| `chromadb` | Vector store for the workspace UI | Internal |
+| `ntfy` | Push notifications for the workspace UI | Internal |
+| `takeover-desktop` | On-demand web-streamed Ubuntu desktop for live takeover (`--profile takeover`) | Internal |
+
+An optional `ollama` service is provided (commented) for a fully-local LLM. Secrets
+come from the environment, restart policies are pinned, the engine carries a
+healthcheck, and DB backups land in a named volume for `update.sh` rollback. Both
+containers read the same `ENGINE_URL` / `APPLICANT_INTERNAL_TOKEN` from the repo-root
+`.env` that `install.sh` generates, so the bridge is wired automatically.
+
+The base `docker/docker-compose.yml` is a leaner **dev/engine-only** stack
+(`api` + `postgres` + `searxng`, engine published on `8000`) for working on the
+engine in isolation. Everything after install is configured **in-browser** (zero-CLI,
+NFR-ZEROCLI-1).
 
 ## Prerequisites
 
 - A Linux host (VM, Proxmox LXC, or bare metal) or any Docker host; ~2 vCPU / 4 GB
   RAM is plenty to start.
-- **Docker + Docker Compose v2** — the only hard requirement for the container path.
-- For local development instead of containers: **Python 3.11+** and
-  **[uv](https://docs.astral.sh/uv/)** (`uv sync`).
+- **Docker + Docker Compose v2** — the only hard requirement.
 - An LLM endpoint — either a cloud OpenAI-compatible API key (e.g. OpenRouter) **or**
   a local/network [Ollama](https://ollama.com) (fully local, no cloud key). You set
   this in the browser at first run; no key needs to live in a file.
-
-The dev Compose stack (`docker/docker-compose.yml`) brings up three services — `api`
-(FastAPI + UI), `postgres` (16), and `searxng` (metasearch) — with a persistent
-`pgdata` volume. `docker/docker-compose.prod.yml` is the hardened production variant
-(env-based secrets, `restart: always`, an `api` healthcheck, a `pgbackups` volume,
-internal-only SearXNG).
+- For local engine development without containers: **Python 3.11+** and
+  **[uv](https://docs.astral.sh/uv/)** (`uv sync`).
 
 ## Install and first run
 
 ### Proxmox VE node (recommended) — paste-and-go
 
-On your **Proxmox VE node shell**, paste this one line. Per the spec (FR-INSTALL-1) it
-provisions a **Proxmox VM** (not an LXC): a whiptail wizard creates a **lean, headless
-Ubuntu Server 24.04 LTS** cloud VM, presets the root password, auto-imports the node's
-SSH keys, and uses cloud-init to self-provision on first boot — install Docker, deploy
-Applicant, run the migrations (the full takeover desktop is a container, not on the host):
+On your **Proxmox VE node shell**, paste this one line. Per the spec (FR-INSTALL-1)
+it provisions a **Proxmox VM** (not an LXC): a whiptail wizard creates a lean,
+headless **Ubuntu Server 24.04 LTS** cloud VM, presets the root password, auto-imports
+the node's SSH keys, and uses cloud-init to self-provision on first boot — install
+Docker, deploy the stack, run migrations:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
 ```
 
-Pick **default** (2 cores / 4 GB / 16 GB disk, DHCP, auto-picked storage) or **advanced**
-(choose VMID, resources, disk storage, bridge). It prints the VM's root password and,
-once the first-boot build finishes (a few minutes), `http://<vm-ip>:8000` — open that and
-complete the in-browser OOBE wizard (see the [User guide](#user-guide)). Watch first-boot
-progress with `qm guest exec <vmid> -- tail -n40 /var/log/cloud-init-output.log`; update
-later with `qm guest exec <vmid> -- bash -lc 'cd /opt/applicant && bash scripts/update.sh --apply'`.
+Pick **default** (2 cores / 4 GB / 16 GB disk, DHCP, auto-picked storage) or
+**advanced** (choose VMID, resources, disk storage, bridge). It prints the VM's root
+password and, once the first-boot build finishes (a few minutes),
+`http://<vm-ip>:${APP_PORT}` — open that **front-door UI** and complete the in-browser
+OOBE wizard (see the [Operator guide](#operator-guide)). The deployer waits on the
+front door's `/api/health` before declaring the stack green. Watch first-boot progress
+with `qm guest exec <vmid> -- tail -n40 /var/log/cloud-init-output.log`.
 
-A VM (not a container) is used deliberately — it matches the spec, gives Docker and the
-browser sandbox clean isolation, and supports the residential-egress posture (FR-STEALTH-4).
+A VM (not a container) is deliberate — it matches the spec, gives Docker and the
+browser sandbox clean isolation, and supports the residential-egress posture
+(FR-STEALTH-4).
 
 ### Any Docker host
 
@@ -106,14 +198,16 @@ From a checkout (dry-run by default — prints the steps; add `--apply` to run t
 
 ```bash
 bash scripts/install.sh            # dry-run preview
-bash scripts/install.sh --apply    # provision: compose up + alembic upgrade head
+bash scripts/install.sh --apply    # provision: compose up (prod stack) + alembic upgrade head
 ```
 
-Then open **`http://localhost:8000`** and complete the setup wizard. Editable defaults
-are environment-driven (set them in a `.env` file next to the compose file before
-`--apply`, or export them — e.g. `POSTGRES_PASSWORD`, `APP_URL`).
+`install.sh` opens the **front door** on `${APP_PORT}` (default `8000`, mapped to the
+UI container's `7000`) — the engine `api` stays internal. It generates and persists
+the DB credentials, `APP_URL`, `ENGINE_URL`, and the shared `APPLICANT_INTERNAL_TOKEN`
+into the repo-root `.env` so both containers agree. Then open
+**`http://<host>:${APP_PORT}`** and complete the setup wizard.
 
-**Local (non-container) run** for development:
+**Local engine run** for development (the engine alone, no workspace UI):
 
 ```bash
 uv sync                                   # install deps (add --extra browser for patchright)
@@ -121,7 +215,7 @@ uv run alembic upgrade head               # create the schema (needs DATABASE_UR
 uv run uvicorn applicant.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-With the default `ORCHESTRATOR_BACKEND=shim` the app boots with **no Postgres**
+With the default `ORCHESTRATOR_BACKEND=shim` the engine boots with **no Postgres**
 (file-backed checkpoints + in-memory storage fallback), which is how the test suite
 stays hermetic; point `DATABASE_URL` at a real Postgres for persistence.
 
@@ -136,294 +230,233 @@ bash scripts/update.sh --apply              # backup → pull → migrate → re
 bash scripts/update.sh --rollback --apply   # restore the most recent DB backup
 ```
 
-The same flow is invokable from the **in-UI Update button** on the debug surface
-(`/debug`) with no CLI (FR-OOBE-4); real dispatch is guarded behind
+The same flow is invokable from the **in-UI Update button** on the Activity/debug
+surface with no CLI (FR-OOBE-4); real dispatch is guarded behind
 `APPLICANT_UPDATE_ENABLED=1`, otherwise it reports a safe dry-run.
 
 ## Configuration (environment variables)
 
-All settings are env-driven (`src/applicant/app/config.py`, loaded from the
-environment or a `.env` file). Sensible defaults mean a fresh install needs almost
-none of these — the LLM and notification channels are configured in-browser.
+Sensible defaults mean a fresh install needs almost none of these — the LLM and
+notification channels are configured in-browser. The most load-bearing ones:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg://applicant:applicant@localhost:5432/applicant` | Postgres DSN (app schema). |
-| `ORCHESTRATOR_BACKEND` | `shim` | Durable backbone: `shim` (file-backed, no PG) or `dbos` (needs Postgres). |
-| `CHECKPOINT_DIR` | `.applicant_checkpoints` | Where the shim stores durable checkpoints. |
-| `APP_STATIC_DIR` | `frontend/static` | Vendored UI assets served by FastAPI. |
+| `APP_PORT` | `8000` | Public host port for the front-door UI (→ container `7000`). |
+| `ENGINE_URL` | `http://api:8000` | Where the workspace UI reaches the engine (the bridge). |
+| `APPLICANT_INTERNAL_TOKEN` | _unset_ | Shared secret for engine→workspace callbacks; unset disables the channel. |
+| `WORKSPACE_URL` | `http://applicant-ui:7000` | Where the engine reaches the workspace for callbacks. |
+| `UI_DATABASE_URL` | `sqlite:///./data/app.db` | The workspace UI's own store (separate from the engine's Postgres). |
+| `DATABASE_URL` | `postgresql+psycopg://applicant:applicant@postgres:5432/applicant` | Engine Postgres DSN. |
+| `ORCHESTRATOR_BACKEND` | `shim` | Engine durable backbone: `shim` (file-backed, no PG) or `dbos` (needs Postgres). |
+| `CHECKPOINT_DIR` | `/data/checkpoints` | Where the shim stores durable checkpoints (named volume in prod). |
+| `SCHEDULER_ENABLED` | `true` (prod) | 24/7 scheduler: run loop, daily digest, notification ladder. |
 | `LLM_PROVIDER` / `LLM_MODEL` | _empty_ | Seed the OOBE LLM gate from env (otherwise set in-browser). |
 | `LLM_BASE_URL` / `LLM_API_KEY` | _empty_ | OpenAI-compatible endpoint + key (or Ollama base URL; key blank). |
-| `LLM_RATE_LIMIT` / `LLM_RATE_PERIOD` | `0` / `60.0` | Per-provider LLM rate cap (0 disables) over N seconds. |
-| `SANDBOX_CONCURRENCY` | `3` | Max concurrent application sandboxes (durable-queue cap). |
-| `CREDENTIAL_KEYFILE` | `secrets/master.key` | libsodium master key file for the credential vault (mode `0600`). |
-| `FONTS_DIR` | `.applicant_fonts` | Confined dir for runtime font installs (never system-wide). |
-| `DISCOVERY_LIVE` | `false` | Turn on real job-board scraping (off = offline fakes). |
-| `SEARXNG_URL` | _empty_ | SearXNG metasearch endpoint for discovery. |
-| `DISCOVERY_PROXIES` | _empty_ | Comma-separated proxy hooks for hostile boards (empty = direct). |
-| `NOTIFICATIONS_LIVE` | `false` | Turn on real Discord/email send (off = captured, no network). |
+| `DISCOVERY_LIVE` | `true` (prod) | Real job-board scraping (off = offline fakes). |
+| `SEARXNG_URL` | `http://searxng:8080` | SearXNG metasearch endpoint for discovery. |
+| `NOTIFICATIONS_LIVE` | `true` (prod) | Real Discord/email send (off = captured, no network). |
 | `DISCORD_WEBHOOK_URL` / `APPRISE_URLS` | _empty_ | Notification targets (Apprise URL syntax). |
-| `BROWSER_CHANNEL` | `chrome` | Driving browser channel: `chrome` (real Google Chrome, default) \| `chromium` (fallback). Invalid → boot error. |
-| `EGRESS_MODE` | `direct` | Browser egress: `direct` (host residential connection) \| `residential-proxy` (requires `EGRESS_PROXY_URL` + `EGRESS_RESIDENTIAL=true`). Datacenter exit refused. |
-| `EGRESS_PROXY_URL` / `EGRESS_RESIDENTIAL` | _empty_ / `false` | Residential proxy URL + operator attestation it is residential (FR-STEALTH-4). |
-| `EGRESS_TIMEZONE` / `EGRESS_LOCALE` | `America/Phoenix` / `en-US` | tz/locale pinned to the egress geolocation so the fingerprint ↔ exit IP stay consistent (FR-STEALTH-1). |
-| `TAKEOVER_DESKTOP` | `cinnamon` | Takeover desktop DE: `cinnamon` (default) \| `xfce` \| `gnome`. Invalid → boot error. Every DE ships Google Chrome. |
-| `TAKEOVER_DESKTOP_IMAGE` | _empty_ | Advanced: pin an exact desktop image (overrides the DE→image table). |
-| `REMOTE_VIEW_BACKEND` | `webtop` | Live remote-view backend: `webtop` (full desktop, default) \| `neko` (browser-only). |
-| `NEKO_ROOMS_URL` / `NEKO_ROOMS_TOKEN` | _empty_ | Real Neko remote-session server (used when `REMOTE_VIEW_BACKEND=neko`). |
+| `CREDENTIAL_KEYFILE` | `secrets/master.key` | libsodium master key file for the credential vault (mode `0600`). |
+| `BROWSER_CHANNEL` | `chrome` | Driving browser channel: `chrome` (real Google Chrome) \| `chromium` (fallback). |
+| `EGRESS_MODE` | `direct` | Browser egress: `direct` (host residential connection) \| `residential-proxy`. |
+| `TAKEOVER_DESKTOP` | `cinnamon` | Takeover desktop DE: `cinnamon` \| `xfce` \| `gnome` \| `pantheon`. Image swap. |
+| `REMOTE_VIEW_BACKEND` | `webtop` | Live remote-view backend: `webtop` (full desktop) \| `neko` (browser-only). |
 | `APPLICANT_UPDATE_ENABLED` | _unset_ | Set `1` to let the in-UI Update button actually dispatch. |
-| `LOG_FORMAT` / `LOG_LEVEL` | `pretty` / `INFO` | structlog output (`json` in prod) and verbosity. |
+
+See `src/applicant/app/config.py` for the full engine config surface; the front-door
+UI reads `ENGINE_URL`, `APPLICANT_INTERNAL_TOKEN`, `SEARXNG_INSTANCE`,
+`CHROMADB_*`, and its own `DATABASE_URL`.
 
 ## Enabling the real integrations
 
-The default lane runs everything behind hermetic fakes. To go fully live in a real
-deployment, enable each integration (all are opt-in, none required to boot):
+The default lane runs everything behind hermetic fakes. To go fully live, enable each
+integration (all opt-in, none required to boot):
 
 - **Persistence + durable execution (DBOS):** set `ORCHESTRATOR_BACKEND=dbos` and a
   reachable `DATABASE_URL`. DBOS owns its own system tables; Alembic manages the app
   schema. See [Durable orchestration backend](#durable-orchestration-backend).
-- **Real browser pre-fill (Google Chrome via patchright):** `uv sync --extra browser`
-  then install **real Google Chrome** (`google-chrome-stable`) — patchright drives
-  the Chrome *channel* (`BROWSER_CHANNEL=chrome`, the default; `chromium` is a
-  less-coherent fallback). The driver runs **headful** (never headless — that is a
-  detection tell) on a per-tenant Chrome profile. Real Google Chrome (not Chromium)
-  is the foundation of the stance below: it yields the genuine Chrome TLS/JA3 +
-  HTTP/2 fingerprint and the correct Sec-CH-UA client hints automatically. The
-  adapter swaps from the in-memory fake page model to that real Chrome.
+- **Real browser pre-fill (Google Chrome via patchright):** `uv sync --extra browser`,
+  install real `google-chrome-stable`, keep `BROWSER_CHANNEL=chrome`. The driver runs
+  **headful** (never headless — a detection tell) on a per-tenant Chrome profile.
 
-  **Coherent real-Linux/Chrome identity (FR-STEALTH-1) — and WHY.** The engine
-  presents a single, internally-consistent **real Linux + Google Chrome** identity
-  rather than spoofing a Windows persona: UA `Mozilla/5.0 (X11; Linux x86_64) ...
-  Chrome/<major>` (the `<major>` is derived from the *installed* Chrome so UA ↔
-  Sec-CH-UA ↔ engine never disagree), `navigator.platform = "Linux x86_64"`,
-  `navigator.vendor = "Google Inc."`, `Sec-CH-UA-Platform: "Linux"`, languages
-  `en-US,en`, and a **real Linux GPU** WebGL renderer (Mesa/llvmpipe) — never a
-  Windows Direct3D renderer, and **stable, not randomized** (randomization is itself
-  a tell, and no canvas-noise is injected). An incoherent spoof (e.g. a Windows UA
-  with a Linux GPU) scores *worse* with bot detectors than an honest, coherent
-  fingerprint on the residential IP, so coherence is the whole point.
-
-  **Timezone/locale pinned to egress (FR-STEALTH-1 ↔ FR-STEALTH-4).** `EGRESS_TIMEZONE`
-  / `EGRESS_LOCALE` are threaded into the browser context (`timezone_id` / `locale`)
-  so tz/locale ↔ exit IP stay consistent; derive them from the residential egress IP's
-  region in a real deployment (defaults are a sensible coherent pair).
+  **Coherent real-Linux/Chrome identity (FR-STEALTH-1).** The engine presents a single,
+  internally-consistent **real Linux + Google Chrome** identity rather than a spoofed
+  Windows persona: UA `Mozilla/5.0 (X11; Linux x86_64) ... Chrome/<major>` (the
+  `<major>` derived from the *installed* Chrome), `navigator.platform = "Linux x86_64"`,
+  `Sec-CH-UA-Platform: "Linux"`, a real Linux GPU (Mesa/llvmpipe) WebGL renderer —
+  stable, not randomized, no canvas-noise. An incoherent spoof scores *worse* with bot
+  detectors than an honest, coherent fingerprint on a residential IP, so coherence is
+  the point. `EGRESS_TIMEZONE`/`EGRESS_LOCALE` are pinned to the egress geolocation so
+  tz/locale ↔ exit IP stay consistent.
 - **Live discovery:** `DISCOVERY_LIVE=true` (+ `SEARXNG_URL`, optional
   `DISCOVERY_PROXIES`) to scrape real boards via JobSpy + SearXNG.
-- **Notifications:** `NOTIFICATIONS_LIVE=true` + `DISCORD_WEBHOOK_URL` / `APPRISE_URLS`
-  (email/SMTP/etc. via Apprise URL syntax). Also configurable in the wizard.
-- **Live remote takeover (full Ubuntu desktop, default):** the takeover environment
-  is a containerized, web-streamed **full Ubuntu desktop** the user drives during an
+- **Notifications:** `NOTIFICATIONS_LIVE=true` + `DISCORD_WEBHOOK_URL` / `APPRISE_URLS`.
+  Also configurable in the wizard.
+- **Live remote takeover (full Ubuntu desktop, default):** the takeover environment is a
+  containerized, web-streamed **full Ubuntu desktop** the operator drives during an
   irreducible human step (CAPTCHA / account-creation / verification / final submit;
-  FR-SANDBOX-2/3, FR-PREFILL-5). The desktop's DE is configurable via
-  `TAKEOVER_DESKTOP` (default **Cinnamon**, plus **Xfce** and full **GNOME**) and is a
-  pure image swap:
-
-  | `TAKEOVER_DESKTOP` | Image | Notes |
-  | --- | --- | --- |
-  | `cinnamon` (default) | `applicant/webtop-chrome:cinnamon` | LinuxServer Cinnamon webtop **+ Google Chrome + realistic fonts** (`docker/webtop-chrome/Dockerfile`, `BASE=...ubuntu-cinnamon`). |
-  | `xfce` | `applicant/webtop-chrome:xfce` | LinuxServer Xfce webtop **+ Google Chrome + realistic fonts** (`docker/webtop-chrome/Dockerfile`, `BASE=...ubuntu-xfce`). |
-  | `gnome` | `applicant/webtop-gnome:latest` | **Custom** image (`docker/webtop-gnome/Dockerfile`): Ubuntu + GNOME on Xorg + KasmVNC **+ Google Chrome + realistic fonts**. **Heavier** — full GNOME has no prebuilt webtop. |
-
-  **Google Chrome is the browser in every desktop** (FR-STEALTH-1): the stock
-  LinuxServer webtops do not ship Chrome, so `cinnamon`/`xfce` resolve to local
-  *derived* images (`docker/webtop-chrome/Dockerfile`, `FROM` the LinuxServer webtop)
-  that add `google-chrome-stable` + a realistic desktop font set (Liberation/DejaVu/
-  Noto/MS-corefonts) so font enumeration looks like a real machine, not a bare
-  container. This way the human takes over the **same real Chrome** the engine drives.
-
-  **X11, not Wayland**, for all three: the web-streaming layer and the
-  automation/handoff path are X11-native (Chrome runs headful on that X server);
-  Wayland would complicate both. **GNOME trade-off:** standard webtop images don't
-  ship full GNOME (it assumes Wayland/systemd), so `gnome` builds a heavier custom
-  image — prefer Cinnamon or Xfce unless GNOME is specifically required. **Switch the
-  driving channel** with `BROWSER_CHANNEL` (`chrome` default ↔ `chromium`).
-
-  **Session continuity / handoff:** the one-click live-session URL carries the
-  short-lived access token AND the application URL the agent was on (`app=`), so the
-  desktop's browser opens the SAME application the engine was filling. The real
-  shared-profile/cookie continuity + container start/stop are integration-gated; the
-  image selection, URL/token minting, and lifecycle bookkeeping are unit-tested.
-
-  Switch backend with `REMOTE_VIEW_BACKEND` (`webtop` default ↔ `neko`). Run the
-  desktop container with the `takeover` compose profile:
-  `TAKEOVER_DESKTOP_IMAGE=lscr.io/linuxserver/webtop:ubuntu-xfce docker compose -f docker/docker-compose.prod.yml --profile takeover up -d takeover-desktop`.
+  FR-SANDBOX-2/3, FR-PREFILL-5). The DE is configurable via `TAKEOVER_DESKTOP`
+  (default **Cinnamon**, plus **Xfce**, **GNOME**, **Pantheon**) and is an image swap;
+  **every desktop ships real Google Chrome** (FR-STEALTH-1) so the human takes over the
+  same Chrome the engine drives. All run on **X11** (not Wayland) for the streaming +
+  automation path. Run with the `takeover` compose profile.
 - **Live remote takeover (Neko, browser-only alt):** set `REMOTE_VIEW_BACKEND=neko`
-  with `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`) for the one-click browser-only session;
-  the remote-view sub-port also supports noVNC.
+  with `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`); the remote-view sub-port also supports
+  noVNC.
 - **Resume fidelity rendering:** install a TeX engine (`lualatex`/`xelatex` +
   fontspec/moderncv) for LaTeX-primary PDFs, or LibreOffice (`soffice`) for the
   docx-XML fallback. Without either, rendering uses the deterministic stub seam.
 
 ## Data, backups, and security
 
-- **Persistent data** lives in Postgres (the `pgdata`/`pgbackups` Compose volumes):
-  campaigns, attribute clouds, applications, screenshots, resume variants, learning
-  state, durable workflow state. Back it up with `scripts/update.sh` (which dumps
-  before every migration) or your own `pg_dump` schedule.
+- **Engine data** lives in Postgres (the `pgdata`/`pgbackups` volumes): campaigns,
+  attribute clouds, applications, screenshots, resume variants, learning state, durable
+  workflow state. The **workspace UI** keeps its own state on the `ui-data` volume.
+  Back up Postgres with `scripts/update.sh` (which dumps before every migration) or
+  your own `pg_dump` schedule.
 - **Secrets:** application credentials are sealed at rest with libsodium
-  (XSalsa20-Poly1305); the master key is a `0600` key-file (`CREDENTIAL_KEYFILE`) —
-  keep it off the repo and back it up separately. Secrets are never logged (structlog
-  redacts recursively). API keys are stored via the encrypted credential path, not in
-  plaintext config.
-- **Remote access / HTTPS:** put the `api` service behind a reverse proxy (Caddy,
-  nginx, Traefik) for TLS, or expose it over a private network (e.g. Tailscale). The
-  Update button and live-session URLs assume an authenticated, trusted network.
+  (XSalsa20-Poly1305); the master key is a `0600` key-file (`CREDENTIAL_KEYFILE`).
+  Secrets are never logged (structlog redacts recursively, value-based).
+- **Network posture:** single-operator on a private LAN/VPN over HTTP (see
+  [Posture](#posture-single-operator-private-lanvpn)). Add a reverse proxy for TLS if
+  you expose it beyond the private network.
 
 ---
 
-# User guide
+# Operator guide
 
-Applicant is operated entirely through its web UI (zero-CLI). The surfaces:
+Applicant is operated entirely through the workspace front door (zero-CLI). Each
+surface is a workspace section backed by an engine router; surfaces light up
+progressively as setup completes.
 
-| URL | Surface | What you do there |
-|---|---|---|
-| `/wizard` | Setup wizard (OOBE) | First-run configuration: LLM → channels → fonts → onboarding |
-| `/` `/digest` | Pending-actions home + daily digest | Approve/decline roles, work the 24/7 action queue |
-| `/review` | Redline review | Approve/revise resumes, cover letters, screening answers |
-| `/chat` | Chatbot | Fill gaps in your profile/criteria conversationally |
-| `/debug` | Debug & admin | Tool toggles, logs, screenshots, history, workflow state, Update button |
+### 1. First-run setup wizard
 
-### 1. First-run setup wizard (`/wizard`)
+A resumable, multi-step wizard (FR-OOBE, FR-UI-5) auto-launches on first run as a
+blocking overlay. Steps gate in order and the engine will not start automated work
+until they're complete:
 
-A resumable, multi-step wizard (FR-OOBE, FR-UI-5). Steps gate in order and the engine
-will not start automated work until they're complete:
-
-1. **LLM settings (gate).** Choose a provider/model — a cloud OpenAI-compatible API
-   (paste an OpenRouter key) or a local Ollama URL (fully local). Optionally arrange a
-   capability-ranked **tier ladder** (cheap model first, escalate on hard tasks).
-   Nothing downstream unlocks until this is set.
-2. **Notification channels.** Connect Discord and/or email (Apprise). This is a gating
-   step — the engine won't run unattended until you can be reached.
+1. **LLM settings (gate).** Connect a provider/model — a cloud OpenAI-compatible API
+   (paste an OpenRouter key) or a local Ollama URL (fully local). This step **reuses
+   the workspace's existing Local/Remote model-endpoint manager** over
+   `/api/model-endpoints`, not a new form. Optionally arrange a capability-ranked
+   **tier ladder**. Nothing downstream unlocks until this is set.
+2. **Notification channels.** Connect Discord and/or email (Apprise) — a gating step;
+   the engine won't run unattended until you can be reached.
 3. **Fonts.** Upload your résumé; the engine detects required fonts and prompts for any
    missing ones, installing them into the render environment.
 4. **Onboarding intake.** A Workday-ready interview (identity, work authorization,
    location/remote prefs, target roles, salary floor, full work history, education,
    references, key attributes, EEO — defaulting to "decline to self-identify", never
    AI-guessed). Your base résumé is parsed to bootstrap the **attribute cloud**;
-   conflicts with your answers ask for confirmation. Finally you **accept or reject**
-   the LaTeX conversion preview of your résumé (accept → LaTeX-primary engine; reject →
-   docx fallback).
+   conflicts ask for confirmation. Finally you **accept or reject** the LaTeX
+   conversion preview (accept → LaTeX-primary engine; reject → docx fallback).
 
-### 2. Create a campaign and criteria
+### 2. The daily digest (approve / decline)
 
-Each job search is a **campaign** (`/api/campaigns`) with its own criteria, attribute
-cloud, learning, and digest. Criteria (`/api/criteria`) are human-readable and editable
-at any time; the engine also proposes learned adjustments, always shown transparently
-and overridable. Tune run behavior (`/api/agent-runs`): throughput (default ~15/day,
-hard cap 30), and run mode (24/7 continuous, fixed duration, or until N viable roles).
+When matches accumulate, you get a per-campaign **digest** (email + the in-app digest
+panel + a Discord "ready" ping). Each row shows the role, a brief summary, the posting
+link, work mode, a viability score, and **why it was suggested**. You **approve**
+(queue it for pre-fill) or **decline with feedback** (mandatory free-text) — and that
+feedback feeds learning and tunes the next run's criteria. Empty days get a short
+"here's what I searched and why" note. Notifications escalate: in-app if you're present
+→ Discord (held ~30s) → email after a timeout; acting on one channel cancels the others.
 
-### 3. The daily digest (approve / decline)
+### 3. Pending-actions home base
 
-When matches accumulate, you get a per-campaign **digest** (email + webpage + a Discord
-"ready" ping). Each row shows the role, a brief summary, the posting link, work mode, a
-viability score, and **why it was suggested**. You **approve** (queue it for pre-fill)
-or **decline with feedback** (mandatory free-text) — and that feedback feeds learning
-and tunes the next run's criteria. Empty days get a short "here's what I searched and
-why" note. Notifications follow an escalation ladder: in-app if you're present →
-Discord (held ~30s) → email after a timeout; acting on one channel cancels the others.
+The 24/7 home base aggregates **everything awaiting you across all campaigns** — digest
+approvals, material reviews, missing-attribute soft errors, agent questions,
+account-creation handoffs, and final-submit approvals — each one actionable.
 
-### 4. Pending-actions home base (`/` and `/digest`)
-
-The 24/7 home base lists **everything awaiting you** — digest approvals, material
-reviews, missing-attribute soft errors, agent questions, and final-submit approvals —
-each one actionable.
-
-### 5. Application pre-fill and live takeover
+### 4. Application pre-fill and live takeover
 
 For an approved role the engine spins up an isolated, stealthy browser **sandbox** and
 pre-fills every field on every page from your attribute cloud (escalating ambiguous
 mappings to the LLM, never guessing sensitive/EEO fields). It **stops at irreducible
-human steps** — CAPTCHA, email/SMS verification, account-creating submit, final
-submit — and notifies you with a **one-click live session (VNC)** link (`/api/remote`)
-where you can finish the step yourself or authorize the engine to continue. If a board
-gets hostile, **cautious mode** pauses and hands off rather than risking your account.
-Credentials you enter (or that the engine captures during account creation) are banked
-in the encrypted **vault** (`/api/credentials`) for reuse.
+human steps** — CAPTCHA, email/SMS verification, account-creating submit, final submit
+— and notifies you with a **one-click live session** where you can finish the step
+yourself or authorize the engine to continue. If a board gets hostile, **cautious mode**
+pauses and hands off rather than risking your account. Credentials you enter (or that
+the engine captures during account creation) are banked in the encrypted **vault**.
 
-### 6. Material review and approval (`/review`)
+### 5. Material review and approval
 
 When a role warrants tailored material, the engine generates a résumé variant and/or
 cover letter and/or screening answers — truthfully (it reframes real experience, never
 fabricates) and without AI tells (em-dashes stripped, your voice matched). Each artifact
 is shown as a **redline** with additions and subtractions highlighted. Run the
-interactive loop: accept, reject, free-text instruction ("make it more concise"),
-targeted add, or targeted subtract — each turn re-generates within budget and
-re-renders. **Nothing is submitted until you approve it.** Approved material bundles
-into the final-submit step.
+interactive loop: accept, reject, free-text instruction, targeted add, or targeted
+subtract. **Nothing is submitted until you approve it.**
 
-### 7. Tools, debug, and the chatbot
+### 6. Profile, chat, and activity
 
-- **Tool toggles** (`/debug`): switch any capability on/off (discovery, scoring,
-  pre-fill, account-creation, web-research, résumé/cover/answer generation, chat,
-  notifications) — and it actually disables at runtime.
-- **Debug surface** (`/debug`): recent (redacted) logs, per-application history, captured
-  per-page screenshots, durable-workflow state, and the **variant library** (lineage +
-  fit scores). The **Update button** lives here too.
-- **Chatbot** (`/chat`): converse to fill gaps in your profile or criteria; proposed
-  changes go through the confirmation gate (integral/sensitive changes need your
-  explicit OK; minor ones auto-apply).
+- **Profile:** edit criteria (integral edits confirmation-gated), the attribute cloud
+  (including overridable learned/AI-added values; EEO never AI-guessed), and review
+  résumé-conversion learning.
+- **Chat / assistant:** converse to fill gaps in your profile or criteria; proposed
+  changes go through the confirmation gate. Drive job actions (pending list, remote
+  résumé actions) from here.
+- **Activity / debug:** recent redacted logs, per-application history, captured
+  screenshots, durable-workflow state, the variant library, run-mode/throughput
+  controls, discovery-source toggles, mark-submitted, and the **Update button**.
 
-### 8. How it learns
+### 7. How it learns
 
 Every input — digest approvals/declines and their feedback, redline edits, pre-fill
 soft-error resolutions, source yield, and actual **conversions** (approval **plus**
 submission) — feeds per-campaign learning. The engine learns the signature of roles
 that convert and biases discovery, scoring, and variant selection toward them —
-transparently, and always overridable by you.
+transparently, and always overridable.
 
 ---
 
 ## Stack
 
-Python 3.11+ · FastAPI + vendored Applicant UI · PostgreSQL + JSONB · DBOS Transact
-(durable execution) · LangGraph (in-step reasoning) · patchright (browser automation)
-· JobSpy + SearXNG (discovery) · LaTeX/moderncv primary resume engine with docx-XML
-fallback · Apprise/Discord notifications · structlog. Toolchain: **uv**.
+Python 3.11+ · FastAPI (engine) + white-labeled no-build workspace UI (front door) ·
+PostgreSQL + JSONB · DBOS Transact (durable execution) · LangGraph (in-step reasoning)
+· patchright (browser automation) · JobSpy + SearXNG (discovery) · LaTeX/moderncv
+primary resume engine with docx-XML fallback · Apprise/Discord notifications ·
+ChromaDB + ntfy (workspace UI) · structlog. Toolchain: **uv**.
 
 ## Durable orchestration backend
 
-The durable backbone is pluggable via the `ORCHESTRATOR_BACKEND` env var:
+The engine's durable backbone is pluggable via the `ORCHESTRATOR_BACKEND` env var:
 
-- `shim` (**default**) — a file-backed checkpoint store (`CHECKPOINT_DIR`,
-  default `.applicant_checkpoints`). Requires no Postgres, so the app boots and the
-  full test suite runs hermetically while still proving true mid-step resumption.
-- `dbos` — the real DBOS Transact adapter (durable workflows, idempotent
-  checkpointed steps, `send`/`recv` approval gates, cron scheduling, durable
-  queues for concurrency caps / rate limits). Requires a live Postgres at
-  `DATABASE_URL`. The DBOS-backed resumption tests
-  (`tests/integration/test_dbos_orchestrator.py`) are skipped unless both
-  `ORCHESTRATOR_BACKEND=dbos` and a reachable `DATABASE_URL` are set.
+- `shim` (**default**) — a file-backed checkpoint store (`CHECKPOINT_DIR`). Requires no
+  Postgres, so the engine boots and the full test suite runs hermetically while still
+  proving true mid-step resumption.
+- `dbos` — the real DBOS Transact adapter (durable workflows, idempotent checkpointed
+  steps, `send`/`recv` approval gates, cron scheduling, durable queues for concurrency
+  caps / rate limits). Requires a live Postgres at `DATABASE_URL`.
 
 ## Status
 
-**All five phases (0–4) are implemented and merged to `main`.** The engine is end-to-end
-functional in its hermetic default lane. What works today:
+**All phases (0–5) are implemented and merged to `main`,** plus a production-hardening
+remediation pass and a front-door reachability re-audit. The engine is end-to-end
+functional in its hermetic default lane, and every requirement is reachable in the
+workspace front door (see [`docs/traceability.md`](docs/traceability.md) and
+[`docs/delivery-status.md`](docs/delivery-status.md)).
 
-- **Phase 0** — zero-CLI OOBE + onboarding: setup wizard (LLM-gate first, then channels,
-  fonts, Workday-ready intake), provider-agnostic LLM with a tier ladder, resumable
-  onboarding interview, resume parsing to bootstrap the attribute cloud, durable
-  orchestration backbone, structlog observability, vendored Applicant UI shell.
-- **Phase 1** — discovery → digest → approve/decline → learning: JobSpy/SearXNG discovery,
-  per-campaign self-learning criteria + attribute cloud, daily digest with rationale and
-  approve/decline-with-feedback, pending-actions portal, Discord/web/email notifications
-  with the 30s-hold escalation ladder, source-yield learning.
-- **Phase 2** — maximal Workday pre-fill in a stealth browser sandbox: per-application
-  ephemeral sandbox, deterministic field mapping with LLM escalation, stop-at-irreducible-
-  human-steps handoff, one-click live remote session (Neko), cautious mode, encrypted
-  credential vault (libsodium), per-page screenshot logging, submission detection.
-- **Phase 3** — truthful material generation: LaTeX-primary / docx-XML fallback resume
-  tailoring, cover letters and screening answers, truthfulness + non-AI-voice guardrails,
-  variant library with lineage and fit-scoring, interactive redline review with a durable
-  revision-session loop.
-- **Phase 4** — conversion learning + tool registry + debug surface + chatbot + one-liner
-  install/update: deepened real-conversion learning, per-tool toggle registry, debug surface
-  (logs/screenshots/history/workflow state), confirmation-gated chatbot, and the
-  install/update scripts (with in-UI Update button).
+- **Phase 0** — zero-CLI OOBE + onboarding, provider-agnostic LLM with a tier ladder,
+  resumable onboarding interview, attribute-cloud bootstrap, durable orchestration
+  backbone, structlog observability.
+- **Phase 1** — discovery → digest → approve/decline → learning, per-campaign
+  self-learning criteria + attribute cloud, pending-actions portal,
+  Discord/web/email notifications with the escalation ladder.
+- **Phase 2** — maximal Workday pre-fill in a stealth browser sandbox, stop-at-irreducible-
+  human-steps handoff, one-click live remote session, cautious mode, encrypted
+  credential vault, screenshot logging, submission detection.
+- **Phase 3** — truthful material generation (LaTeX-primary / docx-XML fallback),
+  cover letters, screening answers, guardrails, variant library, interactive redline
+  review with a durable revision loop.
+- **Phase 4** — conversion learning, per-tool toggle registry, Activity/debug surface,
+  confirmation-gated chatbot, one-liner install/update with the in-UI Update button.
+- **Phase 5 (front door)** — the white-labeled workspace front door: lift-and-shift of
+  the wizard, chat, profile, documents, digest, remote, vault, and activity surfaces
+  onto the workspace, wired to the engine through the bridge, with progressive
+  feature activation. Reachability — not just engine delivery — is the definition of
+  done.
 
-**Tests:** the hermetic default test lane is green — `uv run pytest -q` reports **539
-passed** (10 integration-gated skips). Real external integrations — live job boards, a real
-browser (patchright/playwright), TeX (lualatex/xelatex), Neko remote sessions,
-Postgres/DBOS durable execution, and Discord/SMTP delivery — sit behind integration-gated
-boundaries that require a live deployment; the default lane proves the same logic with
-fakes. See [`docs/delivery-status.md`](docs/delivery-status.md) for the per-phase delivery
-summary and [`docs/traceability.md`](docs/traceability.md) for requirement-level coverage.
+**Tests:** the hermetic default lane is green. Real external integrations — live job
+boards, a real browser, TeX, remote sessions, Postgres/DBOS durable execution, and
+Discord/SMTP delivery — sit behind integration-gated boundaries that require a live
+deployment.

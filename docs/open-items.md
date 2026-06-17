@@ -14,12 +14,26 @@ Source: master spec §12. Per the engineering mandate, any new ambiguity is reco
 
 ## Newly-discovered ambiguity (recorded per §12)
 
-### Applicant UI license — RESOLVED (vendored from owner's MIT fork)
+### Front door & UI vendoring — RESOLVED (owner's white-labeled workspace app)
 
-- **Original ambiguity:** The §5 stack table and §5.1 reference list state the Applicant UI source is **MIT** and instruct vendoring its `static/` "under MIT with notice preserved" (FR-UI-1). On inspection, the **upstream** `pewdiepie-archdaemon/applicant` repo's own LICENSE + README declared **AGPLv3**, not MIT — so the original vendoring picked up AGPL assets, contradicting the spec.
-- **Resolution (2026-06):** The owner provided two **MIT-licensed forks they own** of the Applicant design system, and `frontend/static/` was **re-vendored from those** in place of the AGPL upstream:
-  - **applicant** (MIT, Copyright (c) 2026 kevinhirsch) — base of the vendored set: `style.css` (closest to canonical), `app.js`, `index.html`, `login.html`, `manifest.json`, `sw.js`, the `js/` shell + design-system modules, `lib/`, `fonts/` (incl. `fonts/custom/GohuFont.ttf`), `css/`, icons.
-  - **applicant** (MIT, Copyright (c) 2025 Applicant Contributors) — same UI family, available for any design-system module applicant trims that the shell/our surfaces need.
-  - The AGPL `pewdiepie-archdaemon/applicant` repo is now used as a **reference only** (to confirm the canonical class/module/asset set); no file is copied from it.
-- **Effect:** `frontend/static/LICENSE` is now the **MIT** text from the applicant fork; `THIRD_PARTY_LICENSES.md` records the UI as MIT with no network-copyleft obligation. The spec's §5/§5.1 "Applicant is MIT" statements are now accurate for the vendored material.
-- **Status:** **RESOLVED.** Vendored UI is MIT; no AGPL obligation remains for the UI subtree.
+- **Original ambiguity:** §5/§5.1 instruct cloning an **external** UI repo
+  (`pewdiepie-archdaemon/applicant`) and vendoring its `static/` "served from our FastAPI
+  backend" to satisfy the pixel-perfect-clone requirement (FR-UI-1). On inspection that
+  upstream repo's own LICENSE declared **AGPLv3**, not MIT — and, more fundamentally, an
+  engine-served clone of a third-party repo is **not** how the product is built.
+- **Resolution (as built):** The operator UI is the **owner's own no-build *workspace* web
+  app** (`workspace/`), white-labeled as Applicant. It runs as a **separate public service**
+  (`applicant-ui` on `${APP_PORT}` → container 7000) in **front of** the engine (internal
+  `api:8000`), wired across the bridge (`workspace/src/applicant_engine.py` / `ENGINE_URL`
+  one way; the token-gated `workspace/routes/applicant_internal_routes.py` /
+  `APPLICANT_INTERNAL_TOKEN` the other). The external repo is **not used** and **no file is
+  copied from it**; the engine serves no operator UI. FR-UI-1 ("vendor its `static/`, served
+  from our FastAPI, wired to our APIs, extensible") is satisfied by
+  **vendoring/white-labeling the owner's workspace app** and wiring it to the engine through
+  the proxies — see [architecture.md](architecture.md), [frontend.md](frontend.md), and the
+  master-spec [Reconciliation note](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring).
+- **Effect:** there is no AGPL obligation from any external UI repo (none is vendored), and
+  white-labeling is mandatory: no vendor/persona codename and no `FR-`/`NFR-` jargon in any
+  user-facing string — the product is **Applicant**.
+- **Status:** **RESOLVED.** The front door is the owner's white-labeled workspace app; the
+  engine is internal-only behind it.

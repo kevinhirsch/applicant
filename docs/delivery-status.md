@@ -1,12 +1,23 @@
 # Delivery Status
 
-Single source of "done" truth: a per-phase delivery summary for the Applicant engine.
-**All five phases (0–4) are merged to `main`, plus a production-hardening remediation pass
-that followed an honest re-audit.** The hermetic default test lane is green —
-`uv run pytest -q` reports **613 passed** with 14 integration-gated skips.
+Single source of "done" truth: a per-phase delivery summary for Applicant.
+**All phases are merged to `main`:** engine phases 0–4, a production-hardening remediation
+pass that followed an honest re-audit, and the **front-door (Phase 5)** lift-and-shift of
+the operator UI onto the white-labeled workspace app plus a reachability re-audit. The
+engine's hermetic default test lane is green — `uv run pytest -q` reports **613 passed**
+with 14 integration-gated skips.
 
-See [traceability.md](traceability.md) for the re-verified requirement-level coverage and
-[work-packages.md](work-packages.md) for the original phase plan and exit criteria.
+> **Done means reachable.** A requirement is delivered only when it is reachable/operable
+> in the white-labeled workspace **front door** (`workspace/`), not merely when the engine
+> implements it and its tests pass. The engine runs internal-only (`api:8000`); the
+> operator only ever touches the front door (`applicant-ui` on `${APP_PORT}` → 7000), which
+> proxies the engine. Earlier delivery claims measured the engine alone — that
+> understated the work and overstated reachability. Both dimensions are now tracked here
+> and in [traceability.md](traceability.md).
+
+See [traceability.md](traceability.md) for the re-verified requirement-level coverage
+(engine delivery **and** front-door reachability) and [work-packages.md](work-packages.md)
+for the phase plan and exit criteria.
 
 ## Test count progression
 
@@ -41,8 +52,9 @@ gated. They are environment dependencies, not requirement gaps.
 (OpenAI-compatible + Ollama) with tier ladder and escalation, zero-CLI setup wizard
 (LLM-gate first), resumable onboarding intake, resume parser bootstrapping the attribute
 cloud, font management, durable orchestration port (file-backed `shim` default + DBOS
-adapter), structlog observability with correlation IDs + redaction, vendored Applicant UI
-shell with grayed dormant surfaces, truthfulness / em-dash / confirmation-gate core rules.
+adapter), structlog observability with correlation IDs + redaction, the engine-local
+`frontend/static/` shell + dormant-surface registry (the real operator front door is the
+workspace app delivered in Phase 5), truthfulness / em-dash / confirmation-gate core rules.
 **Exit criteria:** met — boots with no Postgres, full suite hermetic, mid-step resumption proven.
 
 ### Phase 1 — Discovery, criteria, digest, learning, notifications (264 tests)
@@ -77,8 +89,36 @@ per-application history / durable-workflow state), confirmation-gated chatbot (C
 chat router, FR-CHAT-1), history retrieval UI, in-UI Update button, and the one-liner
 `scripts/install.sh` + `scripts/update.sh` (backup / migrate / restart / rollback).
 **Exit criteria:** met. Every FR-*/NFR-* requirement is delivered and re-verified against the
-code; the only un-exercised paths are the integration-gated boundaries above (environment
-dependencies, not requirement gaps).
+engine code; the only un-exercised paths are the integration-gated boundaries above
+(environment dependencies, not requirement gaps).
+
+### Phase 5 — Front door: white-labeled workspace UI + bridge
+
+**Delivered:** the operator-facing UI moved out of the engine and onto the **white-labeled
+workspace app** (`workspace/`), the only surface the operator opens. Phase 5 stood up the
+bridge (workspace→engine via `workspace/src/applicant_engine.py` / `ENGINE_URL`;
+engine→workspace callbacks via `workspace/routes/applicant_internal_routes.py` /
+`APPLICANT_INTERNAL_TOKEN`), the thin auth-protected `/api/applicant/*` **proxy routes**,
+the per-surface **JS glue** (`workspace/static/js/applicant*.js`), and the **progressive
+feature-activation** layer (`workspace/src/applicant_features.py`) that greys/locks/activates
+each section from engine setup status. Surfaces were **lifted and shifted** onto existing
+workspace components rather than rebuilt (the OOBE LLM step reuses the workspace's
+Local/Remote model-endpoint manager). The production Compose stack became the two-app
+topology: public `applicant-ui` (→ 7000) + internal `api` (8000) + postgres + searxng +
+chromadb + ntfy (+ optional takeover-desktop / ollama). Removed during this focus pass:
+Home Assistant, awareness/proactive, and "Nobody"/incognito mode.
+
+**Reachable surfaces (front door → engine):** OOBE setup/onboarding wizard, pending-actions
+portal, documents/résumé redline review, profile (criteria + attributes + learning), chat/
+assistant + job actions, email/digest + feedback survey, activity/debug + history +
+mark-submitted + Update button, live remote view/takeover + submit/authorize, credential
+vault. **Compare** ships present-but-disabled. Calendar / Deep-Research / Cookbook stay
+native workspace surfaces reached via the internal callback channel.
+
+**Exit criteria:** met. Every operator-facing requirement family is reachable across the
+chain spec → engine router → workspace proxy → JS → nav/section (see
+[traceability.md](traceability.md#front-door-reachability) and
+[dormant-surfaces.md](dormant-surfaces.md)).
 
 ### Production-hardening remediation (post-honest-re-audit)
 

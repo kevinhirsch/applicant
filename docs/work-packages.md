@@ -1,6 +1,10 @@
-# Work Packages (Phases 0-4)
+# Work Packages (Phases 0-5)
 
-Source: master spec §9. Each phase is delivered by implementer sub-agents using TDD/BDD, with every sub-task tagged to requirement IDs (§ engineering mandate). Phases build on each other; later phases assume earlier exit criteria hold.
+Source: master spec §9 (engine phases 0–4), extended with the front-door work (Phase 5).
+Each phase is delivered by implementer sub-agents using TDD/BDD, with every sub-task tagged
+to requirement IDs (§ engineering mandate). Phases build on each other; later phases assume
+earlier exit criteria hold. Phases 0–4 build the engine; **Phase 5 builds the white-labeled
+workspace front door** that makes the engine reachable to the operator.
 
 ---
 
@@ -14,7 +18,7 @@ Source: master spec §9. Each phase is delivered by implementer sub-agents using
 - DBOS durable backbone: workflows, idempotent steps, `send`/`recv`, scheduling, queues skeleton (FR-DUR-1/2/3).
 - OpenRouter LLM adapter + auto-pull model list; tier-ladder config; defensive structured-output parsing (FR-LLM-1/2/3/4/4a/5).
 - structlog with correlation IDs + secret redaction; DBOS OTel (FR-OBS-1).
-- Frontend clone shell: vendor Applicant `static/` verbatim, MIT notice preserved, served from FastAPI; grayed dormant surfaces (FR-UI-1/2).
+- Frontend shell + grayed dormant-surface registry (FR-UI-1/2). *(Phase 0 stood up an engine-local `frontend/static/` shell; the **real operator front door** is the white-labeled workspace app delivered in Phase 5 — see below and the master-spec [Reconciliation note](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring).)*
 - Setup wizard framework starting with the LLM-settings gate (FR-OOBE-1/2, FR-UI-5).
 - Comprehensive Workday-ready onboarding intake + base-resume parse + reconciliation (FR-ONBOARD-1/2/3).
 - Font upload flow with detection of required fonts and runtime cache refresh (FR-FONT-1/2).
@@ -113,3 +117,41 @@ Source: master spec §9. Each phase is delivered by implementer sub-agents using
 **Exit criteria:** Conversion learning closes the loop across every input; the tool registry, debug surface, and history/variant-library UIs are live; the one-liner install and in-UI Update button work end-to-end with DB backup/migration/rollback; multi-campaign readiness is verified.
 
 > **Note on FR-CHAT-1:** §3.20 mandates the chatbot; §9 does not name it in any phase explicitly. It is placed in Phase 4 (alongside the remaining FR-UI-6 surfaces, which include "the chatbot") and flagged as a soft mapping in [traceability.md](traceability.md).
+
+---
+
+## Phase 5 — Front door: white-labeled workspace UI + bridge
+
+**Goal:** Make the engine reachable to the operator through the **white-labeled workspace
+app** (`workspace/`) — the only surface the operator opens — rather than an engine-served
+page. Reachability across spec → engine router → workspace proxy → JS → nav/section is the
+definition of done (the binding working principle in [extending.md](extending.md)). This
+reconciles FR-UI-1 with reality: the front door is the owner's vendored workspace app, not a
+clone of an external repo (see the master-spec [Reconciliation note](spec/master-spec.md#reconciliation-note-front-door--ui-vendoring)).
+
+**Sub-tasks:**
+- **Bridge:** workspace→engine httpx client (`workspace/src/applicant_engine.py`, `ENGINE_URL`)
+  with typed `EngineError`; engine→workspace token-gated callback channel
+  (`workspace/routes/applicant_internal_routes.py`, `APPLICANT_INTERNAL_TOKEN`) (FR-UI-1/6).
+- **Proxy routes:** thin, auth-protected, owner-scoped `/api/applicant/*` routes
+  (`workspace/routes/applicant_*_routes.py`) forwarding to the engine client; no logic.
+- **Glue + lift-and-shift:** per-surface JS (`workspace/static/js/applicant*.js`),
+  lifting/shifting existing workspace components rather than rebuilding (the OOBE LLM step
+  reuses the workspace Local/Remote model-endpoint manager) (FR-UI-1/5/6).
+- **Progressive activation:** `workspace/src/applicant_features.py` derives each section's
+  state from engine setup status + dormant registry; no dead UI (FR-UI-2).
+- **Two-app Compose topology:** public `applicant-ui` (→ 7000) + internal `api` (8000) +
+  postgres + searxng + chromadb + ntfy (+ optional takeover-desktop / ollama)
+  (FR-INSTALL-3); install.sh wires the bridge env into the repo-root `.env`.
+- **Focus pass — removals:** Home Assistant, awareness/proactive, and "Nobody"/incognito
+  mode removed; they are not part of the product.
+
+**Requirement IDs covered:** FR-UI-1/2/3/4/5/6 (front-door reachability), and the
+front-door reachability of every operator-facing FR family (see
+[traceability.md](traceability.md#front-door-reachability)).
+
+**Exit criteria:** every operator-facing requirement family is reachable/operable in the
+front door; the OOBE wizard auto-launches and gates automated work; Compare ships
+present-but-disabled; Calendar/Deep-Research/Cookbook stay native workspace surfaces reached
+via the internal callback channel. See [delivery-status.md](delivery-status.md) and
+[dormant-surfaces.md](dormant-surfaces.md).
