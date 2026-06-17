@@ -34591,20 +34591,16 @@ body.theme-frosted .modal {
 .ao-error { color: var(--accent-error, #e06c6c); font-size: 0.86rem; margin: 8px 0; }
 .ao-ok { color: #5bbf78; font-size: 0.86rem; margin: 8px 0; }
 .ao-warn { color: var(--accent-warm, #d8a23a); font-size: 0.86rem; margin: 8px 0; }
-.ao-tip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--border, #444);
-  color: var(--text, #eee);
-  font-size: 0.7rem;
-  cursor: help;
-  margin-left: 4px;
-  vertical-align: middle;
-}
+/* `.ao-tip` now layers onto the workspace-standard `.preset-hint-icon` help
+   icon (see _tip() in applicantOnboarding.js) so the wizard's `?` markers hover
+   exactly like the rest of the app. Kept as a thin alias for back-compat. */
+.ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; }
+
+/* Step 1 hosts the SHARED Settings endpoint manager (relocated here at runtime).
+   Reset the admin-card width so it fits the narrower wizard body. */
+.ao-llm-manager { margin: 4px 0 8px; }
+.ao-llm-manager .admin-card { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+.ao-llm-manager #adm-endpoint-manager { width: 100%; }
 .ao-conflict-box,
 .ao-preview-box {
   border: 1px solid var(--border, #333);
