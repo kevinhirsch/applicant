@@ -12,6 +12,30 @@ discovery services is required.** That is the NFR-EXT-1 guarantee.
 
 ---
 
+## 0. Working principles (binding)
+
+These apply to **every** change, by humans and AI agents alike (the agent-facing copy
+lives in the repo-root `CLAUDE.md`):
+
+1. **Lift and shift first — never rebuild what already exists.** If logic or UI for
+   something already exists anywhere in the tree, **copy that component into the new
+   location first**, get it working there unchanged, and only **then adapt it by
+   extension and removal** to meet the spec for the new context. Do not write a fresh
+   from-scratch implementation when a working one exists. (E.g. the out-of-box "Connect
+   a model" step reuses the existing Local/Remote endpoint manager in
+   `workspace/static/js/admin.js` over the workspace's own `/api/model-endpoints`, not a
+   new form.)
+2. **Reachability is the definition of done.** A requirement is finished only when it is
+   reachable/operable in the white-labeled front-door (`workspace/`), not merely when the
+   engine implements it and tests pass. Verify the chain spec → engine → workspace proxy
+   → JS → nav/section; the traceability matrix checks the engine only.
+3. **White-label everything.** No vendor/persona codename and no `FR-`/`NFR-` jargon in
+   user-facing strings; the product is **Applicant**.
+4. **Front-door proxies; the engine owns the logic.** Workspace `/api/applicant/*` routes
+   are thin, auth-protected, owner-scoped proxies over the engine client.
+
+---
+
 ## 1. Add a new ATS adapter
 
 The ATS abstraction lives in `src/applicant/adapters/browser/ats.py`. An ATS is
