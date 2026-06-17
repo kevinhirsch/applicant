@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Orwell Chat</title>
+  <title>Applicant Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 16Q9 7 16 7Q23 7 30 16Q23 25 16 25Q9 25 2 16Z' fill='none' stroke='%23e06c75' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='4.5' fill='%23e06c75'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#282c34">
@@ -10,14 +10,14 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
        in email bodies — was wrapping random digits in <a href="tel:..."> with
-       browser-default styling that didn't match the Orwell theme. -->
+       browser-default styling that didn't match the Applicant theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
   <script nonce="{{CSP_NONCE}}">
-  window._orwellLoadTime = Date.now();
+  window._applicantLoadTime = Date.now();
   (function(){
     try {
-      var t = JSON.parse(localStorage.getItem('orwell-theme'));
+      var t = JSON.parse(localStorage.getItem('applicant-theme'));
       if (t && t.colors) {
         var s = document.documentElement.style;
         var c = t.colors;
@@ -100,7 +100,7 @@
   (function(){
     try {
       var path = (window.location.pathname || '').toLowerCase();
-      var theme = (function(){ try { return JSON.parse(localStorage.getItem('orwell-theme')); } catch(_) { return null; } })();
+      var theme = (function(){ try { return JSON.parse(localStorage.getItem('applicant-theme')); } catch(_) { return null; } })();
       var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#e06c75';
       // Shapes are line-stroke SVGs (no emoji glyphs). Each entry returns
       // the inner SVG markup rendered against currentColor=`ac`.
@@ -150,14 +150,14 @@
       apple.href = href;
       // Also customize the page title so the bookmark inherits a useful name.
       var titles = {
-        '/calendar': 'Calendar — Orwell',
-        '/notes': 'Notes — Orwell',
-        '/cookbook': 'Cookbook — Orwell',
-        '/email': 'Email — Orwell',
-        '/memory': 'Memory — Orwell',
-        '/gallery': 'Gallery — Orwell',
-        '/tasks': 'Tasks — Orwell',
-        '/library': 'Library — Orwell',
+        '/calendar': 'Calendar — Applicant',
+        '/notes': 'Notes — Applicant',
+        '/cookbook': 'Cookbook — Applicant',
+        '/email': 'Email — Applicant',
+        '/memory': 'Memory — Applicant',
+        '/gallery': 'Gallery — Applicant',
+        '/tasks': 'Tasks — Applicant',
+        '/library': 'Library — Applicant',
       };
       if (titles[path]) document.title = titles[path];
       // Per-route Android home-screen icon. We swap the <link rel="manifest">
@@ -167,8 +167,8 @@
       try {
         if (inner && typeof Blob !== 'undefined') {
           var pwa = {
-            name: (titles[path] || 'Orwell'),
-            short_name: (titles[path] || 'Orwell').split('—')[0].trim(),
+            name: (titles[path] || 'Applicant'),
+            short_name: (titles[path] || 'Applicant').split('—')[0].trim(),
             start_url: path,
             scope: '/',
             display: 'standalone',
@@ -209,14 +209,14 @@
       if (k) k.addEventListener('load', function(){ k.media = 'all'; }, { once: true });
       var m = document.getElementById('mermaid-script');
       if (m) m.addEventListener('load', function(){
-        if (window.orwellInitMermaid) window.orwellInitMermaid();
+        if (window.applicantInitMermaid) window.applicantInitMermaid();
       }, { once: true });
     })();
   </script>
   <link rel="stylesheet" href="/static/css/responsive-tokens.css">  <!-- Stream S: the responsive mechanism — MUST precede style.css -->
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/css/orwellHouseThemes.css">  <!-- 0052: the house themes' frost + micro-motion -->
-  <link rel="stylesheet" href="/static/css/game-trim.css?v=20260608">  <!-- Orwell: hide non-game tool surfaces -->
+  <link rel="stylesheet" href="/static/css/applicantHouseThemes.css">  <!-- 0052: the house themes' frost + micro-motion -->
+  <link rel="stylesheet" href="/static/css/game-trim.css?v=20260608">  <!-- Applicant: hide non-game tool surfaces -->
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -499,7 +499,7 @@
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Sidebar</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Orwell Logo</label><input type="color" id="adv-brandColor"><button class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
+            <div class="color-row"><label>Applicant Logo</label><input type="color" id="adv-brandColor"><button class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
             <div class="color-row"><label title="Hamburger menu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></label><input type="color" id="adv-hamburgerColor"><button class="color-reset-btn" data-reset-adv="hamburgerColor" title="Reset this color" aria-label="Reset color">&#x21BA;</button></div>
           </div>
         </div>
@@ -692,7 +692,7 @@
     <div class="sidebar-header">
       <button class="sidebar-hamburger" id="sidebar-toggle-btn" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="sidebar-brand" id="sidebar-brand-btn" style="cursor:pointer;" title="New chat">
-        <span class="sidebar-brand-title">Orwell</span>
+        <span class="sidebar-brand-title">Applicant</span>
       </div>
     </div>
     <div class="sidebar-inner">
@@ -937,11 +937,11 @@
          never affects layout, but always present inside the main landmark
          (the sidebar that shows the visible brand is hidden off-canvas on
          mobile) so the page always exposes a single level-1 heading. -->
-    <h1 class="a11y-visually-hidden">Orwell</h1>
+    <h1 class="a11y-visually-hidden">Applicant</h1>
     <div class="chat-top-bar">
-      <div class="chat-meta-overlay"><span id="current-meta">Orwell Chat</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
+      <div class="chat-meta-overlay"><span id="current-meta">Applicant Chat</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
     <div id="welcome-screen">
-      <div class="welcome-name"><svg class="welcome-eye" viewBox="0 0 32 32"><path d="M2 16Q9 7 16 7Q23 7 30 16Q23 25 16 25Q9 25 2 16Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><circle cx="16" cy="16" r="4.5" fill="currentColor"/></svg>Orwell</div>
+      <div class="welcome-name"><svg class="welcome-eye" viewBox="0 0 32 32"><path d="M2 16Q9 7 16 7Q23 7 30 16Q23 25 16 25Q9 25 2 16Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><circle cx="16" cy="16" r="4.5" fill="currentColor"/></svg>Applicant</div>
       <div class="welcome-sub" id="welcome-sub">Welcome, <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">type /setup</span> to get started.</div>
       <div class="welcome-tip" id="welcome-tip"></div>
       <div id="welcome-setup" style="display:none"></div>
@@ -1006,7 +1006,7 @@
     <div class="chat-input-bar">
       <div class="chat-input-top">
         <div id="message-ghost" class="ghost-text-overlay" aria-hidden="true"></div>
-        <textarea id="message" placeholder="Message Orwell..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
+        <textarea id="message" placeholder="Message Applicant..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
         <!-- Model picker (inside chatbox, top-right) -->
         <div class="model-picker-wrap" id="model-picker-wrap">
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
@@ -1654,7 +1654,7 @@
             <div class="vis-toggles">
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg></span>
-                <span class="vis-label">Orwell <span class="vis-hint">Brand name</span></span>
+                <span class="vis-label">Applicant <span class="vis-hint">Brand name</span></span>
                 <input type="checkbox" checked data-ui-key="sidebar-brand"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
@@ -1885,7 +1885,7 @@
           </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Public App URL</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Used to build clickable links back to Orwell inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links.</div>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Used to build clickable links back to Applicant inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links.</div>
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">URL</label>
@@ -2230,22 +2230,22 @@
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script defer src="/static/js/sessionSync.js?v=20260608"></script>  <!-- cross-device live sync -->
-<script src="/static/js/orwellReport.js"></script>  <!-- BB failure ring (G11): fail-open catches report here — absence becomes observable. Plain script, BEFORE the panels -->
-<script type="module" src="/static/js/orwellOnboarding.js"></script>  <!-- BB onboarding: char creation before chat -->
-<script src="/static/js/orwellSlots.js"></script>  <!-- BB anchor slots: floaters position by slot, never coordinate (E91/S11) -->
-<script type="module" src="/static/js/orwellWindow.js"></script>  <!-- THE window kit (Lane F): one window class + .ow-* family every surface composes -->
-<script type="module" src="/static/js/orwellStatusPanel.js"></script>  <!-- BB status HUD: week/phase/HOH/noms/veto (Vault-free) -->
-<script type="module" src="/static/js/orwellSocial.js"></script>  <!-- BB social: NPC approaches (Vault-free, 0036) -->
-<script src="/static/js/orwellDiaryRoom.js"></script>  <!-- BB Diary Room: standing sidebar button + composer mode (E88, ruling #4) -->
-<script src="/static/js/orwellCast.js"></script>  <!-- BB cast roster: portrait + name + status sidebar panel (Vault-free, 0051) -->
-<script src="/static/js/orwellAvatar.js"></script>  <!-- BB account avatar: paints the finalized headshot into the user circle(s) (G27) -->
-<script src="/static/js/orwellHeadshot.js"></script>  <!-- BB casting headshot studio: pre-game portrait upload + 3-option AI flow (G26/G27) -->
-<script src="/static/js/orwellPresence.js"></script>  <!-- BB presence strip: room + co-presence + nearby (Vault-free, 0049/C28; ambient, never click-to-act) -->
-<script src="/static/js/orwellRetrospective.js"></script>  <!-- BB season retrospective: post-season recap + the unsealed Vault (0048/C17; render-only, 404-gated while live) -->
-<script type="module" src="/static/js/orwellFinale.js"></script>  <!-- BB finale: staged jury-vote reveal (Vault-free, 0037/C11) -->
-<script type="module" src="/static/js/orwellEngineStatus.js"></script>  <!-- BB engine-down banner: visible OOC error reporting -->
-<script type="module" src="/static/js/orwellDecision.js"></script>  <!-- BB decisions: confirm-on-binding guardrail (Vault-free, C20) -->
-<script src="/static/js/orwellComposerDraft.js"></script>  <!-- BB composer draft: {text, drMode, pendingApproachId} survives refresh; DR mode restores BEFORE text (G17, audit F3/F5/F7) -->
+<script src="/static/js/applicantReport.js"></script>  <!-- BB failure ring (G11): fail-open catches report here — absence becomes observable. Plain script, BEFORE the panels -->
+<script type="module" src="/static/js/applicantOnboarding.js"></script>  <!-- BB onboarding: char creation before chat -->
+<script src="/static/js/applicantSlots.js"></script>  <!-- BB anchor slots: floaters position by slot, never coordinate (E91/S11) -->
+<script type="module" src="/static/js/applicantWindow.js"></script>  <!-- THE window kit (Lane F): one window class + .ow-* family every surface composes -->
+<script type="module" src="/static/js/applicantStatusPanel.js"></script>  <!-- BB status HUD: week/phase/HOH/noms/veto (Vault-free) -->
+<script type="module" src="/static/js/applicantSocial.js"></script>  <!-- BB social: NPC approaches (Vault-free, 0036) -->
+<script src="/static/js/applicantDiaryRoom.js"></script>  <!-- BB Diary Room: standing sidebar button + composer mode (E88, ruling #4) -->
+<script src="/static/js/applicantCast.js"></script>  <!-- BB cast roster: portrait + name + status sidebar panel (Vault-free, 0051) -->
+<script src="/static/js/applicantAvatar.js"></script>  <!-- BB account avatar: paints the finalized headshot into the user circle(s) (G27) -->
+<script src="/static/js/applicantHeadshot.js"></script>  <!-- BB casting headshot studio: pre-game portrait upload + 3-option AI flow (G26/G27) -->
+<script src="/static/js/applicantPresence.js"></script>  <!-- BB presence strip: room + co-presence + nearby (Vault-free, 0049/C28; ambient, never click-to-act) -->
+<script src="/static/js/applicantRetrospective.js"></script>  <!-- BB season retrospective: post-season recap + the unsealed Vault (0048/C17; render-only, 404-gated while live) -->
+<script type="module" src="/static/js/applicantFinale.js"></script>  <!-- BB finale: staged jury-vote reveal (Vault-free, 0037/C11) -->
+<script type="module" src="/static/js/applicantEngineStatus.js"></script>  <!-- BB engine-down banner: visible OOC error reporting -->
+<script type="module" src="/static/js/applicantDecision.js"></script>  <!-- BB decisions: confirm-on-binding guardrail (Vault-free, C20) -->
+<script src="/static/js/applicantComposerDraft.js"></script>  <!-- BB composer draft: {text, drMode, pendingApproachId} survives refresh; DR mode restores BEFORE text (G17, audit F3/F5/F7) -->
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
 </body>
 </html>

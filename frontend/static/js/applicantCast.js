@@ -1,11 +1,11 @@
-// Orwell cast roster (feature 0051 / C-FE) — a "who is who" reference panel.
+// Applicant cast roster (feature 0051 / C-FE) — a "who is who" reference panel.
 //
 // A standing sidebar button (alongside New Chat / Search / Diary Room, shown while a game is
 // active) opens a roster panel: each houseguest's persisted portrait (or a graceful placeholder
 // when none), their name, and their current status (active / jury / evicted). Evicted houseguests
 // stay on the roster, visually dimmed.
 //
-// Vault-free by construction: it renders ONLY what GET /api/orwell/roster returns — name, status,
+// Vault-free by construction: it renders ONLY what GET /api/applicant/roster returns — name, status,
 // and a portrait ref — which the route builds from the engine's Vault-free public projection. No
 // stat, relationship, or hidden element ever reaches this surface. ADR 0003: it AUGMENTS the chat
 // (a companion reference), never replaces an interaction; the game plays identically with no
@@ -21,7 +21,7 @@
   "use strict";
 
   const BTN_ID = "sidebar-cast-btn";
-  const PANEL_ID = "orwell-cast";
+  const PANEL_ID = "applicant-cast";
   // G22: adaptive poll cadence — FAST while a generation run is still landing portraits
   // (the roster reports imagesAvailable with portraitsPresent < portraitsTotal), the idle
   // cadence once the set is complete or no image provider is configured.
@@ -77,7 +77,7 @@
     const btn = ensureButton();
     if (!btn) return;
     try {
-      const r = await fetch("/api/orwell/state", { credentials: "same-origin" });
+      const r = await fetch("/api/applicant/state", { credentials: "same-origin" });
       const st = r.ok ? await r.json() : null;
       const live = !!(st && st.started);
       btn.style.display = live ? "" : "none";
@@ -101,50 +101,50 @@
     const content = document.createElement("div");
     content.innerHTML = `
       <style>
-        #orwell-cast {
+        #applicant-cast {
           width: min(560px, 92vw);
           font-family: 'Fira Code', ui-monospace, monospace;
         }
-        #orwell-cast .oc-grid {
+        #applicant-cast .oc-grid {
           display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
           gap: .7rem;
         }
-        #orwell-cast .oc-hg { text-align: center; }
-        #orwell-cast .oc-portrait {
+        #applicant-cast .oc-hg { text-align: center; }
+        #applicant-cast .oc-portrait {
           width: 100%; aspect-ratio: 1 / 1; border-radius: 10px; overflow: hidden;
           background: rgba(255,255,255,.05); border: 1px solid var(--border, #355a66);
           display: flex; align-items: center; justify-content: center;
         }
-        #orwell-cast .oc-portrait img { width: 100%; height: 100%; object-fit: cover; }
+        #applicant-cast .oc-portrait img { width: 100%; height: 100%; object-fit: cover; }
         /* G22: a just-landed face fades in gently… */
         @keyframes ocFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        #orwell-cast .oc-portrait img.oc-justin { animation: ocFadeIn .35s ease; }
+        #applicant-cast .oc-portrait img.oc-justin { animation: ocFadeIn .35s ease; }
         /* …unless the player prefers reduced motion. */
         @media (prefers-reduced-motion: reduce) {
-          #orwell-cast .oc-portrait img.oc-justin { animation: none; }
+          #applicant-cast .oc-portrait img.oc-justin { animation: none; }
         }
-        #orwell-cast .oc-ph { font-size: 1.6rem; opacity: .45; }
-        #orwell-cast .oc-name { margin-top: .35rem; font-size: .78rem; line-height: 1.25; word-break: break-word; }
-        #orwell-cast .oc-name b { color: var(--fg, #9cdef2); }
-        #orwell-cast .oc-status {
+        #applicant-cast .oc-ph { font-size: 1.6rem; opacity: .45; }
+        #applicant-cast .oc-name { margin-top: .35rem; font-size: .78rem; line-height: 1.25; word-break: break-word; }
+        #applicant-cast .oc-name b { color: var(--fg, #9cdef2); }
+        #applicant-cast .oc-status {
           margin-top: .15rem; font-size: .66rem; letter-spacing: .04em; opacity: .65; text-transform: uppercase;
         }
-        #orwell-cast .oc-hg.oc-out { opacity: .5; }
-        #orwell-cast .oc-hg.oc-out .oc-portrait img { filter: grayscale(1); }
-        #orwell-cast .oc-empty { opacity: .65; font-size: .8rem; line-height: 1.5; padding: .4rem 0; }
-        #orwell-cast .oc-actions { margin-top: .8rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-        #orwell-cast .oc-backfill {
+        #applicant-cast .oc-hg.oc-out { opacity: .5; }
+        #applicant-cast .oc-hg.oc-out .oc-portrait img { filter: grayscale(1); }
+        #applicant-cast .oc-empty { opacity: .65; font-size: .8rem; line-height: 1.5; padding: .4rem 0; }
+        #applicant-cast .oc-actions { margin-top: .8rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+        #applicant-cast .oc-backfill {
           cursor: pointer; font: inherit; font-size: .74rem; letter-spacing: .03em;
           color: inherit; background: rgba(255,255,255,.06);
           border: 1px solid var(--border, #355a66); border-radius: 8px;
           padding: .4rem .7rem; min-height: 32px;
         }
-        #orwell-cast .oc-backfill:hover:not(:disabled) { background: rgba(255,255,255,.12); }
-        #orwell-cast .oc-backfill:disabled { opacity: .5; cursor: default; }
-        #orwell-cast .oc-backfill-note { font-size: .72rem; opacity: .65; line-height: 1.4; }
+        #applicant-cast .oc-backfill:hover:not(:disabled) { background: rgba(255,255,255,.12); }
+        #applicant-cast .oc-backfill:disabled { opacity: .5; cursor: default; }
+        #applicant-cast .oc-backfill-note { font-size: .72rem; opacity: .65; line-height: 1.4; }
         /* Narrow: the slot engine's sheet host owns the position; just fit. */
         @media (max-width: 768px) {
-          #orwell-cast { width: auto !important; max-width: none !important; }
+          #applicant-cast { width: auto !important; max-width: none !important; }
         }
       </style>
       <div class="oc-grid" id="oc-grid"></div>
@@ -153,7 +153,7 @@
         <button type="button" class="oc-backfill" id="oc-backfill">Generate cast portraits</button>
         <span class="oc-backfill-note" id="oc-backfill-note"></span>
       </div>`;
-    _win = window.OrwellWindowKit.create({
+    _win = window.ApplicantWindowKit.create({
       id: PANEL_ID, title: "🎬 The Cast",
       icon: "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'><circle cx='9' cy='7' r='4'/><path d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/></svg>",
       slot: "top-left", slotKey: "cast", role: "complementary",
@@ -189,7 +189,7 @@
     btn.disabled = true;
     note.textContent = "Requesting…";
     try {
-      const r = await fetch("/api/orwell/portraits/backfill", {
+      const r = await fetch("/api/applicant/portraits/backfill", {
         method: "POST", credentials: "same-origin",
       });
       const data = r.ok ? await r.json() : null;
@@ -205,7 +205,7 @@
         note.textContent = "A generation run started recently — give it a few minutes, then try again.";
       }
     } catch (_) {
-      if (window.OrwellReport) window.OrwellReport.fail("cast", "backfill-post", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("cast", "backfill-post", _); // G11: fail open, never silent
       note.textContent = "The portrait service is offline right now.";
     }
     // Re-enable after a beat (the server debounces regardless — this just avoids mashing).
@@ -375,11 +375,11 @@
 
   async function refreshRoster() {
     try {
-      const data = await getJSON("/api/orwell/roster");
+      const data = await getJSON("/api/applicant/roster");
       render(data);
     } catch (_) {
       // Fail open: keep whatever's shown; an empty first load shows the empty-state copy.
-      if (window.OrwellReport) window.OrwellReport.fail("cast", "roster-fetch", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("cast", "roster-fetch", _); // G11: fail open, never silent
       const el = document.getElementById(PANEL_ID);
       if (el && !el.querySelector("#oc-grid").children.length) {
         el.querySelector("#oc-empty").style.display = "";
@@ -430,13 +430,13 @@
   }
 
   // Seam for the headless gate (mirrors the other panels).
-  window._orwellCastEnsure = () => { togglePanel(true); return true; };
+  window._applicantCastEnsure = () => { togglePanel(true); return true; };
 
-  // Public hooks (mirrors the other orwell panels): refresh on a game change — and
+  // Public hooks (mirrors the other applicant panels): refresh on a game change — and
   // re-arm the poll so a cadence change (say, a fresh season that is generating its
   // portraits) takes effect NOW, not at the old timer's next tick.
-  window.orwellRefreshCast = () => { if (_open) refreshRoster().then(scheduleNextPoll); };
-  window.addEventListener("orwell:gamechanged", () => {
+  window.applicantRefreshCast = () => { if (_open) refreshRoster().then(scheduleNextPoll); };
+  window.addEventListener("applicant:gamechanged", () => {
     refreshGate();
     if (_open) refreshRoster().then(scheduleNextPoll);
   });

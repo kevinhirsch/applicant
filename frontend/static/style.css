@@ -1,5 +1,5 @@
 /* ============================================ */
-/* Orwell UI — Consolidated Stylesheet        */
+/* Applicant UI — Consolidated Stylesheet        */
 /* ============================================ */
 
 
@@ -69,12 +69,12 @@
 
   /* ── Window visual tokens (Lane G4) — ONE window visual language ──
      The shared window frame, defined ONCE and consumed by BOTH window
-     families: the OrwellWindow kit (.ow-window — css injected by
-     static/js/orwellWindow.js ensureCss) and the legacy modal family
+     families: the ApplicantWindow kit (.ow-window — css injected by
+     static/js/applicantWindow.js ensureCss) and the legacy modal family
      (.modal-content / .modal-header h4 below). Settings, theme, and tool
      modals therefore share one look with every kit window, and a theme
      that moves --panel/--border (e.g. the five 0052 house presets) or the
-     house frost layer (orwellHouseThemes.css) re-skins both families at
+     house frost layer (applicantHouseThemes.css) re-skins both families at
      once. Source pin: tests/test_g4_visual_tokens.py.
      Deliberately NOT a shared token: the titlebar COLOR — the modal
      family's var(--red) header fails AA 4.5:1 on the panel in some
@@ -5019,7 +5019,7 @@ body.bg-pattern-sparkles {
     .modal-content {
       /* The window FRAME (bg / border / radius / shadow) comes from the
          shared --win-* tokens (:root, Lane G4) so this family and the
-         OrwellWindow kit (.ow-window) paint one visual language. */
+         ApplicantWindow kit (.ow-window) paint one visual language. */
       background:var(--win-bg);
       border:1px solid var(--win-border);
       width:min(520px, 92vw); max-height:85vh; padding:10px;
@@ -5735,7 +5735,7 @@ body.bg-pattern-sparkles {
     /* (legacy toolbar-toggle styles removed — now using .vis-* classes) */
 
     /* Demo highlight pulse */
-    .orwell-highlight {
+    .applicant-highlight {
       outline: 2px solid var(--accent, var(--red)) !important;
       outline-offset: 1px;
       box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
@@ -5863,7 +5863,7 @@ body.bg-pattern-sparkles {
     @media (prefers-reduced-motion: reduce) {
       .th-cursor, .th-modal-group, .th-zone { animation: none !important; }
     }
-    .orwell-hl-label {
+    .applicant-hl-label {
       position: absolute;
       top: -22px;
       left: 8px;
@@ -21711,7 +21711,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Welcome name — left-to-right wipe with a touch of horizontal stretch.
    Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
-   Orwell toggle via JS reflow trick. */
+   Applicant toggle via JS reflow trick. */
 .welcome-name {
   transform-origin: left center;
   animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;

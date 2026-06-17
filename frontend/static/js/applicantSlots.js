@@ -1,4 +1,4 @@
-// Orwell anchor slots — floating panels position by SLOT, never by coordinate
+// Applicant anchor slots — floating panels position by SLOT, never by coordinate
 // (E91/S11; the Stream-S mechanism, part 2). One registry owns where game
 // panels sit: each slot stacks its panels by MEASURED height (top slots stack
 // down, bottom slots stack up), with safe-area insets, so no panel can encode
@@ -25,7 +25,7 @@
   let _user = "";
   try { _user = (document.body && document.body.dataset.user) || ""; } catch (_) {}
 
-  function offsetKey(key) { return "orwell-slot-offset:" + key + ":" + _user; }
+  function offsetKey(key) { return "applicant-slot-offset:" + key + ":" + _user; }
 
   function loadOffset(key) {
     try {
@@ -141,16 +141,16 @@
   // motion disables (the class is inert under the media query in tokens css).
   function animateIn(el) {
     if (REDUCED.matches) return;
-    el.classList.remove("orwell-anim-in");
+    el.classList.remove("applicant-anim-in");
     void el.offsetWidth; // restart
-    el.classList.add("orwell-anim-in");
+    el.classList.add("applicant-anim-in");
   }
 
   function register(el, slotName, opts) {
     const o = opts || {};
     if (!slots[slotName]) slotName = "top-right";
     slots[slotName].push({ el, key: o.key || null, draggable: !!o.draggable });
-    el.classList.add("orwell-slotted");
+    el.classList.add("applicant-slotted");
     // Re-stack whenever this panel shows/hides or resizes — but never re-enter
     // off our own restack writes, and never while a drag owns the position (F2).
     try {
@@ -202,5 +202,5 @@
     restackAll();
   });
 
-  window.OrwellSlots = { register, restackAll };
+  window.ApplicantSlots = { register, restackAll };
 })();

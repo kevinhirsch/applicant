@@ -37,7 +37,7 @@ def test_setup_page_resolves(client):
 
 @pytest.mark.integration
 def test_vendored_asset_resolves(client):
-    # A vendored Odysseus asset is served verbatim (FR-UI-1).
+    # A vendored Applicant asset is served verbatim (FR-UI-1).
     res = client.get("/static/style.css")
     assert res.status_code == 200
     assert len(res.content) > 0

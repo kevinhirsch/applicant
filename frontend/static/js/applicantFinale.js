@@ -1,12 +1,12 @@
-// Orwell finale surface (feature 0037 / C11) — the player-facing view of the staged jury vote,
-// over the engine's Vault-free /api/orwell/finale route. A self-contained, fail-open sibling to
-// orwellSocial.js: it shows ONLY while a finale is staging, renders ONLY what the route returns
+// Applicant finale surface (feature 0037 / C11) — the player-facing view of the staged jury vote,
+// over the engine's Vault-free /api/applicant/finale route. A self-contained, fail-open sibling to
+// applicantSocial.js: it shows ONLY while a finale is staging, renders ONLY what the route returns
 // (finalists, stage, and the votes revealed SO FAR — never a pre-reveal tally or the winner), and
 // never disturbs the chat if the engine is down. The binding finale decisions still flow through the
 // chat agent's submitDecision seam; this panel just visualizes the reveal and offers composer-prefill
-// shortcuts for the player's turn (mirroring how orwellSocial surfaces approaches).
+// shortcuts for the player's turn (mirroring how applicantSocial surfaces approaches).
 //
-//   • GET /api/orwell/finale → { finale: { stage, finalists[], asking, reveals[] } | null }
+//   • GET /api/applicant/finale → { finale: { stage, finalists[], asking, reveals[] } | null }
 //
 // Vault-free by construction (the engine withholds leans/tallies/manner/the pre-reveal winner);
 // fail-open everywhere. Composes the window kit (Lane F wave 2); modalManager is
@@ -18,7 +18,7 @@ import * as modalManager from "./modalManager.js";
 
   const POLL_FAST_MS = 5000;       // a finale is staging — poll briskly
   const POLL_SLOW_MS = 45000;      // no finale yet — a light heartbeat (E67/C18)
-  const ID = "orwell-finale";
+  const ID = "applicant-finale";
   const PLAYER_ID = "player";
   const ICON = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9H4.5a2.5 2.5 0 0 1 0-5H6'/><path d='M18 9h1.5a2.5 2.5 0 0 0 0-5H18'/><path d='M4 22h16'/><path d='M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22'/><path d='M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22'/><path d='M18 2H6v7a6 6 0 0 0 12 0V2Z'/></svg>";
   const STAGE_LABEL = { statements: "Opening statements", questions: "Jury questions", vote: "The jury votes", reveal: "The votes are read" };
@@ -58,7 +58,7 @@ import * as modalManager from "./modalManager.js";
   }
 
   // F-2 wave 2 (DWE audit): the panel COMPOSES the window kit — chrome, drag,
-  // minimize-to-dock, Escape, focus, and persistence come from OrwellWindow.
+  // minimize-to-dock, Escape, focus, and persistence come from ApplicantWindow.
   // This module keeps only the finale content: stage, finalists, reveals, and
   // the composer-prefill move buttons.
   let _win = null;
@@ -68,35 +68,35 @@ import * as modalManager from "./modalManager.js";
     const content = document.createElement("div");
     content.innerHTML = `
       <style>
-        #orwell-finale {
+        #applicant-finale {
           width: 240px; display: none;
           font-family: 'Fira Code', ui-monospace, monospace; font-size: .74rem;
         }
-        #orwell-finale .ofin-stage { opacity: .6; margin: 0 0 .4rem; letter-spacing: .03em; }
-        #orwell-finale .ofin-final {
+        #applicant-finale .ofin-stage { opacity: .6; margin: 0 0 .4rem; letter-spacing: .03em; }
+        #applicant-finale .ofin-final {
           display: flex; justify-content: space-between; gap: .4rem; margin-bottom: .5rem;
         }
-        #orwell-finale .ofin-fin {
+        #applicant-finale .ofin-fin {
           flex: 1; text-align: center; background: rgba(255,255,255,.05);
           border: 1px solid var(--border, #355a66); border-radius: 8px; padding: .3rem .25rem;
         }
-        #orwell-finale .ofin-fin b { display: block; color: var(--fg, #9cdef2); }
-        #orwell-finale .ofin-fin .ofin-tally { font-size: 1.1rem; opacity: .9; }
-        #orwell-finale .ofin-hd { opacity: .6; margin: .5rem 0 .25rem; letter-spacing: .03em; }
-        #orwell-finale .ofin-reveal { margin: .2rem 0; opacity: .9; }
-        #orwell-finale .ofin-reveal b { color: var(--fg, #9cdef2); }
-        #orwell-finale .ofin-move { margin-top: .5rem; }
-        #orwell-finale .ofin-btn {
+        #applicant-finale .ofin-fin b { display: block; color: var(--fg, #9cdef2); }
+        #applicant-finale .ofin-fin .ofin-tally { font-size: 1.1rem; opacity: .9; }
+        #applicant-finale .ofin-hd { opacity: .6; margin: .5rem 0 .25rem; letter-spacing: .03em; }
+        #applicant-finale .ofin-reveal { margin: .2rem 0; opacity: .9; }
+        #applicant-finale .ofin-reveal b { color: var(--fg, #9cdef2); }
+        #applicant-finale .ofin-move { margin-top: .5rem; }
+        #applicant-finale .ofin-btn {
           width: 100%; cursor: pointer; border-radius: 8px; padding: .3rem .5rem; margin: .2rem 0;
           background: rgba(255,255,255,.05); color: inherit; border: 1px solid var(--border, #355a66);
           font-family: inherit; font-size: .74rem; text-align: left;
         }
-        #orwell-finale .ofin-btn:hover { border-color: var(--accent, #e06c75); }
+        #applicant-finale .ofin-btn:hover { border-color: var(--accent, #e06c75); }
         /* E67/C26 + F3: phones — a full-width top sheet whose POSITION the slot
            engine's sheet host owns (no per-panel pins; two visible sheets stack,
            never overlap). */
         @media (max-width: 768px) {
-          #orwell-finale {
+          #applicant-finale {
             width: auto !important; max-width: none !important;
             border-radius: 0 0 12px 12px; border-left: none; border-right: none;
             max-height: 42vh; overflow: auto;
@@ -112,7 +112,7 @@ import * as modalManager from "./modalManager.js";
     // The kit owns chrome, drag, dock, Escape, focus, and the ONE position
     // system (the clamped slot offset "finale" — the F5 dual-persistence era is
     // over; wave 1 shipped the stale-key cleanup, retired here).
-    _win = window.OrwellWindowKit.create({
+    _win = window.ApplicantWindowKit.create({
       id: ID, title: "🏆 The Finale", icon: ICON,
       slot: "top-left", slotKey: "finale", role: "complementary",
       // An ambient HUD parks (minimize); the finale exists while one is staging,
@@ -200,12 +200,12 @@ import * as modalManager from "./modalManager.js";
   async function refresh() {
     let finale = null;
     try {
-      const data = await getJSON("/api/orwell/finale");
+      const data = await getJSON("/api/applicant/finale");
       finale = data && data.finale;
       _failures = 0;
     } catch (_) {
       _failures += 1; // engine down → fail open (hide) + back the poll off (E67)
-      if (window.OrwellReport) window.OrwellReport.fail("finale", "finale-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("finale", "finale-poll", _); // G11: fail open, never silent
       finale = null;
     }
     _staging = !!finale;
@@ -224,8 +224,8 @@ import * as modalManager from "./modalManager.js";
   }
 
   // Seam for the headless gate (F3 and the finale's own F-2 wave): build + show on demand.
-  window._orwellFinaleEnsure = () => { const el = ensureUI(); if (!isMinimized()) el.style.display = "block"; return true; };
-  window.orwellRefreshFinale = refresh;
-  window.addEventListener("orwell:gamechanged", refresh);
+  window._applicantFinaleEnsure = () => { const el = ensureUI(); if (!isMinimized()) el.style.display = "block"; return true; };
+  window.applicantRefreshFinale = refresh;
+  window.addEventListener("applicant:gamechanged", refresh);
   ready(start);
 })();

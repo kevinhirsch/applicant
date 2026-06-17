@@ -65,7 +65,7 @@ export function el(tag, attrs, children) {
 }
 
 /**
- * mountShell({ active }) — inject the shared Odysseus-styled nav into the
+ * mountShell({ active }) — inject the shared Applicant-styled nav into the
  * #applicant-nav container (if present), marking the active link. Surfaces that
  * predate the shared nav simply omit the container and render unchanged.
  */

@@ -3,8 +3,8 @@
 
 // ── Key constants ──
 export const KEYS = {
-  THEME: 'orwell-theme',
-  TOGGLES: 'orwell-toggles',
+  THEME: 'applicant-theme',
+  TOGGLES: 'applicant-toggles',
   SIDEBAR_COLLAPSED: 'sidebar-collapsed',
   SIDEBAR_WIDTH: 'sidebar-width',
   SIDEBAR_SIDE: 'sidebar-side',
@@ -13,19 +13,19 @@ export const KEYS = {
   COMPARE_CHAT: 'compare-continue-chat',
   COMPARE_BLIND: 'compare-blind',
   COMPARE_RANDOM: 'compare-randomize',
-  MODELS_EXPANDED: 'orwell-model-expanded',
-  MODEL_ENDPOINTS: 'orwell-model-endpoints',
-  MODEL_SELECTED: 'orwell-selected-model',
-  SORT_ORDER: 'orwell-sessions-sort',
-  CHAT_SEARCH_SCOPE: 'orwell-search-scope',
-  INCOGNITO: 'orwell-incognito',
-  RAG_ACTIVE: 'orwell-rag-active',
-  MCP_ACTIVE: 'orwell-mcp-active',
+  MODELS_EXPANDED: 'applicant-model-expanded',
+  MODEL_ENDPOINTS: 'applicant-model-endpoints',
+  MODEL_SELECTED: 'applicant-selected-model',
+  SORT_ORDER: 'applicant-sessions-sort',
+  CHAT_SEARCH_SCOPE: 'applicant-search-scope',
+  INCOGNITO: 'applicant-incognito',
+  RAG_ACTIVE: 'applicant-rag-active',
+  MCP_ACTIVE: 'applicant-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',
-  DENSITY: 'orwell-density',
-  WORKSPACE: 'orwell-workspace',
-  PLAN: 'orwell-plan'
+  DENSITY: 'applicant-density',
+  WORKSPACE: 'applicant-workspace',
+  PLAN: 'applicant-plan'
 };
 
 /**

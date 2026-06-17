@@ -119,9 +119,9 @@ else
   echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
 fi
 
-log "2/5 Pulling base images + rebuilding the api from synced source"
+log "2/5 Pulling base images + rebuilding local images (front-door UI + engine api) from synced source"
 run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
-run docker compose -f "${COMPOSE_FILE}" build api
+run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
 
 log "3/5 Running database migrations"
 run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head

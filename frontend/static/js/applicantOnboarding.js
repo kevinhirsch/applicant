@@ -1,4 +1,4 @@
-// Orwell onboarding — the casting interview lives in the CHAT (feature 0050).
+// Applicant onboarding — the casting interview lives in the CHAT (feature 0050).
 //
 // There is NO data-entry modal: character creation is the game's first scene. Pre-game,
 // the server frames every chat turn as the producer's casting interview (the engine's
@@ -19,7 +19,7 @@
 (function () {
   "use strict";
 
-  const SEAT_TAKEN_KEY = "orwell-interview-open"; // sessionStorage: one fresh-session+prefill per interview
+  const SEAT_TAKEN_KEY = "applicant-interview-open"; // sessionStorage: one fresh-session+prefill per interview
 
   const ready = (fn) =>
     document.readyState === "loading"
@@ -27,47 +27,47 @@
       : fn();
 
   async function fetchState() {
-    const r = await fetch("/api/orwell/state", { credentials: "same-origin" });
+    const r = await fetch("/api/applicant/state", { credentials: "same-origin" });
     if (!r.ok) throw new Error("state " + r.status);
     return r.json();
   }
 
   function buildOverlay() {
     const el = document.createElement("div");
-    el.id = "orwell-onboarding";
+    el.id = "applicant-onboarding";
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-modal", "true");
     el.setAttribute("aria-label", "Big Brother production notice");
     el.innerHTML = `
       <style>
-        #orwell-onboarding {
+        #applicant-onboarding {
           position: fixed; inset: 0; z-index: 99999;
           display: flex; align-items: center; justify-content: center;
           background: color-mix(in srgb, var(--bg, #282c34) 88%, black);
           font-family: 'Fira Code', ui-monospace, monospace;
         }
-        #orwell-onboarding .ob-card {
+        #applicant-onboarding .ob-card {
           width: 420px; max-width: 92vw; max-height: 90vh; overflow: auto;
           background: var(--panel, #111); color: var(--fg, #9cdef2);
           border: 1px solid var(--border, #355a66); border-radius: 12px;
           padding: 1.6rem 1.6rem 1.4rem; box-shadow: 0 20px 60px rgba(0,0,0,.45);
         }
-        #orwell-onboarding h1 {
+        #applicant-onboarding h1 {
           font-size: 1.5rem; font-weight: 600; letter-spacing: .04em; margin: 0 0 .25rem;
           background: linear-gradient(135deg, var(--brand-color, var(--red, #e06c75)),
             color-mix(in srgb, var(--brand-color, var(--red, #e06c75)) 60%, var(--fg, #fff)));
           -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
         }
-        #orwell-onboarding .ob-hold { text-align: center; padding: .4rem 0 .2rem; }
-        #orwell-onboarding .ob-hold .ob-hold-sub { opacity: .7; font-size: .82rem; margin: .5rem 0 0; line-height: 1.5; }
-        #orwell-onboarding .ob-hold-actions { display: flex; gap: .6rem; justify-content: center; margin-top: 1.1rem; flex-wrap: wrap; }
-        #orwell-onboarding .ob-btn {
+        #applicant-onboarding .ob-hold { text-align: center; padding: .4rem 0 .2rem; }
+        #applicant-onboarding .ob-hold .ob-hold-sub { opacity: .7; font-size: .82rem; margin: .5rem 0 0; line-height: 1.5; }
+        #applicant-onboarding .ob-hold-actions { display: flex; gap: .6rem; justify-content: center; margin-top: 1.1rem; flex-wrap: wrap; }
+        #applicant-onboarding .ob-btn {
           font: inherit; font-size: .82rem; padding: .45rem .9rem; border-radius: 8px; cursor: pointer;
           background: transparent; color: var(--fg, #9cdef2);
           border: 1px solid var(--border, #355a66);
         }
-        #orwell-onboarding .ob-btn:hover { border-color: var(--fg, #9cdef2); }
-        #orwell-onboarding .ob-btn-primary {
+        #applicant-onboarding .ob-btn:hover { border-color: var(--fg, #9cdef2); }
+        #applicant-onboarding .ob-btn-primary {
           background: var(--brand-color, var(--red, #e06c75)); color: var(--bg, #111);
           border-color: transparent; font-weight: 600;
         }
@@ -114,7 +114,7 @@
   // and stays dismissed until the next page load (route() runs on load only), so an
   // operator mid-configuration is never re-blocked by the poller.
   function mountHolding(title, sub, readyAgain, actions) {
-    if (document.getElementById("orwell-onboarding")) return;
+    if (document.getElementById("applicant-onboarding")) return;
     const el = buildOverlay();
     const card = el.querySelector(".ob-card");
     card.setAttribute("tabindex", "-1");
@@ -171,7 +171,7 @@
   }
 
   // Seam for the headless browser gate: mount the dark-house holding card on demand.
-  window._orwellOnboardingMount = function () {
+  window._applicantOnboardingMount = function () {
     mountHolding("The house is dark",
       "Big Brother will return. The game engine isn't reachable right now — this screen will clear the moment the feeds come back.",
       async () => { try { return !!(await fetchState()); } catch (_) { return false; } });
@@ -242,7 +242,7 @@
   // session so the dead season's transcript never rides as narrator context (F7's
   // page-load-only fence, now event-driven too). The seat marker resets so a future
   // pre-game state runs the casting flow again.
-  window._orwellFreshSession = () => {
+  window._applicantFreshSession = () => {
     try { sessionStorage.removeItem(SEAT_TAKEN_KEY); } catch (_) {}
     try {
       const nb = document.getElementById("sidebar-new-chat-btn") || document.getElementById("rail-new-session");
@@ -275,7 +275,7 @@
       takeASeat();
     } catch (_) {
       // Engine unreachable: on the game build that's a dark house, not a silent skip (F5).
-      if (gameBuild) window._orwellOnboardingMount();
+      if (gameBuild) window._applicantOnboardingMount();
     }
   }
 

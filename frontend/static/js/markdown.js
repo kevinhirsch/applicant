@@ -509,16 +509,16 @@ export function mdToHtml(src, opts) {
   // Feature 0051 — inline cast portraits / generated images. Upgrade markdown image
   // syntax ![alt](url) to a real <img> ONLY for SAME-ORIGIN, app-served image paths
   // (the portrait route + the generated-image route). This is the augment-not-replace
-  // hook: when the game master introduces the cast it can drop ![Name](/api/orwell/
+  // hook: when the game master introduces the cast it can drop ![Name](/api/applicant/
   // portrait/<id>) and the face renders in the transcript. The path allowlist keeps it
   // from being a general image-injection vector; a non-matching ![..](..) falls through
   // to the link handler below (becomes a plain link), so play is unaffected when absent.
   // <img> survives the HTML sanitizer (onerror stripped, dangerous schemes neutralized).
-  s = s.replace(/!\[([^\]]*)\]\((\/api\/(?:orwell\/portrait|generated-image)\/[A-Za-z0-9_./-]+)\)/g,
+  s = s.replace(/!\[([^\]]*)\]\((\/api\/(?:applicant\/portrait|generated-image)\/[A-Za-z0-9_./-]+)\)/g,
     (match, alt, url) => {
       const a = escapeHtml(alt || 'Houseguest');
       const u = escapeHtml(url);
-      return `<img class="orwell-portrait-inline" src="${u}" alt="${a}" title="${a}" loading="lazy" `
+      return `<img class="applicant-portrait-inline" src="${u}" alt="${a}" title="${a}" loading="lazy" `
         + `style="max-width:160px;border-radius:10px;border:1px solid var(--border,#355a66);margin:.25rem .35rem .25rem 0;vertical-align:middle">`;
     });
 
@@ -571,7 +571,7 @@ export function mdToHtml(src, opts) {
   // so the next line's blanket escape doesn't turn it back into text. Sanitized like the
   // other preserved fragments (onerror stripped, scheme-checked); the src was already
   // pinned to the same-origin portrait/generated-image routes by the upgrade regex.
-  s = s.replace(/<img class="orwell-portrait-inline"[^>]*>/gi, (match) => {
+  s = s.replace(/<img class="applicant-portrait-inline"[^>]*>/gi, (match) => {
     const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
     allowedHtmlBlocks.push(sanitizeAllowedHtml(match));
     return placeholder;
@@ -801,11 +801,11 @@ export default markdownModule;
 
 // Mermaid is loaded async so it cannot delay the app shell.
 function initMermaid() {
-  if (!window.mermaid || window.__orwellMermaidReady) return;
+  if (!window.mermaid || window.__applicantMermaidReady) return;
   window.mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
-  window.__orwellMermaidReady = true;
+  window.__applicantMermaidReady = true;
 }
-window.orwellInitMermaid = initMermaid;
+window.applicantInitMermaid = initMermaid;
 initMermaid();
 
 // Persist which thinking sections were expanded across page refreshes.
@@ -813,7 +813,7 @@ initMermaid();
 // the inner text content instead — same content reproduces the same hash on
 // reload. LocalStorage holds a Set of expanded hashes; we observe the chat
 // history and re-expand matching sections as they're inserted.
-const THINK_EXPANDED_KEY = 'orwell-thinking-expanded';
+const THINK_EXPANDED_KEY = 'applicant-thinking-expanded';
 function _loadExpandedSet() {
   try { return new Set(JSON.parse(localStorage.getItem(THINK_EXPANDED_KEY) || '[]')); }
   catch { return new Set(); }

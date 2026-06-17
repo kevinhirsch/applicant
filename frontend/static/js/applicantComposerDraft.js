@@ -1,11 +1,11 @@
-// Orwell composer draft (Lane G17 — refresh-persistence audit F3/F5/F7) — the player's
+// Applicant composer draft (Lane G17 — refresh-persistence audit F3/F5/F7) — the player's
 // typed turn survives a refresh.
 //
 // The G5 audit's literal commission ("text will prefill, I will refresh, and the text
 // will not persist") pinned the cause: NO module persisted the composer. This one does —
 // ONE session-scoped record per user:
 //
-//     orwell-composer-draft:<user>  →  { text, drMode, pendingApproachId }
+//     applicant-composer-draft:<user>  →  { text, drMode, pendingApproachId }
 //
 //   • text              — the composer's live value (M1/M2/M9/M10/M17: the player's own
 //                         words and every prefill ride the same record).
@@ -17,19 +17,19 @@
 //                         cannot engage, the text is WITHHELD (privacy over convenience)
 //                         and the record kept intact for a boot that can.
 //   • pendingApproachId — F7: an approach prefill keeps its pending chip accent and its
-//                         send-dismisses-the-chip contract (the orwellSocial.js seam).
+//                         send-dismisses-the-chip contract (the applicantSocial.js seam).
 //
 // Written debounced on composer input (immediately when the box empties — a sent turn
 // must never be resurrectable by a refresh), and immediately when DR mode or the pending
-// approach change (the orwell:drmode / orwell:approachpending hooks). Cleared on send
-// (chat.js calls _orwellComposerDraftClear where the send path empties the composer).
+// approach change (the applicant:drmode / applicant:approachpending hooks). Cleared on send
+// (chat.js calls _applicantComposerDraftClear where the send path empties the composer).
 // sessionStorage on purpose (the M21 retro-dismissal precedent): a session draft for the
 // tab the player is playing in, never a forever draft.
 (function () {
   "use strict";
 
   // E71 pattern: scoped per user, so one account's draft never bleeds into another's.
-  const KEY = "orwell-composer-draft:" +
+  const KEY = "applicant-composer-draft:" +
     ((document.body && document.body.dataset.user) || "");
   const DEBOUNCE_MS = 250;
 
@@ -45,10 +45,10 @@
   function liveRecord() {
     const b = box();
     let pending = null;
-    try { pending = window._orwellPendingApproach ? window._orwellPendingApproach.get() : null; } catch (_) {}
+    try { pending = window._applicantPendingApproach ? window._applicantPendingApproach.get() : null; } catch (_) {}
     return {
       text: b ? b.value : "",
-      drMode: !!(window._orwellDiaryRoomActive && window._orwellDiaryRoomActive()),
+      drMode: !!(window._applicantDiaryRoomActive && window._applicantDiaryRoomActive()),
       pendingApproachId: pending == null ? null : pending,
     };
   }
@@ -99,17 +99,17 @@
       // composer whose send goes to the house. The record stays for a safer boot.
       if (rec.drMode) {
         let entered = false;
-        try { entered = !!(window._orwellOpenDiaryRoom && window._orwellOpenDiaryRoom()); } catch (_) {}
-        if (!entered || !(window._orwellDiaryRoomActive && window._orwellDiaryRoomActive())) return;
+        try { entered = !!(window._applicantOpenDiaryRoom && window._applicantOpenDiaryRoom()); } catch (_) {}
+        if (!entered || !(window._applicantDiaryRoomActive && window._applicantDiaryRoomActive())) return;
       }
       if (typeof rec.text === "string" && rec.text) {
         b.value = rec.text;
         b.dispatchEvent(new Event("input", { bubbles: true })); // autoresize + listeners hear it
       }
       // F7: the approach chip's pending accent + its send-dismisses contract survive too.
-      if (rec.pendingApproachId != null && window._orwellPendingApproach &&
-          window._orwellPendingApproach.restore) {
-        window._orwellPendingApproach.restore(rec.pendingApproachId);
+      if (rec.pendingApproachId != null && window._applicantPendingApproach &&
+          window._applicantPendingApproach.restore) {
+        window._applicantPendingApproach.restore(rec.pendingApproachId);
       }
       restored = true;
     } finally {
@@ -135,38 +135,38 @@
 
   function wire() {
     const b = box();
-    if (b && !b._orwellDraftWired) {
-      b._orwellDraftWired = true;
+    if (b && !b._applicantDraftWired) {
+      b._applicantDraftWired = true;
       b.addEventListener("input", (e) => {
         if (b.value) { saveSoon(); return; } // typing (and restored/prefilled text) debounces
         // An empty box: only the PLAYER's own clear (a trusted event) writes through —
         // the inherited boot wipes the composer programmatically (chatRenderer's
         // showWelcomeScreen reset, init.js's fresh-workspace wipe) and those must not
         // eat a draft awaiting its restore. The real send paths clear through the
-        // explicit seam instead (chat.js calls _orwellComposerDraftClear; the Diary
-        // Room's send normalizes via its orwell:drmode exit notify).
+        // explicit seam instead (chat.js calls _applicantComposerDraftClear; the Diary
+        // Room's send normalizes via its applicant:drmode exit notify).
         if (e.isTrusted) saveNow();
       });
     }
     const form = document.getElementById("chat-form") || (b && b.form);
-    if (form && !form._orwellDraftWired) {
-      form._orwellDraftWired = true;
+    if (form && !form._applicantDraftWired) {
+      form._applicantDraftWired = true;
       // Flush AFTER the submit handlers ran: a real send leaves an empty box (the
       // record drops); a stop-click leaves the typed draft in place (it survives).
       form.addEventListener("submit", () => { setTimeout(saveNow, 0); });
     }
     // The two non-input legs of the record write through immediately on change.
-    window.addEventListener("orwell:drmode", saveNow);
-    window.addEventListener("orwell:approachpending", saveNow);
+    window.addEventListener("applicant:drmode", saveNow);
+    window.addEventListener("applicant:approachpending", saveNow);
     // A new season is a clean slate (the E71/G15 precedent): a dead game's draft must
     // not ride into the next casting interview.
-    window.addEventListener("orwell:gamechanged", clearDraft);
+    window.addEventListener("applicant:gamechanged", clearDraft);
   }
 
   // chat.js calls this where the send path empties the composer (clear on send).
-  window._orwellComposerDraftClear = clearDraft;
+  window._applicantComposerDraftClear = clearDraft;
   // Test seam (the headless browser gate): read the stored record.
-  window._orwellComposerDraftPeek = load;
+  window._applicantComposerDraftPeek = load;
 
   ready(() => {
     wire();

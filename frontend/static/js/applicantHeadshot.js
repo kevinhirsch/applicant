@@ -1,19 +1,19 @@
-// Orwell headshot studio (features G26/G27/G28) — the player's OWN portrait + account avatar.
+// Applicant headshot studio (features G26/G27/G28) — the player's OWN portrait + account avatar.
 //
 // Make your houseguest's portrait (and your account profile pic) from a photo of yourself:
 //   • exact  — your photo, cropped to your face, used as-is (no AI);
 //   • studio — AI recreates you in the house style; you GENERATE 3 OPTIONS AT A TIME and pick
 //              one, regenerate for a fresh set (indefinitely), or upload a different photo.
 // Finalizing sets it as your houseguest portrait AND your account avatar (the circle updates at
-// once, via `orwell:avatarchanged`).
+// once, via `applicant:avatarchanged`).
 //
-// The STUDIO (`window.OrwellHeadshotStudio.mount(bodyEl)`) is reusable — the pre-game casting
+// The STUDIO (`window.ApplicantHeadshotStudio.mount(bodyEl)`) is reusable — the pre-game casting
 // card mounts it (game-build, state.started===false), and Settings → Account mounts the same
 // thing (G28). Vault-safe: only the player's own image, never game state. Fail-open.
 (function () {
   "use strict";
 
-  const ID = "orwell-headshot";
+  const ID = "applicant-headshot";
   const ready = (fn) =>
     document.readyState === "loading"
       ? document.addEventListener("DOMContentLoaded", fn, { once: true })
@@ -25,9 +25,9 @@
   }
 
   function ensureCss() {
-    if (document.getElementById("orwell-headshot-css")) return;
+    if (document.getElementById("applicant-headshot-css")) return;
     const s = document.createElement("style");
-    s.id = "orwell-headshot-css";
+    s.id = "applicant-headshot-css";
     s.textContent = `
       #${ID} { margin: 0 auto 8px; max-width: 760px; width: 100%;
         border: 1px solid var(--border, #355a66); border-radius: 10px;
@@ -86,20 +86,20 @@
     const msg = (m) => { _msg = m || ""; };
     const setBusy = (b) => { st.busy = b; render(); };
     const summary = (t) => { try { opts.onSummary && opts.onSummary(t); } catch (_) {} };
-    function avatarChanged() { try { window.dispatchEvent(new CustomEvent("orwell:avatarchanged")); } catch (_) {} }
+    function avatarChanged() { try { window.dispatchEvent(new CustomEvent("applicant:avatarchanged")); } catch (_) {} }
 
     async function upload(mode) {
       if (!st.file) return false;
       setBusy(true);
       try {
         const fd = new FormData(); fd.append("file", st.file); fd.append("mode", mode);
-        const r = await fetch("/api/orwell/portrait/intake", { method: "POST", credentials: "same-origin", body: fd });
+        const r = await fetch("/api/applicant/portrait/intake", { method: "POST", credentials: "same-origin", body: fd });
         const d = r.ok ? await r.json() : null;
         st.busy = false;
         if (!d || !d.ok) { msg(d && d.error ? d.error : "That image couldn't be used — try another."); render(); return false; }
         return true;
       } catch (e) {
-        if (window.OrwellReport) window.OrwellReport.fail("headshot", "upload", e);
+        if (window.ApplicantReport) window.ApplicantReport.fail("headshot", "upload", e);
         st.busy = false; msg("Upload failed — the photo service is offline."); render(); return false;
       }
     }
@@ -113,13 +113,13 @@
       if (st.file) { const ok = await upload("reference"); if (!ok) return; st.file = null; }
       setBusy(true); msg("Generating 3 studio options…");
       try {
-        const r = await fetch("/api/orwell/portrait/studio/generate", { method: "POST", credentials: "same-origin" });
+        const r = await fetch("/api/applicant/portrait/studio/generate", { method: "POST", credentials: "same-origin" });
         const d = r.ok ? await r.json() : null;
         st.busy = false;
         if (d && d.generated > 0) { st.candidates = d.candidates; st.selected = null; msg("Pick your favorite — or generate 3 more."); }
         else { msg((d && d.reason) || "Couldn't generate options — check the image model in Settings."); }
       } catch (e) {
-        if (window.OrwellReport) window.OrwellReport.fail("headshot", "studio", e);
+        if (window.ApplicantReport) window.ApplicantReport.fail("headshot", "studio", e);
         st.busy = false; msg("The photo service is offline right now.");
       }
       render();
@@ -129,7 +129,7 @@
       if (st.selected === null || st.selected === undefined) return;
       setBusy(true);
       try {
-        const r = await fetch("/api/orwell/portrait/studio/finalize", {
+        const r = await fetch("/api/applicant/portrait/studio/finalize", {
           method: "POST", credentials: "same-origin",
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index: st.selected }) });
         const d = r.ok ? await r.json() : null;
@@ -140,21 +140,21 @@
     }
 
     async function removeAll() {
-      try { await fetch("/api/orwell/portrait/intake", { method: "DELETE", credentials: "same-origin" }); } catch (_) {}
+      try { await fetch("/api/applicant/portrait/intake", { method: "DELETE", credentials: "same-origin" }); } catch (_) {}
       st.file = null; st.fileUrl = null; st.candidates = []; st.selected = null;
       avatarChanged(); msg("Removed."); await refreshStatus();
     }
 
     async function refreshStatus() {
-      status = (await jget("/api/orwell/portrait/intake")) || status;
-      const lib = await jget("/api/orwell/portrait/library");
+      status = (await jget("/api/applicant/portrait/intake")) || status;
+      const lib = await jget("/api/applicant/portrait/library");
       st.library = (lib && lib.headshots) || [];
       // G32: a generated-but-unpicked photoset must survive a refresh/new session. The
       // candidate images persist server-side (intake reports the count) — rebuild the picker
       // from that count so the options reappear, instead of dropping to the upload chooser.
       if (!status.finalized && (status.candidates || 0) > 0 && !st.candidates.length) {
         st.candidates = Array.from({ length: status.candidates },
-          (_, i) => ({ index: i, ref: "/api/orwell/portrait/studio/candidate/" + i }));
+          (_, i) => ({ index: i, ref: "/api/applicant/portrait/studio/candidate/" + i }));
       }
       render();
     }
@@ -163,7 +163,7 @@
     async function selectFromLibrary(id) {
       setBusy(true);
       try {
-        const r = await fetch("/api/orwell/portrait/library/select", {
+        const r = await fetch("/api/applicant/portrait/library/select", {
           method: "POST", credentials: "same-origin",
           headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
         st.busy = false;
@@ -172,7 +172,7 @@
       } catch (e) { st.busy = false; msg("The photo service is offline right now."); render(); }
     }
     async function deleteFromLibrary(id) {
-      try { await fetch("/api/orwell/portrait/library/" + encodeURIComponent(id), { method: "DELETE", credentials: "same-origin" }); } catch (_) {}
+      try { await fetch("/api/applicant/portrait/library/" + encodeURIComponent(id), { method: "DELETE", credentials: "same-origin" }); } catch (_) {}
       await refreshStatus();
     }
 
@@ -202,7 +202,7 @@
       if (status.finalized) {
         body.innerHTML = lib + `
           <div class="hs-row">
-            <div class="hs-preview" style="background-image:url('/api/orwell/avatar?t=${Date.now()}')"></div>
+            <div class="hs-preview" style="background-image:url('/api/applicant/avatar?t=${Date.now()}')"></div>
             <div class="hs-opts"><div>Your headshot is set — it's your houseguest portrait and your profile pic.</div>
               <div class="hs-actions">
                 <button type="button" class="hs-btn hs-btn-ghost" id="hs-redo">Make another</button>
@@ -263,7 +263,7 @@
   }
 
   // expose the reusable studio for Settings → Account (G28)
-  window.OrwellHeadshotStudio = { mount: buildStudio };
+  window.ApplicantHeadshotStudio = { mount: buildStudio };
 
   // ── the pre-game casting card (collapsible host for the studio) ─────────────
   function build() {
@@ -302,10 +302,10 @@
   async function route() {
     const gameBuild = document.body && document.body.hasAttribute("data-game-build");
     if (!gameBuild) return;
-    const st = await jget("/api/orwell/state");
+    const st = await jget("/api/applicant/state");
     if (st && st.started === false) mount(); else unmount();
   }
 
-  window.addEventListener("orwell:gamechanged", route);
+  window.addEventListener("applicant:gamechanged", route);
   ready(route);
 })();

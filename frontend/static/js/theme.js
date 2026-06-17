@@ -12,7 +12,7 @@ export const THEMES = {
   // ── 0052 (ruling #13): the HOUSE themes lead the picker — the game's identity,
   //    first in insertion order. Each is a full token set in the preset shape; the
   //    `house: true` flag drives the frosted-chrome + micro-motion treatment
-  //    (orwellHouseThemes.css) — frost never on the chat text column, motion gated
+  //    (applicantHouseThemes.css) — frost never on the chat text column, motion gated
   //    by prefers-reduced-motion (never the frost), AA contrast on fg/bg.
   'the-feed':   { bg:'#050a05', fg:'#9fe8a8', panel:'#0a140b', border:'#1f4a26', red:'#ff3b30', house: true },
   'telescreen': { bg:'#101418', fg:'#d7e9ee', panel:'#151c22', border:'#2a3e4a', red:'#56c8e8', house: true },
@@ -45,8 +45,8 @@ export const THEMES = {
 for (const [k, v] of Object.entries(THEMES)) v._key = k;
 
 const DEFAULT_THEME = 'dark';
-const LS_KEY = 'orwell-theme';
-const CUSTOM_THEMES_KEY = 'orwell-custom-themes';
+const LS_KEY = 'applicant-theme';
+const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 
 const FONT_MAP = {
   mono: "'Fira Code', monospace",
@@ -196,7 +196,7 @@ const ADV_KEYS = [
   { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
   { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
   { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Orwell Logo',    group: 'Sidebar' },
+  { key: 'brandColor',         css: '--brand-color',       label: 'Applicant Logo',    group: 'Sidebar' },
   { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
   { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
   { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
@@ -301,7 +301,7 @@ export function applyColors(colors) {
   _updateFavicon(colors.red || '#e06c75');
 
   // 0052: the HOUSE treatment — frosted backdrop-blur chrome + per-theme
-  // micro-motion (orwellHouseThemes.css keys off these body classes). Frost
+  // micro-motion (applicantHouseThemes.css keys off these body classes). Frost
   // never touches the chat text column; reduced-motion strips motion only.
   try {
     const body = document.body;
@@ -1292,7 +1292,7 @@ export function initThemeUI() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'orwell_' + (obj.name || 'theme') + '.json';
+      a.download = 'applicant_' + (obj.name || 'theme') + '.json';
       a.click();
       URL.revokeObjectURL(url);
       newExp.innerHTML = '&#x2713; Downloaded!';

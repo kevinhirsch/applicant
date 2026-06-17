@@ -3,17 +3,20 @@
 # Applicant — one-liner installer (FR-INSTALL-1/3, NFR-ZEROCLI-1).
 #
 # Proxmox-helper-script style: a single curl-pipe-bash bootstrap that provisions
-# the whole Docker Compose stack (api + postgres + searxng) with sane, EDITABLE
-# defaults and zero CLI knowledge required. Typical usage:
+# the whole Docker Compose stack (front-door UI + engine api + postgres + searxng
+# + chromadb + ntfy) with sane, EDITABLE defaults and zero CLI knowledge required.
+# The user opens the front-door UI on ${APP_PORT}; the engine api is internal.
+# Typical usage:
 #
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/install.sh)" -- --apply
 #
 # What --apply does (idempotent — safe to re-run; data volumes are never deleted):
 #   1. Preflight: require docker + docker compose v2.
 #   2. Validate the production compose file.
-#   3. Bring up Postgres + SearXNG + the API (detached).
-#   4. Wait for Postgres to be healthy, then run Alembic migrations.
-#   5. Print where the app is reachable; OOBE finishes setup in-browser (no CLI).
+#   3. Bring up the stack (front-door UI + api + postgres + searxng + chromadb
+#      + ntfy, detached).
+#   4. Wait for Postgres to be healthy, then run the engine's Alembic migrations.
+#   5. Print where the UI is reachable; OOBE finishes setup in-browser (no CLI).
 #
 # VM / host path (FR-INSTALL-1): on a fresh Proxmox VM or bare host, set the
 # editable defaults below via the environment before running, e.g.:
@@ -98,10 +101,12 @@ EOF
 fi
 
 # --- 3. Bring up the stack --------------------------------------------------
-log "Building the api image locally (not published to any registry)…"
-run docker compose -f "${COMPOSE_FILE}" build api
+# Build BOTH locally-built images (neither is published to a registry): the
+# front-door UI (built from ../workspace) and the engine api.
+log "Building the local images (front-door UI + engine api)…"
+run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
 
-log "Bringing up the Applicant stack (postgres + searxng + api, detached)…"
+log "Bringing up the Applicant stack (UI + api + postgres + searxng + chromadb + ntfy, detached)…"
 run docker compose -f "${COMPOSE_FILE}" up -d --build
 
 # --- 4. Run database migrations (after Postgres is healthy) -----------------
@@ -112,7 +117,7 @@ run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
 # --- 5. Done ----------------------------------------------------------------
 if [[ "${APPLY}" -eq 1 ]]; then
-  log "Install complete. Open ${APP_URL} and finish the OOBE wizard (no CLI, NFR-ZEROCLI-1)."
+  log "Install complete. Open the Applicant UI at ${APP_URL} and finish setup in-browser (no CLI, NFR-ZEROCLI-1)."
 else
   log "DRY RUN complete (no --apply). Re-run with --apply to provision the stack."
 fi

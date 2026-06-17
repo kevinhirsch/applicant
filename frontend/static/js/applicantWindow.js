@@ -1,4 +1,4 @@
-// OrwellWindow — THE window kit (Lane F / F-1; DWE audit Phase 2).
+// ApplicantWindow — THE window kit (Lane F / F-1; DWE audit Phase 2).
 //
 // One base class + one CSS family (.ow-window / .ow-titlebar / .ow-controls /
 // .ow-body + state modifiers) that every panel, modal, and popover composes —
@@ -6,7 +6,7 @@
 // (3 drag engines, 7 geometry-key schemes, 6 chrome builders, 5+ Escape paths,
 // 2 z escalators). The kit OWNS, in one place:
 //
-//   • registration: OrwellSlots (placement) + modalManager (minimize/dock chip)
+//   • registration: ApplicantSlots (placement) + modalManager (minimize/dock chip)
 //   • drag (windowDrag) with an EXPLICIT clamp — never trust cursor physics
 //   • one z-authority for the window band (modals stay above; banner above all)
 //     + click-to-front + a visible focused state (audit F9)
@@ -125,13 +125,13 @@ function flyTargetRect() {
 // Parked means parked: modalManager's minimized registry is in-memory, so a
 // refresh used to snap every parked window back open (and lose its dock
 // chip). The kit persists a per-window parked flag — keyed per user,
-// mirroring the slot-offset scheme ('orwell-slot-offset:<key>:<user>') —
+// mirroring the slot-offset scheme ('applicant-slot-offset:<key>:<user>') —
 // set on minimize(), cleared on a dock restore and on close/teardown.
 // open() consults it and mounts a previously-parked window DIRECTLY into
 // the dock (chip rendered, panel hidden, no open animation — no flash, no
 // raise, no focus steal).
 function parkedKey(id) {
-  return 'orwell-win-parked:' + id + ':' + ((document.body && document.body.dataset.user) || '');
+  return 'applicant-win-parked:' + id + ':' + ((document.body && document.body.dataset.user) || '');
 }
 function loadParked(id) {
   try { return localStorage.getItem(parkedKey(id)) === '1'; } catch (_) { return false; }
@@ -143,7 +143,7 @@ function saveParked(id, on) {
   } catch (_) {}
 }
 
-export class OrwellWindow {
+export class ApplicantWindow {
   /**
    * opts: { id, title, icon, slot='top-right', slotKey=null, role='complementary',
    *         draggable=true, minimizable=true, closable=true, resizable=false,
@@ -152,7 +152,7 @@ export class OrwellWindow {
   constructor(opts) {
     this.o = Object.assign({ slot: 'top-right', role: 'complementary',
       draggable: true, minimizable: true, closable: true, resizable: false, focus: false }, opts);
-    if (!this.o.id || !this.o.title) throw new Error('OrwellWindow needs id + title');
+    if (!this.o.id || !this.o.title) throw new Error('ApplicantWindow needs id + title');
     this.ac = new AbortController();
     this.opener = null;
     this.el = null;
@@ -232,7 +232,7 @@ export class OrwellWindow {
     const dirs = { ArrowLeft: [-STEP, 0], ArrowRight: [STEP, 0], ArrowUp: [0, -STEP], ArrowDown: [0, STEP] };
     if (e.key === 'Home' && this._slot && this.o.slotKey) {
       e.preventDefault();
-      try { localStorage.removeItem('orwell-slot-offset:' + this.o.slotKey + ':' + ((document.body && document.body.dataset.user) || '')); } catch (_) {}
+      try { localStorage.removeItem('applicant-slot-offset:' + this.o.slotKey + ':' + ((document.body && document.body.dataset.user) || '')); } catch (_) {}
       this._slot.restack();
       return;
     }
@@ -257,8 +257,8 @@ export class OrwellWindow {
     this.opener = opener || document.activeElement || null;
     const el = this._build();
     document.body.appendChild(el);
-    if (window.OrwellSlots) {
-      this._slot = window.OrwellSlots.register(el, this.o.slot,
+    if (window.ApplicantSlots) {
+      this._slot = window.ApplicantSlots.register(el, this.o.slot,
         { key: this.o.slotKey || null, draggable: this.o.draggable });
     }
     Modals.register(this.o.id, {
@@ -403,8 +403,8 @@ if (document.readyState === "loading") {
 }
 
 // The seam every consumer + the headless gate use.
-window.OrwellWindowKit = {
-  create: (opts) => new OrwellWindow(opts),
+window.ApplicantWindowKit = {
+  create: (opts) => new ApplicantWindow(opts),
   dismissTop,
   stackIds,
 };

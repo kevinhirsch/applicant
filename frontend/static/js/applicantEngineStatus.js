@@ -1,7 +1,7 @@
-// Orwell engine-status banner — VISIBLE error reporting when the game engine has a problem.
+// Applicant engine-status banner — VISIBLE error reporting when the game engine has a problem.
 // The in-character "live feeds are down" chat line keeps players in the show, but the operator (and
 // a confused player) needs an honest, out-of-character signal that something is actually broken. This
-// is that signal: a small fixed banner driven by /api/orwell/health with two severities:
+// is that signal: a small fixed banner driven by /api/applicant/health with two severities:
 //   • RED   — the engine is unreachable (connection refused / timeout / wrong URL);
 //   • AMBER — the engine is up but a recent tool call FAILED (`lastError`: a technical problem like a
 //     corrupt-save 500 or a failing action), naming the tool + reason so it's actionable.
@@ -10,7 +10,7 @@
   "use strict";
 
   const POLL_MS = 15000;
-  const ID = "orwell-engine-status";
+  const ID = "applicant-engine-status";
   const ready = (fn) =>
     document.readyState === "loading"
       ? document.addEventListener("DOMContentLoaded", fn, { once: true })
@@ -75,7 +75,7 @@
 
   async function refresh() {
     try {
-      const r = await fetch("/api/orwell/health", { credentials: "same-origin" });
+      const r = await fetch("/api/applicant/health", { credentials: "same-origin" });
       if (!r.ok) { show("down", "⚠ Big Brother engine unavailable.", "The app couldn't reach the game service. The show can't load until it's back."); return; }
       const d = await r.json();
       const busy = !!(d && d.busy === "creating"); // G8: createCharacter in flight
@@ -93,7 +93,7 @@
       }
     } catch (_) {
       // The FE route itself failed — surface the most likely truth rather than going silent.
-      if (window.OrwellReport) window.OrwellReport.fail("engine-status", "health-fetch", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("engine-status", "health-fetch", _); // G11: fail open, never silent
       show("down", "⚠ Big Brother engine unavailable.", "The app couldn't reach the game service.");
     }
   }
@@ -104,7 +104,7 @@
     timer = setInterval(refresh, POLL_MS);
   }
 
-  window.orwellRefreshEngineStatus = refresh;
-  window.addEventListener("orwell:gamechanged", refresh);
+  window.applicantRefreshEngineStatus = refresh;
+  window.addEventListener("applicant:gamechanged", refresh);
   ready(start);
 })();

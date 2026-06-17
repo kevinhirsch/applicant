@@ -375,7 +375,7 @@ transparently, and always overridable by you.
 
 ## Stack
 
-Python 3.11+ · FastAPI + vendored Odysseus UI · PostgreSQL + JSONB · DBOS Transact
+Python 3.11+ · FastAPI + vendored Applicant UI · PostgreSQL + JSONB · DBOS Transact
 (durable execution) · LangGraph (in-step reasoning) · patchright (browser automation)
 · JobSpy + SearXNG (discovery) · LaTeX/moderncv primary resume engine with docx-XML
 fallback · Apprise/Discord notifications · structlog. Toolchain: **uv**.
@@ -402,7 +402,7 @@ functional in its hermetic default lane. What works today:
 - **Phase 0** — zero-CLI OOBE + onboarding: setup wizard (LLM-gate first, then channels,
   fonts, Workday-ready intake), provider-agnostic LLM with a tier ladder, resumable
   onboarding interview, resume parsing to bootstrap the attribute cloud, durable
-  orchestration backbone, structlog observability, vendored Odysseus UI shell.
+  orchestration backbone, structlog observability, vendored Applicant UI shell.
 - **Phase 1** — discovery → digest → approve/decline → learning: JobSpy/SearXNG discovery,
   per-campaign self-learning criteria + attribute cloud, daily digest with rationale and
   approve/decline-with-feedback, pending-actions portal, Discord/web/email notifications

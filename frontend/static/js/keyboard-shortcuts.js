@@ -50,7 +50,7 @@ export function initKeyboardShortcuts(modules) {
     _closeCompareIfActive, _deactivateIncognito, API_BASE
   } = modules;
 
-  window._orwellKeybinds = { ..._defaultKeybinds };
+  window._applicantKeybinds = { ..._defaultKeybinds };
 
   // Load saved keybinds — the SAME layering the Shortcuts tab renders from
   // (settings.js initShortcuts): defaults ← global `keybinds` ← the per-user
@@ -73,7 +73,7 @@ export function initKeyboardShortcuts(modules) {
         if (value && typeof value === 'object') Object.assign(kb, value);
       }
     } catch (_) {}
-    window._orwellKeybinds = kb;
+    window._applicantKeybinds = kb;
   })();
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
@@ -147,7 +147,7 @@ export function initKeyboardShortcuts(modules) {
   };
 
   document.addEventListener('keydown', (e) => {
-    const kb = window._orwellKeybinds;
+    const kb = window._applicantKeybinds;
 
     if (_matchesCombo(e, kb.search)) {
       e.preventDefault();
@@ -216,7 +216,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Orwell Chat';
+            el('current-meta').textContent = 'Applicant Chat';
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }

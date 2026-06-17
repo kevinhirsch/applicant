@@ -1,4 +1,4 @@
-// Orwell season retrospective (feature 0048 / C17) — the post-season payoff surface.
+// Applicant season retrospective (feature 0048 / C17) — the post-season payoff surface.
 //
 // While a season is live this module shows NOTHING (the Wall is absolute; the /retrospective
 // route 404s by the engine's terminal-state gate). Once a winner is crowned it offers:
@@ -13,7 +13,7 @@
   "use strict";
 
   const POLL_MS = 30000;
-  const ID = "orwell-retro";
+  const ID = "applicant-retro";
   const ready = (fn) =>
     document.readyState === "loading"
       ? document.addEventListener("DOMContentLoaded", fn, { once: true })
@@ -52,14 +52,14 @@
     panel.setAttribute("role", "complementary");
     panel.setAttribute("aria-label", "Season retrospective");
     document.body.appendChild(panel);
-  if (window.OrwellSlots) window.OrwellSlots.register(panel, "bottom-right", { key: "retro" });
+  if (window.ApplicantSlots) window.ApplicantSlots.register(panel, "bottom-right", { key: "retro" });
     return panel;
   }
 
   function render(recap) {
     const panel = ensurePanel();
     if (!recap || !recap.finished) { panel.style.display = "none"; return; }
-    if (sessionStorage.getItem("orwell-retro-dismissed") === "1") { panel.style.display = "none"; return; }
+    if (sessionStorage.getItem("applicant-retro-dismissed") === "1") { panel.style.display = "none"; return; }
     panel.replaceChildren();
 
     const head = el("div", "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px");
@@ -68,7 +68,7 @@
     close.className = "ow-dismiss";
     close.setAttribute("aria-label", "Dismiss the retrospective panel");
     close.addEventListener("click", () => {
-      try { sessionStorage.setItem("orwell-retro-dismissed", "1"); } catch (_) {}
+      try { sessionStorage.setItem("applicant-retro-dismissed", "1"); } catch (_) {}
       panel.style.display = "none";
     });
     head.appendChild(close);
@@ -102,11 +102,11 @@
       ].join(";"), "🔐 Open the Producer's Vault");
       open.addEventListener("click", async () => {
         try {
-          const data = await getJSON("/api/orwell/retrospective");
+          const data = await getJSON("/api/applicant/retrospective");
           unsealed = data.retrospective || null;
           render(recap);
         } catch (_) {
-          if (window.OrwellReport) window.OrwellReport.fail("retrospective", "vault-open", _); // G11: fail open, never silent
+          if (window.ApplicantReport) window.ApplicantReport.fail("retrospective", "vault-open", _); // G11: fail open, never silent
           open.textContent = "The Vault would not open — try again";
         }
       });
@@ -121,14 +121,14 @@
   async function tick() {
     try {
       if (document.hidden) return;
-      const state = await getJSON("/api/orwell/state");
+      const state = await getJSON("/api/applicant/state");
       if (!state || !state.started) { render(null); unsealed = null; return; }
-      const data = await getJSON("/api/orwell/recap");
+      const data = await getJSON("/api/applicant/recap");
       render(data ? data.recap : null);
       _failures = 0;
     } catch (_) {
       _failures += 1;
-      if (window.OrwellReport) window.OrwellReport.fail("retrospective", "recap-poll", _); // G11: fail open, never silent
+      if (window.ApplicantReport) window.ApplicantReport.fail("retrospective", "recap-poll", _); // G11: fail open, never silent
       render(null); // fail OPEN: no panel on error
     } finally {
       timer = setTimeout(tick, _pollDelay());

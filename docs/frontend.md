@@ -2,8 +2,8 @@
 
 Applicant's own surfaces live under `frontend/static/applicant/` and are served by
 the `ui` router (`src/applicant/app/routers/ui.py`). They are deliberately
-**vanilla, no-build** — they reuse the vendored MIT Odysseus design system the same
-way Odysseus itself does (hand-authored HTML + ES modules, no bundler, no new
+**vanilla, no-build** — they reuse the vendored MIT Applicant design system the same
+way Applicant itself does (hand-authored HTML + ES modules, no bundler, no new
 runtime deps). Two requirements govern the look:
 
 - **FR-UI-1 — pixel-faithful clone.** Surfaces reuse the vendored design-system
@@ -22,7 +22,7 @@ content plus a one-line import. It exports (and bundles as `ApplicantUI`):
   LLM-gate redirect (FR-UI-5)**: a `409` from the setup / automated-work gate routes
   the user to the wizard (the wizard itself is exempt — it is how the gate opens).
   Returns parsed JSON, or `null` for `204`.
-- `mountShell({ active })` / `mount({ active })` — inject the shared Odysseus-styled
+- `mountShell({ active })` / `mount({ active })` — inject the shared Applicant-styled
   nav into a `#applicant-nav` container (opt-in: surfaces without that container
   render unchanged), marking the active link.
 - `el(tag, attrs, children)` — the tiny DOM builder shared by every surface's glue.
