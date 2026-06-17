@@ -75,6 +75,21 @@ def test_secret_never_logged_or_in_repr(tmp_path, session_factory, caplog):
     assert "topsecret" not in repr(store)
 
 
+def test_credential_repr_redacts_secret_and_username():
+    # NFR-PRIV-1 / FR-VAULT-3: the Credential dataclass itself must never render its
+    # secret (or username) in repr/str — a default dataclass repr would, leaking the
+    # plaintext if a Credential is interpolated into an exception or a free-text log
+    # line the structlog value-redactor can't pattern-match (e.g. a short secret).
+    cred = Credential(tenant_key="acme.workday", username="kev", secret="pass")
+    text = repr(cred)
+    assert "pass" not in text
+    assert "kev" not in text
+    # The non-sensitive fields stay visible for debuggability.
+    assert "acme.workday" in text
+    # str() delegates to __repr__ for dataclasses, so it is covered too.
+    assert "pass" not in str(cred)
+
+
 def test_credentials_model_has_campaign_tenant_unique_constraint():
     """schema/model parity: the ORM model (SQLite create_all lane) must carry the
     same uq_credentials_campaign_tenant unique constraint the alembic migration

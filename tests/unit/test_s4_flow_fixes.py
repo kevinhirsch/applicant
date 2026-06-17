@@ -689,6 +689,28 @@ def test_ssrf_guard_blocks_metadata_allows_localhost():
 
 
 @pytest.mark.unit
+def test_ssrf_guard_blocks_ipv6_mapped_metadata_address():
+    """#12 (SECURITY): the metadata block must also cover the IPv6-mapped IPv4 forms
+    of 169.254.169.254 — ``::ffff:169.254.169.254`` and its packed ``::ffff:a9fe:a9fe``
+    spelling parse as IPv6Address that does NOT ``==`` the plain IPv4, so without
+    normalization the metadata guard is trivially bypassed (instance-credential SSRF)."""
+    from applicant.application.services.setup_service import (
+        validate_operator_url,
+        validate_operator_urls,
+    )
+    from applicant.core.errors import InvalidInput
+
+    for host in ("[::ffff:169.254.169.254]", "[::ffff:a9fe:a9fe]"):
+        with pytest.raises(InvalidInput):
+            validate_operator_url(f"http://{host}/latest/meta-data/", field="base URL")
+        with pytest.raises(InvalidInput):
+            validate_operator_urls(f"http://{host}/")
+
+    # A legitimate private/loopback IPv6 (e.g. local Ollama bound to ::1) still passes.
+    assert validate_operator_url("http://[::1]:11434/v1")
+
+
+@pytest.mark.unit
 def test_setup_service_rejects_metadata_llm_base_url():
     """#12: configure_llm rejects an LLM base_url that targets cloud metadata."""
     from applicant.application.services.setup_service import SetupService

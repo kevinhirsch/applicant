@@ -67,8 +67,16 @@ def validate_operator_url(url: str, *, field: str = "url") -> str:
             f"{field} may not target the cloud metadata address {_METADATA_ADDR}."
         )
     # Also block the metadata address when given as a packed/alternate IP form.
+    # An IPv6-mapped IPv4 literal (e.g. ``::ffff:169.254.169.254`` or its packed
+    # ``::ffff:a9fe:a9fe`` form) parses as an IPv6Address that does NOT ``==`` the
+    # plain IPv4 metadata address, so normalize it back to IPv4 first — otherwise
+    # the metadata block is trivially bypassed via the mapped form (SSRF).
     try:
-        if ipaddress.ip_address(host) == ipaddress.ip_address(_METADATA_ADDR):
+        ip = ipaddress.ip_address(host)
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if ip == ipaddress.ip_address(_METADATA_ADDR):
             raise InvalidInput(
                 f"{field} may not target the cloud metadata address {_METADATA_ADDR}."
             )
