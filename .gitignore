@@ -38,3 +38,8 @@ alembic_tmp/
 *.swp
 .idea/
 .vscode/
+workspace/data/
+workspace/logs/
+workspace/.ssh/
+workspace/.cache/
+workspace/.local/

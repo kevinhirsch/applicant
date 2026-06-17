@@ -10,7 +10,7 @@ approve/decline-with-feedback decisions that close the learning loop:
 - an explicit **empty-day note** when nothing cleared the bar (FR-DIG-6) so silence is
   never ambiguous, plus what was searched and why;
 - **delivery** = email payload + webpage payload + a Discord "ready" ping; the digest
-  is EXEMPT from the Odysseus visual style — it has its own template (FR-DIG-2);
+  is EXEMPT from the Applicant visual style — it has its own template (FR-DIG-2);
 - **approve** / **decline-with-feedback** record a ``Decision`` whose feedback +
   criteria-delta round-trip into ``LearningService`` and the next run's criteria via
   ``CriteriaService`` (FR-DIG-5, FR-FB-1), and notify-idempotency expires the other
@@ -134,7 +134,7 @@ class DigestService:
 
     # --- delivery (FR-DIG-1/2) --------------------------------------------
     def render_email(self, campaign_id: CampaignId, criteria=None, *, payload: dict | None = None) -> dict:
-        """Email payload — its OWN template, exempt from the Odysseus style (FR-DIG-2).
+        """Email payload — its OWN template, exempt from the Applicant style (FR-DIG-2).
 
         #13: accepts an already-built ``payload`` so ``deliver`` builds + scores the
         digest ONCE and passes it in, instead of ``render_email`` re-scoring the full

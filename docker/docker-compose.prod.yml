@@ -5,9 +5,66 @@
 # pinned restart policies, a named volume for DB backups (used by update.sh
 # rollback), internal-only searxng (not published), and a healthcheck on the api.
 #
+# Stage 1 front-door topology: the vendored Applicant UI app (built from
+# ``../workspace``) is the public entry on ${APP_PORT:-8000} -> container 7000.
+# The Applicant ENGINE (``api``) is kept running but INTERNAL only — other
+# services and the UI reach it at http://api:8000 (no host publish). The UI app
+# brings its own ``chromadb`` and ``ntfy`` (copied from the workspace compose)
+# and REUSES the existing internal ``searxng`` below (not duplicated).
+#
 # Validate with: docker compose -f docker/docker-compose.prod.yml config
 # Bring up with:  scripts/install.sh --apply
 services:
+  # ---------------------------------------------------------------------------
+  # Front-door UI (public entry). Built from the vendored workspace app's own
+  # Dockerfile (serves uvicorn app:app on container port 7000). This is the host
+  # port the user opens.
+  # ---------------------------------------------------------------------------
+  applicant-ui:
+    build:
+      context: ../workspace
+      dockerfile: Dockerfile
+    image: applicant/ui:latest
+    # Build locally; never try to PULL this name from a registry (not published).
+    pull_policy: build
+    # Optional so `docker compose config` validates before the first install
+    # writes the repo-root .env (install.sh persists DB creds + APP_URL there).
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # In-network service wiring (overrides the app's localhost defaults).
+      SEARXNG_INSTANCE: ${SEARXNG_INSTANCE:-http://searxng:8080}
+      CHROMADB_HOST: ${CHROMADB_HOST:-chromadb}
+      CHROMADB_PORT: ${CHROMADB_PORT:-8000}
+      # Stage 1: the UI app keeps its OWN sqlite, persisted on the data volume
+      # below (separate from the engine's Postgres). A later stage may converge.
+      DATABASE_URL: ${UI_DATABASE_URL:-sqlite:///./data/app.db}
+      # User/group the container drops to (it chowns the bind/named data + logs).
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    volumes:
+      - ui-data:/app/data
+      - ui-logs:/app/logs
+    extra_hosts:
+      # Lets the container reach local services on the Docker host (e.g. a host
+      # Ollama at http://host.docker.internal:11434).
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Public front door: take over the main host port -> UI container 7000.
+      - "${APP_PORT:-8000}:7000"
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # Applicant ENGINE — kept running but INTERNAL only (no host publish). The UI
+  # and other services reach it at http://api:8000. Its surfaces under /static
+  # stay reachable in-network for the next migration stage.
+  # ---------------------------------------------------------------------------
   api:
     build:
       context: ..
@@ -35,8 +92,10 @@ services:
       NOTIFICATIONS_LIVE: ${NOTIFICATIONS_LIVE:-true}
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       LOG_FORMAT: json
-    ports:
-      - "8000:8000"
+    # INTERNAL ONLY — no host publish. The front-door UI and sibling services
+    # reach the engine in-network at http://api:8000.
+    expose:
+      - "8000"
     volumes:
       # Durable checkpoint store for the shim backend (FR-INSTALL-3/FR-DUR-3):
       # survives container recreation so approvals/in-flight workflows are not lost.
@@ -99,13 +158,50 @@ services:
       - "3000"
     restart: unless-stopped
 
-  # Internal-only search backend (not published to the host in prod).
+  # Internal-only search backend (not published to the host in prod). Shared by
+  # BOTH the engine (SEARXNG_URL) and the front-door UI (SEARXNG_INSTANCE).
   searxng:
     image: searxng/searxng:latest
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
     expose:
       - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # ChromaDB vector store for the UI app (copied from the workspace compose).
+  # Internal only in prod — the UI reaches it at chromadb:8000.
+  # ---------------------------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    environment:
+      ANONYMIZED_TELEMETRY: "FALSE"
+    expose:
+      - "8000"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # ntfy push notifications for the UI app (copied from the workspace compose).
+  # Internal only in prod (reachable in-network at ntfy:80). Publish it via a
+  # reverse proxy if external push is wanted.
+  # ---------------------------------------------------------------------------
+  ntfy:
+    image: binwiederhier/ntfy
+    command: serve
+    environment:
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-http://ntfy}
+    expose:
+      - "80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
     restart: always
 
   # Optional local LLM (uncomment to run fully local, NFR-LOCAL-1):
@@ -121,4 +217,8 @@ volumes:
   pgdata:
   pgbackups:  # DB backups for update.sh rollback (FR-INSTALL-2)
   checkpoints:  # durable shim checkpoint/mailbox state (FR-INSTALL-3/FR-DUR-3)
+  ui-data:       # front-door UI app data (its own sqlite, prefs, caches)
+  ui-logs:       # front-door UI app logs
+  chromadb-data: # UI vector store
+  ntfy-cache:    # ntfy message cache
   # ollama:

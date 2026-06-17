@@ -14,12 +14,12 @@ Source: master spec §12. Per the engineering mandate, any new ambiguity is reco
 
 ## Newly-discovered ambiguity (recorded per §12)
 
-### Odysseus UI license — RESOLVED (vendored from owner's MIT fork)
+### Applicant UI license — RESOLVED (vendored from owner's MIT fork)
 
-- **Original ambiguity:** The §5 stack table and §5.1 reference list state the Odysseus UI source is **MIT** and instruct vendoring its `static/` "under MIT with notice preserved" (FR-UI-1). On inspection, the **upstream** `pewdiepie-archdaemon/odysseus` repo's own LICENSE + README declared **AGPLv3**, not MIT — so the original vendoring picked up AGPL assets, contradicting the spec.
-- **Resolution (2026-06):** The owner provided two **MIT-licensed forks they own** of the Odysseus design system, and `frontend/static/` was **re-vendored from those** in place of the AGPL upstream:
-  - **orwell** (MIT, Copyright (c) 2026 kevinhirsch) — base of the vendored set: `style.css` (closest to canonical), `app.js`, `index.html`, `login.html`, `manifest.json`, `sw.js`, the `js/` shell + design-system modules, `lib/`, `fonts/` (incl. `fonts/custom/GohuFont.ttf`), `css/`, icons.
-  - **firehouse** (MIT, Copyright (c) 2025 Firehouse Contributors) — same UI family, available for any design-system module orwell trims that the shell/our surfaces need.
-  - The AGPL `pewdiepie-archdaemon/odysseus` repo is now used as a **reference only** (to confirm the canonical class/module/asset set); no file is copied from it.
-- **Effect:** `frontend/static/LICENSE` is now the **MIT** text from the orwell fork; `THIRD_PARTY_LICENSES.md` records the UI as MIT with no network-copyleft obligation. The spec's §5/§5.1 "Odysseus is MIT" statements are now accurate for the vendored material.
+- **Original ambiguity:** The §5 stack table and §5.1 reference list state the Applicant UI source is **MIT** and instruct vendoring its `static/` "under MIT with notice preserved" (FR-UI-1). On inspection, the **upstream** `pewdiepie-archdaemon/applicant` repo's own LICENSE + README declared **AGPLv3**, not MIT — so the original vendoring picked up AGPL assets, contradicting the spec.
+- **Resolution (2026-06):** The owner provided two **MIT-licensed forks they own** of the Applicant design system, and `frontend/static/` was **re-vendored from those** in place of the AGPL upstream:
+  - **applicant** (MIT, Copyright (c) 2026 kevinhirsch) — base of the vendored set: `style.css` (closest to canonical), `app.js`, `index.html`, `login.html`, `manifest.json`, `sw.js`, the `js/` shell + design-system modules, `lib/`, `fonts/` (incl. `fonts/custom/GohuFont.ttf`), `css/`, icons.
+  - **applicant** (MIT, Copyright (c) 2025 Applicant Contributors) — same UI family, available for any design-system module applicant trims that the shell/our surfaces need.
+  - The AGPL `pewdiepie-archdaemon/applicant` repo is now used as a **reference only** (to confirm the canonical class/module/asset set); no file is copied from it.
+- **Effect:** `frontend/static/LICENSE` is now the **MIT** text from the applicant fork; `THIRD_PARTY_LICENSES.md` records the UI as MIT with no network-copyleft obligation. The spec's §5/§5.1 "Applicant is MIT" statements are now accurate for the vendored material.
 - **Status:** **RESOLVED.** Vendored UI is MIT; no AGPL obligation remains for the UI subtree.

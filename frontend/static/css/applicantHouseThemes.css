@@ -1,0 +1,87 @@
+/* ============================================================================
+   applicantHouseThemes.css — the 0052 HOUSE treatment (ruling #13 + addendum).
+   Active only under body.house-theme (set by theme.js when a house preset
+   applies). Three contracts:
+
+   · FROST — translucent, backdrop-blurred chrome (sidebar, slotted panels,
+     modals, the Windows dock) so the house is faintly visible through it.
+     Never on the chat text column (readability first). No-support fallback:
+     the solid --panel stays (the frost rules live inside @supports).
+   · MOTION — delightful micro-motion per theme, riding the E97 contract.
+     prefers-reduced-motion strips ALL motion — never the frost.
+   · CONTRAST — fg/bg pairs are AA against the effective composite (the
+     pytest gate computes the ratios).
+   ========================================================================== */
+
+/* ---- FROST (capability-gated; fallback = the existing solid panel) --------
+   Covers BOTH window families at once (Lane G4): the legacy modal family
+   (.modal-content) and the ApplicantWindow kit (.ow-window — usually also
+   .applicant-slotted, but pinned by family name so unslotted kit windows frost
+   identically). The fallback mix derives from the shared --win-bg token so
+   the frost always composites from the same ground both families paint. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  body.house-theme #sidebar,
+  body.house-theme .applicant-slotted,
+  body.house-theme #applicant-status,
+  body.house-theme #minimized-dock,
+  body.house-theme .settings-modal-content,
+  body.house-theme .modal-content,
+  body.house-theme .ow-window {
+    background: var(--panel-frost, color-mix(in srgb, var(--win-bg, var(--panel)) 62%, transparent));
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    backdrop-filter: blur(14px) saturate(1.15);
+  }
+}
+
+/* ---- Shared house polish (motion-free, so it survives reduced-motion) ----- */
+body.house-theme .theme-swatch,
+body.house-theme button {
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* ---- Per-theme micro-motion (E97 contract; reduced-motion strips it) ------ */
+@media (prefers-reduced-motion: no-preference) {
+  /* The Feed — the REC dot pulses: surveillance is live. */
+  @keyframes house-rec-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+  body.house-theme--the-feed #os-stale,
+  body.house-theme--the-feed .os-badge {
+    animation: house-rec-pulse 1.6s ease-in-out infinite;
+  }
+
+  /* Telescreen — panels power on with a brief CRT bloom. */
+  @keyframes house-crt-bloom {
+    0% { filter: brightness(2.4) saturate(0.2); transform: scaleY(0.92); }
+    60% { filter: brightness(1.15); }
+    100% { filter: none; transform: none; }
+  }
+  body.house-theme--telescreen .applicant-anim-in {
+    animation: house-crt-bloom 0.28s ease-out;
+  }
+
+  /* Memory Wall — swatches/buttons backlight on hover, like the gallery. */
+  body.house-theme--memory-wall .theme-swatch:hover,
+  body.house-theme--memory-wall .ofin-btn:hover {
+    box-shadow: 0 0 14px color-mix(in srgb, var(--red) 55%, transparent);
+  }
+
+  /* Sequester — a slow velvet settle on opening panels. */
+  @keyframes house-velvet-settle {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  body.house-theme--sequester .applicant-anim-in {
+    animation: house-velvet-settle 0.26s ease-out;
+  }
+
+  /* Room 101 — the door shuts: a hard, brief clamp on open. */
+  @keyframes house-clamp {
+    from { opacity: 0; transform: scale(1.03); }
+    to { opacity: 1; transform: none; }
+  }
+  body.house-theme--room-101 .applicant-anim-in {
+    animation: house-clamp 0.14s ease-in;
+  }
+}

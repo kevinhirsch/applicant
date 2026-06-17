@@ -13,8 +13,8 @@ const API_BASE = window.location.origin;
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
 // own key. Favorites is the SAME key the sidebar Models section uses, so a
 // favorite toggled here shows up there and vice-versa.
-const RECENT_KEY = 'orwell-model-recent';
-const FAVORITES_KEY = 'orwell-model-favorites';
+const RECENT_KEY = 'applicant-model-recent';
+const FAVORITES_KEY = 'applicant-model-favorites';
 const RECENT_MAX = 5;
 // Catalogs at or below this size are small enough that hiding everything
 // behind search would be a regression — keep listing them in browse mode.
@@ -272,7 +272,7 @@ function _initModelPickerDropdown() {
     let slug = slash > 0 ? mid.substring(0, slash) : 'other';
     return _PROVIDER_ALIAS[slug] || slug;
   }
-  const _collapsedProviders = new Set(_loadList('orwell-model-collapsed'));
+  const _collapsedProviders = new Set(_loadList('applicant-model-collapsed'));
   let _justExpandedProvider = null;
 
   function _populate(filter) {
@@ -484,7 +484,7 @@ function _initModelPickerDropdown() {
             _collapsedProviders.add(provider);
             _justExpandedProvider = null;
           }
-          _saveList('orwell-model-collapsed', [..._collapsedProviders]);
+          _saveList('applicant-model-collapsed', [..._collapsedProviders]);
           const st = listEl.scrollTop;
           _populate('');
           listEl.scrollTop = st;
@@ -515,7 +515,7 @@ function _initModelPickerDropdown() {
 
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
-    try { document.dispatchEvent(new CustomEvent('orwell:model-picked', { detail: m })); } catch {}
+    try { document.dispatchEvent(new CustomEvent('applicant:model-picked', { detail: m })); } catch {}
 
     // Blur search input before closing to dismiss keyboard on mobile
     if (document.activeElement) document.activeElement.blur();
@@ -561,7 +561,7 @@ function _initModelPickerDropdown() {
     uiModule.showToast(`Using ${m.display}`);
   }
 
-  document.addEventListener('orwell:auto-select-model', async (e) => {
+  document.addEventListener('applicant:auto-select-model', async (e) => {
     const detail = (e && e.detail) || {};
     const currentSessionId = _deps.getCurrentSessionId();
     const sessions = _deps.getSessions();
@@ -691,7 +691,7 @@ export function updateModelPicker() {
       modelId = null;
     }
   }
-  // SECURITY: deliberately NOT auto-injecting `orwell-model-favorites[0]`
+  // SECURITY: deliberately NOT auto-injecting `applicant-model-favorites[0]`
   // here. localStorage favorites are per-browser, not per-user, so on a
   // shared browser the previous account's first favorited model would
   // silently pre-populate the chatbox of the next user that signed in. If

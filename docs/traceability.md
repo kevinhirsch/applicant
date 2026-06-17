@@ -219,7 +219,7 @@ read to confirm real, wired behavior. The suite is green
 
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
-| FR-UI-1 | 0 | "Pixel-perfect Odysseus clone" | Delivered — Phase 0; vendored `static/` served from FastAPI; presence test |
+| FR-UI-1 | 0 | "Pixel-perfect Applicant clone" | Delivered — Phase 0; vendored `static/` served from FastAPI; presence test |
 | FR-UI-2 | 0/4 | "Dormant surfaces grayed with stubs" | Delivered — Phase 0 shell / Phase 4 backlog; dormant-surface backlog test — see [dormant-surfaces.md](dormant-surfaces.md) |
 | FR-UI-3 | 1 | "Pending-actions portal" | Delivered (re-verified) — real PRODUCERS now create pending actions (digest-approval in `digest_service.deliver`, missing-attr / agent-question / error / final-approval in `prefill_service`); `pending_actions` router lists + resolves them; the digest-decision resolve key bug is fixed; contract+BDD |
 | FR-UI-4 | 4 | "Per-tool toggle registry" | Delivered — Phase 4; ToolRegistry adapter + settings sink; contract test |

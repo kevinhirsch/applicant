@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""applicant-update — pull the newest Applicant from GitHub and restart.
+
+Backs up data/, pulls the latest code + service images, then rebuilds and
+recreates the Docker containers. Your data/ and .env are left untouched; the
+app runs its SQLite schema migrations automatically on the next startup.
+
+    applicant update                # backup, pull code + images, rebuild & restart
+    applicant update --no-backup    # skip the pre-update backup
+
+If any step fails the update aborts before the restart, so a failed pull or
+backup never leaves you on a half-updated stack.
+"""
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _step(msg: str) -> None:
+    print(f"\n==> {msg}", flush=True)
+
+
+def _sh(*cmd: str) -> None:
+    """Run a command from the repo root, streaming its output. Abort the
+    whole update (before any restart) if it exits non-zero."""
+    proc = subprocess.run(cmd, cwd=REPO_ROOT)
+    if proc.returncode != 0:
+        sys.exit(
+            f"\napplicant-update: `{' '.join(cmd)}` failed "
+            f"(exit {proc.returncode}); aborting before restart."
+        )
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="applicant update",
+        description="Pull the newest Applicant from GitHub and restart.",
+    )
+    parser.add_argument(
+        "--no-backup", action="store_true",
+        help="skip the pre-update backup of data/",
+    )
+    args = parser.parse_args(argv)
+
+    if args.no_backup:
+        _step("Skipping backup (--no-backup)")
+    elif (REPO_ROOT / "data").is_dir():
+        _step("Backing up data/ ...")
+        _sh(sys.executable, str(REPO_ROOT / "scripts" / "applicant-backup"), "snapshot")
+    else:
+        _step("No data/ dir yet — nothing to back up")
+
+    _step("Pulling newest code from GitHub ...")
+    _sh("git", "pull")
+
+    _step("Pulling newest service images ...")
+    _sh("docker", "compose", "pull")
+
+    _step("Rebuilding and restarting ...")
+    _sh("docker", "compose", "up", "-d", "--build")
+
+    _step("Up to date.")
+    _sh("docker", "compose", "ps")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

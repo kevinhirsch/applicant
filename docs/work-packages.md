@@ -14,7 +14,7 @@ Source: master spec §9. Each phase is delivered by implementer sub-agents using
 - DBOS durable backbone: workflows, idempotent steps, `send`/`recv`, scheduling, queues skeleton (FR-DUR-1/2/3).
 - OpenRouter LLM adapter + auto-pull model list; tier-ladder config; defensive structured-output parsing (FR-LLM-1/2/3/4/4a/5).
 - structlog with correlation IDs + secret redaction; DBOS OTel (FR-OBS-1).
-- Frontend clone shell: vendor Odysseus `static/` verbatim, MIT notice preserved, served from FastAPI; grayed dormant surfaces (FR-UI-1/2).
+- Frontend clone shell: vendor Applicant `static/` verbatim, MIT notice preserved, served from FastAPI; grayed dormant surfaces (FR-UI-1/2).
 - Setup wizard framework starting with the LLM-settings gate (FR-OOBE-1/2, FR-UI-5).
 - Comprehensive Workday-ready onboarding intake + base-resume parse + reconciliation (FR-ONBOARD-1/2/3).
 - Font upload flow with detection of required fonts and runtime cache refresh (FR-FONT-1/2).

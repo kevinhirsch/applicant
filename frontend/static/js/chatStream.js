@@ -124,15 +124,15 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'highlight' || uiData.ui_event === 'highlight') {
-      document.querySelectorAll('.orwell-highlight').forEach(function(e) { e.classList.remove('orwell-highlight'); });
-      document.querySelectorAll('.orwell-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.applicant-highlight').forEach(function(e) { e.classList.remove('applicant-highlight'); });
+      document.querySelectorAll('.applicant-hl-label').forEach(function(e) { e.remove(); });
       var target = document.querySelector(uiData.selector);
       if (target) {
-        target.classList.add('orwell-highlight');
+        target.classList.add('applicant-highlight');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         if (uiData.label) {
           var lbl = document.createElement('div');
-          lbl.className = 'orwell-hl-label';
+          lbl.className = 'applicant-hl-label';
           lbl.textContent = uiData.label;
           if (!target.style.position) target.style.position = 'relative';
           target.appendChild(lbl);
@@ -140,8 +140,8 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'clear_highlight' || uiData.ui_event === 'clear_highlight') {
-      document.querySelectorAll('.orwell-highlight').forEach(function(e) { e.classList.remove('orwell-highlight'); });
-      document.querySelectorAll('.orwell-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.applicant-highlight').forEach(function(e) { e.classList.remove('applicant-highlight'); });
+      document.querySelectorAll('.applicant-hl-label').forEach(function(e) { e.remove(); });
 
     } else if (uiEvent === 'open_panel' || uiData.ui_event === 'open_panel') {
       // Game build (feature 0032): only the kept panels remain — the workspace

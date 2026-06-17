@@ -1,6 +1,6 @@
-/* Orwell game build — hide non-game tool surfaces from the UI.
+/* Applicant game build — hide non-game tool surfaces from the UI.
  *
- * Orwell is the Big Brother game; the inherited workspace tools are not part of
+ * Applicant is the Big Brother game; the inherited workspace tools are not part of
  * the player experience. This hides their UI entry points only. It is the safe,
  * reversible first cut: the underlying modals/routes/JS stay dormant (a deeper
  * code-level prune is a separate pass, to be verified against a running

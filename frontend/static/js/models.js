@@ -19,10 +19,10 @@ let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
 let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
-const COLLAPSE_KEY = 'orwell-models-collapsed';
-const FAVORITES_KEY = 'orwell-model-favorites';
-const USAGE_KEY = 'orwell-model-usage';
-const SORT_KEY = 'orwell-model-sort';
+const COLLAPSE_KEY = 'applicant-models-collapsed';
+const FAVORITES_KEY = 'applicant-model-favorites';
+const USAGE_KEY = 'applicant-model-usage';
+const SORT_KEY = 'applicant-model-sort';
 
 export function init(apiBase) {
   API_BASE = apiBase;
@@ -573,7 +573,7 @@ export async function refreshModels(force = false) {
       // with the engine's snarky, state-aware Big Brother tagline (0033) when it answers.
       if (welcomeSub) {
         welcomeSub.textContent = 'The house is waiting.';
-        fetch('/api/orwell/tagline')
+        fetch('/api/applicant/tagline')
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => { if (d && typeof d.text === 'string' && d.text.trim()) welcomeSub.textContent = d.text.trim(); })
           .catch(() => {});

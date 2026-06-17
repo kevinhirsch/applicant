@@ -54,7 +54,7 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 | ID | Priority | One-line summary | Phase |
 |---|---|---|---|
 | FR-DIG-1 | MUST | Produce a daily digest per campaign when matches are aggregated. | 1 |
-| FR-DIG-2 | MUST | Delivery via email/webpage + Discord "ready" notification; digest exempt from Odysseus visual style. | 1 |
+| FR-DIG-2 | MUST | Delivery via email/webpage + Discord "ready" notification; digest exempt from Applicant visual style. | 1 |
 | FR-DIG-3 | MUST | Table, one row per role: summary, link, work mode, fit/viability score, approve/decline controls. | 1 |
 | FR-DIG-4 | MUST | Brief "why this role was suggested" rationale. | 1 |
 | FR-DIG-5 | MUST | Decline-with-feedback free-text feeding FR-LEARN and next-run criteria. | 1 |
@@ -200,7 +200,7 @@ Priority language (§ preamble): **MUST** = non-negotiable; **SHOULD** = strong 
 
 | ID | Priority | One-line summary | Phase |
 |---|---|---|---|
-| FR-UI-1 | MUST | Pixel-perfect Odysseus clone: vendor its static/ verbatim (MIT notice preserved), served from FastAPI, wired to our APIs; extensible. | 0 |
+| FR-UI-1 | MUST | Pixel-perfect Applicant clone: vendor its static/ verbatim (MIT notice preserved), served from FastAPI, wired to our APIs; extensible. | 0 |
 | FR-UI-2 | MUST | Unwired surfaces grayed out but present; produce a Dormant Surface Wiring Backlog (one stub spec each); no dead UI shipped as live. | 0 (shell), 4 (backlog) |
 | FR-UI-3 | MUST | Pending-actions portal: primary surface listing everything awaiting user input, each actionable. | 1 |
 | FR-UI-4 | MUST | Many agent tools toggled on/off in UI; initial registry (Discovery, Scoring, Pre-fill, ... Notifications). | 4 |

@@ -67,7 +67,7 @@ def deliver(campaign_id: str, digest=Depends(get_digest_service)) -> dict:
 
 @router.get("/{campaign_id}/email", dependencies=[Depends(require_automated_work)])
 def get_email(campaign_id: str, digest=Depends(get_digest_service)) -> dict:
-    """The digest email payload (own template, exempt from Odysseus style, FR-DIG-2)."""
+    """The digest email payload (own template, exempt from Applicant style, FR-DIG-2)."""
     return digest.render_email(campaign_id)  # type: ignore[arg-type]
 
 
