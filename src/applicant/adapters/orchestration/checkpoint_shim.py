@@ -265,21 +265,34 @@ class CheckpointShimOrchestrator:
             if q is None:
                 return None
             q.active.discard(work_id)
-            # Pivot: admit the oldest waiter that now fits (capacity yielded by the
-            # blocked/awaiting application FR-AGENT-6).
+            # PIVOT (FR-DUR-4): promote the FIRST waiter that currently fits — not
+            # only the head. The previous ``while ... break`` only ever inspected
+            # the head, so a head that cannot be admitted (e.g. its own per-item
+            # rate window is exhausted, or it is a stale already-active duplicate)
+            # stalled a later admissible waiter. Scan the FIFO in order and admit
+            # the first one that fits.
             now = time.monotonic()
-            promoted: str | None = None
-            while q.waiting:
-                nxt = q.waiting[0]
-                if q._capacity_ok() and q._rate_ok(now):
-                    q.waiting.popleft()
-                    q.active.add(nxt)
-                    if q.limiter_limit is not None:
-                        q.admit_times.append(now)
-                    promoted = nxt
-                break
+            promoted = self._promote_first_fitting(q, now)
             self._save_queue(queue_name, q)
             return promoted
+
+    @staticmethod
+    def _promote_first_fitting(q: _Queue, now: float) -> str | None:
+        """Admit the first waiter that currently fits; return it (or ``None``)."""
+        for idx in range(len(q.waiting)):
+            nxt = q.waiting[idx]
+            if nxt in q.active:
+                # Stale already-admitted duplicate: drop it and keep scanning so a
+                # genuine waiter behind it is not blocked.
+                del q.waiting[idx]
+                return nxt
+            if q._capacity_ok() and q._rate_ok(now):
+                del q.waiting[idx]
+                q.active.add(nxt)
+                if q.limiter_limit is not None:
+                    q.admit_times.append(now)
+                return nxt
+        return None
 
     # --- durable-queue persistence (DUR-1) --------------------------------
     def _queues_path(self) -> Path:

@@ -1,13 +1,13 @@
 /*
- * Applicant — criteria editor (FR-CRIT-1/2/3, FR-FB-3, FR-UI-6).
+ * Applicant — search criteria editor.
  *
- * Loads the campaign's criteria (human-readable + learned adjustments), lets the
- * user edit them, and PUTs the change. Integral edits route through the
- * confirmation gate (FR-FB-3): the API returns 409 and we re-ask, retrying with
- * confirm=true. Learned adjustments are surfaced and clearable (FR-CRIT-3).
- * Network failures degrade gracefully — never dead UI shown as live (FR-UI-2).
+ * Loads the search criteria (plain-language summary plus learned adjustments),
+ * lets the user edit them, and saves the change. Important changes ask for
+ * confirmation: if not confirmed we re-ask, then retry with confirm=true.
+ * Learned adjustments are shown and clearable. Network failures are handled
+ * gracefully rather than showing a broken screen.
  */
-import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch, el } from "/static/applicant/js/applicant-ui.js";
 
 const campaignId =
   document.body.getAttribute("data-campaign-id") ||
@@ -40,7 +40,7 @@ async function load() {
     document.getElementById("c-salary").value = c.salary_floor == null ? "" : c.salary_floor;
     renderLearned(c.learned_adjustments);
   } catch (e) {
-    status("Could not load criteria (backend unavailable).", true);
+    status("Could not load criteria. Please try again.", true);
   }
 }
 
@@ -75,13 +75,12 @@ async function save(confirm) {
     renderLearned(updated.learned_adjustments);
     status("Criteria saved.");
   } catch (e) {
-    // FR-FB-3: an integral change is confirmation-gated -> 409. Re-ask the user
-    // and retry with confirm=true so the gate is surfaced, not hidden.
+    // An important change needs confirmation (HTTP 409). Re-ask, then retry.
     if (String(e.message) === "HTTP 409" && !confirm) {
-      if (window.confirm("This is an integral change to your criteria. Confirm it?")) {
+      if (window.confirm("This is an important change to your criteria. Save it?")) {
         return save(true);
       }
-      status("Integral change not confirmed — no edit applied (FR-FB-3).", true);
+      status("Change not confirmed — nothing was saved.", true);
       return;
     }
     status("Could not save criteria.", true);

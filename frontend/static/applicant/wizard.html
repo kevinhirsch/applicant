@@ -1,28 +1,27 @@
 <!DOCTYPE html>
 <!--
-  Applicant — OOBE Setup Wizard shell (FR-OOBE, FR-UI-5).
-  Reuses the vendored Odysseus design system (../style.css): .admin-card,
+  Applicant — setup wizard.
+  Reuses the shared Odysseus design system (/static/style.css): .admin-card,
   .adm-provider-picker, .admin-model-form, .admin-btn-add, .toggle-switch.
-  The wizard begins with the LLM-settings gate: until LLM is configured the rest
-  of the app returns 409 (FR-UI-5). Subsequent steps (channels, fonts, intake)
-  light up as their backends land (FR-OOBE-2).
+  Setup starts with the language-model step: until a model is configured the rest
+  of the app stays locked. The remaining steps unlock as you complete them.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Applicant — Setup</title>
-  <link rel="stylesheet" href="../style.css" />
-  <link rel="stylesheet" href="applicant.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
 </head>
 <body>
   <main class="admin-card" id="wizard-root" style="max-width:720px;margin:40px auto;padding:24px;">
     <h1>Applicant setup</h1>
-    <p class="admin-empty">Zero-CLI setup (NFR-ZEROCLI-1). Complete each step in order.</p>
+    <p class="admin-empty">Get set up in a few quick steps — no command line needed.</p>
 
-    <!-- STEP 1 — LLM settings gate (FR-UI-5). The only step active in Phase 0. -->
+    <!-- Step 1 — connect a language model. This unlocks the rest of the app. -->
     <section class="admin-card" id="step-llm" style="margin-top:16px;padding:16px;">
-      <h2>1. LLM provider <span class="admin-badge">required</span></h2>
+      <h2>1. Language model <span class="admin-badge">required</span></h2>
       <div class="adm-provider-picker" id="provider-picker">
         <label>Provider
           <select id="llm-provider">
@@ -37,37 +36,37 @@
         <label>Base URL <input id="llm-base-url" type="text" placeholder="https://…/v1" /></label>
         <label>API key <input id="llm-api-key" type="password" placeholder="(optional for local)" /></label>
         <label>Model <input id="llm-model" type="text" placeholder="e.g. llama3.1 or anthropic/claude" /></label>
-        <button class="admin-btn-add" type="submit">Save LLM settings</button>
+        <button class="admin-btn-add" type="submit">Save language model</button>
       </form>
-      <p id="llm-status" class="admin-empty">Gate: <strong>closed</strong></p>
+      <p id="llm-status" class="admin-empty">Status: <strong>not connected</strong></p>
     </section>
 
-    <!-- STEP 2 — notification channels (FR-NOTIF-1, FR-OOBE-2/3). LIVE in Phase 1:
-         configuring Discord and/or email completes the channel gate; automated work
-         is blocked until channels are set (FR-OOBE-3). -->
+    <!-- Step 2 — notification channels. Configure Discord and/or email so
+         Applicant can reach you; automated work waits until at least one is set. -->
     <section class="admin-card" id="step-channels" style="margin-top:16px;padding:16px;">
-      <h2>2. Notification channels <span class="admin-badge admin-badge-on">Phase 1 — live</span></h2>
-      <p class="admin-empty">Configure how Applicant reaches you. Discord is primary (one-click); email via Apprise is the escalation channel (FR-NOTIF-1/2).</p>
+      <h2>2. Notifications <span class="admin-badge admin-badge-on">ready</span></h2>
+      <p class="admin-empty">Choose how Applicant reaches you. Discord is the quick one-click option; email is used as a backup.</p>
       <form id="channels-form">
         <label>Discord webhook URL
           <input type="text" name="discord_webhook_url" placeholder="https://discord.com/api/webhooks/..." style="width:100%;" />
         </label>
-        <label>Apprise / email URLs (comma-separated)
+        <label>Email addresses (comma-separated)
           <input type="text" name="apprise_urls" placeholder="mailto://user:pass@smtp.example.com" style="width:100%;" />
         </label>
-        <button type="submit" class="admin-btn">Save channels</button>
+        <button type="submit" class="admin-btn">Save notifications</button>
         <button type="button" id="channels-test" class="admin-btn admin-btn-sm">Send test</button>
       </form>
-      <p id="channels-status" class="admin-empty">Channels: <strong>not configured</strong></p>
+      <p id="channels-status" class="admin-empty">Notifications: <strong>not configured</strong></p>
     </section>
-    <!-- STEP 3..4 — light up as their backends land (FR-OOBE-2, FR-UI-2). -->
+
+    <!-- Steps 3-4 — unlock as their features become available. -->
     <section class="admin-card" id="step-fonts" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
-      <h2>3. Fonts <span class="admin-badge admin-badge-off">Phase 0/3</span></h2>
+      <h2>3. Fonts <span class="admin-badge admin-badge-off">coming soon</span></h2>
     </section>
     <section class="admin-card" id="step-intake" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
-      <h2>4. Workday-ready intake <span class="admin-badge admin-badge-off">Phase 0</span></h2>
+      <h2>4. Application intake <span class="admin-badge admin-badge-off">coming soon</span></h2>
     </section>
   </main>
-  <script type="module" src="js/wizard.js"></script>
+  <script type="module" src="/static/applicant/js/wizard.js"></script>
 </body>
 </html>

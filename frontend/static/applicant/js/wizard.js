@@ -1,7 +1,6 @@
-// Applicant OOBE wizard glue (FR-UI-5). Minimal, real: posts LLM settings to the
-// gate endpoint and reflects gate state. Uses the shared ApplicantUI module for
-// the redirect-aware fetch (the wizard is exempt from the gate redirect — it is
-// how the user opens the gate). STAGE B (Phase 0/1) deepens the wizard.
+// Applicant setup wizard. Posts the language-model and notification settings and
+// reflects their status. Uses the shared ApplicantUI module for the redirect-aware
+// fetch (the wizard never redirects to itself — it is where you complete setup).
 import { ApplicantUI } from "./applicant-ui.js";
 
 async function refreshStatus() {
@@ -9,12 +8,12 @@ async function refreshStatus() {
     const s = await ApplicantUI.apiFetch("/api/setup/status");
     const el = document.getElementById("llm-status");
     if (el) {
-      el.innerHTML = "Gate: <strong>" + (s.gate_open ? "open" : "closed") + "</strong>";
+      el.innerHTML = "Status: <strong>" + (s.gate_open ? "connected" : "not connected") + "</strong>";
     }
     const ch = document.getElementById("channels-status");
     if (ch) {
       ch.innerHTML =
-        "Channels: <strong>" +
+        "Notifications: <strong>" +
         (s.channels_configured ? "configured" : "not configured") +
         "</strong>";
     }
@@ -23,7 +22,7 @@ async function refreshStatus() {
   }
 }
 
-// Channel setup (FR-NOTIF-1, FR-OOBE-2/3): post Discord/email and reflect the gate.
+// Notification setup: post Discord/email and reflect the status.
 function onChannelsSubmit(ev) {
   ev.preventDefault();
   const form = ev.target;

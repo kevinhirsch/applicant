@@ -1,24 +1,22 @@
 /*
- * Applicant — interactive document review (FR-RESUME-1/8/9, FR-ANSWER-1, FR-NOTIF-4).
+ * Applicant — document review.
  *
- * Phase 3 thin client for the redline review surface:
- *  - resume / cover-letter / screening-answer tabs over an application's materials;
- *  - renders the redline (additions + deletions highlighted) from the backend;
- *  - runs the interactive add/subtract/free-text revision loop, re-rendering the
- *    redline after every turn (each turn re-applies the server-side filters);
- *  - approve/decline (no submission until approved).
- * The aggressiveness control (FR-RESUME-9) ships GRAYED/disabled (FR-UI-2). Network
- * failures degrade gracefully (no dead UI shown as live). Shares the redirect-aware
- * fetch from ApplicantUI (a 409 from the gate routes to the wizard).
+ *  - resume / cover-letter / screening-answer tabs over an application's documents;
+ *  - shows what changed (additions and removals highlighted);
+ *  - runs the add/subtract/free-text revision loop, refreshing the changes after
+ *    each request;
+ *  - approve or decline (nothing is submitted until you approve it).
+ * The aggressiveness control isn't available yet and ships disabled. Network
+ * failures are handled gracefully. Shares the redirect-aware fetch from ApplicantUI.
  */
-import { ApplicantUI, apiFetch } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch } from "/static/applicant/js/applicant-ui.js";
 
   function qs(name) {
     var m = new RegExp("[?&]" + name + "=([^&]*)").exec(window.location.search);
     return m ? decodeURIComponent(m[1]) : "";
   }
 
-  // The notification deep link (FR-NOTIF-4) passes ?document_id=; fall back to data-attr.
+  // The notification link passes ?document_id=; fall back to the data attribute.
   var documentId = qs("document_id") || document.body.getAttribute("data-document-id") || "";
   var variantId = document.body.getAttribute("data-variant-id") || "";
   var applicationId = qs("application_id") || document.body.getAttribute("data-application-id") || "";
@@ -48,7 +46,7 @@ import { ApplicantUI, apiFetch } from "./applicant-ui.js";
       // rendered_html already wraps additions/deletions in highlighted spans.
       view.innerHTML = payload.rendered_html || "(no differences)";
     } catch (e) {
-      view.textContent = "Could not load the redline (backend unavailable).";
+      view.textContent = "Could not load the changes. Please try again.";
     }
   }
 

@@ -59,6 +59,7 @@ _SECRET_KEYS = frozenset(
         "credential",
         "llm_api_key",
         "discord_webhook_url",
+        "apprise_urls",
         "master_key",
         "ssn",
     }
@@ -80,6 +81,10 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)\b(?:bearer|token|api[_-]?key|authorization)\b[=:\s]+\S{8,}"),
     # password=... / pwd: ... inline in a message.
     re.compile(r"(?i)\b(?:password|passwd|pwd|secret)\b[=:\s]+\S{4,}"),
+    # PRIV-1: URL userinfo — ``scheme://user:pass@host`` — mask the ``user:pass``
+    # so an Apprise/SMTP URL like ``smtps://user:password@host`` does not leak its
+    # credentials when it appears embedded in a free-text message.
+    re.compile(r"(?i)(?<=://)[^/\s:@]+:[^/\s@]+(?=@)"),
 )
 #: A long high-entropy bare token (32+ url-safe chars, mixed case+digits) — a
 #: catch-all for opaque credentials embedded with no telltale prefix.
