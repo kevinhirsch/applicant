@@ -1,7 +1,10 @@
-"""Remote-view sub-port adapter (Neko/WebRTC default, noVNC alt) (FR-SANDBOX-2).
+"""Remote-view sub-port adapters (Webtop default, Neko/WebRTC, noVNC) (FR-SANDBOX-2).
 
-The remote-view provider is its own **swappable sub-port** (Neko <-> noVNC <->
-future). Both adapters below mint a **one-click live-session URL** for a session and
+The remote-view provider is its own **swappable sub-port** (Webtop <-> Neko <->
+noVNC <-> future). The default takeover environment is now a containerized, full
+**Ubuntu webtop desktop** (:class:`WebtopRemoteView`, DE configurable: Cinnamon /
+Xfce / GNOME on X11); Neko (browser-only) remains a selectable backend. All adapters
+below mint a **one-click live-session URL** for a session and
 authorize/revoke a live takeover (FR-SANDBOX-3). The URL is a real, single-click
 deep link: it carries a short-lived, per-session **access token** so the link can be
 sent in a notification and opened straight into the controllable session without a
@@ -106,6 +109,72 @@ class NekoRemoteView(_TokenMixin):
     def view_url(self, session_id: str) -> str:
         """Return a one-click, token-bearing live-session URL (FR-SANDBOX-2)."""
         return f"{self._base_url}/{session_id}?token={self._token(session_id)}"
+
+
+class WebtopRemoteView(_TokenMixin):
+    """RemoteViewPort adapter — full **Ubuntu webtop desktop** (FR-SANDBOX-2/3).
+
+    The takeover environment is a containerized, web-streamed FULL Ubuntu desktop
+    (NOT a browser-only view): the human drives a real DE with a real browser. The
+    DE is configurable (Cinnamon default / Xfce / GNOME) and resolves to a container
+    image at construction — Cinnamon/Xfce use ready-made LinuxServer webtop images,
+    GNOME uses the local custom ``applicant/webtop-gnome:latest`` image. All three
+    run on **X11** (not Wayland) for remote streaming + automation.
+
+    Session continuity (the handoff, FR-PREFILL-5): the one-click URL carries the
+    short-lived token AND the application URL the agent was on (``app=`` query) so the
+    desktop's browser opens the SAME application the engine was filling. The real
+    profile/cookie sharing (so the human resumes the agent's authenticated session)
+    is done by the container control plane (a shared/seeded browser profile) — that
+    REAL part is behind the integration-gated ``RoomControl`` boundary; the image
+    selection, URL/token minting, and lifecycle bookkeeping here are unit-tested.
+    """
+
+    provider = "webtop"
+
+    def __init__(
+        self,
+        base_url: str = "https://sandbox.local/webtop",
+        *,
+        desktop: str = "cinnamon",
+        image: str = "lscr.io/linuxserver/webtop:ubuntu-cinnamon",
+        token_ttl_seconds: float = DEFAULT_TOKEN_TTL_SECONDS,
+    ) -> None:
+        super().__init__(token_ttl_seconds=token_ttl_seconds)
+        self._base_url = base_url.rstrip("/")
+        #: The configured DE (cinnamon | xfce | gnome) — introspectable for wiring/UI.
+        self.desktop = desktop
+        #: The resolved container image the takeover desktop is launched from.
+        self.image = image
+        #: session_id -> application URL to open in the desktop's browser (handoff).
+        self._app_urls: dict[str, str] = {}
+
+    def bind_application_url(self, session_id: str, app_url: str) -> None:
+        """Record the application URL the agent was on, for the handoff (FR-PREFILL-5).
+
+        The takeover desktop opens this URL in its browser so the human drives the
+        SAME application/session the engine was filling (session-continuity seam).
+        """
+        if app_url:
+            self._app_urls[session_id] = app_url
+
+    def view_url(self, session_id: str) -> str:
+        """One-click, token-bearing live-session URL to the streamed desktop.
+
+        Carries the access token AND (when bound) the application URL so the desktop
+        browser lands on the same application the agent was on (FR-SANDBOX-2/3).
+        """
+        url = f"{self._base_url}/{session_id}?token={self._token(session_id)}"
+        app_url = self._app_urls.get(session_id)
+        if app_url:
+            from urllib.parse import quote
+
+            url += f"&app={quote(app_url, safe='')}"
+        return url
+
+    def invalidate(self, session_id: str) -> None:
+        super().invalidate(session_id)
+        self._app_urls.pop(session_id, None)
 
 
 class NoVncRemoteView(_TokenMixin):

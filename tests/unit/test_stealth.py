@@ -33,7 +33,7 @@ class TestFingerprintCoherence:
 
     def test_windows_ua_with_apple_renderer_is_incoherent(self):
         bad = dict(NORMALIZED_FINGERPRINT)
-        bad["webgl_renderer"] = "Apple M1 (Metal)"  # contradicts Windows UA
+        bad["webgl_renderer"] = "Apple M1 (Metal)"  # contradicts the Linux UA
         assert fingerprint_is_coherent(bad) is False
 
     def test_mac_ua_with_windows_platform_is_incoherent(self):
@@ -202,9 +202,10 @@ class TestEgressThreadedIntoLaunch:
         captured: dict = {}
 
         class _FakeSource:
-            def __init__(self, fingerprint, *, proxy=None, user_data_dir=""):
+            def __init__(self, fingerprint, *, proxy=None, user_data_dir="", channel="chrome"):
                 captured["proxy"] = proxy
                 captured["user_data_dir"] = user_data_dir
+                captured["channel"] = channel
 
             def open(self, url):  # noqa: D401
                 captured["opened"] = url

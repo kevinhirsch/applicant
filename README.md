@@ -45,9 +45,13 @@ The full build specification lives under [`docs/`](docs/):
 # Deployment
 
 Applicant ships the whole stack — FastAPI + the vendored frontend, PostgreSQL,
-SearXNG, on-demand Neko, font-install — as a Docker Compose deployment
-(FR-INSTALL-1/3). No `make` needed. Everything after install is configured
-**in-browser** (zero-CLI, NFR-ZEROCLI-1).
+SearXNG, the on-demand **takeover desktop** (a full Ubuntu desktop, see below),
+font-install — as a Docker Compose deployment (FR-INSTALL-1/3). No `make` needed.
+Everything after install is configured **in-browser** (zero-CLI, NFR-ZEROCLI-1).
+
+The host is a **lean, headless Ubuntu Server 24.04 LTS** VM (the Proxmox deployer
+builds it from the Ubuntu noble cloud image). The desktop the user takes over lives
+in a separate container, not on the host.
 
 ## Prerequisites
 
@@ -71,9 +75,10 @@ internal-only SearXNG).
 ### Proxmox VE node (recommended) — paste-and-go
 
 On your **Proxmox VE node shell**, paste this one line. Per the spec (FR-INSTALL-1) it
-provisions a **Proxmox VM** (not an LXC): a whiptail wizard creates a Debian 12 cloud
-VM, presets the root password, auto-imports the node's SSH keys, and uses cloud-init to
-self-provision on first boot — install Docker, deploy Applicant, run the migrations:
+provisions a **Proxmox VM** (not an LXC): a whiptail wizard creates a **lean, headless
+Ubuntu Server 24.04 LTS** cloud VM, presets the root password, auto-imports the node's
+SSH keys, and uses cloud-init to self-provision on first boot — install Docker, deploy
+Applicant, run the migrations (the full takeover desktop is a container, not on the host):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
@@ -158,7 +163,14 @@ none of these — the LLM and notification channels are configured in-browser.
 | `DISCOVERY_PROXIES` | _empty_ | Comma-separated proxy hooks for hostile boards (empty = direct). |
 | `NOTIFICATIONS_LIVE` | `false` | Turn on real Discord/email send (off = captured, no network). |
 | `DISCORD_WEBHOOK_URL` / `APPRISE_URLS` | _empty_ | Notification targets (Apprise URL syntax). |
-| `NEKO_ROOMS_URL` / `NEKO_ROOMS_TOKEN` | _empty_ | Real Neko remote-session server for live takeover. |
+| `BROWSER_CHANNEL` | `chrome` | Driving browser channel: `chrome` (real Google Chrome, default) \| `chromium` (fallback). Invalid → boot error. |
+| `EGRESS_MODE` | `direct` | Browser egress: `direct` (host residential connection) \| `residential-proxy` (requires `EGRESS_PROXY_URL` + `EGRESS_RESIDENTIAL=true`). Datacenter exit refused. |
+| `EGRESS_PROXY_URL` / `EGRESS_RESIDENTIAL` | _empty_ / `false` | Residential proxy URL + operator attestation it is residential (FR-STEALTH-4). |
+| `EGRESS_TIMEZONE` / `EGRESS_LOCALE` | `America/Phoenix` / `en-US` | tz/locale pinned to the egress geolocation so the fingerprint ↔ exit IP stay consistent (FR-STEALTH-1). |
+| `TAKEOVER_DESKTOP` | `cinnamon` | Takeover desktop DE: `cinnamon` (default) \| `xfce` \| `gnome`. Invalid → boot error. Every DE ships Google Chrome. |
+| `TAKEOVER_DESKTOP_IMAGE` | _empty_ | Advanced: pin an exact desktop image (overrides the DE→image table). |
+| `REMOTE_VIEW_BACKEND` | `webtop` | Live remote-view backend: `webtop` (full desktop, default) \| `neko` (browser-only). |
+| `NEKO_ROOMS_URL` / `NEKO_ROOMS_TOKEN` | _empty_ | Real Neko remote-session server (used when `REMOTE_VIEW_BACKEND=neko`). |
 | `APPLICANT_UPDATE_ENABLED` | _unset_ | Set `1` to let the in-UI Update button actually dispatch. |
 | `LOG_FORMAT` / `LOG_LEVEL` | `pretty` / `INFO` | structlog output (`json` in prod) and verbosity. |
 
@@ -170,15 +182,74 @@ deployment, enable each integration (all are opt-in, none required to boot):
 - **Persistence + durable execution (DBOS):** set `ORCHESTRATOR_BACKEND=dbos` and a
   reachable `DATABASE_URL`. DBOS owns its own system tables; Alembic manages the app
   schema. See [Durable orchestration backend](#durable-orchestration-backend).
-- **Real browser pre-fill (patchright):** `uv sync --extra browser` then
-  `patchright install chromium`. The adapter swaps from the in-memory fake page model
-  to a real Chromium with stealth fingerprinting.
+- **Real browser pre-fill (Google Chrome via patchright):** `uv sync --extra browser`
+  then install **real Google Chrome** (`google-chrome-stable`) — patchright drives
+  the Chrome *channel* (`BROWSER_CHANNEL=chrome`, the default; `chromium` is a
+  less-coherent fallback). The driver runs **headful** (never headless — that is a
+  detection tell) on a per-tenant Chrome profile. Real Google Chrome (not Chromium)
+  is the foundation of the stance below: it yields the genuine Chrome TLS/JA3 +
+  HTTP/2 fingerprint and the correct Sec-CH-UA client hints automatically. The
+  adapter swaps from the in-memory fake page model to that real Chrome.
+
+  **Coherent real-Linux/Chrome identity (FR-STEALTH-1) — and WHY.** The engine
+  presents a single, internally-consistent **real Linux + Google Chrome** identity
+  rather than spoofing a Windows persona: UA `Mozilla/5.0 (X11; Linux x86_64) ...
+  Chrome/<major>` (the `<major>` is derived from the *installed* Chrome so UA ↔
+  Sec-CH-UA ↔ engine never disagree), `navigator.platform = "Linux x86_64"`,
+  `navigator.vendor = "Google Inc."`, `Sec-CH-UA-Platform: "Linux"`, languages
+  `en-US,en`, and a **real Linux GPU** WebGL renderer (Mesa/llvmpipe) — never a
+  Windows Direct3D renderer, and **stable, not randomized** (randomization is itself
+  a tell, and no canvas-noise is injected). An incoherent spoof (e.g. a Windows UA
+  with a Linux GPU) scores *worse* with bot detectors than an honest, coherent
+  fingerprint on the residential IP, so coherence is the whole point.
+
+  **Timezone/locale pinned to egress (FR-STEALTH-1 ↔ FR-STEALTH-4).** `EGRESS_TIMEZONE`
+  / `EGRESS_LOCALE` are threaded into the browser context (`timezone_id` / `locale`)
+  so tz/locale ↔ exit IP stay consistent; derive them from the residential egress IP's
+  region in a real deployment (defaults are a sensible coherent pair).
 - **Live discovery:** `DISCOVERY_LIVE=true` (+ `SEARXNG_URL`, optional
   `DISCOVERY_PROXIES`) to scrape real boards via JobSpy + SearXNG.
 - **Notifications:** `NOTIFICATIONS_LIVE=true` + `DISCORD_WEBHOOK_URL` / `APPRISE_URLS`
   (email/SMTP/etc. via Apprise URL syntax). Also configurable in the wizard.
-- **Live remote takeover (Neko):** `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`) for the
-  one-click VNC session; the remote-view sub-port also supports noVNC.
+- **Live remote takeover (full Ubuntu desktop, default):** the takeover environment
+  is a containerized, web-streamed **full Ubuntu desktop** the user drives during an
+  irreducible human step (CAPTCHA / account-creation / verification / final submit;
+  FR-SANDBOX-2/3, FR-PREFILL-5). The desktop's DE is configurable via
+  `TAKEOVER_DESKTOP` (default **Cinnamon**, plus **Xfce** and full **GNOME**) and is a
+  pure image swap:
+
+  | `TAKEOVER_DESKTOP` | Image | Notes |
+  | --- | --- | --- |
+  | `cinnamon` (default) | `applicant/webtop-chrome:cinnamon` | LinuxServer Cinnamon webtop **+ Google Chrome + realistic fonts** (`docker/webtop-chrome/Dockerfile`, `BASE=...ubuntu-cinnamon`). |
+  | `xfce` | `applicant/webtop-chrome:xfce` | LinuxServer Xfce webtop **+ Google Chrome + realistic fonts** (`docker/webtop-chrome/Dockerfile`, `BASE=...ubuntu-xfce`). |
+  | `gnome` | `applicant/webtop-gnome:latest` | **Custom** image (`docker/webtop-gnome/Dockerfile`): Ubuntu + GNOME on Xorg + KasmVNC **+ Google Chrome + realistic fonts**. **Heavier** — full GNOME has no prebuilt webtop. |
+
+  **Google Chrome is the browser in every desktop** (FR-STEALTH-1): the stock
+  LinuxServer webtops do not ship Chrome, so `cinnamon`/`xfce` resolve to local
+  *derived* images (`docker/webtop-chrome/Dockerfile`, `FROM` the LinuxServer webtop)
+  that add `google-chrome-stable` + a realistic desktop font set (Liberation/DejaVu/
+  Noto/MS-corefonts) so font enumeration looks like a real machine, not a bare
+  container. This way the human takes over the **same real Chrome** the engine drives.
+
+  **X11, not Wayland**, for all three: the web-streaming layer and the
+  automation/handoff path are X11-native (Chrome runs headful on that X server);
+  Wayland would complicate both. **GNOME trade-off:** standard webtop images don't
+  ship full GNOME (it assumes Wayland/systemd), so `gnome` builds a heavier custom
+  image — prefer Cinnamon or Xfce unless GNOME is specifically required. **Switch the
+  driving channel** with `BROWSER_CHANNEL` (`chrome` default ↔ `chromium`).
+
+  **Session continuity / handoff:** the one-click live-session URL carries the
+  short-lived access token AND the application URL the agent was on (`app=`), so the
+  desktop's browser opens the SAME application the engine was filling. The real
+  shared-profile/cookie continuity + container start/stop are integration-gated; the
+  image selection, URL/token minting, and lifecycle bookkeeping are unit-tested.
+
+  Switch backend with `REMOTE_VIEW_BACKEND` (`webtop` default ↔ `neko`). Run the
+  desktop container with the `takeover` compose profile:
+  `TAKEOVER_DESKTOP_IMAGE=lscr.io/linuxserver/webtop:ubuntu-xfce docker compose -f docker/docker-compose.prod.yml --profile takeover up -d takeover-desktop`.
+- **Live remote takeover (Neko, browser-only alt):** set `REMOTE_VIEW_BACKEND=neko`
+  with `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`) for the one-click browser-only session;
+  the remote-view sub-port also supports noVNC.
 - **Resume fidelity rendering:** install a TeX engine (`lualatex`/`xelatex` +
   fontspec/moderncv) for LaTeX-primary PDFs, or LibreOffice (`soffice`) for the
   docx-XML fallback. Without either, rendering uses the deterministic stub seam.

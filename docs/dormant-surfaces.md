@@ -81,9 +81,9 @@ The clone follows the Odysseus design system (FR-UI-1); dormant surfaces are bui
 ## 9. Remote-session takeover
 
 - **Surface:** The one-click live remote session view and its takeover/authorize controls.
-- **What it will do:** Show the browser the engine is working in; let the user submit themselves or authorize the engine to finish (and complete CAPTCHA/verification).
+- **What it will do:** Hand the user a **full Ubuntu desktop** (containerized, web-streamed) driving the SAME application/session the engine was on; let them submit themselves or authorize the engine to finish (and complete CAPTCHA/verification).
 - **Requirement ID(s):** FR-SANDBOX-2/3; FR-PREFILL-4/5; FR-UI-6.
-- **Wiring remaining:** Bind to the RemoteSessionControl driving port and the Sandbox + RemoteView sub-port (Neko default, swappable). Live in Phase 2.
+- **Wiring remaining:** Bind to the RemoteSessionControl driving port and the Sandbox + RemoteView sub-port. The default backend is now the **configurable Ubuntu webtop desktop** (`WebtopRemoteView`; DE = `TAKEOVER_DESKTOP` → cinnamon default / xfce / gnome on X11, an image swap), with **Neko (browser-only) still selectable** via `REMOTE_VIEW_BACKEND`. Image selection + tokenized URL + handoff (`app=`) + lifecycle are wired/unit-tested; the real container/room start-stop + shared-profile continuity are integration-gated (Phase 2 boundary).
 
 ---
 

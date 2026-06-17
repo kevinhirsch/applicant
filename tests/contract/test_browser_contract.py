@@ -101,7 +101,7 @@ class TestPatchrightBrowserContract:
 
     def test_incoherent_fingerprint_rejected(self):
         bad = dict(NORMALIZED_FINGERPRINT)
-        bad["webgl_renderer"] = "Apple M1 (Metal)"  # contradicts Windows UA
+        bad["webgl_renderer"] = "Apple M1 (Metal)"  # contradicts the Linux UA
         assert fingerprint_is_coherent(bad) is False
 
     # --- screenshot routes through the boundary (FR-PREFILL-4) -----------
