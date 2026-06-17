@@ -416,6 +416,57 @@
             <p class="memory-desc" style="margin:0;">This becomes available once the job-application assistant is set up. Finish its first-run setup, then reopen this tab.</p>
           </div>
           <div id="applicant-profile-body">
+            <!-- CRIT-profile: what-roles-to-target editor (criteria) -->
+            <div class="admin-card" id="applicant-criteria-card">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <h2 style="margin:0;font-size:1em;">What jobs to look for</h2>
+                <span style="flex:1"></span>
+                <button id="applicant-criteria-refresh-btn" class="memory-toolbar-btn" title="Reload from the assistant">Refresh</button>
+              </div>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The kinds of roles the assistant searches and applies to for you. Edit any field below — these stay plain and under your control.</p>
+              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Locations <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention">
+                </div>
+                <div style="max-width:240px">
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Lowest acceptable salary</label>
+                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)">
+                </div>
+              </div>
+              <div id="applicant-crit-learned" class="hidden" style="margin-top:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(127,127,127,0.06)">
+                <div style="font-size:11px;opacity:0.7;margin-bottom:4px;display:flex;align-items:center;gap:6px"><span class="pill" style="font-size:10px;opacity:0.8">auto-tuned</span> Adjustments the assistant made from your feedback</div>
+                <div id="applicant-crit-learned-body" style="font-size:12px;opacity:0.85;white-space:pre-wrap"></div>
+                <button id="applicant-crit-clear-learned-btn" class="memory-toolbar-btn" style="margin-top:6px" title="Discard the assistant's auto-tuning and keep only your own settings">Clear auto-tuning</button>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button id="applicant-crit-save-btn" class="primary-btn" title="Save your search settings">Save</button>
+              </div>
+            </div>
+
+            <!-- CRIT-profile: AI-suggested attributes awaiting confirmation (FR-ATTR-4) -->
+            <div class="admin-card hidden" id="applicant-suggested-card">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <h2 style="margin:0;font-size:1em;">Suggested details <span id="applicant-suggested-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal"></span></h2>
+                <span style="flex:1"></span>
+                <button id="applicant-suggested-refresh-btn" class="memory-toolbar-btn" title="Reload suggestions">Refresh</button>
+              </div>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The assistant noticed these details while working. Add the ones you want; ignore the rest. Nothing is saved until you confirm it.</p>
+              <div id="applicant-suggested-list" style="display:flex;flex-direction:column;gap:8px"></div>
+            </div>
+
             <div class="admin-card">
               <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
                 <div style="flex:1;min-width:140px">
@@ -450,6 +501,40 @@
               <p class="memory-desc doclib-desc" style="margin:0 0 6px;">When the assistant prepares your resume it picks a format. Review its choice and keep it or switch back — nothing is locked in without you.</p>
               <div id="applicant-learning-body" style="font-size:13px;opacity:0.7">Loading…</div>
               <div id="applicant-learning-actions" style="display:flex;gap:8px;margin-top:8px"></div>
+            </div>
+
+            <!-- CRIT-profile: writing-style controls — banned phrases (FR-RESUME-5) + aggressiveness dial (FR-RESUME-9) -->
+            <div class="admin-card" id="applicant-style-card">
+              <h2 style="margin:0 0 4px;font-size:1em;">Writing style</h2>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">Keep your resumes and letters sounding like you — not like a robot.</p>
+
+              <div style="margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <label style="font-size:12px;font-weight:600">Phrases to never use</label>
+                  <span style="flex:1"></span>
+                  <button id="applicant-banned-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
+                </div>
+                <p class="memory-desc" style="margin:0 0 6px;font-size:11px;opacity:0.7">These get removed from anything the assistant writes. One phrase per line.</p>
+                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text"></textarea>
+                <div id="applicant-banned-seed" style="font-size:11px;opacity:0.6;margin-top:6px"></div>
+                <div style="margin-top:6px">
+                  <button id="applicant-banned-save-btn" class="primary-btn" title="Save your phrase list">Save phrases</button>
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--border);padding-top:10px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <label style="font-size:12px;font-weight:600" for="applicant-aggr-slider">Tone</label>
+                  <span class="pill" style="font-size:10px;opacity:0.7" title="This control is not active yet — it is shown for an upcoming release.">coming soon</span>
+                </div>
+                <p class="memory-desc" style="margin:4px 0 6px;font-size:11px;opacity:0.7">How assertively wording leans — from measured to bold. Always truthful; this only changes framing. <em>Preview only for now.</em></p>
+                <div style="display:flex;align-items:center;gap:10px;opacity:0.5">
+                  <span style="font-size:11px">Measured</span>
+                  <input type="range" id="applicant-aggr-slider" min="0" max="100" value="20" step="5" style="flex:1" disabled aria-disabled="true" title="Not active yet">
+                  <span style="font-size:11px">Bold</span>
+                  <span id="applicant-aggr-value" style="font-size:11px;width:28px;text-align:right">20</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -805,6 +890,9 @@
     <button class="icon-rail-btn rail-dynamic" id="rail-chats" title="Chat ready" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="icon-rail-btn rail-dynamic" id="rail-documents" title="Documents" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
     <!-- Tool launchers — always visible, alphabetical -->
+    <!-- CRIT-portal: Pending — primary home-base; lists everything awaiting you across your job searches. Live count badge added by applicantPortal.js. -->
+    <button class="icon-rail-btn" id="rail-portal" title="Pending — everything across your job search that needs your attention"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+    <!-- CRIT-portal end -->
     <button class="icon-rail-btn" id="rail-assistant" title="Job Assistant — answers about your applications and surfaces what needs you"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="icon-rail-btn" id="rail-calendar" title="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
     <button class="icon-rail-btn" id="rail-compare" title="Compare"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></button>
@@ -1069,6 +1157,19 @@
           </svg>
           <span class="grow">Home Assistant</span>
         </div>
+
+        <!-- CRIT-ops: Activity / debug launcher (read-only observability + run
+             controls + update). Greyed by the feature-activation layer until the
+             engine is configured (the `debug` section in applicant_features.py). -->
+        <div class="list-item" id="tool-debug-btn" title="Activity — application history, run controls, and updates">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+          <span class="grow">Activity</span>
+        </div>
+        <!-- end CRIT-ops -->
 
         <div class="list-item" id="tool-theme-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2429,6 +2530,12 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
+<!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
+     before app.js so the window.openApplicantRemoteSession / openApplicantVault
+     seams exist for other lanes to call. -->
+<script type="module" src="/static/js/applicantRemote.js"></script>
+<script type="module" src="/static/js/applicantVault.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

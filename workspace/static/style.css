@@ -34469,6 +34469,15 @@ body.theme-frosted .modal {
 }
 .applicant-locked:hover { opacity: 0.4; }
 
+/* CRIT-portal: Pending home-base launcher. The portal is NEVER gated behind a
+   campaign/engine state (it aggregates across everything the owner has), so its
+   rail entry stays fully interactive. The live count badge reuses the shared
+   .rail-notes-badge pill anchored to the (position:relative) rail button. */
+#rail-portal { opacity: 0.62; }
+#rail-portal:hover { opacity: 1; }
+#rail-portal .rail-notes-badge { background: var(--red); }
+/* CRIT-portal end */
+
 /* ===== First-run setup wizard (static/js/applicantOnboarding.js) =====
    A blocking, resumable full-screen overlay shown right after login until the
    engine reports setup + onboarding are complete. Uses the shared design tokens

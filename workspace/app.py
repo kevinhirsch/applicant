@@ -719,6 +719,12 @@ app.include_router(setup_applicant_chat_routes())
 # Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
 from routes.applicant_email_routes import setup_applicant_email_routes
 app.include_router(setup_applicant_email_routes())
+# CRIT-portal: Pending-Actions Portal (primary home-base) — aggregates every open
+# pending action across ALL the owner's campaigns into one feed + resolve +
+# supply-a-missing-detail (/api/applicant/portal/*). Auth-protected, owner-scoped.
+from routes.applicant_portal_routes import setup_applicant_portal_routes
+app.include_router(setup_applicant_portal_routes())
+# CRIT-portal end
 # Stage 2.5 — ENGINE -> WORKSPACE callback channel (/api/applicant/internal/*).
 # Gated in AuthMiddleware by the shared APPLICANT_INTERNAL_TOKEN (NOT loopback,
 # since the engine calls from a sibling container). Disabled when no token is set.
@@ -727,6 +733,21 @@ from routes.applicant_internal_routes import setup_applicant_internal_routes
 # /research callback so the engine can run owner-scoped research synchronously.
 app.state.research_handler = research_handler
 app.include_router(setup_applicant_internal_routes())
+# CRIT-auto: live remote view/takeover + final-submit controls (/api/applicant/remote/*)
+# and the engine credential vault (/api/applicant/vault/*). Auth + owner-scoped.
+from routes.applicant_remote_routes import setup_applicant_remote_routes
+app.include_router(setup_applicant_remote_routes())
+from routes.applicant_vault_routes import setup_applicant_vault_routes
+app.include_router(setup_applicant_vault_routes())
+
+# CRIT-ops: Debug/Activity (read-only observability) + Update button + run-mode/
+# throughput controls + discovery-source toggles. Admin-scoped engine proxies;
+# additive, disjoint prefixes (/api/applicant/admin, /api/applicant/ops).
+from routes.applicant_admin_routes import setup_applicant_admin_routes
+app.include_router(setup_applicant_admin_routes())
+from routes.applicant_ops_routes import setup_applicant_ops_routes
+app.include_router(setup_applicant_ops_routes())
+# end CRIT-ops
 
 # ========= ROUTES (kept in app.py) =========
 

@@ -215,6 +215,24 @@ def test_attribute_integral_edit_is_confirmation_gated(client):
     assert ok.status_code == 201
 
 
+# CRIT-profile: explicit attribute delete (FR-ATTR-3).
+@pytest.mark.integration
+def test_attribute_delete_removes_it(client):
+    cid = "c-attr-del"
+    made = client.post(
+        "/api/attributes",
+        json={"campaign_id": cid, "name": "Phone", "value": "+1 555 0100"},
+    )
+    assert made.status_code == 201
+    attr_id = made.json()["id"]
+    assert any(a["id"] == attr_id for a in client.get(f"/api/attributes/{cid}").json()["items"])
+
+    deleted = client.delete(f"/api/attributes/{cid}/{attr_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": attr_id}
+    assert not any(a["id"] == attr_id for a in client.get(f"/api/attributes/{cid}").json()["items"])
+
+
 # === Stealth honesty caveat + egress (FR-STEALTH-4 / FR-STEALTH-5) ========
 @pytest.mark.integration
 def test_stealth_endpoint_surfaces_caveat_and_egress(client):

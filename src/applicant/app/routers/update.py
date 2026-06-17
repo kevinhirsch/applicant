@@ -51,14 +51,20 @@ class UpdateTrigger:
                 ),
             )
         # Real (opt-in) dispatch — detached so the UI returns immediately.
+        # The enabled path MUST pass ``--apply`` so the script actually performs
+        # the update (backup -> migrate -> restart); without it the script is a
+        # dry-run that only prints the steps, so an "enabled" trigger that
+        # silently did nothing would be a footgun. The guard (APPLICANT_UPDATE_
+        # ENABLED=1 *and* script-exists) above is what keeps this from running in
+        # tests/dev — once past it, run for real.
         import subprocess  # local import: only loaded on real dispatch
 
         subprocess.Popen(  # noqa: S603 - script path is repo-fixed, not user input
-            ["/bin/bash", str(self._script)],
+            ["/bin/bash", str(self._script), "--apply"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return UpdateResult(started=True, message=f"Started {self._script.name} (background).")
+        return UpdateResult(started=True, message=f"Started {self._script.name} --apply (background).")
 
 
 @router.get("")

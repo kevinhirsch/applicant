@@ -52,6 +52,29 @@ def index() -> dict:
     return {"surface": "remote", "phase": 2, "status": "live"}
 
 
+# CRIT-auto: read-only list of the live sandbox sessions so a front-door surface
+# can render a session picker for multiple concurrent takeovers (FR-SANDBOX-4).
+# Uses the existing sandbox introspection (active_sessions); no new state.
+@router.get("/sessions")
+def list_sessions(container: Container = Depends(get_container)) -> dict:
+    active = getattr(container.sandbox, "active_sessions", None)
+    sessions = active() if callable(active) else []
+    remote_view = container.sandbox.remote_view()
+    out = []
+    for s in sessions:
+        out.append(
+            {
+                "session_id": s.session_id,
+                "application_id": str(s.application_id),
+                "view_url": remote_view.view_url(s.session_id),
+                "has_takeover": bool(
+                    getattr(remote_view, "has_takeover", lambda _sid: False)(s.session_id)
+                ),
+            }
+        )
+    return {"sessions": out, "count": len(out)}
+
+
 @router.post("/sessions", status_code=201)
 def open_session(body: OpenSessionIn, container: Container = Depends(get_container)) -> dict:
     """Provision a sandbox and return its one-click live-session URL (FR-SANDBOX-2).
