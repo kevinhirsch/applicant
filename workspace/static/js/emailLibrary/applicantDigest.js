@@ -47,6 +47,17 @@ function _esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// True only for http(s) URLs — guards the posting "Open" link against
+// javascript:/data:/other schemes even though the value is trusted infra.
+function _isWebUrl(u) {
+  try {
+    const proto = new URL(u, window.location.origin).protocol;
+    return proto === 'http:' || proto === 'https:';
+  } catch (_e) {
+    return false;
+  }
+}
+
 // Inline icons (match the line-icon style used across the email UI).
 const _ICON_BELL =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
@@ -221,7 +232,9 @@ function _buildRow(panel, row) {
   // Actions row.
   const actions = _el('div', { style: 'display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;' });
 
-  if (row.link) {
+  // Only render a clickable link for real web URLs — never javascript:/data:/etc.,
+  // even though the link comes from trusted same-origin infrastructure (defense in depth).
+  if (row.link && _isWebUrl(row.link)) {
     const open = _el('a', {
       cls: 'memory-toolbar-btn',
       html: `${_ICON_LINK}Open`,
