@@ -22,6 +22,7 @@ import {
   _tryFoldHintSig, _foldSignature, _SIG_ICON, _QUOTE_ICON,
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
+import { mountApplicantDigest } from './emailLibrary/applicantDigest.js';
 
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
@@ -1086,6 +1087,9 @@ export function openEmailLibrary(opts = {}) {
   _loadFolders();
   _loadEmailReminderBellVisibility();
   _loadEmails();
+  // Additive: surface the Applicant assistant's daily digest above the native
+  // mailbox grid. Self-gates on the engine feature state; no-op when inactive.
+  mountApplicantDigest(modal);
 }
 
 async function _loadAccounts() {

@@ -687,6 +687,10 @@ app.include_router(setup_applicant_memory_routes())
 # Lane C — Chat/Agent ↔ engine assistant + job actions (additive; auth-protected).
 from routes.applicant_chat_routes import setup_applicant_chat_routes
 app.include_router(setup_applicant_chat_routes())
+# Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
+from routes.applicant_email_routes import setup_applicant_email_routes
+app.include_router(setup_applicant_email_routes())
+>>>>>>> claude/s2-email
 
 # ========= ROUTES (kept in app.py) =========
 
