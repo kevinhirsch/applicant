@@ -295,15 +295,24 @@ def build_container(settings: Settings | None = None) -> Container:
         pending_actions=pending_actions_service,
     )
     attribute_cloud_service = AttributeCloudService(
-        storage, pending_actions=pending_actions_service
+        storage,
+        pending_actions=pending_actions_service,
+        advanced_learning=advanced_learning_service,
     )
-    feedback_service = FeedbackService(storage, learning_service, criteria=criteria_service)
+    feedback_service = FeedbackService(
+        storage,
+        learning_service,
+        criteria=criteria_service,
+        advanced_learning=advanced_learning_service,
+    )
     # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
     # routing integral changes through the shared confirmation gate (FR-FB-3).
     chat_service = ChatService(
         attribute_service=attribute_cloud_service,
         criteria_service=criteria_service,
         llm=llm,
+        learning=learning_service,
+        storage=storage,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -347,6 +356,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notifications=notification_service,
         pending_actions=pending_actions_service,
         learning=learning_service,
+        advanced_learning=advanced_learning_service,
     )
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
@@ -368,6 +378,7 @@ def build_container(settings: Settings | None = None) -> Container:
         final_approval_service=final_approval_service,
         sandbox=sandbox,
         orchestrator=orchestrator,
+        setup_service=setup_service,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -377,6 +388,7 @@ def build_container(settings: Settings | None = None) -> Container:
     # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
     def _build_tick_services(tick_storage):
         ls = LearningService(tick_storage, embedding)
+        adv = AdvancedLearningService(base=ls, storage=tick_storage)
         ds = DiscoveryService(
             tick_storage, discovery, embedding, ls, tool_registry=tool_registry
         )
@@ -415,6 +427,7 @@ def build_container(settings: Settings | None = None) -> Container:
             notifications=notification_service,
             pending_actions=pas,
             learning=ls,
+            advanced_learning=adv,
         )
         loop = AgentLoop(
             storage=tick_storage,
@@ -431,6 +444,7 @@ def build_container(settings: Settings | None = None) -> Container:
             final_approval_service=final_approval_service,
             sandbox=sandbox,
             orchestrator=orchestrator,
+            setup_service=setup_service,
         )
         return {
             "storage": tick_storage,
@@ -457,6 +471,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notification_service=notification_service,
         final_approval_service=final_approval_service,
         tick_services_factory=tick_services_factory,
+        setup_service=setup_service,
     )
 
     return Container(

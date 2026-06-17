@@ -87,6 +87,7 @@ class AgentLoop:
         final_approval_service=None,
         sandbox=None,
         orchestrator=None,
+        setup_service=None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -102,6 +103,14 @@ class AgentLoop:
         self._final_approval = final_approval_service
         self._sandbox = sandbox
         self._orch = orchestrator
+        # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. No NEW automated work
+        # (discovery / digest delivery / pipeline starts) may run until onboarding is
+        # complete AND channels are configured AND the LLM gate is open. Enforced here
+        # in the 24/7 loop, not only at the HTTP layer (``require_automated_work``).
+        # Already-in-flight workflows may still be re-driven (recovery), but the loop
+        # never starts new work while the gate is closed. When unset (legacy tests),
+        # the gate is treated as open so behavior is unchanged.
+        self._setup = setup_service
         # (campaign_id, date) -> count of applications acted on that day (FR-AGENT-1).
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
@@ -172,6 +181,19 @@ class AgentLoop:
         finally:
             self._acted.pop(key, None)
 
+    def _automated_work_allowed(self) -> bool:
+        """True when the loop may start NEW automated work (FR-ONBOARD-2/FR-OOBE-3).
+
+        When no ``setup_service`` is wired (legacy/unit tests that drive the loop
+        directly) the gate is treated as open so existing behavior is unchanged.
+        """
+        if self._setup is None:
+            return True
+        try:
+            return bool(self._setup.is_automated_work_allowed())
+        except Exception:  # pragma: no cover - defensive: gate failure closes the gate
+            return False
+
     def _prune_daily(self, today: date) -> None:
         """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
         self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
@@ -198,7 +220,17 @@ class AgentLoop:
 
         # First resume any already-started pipelines that may now be unblocked, so a
         # tick advances in-flight work even when the budget is exhausted (FR-DUR-1/4).
+        # This is recovery re-drive (NOT new automated work) so it runs even while the
+        # automated-work gate is closed.
         self._resume_in_flight(campaign_id, result)
+
+        # FR-ONBOARD-2 / FR-OOBE-3: no NEW automated work until onboarding is complete
+        # AND channels are configured AND the LLM gate is open. With the gate closed we
+        # re-drove in-flight work above but start nothing new: no discovery, no digest
+        # delivery, no pipeline starts.
+        if not self._automated_work_allowed():
+            result.reason = "automated_work_gated"
+            return result
 
         # 2. Throughput cap (FR-AGENT-1): stop discovery + new pre-fill when spent.
         if result.budget_remaining <= 0:

@@ -40,12 +40,20 @@ class Scheduler:
         notification_service=None,
         final_approval_service=None,
         tick_services_factory=None,
+        setup_service=None,
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
         self._digest = digest_service
         self._notifications = notification_service
         self._final_approval = final_approval_service
+        # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. Each per-campaign loop tick
+        # consults this and starts NO new work (discovery/digest/pipeline) while the
+        # gate is closed — only in-flight recovery re-drive proceeds. The scheduler
+        # holds the gate too so a tick is a fast no-op for new work before onboarding +
+        # channels + LLM are satisfied; the escalation ladder still advances (it only
+        # escalates already-emitted notifications, not new work).
+        self._setup = setup_service
         # CONC-2: when set, called ONCE per tick to build a fresh, isolated
         # storage/session + storage-bound services so the 24/7 scheduler thread never
         # shares the request-scoped (non-thread-safe) SQLAlchemy Session. Returns a
@@ -112,6 +120,18 @@ class Scheduler:
             "daily_digests": [],
             "ladder_fired": fired,
         }
+
+    def _automated_work_allowed(self) -> bool:
+        """True when automated work may begin (FR-ONBOARD-2/FR-OOBE-3).
+
+        Treated as open when no ``setup_service`` is wired (legacy/unit tests).
+        """
+        if self._setup is None:
+            return True
+        try:
+            return bool(self._setup.is_automated_work_allowed())
+        except Exception:  # pragma: no cover - defensive: gate failure closes the gate
+            return False
 
     def _prune_daily_sent(self, now: datetime) -> None:
         """CONC-3: drop daily-digest dedup entries from days other than today."""

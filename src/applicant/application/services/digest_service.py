@@ -312,6 +312,10 @@ class DigestService:
         try:
             if decision.type is DecisionType.APPROVE:
                 self._record_approval_yield(decision)
+                # FR-LEARN-2: fold the approved posting's features as a POSITIVE taste
+                # decision so feature_stats accrues ``...:approve`` buckets, not just
+                # the source-yield approvals leg + decline buckets.
+                self._learn_from_approval(decision)
             if decision.type is DecisionType.DECLINE:
                 self._learn_from_decline(decision)
         except Exception:  # learning must never break the recorded decision
@@ -328,6 +332,62 @@ class DigestService:
         source_key, campaign_id = self._source_for_decision(decision.application_id)
         if source_key and campaign_id is not None:
             self._learning.record_source_event(campaign_id, source_key, "approvals")
+
+    def _learn_from_approval(self, decision: Decision) -> None:
+        """Fold the approved posting's features as a POSITIVE taste decision (FR-LEARN-2).
+
+        Mirrors how a decline folds a NEGATIVE taste signal, but ``approved=True`` so
+        per-feature ``...:approve`` buckets accrue for the flavor of role the user keeps
+        approving. Routed through the per-campaign-locked atomic fold (Batch F) so this
+        load->fold->persist can't lose-update against a concurrent funnel/decline fold.
+        """
+        if self._learning is None:
+            return
+        posting, campaign_id = self._posting_for_decision(decision.application_id)
+        if posting is None or campaign_id is None:
+            return
+        features = self._posting_features(posting)
+        if not features:
+            return
+        atomic = getattr(self._learning, "fold_decision_atomic", None)
+        if atomic is not None:
+            atomic(campaign_id, approved=True, features=features)
+        else:  # pragma: no cover - all wired learning services expose the atomic API
+            model = self._learning.load_model(campaign_id)
+            model = self._learning.record_decision(model, approved=True, features=features)
+            self._learning.persist_model(model)
+
+    @staticmethod
+    def _posting_features(posting) -> dict:
+        """Cheap, deterministic taste features for an approved posting (FR-LEARN-2/7)."""
+        features: dict[str, str] = {}
+        title = (getattr(posting, "title", None) or "").strip().lower()
+        if title:
+            features[f"role:{title}"] = title
+        work_mode = (getattr(posting, "work_mode", None) or "").strip().lower()
+        if work_mode:
+            features[f"work_mode:{work_mode}"] = work_mode
+        source_key = (getattr(posting, "source_key", None) or "").strip().lower()
+        if source_key:
+            features[f"source:{source_key}"] = source_key
+        return features
+
+    def _posting_for_decision(self, decision_id: ApplicationId):
+        """Resolve (posting, campaign_id) for a digest/application decision id."""
+        from applicant.core.ids import JobPostingId
+
+        app = self._storage.applications.get(decision_id)
+        if app is not None and app.posting_id is not None:
+            posting = self._storage.postings.get(app.posting_id)
+            if posting is not None:
+                return posting, posting.campaign_id
+        try:
+            posting = self._storage.postings.get(JobPostingId(str(decision_id)))
+        except Exception:
+            posting = None
+        if posting is not None:
+            return posting, posting.campaign_id
+        return None, None
 
     def _source_for_decision(self, decision_id: ApplicationId):
         """Resolve (source_key, campaign_id) for a digest/application decision id."""

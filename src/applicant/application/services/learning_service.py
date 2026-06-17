@@ -397,6 +397,26 @@ class LearningService:
             self.persist_model(model)
         return model
 
+    def fold_decision_atomic(
+        self, campaign_id: CampaignId, *, approved: bool, features: dict | None = None
+    ) -> LearningModel:
+        """Atomically load -> fold an approve/decline decision -> persist (CONC-4).
+
+        FR-LEARN-1/2/FR-DUR-2: the per-campaign lock serializes this read-modify-write
+        of the shared ``campaign.learning_state`` with the funnel + decline folds so a
+        concurrent record can't lose-update the per-feature taste signal. Used to fold
+        the digest APPROVE branch's positive taste (FR-LEARN-2), redline-revision
+        feedback (FR-LEARN-3), chat taste (FR-LEARN-3), and soft-error resolutions
+        (FR-LEARN-4) without bypassing the shared lock.
+        """
+        if not features:
+            return self.load_model(campaign_id)
+        with _campaign_lock(campaign_id):
+            model = self.load_model(campaign_id)
+            model = self.record_decision(model, approved=approved, features=features)
+            self.persist_model(model)
+        return model
+
     def ingest_decline_feedback(
         self, model: LearningModel, *, feedback_text: str, criteria_delta: dict | None = None
     ) -> LearningModel:
