@@ -2142,6 +2142,11 @@
 
         <!-- ═══ SERVICES TAB ═══ -->
         <div data-settings-panel="services">
+          <!-- Local/Remote endpoint manager. A single instance: Settings shows it
+               here, and the first-run setup wizard relocates this exact node into
+               its step 1 (admin.js mountEndpointManager) so both surfaces share
+               one form, one list, and one /api/model-endpoints backend. -->
+          <div id="adm-endpoint-manager">
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Add Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:10px">Connect local models first, or add a cloud API.</div>
@@ -2249,6 +2254,7 @@
               <div id="adm-epList-api"></div>
             </div>
           </div>
+          </div><!-- /#adm-endpoint-manager -->
         </div>
 
         <!-- ═══ TOOLS TAB ═══ -->

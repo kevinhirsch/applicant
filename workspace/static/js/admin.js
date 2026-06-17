@@ -637,9 +637,21 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+// Wired-once guard. `initEndpointForm()` attaches click/change listeners to the
+// `adm-*` endpoint-manager controls. It can now be triggered from two places —
+// the Settings → Services tab (via `initAll`) and the first-run setup wizard
+// (which mounts the SAME manager) — so guard against double-binding listeners.
+let _endpointFormWired = false;
+
 function initEndpointForm() {
+  // Idempotent: the manager markup is a single instance in the DOM, so wiring it
+  // more than once would double-fire every handler. Bail if already wired.
+  if (_endpointFormWired) return;
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
+  // The manager markup may be absent in stripped-down/embedding scenarios.
+  if (!provider || !urlInput) return;
+  _endpointFormWired = true;
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
@@ -2056,6 +2068,105 @@ function refreshAll() {
 }
 
 /* ═══════════════════════════════════════════
+   ENDPOINT MANAGER — MOUNT INTO ANY CONTAINER
+   ═══════════════════════════════════════════ */
+// The first-run setup wizard reuses the EXACT same Local/Remote endpoint manager
+// that lives in Settings → Services. Rather than copy-paste a second form (which
+// would duplicate the `adm-*` IDs and re-implement the add/test/list logic), we
+// physically relocate the single existing `#adm-endpoint-manager` node into the
+// wizard's container and drive it with the unchanged `initEndpointForm()` +
+// `loadEndpoints()` functions and the working `/api/model-endpoints` backend.
+// On unmount we move the node back so Settings keeps working untouched.
+
+// Where the manager normally lives, so we can restore it.
+let _epmHome = null; // { parent, nextSibling }
+// Cached node reference. `document.getElementById` returns null once the node is
+// detached from the document (which happens when the wizard overlay re-renders
+// its body), so once we've grabbed the node we hold onto it.
+let _epmNode = null;
+
+function _endpointManagerNode() {
+  if (_epmNode) return _epmNode;
+  _epmNode = el('adm-endpoint-manager');
+  return _epmNode;
+}
+
+// Expand the collapsible "Local"/"API" add sections so the manager is usable the
+// moment it appears in the wizard (in Settings they start collapsed by choice).
+function _expandAddSections(node) {
+  if (!node) return;
+  node.querySelectorAll('#adm-add-local, #adm-add-api').forEach((sec) => {
+    sec.classList.remove('collapsed');
+    const head = sec.querySelector('.adm-section-toggle');
+    if (head) head.setAttribute('aria-expanded', 'true');
+  });
+}
+
+/**
+ * Mount the existing endpoint manager into `target` and start it.
+ *
+ * Reuses `initEndpointForm()` (wires add/test/discover, once) and
+ * `loadEndpoints()` (renders the live list with enable/test/delete + per-endpoint
+ * model toggles) verbatim — no add-endpoint logic is duplicated here.
+ *
+ * @param {HTMLElement} target container to mount into.
+ * @returns {boolean} true if mounted, false if the manager markup is missing.
+ */
+export function mountEndpointManager(target) {
+  const node = _endpointManagerNode();
+  if (!node || !target) return false;
+  // Remember the original home exactly once so repeated mounts still restore.
+  if (!_epmHome) {
+    _epmHome = { parent: node.parentNode, nextSibling: node.nextSibling };
+  }
+  target.appendChild(node);
+  node.classList.add('adm-endpoint-manager-mounted');
+  _expandAddSections(node);
+  // Wire the controls (idempotent) and render the live list against
+  // /api/model-endpoints — the same calls Settings makes.
+  try { initEndpointForm(); } catch (e) { console.error('mountEndpointManager: initEndpointForm', e); }
+  try { loadEndpoints(); } catch (e) { console.error('mountEndpointManager: loadEndpoints', e); }
+  return true;
+}
+
+/** Move the endpoint manager back to its Settings home (no-op if never moved). */
+export function unmountEndpointManager() {
+  const node = _endpointManagerNode();
+  if (!node || !_epmHome) return;
+  node.classList.remove('adm-endpoint-manager-mounted');
+  const { parent, nextSibling } = _epmHome;
+  if (parent) {
+    if (nextSibling && nextSibling.parentNode === parent) parent.insertBefore(node, nextSibling);
+    else parent.appendChild(node);
+  }
+}
+
+/**
+ * Read the currently chosen LLM endpoint from the live list: the first ENABLED,
+ * online LLM endpoint that has at least one visible (enabled) model. Returns
+ * `{ id, base_url, model, has_key }` or null. Used by the wizard to open the
+ * engine gate from whatever the user configured in the shared manager.
+ */
+export async function getSelectedLlmEndpoint() {
+  let data = [];
+  try {
+    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    if (res.ok) data = await res.json();
+  } catch { return null; }
+  if (!Array.isArray(data)) return null;
+  const ep = data.find((e) =>
+    e && e.is_enabled && e.online && (e.model_type || 'llm') === 'llm'
+    && Array.isArray(e.models) && e.models.length > 0);
+  if (!ep) return null;
+  return {
+    id: ep.id,
+    base_url: ep.base_url || '',
+    model: ep.models[0],
+    has_key: !!ep.has_key,
+  };
+}
+
+/* ═══════════════════════════════════════════
    PUBLIC API
    ═══════════════════════════════════════════ */
 export function _initData() {
@@ -2072,5 +2183,9 @@ export function close() {
   settingsModule.close();
 }
 
-const adminModule = { open, close, _initData, get _initialized() { return initialized; } };
+const adminModule = {
+  open, close, _initData,
+  mountEndpointManager, unmountEndpointManager, getSelectedLlmEndpoint,
+  get _initialized() { return initialized; },
+};
 export default adminModule;
