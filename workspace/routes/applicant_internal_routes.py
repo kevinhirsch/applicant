@@ -54,11 +54,14 @@ full contract + file-ownership map so the three lanes do not collide.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -369,6 +372,117 @@ def _read_owner_calendar_events(owner: str) -> list[dict]:
 # ======================================================================== #
 
 
+# --- Lane C (Cookbook) helpers -------------------------------------------------
+#: Default serve port when a serve command does not pass ``--port`` (mirrors the
+#: Cookbook UI's serve-port allocator in ``static/js/cookbookRunning.js``).
+_COOKBOOK_DEFAULT_SERVE_PORT = 8000
+#: Serve task statuses that mean an OpenAI-compatible endpoint is (coming) up and
+#: worth advertising to the engine. ``running`` covers a server that is warming
+#: up; ``ready`` is the explicit "Application startup complete" phase.
+_COOKBOOK_LIVE_STATUSES = ("ready", "running")
+_SERVE_PORT_RE = re.compile(r"--port\s+(\d+)")
+
+
+def _cookbook_state_path() -> Path:
+    """Path to the persisted Cookbook state (matches ``cookbook_routes.py``)."""
+    return Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+
+
+def _load_cookbook_state(path: Path | None = None) -> dict[str, Any]:
+    """Read the Cookbook state JSON, or ``{}`` when missing/unreadable.
+
+    Never raises: a missing or corrupt state file simply means "nothing served".
+    """
+    state_path = path or _cookbook_state_path()
+    try:
+        if not state_path.exists():
+            return {}
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # pragma: no cover - defensive; corrupt file -> empty
+        logger.warning("cookbook_state_unreadable", exc_info=True)
+        return {}
+
+
+def _serve_base_url(cmd: str, remote_host: str) -> str:
+    """Derive the in-network OpenAI-compatible base URL for a serve task.
+
+    The serve ``cmd`` carries ``--port N`` (default 8000). The host is the
+    serve target: a remote SSH alias/host when set, else ``localhost`` (the
+    Cookbook server itself). This mirrors ``cookbook_routes`` image-endpoint
+    auto-registration (``http://<host>:<port>/v1``). The engine rewrites a
+    ``localhost`` host to a network-reachable address on its side.
+    """
+    match = _SERVE_PORT_RE.search(cmd or "")
+    port = int(match.group(1)) if match else _COOKBOOK_DEFAULT_SERVE_PORT
+    host = (remote_host or "").strip()
+    if host:
+        # SSH alias form "user@host" -> bare host (Tailscale/DNS resolves it).
+        host = host.split("@")[-1]
+    else:
+        host = "localhost"
+    return f"http://{host}:{port}/v1"
+
+
+def _cookbook_served_models(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the currently Cookbook-served local LLM endpoints.
+
+    Returns a clean JSON list of ``{model_id, name, base_url, status, remote,
+    served_by}`` — one per live serve task that exposes an OpenAI-compatible
+    endpoint. Diffusion (image) serves are skipped (the engine LLM config wants
+    text endpoints; image serves auto-register on the workspace side already).
+    Empty list when nothing is served.
+    """
+    tasks = state.get("tasks") if isinstance(state, dict) else None
+    if isinstance(tasks, dict):
+        tasks = list(tasks.values())
+    if not isinstance(tasks, list):
+        return []
+
+    out: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if task.get("type") != "serve":
+            continue
+        status = (task.get("status") or "").strip().lower()
+        if status not in _COOKBOOK_LIVE_STATUSES:
+            continue
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        cmd = payload.get("_cmd") or payload.get("cmd") or ""
+        # Image (diffusion) serves are not OpenAI chat endpoints — skip them.
+        if "diffusion_server.py" in cmd:
+            continue
+        model_id = (
+            task.get("modelId")
+            or task.get("repoId")
+            or task.get("name")
+            or payload.get("repo_id")
+            or payload.get("modelId")
+            or ""
+        )
+        if not model_id:
+            continue
+        remote = (task.get("remoteHost") or "").strip()
+        base_url = _serve_base_url(cmd, remote)
+        if base_url in seen_urls:
+            continue
+        seen_urls.add(base_url)
+        short = model_id.split("/")[-1] if "/" in model_id else model_id
+        out.append(
+            {
+                "model_id": model_id,
+                "name": short,
+                "base_url": base_url,
+                "status": status,
+                "remote": remote or "local",
+                "served_by": "cookbook",
+            }
+        )
+    return out
+
+
 def setup_applicant_internal_routes() -> APIRouter:
     router = APIRouter(prefix=INTERNAL_PREFIX, tags=["applicant-internal"])
 
@@ -521,12 +635,21 @@ def setup_applicant_internal_routes() -> APIRouter:
 
     @router.get("/local-models")
     async def local_models(request: Request):
-        """LANE C placeholder — list Cookbook-served local models.
+        """LANE C — list Cookbook-served local model endpoints (owner-scoped).
 
-        Contract: ``{"models": [...]}`` of locally-served models the Cookbook is
-        currently exposing. 501 until lane C lands.
+        Returns ``{"owner": <str|null>, "models": [...]}`` where each model is a
+        currently Cookbook-served OpenAI-compatible endpoint:
+        ``{model_id, name, base_url, status, remote, served_by}``. The base URL is
+        in-network (``http://<host>:<port>/v1``); the engine rewrites a
+        ``localhost`` host to a network-reachable address on its side.
+
+        Empty list when nothing is served (or the Cookbook state is absent). The
+        Cookbook is an owner/admin surface, so the served set is the deployment's;
+        the attributed owner is echoed back for the engine to confirm scoping.
         """
         verify_internal_token(request)
-        raise HTTPException(status_code=501, detail="local-models not implemented (lane C)")
+        owner = internal_owner(request)
+        models = _cookbook_served_models(_load_cookbook_state())
+        return {"owner": owner or None, "models": models}
 
     return router
