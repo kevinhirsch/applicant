@@ -9,14 +9,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
 #: The takeover desktop is a containerized, web-streamed Ubuntu desktop (the DE is
-#: an image/arg swap). Default Cinnamon; Xfce + full GNOME are also selectable.
+#: an image/arg swap). Default Cinnamon; Xfce, GNOME, Pantheon also selectable.
 TAKEOVER_DESKTOP_CINNAMON = "cinnamon"
 TAKEOVER_DESKTOP_XFCE = "xfce"
 TAKEOVER_DESKTOP_GNOME = "gnome"
+TAKEOVER_DESKTOP_PANTHEON = "pantheon"
 TAKEOVER_DESKTOPS = (
     TAKEOVER_DESKTOP_CINNAMON,
     TAKEOVER_DESKTOP_XFCE,
     TAKEOVER_DESKTOP_GNOME,
+    TAKEOVER_DESKTOP_PANTHEON,
 )
 
 #: DE -> container image resolution table (FR-SANDBOX-2, FR-STEALTH-1). Every DE
@@ -26,11 +28,15 @@ TAKEOVER_DESKTOPS = (
 #: (``docker/webtop-chrome/Dockerfile``, ``FROM`` the LinuxServer webtop, adding
 #: google-chrome-stable + a realistic font set). Full GNOME does NOT ship as a
 #: prebuilt webtop (GNOME assumes Wayland/systemd) so ``gnome`` resolves to the
-#: custom ``docker/webtop-gnome/Dockerfile`` (now also Chrome + fonts). See README.
+#: custom ``docker/webtop-gnome/Dockerfile`` (now also Chrome + fonts). Likewise
+#: ``pantheon`` (elementary's DE) is not a prebuilt webtop, so it resolves to the
+#: custom ``docker/webtop-pantheon/Dockerfile`` (Ubuntu + pantheon-session/Gala on
+#: X11 + Chrome + fonts; cosmetic-only, not pixel-pure elementary). See README.
 TAKEOVER_DESKTOP_IMAGES: dict[str, str] = {
     TAKEOVER_DESKTOP_CINNAMON: "applicant/webtop-chrome:cinnamon",
     TAKEOVER_DESKTOP_XFCE: "applicant/webtop-chrome:xfce",
     TAKEOVER_DESKTOP_GNOME: "applicant/webtop-gnome:latest",
+    TAKEOVER_DESKTOP_PANTHEON: "applicant/webtop-pantheon:latest",
 }
 
 #: Remote-view backends (FR-SANDBOX-2): ``webtop`` (full Ubuntu desktop, default)

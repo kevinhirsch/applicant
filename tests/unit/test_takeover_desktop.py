@@ -37,10 +37,12 @@ def test_takeover_desktop_defaults_to_cinnamon():
     assert s.remote_view_backend == "webtop"
 
 
-@pytest.mark.parametrize("de", ["cinnamon", "xfce", "gnome", "GNOME", " Xfce "])
+@pytest.mark.parametrize(
+    "de", ["cinnamon", "xfce", "gnome", "pantheon", "GNOME", " Pantheon "]
+)
 def test_takeover_desktop_accepts_valid_des(de):
     s = Settings(_env_file=None, TAKEOVER_DESKTOP=de)
-    assert s.takeover_desktop in {"cinnamon", "xfce", "gnome"}
+    assert s.takeover_desktop in {"cinnamon", "xfce", "gnome", "pantheon"}
 
 
 def test_invalid_takeover_desktop_rejected_with_clear_error():
@@ -63,6 +65,8 @@ def test_de_to_image_resolution_all_three():
     assert resolve_takeover_image("xfce") == "applicant/webtop-chrome:xfce"
     # GNOME does NOT ship as a prebuilt webtop -> local custom image (also Chrome).
     assert resolve_takeover_image("gnome") == "applicant/webtop-gnome:latest"
+    # Pantheon likewise -> local custom Pantheon-on-Ubuntu image (also Chrome).
+    assert resolve_takeover_image("pantheon") == "applicant/webtop-pantheon:latest"
 
 
 def test_image_override_wins():

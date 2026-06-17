@@ -79,6 +79,7 @@ services:
   #   cinnamon (default) -> applicant/webtop-chrome:cinnamon (docker/webtop-chrome, BASE=...cinnamon)
   #   xfce               -> applicant/webtop-chrome:xfce     (docker/webtop-chrome, BASE=...xfce)
   #   gnome              -> applicant/webtop-gnome:latest     (custom; build docker/webtop-gnome)
+  #   pantheon           -> applicant/webtop-pantheon:latest  (custom; build docker/webtop-pantheon)
   # All run on X11 (not Wayland) for browser streaming + automation. Disabled by
   # default (profile: takeover); enable with `--profile takeover` once a desktop is wanted.
   takeover-desktop:

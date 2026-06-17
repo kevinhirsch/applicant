@@ -143,7 +143,7 @@ def _build_remote_view(settings: Settings) -> Any:
     """Pick the remote-view sub-port by REMOTE_VIEW_BACKEND (FR-SANDBOX-2).
 
     ``webtop`` (default) -> full Ubuntu webtop desktop with the DE resolved from
-    TAKEOVER_DESKTOP (cinnamon default / xfce / gnome). ``neko`` -> browser-only Neko.
+    TAKEOVER_DESKTOP (cinnamon default / xfce / gnome / pantheon). ``neko`` -> browser-only Neko.
     """
     from applicant.adapters.sandbox.remote_view import NekoRemoteView, WebtopRemoteView
     from applicant.app.config import REMOTE_VIEW_NEKO
