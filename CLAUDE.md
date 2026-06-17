@@ -72,10 +72,39 @@ submit and the pre-fill stop-boundary mean the engine **cannot** self-authorize 
 **Front-door surfacing:** each engine capability is reachable through proxy → JS (`workspace/static/js/
 applicant*.js`) → nav. `workspace/src/applicant_features.py` computes per-section state (active /
 locked / disabled) from the engine's setup-status + dormant-surface registry, so sections light up as
-configured and there is no dead UI. The Pending-Actions **Portal** is the post-login home base; the
-OOBE/onboarding **wizard** (`applicantOnboarding.js`) takes precedence when setup is incomplete and is
-launchable from Settings (`window.launchApplicantSetup`). The daily loop is digest → review (redline,
-`documentLibrary.js`) → approve/decline → final-submit (Portal/live takeover, `applicantRemote.js`).
+configured and there is no dead UI. The Pending-Actions **Portal** is the post-login home base **and the
+in-app notification center**: action-required items persist there and clear when handled; informational
+notifications appear too and pop browser toasts (reuse `ui.js` `showToast`, do not rebuild). The engine's
+in-app inbox is exposed by `app/routers/notifications.py`; Discord/email are opt-in **fan-out of the same
+notifications**, configured in Settings. The OOBE **wizard** (`applicantOnboarding.js`) is slimmed to
+**Connect a model → Your profile** — the only setup that gates automated work; fonts, the automation
+sandbox, and notification channels live in **Settings**, which reuses the exact wizard renderers via the
+exported `mountSettingsStep`. The wizard still takes precedence when setup is incomplete and is
+re-launchable from Settings (`window.launchApplicantSetup`). Daily loop: digest → review (redline
+add/subtract/free-text, `documentLibrary.js`) → approve/decline → final-submit (Portal / live takeover,
+`applicantRemote.js`).
+
+## Runtime dependencies & deploy gotchas
+
+The engine shells out to external binaries and **detects them via `shutil.which()` — silently degrading
+(no real output) when absent**, so they must be baked into the engine image (`docker/Dockerfile`), not
+just the host:
+- **Resume rendering** (FR-RESUME-3/4): TeX (`xelatex`/`lualatex` + moderncv/fontspec/fontawesome5) for
+  the LaTeX path and **LibreOffice** headless (`soffice --convert-to pdf`) for the docx fallback. Both
+  paths are reachable depending on the onboarding accept/reject choice.
+- **Pre-fill / Workday automation** (FR-PREFILL, FR-STEALTH): the `browser` optional extra
+  (`uv sync --extra browser`, patchright) **plus a real Google Chrome** (`BROWSER_CHANNEL=chrome`). The
+  engine wires the real `PatchrightBrowser` unconditionally (`container.py`); the default local sandbox
+  launches it **inside the `api` container** (no CDP endpoint), so the binary must live in that image.
+  The takeover/Proxmox sandbox instead connects to a remote Chrome over CDP.
+- **Durable orchestration**: `dbos` is an **optional** extra (`durable-orchestration`); the default
+  `ORCHESTRATOR_BACKEND=shim` (in-process checkpoints) needs nothing extra. Select `dbos` only to
+  co-reside workflow state in Postgres.
+
+The integration tests for these paths are `@pytest.mark.integration` and **skip when the dep is absent**
+— a skip is a signal that the *deployed image* needs that dependency, not just a quirk of the test box.
+CI validates `docker compose config` but does **not** build images, so the apt/Chrome layers are first
+exercised by the real `compose up --build` at deploy time.
 
 ## Binding working principles (read before building anything)
 
