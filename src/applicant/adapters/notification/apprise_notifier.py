@@ -49,6 +49,12 @@ _EMAIL_TIMEOUT_SECONDS = 15 * 60  # 15 min, UI-configurable
 _MAX_INBOX = 1000
 _MAX_CAPTURED = 1000
 
+# LEAK-NOTIF-1: bound the digest-email dedup memory to a rolling window of recent
+# UTC days. Each digest dedup key embeds its day (``digest_email:<cid>:<YYYY-MM-DD>``),
+# so a few days of retention keeps re-driven same-day sends idempotent while never
+# growing one key per campaign+day forever over 24/7 operation.
+_SENT_EMAIL_RETENTION_DAYS = 3
+
 
 class NotificationDeliveryError(RuntimeError):
     """Raised when a real Apprise dispatch fails (apprise.notify() == False)."""
@@ -127,6 +133,9 @@ class AppriseNotifier:
         self._captured: list[CapturedSend] = []
         # IDEM-1: dedup keys of digest emails already sent (per campaign+day) so a
         # re-driven delivery never dispatches the same digest email twice.
+        # LEAK-NOTIF-1: bounded to a rolling recent-days window (mirror the
+        # today-only prune used elsewhere) so it does not grow one key per
+        # campaign+day forever.
         self._sent_emails: set[str] = set()
         # CONC-3: cap the unbounded in-app inbox + capture lists so 24/7 operation
         # does not grow them without bound (oldest entries rotate out).
@@ -288,6 +297,10 @@ class AppriseNotifier:
         self._sent[key] = delivery
         # Fire any rung already due (NORMAL in-app + Discord-now; IMMEDIATE all).
         self._fire_due(delivery, self._now_secs())
+        # LEAK-NOTIF-1: opportunistically drop fully-fired, past-timeout deliveries
+        # so apps that never call ``expire`` (abandon/complete off-path) do not leak
+        # ``_sent`` entries forever.
+        self._prune_sent(self._now_secs())
         return handle
 
     def send_email(
@@ -316,6 +329,9 @@ class AppriseNotifier:
             if dedup_key in self._sent_emails:
                 return True  # already sent this campaign+day — idempotent no-op
             self._sent_emails.add(dedup_key)
+            # LEAK-NOTIF-1: prune to a rolling recent-days window so the dedup set
+            # does not grow one key per campaign+day forever.
+            self._prune_sent_emails()
         self._dispatch(
             NotificationChannel.EMAIL.value,
             Notification(
@@ -327,6 +343,26 @@ class AppriseNotifier:
         )
         return True
 
+    def _prune_sent_emails(self) -> None:
+        """Bound ``_sent_emails`` to recent UTC days (LEAK-NOTIF-1).
+
+        Digest dedup keys embed the UTC day (``...:<YYYY-MM-DD>``). Keep only keys
+        whose embedded day is within ``_SENT_EMAIL_RETENTION_DAYS`` of today; keys
+        without a parseable trailing date are retained (unknown format, do not drop).
+        """
+        from datetime import date, timedelta
+
+        today = self._clock().date()
+        horizon = today - timedelta(days=_SENT_EMAIL_RETENTION_DAYS)
+        for key in list(self._sent_emails):
+            tail = key.rsplit(":", 1)[-1]
+            try:
+                day = date.fromisoformat(tail)
+            except ValueError:
+                continue  # no parseable date — keep
+            if day < horizon:
+                self._sent_emails.discard(key)
+
     def advance(self, now: datetime | None = None) -> list[str]:
         """Fire any escalation rungs now due across active deliveries (FR-NOTIF-2).
 
@@ -334,10 +370,35 @@ class AppriseNotifier:
         the list of channels fired on this tick.
         """
         ts = (now or self._clock()).timestamp()
+        # LEAK-NOTIF-1: prune BEFORE firing so deliveries fully-fired on a PRIOR
+        # tick are dropped (``advance`` stops rescanning dead entries) while a
+        # delivery whose rungs fire on THIS tick survives for introspection until
+        # the next tick.
+        self._prune_sent(ts)
         fired: list[str] = []
         for delivery in list(self._sent.values()):
             fired.extend(self._fire_due(delivery, ts))
         return fired
+
+    def _prune_sent(self, ts: float) -> None:
+        """Drop deliveries whose every rung has fired and which are past timeout.
+
+        A delivery is only removed once ALL its rungs have fired AND it is past the
+        email timeout (the last possible rung's window), so a delivery still awaiting
+        a future hop is never dropped early. Inactive (acted/expired) deliveries are
+        already popped by :meth:`expire`; this catches the abandon/complete paths
+        that never call ``acted`` (LEAK-NOTIF-1).
+        """
+        cutoff = ts - self._email_timeout
+        for key in list(self._sent.keys()):
+            delivery = self._sent[key]
+            if not delivery.active:
+                self._sent.pop(key, None)
+                continue
+            all_fired = all(r.fired for r in delivery.rungs)
+            last_due = max((r.due_at for r in delivery.rungs), default=0.0)
+            if all_fired and last_due <= cutoff:
+                self._sent.pop(key, None)
 
     def _fire_due(self, delivery: _Delivery, ts: float) -> list[str]:
         if not delivery.active:
