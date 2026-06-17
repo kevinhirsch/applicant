@@ -729,9 +729,11 @@ import createResearchSynapse from './researchSynapse.js';
         try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
         fd.append('active_doc_id', documentModule.getCurrentDocId());
       }
-      // Web toggle: pre-search in Chat mode, tool permission in Agent mode
+      // Web toggle: pre-search in Chat mode, tool permission in Agent mode.
+      // Applicant front-door is agent-only (the in-composer mode switch is hidden),
+      // so default to agent when no explicit mode is stored.
       const toggleState = Storage.loadToggleState();
-      let isAgentMode = (toggleState.mode || 'chat') === 'agent';
+      let isAgentMode = (toggleState.mode || 'agent') === 'agent';
       // Auto-escalate to agent mode when a document is open — the user expects
       // the AI to see the document and have tools to edit it
       if (!isAgentMode && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
@@ -767,7 +769,7 @@ import createResearchSynapse from './researchSynapse.js';
       currentAbort = abortCtrl;
 
       const _tState = Storage.loadToggleState();
-      const _isAgent = (_tState.mode || 'chat') === 'agent';
+      const _isAgent = (_tState.mode || 'agent') === 'agent';
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;

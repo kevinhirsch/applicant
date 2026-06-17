@@ -34509,6 +34509,13 @@ body.theme-frosted .modal {
    card heading is settings-appropriate and carries the section icon. */
 .ao-settings-body .ao-step-title,
 .ao-settings-body .ao-step-desc { display: none; }
+
+/* Applicant front-door is agent-only: hide the composer's Agent/Chat mode switch
+   (chat.js defaults the mode to "agent"). The buttons stay in the DOM so existing
+   mode JS keeps working; only the control is hidden. */
+.chat-input-bar .mode-toggle,
+.input-wrap .mode-toggle,
+.mode-toggle { display: none !important; }
 .ao-settings-body .attach-strip { max-width: 100%; padding: 2px 0; }
 .ao-settings-body .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; position: relative; }
 .ao-settings-body .ao-tip:hover::after,
