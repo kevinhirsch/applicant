@@ -171,10 +171,11 @@ def test_debug_and_chat_surfaces_served(client):
 def test_criteria_and_attribute_surfaces_served(client):
     crit = client.get("/criteria").text
     assert "criteria-section" in crit
-    assert "Learned adjustments" in crit  # learned-but-overridable surfaced (FR-CRIT-3)
+    assert "Learned adjustments" in crit  # learned-but-overridable surfaced
     attrs = client.get("/attributes").text
     assert "attributes-section" in attrs
-    assert "AI-guessed" in attrs  # sensitive policy surfaced (FR-ATTR-6)
+    # Equal-opportunity policy is surfaced in plain language.
+    assert "never auto-filled" in attrs
 
 
 @pytest.mark.integration

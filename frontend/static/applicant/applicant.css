@@ -5,8 +5,8 @@
  * stylesheet only adds the handful of `applicant-*` / `review-*` / `chat-*` rules
  * that our surfaces need, plus the two `.admin-*` classes the canonical CSS is
  * missing (.admin-btn / .admin-badge-on). Every value here is copied verbatim from
- * the per-file <style> blocks it replaces so rendering stays pixel-identical
- * (FR-UI-1). Loaded by our surfaces via <link rel="stylesheet" href="applicant.css">.
+ * the per-file <style> blocks it replaces so rendering stays pixel-identical.
+ * Loaded by our surfaces via <link rel="stylesheet" href="/static/applicant/applicant.css">.
  */
 
 /* --- missing siblings of vendored admin classes --------------------------- */
@@ -49,7 +49,7 @@
 .applicant-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; }
 .applicant-error { color: #9e1c23; }
 
-/* --- editor forms (criteria + attribute-cloud surfaces, FR-UI-6) ----------- */
+/* --- editor forms (criteria + attribute-cloud surfaces) ------------------- */
 .applicant-form { display: flex; flex-direction: column; gap: 10px; max-width: 560px; }
 .applicant-form label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .applicant-form input[type="text"], .applicant-form input[type="number"],
@@ -61,18 +61,18 @@
 .applicant-nav { display: flex; gap: 4px; margin: 12px 0; }
 .applicant-nav-active { font-weight: 700; }
 
-/* --- review surface (FR-RESUME-1/8/9) ------------------------------------- */
-/* Redline highlighting (additions + deletions), FR-RESUME-8. */
+/* --- review surface -------------------------------------------------------- */
+/* Redline highlighting (additions + deletions). */
 .redline-add, ins.redline-add { background: #e6ffed; color: #045d1e; text-decoration: none; }
 .redline-sub, del.redline-sub { background: #ffeef0; color: #9e1c23; text-decoration: line-through; }
 .redline-eq { color: #444; }
 #redline-view { white-space: pre-wrap; font-family: ui-monospace, monospace; line-height: 1.5; }
-/* Material tabs (resume / cover letter / screening answers), FR-RESUME-1. */
+/* Material tabs (resume / cover letter / screening answers). */
 .review-tabs { display: flex; gap: 4px; margin: 12px 0; }
 .review-tab { cursor: pointer; }
 .review-tab[aria-selected="true"] { font-weight: 700; border-bottom: 2px solid #045d1e; }
 
-/* --- chat surface (FR-CHAT-1) --------------------------------------------- */
+/* --- chat surface --------------------------------------------------------- */
 /* The chat surface narrows the shared section to 760px (matches its old block). */
 #chat-section.applicant-section { max-width: 760px; }
 .chat-log { min-height: 200px; max-height: 360px; overflow-y: auto; padding: 8px 0; }

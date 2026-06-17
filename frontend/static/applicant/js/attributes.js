@@ -1,13 +1,13 @@
 /*
- * Applicant — attribute-cloud editor (FR-ATTR-1/2/3/4/6, FR-FB-3, FR-UI-6).
+ * Applicant — your details editor.
  *
- * Lists the campaign's attributes (the pre-fill answers, learned values included
- * and overridable), and adds/updates one. Integral edits are confirmation-gated
- * (FR-FB-3): the API 409s and we re-ask, retrying with confirm=true. A sensitive
- * attribute given an AI-suggested value is rejected (FR-ATTR-6 -> 422), surfaced
- * here. Network failures degrade gracefully — no dead UI as live (FR-UI-2).
+ * Lists the answers used to pre-fill applications (learned values included and
+ * overridable), and adds or updates one. Important fields ask for confirmation
+ * before saving; if the change isn't confirmed we re-ask, then retry with
+ * confirm=true. Equal-opportunity fields can't be given an AI-suggested value.
+ * Network failures are handled gracefully rather than showing a broken screen.
  */
-import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch, el } from "/static/applicant/js/applicant-ui.js";
 
 const campaignId =
   document.body.getAttribute("data-campaign-id") ||
@@ -71,16 +71,16 @@ async function save(confirm) {
     status("Attribute saved.");
     load();
   } catch (e) {
-    // FR-FB-3: integral change is confirmation-gated -> 409; re-ask + retry.
+    // Important fields need confirmation (HTTP 409); re-ask, then retry.
     if (String(e.message) === "HTTP 409" && !confirm) {
-      if (window.confirm("This is an integral change. Confirm it?")) {
+      if (window.confirm("This is an important field. Save this change?")) {
         return save(true);
       }
-      status("Integral change not confirmed — no edit applied (FR-FB-3).", true);
+      status("Change not confirmed — nothing was saved.", true);
       return;
     }
     if (String(e.message) === "HTTP 422") {
-      status("Sensitive attributes are never AI-guessed (FR-ATTR-6).", true);
+      status("Equal-opportunity fields are never auto-filled.", true);
       return;
     }
     status("Could not save attribute.", true);

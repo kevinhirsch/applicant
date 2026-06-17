@@ -1,14 +1,13 @@
 /*
- * Applicant — digest + pending-actions portal (FR-DIG-3, FR-DIG-5/6, FR-UI-3).
+ * Applicant — daily digest and the things waiting for your input.
  *
- * Phase 1 thin client: fetches the digest payload and pending actions for the active
- * campaign, renders the FR-DIG-3 table (summary, work mode, score, why-suggested,
- * approve/decline-with-feedback), and the pending-actions list. Decline collects
- * free-text feedback that the backend folds into learning + the next run (FR-DIG-5).
- * Network failures degrade gracefully (no dead UI shown as live, FR-UI-2). Shares the
- * redirect-aware fetch + DOM builder from ApplicantUI (a 409 routes to the wizard).
+ * Fetches the digest and the waiting-for-you list for the active search, then
+ * renders the digest table (role, work mode, score, why suggested, approve or
+ * decline with feedback) and the list. Decline collects a short note that Applicant
+ * learns from for next time. Network failures are handled gracefully. Shares the
+ * redirect-aware fetch and DOM builder from ApplicantUI.
  */
-import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch, el } from "/static/applicant/js/applicant-ui.js";
 
 const campaignId = document.body.getAttribute("data-campaign-id") || "";
 const api = apiFetch;
@@ -33,7 +32,7 @@ async function loadDigest() {
     tbody.innerHTML = "";
     payload.rows.forEach((row) => tbody.appendChild(digestRow(row)));
   } catch (e) {
-    renderEmpty(tbody, "Could not load the digest (backend unavailable).");
+    renderEmpty(tbody, "Could not load the digest. Please try again.");
   }
 }
 
@@ -44,7 +43,7 @@ function digestRow(row) {
   const decline = el("button", { className: "admin-btn admin-btn-sm", textContent: "Decline" });
   const feedback = el("input", {
     className: "applicant-feedback",
-    placeholder: "Why not? (feeds learning, FR-DIG-5)",
+    placeholder: "Why not? (helps Applicant learn)",
     type: "text",
   });
   decline.addEventListener("click", () => decide(row, "decline", feedback.value));
@@ -62,7 +61,6 @@ function digestRow(row) {
 }
 
 async function decide(row, kind, feedbackText) {
-  // Phase 1: digest rows reference postings; application binding lands in Phase 2.
   const appId = row.application_id || row.posting_id;
   const base = `/api/digest/applications/${encodeURIComponent(appId)}`;
   try {
@@ -76,7 +74,7 @@ async function decide(row, kind, feedbackText) {
     }
     loadDigest();
   } catch (e) {
-    /* leave the row; surfacing an error toast is a later polish item */
+    /* leave the row in place if the action could not be saved */
   }
 }
 
@@ -104,8 +102,8 @@ async function loadPending() {
   }
 }
 
-// Presence beacon (FR-NOTIF-2): tell the backend the user is verifiably present
-// in the web UI so the in-app surface pre-empts the held Discord push.
+// Let the app know you're active in the browser so it can hold the Discord ping
+// and show the update here instead.
 async function signalPresence(present) {
   try {
     await api("/api/digest/presence", { method: "POST", body: JSON.stringify({ present: present }) });
