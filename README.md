@@ -257,10 +257,21 @@ notification channels are configured in-browser. The most load-bearing ones:
 | `NOTIFICATIONS_LIVE` | `true` (prod) | Real Discord/email send (off = captured, no network). |
 | `DISCORD_WEBHOOK_URL` / `APPRISE_URLS` | _empty_ | Notification targets (Apprise URL syntax). |
 | `CREDENTIAL_KEYFILE` | `secrets/master.key` | libsodium master key file for the credential vault (mode `0600`). |
-| `BROWSER_CHANNEL` | `chrome` | Driving browser channel: `chrome` (real Google Chrome) \| `chromium` (fallback). |
-| `EGRESS_MODE` | `direct` | Browser egress: `direct` (host residential connection) \| `residential-proxy`. |
-| `TAKEOVER_DESKTOP` | `cinnamon` | Takeover desktop DE: `cinnamon` \| `xfce` \| `gnome` \| `pantheon`. Image swap. |
-| `REMOTE_VIEW_BACKEND` | `webtop` | Live remote-view backend: `webtop` (full desktop) \| `neko` (browser-only). |
+| `BROWSER_CHANNEL` | `chrome` | Driving browser channel: `chrome` (real Google Chrome, default) \| `chromium` (fallback). Invalid → boot error. |
+| `EGRESS_MODE` | `direct` | Browser egress: `direct` (host residential connection) \| `residential-proxy` (requires `EGRESS_PROXY_URL` + `EGRESS_RESIDENTIAL=true`). Datacenter exit refused. |
+| `EGRESS_PROXY_URL` / `EGRESS_RESIDENTIAL` | _empty_ / `false` | Residential proxy URL + operator attestation it is residential (FR-STEALTH-4). |
+| `EGRESS_TIMEZONE` / `EGRESS_LOCALE` | `America/Phoenix` / `en-US` | tz/locale pinned to the egress geolocation so the fingerprint ↔ exit IP stay consistent (FR-STEALTH-1). |
+| `TAKEOVER_DESKTOP` | `cinnamon` | Takeover desktop DE: `cinnamon` (default) \| `xfce` \| `gnome` \| `pantheon`. Invalid → boot error. Every DE ships Google Chrome. |
+| `TAKEOVER_DESKTOP_IMAGE` | _empty_ | Advanced: pin an exact desktop image (overrides the DE→image table). |
+| `REMOTE_VIEW_BACKEND` | `webtop` | Live remote-view backend: `webtop` (full desktop, default) \| `neko` (browser-only). |
+| `NEKO_ROOMS_URL` / `NEKO_ROOMS_TOKEN` | _empty_ | Real Neko remote-session server (used when `REMOTE_VIEW_BACKEND=neko`). |
+| `SANDBOX_BACKEND` | `local` | Sandbox backend: `local` (default, the webtop/Neko path) \| `proxmox-windows` (native real Windows VM, see below). Invalid → boot error. |
+| `STEALTH_PERSONA` | _empty_ | `linux` (coherent honest spoof) \| `native` (real browser identity, no override). Blank derives it: `native` for `proxmox-windows`, `linux` for `local`. |
+| `PROXMOX_API_URL` / `PROXMOX_NODE` / `PROXMOX_TOKEN_ID` | _empty_ | Proxmox node API URL, node name, API token id (non-secret). The token **secret** + RDP password are collected in the setup wizard and **vaulted** — never env/logs. |
+| `PROXMOX_TEMPLATE_VMID` | `0` | The licensed Windows VM template (or persistent) VMID. |
+| `PROXMOX_CLONE_MODE` | `snapshot-revert` | `snapshot-revert` (reuse one VM, roll back per session) \| `linked-clone` (clone per session, destroyed on teardown). |
+| `PROXMOX_CDP_HOST` / `PROXMOX_CDP_PORT` | _empty_ / `9222` | Chrome remote-debugging (CDP) host (blank → guest IP) + port the engine connects to. |
+| `PROXMOX_TAKEOVER_METHOD` / `PROXMOX_TAKEOVER_URL_TEMPLATE` | `rdp` / _empty_ | One-click takeover: `rdp` (rdp:// URI) \| `web-console` (Guacamole/web RDP URL template with `{host}`/`{token}`/`{vmid}` slots). |
 | `APPLICANT_UPDATE_ENABLED` | _unset_ | Set `1` to let the in-UI Update button actually dispatch. |
 
 See `src/applicant/app/config.py` for the full engine config surface; the front-door
@@ -301,8 +312,45 @@ integration (all opt-in, none required to boot):
   same Chrome the engine drives. All run on **X11** (not Wayland) for the streaming +
   automation path. Run with the `takeover` compose profile.
 - **Live remote takeover (Neko, browser-only alt):** set `REMOTE_VIEW_BACKEND=neko`
-  with `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`); the remote-view sub-port also supports
-  noVNC.
+  with `NEKO_ROOMS_URL` (+ `NEKO_ROOMS_TOKEN`) for the one-click browser-only session;
+  the remote-view sub-port also supports noVNC.
+- **Native Proxmox Windows VM backend (`SANDBOX_BACKEND=proxmox-windows`):** a
+  selectable sandbox backend where the browser the engine drives — and that you take
+  over — is **real Google Chrome inside a real, licensed Windows VM** on your Proxmox
+  node. Because it is real Windows, the fingerprint (JA3/TLS, Direct3D WebGL,
+  Segoe UI/Calibri, OS signals) is **genuinely Windows with ZERO spoofing** — the
+  strongest FR-STEALTH-1 (so the persona is `native`: no fingerprint override). It is
+  a clean swap behind the existing `SandboxPort`/`RemoteViewPort` — the engine,
+  services and router are unchanged; the `local` backend stays the default.
+
+  **Definition of ready (you provide; everything else is automated):** a licensed
+  Windows VM (Server or Desktop) on the Proxmox node with **Google Chrome installed**,
+  **qemu-guest-agent** running, and **RDP enabled**. Make it the template/VMID you
+  point the wizard at, and (for `snapshot-revert` mode) take a clean snapshot named
+  `applicant-clean`.
+
+  **Setup is zero-CLI (FR-OOBE):** the setup wizard has a *“Windows sandbox
+  connection”* step (`POST /api/setup/sandbox-connection`) that collects the Proxmox
+  API URL/node/token id + **token secret**, the template/persistent VMID, clone mode,
+  Chrome CDP host/port, RDP username + **password**, and the takeover method/URL. The
+  **secrets (token secret + RDP password) are sealed in the credential vault** and
+  never logged or returned; the non-secrets persist to app-config. The
+  `proxmox-windows` backend is **gated** on this step (until it is complete the app
+  boots on the local sandbox and automated work stays blocked).
+
+  **How it works:** on provision the backend clones the template (`linked-clone`) or
+  rolls a persistent VM back to the clean snapshot (`snapshot-revert`), starts it,
+  reads the guest IP via the agent, launches Chrome with
+  `--remote-debugging-port`/`--remote-debugging-address` (so its CDP endpoint is
+  reachable from the host), and returns a session carrying the **CDP ws endpoint**
+  (the prefill browser **connects over CDP** to that remote Chrome instead of
+  launching a local one) plus a **tokenized one-click takeover URL** (an `rdp://` URI
+  or a web-console/Guacamole URL) so you take over the SAME real Chrome. Teardown
+  reverts/stops/destroys the VM and invalidates the takeover token. The real Proxmox
+  control plane + CDP + RDP paths are **integration-gated**
+  (`tests/integration/test_proxmox_windows_real.py`, skipped without `PROXMOX_API_URL`);
+  the orchestration, backend/persona selection, CDP wiring, takeover URL/token,
+  secret vaulting, and the lifecycle are unit-tested with a `FakeProxmoxClient`.
 - **Resume fidelity rendering:** install a TeX engine (`lualatex`/`xelatex` +
   fontspec/moderncv) for LaTeX-primary PDFs, or LibreOffice (`soffice`) for the
   docx-XML fallback. Without either, rendering uses the deterministic stub seam.

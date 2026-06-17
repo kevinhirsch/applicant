@@ -50,9 +50,13 @@ let _busy = false;
 
 // Ordered wizard steps. `done(status)` reads the engine status to decide if the
 // step is already satisfied (drives resume + the progress rail).
+// The `sandbox` step is satisfied (and so skipped on the local default) unless the
+// native Windows VM backend is selected and still needs its connection collected —
+// the engine reports this via `steps_complete` containing 'sandbox'.
 const STEPS = [
   { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
   { key: 'channels',   title: 'Notifications',    done: (s) => !!(s && s.channels_configured) },
+  { key: 'sandbox',    title: 'Automation sandbox', done: (s) => !!(s && Array.isArray(s.steps_complete) && s.steps_complete.includes('sandbox')) },
   { key: 'fonts',      title: 'Fonts',            done: (s) => !!(s && s.fonts_ready) },
   { key: 'onboarding', title: 'Your profile',     done: (s) => !!(s && s.onboarding_complete) },
 ];
@@ -212,6 +216,7 @@ async function _renderStep() {
   try {
     if (step.key === 'llm') return await _renderLLM();
     if (step.key === 'channels') return await _renderChannels();
+    if (step.key === 'sandbox') return await _renderSandbox();
     if (step.key === 'fonts') return await _renderFonts();
     if (step.key === 'onboarding') return await _renderOnboarding();
   } catch (e) {
@@ -416,6 +421,147 @@ async function _renderChannels() {
     } catch (e) {
       document.getElementById('ao-ch-msg').innerHTML = _err(esc(e.message || 'Could not save channels.'));
       document.getElementById('ao-ch-save').disabled = false;
+    } finally {
+      _busy = false;
+    }
+  };
+}
+
+// ── STEP 2.5: Automation sandbox (FR-SANDBOX-1) ─────────────────────────────
+//
+// This step LIFTS the same `.admin-card`/`.settings-col`/`.settings-row`/
+// `.settings-label`/`.settings-select` field-card pattern as the Notifications
+// step above, plus the same collect → save → advance handler shape, pointed at
+// the wizard's `/sandbox-connection` proxy. The default is the built-in (local)
+// sandbox — choosing the native Windows VM reveals the Proxmox connection form so
+// the agent (and your one-click takeover) drive real Chrome inside a real Windows
+// VM. The connection's secrets are sealed in the engine vault, never returned.
+async function _renderSandbox() {
+  let cur = {};
+  try { cur = await _fetchJSON(`${SETUP}/sandbox-connection`); } catch { cur = {}; }
+  const conn = cur.connection || {};
+  // Default the picker to whatever the engine has selected.
+  const isWindows = (cur.backend === 'proxmox-windows');
+
+  _setBody(`
+    <h2 class="ao-step-title">Automation sandbox ${_tip('Where Applicant runs the browser it drives — and that you take over when a human step is needed. The built-in sandbox works out of the box. Advanced: point it at your own Windows VM (on Proxmox) so the browser is real Chrome on real Windows.')}</h2>
+    <p class="ao-step-desc">Pick where Applicant runs the browser. Most people keep the built-in sandbox.</p>
+    <div class="admin-card">
+      <div class="settings-col">
+        <div class="settings-row">
+          <label class="settings-label">Sandbox</label>
+          <select id="ao-sb-backend" class="settings-select">
+            <option value="local"${isWindows ? '' : ' selected'}>Built-in sandbox (recommended)</option>
+            <option value="proxmox-windows"${isWindows ? ' selected' : ''}>My own Windows VM (Proxmox)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="ao-sb-win" style="display:${isWindows ? 'block' : 'none'}">
+      <div class="admin-card">
+        <div class="settings-col">
+          <div class="settings-row">
+            <label class="settings-label">Proxmox API URL ${_tip('Your Proxmox node API base, e.g. https://pve.example.com:8006/api2/json')}</label>
+            <input id="ao-sb-apiurl" class="settings-select" type="text" placeholder="https://pve.example.com:8006/api2/json" value="${esc(conn.proxmox_api_url || '')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Node name ${_tip('The Proxmox node that hosts the Windows VM, e.g. pve.')}</label>
+            <input id="ao-sb-node" class="settings-select" type="text" placeholder="pve" value="${esc(conn.proxmox_node || '')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">API token id ${_tip('A Proxmox API token id, e.g. root@pam!applicant. The token secret is stored encrypted, never shown.')}</label>
+            <input id="ao-sb-tokenid" class="settings-select" type="text" placeholder="root@pam!applicant" value="${esc(conn.proxmox_token_id || '')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">API token secret ${_tip('The secret half of the API token. Sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
+            <input id="ao-sb-tokensecret" class="settings-select" type="password" placeholder="••••••••" autocomplete="new-password" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Windows template / VM id ${_tip('The VMID of your licensed Windows VM (with Chrome + guest agent + RDP), used as the template/persistent VM.')}</label>
+            <input id="ao-sb-vmid" class="settings-select" type="number" placeholder="100" value="${esc(conn.template_vmid || '')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Per-session mode</label>
+            <select id="ao-sb-clone" class="settings-select">
+              <option value="snapshot-revert"${(conn.clone_mode || 'snapshot-revert') === 'snapshot-revert' ? ' selected' : ''}>Reuse one VM, roll back each session</option>
+              <option value="linked-clone"${conn.clone_mode === 'linked-clone' ? ' selected' : ''}>Fresh clone each session</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="admin-card">
+        <div class="settings-col">
+          <div class="settings-row">
+            <label class="settings-label">Take-over method</label>
+            <select id="ao-sb-tomethod" class="settings-select">
+              <option value="rdp"${(conn.takeover_method || 'rdp') === 'rdp' ? ' selected' : ''}>RDP (one-click rdp:// link)</option>
+              <option value="web-console"${conn.takeover_method === 'web-console' ? ' selected' : ''}>Web console (Guacamole / web RDP)</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">RDP username ${_tip('The Windows account you sign in with when you take over the session.')}</label>
+            <input id="ao-sb-rdpuser" class="settings-select" type="text" placeholder="Administrator" value="${esc(conn.rdp_username || '')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">RDP password ${_tip('Sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
+            <input id="ao-sb-rdppass" class="settings-select" type="password" placeholder="••••••••" autocomplete="new-password" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Web console URL template ${_tip('Only for the web console method. Use {host}/{token}/{vmid}/{node} placeholders.')}</label>
+            <input id="ao-sb-tourl" class="settings-select" type="text" placeholder="https://guac.example.com/#/?host={host}&token={token}" value="${esc(conn.takeover_url_template || '')}" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="ao-sb-msg"></div>
+  `);
+  _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-sb-save">Save &amp; continue</button>`);
+
+  const backendSel = document.getElementById('ao-sb-backend');
+  const winBox = document.getElementById('ao-sb-win');
+  backendSel.onchange = () => {
+    winBox.style.display = (backendSel.value === 'proxmox-windows') ? 'block' : 'none';
+  };
+
+  const val = (id) => (document.getElementById(id).value || '').trim();
+
+  document.getElementById('ao-sb-save').onclick = async () => {
+    if (_busy) return;
+    const msgEl = document.getElementById('ao-sb-msg');
+    if (msgEl) msgEl.innerHTML = '';
+    // Built-in sandbox: nothing to collect — the engine treats the step as done
+    // for the local backend, so just advance.
+    if (backendSel.value !== 'proxmox-windows') {
+      _busy = true;
+      document.getElementById('ao-sb-save').disabled = true;
+      try { await _advanceAndContinue('sandbox'); }
+      finally { _busy = false; }
+      return;
+    }
+    const body = {
+      proxmox_api_url: val('ao-sb-apiurl'),
+      proxmox_node: val('ao-sb-node'),
+      proxmox_token_id: val('ao-sb-tokenid'),
+      proxmox_token_secret: val('ao-sb-tokensecret'),
+      template_vmid: parseInt(val('ao-sb-vmid'), 10) || 0,
+      clone_mode: val('ao-sb-clone') || 'snapshot-revert',
+      rdp_username: val('ao-sb-rdpuser'),
+      rdp_password: val('ao-sb-rdppass'),
+      takeover_method: val('ao-sb-tomethod') || 'rdp',
+      takeover_url_template: val('ao-sb-tourl'),
+    };
+    if (!body.proxmox_api_url || !body.proxmox_node || !body.template_vmid || !body.proxmox_token_id) {
+      if (msgEl) msgEl.innerHTML = _err('Add the Proxmox API URL, node, token id and the Windows VM id to continue.');
+      return;
+    }
+    _busy = true;
+    document.getElementById('ao-sb-save').disabled = true;
+    try {
+      await _post(`${SETUP}/sandbox-connection`, body);
+      await _advanceAndContinue('sandbox');
+    } catch (e) {
+      if (msgEl) msgEl.innerHTML = _err(esc(e.message || 'Could not save the sandbox connection.'));
+      document.getElementById('ao-sb-save').disabled = false;
     } finally {
       _busy = false;
     }

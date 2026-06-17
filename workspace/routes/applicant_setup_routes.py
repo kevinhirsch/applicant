@@ -117,6 +117,28 @@ class ConversionPreviewIn(BaseModel):
     source: str = ""
 
 
+class SandboxConnectionIn(BaseModel):
+    """Native Windows automation-sandbox connection (Proxmox VM) + login.
+
+    Secrets (``proxmox_token_secret`` + ``rdp_password``) are sealed in the
+    engine's credential vault and never returned/logged; non-secrets persist to
+    app-config. This is a thin proxy body mirroring the engine's contract.
+    """
+
+    proxmox_api_url: str
+    proxmox_node: str
+    proxmox_token_id: str
+    proxmox_token_secret: str = ""
+    template_vmid: int
+    clone_mode: str = "snapshot-revert"
+    cdp_host: str = ""
+    cdp_port: int = 9222
+    rdp_username: str = ""
+    rdp_password: str = ""
+    takeover_method: str = "rdp"
+    takeover_url_template: str = ""
+
+
 def setup_applicant_setup_routes() -> APIRouter:
     """Build the Applicant setup/onboarding proxy router (mounted in ``app.py``)."""
     router = APIRouter(prefix="/api/applicant/setup", tags=["applicant-setup"])
@@ -280,6 +302,34 @@ def setup_applicant_setup_routes() -> APIRouter:
             logger.info("applicant test channels failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
+
+    # ── automation sandbox backend (FR-SANDBOX-1) ──────────────────────
+
+    @router.get("/sandbox-connection")
+    async def get_sandbox_connection(request: Request) -> JSONResponse:
+        """Persisted Windows automation-sandbox connection (no secrets) + readiness."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_sandbox_connection()
+        except EngineError as exc:
+            logger.info("applicant get sandbox connection failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/sandbox-connection")
+    async def configure_sandbox_connection(
+        body: SandboxConnectionIn, request: Request
+    ) -> JSONResponse:
+        """Save the native Windows VM connection/login (secrets vaulted by engine)."""
+        require_privilege(request, _CONFIG_PRIV)
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_configure_sandbox_connection(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant configure sandbox connection failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
 
     # ── step 3: fonts ───────────────────────────────────────────────────
 

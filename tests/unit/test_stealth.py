@@ -202,10 +202,21 @@ class TestEgressThreadedIntoLaunch:
         captured: dict = {}
 
         class _FakeSource:
-            def __init__(self, fingerprint, *, proxy=None, user_data_dir="", channel="chrome"):
+            def __init__(
+                self,
+                fingerprint,
+                *,
+                proxy=None,
+                user_data_dir="",
+                channel="chrome",
+                cdp_endpoint="",
+                persona="linux",
+            ):
                 captured["proxy"] = proxy
                 captured["user_data_dir"] = user_data_dir
                 captured["channel"] = channel
+                captured["cdp_endpoint"] = cdp_endpoint
+                captured["persona"] = persona
 
             def open(self, url):  # noqa: D401
                 captured["opened"] = url

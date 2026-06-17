@@ -170,8 +170,17 @@ class PrefillService:
             sandbox_session_url=session_url,
         )
 
-        # 2. Open the first page.
-        self._browser.open(aid, url)
+        # 2. Open the first page. For the native Proxmox Windows backend the session
+        # carries a CDP endpoint to the remote Windows VM's Chrome — the engine
+        # connects to THAT real browser over CDP (genuine Windows fingerprint, no
+        # spoof) instead of launching a local one. For the local backend it is None
+        # and the local-launch path is unchanged. The kwarg is passed only when the
+        # session actually carries an endpoint (signature-stable for fake browsers).
+        cdp_endpoint = getattr(session, "cdp_endpoint", None)
+        if cdp_endpoint:
+            self._browser.open(aid, url, cdp_endpoint=cdp_endpoint)
+        else:
+            self._browser.open(aid, url)
 
         # 3. Account-creation page (if any) → pre-fill, then hand off (FR-PREFILL-4).
         if self._browser.is_account_create_page(aid):

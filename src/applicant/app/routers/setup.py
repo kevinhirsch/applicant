@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from applicant.app.deps import get_container, get_setup_service
 from applicant.ports.driving.setup_wizard import (
     LLMSettings,
+    SandboxConnectionSettings,
     TierSettings,
     WizardStatus,
     WizardStep,
@@ -45,6 +46,27 @@ class LadderIn(BaseModel):
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
+
+
+class SandboxConnectionIn(BaseModel):
+    """Native Proxmox Windows VM connection + login data (FR-OOBE, zero-CLI).
+
+    Secrets (``proxmox_token_secret``, ``rdp_password``) are sealed in the credential
+    vault and NEVER returned/logged (FR-VAULT-3). Non-secrets persist to app-config.
+    """
+
+    proxmox_api_url: str
+    proxmox_node: str
+    proxmox_token_id: str
+    proxmox_token_secret: str  # SECRET -> vault
+    template_vmid: int
+    clone_mode: str = "snapshot-revert"
+    cdp_host: str = ""
+    cdp_port: int = 9222
+    rdp_username: str = ""
+    rdp_password: str = ""  # SECRET -> vault
+    takeover_method: str = "rdp"
+    takeover_url_template: str = ""
 
 
 class EndpointModelIn(BaseModel):
@@ -200,6 +222,48 @@ def test_channels(container=Depends(get_container)) -> dict:
         else []
     )
     return {"sent": True, "handle": handle, "channels": channels}
+
+
+@router.get("/sandbox-connection")
+def get_sandbox_connection(svc=Depends(get_setup_service)) -> dict:
+    """Return the persisted Proxmox Windows connection (NO secrets) for the UI (FR-OOBE)."""
+    return {
+        "backend": svc.sandbox_backend,
+        "connection": svc.get_sandbox_connection(),
+        "configured": svc.sandbox_connection_configured(),
+        "backend_ready": svc.is_sandbox_backend_ready(),
+    }
+
+
+@router.post("/sandbox-connection", status_code=status.HTTP_204_NO_CONTENT)
+def configure_sandbox_connection(
+    body: SandboxConnectionIn, svc=Depends(get_setup_service)
+) -> None:
+    """Collect + persist the native Proxmox Windows VM connection/login data (FR-OOBE).
+
+    Secrets (Proxmox API token secret + RDP password) are sealed in the credential
+    vault; non-secrets persist to app-config. Completing this step ungates the
+    proxmox-windows backend (FR-SANDBOX-1). Zero-CLI (NFR-ZEROCLI-1).
+    """
+    try:
+        svc.configure_sandbox_connection(
+            SandboxConnectionSettings(
+                proxmox_api_url=body.proxmox_api_url,
+                proxmox_node=body.proxmox_node,
+                proxmox_token_id=body.proxmox_token_id,
+                proxmox_token_secret=body.proxmox_token_secret,
+                template_vmid=body.template_vmid,
+                clone_mode=body.clone_mode,
+                cdp_host=body.cdp_host,
+                cdp_port=body.cdp_port,
+                rdp_username=body.rdp_username,
+                rdp_password=body.rdp_password,
+                takeover_method=body.takeover_method,
+                takeover_url_template=body.takeover_url_template,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/advance/{step}")

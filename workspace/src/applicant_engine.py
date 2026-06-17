@@ -233,6 +233,16 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
+    # -- setup wizard: automation sandbox backend (FR-SANDBOX-1, FR-OOBE) --
+
+    async def setup_get_sandbox_connection(self) -> Any:
+        """The persisted Proxmox Windows connection (NO secrets) + readiness flags."""
+        return await self._request("GET", "/api/setup/sandbox-connection")
+
+    async def setup_configure_sandbox_connection(self, body: dict) -> Any:
+        """Save the native Windows VM connection/login (secrets vaulted). 204 -> None."""
+        return await self._request("POST", "/api/setup/sandbox-connection", json=body)
+
     # -- model endpoints: paste a base URL, auto-list its models ----------
 
     async def list_model_endpoints(self, refresh: bool = False) -> Any:

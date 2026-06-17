@@ -53,6 +53,41 @@ BROWSER_CHANNEL_CHROME = "chrome"
 BROWSER_CHANNEL_CHROMIUM = "chromium"
 BROWSER_CHANNELS = (BROWSER_CHANNEL_CHROME, BROWSER_CHANNEL_CHROMIUM)
 
+#: Sandbox backend (FR-SANDBOX-1, FR-STEALTH-1). ``local`` (default) is the existing
+#: webtop/Neko container path where the browser the engine drives + the human takes
+#: over runs on the host. ``proxmox-windows`` is a NATIVE backend where that browser
+#: is real Google Chrome inside a real, licensed Windows VM on a Proxmox node — so
+#: the fingerprint (JA3/TLS, Direct3D WebGL, Segoe UI/Calibri, OS signals) is
+#: GENUINELY Windows with ZERO spoofing (the strongest FR-STEALTH-1).
+SANDBOX_BACKEND_LOCAL = "local"
+SANDBOX_BACKEND_PROXMOX_WINDOWS = "proxmox-windows"
+SANDBOX_BACKENDS = (SANDBOX_BACKEND_LOCAL, SANDBOX_BACKEND_PROXMOX_WINDOWS)
+
+#: Stealth persona (FR-STEALTH-1). ``linux`` = the coherent REAL-Linux/Chrome spoof
+#: (the default for the ``local`` backend: apply a coherent honest fingerprint).
+#: ``native`` = use the browser's REAL identity with NO fingerprint override —
+#: selected automatically for the ``proxmox-windows`` backend because it IS real
+#: Windows + real Chrome (genuine Windows fingerprint, no override needed).
+STEALTH_PERSONA_LINUX = "linux"
+STEALTH_PERSONA_NATIVE = "native"
+STEALTH_PERSONAS = (STEALTH_PERSONA_LINUX, STEALTH_PERSONA_NATIVE)
+
+#: Proxmox Windows clone modes (FR-SANDBOX-1/4). ``linked-clone`` spins a fresh
+#: linked clone of the template per session (strongest isolation; destroyed on
+#: teardown). ``snapshot-revert`` reuses ONE persistent VM and rolls it back to a
+#: clean snapshot per session (cheaper; no per-session clone). Default is the
+#: cheaper, operator-friendly ``snapshot-revert``.
+PROXMOX_CLONE_LINKED = "linked-clone"
+PROXMOX_CLONE_SNAPSHOT_REVERT = "snapshot-revert"
+PROXMOX_CLONE_MODES = (PROXMOX_CLONE_LINKED, PROXMOX_CLONE_SNAPSHOT_REVERT)
+
+#: Takeover methods for the Windows VM (FR-SANDBOX-2/3). ``rdp`` mints an ``rdp://``
+#: (or ``.rdp``) one-click URI to the VM's RDP host; ``web-console`` mints a URL
+#: against a web RDP gateway (e.g. Guacamole / PVE noVNC) template.
+PROXMOX_TAKEOVER_RDP = "rdp"
+PROXMOX_TAKEOVER_WEB_CONSOLE = "web-console"
+PROXMOX_TAKEOVER_METHODS = (PROXMOX_TAKEOVER_RDP, PROXMOX_TAKEOVER_WEB_CONSOLE)
+
 #: Browser egress modes (FR-STEALTH-4). ``direct`` uses the host's own residential
 #: connection; ``residential-proxy`` threads an attested residential proxy into the
 #: real browser launch. A typo must be rejected at load (item 12) — not silently
@@ -209,6 +244,44 @@ class Settings(BaseSettings):
         default="https://sandbox.local/webtop", alias="TAKEOVER_DESKTOP_BASE_URL"
     )
 
+    # --- Sandbox backend selection (FR-SANDBOX-1, FR-STEALTH-1) --------------
+    # ``local`` (default) = the existing webtop/Neko container path. ``proxmox-windows``
+    # = a native Proxmox Windows VM where the engine drives + the human takes over a
+    # REAL Google Chrome inside a real, licensed Windows VM (genuine Windows
+    # fingerprint, ZERO spoofing). The proxmox-windows backend is GATED on the OOBE
+    # sandbox-connection step (Proxmox API + RDP login data collected in the UI).
+    sandbox_backend: str = Field(default=SANDBOX_BACKEND_LOCAL, alias="SANDBOX_BACKEND")
+    # Stealth persona: ``linux`` (coherent spoof, default for the local backend) or
+    # ``native`` (no fingerprint override — the real browser identity). When empty,
+    # the persona is derived from the backend: ``native`` for proxmox-windows (it IS
+    # Windows), ``linux`` otherwise. An explicit value still validates.
+    stealth_persona: str = Field(default="", alias="STEALTH_PERSONA")
+
+    # --- Proxmox / Windows connection (non-secret in app_config; SECRETS go to
+    # the credential vault via the OOBE sandbox-connection step, FR-VAULT-3). These
+    # env defaults are a fallback ONLY; the wizard-persisted config wins. The token
+    # SECRET + RDP password are NEVER read from env into logs — they are vaulted.
+    proxmox_api_url: str = Field(default="", alias="PROXMOX_API_URL")
+    proxmox_node: str = Field(default="", alias="PROXMOX_NODE")
+    proxmox_token_id: str = Field(default="", alias="PROXMOX_TOKEN_ID")
+    proxmox_template_vmid: int = Field(default=0, alias="PROXMOX_TEMPLATE_VMID")
+    proxmox_clone_mode: str = Field(
+        default=PROXMOX_CLONE_SNAPSHOT_REVERT, alias="PROXMOX_CLONE_MODE"
+    )
+    # Chrome remote-debugging (CDP) endpoint inside the Windows VM.
+    proxmox_cdp_host: str = Field(default="", alias="PROXMOX_CDP_HOST")  # "" = guest IP
+    proxmox_cdp_port: int = Field(default=9222, alias="PROXMOX_CDP_PORT")
+    # RDP username (the password is a vault secret, never here in cleartext logs).
+    proxmox_rdp_username: str = Field(default="", alias="PROXMOX_RDP_USERNAME")
+    # Takeover method + (for web-console) a URL template. ``{host}``/``{vmid}``/
+    # ``{node}``/``{token}`` placeholders are substituted per session.
+    proxmox_takeover_method: str = Field(
+        default=PROXMOX_TAKEOVER_RDP, alias="PROXMOX_TAKEOVER_METHOD"
+    )
+    proxmox_takeover_url_template: str = Field(
+        default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
+    )
+
     @field_validator("takeover_desktop")
     @classmethod
     def _validate_takeover_desktop(cls, v: str) -> str:
@@ -255,6 +328,71 @@ class Settings(BaseSettings):
                 f"{REMOTE_VIEW_BACKENDS} (default 'webtop')."
             )
         return norm
+
+    @field_validator("sandbox_backend")
+    @classmethod
+    def _validate_sandbox_backend(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in SANDBOX_BACKENDS:
+            raise ValueError(
+                f"SANDBOX_BACKEND={v!r} is invalid; choose one of {SANDBOX_BACKENDS} "
+                "(default 'local')."
+            )
+        return norm
+
+    @field_validator("stealth_persona")
+    @classmethod
+    def _validate_stealth_persona(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        # Empty is allowed: the persona is then derived from the backend (see
+        # ``stealth_persona_resolved``). A non-empty value must be a known persona.
+        if norm and norm not in STEALTH_PERSONAS:
+            raise ValueError(
+                f"STEALTH_PERSONA={v!r} is invalid; choose one of {STEALTH_PERSONAS} "
+                "(or leave empty to derive from SANDBOX_BACKEND)."
+            )
+        return norm
+
+    @field_validator("proxmox_clone_mode")
+    @classmethod
+    def _validate_clone_mode(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in PROXMOX_CLONE_MODES:
+            raise ValueError(
+                f"PROXMOX_CLONE_MODE={v!r} is invalid; choose one of {PROXMOX_CLONE_MODES} "
+                "(default 'snapshot-revert')."
+            )
+        return norm
+
+    @field_validator("proxmox_takeover_method")
+    @classmethod
+    def _validate_takeover_method(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in PROXMOX_TAKEOVER_METHODS:
+            raise ValueError(
+                f"PROXMOX_TAKEOVER_METHOD={v!r} is invalid; choose one of "
+                f"{PROXMOX_TAKEOVER_METHODS} (default 'rdp')."
+            )
+        return norm
+
+    @property
+    def stealth_persona_resolved(self) -> str:
+        """The effective persona (FR-STEALTH-1).
+
+        An explicit ``STEALTH_PERSONA`` wins; otherwise it is DERIVED from the
+        backend: ``native`` for ``proxmox-windows`` (real Windows + real Chrome — no
+        spoof needed), ``linux`` for the local backend (coherent honest spoof).
+        """
+        if self.stealth_persona:
+            return self.stealth_persona
+        if self.sandbox_backend == SANDBOX_BACKEND_PROXMOX_WINDOWS:
+            return STEALTH_PERSONA_NATIVE
+        return STEALTH_PERSONA_LINUX
+
+    @property
+    def is_proxmox_windows_backend(self) -> bool:
+        """True when the native Proxmox Windows VM backend is selected."""
+        return self.sandbox_backend == SANDBOX_BACKEND_PROXMOX_WINDOWS
 
     @property
     def takeover_desktop_image_resolved(self) -> str:

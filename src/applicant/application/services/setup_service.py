@@ -28,6 +28,7 @@ from applicant.ports.driven.llm import TierConfig, TierLadder
 from applicant.ports.driving.setup_wizard import (
     STEP_ORDER,
     LLMSettings,
+    SandboxConnectionSettings,
     TierSettings,
     WizardStatus,
     WizardStep,
@@ -111,6 +112,10 @@ def validate_operator_urls(value: str, *, field: str = "url") -> str:
 _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
 _CHANNELS_KEY = "notify.channels"
+_SANDBOX_CONN_KEY = "sandbox.proxmox_windows"
+#: Vault refs for the sandbox-connection secrets (Proxmox token secret, RDP pass).
+_SANDBOX_TOKEN_REF = "sandbox.proxmox_token_secret"
+_SANDBOX_RDP_REF = "sandbox.proxmox_rdp_password"
 _DEFAULT_MAX_TIERS = 10
 
 
@@ -125,6 +130,7 @@ class SetupService:
         credentials: Any | None = None,
         onboarding_gate: Callable[[], bool] | None = None,
         channels_gate: Callable[[], bool] | None = None,
+        sandbox_backend: str = "local",
     ) -> None:
         self._store = config_store or InMemoryAppConfigStore()
         self._credentials = credentials
@@ -136,6 +142,14 @@ class SetupService:
         # "automated work may begin" gate reflects genuine backend state.
         self._onboarding_gate = onboarding_gate
         self._channels_gate = channels_gate
+        # Which sandbox backend is selected — the sandbox-connection step only GATES
+        # when the native proxmox-windows backend is selected (FR-OOBE, FR-SANDBOX-1).
+        self._sandbox_backend = sandbox_backend
+
+    @property
+    def sandbox_backend(self) -> str:
+        """The selected sandbox backend (``local`` | ``proxmox-windows``)."""
+        return self._sandbox_backend
 
     # --- persistence helpers ---------------------------------------------
     def _load_tiers(self) -> list[dict[str, Any]]:
@@ -160,7 +174,20 @@ class SetupService:
             steps.discard(WizardStep.ONBOARDING.value)
         if self._channels_complete_now():
             steps.add(WizardStep.CHANNELS.value)
+        # The sandbox-connection step completes once the Proxmox Windows connection is
+        # configured (FR-OOBE) OR when the native backend is NOT selected (it does not
+        # apply to the local backend, so it never blocks there).
+        if self._sandbox_step_complete_now():
+            steps.add(WizardStep.SANDBOX.value)
+        else:
+            steps.discard(WizardStep.SANDBOX.value)
         return steps
+
+    def _sandbox_step_complete_now(self) -> bool:
+        """The sandbox step is satisfied unless the native backend needs config."""
+        if self._sandbox_backend != "proxmox-windows":
+            return True
+        return self.sandbox_connection_configured()
 
     def _onboarding_complete_now(self) -> bool:
         if self._onboarding_gate is not None:
@@ -218,6 +245,107 @@ class SetupService:
             discord=bool(discord_webhook_url),
             email=bool(apprise_urls),
         )
+
+    # --- sandbox connection (native Proxmox Windows VM, FR-OOBE, FR-VAULT-3) --
+    def configure_sandbox_connection(self, settings: SandboxConnectionSettings) -> None:
+        """Persist the Proxmox Windows VM connection/login data (FR-OOBE).
+
+        Non-secrets (API URL/node/token id/VMID/clone mode/CDP/RDP user/takeover)
+        persist to app-config; the SECRETS (Proxmox API token secret + RDP password)
+        are sealed in the credential vault and only a marker is stored — secrets are
+        NEVER logged or returned (FR-VAULT-3, NFR-PRIV-1).
+        """
+        if not (settings.proxmox_api_url and settings.proxmox_node):
+            raise ValueError("Proxmox API URL and node are required (FR-OOBE).")
+        if not settings.template_vmid:
+            raise ValueError("A Windows template/persistent VMID is required (FR-OOBE).")
+        if not (settings.proxmox_token_id and settings.proxmox_token_secret):
+            raise ValueError("Proxmox API token id + secret are required (FR-OOBE).")
+        record: dict[str, Any] = {
+            "proxmox_api_url": settings.proxmox_api_url,
+            "proxmox_node": settings.proxmox_node,
+            "proxmox_token_id": settings.proxmox_token_id,
+            "template_vmid": int(settings.template_vmid),
+            "clone_mode": settings.clone_mode,
+            "cdp_host": settings.cdp_host,
+            "cdp_port": int(settings.cdp_port),
+            "rdp_username": settings.rdp_username,
+            "takeover_method": settings.takeover_method,
+            "takeover_url_template": settings.takeover_url_template,
+        }
+        if self._credentials is not None:
+            self._store_secret(_SANDBOX_TOKEN_REF, settings.proxmox_token_secret)
+            record["token_secret_ref"] = _SANDBOX_TOKEN_REF
+            if settings.rdp_password:
+                self._store_secret(_SANDBOX_RDP_REF, settings.rdp_password)
+                record["rdp_password_ref"] = _SANDBOX_RDP_REF
+        else:  # no vault wired (tests) — inline but NEVER logged
+            record["token_secret"] = settings.proxmox_token_secret
+            if settings.rdp_password:
+                record["rdp_password"] = settings.rdp_password
+        self._store.set(_SANDBOX_CONN_KEY, record)
+        # Mark the sandbox step complete so the gate ungates.
+        rec = self._store.get(_STEPS_KEY) or {"steps": []}
+        steps = set(rec.get("steps", []))
+        steps.add(WizardStep.SANDBOX.value)
+        self._store.set(_STEPS_KEY, {"steps": sorted(steps)})
+        log.info(
+            "sandbox_connection_configured",
+            node=settings.proxmox_node,
+            template_vmid=int(settings.template_vmid),
+            clone_mode=settings.clone_mode,
+            takeover_method=settings.takeover_method,
+        )
+
+    def get_sandbox_connection(self) -> dict[str, Any]:
+        """Return the persisted connection config WITHOUT secrets (for the UI)."""
+        rec = self._store.get(_SANDBOX_CONN_KEY)
+        if not rec:
+            return {}
+        return {
+            k: v
+            for k, v in rec.items()
+            if k not in ("token_secret", "rdp_password", "token_secret_ref", "rdp_password_ref")
+        }
+
+    def sandbox_connection_configured(self) -> bool:
+        """True once the Proxmox Windows connection has been collected (FR-OOBE)."""
+        rec = self._store.get(_SANDBOX_CONN_KEY)
+        return bool(
+            rec and rec.get("proxmox_api_url") and rec.get("proxmox_node")
+            and rec.get("template_vmid")
+        )
+
+    def resolve_sandbox_secret(self, which: str) -> str:
+        """Unseal a sandbox secret by name (``token`` | ``rdp``); ``""`` if absent.
+
+        Used only by the composition root to build the real Proxmox client; never
+        exposed via an endpoint and never logged.
+        """
+        rec = self._store.get(_SANDBOX_CONN_KEY) or {}
+        if which == "token":
+            if "token_secret" in rec:
+                return rec["token_secret"]
+            ref = rec.get("token_secret_ref")
+        elif which == "rdp":
+            if "rdp_password" in rec:
+                return rec["rdp_password"]
+            ref = rec.get("rdp_password_ref")
+        else:
+            return ""
+        if ref and self._credentials is not None:
+            return self._retrieve_secret(ref) or ""
+        return ""
+
+    def is_sandbox_backend_ready(self) -> bool:
+        """True if the selected sandbox backend is usable.
+
+        The local backend is always ready; the native proxmox-windows backend is
+        usable ONLY once its connection/login data has been collected (the gate).
+        """
+        if self._sandbox_backend != "proxmox-windows":
+            return True
+        return self.sandbox_connection_configured()
 
     # --- status ----------------------------------------------------------
     def status(self) -> WizardStatus:
@@ -375,18 +503,26 @@ class SetupService:
         """True only when automated work may begin (FR-OOBE-3, FR-ONBOARD-2).
 
         Requires: LLM configured (FR-UI-5) AND notification channels configured
-        (modeled, FR-OOBE-3) AND onboarding complete (FR-ONBOARD-2).
+        (modeled, FR-OOBE-3) AND onboarding complete (FR-ONBOARD-2) AND — when the
+        native proxmox-windows backend is selected — its connection/login data
+        collected (FR-OOBE, FR-SANDBOX-1).
         """
         return (
             self.is_setup_gate_open()
             and self._channels_complete_now()
             and self._onboarding_complete_now()
+            and self._sandbox_step_complete_now()
         )
 
     def advance_step(self, step: WizardStep) -> WizardStatus:
         """Mark a wizard step complete (FR-OOBE-2). LLM is gated by its config."""
         if step is WizardStep.LLM and not self.is_setup_gate_open():
             raise ValueError("Configure the LLM before completing the LLM step (FR-UI-5).")
+        if step is WizardStep.SANDBOX and not self._sandbox_step_complete_now():
+            raise ValueError(
+                "The Proxmox Windows connection is not configured; collect it before "
+                "advancing (FR-OOBE, proxmox-windows backend)."
+            )
         if step is WizardStep.ONBOARDING and not self._onboarding_complete_now():
             # The onboarding step only completes when the intake is complete
             # (FR-ONBOARD-2). When no real gate is wired, the local flag is used.
