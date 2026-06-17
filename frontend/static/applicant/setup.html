@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<!--
+  Applicant — first-run setup, hosted inside the real settings page.
+
+  This is the same settings panel you'll use day to day (the modal, sidebar tabs,
+  cards, and toggle switches all come from the shared design system in
+  /static/style.css). On first run it opens by itself to the setup sections and the
+  chat surface stays locked until the required steps are done. After setup, the same
+  page is reachable from the menu as ordinary settings.
+
+  The "Add Models" section is the model-connection flow from the shared chat app:
+  paste a base URL for a local model server (e.g. Ollama) or a cloud API (e.g.
+  OpenRouter) plus a key, and the available models are listed live from that address.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Applicant — Settings</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
+</head>
+<body>
+  <!-- The chat surface, kept locked until setup is complete. After setup it
+       becomes available; until then the gate banner sits over it. -->
+  <main id="chat-surface" class="applicant-section" style="display:none;">
+    <h1>Applicant</h1>
+    <p class="admin-empty">Your setup is complete. Open settings any time from the button below.</p>
+    <button class="admin-btn" id="open-settings-btn" title="Open the settings page">Open settings</button>
+    <nav id="applicant-nav"></nav>
+  </main>
+
+  <!-- A small gate banner shown while setup is incomplete, so the page is never
+       an empty/unusable screen behind the settings panel. -->
+  <div id="setup-gate-banner" class="applicant-section" style="display:none;">
+    <h1>Welcome to Applicant</h1>
+    <p class="admin-empty">Let's get you set up. Connect a model to begin — the rest unlocks as you go.</p>
+    <button class="admin-btn" id="reopen-settings-btn" title="Reopen the setup panel">Continue setup</button>
+  </div>
+
+  <!-- ═══ The real settings modal (ported from the shared chat app). ═══ -->
+  <div id="settings-modal" class="modal hidden">
+    <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings">
+      <div class="modal-header">
+        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:var(--fs-md)">&#x2699;</span>Settings</h4>
+        <button class="close-btn" id="settings-close" aria-label="Close settings">✖</button>
+      </div>
+      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:var(--fs-xs);">Connect a model, choose how you're notified, and turn on features as you go.</div>
+      <div class="settings-layout">
+        <div class="settings-sidebar">
+          <button class="settings-nav-item active" data-settings-tab="services" title="Connect a local or cloud model and list its available models">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
+            <span>Add Models</span>
+            <span class="admin-badge admin-badge-off" data-setup-badge="llm" title="Setup status for this section">to do</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="ai" title="Pick which connected model the assistant uses by default">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/></svg>
+            <span>AI Defaults</span>
+          </button>
+          <div class="settings-sidebar-divider"></div>
+          <button class="settings-nav-item" data-settings-tab="notifications" title="Choose how Applicant reaches you (Discord and/or email)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span>Notifications</span>
+            <span class="admin-badge admin-badge-off" data-setup-badge="channels" title="Setup status for this section">to do</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="fonts" title="Manage fonts used when building your documents">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            <span>Fonts</span>
+            <span class="admin-badge admin-badge-off" data-setup-badge="fonts" title="Setup status for this section">optional</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="intake" title="Add your background so Applicant can fill out applications for you">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>Application Intake</span>
+            <span class="admin-badge admin-badge-off" data-setup-badge="onboarding" title="Setup status for this section">optional</span>
+          </button>
+        </div>
+
+        <div class="settings-panels">
+
+          <!-- ═══ Add Models (local + cloud), ported from the chat settings ═══ -->
+          <div data-settings-panel="services">
+            <div class="admin-card">
+              <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Add Models</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Connect a local model server first, or add a cloud API. Models are listed live from the address you enter.</div>
+
+              <!-- Local subsection (e.g. Ollama on this machine or your network) -->
+              <div class="adm-add-section" id="adm-add-local">
+                <div class="adm-ep-section-head">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+                  <span>Local</span>
+                </div>
+                <div class="admin-model-form">
+                  <div class="admin-model-form-row">
+                    <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1" title="The address of a model server running on this machine or your network (for example Ollama at http://localhost:11434/v1).">
+                    <select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;" title="What this endpoint provides: text models (LLM) or image models.">
+                      <option value="llm">LLM</option>
+                      <option value="image">Image</option>
+                    </select>
+                  </div>
+                  <div class="admin-model-form-row">
+                    <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1" title="Only needed if your local server requires a key. Most local setups (like Ollama) need none.">
+                  </div>
+                  <div class="admin-model-form-row">
+                    <span style="flex:1"></span>
+                    <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill in the default Ollama address for you">Ollama</button>
+                    <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="width:55px;text-align:center;" title="Check the address is reachable and preview its models without saving">Test</button>
+                    <button class="admin-btn-add" id="adm-epLocalAddBtn" style="width:55px;text-align:center;" title="Save this endpoint and list its models">Add</button>
+                  </div>
+                  <div id="adm-epLocalMsg" class="adm-ep-inline-msg"></div>
+                </div>
+              </div>
+
+              <!-- API subsection (e.g. OpenRouter / any OpenAI-compatible cloud) -->
+              <div class="adm-add-section" id="adm-add-api" style="margin-top:14px">
+                <div class="adm-ep-section-head">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                  <span>Cloud API</span>
+                </div>
+                <div class="admin-model-form">
+                  <div class="admin-model-form-row">
+                    <select id="adm-epProvider" style="padding:5px;flex-shrink:0;" title="Pick a known provider to fill in its address, or choose Custom URL to type your own.">
+                      <option value="">Custom URL</option>
+                      <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+                      <option value="https://api.openai.com/v1">OpenAI</option>
+                      <option value="https://api.deepseek.com/v1">DeepSeek</option>
+                      <option value="https://api.groq.com/openai/v1">Groq</option>
+                      <option value="https://api.mistral.ai/v1">Mistral</option>
+                      <option value="https://api.together.xyz/v1">Together AI</option>
+                    </select>
+                    <input id="adm-epUrl" type="text" placeholder="Base URL, e.g. https://openrouter.ai/api/v1" autocomplete="off" style="flex:1" title="The base URL of the cloud provider's OpenAI-compatible API.">
+                  </div>
+                  <div class="admin-model-form-row">
+                    <input id="adm-epApiKey" type="password" placeholder="API key" style="flex:1" title="Your secret key for this provider. It is stored encrypted on the server and never shown again.">
+                    <select id="adm-epType" style="padding:5px;width:80px;" title="What this endpoint provides: text models (LLM) or image models.">
+                      <option value="llm">LLM</option>
+                      <option value="image">Image</option>
+                    </select>
+                    <button class="admin-btn-sm" id="adm-epApiTestBtn" style="width:55px;text-align:center;" title="Check the key and address work, and preview the models, without saving">Test</button>
+                    <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;" title="Save this endpoint and list its models">Add</button>
+                  </div>
+                  <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="admin-card">
+              <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Manage the endpoints you've connected.</div>
+              <div id="adm-epList"><div class="admin-empty">Loading…</div></div>
+            </div>
+          </div>
+
+          <!-- ═══ AI Defaults — pick which connected model the assistant uses ═══ -->
+          <div data-settings-panel="ai" class="hidden">
+            <div class="admin-card">
+              <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Default Chat Model</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Choose which connected endpoint and model the assistant uses.</div>
+              <div class="settings-row">
+                <label class="settings-label" title="Which connected endpoint to use">Endpoint</label>
+                <select id="set-defaultEpSelect" class="settings-select" title="Pick one of the endpoints you connected in Add Models"></select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label" title="Which model on that endpoint to use">Model</label>
+                <select id="set-defaultModelSelect" class="settings-select" title="The model that endpoint offers — listed live from its address"></select>
+              </div>
+              <div id="set-defaultChatMsg" class="adm-ep-inline-msg"></div>
+            </div>
+          </div>
+
+          <!-- ═══ Notifications — Discord and/or email ═══ -->
+          <div data-settings-panel="notifications" class="hidden">
+            <div class="admin-card">
+              <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Notifications</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Choose how Applicant reaches you. Discord is the quick option; email is a good backup.</div>
+              <div class="admin-model-form">
+                <div class="admin-model-form-row">
+                  <input id="notif-discord" type="text" placeholder="https://discord.com/api/webhooks/…" style="flex:1" title="A Discord webhook URL. Create one in a channel's Integrations settings, then paste it here.">
+                </div>
+                <div class="admin-model-form-row">
+                  <input id="notif-email" type="text" placeholder="mailto://user:pass@smtp.example.com" style="flex:1" title="An email destination in Apprise URL form, used as a backup channel.">
+                </div>
+                <div class="admin-model-form-row">
+                  <span style="flex:1"></span>
+                  <button class="admin-btn-sm" id="notif-test" title="Send a test message to the channels above">Send test</button>
+                  <button class="admin-btn-add" id="notif-save" title="Save these notification channels">Save</button>
+                </div>
+                <div id="notif-msg" class="adm-ep-inline-msg"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ Fonts ═══ -->
+          <div data-settings-panel="fonts" class="hidden">
+            <div class="admin-card">
+              <h2>Fonts</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Fonts used when building your documents. You can finish setup without this and add fonts later.</div>
+              <label class="applicant-toggle-row" title="Turn on managed fonts for document building">
+                <span>Use managed fonts</span>
+                <span class="toggle-switch"><input type="checkbox" id="fonts-toggle"><span class="toggle-slider"></span></span>
+              </label>
+              <div id="fonts-msg" class="adm-ep-inline-msg"></div>
+            </div>
+          </div>
+
+          <!-- ═══ Application intake ═══ -->
+          <div data-settings-panel="intake" class="hidden">
+            <div class="admin-card">
+              <h2>Application Intake</h2>
+              <div class="admin-toggle-sub" style="margin-bottom:10px">Add your background so Applicant can fill out applications for you. Optional for now — you can complete it later.</div>
+              <label class="applicant-toggle-row" title="Mark your intake as ready so automated work can use it">
+                <span>Intake ready</span>
+                <span class="toggle-switch"><input type="checkbox" id="intake-toggle"><span class="toggle-slider"></span></span>
+              </label>
+              <div id="intake-msg" class="adm-ep-inline-msg"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/applicant/js/setup.js"></script>
+</body>
+</html>

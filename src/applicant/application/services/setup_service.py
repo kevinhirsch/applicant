@@ -253,6 +253,32 @@ class SetupService:
         self._save_tiers(tiers)
         log.info("llm_configured", provider=settings.provider, model=settings.model)
 
+    def configure_llm_from_endpoint(
+        self, *, endpoint_resolver: Callable[[], dict[str, Any] | None], model: str
+    ) -> None:
+        """Configure the LLM from a saved model endpoint + a chosen model.
+
+        ``endpoint_resolver`` returns the endpoint's ``{base_url, api_key, name}``
+        (the caller resolves the sealed key); this maps the user's setup-page choice
+        into the LLM tier ladder so picking an endpoint + model actually wires the
+        model the rest of the app uses.
+        """
+        ep = endpoint_resolver()
+        if ep is None:
+            raise ValueError("Unknown model endpoint; add it first.")
+        if not model:
+            raise ValueError("Choose a model for the endpoint.")
+        base_url = ep.get("base_url", "")
+        provider = "ollama" if ("11434" in base_url or "ollama" in base_url.lower()) else "openai"
+        self.configure_llm(
+            LLMSettings(
+                provider=provider,
+                base_url=base_url,
+                api_key=ep.get("api_key", ""),
+                model=model,
+            )
+        )
+
     def get_tiers(self) -> list[dict[str, Any]]:
         """Return the persisted ladder as non-secret records (for the UI)."""
         return [{k: v for k, v in t.items() if k != "api_key"} for t in self._load_tiers()]
