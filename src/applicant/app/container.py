@@ -369,6 +369,9 @@ def build_container(settings: Settings | None = None) -> Container:
         llm=llm,
         learning=learning_service,
         storage=storage,
+        # Stage 2.5 lane A: inject the workspace callback so the assistant can
+        # surface auto-detected upcoming interviews (degrades silently when off).
+        workspace=workspace,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -564,6 +567,7 @@ def build_container(settings: Settings | None = None) -> Container:
             llm=llm,
             learning=rs_ls,
             storage=req_storage,
+            workspace=workspace,  # Stage 2.5 lane A (see main ChatService build)
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         rs_submission = SubmissionService(

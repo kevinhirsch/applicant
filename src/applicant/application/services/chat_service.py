@@ -92,6 +92,7 @@ class ChatService:
         llm=None,
         learning=None,
         storage=None,
+        workspace=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -100,6 +101,11 @@ class ChatService:
         # the per-campaign learning model (FR-LEARN-3: every input feeds learning).
         self._learning = learning
         self._storage = storage
+        # Stage 2.5: optional WorkspacePort. When the engine->workspace callback
+        # channel is configured (``available()``), the assistant injects a short,
+        # owner-scoped "upcoming interviews" context block so its answers/material
+        # guidance are interview-aware. Degrades silently when off/empty.
+        self._workspace = workspace
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -165,6 +171,9 @@ class ChatService:
             prompt = message
             if gaps:
                 prompt += f"\n\n(Known missing details: {', '.join(gaps)}.)"
+            interview_ctx = self._interview_context()
+            if interview_ctx:
+                prompt += f"\n\n{interview_ctx}"
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
                 max_tokens=256,
@@ -174,6 +183,47 @@ class ChatService:
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
             return deterministic
+
+    # --- upcoming-interview context (Stage 2.5; degrade silently) ---------
+    def _interview_context(self, owner: str | None = None) -> str:
+        """A short, owner-scoped "upcoming interviews" block for the LLM prompt.
+
+        Pulls auto-detected interviews from the front-door workspace via the
+        callback channel (``container.workspace.calendar_interviews``) ONLY when
+        the channel is configured (``available()``). Any failure / empty result
+        degrades silently to "" so the chat turn is never broken by a flaky or
+        absent workspace. Bounded to a handful of lines to keep the prompt lean.
+        """
+        ws = self._workspace
+        if ws is None:
+            return ""
+        try:
+            if not ws.available():
+                return ""
+            payload = ws.calendar_interviews(owner=owner)
+        except Exception:
+            return ""
+        interviews = (payload or {}).get("interviews") or []
+        if not interviews:
+            return ""
+        lines: list[str] = []
+        for iv in interviews[:5]:
+            title = (iv.get("title") or "").strip() or "Interview"
+            when = (iv.get("start") or "").strip()
+            company = (iv.get("detected_company") or "").strip()
+            bits = [title]
+            if company:
+                bits.append(f"({company})")
+            if when:
+                bits.append(f"— {when}")
+            lines.append("- " + " ".join(bits))
+        if not lines:
+            return ""
+        return (
+            "Upcoming interviews the candidate has scheduled (use to make "
+            "answers/materials interview-aware; do not invent details):\n"
+            + "\n".join(lines)
+        )
 
     @staticmethod
     def _deterministic_reply(gaps: list[str]) -> str:
