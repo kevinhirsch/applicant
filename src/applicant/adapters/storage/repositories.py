@@ -7,7 +7,9 @@ boundary (``commit``/``rollback``) required by ``StoragePort``.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import date, datetime, time
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from applicant.adapters.storage import models as m
@@ -48,6 +50,11 @@ from applicant.core.ids import (
     ScreenshotId,
 )
 from applicant.core.state_machine import ApplicationState
+
+#: Outcome event types that mean the application has reached a terminal/submitted
+#: state. Used by ``exists_terminal_for_application`` to make submission idempotent
+#: (a second submit must not re-fire if a terminal outcome already exists).
+TERMINAL_OUTCOME_TYPES: frozenset[str] = frozenset({"submitted", "converted"})
 
 # --- mapping helpers -------------------------------------------------------
 
@@ -339,7 +346,18 @@ class JobPostingRepo:
 
     def list_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
         rows = self._s.scalars(
-            select(m.JobPostingModel).where(m.JobPostingModel.campaign_id == campaign_id)
+            select(m.JobPostingModel)
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+            .order_by(m.JobPostingModel.id)
+        ).all()
+        return [_posting_to_entity(r) for r in rows]
+
+    def list_unscored_for_campaign(self, campaign_id: CampaignId) -> list[JobPosting]:
+        rows = self._s.scalars(
+            select(m.JobPostingModel)
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+            .where(m.JobPostingModel.viability_score.is_(None))
+            .order_by(m.JobPostingModel.id)
         ).all()
         return [_posting_to_entity(r) for r in rows]
 
@@ -375,7 +393,33 @@ class ApplicationRepo:
 
     def list_for_campaign(self, campaign_id: CampaignId) -> list[Application]:
         rows = self._s.scalars(
-            select(m.ApplicationModel).where(m.ApplicationModel.campaign_id == campaign_id)
+            select(m.ApplicationModel)
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .order_by(m.ApplicationModel.id)
+        ).all()
+        return [_application_to_entity(r) for r in rows]
+
+    def get_by_posting(
+        self, campaign_id: CampaignId, posting_id: JobPostingId
+    ) -> Application | None:
+        row = self._s.scalars(
+            select(m.ApplicationModel)
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.ApplicationModel.posting_id == posting_id)
+            .order_by(m.ApplicationModel.id)
+        ).first()
+        return _application_to_entity(row) if row else None
+
+    def list_by_status(
+        self, campaign_id: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> list[Application]:
+        if not statuses:
+            return []
+        rows = self._s.scalars(
+            select(m.ApplicationModel)
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.ApplicationModel.status.in_([s.value for s in statuses]))
+            .order_by(m.ApplicationModel.id)
         ).all()
         return [_application_to_entity(r) for r in rows]
 
@@ -488,9 +532,29 @@ class DecisionRepo:
 
     def list_for_application(self, application_id: ApplicationId) -> list[Decision]:
         rows = self._s.scalars(
-            select(m.DecisionModel).where(m.DecisionModel.application_id == application_id)
+            select(m.DecisionModel)
+            .where(m.DecisionModel.application_id == application_id)
+            .order_by(m.DecisionModel.id)
         ).all()
         return [_decision_to_entity(r) for r in rows]
+
+    def list_approved_postings_for_campaign(
+        self, campaign_id: CampaignId
+    ) -> list[JobPostingId]:
+        """Posting ids with an APPROVED decision (single join, no N+1)."""
+        rows = self._s.execute(
+            select(m.ApplicationModel.posting_id)
+            .join(
+                m.DecisionModel,
+                m.DecisionModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .where(m.DecisionModel.type == DecisionType.APPROVE.value)
+            .where(m.ApplicationModel.posting_id.is_not(None))
+            .distinct()
+            .order_by(m.ApplicationModel.posting_id)
+        ).all()
+        return [JobPostingId(r[0]) for r in rows]
 
 
 class OutcomeEventRepo:
@@ -509,25 +573,50 @@ class OutcomeEventRepo:
 
     def list_for_application(self, application_id: ApplicationId) -> list[OutcomeEvent]:
         rows = self._s.scalars(
-            select(m.OutcomeEventModel).where(m.OutcomeEventModel.application_id == application_id)
+            select(m.OutcomeEventModel)
+            .where(m.OutcomeEventModel.application_id == application_id)
+            .order_by(m.OutcomeEventModel.created_at, m.OutcomeEventModel.id)
         ).all()
         return [_outcome_to_entity(r) for r in rows]
 
-    def list_for_campaign(self, campaign_id: CampaignId) -> list[OutcomeEvent]:
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[OutcomeEvent]:
         """All outcome events for a campaign (join through applications).
 
         Campaign-scoped (FR-CRIT-4): outcomes must never bleed across campaigns, so
-        learning-depth queries filter by the owning application's campaign.
+        learning-depth queries filter by the owning application's campaign. ``limit``/
+        ``offset`` bound the scan for paginated admin loads (default: unbounded).
         """
-        rows = self._s.scalars(
+        stmt = (
             select(m.OutcomeEventModel)
             .join(
                 m.ApplicationModel,
                 m.OutcomeEventModel.application_id == m.ApplicationModel.id,
             )
             .where(m.ApplicationModel.campaign_id == campaign_id)
-        ).all()
+            .order_by(m.OutcomeEventModel.created_at, m.OutcomeEventModel.id)
+        )
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = self._s.scalars(stmt).all()
         return [_outcome_to_entity(r) for r in rows]
+
+    def exists_terminal_for_application(self, application_id: ApplicationId) -> bool:
+        """True if a terminal (submitted/converted) outcome already exists."""
+        row = self._s.scalars(
+            select(m.OutcomeEventModel.id)
+            .where(m.OutcomeEventModel.application_id == application_id)
+            .where(m.OutcomeEventModel.type.in_(tuple(TERMINAL_OUTCOME_TYPES)))
+            .limit(1)
+        ).first()
+        return row is not None
 
 
 class ApplicationScreenshotRepo:
@@ -546,10 +635,40 @@ class ApplicationScreenshotRepo:
 
     def list_for_application(self, application_id: ApplicationId) -> list[ApplicationScreenshot]:
         rows = self._s.scalars(
-            select(m.ApplicationScreenshotModel).where(
-                m.ApplicationScreenshotModel.application_id == application_id
-            )
+            select(m.ApplicationScreenshotModel)
+            .where(m.ApplicationScreenshotModel.application_id == application_id)
+            .order_by(m.ApplicationScreenshotModel.captured_at, m.ApplicationScreenshotModel.id)
         ).all()
+        return [_screenshot_to_entity(r) for r in rows]
+
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ApplicationScreenshot]:
+        """All screenshots whose application belongs to ``campaign_id`` (batch load).
+
+        Kills the admin N+1 (one query instead of per-application fetches). ``limit``/
+        ``offset`` bound the scan; default behavior is unbounded.
+        """
+        stmt = (
+            select(m.ApplicationScreenshotModel)
+            .join(
+                m.ApplicationModel,
+                m.ApplicationScreenshotModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
+            .order_by(
+                m.ApplicationScreenshotModel.captured_at, m.ApplicationScreenshotModel.id
+            )
+        )
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = self._s.scalars(stmt).all()
         return [_screenshot_to_entity(r) for r in rows]
 
 
@@ -565,6 +684,9 @@ class PendingActionRepo:
                 application_id=action.application_id,
                 kind=action.kind,
                 title=action.title,
+                # dedup_key is promoted to a real indexed column; it still lives in
+                # ``payload`` for callers, but we mirror it here for direct lookup.
+                dedup_key=(action.payload or {}).get("dedup_key"),
                 payload=action.payload,
                 resolved=action.resolved,
                 created_at=action.created_at,
@@ -580,8 +702,22 @@ class PendingActionRepo:
             select(m.PendingActionModel)
             .where(m.PendingActionModel.campaign_id == campaign_id)
             .where(m.PendingActionModel.resolved.is_(False))
+            .order_by(m.PendingActionModel.created_at, m.PendingActionModel.id)
         ).all()
         return [_pending_to_entity(r) for r in rows]
+
+    def find_open_by_dedup(
+        self, campaign_id: CampaignId, dedup_key: str
+    ) -> PendingAction | None:
+        """Direct (campaign_id, dedup_key) indexed lookup — no payload scan."""
+        row = self._s.scalars(
+            select(m.PendingActionModel)
+            .where(m.PendingActionModel.campaign_id == campaign_id)
+            .where(m.PendingActionModel.dedup_key == dedup_key)
+            .where(m.PendingActionModel.resolved.is_(False))
+            .order_by(m.PendingActionModel.created_at, m.PendingActionModel.id)
+        ).first()
+        return _pending_to_entity(row) if row else None
 
     def resolve(self, action_id: PendingActionId) -> None:
         row = self._s.get(m.PendingActionModel, action_id)
@@ -691,11 +827,57 @@ class AgentRunRepo:
         row = self._s.get(m.AgentRunModel, run_id)
         return _agent_run_to_entity(row) if row else None
 
-    def list_for_campaign(self, campaign_id: CampaignId) -> list[AgentRun]:
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AgentRun]:
+        stmt = (
+            select(m.AgentRunModel)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .order_by(m.AgentRunModel.timestamp, m.AgentRunModel.id)
+        )
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = self._s.scalars(stmt).all()
+        return [_agent_run_to_entity(r) for r in rows]
+
+    def count_pipelines_started_on(self, campaign_id: CampaignId, day: date) -> int:
+        """Runs for ``campaign_id`` whose timestamp falls on the UTC ``day``."""
+        start = datetime.combine(day, time.min)
+        end = datetime.combine(day, time.max)
+        return int(
+            self._s.scalar(
+                select(func.count())
+                .select_from(m.AgentRunModel)
+                .where(m.AgentRunModel.campaign_id == campaign_id)
+                .where(m.AgentRunModel.timestamp >= start)
+                .where(m.AgentRunModel.timestamp <= end)
+            )
+            or 0
+        )
+
+    def latest(self, campaign_id: CampaignId) -> AgentRun | None:
+        """Most recent run (timestamp DESC, seq tie-break per FR-AGENT-7)."""
         rows = self._s.scalars(
             select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
         ).all()
-        return [_agent_run_to_entity(r) for r in rows]
+        runs = [_agent_run_to_entity(r) for r in rows]
+        if not runs:
+            return None
+        # ``seq`` lives inside the JSON blob, so tie-break in Python (mirrors in-memory).
+        return max(runs, key=lambda r: (r.timestamp, r.seq))
+
+    def max_seq(self, campaign_id: CampaignId) -> int:
+        """Highest ``seq`` among campaign runs (0 if none)."""
+        rows = self._s.scalars(
+            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
+        ).all()
+        return max((_agent_run_to_entity(r).seq for r in rows), default=0)
 
 
 class DetectionEventRepo:

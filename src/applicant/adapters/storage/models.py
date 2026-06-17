@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -86,6 +87,8 @@ class AttributeModel(Base):
 # 4 -------------------------------------------------------------------------
 class FieldMappingModel(Base):
     __tablename__ = "field_mappings"
+    # Hot lookup: list_for_site / find scan by site_key.
+    __table_args__ = (Index("ix_field_mappings_site_key", "site_key"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     # nullable for globally-learned mappings (values stay per-campaign).
@@ -121,6 +124,10 @@ class DiscoverySourceModel(Base):
 # 7 -------------------------------------------------------------------------
 class JobPostingModel(Base):
     __tablename__ = "job_postings"
+    # Hot lookup: list_unscored_for_campaign filters by (campaign_id, viability_score).
+    __table_args__ = (
+        Index("ix_job_postings_campaign_viability", "campaign_id", "viability_score"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
@@ -178,6 +185,10 @@ class RevisionSessionModel(Base):
 # 11 ------------------------------------------------------------------------
 class ApplicationModel(Base):
     __tablename__ = "applications"
+    # Hot lookup: list_by_status filters by (campaign_id, status).
+    __table_args__ = (
+        Index("ix_applications_campaign_status", "campaign_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
@@ -230,6 +241,10 @@ class OutcomeEventModel(Base):
 # 15 ------------------------------------------------------------------------
 class AgentRunModel(Base):
     __tablename__ = "agent_runs"
+    # Hot lookup: latest / count_pipelines_started_on order/filter by (campaign_id, timestamp).
+    __table_args__ = (
+        Index("ix_agent_runs_campaign_timestamp", "campaign_id", "timestamp"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
@@ -311,12 +326,21 @@ class CredentialModel(Base):
 # derived -------------------------------------------------------------------
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
+    # Hot lookups: list_open filters by (campaign_id, resolved); dedup matching by
+    # (campaign_id, dedup_key) — both promoted to real indexes (no JSONB payload scan).
+    __table_args__ = (
+        Index("ix_pending_actions_campaign_resolved", "campaign_id", "resolved"),
+        Index("ix_pending_actions_campaign_dedup", "campaign_id", "dedup_key"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
     application_id: Mapped[str | None] = mapped_column(ForeignKey("applications.id"), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    # Promoted from inside ``payload`` to a real indexed column (FR scale): dedup
+    # matching is now a direct (campaign_id, dedup_key) lookup, not an O(open) scan.
+    dedup_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     payload: Mapped[dict] = mapped_column(JSONType, default=dict)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

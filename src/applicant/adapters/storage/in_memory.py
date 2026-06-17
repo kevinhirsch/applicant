@@ -7,12 +7,14 @@ and contract tests run without Postgres.
 
 from __future__ import annotations
 
+from datetime import date
+
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.campaign import Campaign
-from applicant.core.entities.decision import Decision
+from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
@@ -35,6 +37,11 @@ from applicant.core.ids import (
     ResumeVariantId,
     RevisionSessionId,
 )
+from applicant.core.state_machine import ApplicationState
+
+#: Outcome types treated as terminal/submitted for idempotency (mirrors the SQL lane's
+#: ``repositories.TERMINAL_OUTCOME_TYPES``; kept here so this adapter stays DB-free).
+TERMINAL_OUTCOME_TYPES: frozenset[str] = frozenset({"submitted", "converted"})
 
 
 class _CampaignRepo:
@@ -76,7 +83,20 @@ class _PostingRepo:
         return self._d.get(str(pid))
 
     def list_for_campaign(self, cid: CampaignId) -> list[JobPosting]:
-        return [p for p in self._d.values() if p.campaign_id == cid]
+        return sorted(
+            (p for p in self._d.values() if p.campaign_id == cid),
+            key=lambda p: str(p.id),
+        )
+
+    def list_unscored_for_campaign(self, cid: CampaignId) -> list[JobPosting]:
+        return sorted(
+            (
+                p
+                for p in self._d.values()
+                if p.campaign_id == cid and p.viability_score is None
+            ),
+            key=lambda p: str(p.id),
+        )
 
 
 class _ApplicationRepo:
@@ -93,7 +113,38 @@ class _ApplicationRepo:
         return self._d.get(str(aid))
 
     def list_for_campaign(self, cid: CampaignId) -> list[Application]:
-        return [a for a in self._d.values() if a.campaign_id == cid]
+        return sorted(
+            (a for a in self._d.values() if a.campaign_id == cid),
+            key=lambda a: str(a.id),
+        )
+
+    def get_by_posting(
+        self, cid: CampaignId, posting_id: JobPostingId
+    ) -> Application | None:
+        matches = sorted(
+            (
+                a
+                for a in self._d.values()
+                if a.campaign_id == cid and a.posting_id == posting_id
+            ),
+            key=lambda a: str(a.id),
+        )
+        return matches[0] if matches else None
+
+    def list_by_status(
+        self, cid: CampaignId, statuses: tuple[ApplicationState, ...]
+    ) -> list[Application]:
+        if not statuses:
+            return []
+        wanted = set(statuses)
+        return sorted(
+            (
+                a
+                for a in self._d.values()
+                if a.campaign_id == cid and a.status in wanted
+            ),
+            key=lambda a: str(a.id),
+        )
 
 
 class _VariantRepo:
@@ -142,14 +193,32 @@ class _RevisionRepo:
 
 
 class _DecisionRepo:
-    def __init__(self) -> None:
+    def __init__(self, applications: _ApplicationRepo) -> None:
         self._l: list[Decision] = []
+        # Resolve a decision's posting/campaign through its application (mirrors the
+        # SQL join in ``list_approved_postings_for_campaign``).
+        self._applications = applications
 
     def add(self, d: Decision) -> None:
         self._l.append(d)
 
     def list_for_application(self, aid: ApplicationId) -> list[Decision]:
         return [d for d in self._l if d.application_id == aid]
+
+    def list_approved_postings_for_campaign(
+        self, cid: CampaignId
+    ) -> list[JobPostingId]:
+        """Posting ids with an APPROVED decision (distinct, ordered)."""
+        posting_ids: set[str] = set()
+        for d in self._l:
+            if d.type != DecisionType.APPROVE:
+                continue
+            app = self._applications.get(d.application_id)
+            if app is None or app.campaign_id != cid:
+                continue
+            if app.posting_id:
+                posting_ids.add(str(app.posting_id))
+        return [JobPostingId(p) for p in sorted(posting_ids)]
 
 
 class _OutcomeRepo:
@@ -164,25 +233,66 @@ class _OutcomeRepo:
     def list_for_application(self, aid: ApplicationId) -> list[OutcomeEvent]:
         return [e for e in self._l if e.application_id == aid]
 
-    def list_for_campaign(self, cid: CampaignId) -> list[OutcomeEvent]:
-        """All outcomes whose application belongs to ``cid`` (FR-CRIT-4 scoping)."""
+    def list_for_campaign(
+        self,
+        cid: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[OutcomeEvent]:
+        """All outcomes whose application belongs to ``cid`` (FR-CRIT-4 scoping).
+
+        ``limit``/``offset`` bound the scan (default: unbounded). Insertion order is
+        preserved (mirrors the SQL ``created_at, id`` ordering for appended events).
+        """
         out: list[OutcomeEvent] = []
         for e in self._l:
             app = self._applications.get(e.application_id)
             if app is not None and app.campaign_id == cid:
                 out.append(e)
+        if offset:
+            out = out[offset:]
+        if limit is not None:
+            out = out[:limit]
         return out
+
+    def exists_terminal_for_application(self, aid: ApplicationId) -> bool:
+        return any(
+            e.application_id == aid and e.type in TERMINAL_OUTCOME_TYPES
+            for e in self._l
+        )
 
 
 class _ScreenshotRepo:
-    def __init__(self) -> None:
+    def __init__(self, applications: _ApplicationRepo) -> None:
         self._l: list[ApplicationScreenshot] = []
+        # Resolve a screenshot's campaign through its application (mirrors the SQL join).
+        self._applications = applications
 
     def add(self, s: ApplicationScreenshot) -> None:
         self._l.append(s)
 
     def list_for_application(self, aid: ApplicationId) -> list[ApplicationScreenshot]:
         return [s for s in self._l if s.application_id == aid]
+
+    def list_for_campaign(
+        self,
+        cid: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ApplicationScreenshot]:
+        """All screenshots whose application belongs to ``cid`` (batch load, no N+1)."""
+        out: list[ApplicationScreenshot] = []
+        for s in self._l:
+            app = self._applications.get(s.application_id)
+            if app is not None and app.campaign_id == cid:
+                out.append(s)
+        if offset:
+            out = out[offset:]
+        if limit is not None:
+            out = out[:limit]
+        return out
 
 
 class _PendingRepo:
@@ -196,7 +306,26 @@ class _PendingRepo:
         return self._d.get(str(pid))
 
     def list_open(self, cid: CampaignId) -> list[PendingAction]:
-        return [p for p in self._d.values() if p.campaign_id == cid and not p.resolved]
+        return sorted(
+            (p for p in self._d.values() if p.campaign_id == cid and not p.resolved),
+            key=lambda p: (p.created_at, str(p.id)),
+        )
+
+    def find_open_by_dedup(
+        self, cid: CampaignId, dedup_key: str
+    ) -> PendingAction | None:
+        """First open action matching ``dedup_key`` (stored in payload), ordered."""
+        matches = sorted(
+            (
+                p
+                for p in self._d.values()
+                if p.campaign_id == cid
+                and not p.resolved
+                and (p.payload or {}).get("dedup_key") == dedup_key
+            ),
+            key=lambda p: (p.created_at, str(p.id)),
+        )
+        return matches[0] if matches else None
 
     def resolve(self, pid: PendingActionId) -> None:
         import dataclasses
@@ -266,8 +395,40 @@ class _AgentRunRepo:
     def get(self, rid: AgentRunId) -> AgentRun | None:
         return self._d.get(str(rid))
 
-    def list_for_campaign(self, cid: CampaignId) -> list[AgentRun]:
-        return [r for r in self._d.values() if r.campaign_id == cid]
+    def list_for_campaign(
+        self,
+        cid: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AgentRun]:
+        out = sorted(
+            (r for r in self._d.values() if r.campaign_id == cid),
+            key=lambda r: (r.timestamp, str(r.id)),
+        )
+        if offset:
+            out = out[offset:]
+        if limit is not None:
+            out = out[:limit]
+        return out
+
+    def count_pipelines_started_on(self, cid: CampaignId, day: date) -> int:
+        return sum(
+            1
+            for r in self._d.values()
+            if r.campaign_id == cid and r.timestamp.date() == day
+        )
+
+    def latest(self, cid: CampaignId) -> AgentRun | None:
+        runs = [r for r in self._d.values() if r.campaign_id == cid]
+        if not runs:
+            return None
+        return max(runs, key=lambda r: (r.timestamp, r.seq))
+
+    def max_seq(self, cid: CampaignId) -> int:
+        return max(
+            (r.seq for r in self._d.values() if r.campaign_id == cid), default=0
+        )
 
 
 class _DetectionEventRepo:
@@ -315,9 +476,9 @@ class InMemoryStorage:
         self.resume_variants = _VariantRepo()
         self.documents = _DocumentRepo()
         self.revisions = _RevisionRepo()
-        self.decisions = _DecisionRepo()
+        self.decisions = _DecisionRepo(self.applications)
         self.outcomes = _OutcomeRepo(self.applications)
-        self.screenshots = _ScreenshotRepo()
+        self.screenshots = _ScreenshotRepo(self.applications)
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
