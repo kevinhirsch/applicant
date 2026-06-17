@@ -52,3 +52,6 @@ workspace/.local/
 
 # Ephemeral UI-audit telemetry (screenshots, node_modules, browsers)
 .audit-telemetry/
+
+# Runtime résumé/cover render output (xelatex/lualatex work dirs + PDFs)
+.artifacts/

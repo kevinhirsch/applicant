@@ -51,7 +51,10 @@ def p3_storage() -> InMemoryStorage:
 @pytest.fixture
 def material(p3_storage) -> MaterialService:
     # No LLM wired -> deterministic truthful fallback (never fabricates, never blocks).
-    return MaterialService(p3_storage, llm=None, resume_tailoring=LatexTailor())
+    # render_mode="off" forces the stub: BASE_SOURCE is a minimal, non-compilable
+    # fragment for the fidelity contract, so this scenario stays green on a host that
+    # HAS a TeX engine (e.g. the deploy image). Real compiles: integration render tests.
+    return MaterialService(p3_storage, llm=None, resume_tailoring=LatexTailor(render_mode="off"))
 
 
 BASE_SOURCE = (
@@ -378,7 +381,7 @@ def material_with_notify(p3_storage, review_notifier) -> MaterialService:
     return MaterialService(
         p3_storage,
         llm=None,
-        resume_tailoring=LatexTailor(),
+        resume_tailoring=LatexTailor(render_mode="off"),  # stub: see `material` fixture
         notifications=NotificationService(review_notifier),
         pending_actions=PendingActionsService(p3_storage),
     )

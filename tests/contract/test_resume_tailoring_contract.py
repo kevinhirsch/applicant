@@ -69,7 +69,11 @@ class TestResumeTailoringSwappable:
 
     def test_render_runs_fidelity_check_without_tex(self, adapter_cls):
         # FR-RESUME-4: compile-and-inspect fidelity check, fonts embedded, no TeX.
-        adapter = adapter_cls()
+        # render_mode="off" forces the deterministic stub so this stays green on a
+        # host that HAS a TeX/LibreOffice engine (e.g. the deploy image) — the
+        # minimal body below is not compilable standalone; the real compile path is
+        # exercised by the @pytest.mark.integration render tests.
+        adapter = adapter_cls(render_mode="off")
         result = adapter.render_artifact(ResumeVariantId(new_id()), "Short truthful resume body")
         assert isinstance(result.fidelity_ok, bool)
         assert result.page_count >= 1
@@ -81,7 +85,10 @@ class TestLatexTailorSpecific:
     """LaTeX-primary specifics: page-fit + orphaned-title guards (FR-RESUME-4)."""
 
     def test_cover_letter_expects_exactly_one_page(self):
-        adapter = LatexTailor()
+        # Stub-lane: the minimal source omits \begin{document} on purpose, so force
+        # the stub (render_mode="off") to keep this deterministic on a TeX host. A
+        # real cover-letter compile is covered by the integration render tests.
+        adapter = LatexTailor(render_mode="off")
         source = "\\documentclass[]{cover}\n\\namesection{A}{B}{c}\nbody line\n"
         result = adapter.render_artifact(ResumeVariantId(new_id()), source)
         assert result.page_count == 1

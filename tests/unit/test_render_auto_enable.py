@@ -62,10 +62,14 @@ def test_docx_auto_on_when_soffice_present(monkeypatch):
     assert DocxTailor(render_mode="auto")._allow_convert is True
 
 
-def test_default_lane_latex_stays_stub_without_tex():
-    """In the real hermetic env (no TeX) the default auto tailor uses the stub."""
+def test_default_lane_latex_stays_stub_without_tex(monkeypatch):
+    """With no TeX engine on PATH the default auto tailor uses the stub.
+
+    The PATH lookup is mocked so this stays deterministic whether or not the host
+    actually has a TeX engine installed (the deploy image does)."""
     from applicant.core.ids import ResumeVariantId, new_id
 
+    monkeypatch.setattr(latex_mod.shutil, "which", lambda _name: None)
     tailor = LatexTailor()  # default render_mode="auto"
     result = tailor.render_artifact(
         ResumeVariantId(new_id()), "\\section{Skills}\nPython, SQL\n"

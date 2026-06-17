@@ -206,8 +206,16 @@ class ResumeParser:
             dm = _DATE_RANGE_RE.search(line)
             if not dm:
                 continue
-            before = line[: dm.start()].strip(" \t,-|")
+            # The date range is frequently parenthesized ("Acme Corp (2020-Present)");
+            # the regex matches the date itself, so the opening bracket is left
+            # dangling at the end of `before`. Strip brackets/separators from both
+            # ends so the company never renders as "Acme Corp (" (FR-RESUME-3 fidelity).
+            before = line[: dm.start()].strip(" \t,-–—|([{")
             title, company = self._split_title_company(before)
+            # Defensive: the split can still leave a trailing bracket on either field
+            # when the separator sat between the date and the bracket.
+            title = title.strip(" \t,-–—|([{")
+            company = company.strip(" \t,-–—|([{")
             entries.append(
                 WorkHistoryEntry(
                     title=title,
