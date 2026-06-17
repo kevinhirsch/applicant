@@ -186,7 +186,7 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
     if not (body.discord_webhook_url or body.apprise_urls):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide a Discord webhook and/or Apprise/email URLs (FR-NOTIF-1).",
+            detail="Add a Discord webhook and/or an email address so notifications can reach you.",
         )
     container.setup_service.configure_channels(
         discord_webhook_url=body.discord_webhook_url, apprise_urls=body.apprise_urls

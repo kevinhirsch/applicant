@@ -231,7 +231,7 @@ def require_llm_configured(container: Container = Depends(get_container)) -> Non
     if not container.setup_service.is_setup_gate_open():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="LLM is not configured. Complete the OOBE LLM-settings gate first (FR-UI-5).",
+            detail="Connect an AI model first to continue. You can do this in the setup wizard or under Settings.",
         )
 
 
