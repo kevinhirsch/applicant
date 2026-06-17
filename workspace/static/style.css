@@ -34497,6 +34497,37 @@ body.theme-frosted .modal {
 }
 #applicant-onboarding-overlay .ao-adv > summary:hover { opacity: 1; }
 
+/* ===== Relocated setup steps reused inside Settings =====
+   The Notifications / Fonts / Automation Settings tabs render the SAME wizard
+   step renderers (applicantOnboarding.js) into an `.ao-settings-body` host (see
+   settings.js mountRelocatedSetupStep). Re-apply the wizard-local typography /
+   help-bubble / footer styles there so the reused markup looks identical outside
+   the overlay. (The shared `.admin-card`/`.settings-row` classes already style. */
+.ao-settings-body .ao-step-title { font-size: 1.05rem; font-weight: 600; margin: 4px 0 4px; }
+.ao-settings-body .ao-step-desc { margin: 0 0 14px; opacity: 0.78; font-size: 0.9rem; }
+.ao-settings-body .attach-strip { max-width: 100%; padding: 2px 0; }
+.ao-settings-body .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; position: relative; }
+.ao-settings-body .ao-tip:hover::after,
+.ao-settings-body .ao-tip:focus::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
+  width: max-content; max-width: 280px; white-space: normal; text-align: left;
+  background: var(--popover-bg, var(--card-bg, #20232a)); color: var(--text, #e8e8e8);
+  border: 1px solid var(--border, #444); border-radius: 6px; padding: 7px 9px;
+  font-size: 11px; font-weight: 400; line-height: 1.4; letter-spacing: normal;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.38); z-index: 10001; pointer-events: none;
+}
+.ao-settings-body .ao-help { font-size: 12px; line-height: 1.5; }
+.ao-settings-body .ao-help h2 { font-size: 0.9rem; margin: 0 0 6px; }
+.ao-settings-body .ao-help code { background: var(--card-bg, #2a2a2a); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.ao-settings-body .ao-adv { margin-top: 8px; }
+.ao-settings-body .ao-adv > summary { cursor: pointer; font-size: 12px; opacity: 0.75; padding: 4px 0; user-select: none; list-style: revert; }
+.ao-settings-body .ao-adv > summary:hover { opacity: 1; }
+.ao-settings-foot.ao-foot {
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border);
+}
+
 /* ===== Applicant shared-button text-fit (Portal / Chat / Remote / Vault) =====
    The shared `.cal-btn` is a fixed-height (28px) inline-flex pill with no
    white-space rule, so a long label (e.g. "Authorize Applicant to submit

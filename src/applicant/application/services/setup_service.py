@@ -500,19 +500,16 @@ class SetupService:
         return bool(self._load_tiers()) or self._llm_preconfigured
 
     def is_automated_work_allowed(self) -> bool:
-        """True only when automated work may begin (FR-OOBE-3, FR-ONBOARD-2).
+        """True only when automated work may begin (FR-UI-5, FR-ONBOARD-2).
 
-        Requires: LLM configured (FR-UI-5) AND notification channels configured
-        (modeled, FR-OOBE-3) AND onboarding complete (FR-ONBOARD-2) AND — when the
-        native proxmox-windows backend is selected — its connection/login data
-        collected (FR-OOBE, FR-SANDBOX-1).
+        Requires ONLY: LLM configured (FR-UI-5) AND onboarding complete
+        (FR-ONBOARD-2). Notification channels and the automation sandbox are now
+        OPTIONAL — they moved into Settings, in-app notifications always work, and
+        the default local sandbox is always ready — so neither gates automated work.
+        ``channels_configured()`` and the sandbox-connection state remain available
+        and settable from Settings; they just no longer block work here.
         """
-        return (
-            self.is_setup_gate_open()
-            and self._channels_complete_now()
-            and self._onboarding_complete_now()
-            and self._sandbox_step_complete_now()
-        )
+        return self.is_setup_gate_open() and self._onboarding_complete_now()
 
     def advance_step(self, step: WizardStep) -> WizardStatus:
         """Mark a wizard step complete (FR-OOBE-2). LLM is gated by its config."""
