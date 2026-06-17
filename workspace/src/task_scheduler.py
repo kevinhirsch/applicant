@@ -1231,7 +1231,7 @@ class TaskScheduler:
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
-            else "You are Smokey, the AI assistant in Applicant, executing a scheduled task. Use available tools to complete the task thoroughly."
+            else "You are Applicant, the Applicant assistant, executing a scheduled task. Use available tools to complete the task thoroughly."
         )
         # Inject current time so the model knows what's past vs upcoming
         tz_name = _resolve_task_timezone(db, task)
@@ -1456,7 +1456,7 @@ class TaskScheduler:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
-        system_content = system_prompt or "You are Smokey, the AI assistant in Applicant, executing a scheduled task. Use available tools to complete the task thoroughly."
+        system_content = system_prompt or "You are Applicant, the Applicant assistant, executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
         messages = [
             {"role": "system", "content": system_content},

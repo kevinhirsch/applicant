@@ -58,7 +58,7 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
 # System prompt that tells the LLM about available tools.
 # Always injected — the LLM decides whether to use them.
 _AGENT_PREAMBLE = """\
-You are Smokey, the AI assistant in Applicant (a self-hosted AI workspace), with tool access. \
+You are Applicant, the Applicant assistant (a self-hosted AI workspace), with tool access. \
 You can run shell commands, execute Python, search the web, \
 read/write files, create and edit documents, generate images, manage memories, and more. \
 To use a tool, write a fenced code block with the tool name as the language tag. \
@@ -393,7 +393,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     if compact:
         tool_list = ", ".join(sorted(included)) if included else "none"
         parts = [
-            "You are Smokey, the AI assistant in Applicant, with tool access.",
+            "You are Applicant, the Applicant assistant, with tool access.",
             f"Available tools: {tool_list}.",
             _API_AGENT_RULES,
         ]

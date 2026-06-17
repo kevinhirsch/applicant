@@ -28,7 +28,7 @@ DEFAULT_PRIVILEGES = {
     "can_use_research": True,
     "can_generate_images": True,
     "can_manage_memory": True,
-    # Proactive-assistant features (Smokey parity) — default OFF, opt-in.
+    # Proactive-assistant features (Applicant parity) — default OFF, opt-in.
     "can_use_awareness": False,   # proactive awareness loop + notifications
     "can_control_home": False,    # Home Assistant device control
     "max_messages_per_day": 0,

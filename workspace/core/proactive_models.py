@@ -1,4 +1,4 @@
-"""Database models for the proactive-assistant features (Smokey parity).
+"""Database models for the proactive-assistant features (Applicant parity).
 
 These tables back the Entity/Relationship store (Phase 1) and the Awareness
 loop (Phase 2). They live in a dedicated module to keep ``core/database.py``

@@ -1,4 +1,4 @@
-"""Home Assistant integration (Phase 4, Smokey parity).
+"""Home Assistant integration (Phase 4, Applicant parity).
 
 Pure allowlist helpers live here; the DB-backed config store and the guarded
 REST client live in ``service``. All control is opt-in: gated by the

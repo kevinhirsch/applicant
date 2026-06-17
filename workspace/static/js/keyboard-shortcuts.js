@@ -206,7 +206,7 @@ export function initKeyboardShortcuts(modules) {
           } else {
             sessionModule.setCurrentSessionId(null);
             el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Smokey';
+            el('current-meta').textContent = 'Applicant';
             Storage.remove('lastSessionId');
             if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
           }

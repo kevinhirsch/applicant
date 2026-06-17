@@ -2211,7 +2211,7 @@ async function _cmdDemo(args, ctx) {
   }
 
   _clearTour();
-  await typewriterReply('Applicant is yours to explore — Smokey is always on call!');
+  await typewriterReply('Applicant is yours to explore — Applicant is always on call!');
   return true;
 }
 
@@ -5527,7 +5527,7 @@ const COMMANDS = {
   mode: {
     alias: [],
     category: 'Settings',
-    help: 'Switch agent/Smokey mode',
+    help: 'Switch agent/Applicant mode',
     handler: _cmdMode,
     usage: '/mode agent|chat'
   },
