@@ -18,6 +18,12 @@ from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+#: Explicit default per-request timeout (seconds) for the live discovery clients.
+#: Every outbound httpx call MUST be bounded — an unbounded request to a hung
+#: SearXNG instance or a stalled RSS endpoint would otherwise wedge a discovery
+#: run indefinitely. Per-instance ``timeout=`` overrides this default.
+_DEFAULT_HTTP_TIMEOUT = 15.0
+
 
 def _parse_feed_xml(text: str):
     """Parse an untrusted RSS/Atom feed, guarded against entity-expansion DoS.
@@ -99,9 +105,11 @@ class LiveSearxngClient:
     of silently yielding nothing or crashing on a JSON-decode error.
     """
 
-    def __init__(self, base_url: str, *, timeout: float = 15.0) -> None:
+    def __init__(self, base_url: str, *, timeout: float = _DEFAULT_HTTP_TIMEOUT) -> None:
         self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
+        # Never allow an unbounded client: fall back to the explicit default when a
+        # caller passes None/0 so a hung instance can't wedge the discovery run.
+        self._timeout = timeout or _DEFAULT_HTTP_TIMEOUT
 
     def search(self, *, query: str, proxies: list[str] | None) -> list[dict]:
         import httpx  # lazy
@@ -162,8 +170,10 @@ class LiveRssClient:
     (``xml.etree``) so no extra dependency is required for the live path.
     """
 
-    def __init__(self, *, timeout: float = 15.0) -> None:
-        self._timeout = timeout
+    def __init__(self, *, timeout: float = _DEFAULT_HTTP_TIMEOUT) -> None:
+        # Never allow an unbounded client: fall back to the explicit default when a
+        # caller passes None/0 so a stalled feed endpoint can't wedge discovery.
+        self._timeout = timeout or _DEFAULT_HTTP_TIMEOUT
 
     def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
         import httpx  # lazy

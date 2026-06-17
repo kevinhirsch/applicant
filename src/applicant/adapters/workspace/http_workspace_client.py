@@ -35,7 +35,13 @@ DEFAULT_WORKSPACE_URL = "http://applicant-ui:7000"
 INTERNAL_TOKEN_HEADER = "X-Applicant-Internal-Token"
 INTERNAL_OWNER_HEADER = "X-Applicant-Owner"
 _INTERNAL_PREFIX = "/api/applicant/internal"
+#: Default per-call HTTP timeout for the SHORT callbacks (ping, calendar, local
+#: models) — these answer quickly, so a tight bound surfaces a down workspace fast.
 _DEFAULT_TIMEOUT = 10.0
+#: Deep research is a multi-source synchronous LLM job, so it needs a much longer
+#: HTTP read budget than the snappy callbacks. This is the *transport* ceiling; the
+#: research *budget* is carried separately in the ``max_time`` body field.
+_DEFAULT_RESEARCH_TIMEOUT = 30.0
 
 
 class HttpWorkspaceClient:
@@ -47,12 +53,16 @@ class HttpWorkspaceClient:
         base_url: str = DEFAULT_WORKSPACE_URL,
         token: str = "",
         timeout: float = _DEFAULT_TIMEOUT,
+        research_timeout: float = _DEFAULT_RESEARCH_TIMEOUT,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         # Strip a trailing slash so path joins are predictable.
         self._base_url = (base_url or DEFAULT_WORKSPACE_URL).rstrip("/")
         self._token = (token or "").strip()
         self._timeout = timeout
+        # Research gets its own (longer) transport ceiling; the snappy callbacks
+        # keep the short default so a down workspace is detected quickly.
+        self._research_timeout = research_timeout
         # Injectable transport so tests use httpx.MockTransport (hermetic).
         self._transport = transport
 
@@ -76,19 +86,24 @@ class HttpWorkspaceClient:
         *,
         owner: str | None = None,
         json: Any = None,
+        timeout: float | None = None,
     ) -> Any:
         """Make one request and return decoded JSON, or raise WorkspaceError.
 
         Guards the disabled channel up front (no network) and wraps every httpx
-        failure mode in :class:`WorkspaceError`.
+        failure mode in :class:`WorkspaceError`. ``timeout`` overrides the short
+        default for the longer-running research call; a timeout raises a
+        ``WorkspaceError`` with ``is_timeout=True`` so callers can tell an ephemeral
+        timeout apart from a connection-refused / down workspace.
         """
         if not self.available():
             raise WorkspaceError(
                 "Workspace callback channel disabled (APPLICANT_INTERNAL_TOKEN unset).",
             )
+        call_timeout = self._timeout if timeout is None else timeout
         url = f"{self._base_url}{_INTERNAL_PREFIX}{path}"
         try:
-            with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
+            with httpx.Client(timeout=call_timeout, transport=self._transport) as client:
                 resp = client.request(method, url, headers=self._headers(owner), json=json)
         except httpx.TimeoutException as exc:
             log.warning("workspace_callback_timeout", path=path)
@@ -157,7 +172,12 @@ class HttpWorkspaceClient:
             body["context"] = context
         if max_time is not None:
             body["max_time"] = max_time
-        return self._request("POST", "/research", owner=owner, json=body)
+        # Use the longer research transport ceiling (NOT the snappy default) so a
+        # legitimate multi-source run isn't cut off; ``max_time`` is the *research*
+        # budget the workspace enforces, distinct from this HTTP read timeout.
+        return self._request(
+            "POST", "/research", owner=owner, json=body, timeout=self._research_timeout
+        )
 
     def local_models(self, *, owner: str | None = None) -> dict:
         """LANE C — list Cookbook-served local models."""

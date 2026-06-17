@@ -116,6 +116,44 @@ def test_timeout_raises_workspace_error_flagged_timeout():
     assert exc.value.is_timeout is True
 
 
+def test_research_uses_longer_research_timeout():
+    # Resilience fix: the snappy callbacks use the short default timeout, but the
+    # multi-source research call gets its own (longer) HTTP read ceiling so a valid
+    # run isn't cut off. httpx surfaces the per-call timeout in request.extensions.
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request.extensions.get("timeout")
+        return httpx.Response(200, json={"ok": True})
+
+    client = HttpWorkspaceClient(
+        base_url="http://applicant-ui:7000",
+        token="secret-token",
+        timeout=10.0,
+        research_timeout=30.0,
+        transport=httpx.MockTransport(handler),
+    )
+    client.ping()
+    client.run_research(query="ml roles")
+
+    ping_to = seen["/api/applicant/internal/ping"]["read"]
+    research_to = seen["/api/applicant/internal/research"]["read"]
+    assert ping_to == 10.0
+    assert research_to == 30.0
+    assert research_to > ping_to
+
+
+def test_research_timeout_sets_is_timeout():
+    # An ephemeral timeout on the research call must still be distinguishable from a
+    # connection-refused (is_timeout=True) so callers can retry vs. degrade.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow research", request=request)
+
+    with pytest.raises(WorkspaceError) as exc:
+        _client(handler).run_research(query="ml roles")
+    assert exc.value.is_timeout is True
+
+
 def test_connection_error_raises_workspace_error():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)

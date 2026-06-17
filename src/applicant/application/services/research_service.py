@@ -124,6 +124,11 @@ class ResearchService:
           free (does NOT consume budget) unless ``force`` is set.
         * Budget: a FRESH run is charged against the per-campaign cap; when the cap
           is reached and there is no cache hit, returns ``None``.
+        * ``max_time`` is the RESEARCH budget (seconds the workspace lets the
+          multi-source run take), NOT the HTTP transport timeout. The adapter bounds
+          the underlying HTTP call with its own (longer) research read timeout; the
+          two are deliberately separate so a slow-but-valid run is not cut off and a
+          dead socket still fails fast.
         """
         norm = _normalize_query(query)
         if not norm:

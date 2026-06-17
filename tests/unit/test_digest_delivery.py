@@ -137,6 +137,59 @@ def test_empty_day_email_and_note():
     assert "Searched" in payload["note"]
 
 
+def test_email_caps_rows_at_max_and_appends_portal_footer():
+    # MEDIUM perf fix: a campaign with > MAX_EMAIL_ROWS viable roles must render
+    # exactly MAX_EMAIL_ROWS table rows (top-N by score) + a "rest in the portal"
+    # footer, never one row per role (a multi-MB email for 1000+ roles).
+    from applicant.application.services.digest_service import MAX_EMAIL_ROWS
+
+    storage, digest, *_ = _wire()
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    total = MAX_EMAIL_ROWS + 7
+    for i in range(total):
+        storage.postings.add(
+            JobPosting(
+                id=JobPostingId(new_id()),
+                campaign_id=cid,
+                title=f"Python Engineer {i}",
+                company="Acme",
+                source_url=f"https://acme.test/job/{i}",
+                work_mode="remote",
+                description="python fastapi",
+                source_key="jobspy:indeed",
+                # Distinct scores so the top-N ordering is well-defined.
+                viability_score=float(i),
+            )
+        )
+    storage.commit()
+    crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
+
+    payload = digest.build_digest_payload(cid, crit)
+    assert len(payload["rows"]) == total, "the payload itself carries all viable rows"
+
+    email = digest.render_email(cid, crit, payload=payload)
+    # Exactly MAX_EMAIL_ROWS <tr> data rows (the header row has <th>, not <td>).
+    data_rows = email["html"].count("<tr><td>")
+    assert data_rows == MAX_EMAIL_ROWS
+    # Footer points at the portal for the remaining roles.
+    assert "view the remaining 7 in the portal" in email["html"]
+    assert f"top {MAX_EMAIL_ROWS} of {total}" in email["html"]
+
+
+def test_email_no_footer_when_under_cap():
+    # At/under the cap there is no truncation footer and every row renders.
+    from applicant.application.services.digest_service import MAX_EMAIL_ROWS
+
+    storage, digest, *_ = _wire()
+    cid = _seed_campaign(storage)
+    crit = SearchCriteria(campaign_id=cid, titles=("engineer",), keywords=("python",))
+    email = digest.render_email(cid, crit)
+    assert email["html"].count("<tr><td>") == 1
+    assert "in the portal" not in email["html"]
+    assert str(MAX_EMAIL_ROWS) not in email["html"] or "top" not in email["html"]
+
+
 def test_decline_round_trips_into_learning_and_criteria():
     storage, digest, learning, criteria, _pending, _ = _wire()
     cid = _seed_campaign(storage, with_posting=False)

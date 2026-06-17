@@ -28,6 +28,31 @@ def _patch_httpx(monkeypatch, handler):
     monkeypatch.setattr(httpx, "Client", _factory)
 
 
+def test_searxng_request_is_bounded_by_explicit_timeout(monkeypatch):
+    # Resilience: every live SearXNG request carries an explicit (non-None) read
+    # timeout so a hung instance can't wedge the discovery run indefinitely.
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(
+            200, json={"results": []}, headers={"content-type": "application/json"}
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    LiveSearxngClient("https://searxng.test", timeout=7.0).search(query="x", proxies=None)
+    assert seen["timeout"]["read"] == 7.0
+    assert seen["timeout"]["connect"] is not None
+
+
+def test_searxng_falsy_timeout_falls_back_to_default():
+    from applicant.adapters.discovery.clients import _DEFAULT_HTTP_TIMEOUT
+
+    # A None/0 timeout must NOT create an unbounded client.
+    assert LiveSearxngClient("https://x.test", timeout=0)._timeout == _DEFAULT_HTTP_TIMEOUT
+    assert LiveRssClient(timeout=None)._timeout == _DEFAULT_HTTP_TIMEOUT
+
+
 def test_searxng_403_returns_empty_and_logs(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="<html>Forbidden</html>", headers={"content-type": "text/html"})
