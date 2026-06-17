@@ -23,8 +23,6 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
-import awarenessModule from './js/awareness.js';
-import haModule from './js/homeassistant.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -722,9 +720,6 @@ function initializeEventListeners() {
         tipEl.textContent = '';
         tipEl.style.display = 'none';
       }
-      // Hide Nobody toggle during research mode
-      const _incBtn = el('incognito-btn');
-      if (_incBtn) { _incBtn.dataset.researchOrigDisplay = _incBtn.style.display; _incBtn.style.display = 'none'; }
       // Close document panel if open
       if (window.documentModule && window.documentModule.isPanelOpen()) {
         window.documentModule.closePanel();
@@ -743,12 +738,6 @@ function initializeEventListeners() {
         tipEl.style.opacity = '';
         tipEl.style.display = '';
         delete tipEl.dataset.researchOrigTip;
-      }
-      // Restore Nobody toggle
-      const _incBtn2 = el('incognito-btn');
-      if (_incBtn2 && _incBtn2.dataset.researchOrigDisplay !== undefined) {
-        _incBtn2.style.display = _incBtn2.dataset.researchOrigDisplay;
-        delete _incBtn2.dataset.researchOrigDisplay;
       }
     }
     if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
@@ -875,35 +864,6 @@ function initializeEventListeners() {
     });
   }
 
-  // Awareness tool button + close
-  const toolAwarenessBtn = el('tool-awareness-btn');
-  if (toolAwarenessBtn) {
-    toolAwarenessBtn.addEventListener('click', () => {
-      if (awarenessModule) awarenessModule.openPanel();
-    });
-  }
-  const closeAwarenessBtn = el('close-awareness-modal');
-  if (closeAwarenessBtn) {
-    closeAwarenessBtn.addEventListener('click', () => {
-      const m = el('awareness-modal');
-      if (m) dismissModal(m);
-    });
-  }
-
-  // Home Assistant tool button + close
-  const toolHaBtn = el('tool-homeassistant-btn');
-  if (toolHaBtn) {
-    toolHaBtn.addEventListener('click', () => {
-      if (haModule) haModule.openPanel();
-    });
-  }
-  const closeHaBtn = el('close-homeassistant-modal');
-  if (closeHaBtn) {
-    closeHaBtn.addEventListener('click', () => {
-      const m = el('homeassistant-modal');
-      if (m) dismissModal(m);
-    });
-  }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1030,8 +990,6 @@ function initializeEventListeners() {
       setTimeout(_goFullscreen, 200);
     },
     '/memory':   () => document.getElementById('tool-memory-btn')?.click(),
-    '/awareness': () => document.getElementById('tool-awareness-btn')?.click(),
-    '/homeassistant': () => document.getElementById('tool-homeassistant-btn')?.click(),
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
@@ -2307,127 +2265,6 @@ function initializeEventListeners() {
     });
   }
 
-  // ── Incognito mode toggle (on welcome screen) ──
-  const incognitoBtn = el('incognito-btn');
-  const INCOGNITO_EYE_OPEN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-  const INCOGNITO_EYE_CLOSED = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
-  const SESSION_ICON_CHAT = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-  const SESSION_ICON_INCOGNITO = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-
-  function _syncSessionIncognitoIcon(active) {
-    const activeSession = document.querySelector('.list-item.active-session .session-icon');
-    if (activeSession) {
-      activeSession.innerHTML = active ? SESSION_ICON_INCOGNITO : SESSION_ICON_CHAT;
-      activeSession.style.color = active ? 'var(--accent)' : '';
-    }
-  }
-
-  if (incognitoBtn) {
-    incognitoBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    incognitoBtn.addEventListener('click', () => {
-      // Don't toggle mid-chat — incognito only changeable from welcome screen
-      const ws = el('welcome-screen');
-      if (ws && ws.classList.contains('hidden')) return;
-      const chk = el('incognito-toggle');
-      chk.checked = !chk.checked;
-      incognitoBtn.classList.toggle('active', chk.checked);
-      const tipEl = el('welcome-tip');
-      incognitoBtn.title = chk.checked ? 'Disable Nobody mode' : 'Enable Nobody mode — no memory, no history saved';
-      const welcomeName = document.querySelector('.welcome-name');
-      if (chk.checked) {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
-        if (welcomeName) {
-          welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
-          // Restart the L→R clip-wipe reveal on the new label
-          welcomeName.style.animation = 'none';
-          welcomeName.offsetHeight;
-          welcomeName.style.animation = '';
-        }
-        if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
-        const welcomeSub = el('welcome-sub');
-        if (welcomeSub) {
-          if (!welcomeSub.dataset.originalText) welcomeSub.dataset.originalText = welcomeSub.textContent;
-          welcomeSub.textContent = "Who am I? I'm nobody.";
-          welcomeSub.style.display = '';
-        }
-        if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
-        // Default to plain chat: disable tools visually, switch to chat mode.
-        // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
-        // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
-        // ephemeral — their agent-mode defaults must come back on toggle-off.
-        const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
-        _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
-        ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
-        const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
-        if (_ab) _ab.classList.remove('active');
-        if (_cb) _cb.classList.add('active');
-        const ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        ts.research = false; ts.mode = 'chat';
-        Storage.setJSON(Storage.KEYS.TOGGLES, ts);
-      } else {
-        incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
-        if (welcomeName && welcomeName.dataset.originalHtml) {
-          welcomeName.innerHTML = welcomeName.dataset.originalHtml;
-          // Restart the L→R clip-wipe reveal on the restored label
-          welcomeName.style.animation = 'none';
-          welcomeName.offsetHeight;
-          welcomeName.style.animation = '';
-        }
-        if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
-        const welcomeSub2 = el('welcome-sub');
-        if (welcomeSub2) {
-          if (welcomeSub2.dataset.originalText) {
-            welcomeSub2.textContent = welcomeSub2.dataset.originalText;
-            delete welcomeSub2.dataset.originalText;
-          }
-          welcomeSub2.style.display = '';
-        }
-        if (tipEl && tipEl.dataset.originalTip) { tipEl.textContent = tipEl.dataset.originalTip; tipEl.style.opacity = ''; tipEl.style.marginTop = ''; }
-        // Heal any previously-persisted false values from the old Nobody bug
-        // so agent-mode defaults (web/bash ON) come back.
-        const _ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-        let _dirty = false;
-        ['web_agent', 'bash_agent', 'web_chat', 'bash_chat'].forEach(k => {
-          if (_ts[k] === false) { delete _ts[k]; _dirty = true; }
-        });
-        if (_dirty) Storage.setJSON(Storage.KEYS.TOGGLES, _ts);
-        // Reapply the current mode's real defaults to the visible toggles
-        const _curMode = (Storage.getJSON(Storage.KEYS.TOGGLES, {}) || {}).mode || 'chat';
-        try { applyModeToToggles(_curMode); } catch (_) {}
-      }
-      // If toggled off mid-chat (welcome screen hidden), hide the button
-      if (!chk.checked && ws && ws.classList.contains('hidden')) {
-        incognitoBtn.style.display = 'none';
-      }
-      // Show/hide persistent incognito indicator in top bar
-      const _incInd = el('incognito-indicator');
-      if (_incInd) _incInd.style.display = chk.checked ? '' : 'none';
-      // Update active session icon in sidebar
-      _syncSessionIncognitoIcon(chk.checked);
-    });
-  }
-
-  // Incognito indicator click — deactivate incognito
-  const incognitoIndicator = el('incognito-indicator');
-  if (incognitoIndicator) {
-    incognitoIndicator.addEventListener('click', () => {
-      if (incognitoBtn) incognitoBtn.click();
-      else {
-        const chk = el('incognito-toggle');
-        if (chk) { chk.checked = false; }
-        incognitoIndicator.style.display = 'none';
-      }
-    });
-  }
-
-  // ── Deactivate incognito mode (called on new session) ──
-  function _deactivateIncognito() {
-    const chk = el('incognito-toggle');
-    if (!chk || !chk.checked) return;
-    if (incognitoBtn) incognitoBtn.click();
-  }
-
   // ── UI Visibility (Customize UI modal) ──
   const UI_VIS_KEY = 'applicant-ui-visibility';
 
@@ -2456,7 +2293,6 @@ function initializeEventListeners() {
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',
     'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
-    'incognito-btn':       '.incognito-btn',
     'web-toggle-btn':      '#web-toggle-btn',
     'doc-toggle-btn':      '#overflow-doc-btn',
     'rag-toggle-btn':      '#overflow-rag-btn',
@@ -3017,7 +2853,7 @@ function initializeEventListeners() {
 
   // Sidebar layout (extracted to js/sidebar-layout.js)
   initSidebarLayout(Storage, {
-    documentModule, _closeCompareIfActive, _deactivateIncognito,
+    documentModule, _closeCompareIfActive,
     presetsModule, sessionModule, el, _defaultChat, _syncResearchIndicator
   });
 
@@ -3107,7 +2943,6 @@ function initializeEventListeners() {
     railNewSession.addEventListener('click', async () => {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
       // Clear character on new chat
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research mode if active
@@ -3157,7 +2992,6 @@ function initializeEventListeners() {
     mobileNewChat.addEventListener('click', () => {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
       _startFreshChat();
       document.querySelectorAll('.session-item.active').forEach(s => s.classList.remove('active'));
       // Focus the composer synchronously so mobile keyboards pop open.
@@ -3174,7 +3008,6 @@ function initializeEventListeners() {
     brandBtn.addEventListener('click', async () => {
       if (!sessionModule) return;
       if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research toggle when starting a fresh chat (not via research button)
       _syncResearchIndicator(false);
@@ -3464,7 +3297,7 @@ function initializeEventListeners() {
   initKeyboardShortcuts({
     el, Storage, sessionModule, uiModule, chatModule,
     adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
+    _closeCompareIfActive, API_BASE
   });
   
 }

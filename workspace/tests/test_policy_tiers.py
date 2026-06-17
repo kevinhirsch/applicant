@@ -12,7 +12,7 @@ def test_known_actions_classify_to_expected_tiers():
     assert policy.classify_action("manage_memory") == policy.MEDIUM
     assert policy.classify_action("send_email") == policy.HIGH
     assert policy.classify_action("bash") == policy.HIGH
-    assert policy.classify_action("ha_call_service") == policy.HIGH
+    assert policy.classify_action("bulk_email") == policy.HIGH
 
 
 def test_unknown_action_defaults_to_medium():
@@ -29,7 +29,7 @@ def test_no_confirmation_when_enforcement_off():
 
 def test_high_risk_requires_confirmation_when_enforced():
     assert policy.requires_confirmation("send_email", enforced=True) is True
-    assert policy.requires_confirmation("ha_call_service", enforced=True) is True
+    assert policy.requires_confirmation("bulk_email", enforced=True) is True
 
 
 def test_pre_authorized_high_risk_skips_confirmation():

@@ -1204,8 +1204,6 @@ export function hideWelcomeScreen() {
   if (cc) cc.classList.remove('welcome-active');
   // Update send button — switches from muted arrow to + Chat
   if (window._updateSendBtnIcon) setTimeout(window._updateSendBtnIcon, 50);
-  const ib = document.getElementById('incognito-btn');
-  if (ib) ib.style.display = ib.classList.contains('active') ? '' : 'none';
 }
 
 export function showWelcomeScreen() {
@@ -1225,9 +1223,6 @@ export function showWelcomeScreen() {
   }
   // Update send button — switches from + Chat to muted arrow on empty session
   if (window._updateSendBtnIcon) setTimeout(window._updateSendBtnIcon, 50);
-  const ib = document.getElementById('incognito-btn');
-  const _researchChk = document.getElementById('research-toggle');
-  if (ib && !(_researchChk && _researchChk.checked)) ib.style.display = '';
   if (window.innerWidth > 768) {
     const msg = document.getElementById('message');
     if (msg) msg.focus();

@@ -6,7 +6,7 @@ const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
   fav_session: 'ctrl+alt+f', delete_session: 'ctrl+alt+d',
   cancel: 'escape', tts: 'alt+shift+t',
-  incognito: 'ctrl+alt+i', settings: 'ctrl+,', focus_input: 'ctrl+/',
+  settings: 'ctrl+,', focus_input: 'ctrl+/',
   // Open-tool shortcuts (Calendar bound by default; rest unbound).
   open_calendar: 'ctrl+alt+c', open_compare: '', open_cookbook: '',
   open_research: '', open_gallery: '', open_library: '', open_memory: '',
@@ -38,14 +38,13 @@ function _matchesCombo(e, combo) {
  * @param {Object} modules.settingsModule
  * @param {Object} modules.searchChatModule
  * @param {Function} modules._closeCompareIfActive
- * @param {Function} modules._deactivateIncognito
  * @param {string} modules.API_BASE
  */
 export function initKeyboardShortcuts(modules) {
   const {
     el, Storage, sessionModule, uiModule, chatModule,
     adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
+    _closeCompareIfActive, API_BASE
   } = modules;
 
   window._applicantKeybinds = { ..._defaultKeybinds };
@@ -217,7 +216,6 @@ export function initKeyboardShortcuts(modules) {
     if (_matchesCombo(e, kb.new_session)) {
       e.preventDefault();
       if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
       const sid = sessionModule && sessionModule.getCurrentSessionId();
       const sessions = sessionModule ? sessionModule.getSessions() : [];
       const cur = sessions.find(s => s.id === sid);
@@ -240,15 +238,6 @@ export function initKeyboardShortcuts(modules) {
     }
     if (_matchesCombo(e, kb.cancel)) {
       if (chatModule) chatModule.abortCurrentRequest();
-    }
-    if (_matchesCombo(e, kb.incognito)) {
-      e.preventDefault();
-      // Drive the visible button so the real toggle logic runs (visual
-      // state, welcome-screen guard, checkbox sync) — flipping the hidden
-      // checkbox alone did nothing.
-      const btn = el('incognito-btn');
-      if (btn) btn.click();
-      return;
     }
     if (_matchesCombo(e, kb.settings)) {
       e.preventDefault();

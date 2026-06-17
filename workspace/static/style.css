@@ -173,7 +173,7 @@ body.bg-pattern-sparkles {
 
 /* ── Layout ── */
 
-    /* Top bar — session meta + incognito, single row */
+    /* Top bar — session meta, single row */
     .chat-top-bar {
       display: flex;
       align-items: center;
@@ -193,31 +193,6 @@ body.bg-pattern-sparkles {
     }
     body.sidebar-collapsed.hamburger-right .chat-top-bar {
       padding-right: 38px;
-    }
-    .incognito-indicator {
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: opacity 0.15s, background 0.15s, left 0.15s;
-      z-index: 1;
-      opacity: 0.7;
-    }
-    body.sidebar-collapsed.hamburger-left .incognito-indicator {
-      left: 12px;
-    }
-    .incognito-indicator:hover {
-      opacity: 1;
-      background: color-mix(in srgb, var(--accent) 20%, transparent);
     }
 
     .chat-new-btn {
@@ -243,17 +218,10 @@ body.bg-pattern-sparkles {
       opacity: 1;
       color: var(--accent);
     }
-    /* Flip new-chat and incognito when sidebar is on the right */
+    /* Flip new-chat when sidebar is on the right */
     body:has(.sidebar.right-side) .chat-new-btn {
       right: auto;
       left: 12px;
-    }
-    body:has(.sidebar.right-side) .incognito-indicator {
-      left: auto;
-      right: 12px;
-    }
-    body.sidebar-collapsed.hamburger-right .incognito-indicator {
-      right: 42px;
     }
 
     /* Session meta — sits at top of chat area, scrolls with content */
@@ -1767,13 +1735,11 @@ body.bg-pattern-sparkles {
       #welcome-screen { top: 28%; }
       #welcome-screen .welcome-tip { opacity: 0; max-height: 0; margin: 0; }
       #welcome-screen .welcome-version { margin-top: 6px; }
-      .incognito-btn { margin-top: 8px; }
     }
     @media (max-height: 500px) {
       #welcome-screen { top: 22%; }
       #welcome-screen .welcome-name { font-size: 1.4rem; margin-bottom: 0; }
       #welcome-screen .welcome-sub { opacity: 0; max-height: 0; margin: 0; }
-      .incognito-btn { margin-top: 4px !important; }
     }
     @media (max-height: 380px) {
       #welcome-screen { opacity: 0; pointer-events: none; }
@@ -1788,7 +1754,6 @@ body.bg-pattern-sparkles {
       #welcome-screen { top: 42%; }
       #welcome-screen .welcome-name { margin-bottom: 2px; }
       #welcome-screen .welcome-sub { margin-bottom: 0; }
-      #welcome-screen .incognito-btn { margin-top: 6px; }
     }
     #welcome-screen .welcome-name {
       font-size:2.2rem;
@@ -1828,42 +1793,6 @@ body.bg-pattern-sparkles {
       margin-top:24px;
       max-width:320px;
       line-height:1.4;
-    }
-    /* Incognito toggle — on welcome screen */
-    .incognito-btn {
-      pointer-events: auto;
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--fg);
-      opacity: 0.25;
-      cursor: pointer;
-      padding: 6px 12px;
-      border-radius: 20px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: all 0.15s;
-      margin-top: 16px;
-      font-family: inherit;
-      font-size: 11px;
-    }
-    .incognito-btn:hover {
-      opacity: 0.6;
-      background: color-mix(in srgb, var(--fg) 6%, transparent);
-    }
-    .incognito-btn.active {
-      opacity: 1;
-      color: var(--accent);
-      border-color: var(--accent);
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
-    }
-    .incognito-btn.active .eye-open { display: none; }
-    .incognito-btn.active .eye-blinded { display: inline !important; }
-    .incognito-label {
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.3px;
     }
     /* When welcome is active, push input bar up toward center */
     .chat-container .chat-input-bar {
@@ -3813,23 +3742,6 @@ body.bg-pattern-sparkles {
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
       .chat-meta-overlay .export-dl-btn { display: inline-flex; }
-      /* Incognito — smaller on mobile */
-      .incognito-btn {
-        padding: 4px 10px;
-        font-size: 10px;
-      }
-      /* Incognito indicator — right side next to hamburger on mobile */
-      .incognito-indicator {
-        position: fixed;
-        top: 12px;
-        left: auto !important;
-        right: 48px !important;
-        transform: none;
-        width: 32px;
-        height: 32px;
-        z-index: 210;
-        opacity: 0.8;
-      }
       /* Icon rail on mobile — hidden by default, shown in mini-sidebar state */
       .icon-rail { display: none !important; }
       .icon-rail.mobile-mini {
@@ -7081,7 +6993,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       body { background: #fff !important; color: #000 !important; }
       #sidebar, .sidebar, #icon-rail, .hamburger-btn, #sidebar-backdrop, .chat-input-bar, .input-bar-wrapper,
       #welcome-screen, .chat-top-bar, .chat-meta-overlay, .msg-footer,
-      .modal, .toast, .overflow-wrapper, .mode-toggle, .incognito-btn,
+      .modal, .toast, .overflow-wrapper, .mode-toggle,
       button, .dropdown, .session-dropdown,
       .agent-tool-spinner, .agent-thread-node.running { display: none !important; }
       main.chat-container { width: 100% !important; margin: 0 !important; padding: 0 !important; max-height: none !important; overflow: visible !important; }
@@ -20351,8 +20263,7 @@ body.gallery-selecting .gallery-dl-btn,
 /* ── Entrance Animations ── */
 
 /* Welcome name — left-to-right wipe with a touch of horizontal stretch.
-   Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
-   Applicant toggle via JS reflow trick. */
+   Fires on initial render via the .welcome-name rule. */
 .welcome-name {
   transform-origin: left center;
   animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;

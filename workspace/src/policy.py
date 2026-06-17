@@ -1,10 +1,10 @@
 """Risk-tier action policy (Applicant parity, ADR-010 analogue).
 
-Classifies agent/awareness actions into risk tiers and decides when an action
-needs explicit confirmation. Applicant already gates *capabilities* via
-per-user privileges (can/can't); this adds graduated *per-action* risk so the
-agent can act freely on low-risk reads while outward/irreversible actions
-(send email, control the home, shell, bulk delete) are confirmed.
+Classifies agent actions into risk tiers and decides when an action needs
+explicit confirmation. Applicant already gates *capabilities* via per-user
+privileges (can/can't); this adds graduated *per-action* risk so the agent can
+act freely on low-risk reads while outward/irreversible actions (send email,
+shell, bulk delete) are confirmed.
 
 Phase 0 ships the classifier + decision logic only. Enforcement is wired into
 the agent tool dispatch in a later phase and is gated behind the
@@ -63,7 +63,6 @@ ACTION_TIERS: Dict[str, str] = {
     "manage_contact": MEDIUM,
     "manage_skills": MEDIUM,
     "manage_tasks": MEDIUM,
-    "manage_awareness": MEDIUM,
     "create_session": MEDIUM,
     "manage_session": MEDIUM,
     "manage_settings": MEDIUM,
@@ -84,9 +83,6 @@ ACTION_TIERS: Dict[str, str] = {
     "stop_served_model": HIGH,
     "download_model": HIGH,
     "trigger_research": HIGH,   # spawns a long, multi-call background job
-    # Home Assistant (Phase 4)
-    "ha_call_service": HIGH,
-    "ha_set_alarm": HIGH,
 }
 
 
