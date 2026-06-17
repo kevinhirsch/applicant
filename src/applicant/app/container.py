@@ -29,7 +29,6 @@ from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrche
 from applicant.adapters.resume_parser.resume_parser import ResumeParser
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
-from applicant.adapters.sandbox.local_sandbox import LocalSandbox
 from applicant.adapters.storage.app_config_store import (
     InMemoryAppConfigStore,
     SqlAlchemyAppConfigStore,
@@ -157,6 +156,57 @@ def _build_remote_view(settings: Settings) -> Any:
     )
 
 
+def _build_sandbox(settings: Settings, setup_service: Any) -> Any:
+    """Pick the sandbox backend by SANDBOX_BACKEND (FR-SANDBOX-1, FR-STEALTH-1).
+
+    ``local`` (default) -> the existing webtop/Neko container path (LocalSandbox).
+    ``proxmox-windows`` -> the native Proxmox Windows VM backend: the engine drives,
+    and the human takes over, REAL Google Chrome inside a real licensed Windows VM
+    (genuine Windows fingerprint, ZERO spoofing). The Proxmox connection/login data
+    is collected via the OOBE sandbox-connection step and the backend is GATED on it;
+    if it is not yet configured we fall back to LocalSandbox so the app still boots.
+
+    The REAL :class:`ProxmoxApiClient` is only constructed when the connection is
+    configured; the default test lane never reaches it (it stays hermetic).
+    """
+    from applicant.adapters.sandbox.local_sandbox import LocalSandbox
+
+    if not settings.is_proxmox_windows_backend:
+        return LocalSandbox(remote_view=_build_remote_view(settings))
+
+    # Native Proxmox Windows backend. Until the OOBE connection step is done the
+    # backend is not usable — boot with LocalSandbox so the app still starts (the
+    # automated-work gate blocks real work until the step is complete).
+    if not setup_service.is_sandbox_backend_ready():  # pragma: no cover - boot guard
+        return LocalSandbox(remote_view=_build_remote_view(settings))
+
+    from applicant.adapters.sandbox.proxmox_client import ProxmoxApiClient
+    from applicant.adapters.sandbox.proxmox_windows_sandbox import ProxmoxWindowsSandbox
+    from applicant.adapters.sandbox.remote_view import WindowsRdpRemoteView
+
+    conn = setup_service.get_sandbox_connection()
+    token_secret = setup_service.resolve_sandbox_secret("token")
+    client = ProxmoxApiClient(  # pragma: no cover - integration (real PVE)
+        api_url=conn["proxmox_api_url"],
+        token_id=conn["proxmox_token_id"],
+        token_secret=token_secret,
+        node=conn["proxmox_node"],
+    )
+    remote_view = WindowsRdpRemoteView(
+        method=conn.get("takeover_method", "rdp"),
+        url_template=conn.get("takeover_url_template", ""),
+    )
+    return ProxmoxWindowsSandbox(  # pragma: no cover - integration (real PVE)
+        client,
+        template_vmid=int(conn["template_vmid"]),
+        node=conn["proxmox_node"],
+        clone_mode=conn.get("clone_mode", "snapshot-revert"),
+        cdp_host=conn.get("cdp_host", ""),
+        cdp_port=int(conn.get("cdp_port", 9222)),
+        remote_view=remote_view,
+    )
+
+
 def _build_orchestrator(settings: Settings) -> Any:
     if settings.orchestrator_backend == "dbos":
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
@@ -215,6 +265,7 @@ def build_container(settings: Settings | None = None) -> Container:
         config_store=config_store,
         credentials=credentials,
         onboarding_gate=_onboarding_gate,
+        sandbox_backend=settings.sandbox_backend,
     )
 
     def _channels_gate() -> bool:
@@ -263,13 +314,16 @@ def build_container(settings: Settings | None = None) -> Container:
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,
+        # FR-STEALTH-1: ``native`` for the proxmox-windows backend (real Windows +
+        # real Chrome, no spoof); ``linux`` (coherent honest spoof) for local.
+        persona=settings.stealth_persona_resolved,
     )
     detection = DetectionMonitor()
     # FR-SANDBOX-2/3: the swappable remote-view sub-port. Default is the full Ubuntu
     # webtop desktop (DE from TAKEOVER_DESKTOP -> resolved image); Neko (browser-only)
     # stays selectable via REMOTE_VIEW_BACKEND=neko. Image selection + URL/token are
     # real here; the container/room control plane is integration-gated in the adapter.
-    sandbox = LocalSandbox(remote_view=_build_remote_view(settings))
+    sandbox = _build_sandbox(settings, setup_service)
     # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the
     # engine binary is present at runtime (RESUME_RENDER=auto|on|off, default auto).
     latex_tailor = LatexTailor(render_mode=settings.resume_render)

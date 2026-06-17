@@ -21,6 +21,45 @@ async function refreshStatus() {
   } catch (e) {
     /* offline; ignore */
   }
+  try {
+    const sb = await ApplicantUI.apiFetch("/api/setup/sandbox-connection");
+    const el = document.getElementById("sandbox-status");
+    if (el) {
+      el.innerHTML =
+        "Windows sandbox: <strong>" +
+        (sb.configured ? "configured" : "not configured") +
+        "</strong>";
+    }
+  } catch (e) {
+    /* offline; ignore */
+  }
+}
+
+// Native Proxmox Windows VM connection (FR-OOBE, FR-SANDBOX-1). Secrets (token
+// secret + RDP password) are sealed in the credential vault server-side; this form
+// only POSTs them, never reads them back.
+function onSandboxSubmit(ev) {
+  ev.preventDefault();
+  const form = ev.target;
+  const val = (n) => (form[n] || {}).value || "";
+  const body = {
+    proxmox_api_url: val("proxmox_api_url"),
+    proxmox_node: val("proxmox_node"),
+    proxmox_token_id: val("proxmox_token_id"),
+    proxmox_token_secret: val("proxmox_token_secret"),
+    template_vmid: parseInt(val("template_vmid") || "0", 10),
+    clone_mode: val("clone_mode") || "snapshot-revert",
+    cdp_host: val("cdp_host"),
+    cdp_port: parseInt(val("cdp_port") || "9222", 10),
+    rdp_username: val("rdp_username"),
+    rdp_password: val("rdp_password"),
+    takeover_method: val("takeover_method") || "rdp",
+    takeover_url_template: val("takeover_url_template"),
+  };
+  ApplicantUI.apiFetch("/api/setup/sandbox-connection", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }).then(refreshStatus, refreshStatus);
 }
 
 // Channel setup (FR-NOTIF-1, FR-OOBE-2/3): post Discord/email and reflect the gate.
@@ -66,5 +105,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (channels) channels.addEventListener("submit", onChannelsSubmit);
   const test = document.getElementById("channels-test");
   if (test) test.addEventListener("click", onChannelsTest);
+  const sandbox = document.getElementById("sandbox-form");
+  if (sandbox) sandbox.addEventListener("submit", onSandboxSubmit);
   refreshStatus();
 });

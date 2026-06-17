@@ -177,6 +177,80 @@ class WebtopRemoteView(_TokenMixin):
         self._app_urls.pop(session_id, None)
 
 
+class WindowsRdpRemoteView(_TokenMixin):
+    """RemoteViewPort adapter — RDP / web-console takeover into a Windows VM.
+
+    The takeover environment for the native Proxmox Windows backend is the real,
+    licensed Windows VM itself: the human takes over the SAME real Google Chrome the
+    engine drove (genuine Windows fingerprint, FR-STEALTH-1). The one-click takeover
+    URL is either an ``rdp://`` URI to the VM's RDP host OR a web-console/Guacamole
+    URL (per the configured method). Both carry a short-lived per-session access
+    token so the deep link can be sent in a notification and opened straight into the
+    controllable session (FR-SANDBOX-2/3).
+
+    The host/IP + (web-console) URL template are bound per session at provision time
+    via :meth:`bind_session`; ``view_url`` then materializes the tokenized takeover
+    URL. The real RDP/web-console connection is integration-gated; the URL/token
+    minting, method selection, and lifecycle bookkeeping here are unit-tested.
+    """
+
+    provider = "windows-rdp"
+
+    def __init__(
+        self,
+        *,
+        method: str = "rdp",
+        url_template: str = "",
+        token_ttl_seconds: float = DEFAULT_TOKEN_TTL_SECONDS,
+    ) -> None:
+        super().__init__(token_ttl_seconds=token_ttl_seconds)
+        #: rdp | web-console — how the human takes over the Windows VM.
+        self.method = method
+        #: For web-console: a URL template with ``{host}``/``{token}``/... slots.
+        self._url_template = url_template
+        #: session_id -> {host, vmid, node, app_url}, bound at provision.
+        self._bindings: dict[str, dict[str, str]] = {}
+
+    def bind_session(
+        self,
+        session_id: str,
+        *,
+        host: str,
+        vmid: int | str = "",
+        node: str = "",
+        app_url: str = "",
+    ) -> None:
+        """Bind the Windows VM's connection details to a session (provision time)."""
+        self._bindings[session_id] = {
+            "host": host,
+            "vmid": str(vmid),
+            "node": node,
+            "app_url": app_url,
+        }
+
+    def view_url(self, session_id: str) -> str:
+        """One-click, token-bearing RDP / web-console takeover URL (FR-SANDBOX-2/3)."""
+        binding = self._bindings.get(session_id, {})
+        host = binding.get("host", "")
+        token = self._token(session_id)
+        if self.method == "web-console" and self._url_template:
+            return self._url_template.format(
+                host=host,
+                token=token,
+                vmid=binding.get("vmid", ""),
+                node=binding.get("node", ""),
+                session=session_id,
+            )
+        # Default: an rdp:// one-click URI. ``rdp://full address=s:HOST&...`` is the
+        # standard MS RDP URI shape; we append the access token as a query param so a
+        # web gateway / launcher can validate it before handing off.
+        return f"rdp://full%20address=s:{host}:3389&session={session_id}&token={token}"
+
+    def invalidate(self, session_id: str) -> None:
+        super().invalidate(session_id)
+        self._bindings.pop(session_id, None)
+
+
 class NoVncRemoteView(_TokenMixin):
     """RemoteViewPort adapter — noVNC alternative, proving sub-port swappability.
 

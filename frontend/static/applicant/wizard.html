@@ -60,7 +60,60 @@
       </form>
       <p id="channels-status" class="admin-empty">Channels: <strong>not configured</strong></p>
     </section>
-    <!-- STEP 3..4 — light up as their backends land (FR-OOBE-2, FR-UI-2). -->
+    <!-- STEP 3 — native Proxmox Windows VM connection/login (FR-OOBE, FR-SANDBOX-1).
+         Only required when SANDBOX_BACKEND=proxmox-windows; the secrets (token
+         secret + RDP password) are sealed in the credential vault, never returned. -->
+    <section class="admin-card" id="step-sandbox" style="margin-top:16px;padding:16px;">
+      <h2>3. Windows sandbox connection <span class="admin-badge admin-badge-on">proxmox-windows</span></h2>
+      <p class="admin-empty">Only needed for the native Proxmox Windows VM backend: the engine drives, and you take over, real Google Chrome inside a real licensed Windows VM (genuine Windows fingerprint, zero spoofing). Secrets are vaulted and never shown again.</p>
+      <form id="sandbox-form">
+        <label>Proxmox API URL
+          <input type="text" name="proxmox_api_url" placeholder="https://pve.local:8006" style="width:100%;" />
+        </label>
+        <label>Node name
+          <input type="text" name="proxmox_node" placeholder="pve1" style="width:100%;" />
+        </label>
+        <label>API token id
+          <input type="text" name="proxmox_token_id" placeholder="root@pam!applicant" style="width:100%;" />
+        </label>
+        <label>API token secret
+          <input type="password" name="proxmox_token_secret" placeholder="•••• (vaulted)" style="width:100%;" />
+        </label>
+        <label>Windows template / persistent VMID
+          <input type="number" name="template_vmid" placeholder="9000" style="width:100%;" />
+        </label>
+        <label>Clone mode
+          <select name="clone_mode" style="width:100%;">
+            <option value="snapshot-revert">snapshot-revert (reuse one VM)</option>
+            <option value="linked-clone">linked-clone (clone per session)</option>
+          </select>
+        </label>
+        <label>Chrome CDP port
+          <input type="number" name="cdp_port" value="9222" style="width:100%;" />
+        </label>
+        <label>CDP host override (optional; blank = guest IP)
+          <input type="text" name="cdp_host" placeholder="" style="width:100%;" />
+        </label>
+        <label>RDP username
+          <input type="text" name="rdp_username" placeholder="Applicant" style="width:100%;" />
+        </label>
+        <label>RDP password
+          <input type="password" name="rdp_password" placeholder="•••• (vaulted)" style="width:100%;" />
+        </label>
+        <label>Takeover method
+          <select name="takeover_method" style="width:100%;">
+            <option value="rdp">RDP URI (one-click)</option>
+            <option value="web-console">Web console / Guacamole URL</option>
+          </select>
+        </label>
+        <label>Web-console URL template (only for web-console)
+          <input type="text" name="takeover_url_template" placeholder="https://guac.local/?host={host}&amp;token={token}" style="width:100%;" />
+        </label>
+        <button type="submit" class="admin-btn">Save Windows connection</button>
+      </form>
+      <p id="sandbox-status" class="admin-empty">Windows sandbox: <strong>not configured</strong></p>
+    </section>
+    <!-- STEP 4..5 — light up as their backends land (FR-OOBE-2, FR-UI-2). -->
     <section class="admin-card" id="step-fonts" style="margin-top:16px;padding:16px;opacity:.5;" aria-disabled="true">
       <h2>3. Fonts <span class="admin-badge admin-badge-off">Phase 0/3</span></h2>
     </section>

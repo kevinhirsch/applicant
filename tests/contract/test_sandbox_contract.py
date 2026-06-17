@@ -11,7 +11,11 @@ from __future__ import annotations
 import pytest
 
 from applicant.adapters.sandbox.local_sandbox import LocalSandbox
-from applicant.adapters.sandbox.remote_view import NekoRemoteView, NoVncRemoteView
+from applicant.adapters.sandbox.remote_view import (
+    NekoRemoteView,
+    NoVncRemoteView,
+    WindowsRdpRemoteView,
+)
 from applicant.core.ids import ApplicationId, new_id
 from applicant.ports.driven.sandbox import (
     RemoteViewPort,
@@ -66,7 +70,9 @@ class TestLocalSandboxContract:
 
 
 @pytest.mark.contract
-@pytest.mark.parametrize("view_cls", [NekoRemoteView, NoVncRemoteView])
+@pytest.mark.parametrize(
+    "view_cls", [NekoRemoteView, NoVncRemoteView, WindowsRdpRemoteView]
+)
 class TestRemoteViewSwappable:
     """The remote-view sub-port honors one contract regardless of provider."""
 

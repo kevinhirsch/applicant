@@ -86,12 +86,19 @@ class PatchrightBrowser:
         channel: str = "chrome",
         egress_timezone: str = "",
         egress_locale: str = "",
+        persona: str = "linux",
     ) -> None:
         # FR-STEALTH-1: a single coherent REAL Linux + Google Chrome identity for
         # every session. The Chrome major is version-pinned to the installed Chrome
         # for the selected channel (so UA <-> CH-UA <-> engine all agree); a caller
         # may still inject an explicit fingerprint (tests).
         self._channel = channel or "chrome"
+        # FR-STEALTH-1: ``linux`` = apply the coherent honest spoof (the default for
+        # the local backend). ``native`` = use the browser's REAL identity with NO
+        # fingerprint override (the Proxmox Windows backend: real Windows + real
+        # Chrome already coherent). The persona is threaded into the real driver so a
+        # CDP-connected Windows Chrome is never re-fingerprinted.
+        self._persona = persona or "linux"
         self.fingerprint = dict(fingerprint or coherent_fingerprint(self._channel))
         # FR-STEALTH-1 <-> FR-STEALTH-4: tz/locale pinned to the residential egress
         # geolocation so tz/locale <-> exit IP stay consistent.
@@ -114,14 +121,24 @@ class PatchrightBrowser:
         self._sessions: dict[str, _Session] = {}
 
     # --- BrowserAutomationPort -------------------------------------------
-    def open(self, application_id: ApplicationId, url: str) -> PageState:
-        """Open ``url`` in the application's sandbox; return the first page state."""
+    def open(
+        self, application_id: ApplicationId, url: str, *, cdp_endpoint: str | None = None
+    ) -> PageState:
+        """Open ``url`` in the application's sandbox; return the first page state.
+
+        ``cdp_endpoint`` (the native Proxmox Windows backend) makes the engine
+        CONNECT to a remote Windows VM's Chrome over CDP instead of launching a local
+        browser (FR-SANDBOX-1, FR-STEALTH-1). ``None`` keeps the local-launch path.
+        """
         ats = resolve_ats(url)
         tenant_key = ats.tenant_key(url)
         # FR-STEALTH-3: a persistent per-tenant profile (same identity on return).
         profile = self._profiles.for_tenant(tenant_key)
         source = self._make_source(
-            ats, profile.fingerprint, user_data_dir=profile.user_data_dir
+            ats,
+            profile.fingerprint,
+            user_data_dir=profile.user_data_dir,
+            cdp_endpoint=cdp_endpoint,
         )
         source.open(url)
         # FR-STEALTH-2: a per-session human-interaction model (deterministic rng).
@@ -226,14 +243,44 @@ class PatchrightBrowser:
 
     # --- internals -------------------------------------------------------
     def _make_source(
-        self, ats, fingerprint: dict[str, str], *, user_data_dir: str = ""
+        self,
+        ats,
+        fingerprint: dict[str, str],
+        *,
+        user_data_dir: str = "",
+        cdp_endpoint: str | None = None,
     ) -> PageSource:
-        # Test seam: an injected factory receives the resolved per-tenant profile dir.
+        # Test seam: an injected factory receives the resolved per-tenant profile dir
+        # AND (when it accepts it) the CDP endpoint, so the mode selection + endpoint
+        # wiring is unit-tested with a fake (no real browser). The cdp_endpoint kwarg
+        # is only passed when the factory declares it, so older factory signatures
+        # ``(ats, fp, *, user_data_dir="")`` keep working unchanged.
         if self._source_factory is not None:
-            return self._source_factory(ats, fingerprint, user_data_dir=user_data_dir)
+            import inspect
+
+            kwargs: dict = {"user_data_dir": user_data_dir}
+            try:
+                params = inspect.signature(self._source_factory).parameters
+                accepts = "cdp_endpoint" in params or any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+                )
+            except (TypeError, ValueError):  # pragma: no cover - exotic callables
+                accepts = False
+            if accepts:
+                kwargs["cdp_endpoint"] = cdp_endpoint
+            return self._source_factory(ats, fingerprint, **kwargs)
         if self._use_real_browser:  # pragma: no cover - integration-gated
             from applicant.adapters.browser.page_source import PlaywrightPageSource
 
+            if cdp_endpoint:
+                # Native Proxmox Windows backend: CONNECT to the remote Windows VM's
+                # Chrome over CDP. Persona ``native`` -> NO fingerprint override (it
+                # IS real Windows + real Chrome). No local profile/proxy/channel.
+                return PlaywrightPageSource(
+                    fingerprint,
+                    cdp_endpoint=cdp_endpoint,
+                    persona="native",
+                )
             # FR-STEALTH-3: thread the persistent per-tenant profile dir into the real
             # browser launch so per-tenant persistence (same identity on return) works.
             # FR-STEALTH-4: thread the (validated) residential-egress proxy in too, so
@@ -243,6 +290,7 @@ class PatchrightBrowser:
                 proxy=self.egress.launch_proxy(),
                 user_data_dir=user_data_dir,
                 channel=self._channel,
+                persona=self._persona,
             )
         return FakePageSource(ats)
 

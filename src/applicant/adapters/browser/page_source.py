@@ -251,6 +251,8 @@ class PlaywrightPageSource:
         proxy: dict[str, str] | None = None,
         user_data_dir: str = "",
         channel: str = DEFAULT_CHANNEL,
+        cdp_endpoint: str = "",
+        persona: str = "linux",
     ) -> None:
         try:
             # patchright is a drop-in Playwright fork that removes automation tells
@@ -270,31 +272,50 @@ class PlaywrightPageSource:
         # FR-STEALTH-4: the residential-egress proxy (or None for direct egress),
         # threaded into the launch kwargs below.
         self._proxy = dict(proxy) if proxy else None
+        #: CDP-connect mode (FR-SANDBOX-1, FR-STEALTH-1): when an endpoint is set, the
+        #: engine CONNECTS to a remote Chrome (the Windows VM) over CDP instead of
+        #: launching a local browser. Persona is then ``native`` — NO fingerprint
+        #: override, because it IS real Windows + real Chrome (genuine fingerprint).
+        self._cdp_endpoint = cdp_endpoint
+        self._persona = persona
         self._pw = sync_playwright().start()
         # If context/page construction fails, stop the started Playwright process
         # so the driver does not leak (the old __init__ left the node process running
         # on any error after start()).
         self._context = None
         self._page = None
+        self._browser = None
         # Captured per-navigation main-frame HTTP status + the expected host so
         # current() can populate cautious-mode signals (FR-PREFILL-6).
         self._status: int | None = None
         self._expected_host: str | None = None
         try:  # pragma: no cover - integration-gated
-            kwargs = self.launch_kwargs(
-                self._fingerprint,
-                headless=headless,
-                proxy=self._proxy,
-                user_data_dir=user_data_dir,
-                channel=self._channel,
-            )
-            self._context = self._pw.chromium.launch_persistent_context(**kwargs)
-            # FR-STEALTH-1: apply the coherent fingerprint (WebGL vendor/renderer +
-            # navigator.platform) to every page in the context via an init script so
-            # the launched browser actually reports the normalized identity, not the
-            # host's real GPU/platform.
-            self._apply_fingerprint_overrides(self._context)
-            self._page = self._context.new_page()
+            if self._cdp_endpoint:
+                # Connect to the REMOTE Windows VM's Chrome over CDP. The browser is
+                # genuinely Windows; we do NOT apply any fingerprint override (native
+                # persona) — that would only RISK incoherence with a real OS.
+                self._browser = self._pw.chromium.connect_over_cdp(self._cdp_endpoint)
+                contexts = self._browser.contexts
+                self._context = contexts[0] if contexts else self._browser.new_context()
+                pages = self._context.pages
+                self._page = pages[0] if pages else self._context.new_page()
+            else:
+                kwargs = self.launch_kwargs(
+                    self._fingerprint,
+                    headless=headless,
+                    proxy=self._proxy,
+                    user_data_dir=user_data_dir,
+                    channel=self._channel,
+                )
+                self._context = self._pw.chromium.launch_persistent_context(**kwargs)
+                # FR-STEALTH-1: apply the coherent fingerprint (WebGL vendor/renderer
+                # + navigator.platform) to every page in the context via an init
+                # script so the launched browser actually reports the normalized
+                # identity, not the host's real GPU/platform. Skipped entirely in
+                # ``native`` persona (real OS already coherent).
+                if self._persona != "native":
+                    self._apply_fingerprint_overrides(self._context)
+                self._page = self._context.new_page()
             self._page.on("response", self._on_response)
         except Exception:
             self._safe_teardown()
@@ -309,9 +330,18 @@ class PlaywrightPageSource:
             pass
 
     def _safe_teardown(self) -> None:  # pragma: no cover - integration-gated
-        """Best-effort cleanup of a partially-constructed driver."""
+        """Best-effort cleanup of a partially-constructed driver.
+
+        In CDP-connect mode the remote browser is the Windows VM's Chrome — we only
+        DISCONNECT (close our local handle); the VM lifecycle is owned by the sandbox
+        adapter (it tears the VM down). We never destroy a remote context we attached
+        to that we did not create.
+        """
         try:
-            if self._context is not None:
+            if self._cdp_endpoint and self._browser is not None:
+                # Disconnect from the remote Chrome without closing its context.
+                self._browser.close()
+            elif self._context is not None:
                 self._context.close()
         except Exception:
             pass
