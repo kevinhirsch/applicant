@@ -40,6 +40,8 @@ fi
 DB_SERVICE="postgres"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
+# set -u safe default; .env (sourced above) overrides it. Used by the heartbeat.
+APP_URL="${APP_URL:-http://localhost:8000}"
 APPLY=0
 ROLLBACK=0
 
@@ -113,7 +115,9 @@ run mkdir -p "${BACKUP_DIR}"
 # (the deploy tree is not edited by hand). .env / .backups are untracked/ignored
 # and survive the reset.
 APPLICANT_BRANCH="${APPLICANT_BRANCH:-main}"
-if [[ -d "${REPO_ROOT}/.git" ]]; then
+# APPLICANT_SELFTEST=1 skips the destructive git reset (set by the test suite so a
+# unit test can never hard-reset the working tree to origin/main).
+if [[ "${APPLICANT_SELFTEST:-0}" != "1" && -d "${REPO_ROOT}/.git" ]]; then
   log "0/5 Syncing source to origin/${APPLICANT_BRANCH}"
   run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
   run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
@@ -156,8 +160,8 @@ log "5/5 Update applied."
 
 # Heartbeat: verify the stack came back green before declaring success; if not,
 # point the operator at rollback.
-if [[ "${APPLY}" -eq 1 ]]; then
-  APP_PORT="${APP_URL##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" ]]; then
+  APP_PORT="${APP_URL:-}"; APP_PORT="${APP_PORT##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
   if ! heartbeat "${APP_PORT}"; then
     echo "Update did not come up healthy. Roll back with: scripts/update.sh --rollback --apply" >&2
     exit 1
