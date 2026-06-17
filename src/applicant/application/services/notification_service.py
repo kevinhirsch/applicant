@@ -184,6 +184,29 @@ class NotificationService:
             log.info("digest_email_sent", subject=subject)
         return bool(sent)
 
+    # --- in-app notification center (FR-UI-3 feed) ------------------------
+    def list_inbox(self, *, include_seen: bool = False) -> list:
+        """Current in-app notifications backing the notification center.
+
+        Delegates to the notifier's in-app sink. Returns an empty list if the
+        configured notifier has no in-app inbox (degrade gracefully).
+        """
+        lister = getattr(self._notification, "list_inbox", None)
+        if lister is None:
+            return []
+        return lister(include_seen=include_seen)
+
+    def dismiss_notification(self, inbox_id: str) -> bool:
+        """Dismiss one informational in-app notification by id (FR-UI-3).
+
+        Returns True if the id matched a current entry. Action-required entries
+        are cleared via :meth:`acted` when their pending action resolves.
+        """
+        marker = getattr(self._notification, "mark_seen", None)
+        if marker is None:
+            return False
+        return bool(marker(inbox_id))
+
     # --- ladder advance (deterministic, FR-NOTIF-2) -----------------------
     def advance(self, now: datetime | None = None) -> list[str]:
         """Fire any escalation rungs now due. Returns channels fired this tick."""

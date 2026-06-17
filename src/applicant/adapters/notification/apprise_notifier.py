@@ -27,9 +27,10 @@ network) so contract/unit/BDD tests assert ladder + idempotency semantics offlin
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.notification import (
@@ -48,6 +49,12 @@ _EMAIL_TIMEOUT_SECONDS = 15 * 60  # 15 min, UI-configurable
 # operation does not grow them unbounded. The most-recent entries are retained.
 _MAX_INBOX = 1000
 _MAX_CAPTURED = 1000
+
+# LEAK-NOTIF-2: bound the in-app inbox + capture lists by AGE as well as count.
+# Capping by count alone meant a quiet stretch could keep day-old entries pinned
+# in the inbox indefinitely; prune anything older than this window on the same
+# cadence as the email-dedup prune so the lists stay both small AND fresh.
+_INBOX_MAX_AGE = timedelta(hours=24)
 
 # LEAK-NOTIF-1: bound the digest-email dedup memory to a rolling window of recent
 # UTC days. Each digest dedup key embeds its day (``digest_email:<cid>:<YYYY-MM-DD>``),
@@ -80,13 +87,26 @@ class _Delivery:
 
 @dataclass(frozen=True)
 class CapturedSend:
-    """An offline-captured dispatch (for tests / the in-app sink)."""
+    """An offline-captured dispatch (for tests / the in-app sink).
+
+    The in-app sink uses the extra fields (``id``/``created_at``/``dedup_key``/
+    ``seen``/``kind``) to back the notification center: the UI lists entries by
+    id, toasts the ones newer than its last-seen marker, and dismisses
+    informational ones by id. The first five fields keep their original
+    positional shape so existing tuple-style equality in tests is unaffected;
+    the new fields carry sensible defaults.
+    """
 
     channel: str
     title: str
     body: str
     deep_link: str | None
     urgency: str
+    id: str = ""
+    created_at: datetime | None = None
+    dedup_key: str | None = None
+    seen: bool = False
+    kind: str = ""
 
 
 def _default_clock() -> datetime:
@@ -141,6 +161,15 @@ class AppriseNotifier:
         # does not grow them without bound (oldest entries rotate out).
         self._max_inbox = _MAX_INBOX
         self._max_captured = _MAX_CAPTURED
+        # LEAK-NOTIF-2: age cap applied alongside the count cap (overridable in tests).
+        self._max_age = _INBOX_MAX_AGE
+        # Monotonic id source for in-app inbox entries (stable per-process handle
+        # the notification center lists/dismisses by). Independent of ``_counter``
+        # so dispatch ids do not collide with notify handles.
+        self._inbox_ids = itertools.count(1)
+        # Dismissed (seen) in-app inbox ids — an informational notification the
+        # user dismissed stops being listed even if it is still in ``_inbox``.
+        self._dismissed: set[str] = set()
 
     # --- channel configuration / gate (FR-OOBE-3) -------------------------
     def configured_channels(self) -> list[str]:
@@ -228,20 +257,46 @@ class AppriseNotifier:
         return hour >= start or hour < end
 
     # --- dispatch ---------------------------------------------------------
+    @staticmethod
+    def _classify(notification: Notification) -> str:
+        """Coarse kind for the in-app notification center.
+
+        ``action`` items are decisions the user must act on (they clear when the
+        underlying pending action resolves); everything else is ``info`` that the
+        center lists as a dismissible entry. Errors are flagged ``error`` so the
+        UI can style them, but they are still informational (no inline action).
+        """
+        key = notification.dedup_key or ""
+        if notification.web_preemptable or key.startswith("decision:"):
+            return "action"
+        if notification.urgency is NotificationUrgency.IMMEDIATE:
+            return "error"
+        if key.startswith("digest:"):
+            return "digest"
+        return "info"
+
     def _dispatch(self, channel: str, notification: Notification) -> None:
+        now = self._clock()
         captured = CapturedSend(
             channel=channel,
             title=notification.title,
             body=notification.body,
             deep_link=notification.deep_link,
             urgency=notification.urgency.value,
+            created_at=now,
+            dedup_key=notification.dedup_key,
+            kind=self._classify(notification),
         )
         self._captured.append(captured)
+        self._prune_old(self._captured, now)
         if len(self._captured) > self._max_captured:
             # CONC-3: rotate oldest out so the list is bounded over 24/7.
             del self._captured[: len(self._captured) - self._max_captured]
         if channel == NotificationChannel.IN_APP.value:
+            # The in-app sink gets a stable id the notification center addresses.
+            captured = replace(captured, id=f"inapp-{next(self._inbox_ids)}")
             self._inbox.append(captured)
+            self._prune_old(self._inbox, now)
             if len(self._inbox) > self._max_inbox:
                 del self._inbox[: len(self._inbox) - self._max_inbox]
         if self._send_real:
@@ -252,6 +307,18 @@ class AppriseNotifier:
             urgency=notification.urgency.value,
             dedup_key=notification.dedup_key,
         )
+
+    def _prune_old(self, entries: list[CapturedSend], now: datetime) -> None:
+        """LEAK-NOTIF-2: drop entries older than the age window, in place.
+
+        Mirrors the rolling-window prune used for the email-dedup set so the
+        in-app inbox + capture lists are bounded by AGE as well as by count.
+        Entries without a ``created_at`` (legacy/test-built) are retained.
+        """
+        horizon = now - self._max_age
+        entries[:] = [
+            e for e in entries if e.created_at is None or e.created_at >= horizon
+        ]
 
     def _send_real_dispatch(self, channel: str, notification: Notification) -> None:
         """REAL network boundary (FR-NOTIF-1) — integration-gated only.
@@ -433,18 +500,53 @@ class AppriseNotifier:
         return fired
 
     def expire(self, dedup_key: str) -> None:
-        """Idempotency: acting on one channel expires the others (FR-NOTIF-3)."""
+        """Idempotency: acting on one channel expires the others (FR-NOTIF-3).
+
+        Also drops any in-app inbox entries that announced this decision so an
+        action-required notification stops persisting once its underlying action
+        is resolved (the notification center never double-tracks acted items).
+        """
         delivery = self._sent.get(dedup_key)
         if delivery is not None:
             delivery.active = False
             for rung in delivery.rungs:
                 rung.fired = True  # cancel any not-yet-fired hops
             self._sent.pop(dedup_key, None)
+        if dedup_key:
+            self._inbox = [e for e in self._inbox if e.dedup_key != dedup_key]
 
     # --- in-app sink / presence (FR-UI-3 feed, FR-NOTIF-2) ----------------
     def inbox(self) -> list[CapturedSend]:
         """In-app notifications surfaced in the portal (drains nothing)."""
         return list(self._inbox)
+
+    def list_inbox(self, *, include_seen: bool = False) -> list[CapturedSend]:
+        """Current in-app notifications for the notification center.
+
+        Prunes age-expired entries first (so a stale poll never shows day-old
+        items), then returns the inbox newest-first, omitting ones the user has
+        dismissed unless ``include_seen`` is set.
+        """
+        self._prune_old(self._inbox, self._clock())
+        entries = [
+            replace(e, seen=e.id in self._dismissed)
+            for e in self._inbox
+            if include_seen or e.id not in self._dismissed
+        ]
+        return list(reversed(entries))
+
+    def mark_seen(self, inbox_id: str) -> bool:
+        """Dismiss one informational in-app notification by id.
+
+        Returns True if the id matched a current inbox entry. Action-required
+        entries are cleared via :meth:`expire` when their pending action resolves,
+        not here, so dismissing one does not hide a still-open action.
+        """
+        for entry in self._inbox:
+            if entry.id == inbox_id:
+                self._dismissed.add(inbox_id)
+                return True
+        return False
 
     def set_presence(self, present: bool) -> None:
         """Override the presence signal (used when no provider is injected)."""

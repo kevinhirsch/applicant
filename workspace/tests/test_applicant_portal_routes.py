@@ -85,6 +85,18 @@ class FakeEngine:
             raise FakeEngine.raises["acquire_missing_attribute"]
         return FakeEngine.acquire_response
 
+    async def list_notifications(self):
+        FakeEngine.calls.append("list_notifications")
+        if "list_notifications" in FakeEngine.raises:
+            raise FakeEngine.raises["list_notifications"]
+        return FakeEngine.notifications
+
+    async def dismiss_notification(self, nid):
+        FakeEngine.calls.append(("dismiss_notification", nid))
+        if ("dismiss_notification", nid) in FakeEngine.raises:
+            raise FakeEngine.raises[("dismiss_notification", nid)]
+        return None
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -93,6 +105,7 @@ def _reset_fake():
     FakeEngine.pending = {}
     FakeEngine.raises = {}
     FakeEngine.acquire_response = {"saved": True}
+    FakeEngine.notifications = {"count": 0, "items": []}
     yield
 
 
@@ -265,6 +278,57 @@ def test_missing_attribute_survives_resolve_failure(client):
     )
     assert r.status_code == 200
     assert r.json()["resolved"] is False
+
+
+# --- notification center ----------------------------------------------------
+
+
+def test_notifications_list_proxies(client):
+    FakeEngine.notifications = {
+        "count": 2,
+        "items": [
+            {"id": "inapp-2", "title": "Digest ready", "kind": "digest"},
+            {"id": "inapp-1", "title": "Heads up", "kind": "error"},
+        ],
+    }
+    r = client.get("/api/applicant/portal/notifications")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["count"] == 2
+    assert {i["id"] for i in body["items"]} == {"inapp-1", "inapp-2"}
+    assert "list_notifications" in FakeEngine.calls
+
+
+def test_notifications_soft_degrade_when_engine_down(client):
+    FakeEngine.raises["list_notifications"] = EngineError("down")
+    r = client.get("/api/applicant/portal/notifications")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": False, "count": 0, "items": []}
+
+
+def test_notification_dismiss_ok(client):
+    r = client.post("/api/applicant/portal/notifications/inapp-1/seen")
+    assert r.status_code == 200
+    assert r.json() == {"dismissed": True, "id": "inapp-1"}
+    assert ("dismiss_notification", "inapp-1") in FakeEngine.calls
+
+
+def test_notification_dismiss_404_is_idempotent_success(client):
+    # An already-cleared notification (engine 404) is treated as dismissed so the
+    # UI can drop the row without erroring.
+    FakeEngine.raises[("dismiss_notification", "gone")] = EngineError(
+        "missing", status=404, detail="no"
+    )
+    r = client.post("/api/applicant/portal/notifications/gone/seen")
+    assert r.status_code == 200
+    assert r.json() == {"dismissed": True, "id": "gone"}
+
+
+def test_notification_dismiss_forwards_other_errors(client):
+    FakeEngine.raises[("dismiss_notification", "x")] = EngineError("boom", status=500, detail="bad")
+    r = client.post("/api/applicant/portal/notifications/x/seen")
+    assert r.status_code == 500
 
 
 # --- exact engine paths via a real client over MockTransport ----------------

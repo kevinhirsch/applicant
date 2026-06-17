@@ -198,6 +198,44 @@ def setup_applicant_portal_routes() -> APIRouter:
                 raise _engine_http_error(exc) from exc
         return {"resolved": True, "action_id": action_id}
 
+    # -- notification center (in-app inbox) -------------------------------
+
+    @router.get("/notifications")
+    async def list_notifications(request: Request) -> dict:
+        """Current in-app notifications backing the home-base notification center.
+
+        Thin proxy over the engine's in-app inbox. Degrades soft like the pending
+        feed: an unreachable engine returns an empty, well-formed payload with the
+        reachability flag so the Portal keeps rendering its action rows.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.list_notifications()
+            except EngineError as exc:
+                logger.debug("portal: engine unavailable listing notifications: %s", exc)
+                return {"engine_available": False, "count": 0, "items": []}
+        items = data.get("items") if isinstance(data, dict) else None
+        items = items if isinstance(items, list) else []
+        return {"engine_available": True, "count": len(items), "items": items}
+
+    @router.post("/notifications/{notification_id}/seen")
+    async def dismiss_notification(notification_id: str, request: Request) -> dict:
+        """Dismiss one informational notification so it stops persisting.
+
+        A 404 from the engine (already pruned/cleared) is treated as success so
+        the UI can drop the row idempotently instead of erroring.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                await engine.dismiss_notification(notification_id)
+            except EngineError as exc:
+                if exc.status == 404:
+                    return {"dismissed": True, "id": notification_id}
+                raise _engine_http_error(exc) from exc
+        return {"dismissed": True, "id": notification_id}
+
     # -- supply a missing detail (FR-ATTR-5) ------------------------------
 
     @router.post("/missing-attribute")
