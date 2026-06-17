@@ -53,10 +53,6 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         for row in rows:
             if getattr(row, 'is_important', False):
                 continue
-            if (row.name or "").strip() == "Incognito":
-                deleted_throwaway += 1
-                db.delete(row)
-                continue
 
             msg_count = db.query(DbMsg.id).filter(
                 DbMsg.session_id == row.id
@@ -111,8 +107,6 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
 
         session_list = []
         for row in remaining:
-            if row.name == "Incognito":
-                continue
             session_list.append({
                 "id": row.id,
                 "name": row.name or "(unnamed)",

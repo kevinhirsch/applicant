@@ -23,30 +23,8 @@ let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('applicant-session-sort') || 'active'; // default to last active
 let _autoCreateInProgress = false; // guard against recursive auto-create
-const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
-
-function _getIncognitoIds() {
-  try { return JSON.parse(sessionStorage.getItem(_INCOGNITO_SESSIONS_KEY) || '[]'); } catch { return []; }
-}
-function _markIncognito(sid) {
-  const ids = _getIncognitoIds();
-  if (!ids.includes(sid)) { ids.push(sid); sessionStorage.setItem(_INCOGNITO_SESSIONS_KEY, JSON.stringify(ids)); }
-}
-function _isIncognitoSession(sid) { return _getIncognitoIds().includes(sid); }
-async function _cleanupIncognitoSessions() {
-  const ids = _getIncognitoIds();
-  if (ids.length === 0) return;
-  // Keep the current active incognito session alive, delete the rest
-  const toDelete = ids.filter(sid => sid !== currentSessionId);
-  if (toDelete.length === 0) return;
-  const keep = ids.filter(sid => sid === currentSessionId);
-  sessionStorage.setItem(_INCOGNITO_SESSIONS_KEY, JSON.stringify(keep));
-  await Promise.all(toDelete.map(sid =>
-    fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).catch(() => {})
-  ));
-}
 
 // Research indicator tracking
 const _researchingSessions = new Set();
@@ -717,7 +695,7 @@ function _renderSessionListImpl() {
 
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
-  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant');
 
   if (savedOrder) {
     try {
@@ -1304,9 +1282,6 @@ function _animateSessionRowsRemoving(ids, selector) {
 
 export async function loadSessions() {
   try {
-    // Delete incognito sessions left over from a previous page load
-    await _cleanupIncognitoSessions();
-
     // Use prefetched data from login page if available (first load only)
     const prefetched = sessionStorage.getItem('ody-prefetch-sessions');
     let fetched;
@@ -1571,10 +1546,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     }
 
     // Guard: if the fetched history is empty but the DOM already has message
-    // bubbles for the same session (incognito doesn't persist, so /api/history
-    // returns []), preserve the DOM instead of wiping it. This fixes the
-    // "reply flashes for 0.1s then empty" bug when selectSession is called
-    // after a streaming completion in an incognito chat.
+    // bubbles for the same session, preserve the DOM instead of wiping it.
+    // This fixes the "reply flashes for 0.1s then empty" bug when
+    // selectSession is called after a streaming completion.
     const isSameSession = (prevSessionId === id);
     const hasExistingBubbles = chatHistory && chatHistory.querySelectorAll('.msg').length > 0;
     const wouldWipe = !isOC && !msgHistory.length && isSameSession && hasExistingBubbles;
@@ -1776,10 +1750,8 @@ export async function materializePendingSession() {
   if (!pending) return false;
   _pendingChat = null;
 
-  const incognitoChk = document.getElementById('incognito-toggle');
-  const isIncognito = incognitoChk && incognitoChk.checked;
   const base = (pending.modelId || 'model').split('/').pop();
-  const name = isIncognito ? 'Nobody' : `${base} ${new Date().toLocaleTimeString()}`;
+  const name = `${base} ${new Date().toLocaleTimeString()}`;
 
   const fd = new FormData();
   fd.append('name', name);
@@ -1810,10 +1782,6 @@ export async function materializePendingSession() {
   if (!res.ok) {
     uiModule.showError(`Session create failed (${res.status}) ${payload.detail || JSON.stringify(payload)}`);
     return false;
-  }
-
-  if (isIncognito && payload.id) {
-    _markIncognito(payload.id);
   }
 
   // Clear any leftover document text selection from the previous session

@@ -767,7 +767,7 @@ async function handleSetupWizard(mode, input) {
 }
 
 function _syncToggleUI(name, state) {
-  const btnMap = { web: 'web-toggle-btn', bash: 'bash-toggle-btn', incognito: 'incognito-btn' };
+  const btnMap = { web: 'web-toggle-btn', bash: 'bash-toggle-btn' };
   if (name === 'rag' && window._syncRagIndicator) {
     window._syncRagIndicator(state);
   } else if (name === 'research' && window._syncResearchIndicator) {
@@ -1079,17 +1079,6 @@ async function _cmdToggleWeb(args, ctx) { const v = (args[0]||'').toLowerCase();
 async function _cmdToggleBash(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('bash', v); else _quickToggle('bash'); return true; }
 async function _cmdToggleRag(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('rag', v); else _quickToggle('rag'); return true; }
 async function _cmdToggleResearch(args, ctx) { const v = (args[0]||'').toLowerCase(); if (v === 'on' || v === 'off') _applyToggle('research', v); else _quickToggle('research'); return true; }
-async function _cmdToggleIncognito(args, ctx) {
-  const sessions = sessionModule.getSessions();
-  const sess = ctx.sid ? sessions.find(s => s.id === ctx.sid) : null;
-  if (sess && sess.message_count > 0) {
-    slashReply(`Can't toggle Nobody mode mid-conversation — start a new session first`);
-    return true;
-  }
-  const v = (args[0]||'').toLowerCase();
-  if (v === 'on' || v === 'off') _applyToggle('incognito', v); else _quickToggle('incognito');
-  return true;
-}
 
 async function _cmdToggleDoc(args, ctx) {
   if (documentModule) {

@@ -18,7 +18,6 @@ export const KEYS = {
   MODEL_SELECTED: 'applicant-selected-model',
   SORT_ORDER: 'applicant-sessions-sort',
   CHAT_SEARCH_SCOPE: 'applicant-search-scope',
-  INCOGNITO: 'applicant-incognito',
   RAG_ACTIVE: 'applicant-rag-active',
   MCP_ACTIVE: 'applicant-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',

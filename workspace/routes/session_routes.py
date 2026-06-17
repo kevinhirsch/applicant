@@ -64,39 +64,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.get("/sessions")
     def list_sessions(request: Request):
         user = get_current_user(request)
-        # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
-        # from the DB and session_manager so they vanish on the next page refresh.
-        # BUT: skip sessions that were created within the last 10 minutes.
-        # Without that guard, the purge nukes the active "Nobody" session on the
-        # very first /api/sessions call after creation, killing the in-flight
-        # chat. The frontend's own _cleanupIncognitoSessions handler knows which
-        # session is current and won't delete the live one — this server-side
-        # purge exists only to catch ghosts the frontend missed (tab close,
-        # crash). Only clean up rows old enough to be definitely orphaned.
-        try:
-            from datetime import datetime as _dt, timedelta as _td
-            _cutoff = _dt.utcnow() - _td(minutes=10)
-            _purge_db = SessionLocal()
-            try:
-                from core.database import ChatMessage as _DbMsg
-                _ghosts = _purge_db.query(DbSession).filter(
-                    DbSession.name.in_(("Nobody", "Incognito")),
-                    DbSession.created_at < _cutoff,
-                ).all()
-                for _g in _ghosts:
-                    _purge_db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
-                    _purge_db.delete(_g)
-                    if hasattr(session_manager, "delete_session"):
-                        try:
-                            session_manager.delete_session(_g.id)
-                        except Exception:
-                            pass
-                if _ghosts:
-                    _purge_db.commit()
-            finally:
-                _purge_db.close()
-        except Exception:
-            pass
         user_sessions = session_manager.get_sessions_for_user(user)
         # Fetch folder info from DB for each session
         db = SessionLocal()
@@ -155,8 +122,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "mode": mode_map.get(s.id),
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
-                    if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")]
+                    if not s.archived]
 
         return sessions
     
@@ -825,14 +791,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
                     continue
-                # Always delete incognito sessions during cleanup
-                if (row.name or "").strip() == "Incognito":
-                    should_delete = True
-                    deleted_throwaway += 1
-                    db.delete(row)
-                    if hasattr(session_manager, 'delete_session'):
-                        session_manager.delete_session(row.id)
-                    continue
                 msg_count = _counts.get(row.id, 0)
                 should_delete = False
                 if msg_count == 0:
@@ -896,7 +854,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         TIDY_BATCH_SIZE = 15
         all_candidates = []
         for s in user_sessions.values():
-            if s.archived or s.name == "Incognito":
+            if s.archived:
                 continue
             if folder_map.get(s.id):
                 # Already in a folder — skip on this pass.

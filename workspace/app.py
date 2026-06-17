@@ -530,10 +530,6 @@ from routes.memory_routes import setup_memory_routes
 app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
 from routes.entity_routes import setup_entity_routes
 app.include_router(setup_entity_routes())
-from routes.awareness_routes import setup_awareness_routes
-app.include_router(setup_awareness_routes())
-from routes.homeassistant_routes import setup_homeassistant_routes
-app.include_router(setup_homeassistant_routes())
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 
@@ -850,23 +846,6 @@ async def startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
-    # Wipe any leftover incognito sessions from previous process — they're
-    # ephemeral by design and must not survive a restart.
-    try:
-        from core.database import SessionLocal as _SL, Session as _DbSess, ChatMessage as _DbMsg
-        _db = _SL()
-        try:
-            _ghosts = _db.query(_DbSess).filter(_DbSess.name.in_(("Nobody", "Incognito"))).all()
-            for _g in _ghosts:
-                _db.query(_DbMsg).filter(_DbMsg.session_id == _g.id).delete()
-                _db.delete(_g)
-            if _ghosts:
-                _db.commit()
-                logger.info(f"Purged {len(_ghosts)} leftover incognito session(s)")
-        finally:
-            _db.close()
-    except Exception as e:
-        logger.debug(f"Incognito purge skipped: {e}")
     # Strong refs to fire-and-forget startup tasks. Without this, Python may
     # GC tasks created with `asyncio.create_task(...)` before they finish.
     _startup_tasks: list[asyncio.Task] = getattr(app.state, "_startup_tasks", [])
@@ -1068,52 +1047,6 @@ async def startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
-
-    # Proactive awareness loop — OFF by default. Enable with APPLICANT_AWARENESS=1.
-    # Every `awareness_interval_seconds` (default 900 = 15 min) it runs one tick
-    # per owner who has the can_use_awareness privilege AND >=1 enabled trigger.
-    # Change-detection + cooldowns keep idle ticks cheap (services/awareness).
-    _awareness_on = os.environ.get("APPLICANT_AWARENESS", "0").strip().lower()
-    if _awareness_on in ("1", "true", "yes", "on"):
-        async def _awareness_loop():
-            from services.awareness.service import AwarenessService
-            from core.proactive_models import AwarenessTrigger
-            from core.database import SessionLocal
-            svc = AwarenessService()
-
-            def _owners_with_triggers():
-                db = SessionLocal()
-                try:
-                    rows = (db.query(AwarenessTrigger.owner)
-                            .filter(AwarenessTrigger.enabled.is_(True)).distinct().all())
-                    return [r[0] for r in rows]
-                finally:
-                    db.close()
-
-            while True:
-                try:
-                    from src.settings import get_setting
-                    interval = int(get_setting("awareness_interval_seconds", 900) or 900)
-                    limit = int(get_setting("awareness_daily_notification_limit", 0) or 0)
-                except Exception:
-                    interval, limit = 900, 0
-                await asyncio.sleep(max(60, interval))
-                try:
-                    owners = await asyncio.to_thread(_owners_with_triggers)
-                    for owner in owners:
-                        try:
-                            if owner:
-                                privs = auth_manager.get_privileges(owner)
-                                if not privs.get("can_use_awareness"):
-                                    continue
-                            await svc.run_tick(owner, daily_limit=limit)
-                        except Exception as e:
-                            logger.debug(f"Awareness tick failed for {owner}: {e}")
-                except Exception as e:
-                    logger.warning(f"Awareness loop cycle failed: {e}")
-
-        _startup_tasks.append(asyncio.create_task(_awareness_loop()))
-        logger.info("Proactive awareness loop enabled (APPLICANT_AWARENESS=1)")
 
     logger.info("Application startup complete")
 

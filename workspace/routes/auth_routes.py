@@ -532,8 +532,6 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "miniflux": "/v1/me",
             "gitea": "/api/v1/version",
             "linkding": "/api/tags/",
-            "homeassistant": "/api/",
-            "home assistant": "/api/",
         }
         path = health_paths.get(preset, "/")
         result = await execute_api_call(integration_id, "GET", path)

@@ -52,7 +52,7 @@ _TOOL_INTENT_PATTERNS: tuple[Pattern[str], ...] = tuple(
 
         # UI/control-plane actions that should open panels or flip toggles.
         rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b",
-        r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b",
+        r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research)\b",
 
         # Deep research jobs, not quick conceptual mentions of research.
         rf"{_PLEASE}(?:research|deep\s+dive|look\s+into|investigate)\s+.+",

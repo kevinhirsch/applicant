@@ -235,7 +235,6 @@ def setup_chat_routes(
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
-        incognito = str(form_data.get("incognito", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
@@ -323,15 +322,14 @@ def setup_chat_routes(
             use_web=use_web,
             use_rag=use_rag,
             time_filter=time_filter,
-            incognito=incognito,
             no_memory=no_memory,
             search_context=search_context,
             compare_mode=compare_mode,
             webhook_manager=webhook_manager,
             use_enhanced_message=True,
             # Skills index only ships when the model can actually call
-            # manage_skills (agent mode). In plain chat or incognito the
-            # index would be useless / unwanted noise.
+            # manage_skills (agent mode). In plain chat the index would be
+            # useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
         )
 
@@ -390,15 +388,6 @@ def setup_chat_routes(
         if str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")
-
-        # Nobody/incognito mode: deny tools that would expose the user's
-        # persistent memory, past chats, or other identity-linked data.
-        if incognito:
-            disabled_tools.update({
-                "manage_memory",      # persistent memory store
-                "search_chats",       # past chat history
-                "manage_skills",      # skill presets tied to user
-            })
 
         # Enforce per-user privileges
         _privs = {}
@@ -518,8 +507,6 @@ def setup_chat_routes(
                     # Phase 2: Start actual research
                     def _on_research_done(_sid, _result, _sources, _findings):
                         """Persist research to DB when background task finishes."""
-                        if incognito:
-                            return
                         try:
                             _s = session_manager.get_session(_sid)
                             if not _s:
@@ -675,13 +662,12 @@ def setup_chat_routes(
                 full_response = _desc
                 yield f'data: {json.dumps({"delta": _desc})}\n\n'
                 # Save to session history
-                if not incognito:
-                    _ev = {"round": 1, "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
-                    for _ek in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
-                        if _img_result.get(_ek):
-                            _ev[_ek] = _img_result[_ek]
-                    sess.add_message(ChatMessage("assistant", full_response, metadata={"tool_events": [_ev], "model": sess.model}))
-                    session_manager.save_sessions()
+                _ev = {"round": 1, "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
+                for _ek in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
+                    if _img_result.get(_ek):
+                        _ev[_ek] = _img_result[_ek]
+                sess.add_message(ChatMessage("assistant", full_response, metadata={"tool_events": [_ev], "model": sess.model}))
+                session_manager.save_sessions()
                 yield f'data: {json.dumps({"type": "metrics", "data": {"total_time": 0}})}\n\n'
                 yield "data: [DONE]\n\n"
                 _active_streams.pop(session, None)
@@ -754,14 +740,13 @@ def setup_chat_routes(
                                     research_sources=research_sources,
                                     used_memories=ctx.used_memories,
                                     do_research=do_research,
-                                    incognito=incognito,
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
-                                    incognito=incognito, compare_mode=compare_mode,
+                                    compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                                             owner=_user,
                                 )
@@ -772,8 +757,7 @@ def setup_chat_routes(
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
                         _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
-                        if not incognito:
-                            session_manager.save_sessions()
+                        session_manager.save_sessions()
                     raise
                 finally:
                     _active_streams.pop(session, None)
@@ -837,14 +821,13 @@ def setup_chat_routes(
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
                                     used_memories=ctx.used_memories,
-                                    incognito=incognito,
                                 )
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
                                     sess, session_manager, session, message, full_response,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
-                                    incognito=incognito, compare_mode=compare_mode,
+                                    compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
                                                             agent_rounds=_agent_rounds,
                                     agent_tool_calls=_agent_tool_calls,
@@ -866,8 +849,7 @@ def setup_chat_routes(
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
                             _stopped_content2, _stopped_md2 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
-                            if not incognito:
-                                session_manager.save_sessions()
+                            session_manager.save_sessions()
                     except Exception:
                         logger.exception("Failed to save partial response on disconnect (session %s)", session)
                     raise

@@ -1489,9 +1489,9 @@ def init_db():
     Should be called when starting the application.
     """
     _migrate_model_endpoints()
-    # Register proactive-assistant models (entities + awareness) so the tables
-    # below get created. Import here (not at module top) to avoid a circular
-    # import — the module imports Base from this file.
+    # Register the Entity/Relationship store models so the tables below get
+    # created. Import here (not at module top) to avoid a circular import —
+    # the module imports Base from this file.
     import core.proactive_models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_add_hidden_models_column()

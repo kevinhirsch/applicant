@@ -20,7 +20,7 @@ export function handleUIControl(uiData) {
     if (uiEvent === 'toggle' || uiData.ui_event === 'toggle') {
       var toggleMap = {
         web: 'web-toggle', bash: 'bash-toggle', rag: 'rag-toggle',
-        research: 'research-toggle', incognito: 'incognito-toggle',
+        research: 'research-toggle',
       };
       var btnMap = {
         web: 'web-toggle-btn', bash: 'bash-toggle-btn', rag: 'rag-indicator-btn',
@@ -172,16 +172,6 @@ export function handleUIControl(uiData) {
       } else if (panel === 'notes') {
         import('./notes.js').then(function(mod) {
           var fn = mod.openPanel || mod.openNotes || (mod.default && (mod.default.openPanel || mod.default.openNotes));
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'awareness') {
-        import('./awareness.js').then(function(mod) {
-          var fn = mod.openPanel || (mod.default && mod.default.openPanel);
-          if (fn) fn();
-        }).catch(function(){});
-      } else if (panel === 'homeassistant' || panel === 'home') {
-        import('./homeassistant.js').then(function(mod) {
-          var fn = mod.openPanel || (mod.default && mod.default.openPanel);
           if (fn) fn();
         }).catch(function(){});
       } else if (panel === 'memories' || panel === 'skills' || panel === 'settings') {

@@ -73,22 +73,6 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /api/tags/ — list tags"
         ),
     },
-    "homeassistant": {
-        "name": "Home Assistant",
-        "auth_type": "bearer",
-        "description": (
-            "Home Assistant smart home API. Key endpoints:\n"
-            "  GET /api/ — API status check\n"
-            "  GET /api/states — list all entity states\n"
-            "  GET /api/states/{entity_id} — get state of entity\n"
-            "  POST /api/states/{entity_id} — update entity state\n"
-            "  POST /api/services/{domain}/{service} — call service (e.g. light/turn_on)\n"
-            "  GET /api/history/period/{timestamp} — get state history\n"
-            "  GET /api/logbook/{timestamp} — get logbook entries\n"
-            "  POST /api/events/{event_type} — fire event\n"
-            "  GET /api/config — get configuration"
-        ),
-    },
     "ntfy": {
         "name": "ntfy",
         "auth_type": "none",
@@ -324,7 +308,6 @@ async def execute_api_call(
         "miniflux": ["/v1"],
         "gitea": ["/api/v1", "/api"],
         "linkding": ["/api"],
-        "homeassistant": ["/api"],
     }
     for suf in strip_suffixes.get(preset, []):
         if base_url.endswith(suf):

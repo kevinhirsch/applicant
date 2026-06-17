@@ -18,7 +18,6 @@ export function syncRailSide() {
  * @param {Object} opts
  * @param {Object} opts.documentModule - Document module (for swapSide)
  * @param {Function} opts._closeCompareIfActive
- * @param {Function} opts._deactivateIncognito
  * @param {Object} opts.presetsModule
  * @param {Object} opts.sessionModule
  * @param {Function} opts.el - Element lookup helper
@@ -27,7 +26,7 @@ export function syncRailSide() {
  */
 export function initSidebarLayout(Storage, opts) {
   const {
-    documentModule, _closeCompareIfActive, _deactivateIncognito,
+    documentModule, _closeCompareIfActive,
     presetsModule, sessionModule, el, _defaultChat, _syncResearchIndicator
   } = opts;
 
@@ -62,15 +61,6 @@ export function initSidebarLayout(Storage, opts) {
       document.body.classList.toggle('hamburger-left', !isRight);
       document.body.classList.toggle('hamburger-only', sidebarHidden && railHidden);
       document.body.classList.toggle('sidebar-collapsed', sidebarHidden);
-    }
-    // Keep incognito button clear of hamburger
-    const incogBtn = document.getElementById('incognito-btn');
-    if (incogBtn) {
-      if (isRight && sidebarHidden) {
-        incogBtn.style.right = '48px';
-      } else {
-        incogBtn.style.right = '';
-      }
     }
   }
 

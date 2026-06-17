@@ -175,7 +175,6 @@ class ChatProcessor:
         owner: Optional[str] = None,
         character_name: Optional[str] = None,
         agent_mode: bool = False,
-        incognito: bool = False,
         use_skills: bool = True,
     ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
         """Build the context preface for LLM calls.
@@ -249,7 +248,7 @@ class ChatProcessor:
                     logger.warning("Failed to increment memory uses: %s", _e)
 
             # (skills index injection moved out — see below; only fires in
-            # agent mode so chat mode and incognito stay clean.)
+            # agent mode so chat mode stays clean.)
 
         # RAG: search if enabled and rag_manager available, inject only above threshold
         if use_rag:
@@ -310,11 +309,10 @@ class ChatProcessor:
                     ))
 
         # Skills index — progressive disclosure. Only injected when the
-        # model has the `manage_skills` tool available (agent_mode), and
-        # never in incognito mode (the user has explicitly opted out of
-        # context retention this turn). In plain chat mode the model can't
-        # call the tool anyway, so the index would be noise.
-        if agent_mode and not incognito and use_skills and self.skills_manager:
+        # model has the `manage_skills` tool available (agent_mode). In plain
+        # chat mode the model can't call the tool anyway, so the index would
+        # be noise.
+        if agent_mode and use_skills and self.skills_manager:
             try:
                 idx = self.skills_manager.index_for(owner=owner)
             except Exception as e:

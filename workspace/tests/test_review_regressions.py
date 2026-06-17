@@ -306,7 +306,7 @@ def test_normalize_thinking_handles_lowercase_thinking_process(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_build_chat_context_incognito_does_not_duplicate_current_user_message(monkeypatch):
+async def test_build_chat_context_does_not_duplicate_current_user_message(monkeypatch):
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
@@ -344,7 +344,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
             character_name=None,
         )
 
-    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
+    def fake_add_user_message(sess, chat_handler, preprocessed):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
     async def fake_maybe_compact(sess, endpoint_url, model, messages, headers):
@@ -379,7 +379,6 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
         chat_processor=chat_processor,
         message="hello",
         session_id="s1",
-        incognito=True,
     )
 
     user_messages = [m for m in ctx.messages if m.get("role") == "user" and m.get("content") == "hello"]

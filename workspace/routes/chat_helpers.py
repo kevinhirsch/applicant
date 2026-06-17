@@ -285,14 +285,11 @@ async def preprocess(
     )
 
 
-def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, incognito: bool = False):
-    """Add user message to session history and update session name.
-    In incognito mode, still add to in-memory history (for conversation context)
-    but skip session name update (which would persist)."""
+def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage):
+    """Add user message to session history and update session name."""
     user_meta = {"attachments": preprocessed.attachment_meta} if preprocessed.attachment_meta else None
     sess.add_message(ChatMessage("user", preprocessed.user_content, metadata=user_meta))
-    if not incognito:
-        chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
+    chat_handler.update_session_name_if_needed(sess, preprocessed.text_for_context)
 
 
 def fire_message_event(request, webhook_manager, session_id: str, sess, message: str, compare_mode: bool = False):
@@ -347,7 +344,6 @@ async def build_chat_context(
     use_rag=None,
     use_research=None,
     time_filter=None,
-    incognito: bool = False,
     no_memory: bool = False,
     search_context: str = None,
     compare_mode: bool = False,
@@ -374,30 +370,27 @@ async def build_chat_context(
     )
 
     # Add user message to history
-    add_user_message(sess, chat_handler, preprocessed, incognito=incognito)
+    add_user_message(sess, chat_handler, preprocessed)
 
     # Fire events
-    if not incognito:
-        fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
+    fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve user prefs
     user = get_current_user(request)
     uprefs = load_prefs_for_user(user)
 
     # Memory enabled?
-    mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
+    mem_enabled = not no_memory and uprefs.get("memory_enabled", True)
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
-    skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    skills_enabled = uprefs.get("skills_enabled", True)
     logger.debug(
-        "Memory enabled=%s for user=%s (incognito=%s, no_memory=%s, pref=%s)",
-        mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
+        "Memory enabled=%s for user=%s (no_memory=%s, pref=%s)",
+        mem_enabled, user, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
     )
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito:
-        use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
     skip_web = bool(search_context)
@@ -416,7 +409,6 @@ async def build_chat_context(
         owner=user,
         character_name=preset.character_name,
         agent_mode=agent_mode,
-        incognito=incognito,
         use_skills=skills_enabled,
     )
     if use_rag is not None:
@@ -663,9 +655,8 @@ def save_assistant_response(
     used_memories: list = None,
     do_research: bool = False,
     tool_events: list = None,
-    incognito: bool = False,
 ):
-    """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
+    """Add assistant response to session history."""
     md = dict(last_metrics) if last_metrics else {}
     md["model"] = sess.model
     if character_name:
@@ -693,17 +684,13 @@ def save_assistant_response(
         _content = full_response
     sess.add_message(ChatMessage("assistant", _content, metadata=md))
 
-    if not incognito:
-        from core.database import update_session_last_accessed
-        update_session_last_accessed(session_id)
-        session_manager.save_sessions()
+    from core.database import update_session_last_accessed
+    update_session_last_accessed(session_id)
+    session_manager.save_sessions()
 
     # Return the persisted message's DB id so the stream can wire it onto the
     # freshly-rendered bubble — lets the user edit/delete a just-streamed reply
-    # without reloading. Incognito returns None: those messages are ephemeral,
-    # so we don't hand out an edit/delete handle for them.
-    if incognito:
-        return None
+    # without reloading.
     try:
         _last = sess.history[-1]
         _meta = getattr(_last, "metadata", None)
@@ -726,7 +713,6 @@ def run_post_response_tasks(
     memory_vector,
     webhook_manager,
     *,
-    incognito: bool = False,
     compare_mode: bool = False,
     character_name: str = None,
     agent_rounds: int = 0,
@@ -739,7 +725,7 @@ def run_post_response_tasks(
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
-    if not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
+    if not compare_mode and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
@@ -752,22 +738,21 @@ def run_post_response_tasks(
 
     # Skill extraction from complex agent runs. Only when the user actually
     # chose agent mode — not a chat we auto-escalated for a notes/calendar
-    # intent, and never in incognito/compare.
+    # intent, and never in compare.
     auto_skills_enabled = bool(uprefs.get("auto_skills", True))
     # Quiet by default — full gate/dispatch/start trace runs at DEBUG so
     # users can re-enable diagnostics with LOG_LEVEL=DEBUG when something
     # silently breaks. INFO-level only shows the outcome inside
     # maybe_extract_skill (Auto-extracted / dropped / failed).
     logger.debug(
-        "[skill-extract] gate: extract_skills=%s auto_skills=%s incognito=%s "
+        "[skill-extract] gate: extract_skills=%s auto_skills=%s "
         "compare=%s rounds=%d tools=%d skills_manager=%s",
-        extract_skills, auto_skills_enabled, incognito, compare_mode,
+        extract_skills, auto_skills_enabled, compare_mode,
         agent_rounds, agent_tool_calls, "set" if skills_manager else "MISSING",
     )
     if (
         extract_skills
         and auto_skills_enabled
-        and not incognito
         and not compare_mode
         and (agent_rounds >= 2 or agent_tool_calls >= 2)
     ):
