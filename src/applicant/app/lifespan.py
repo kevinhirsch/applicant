@@ -105,6 +105,26 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("dormant_seed_failed", error=str(exc))
 
+    # 3b) Seed the reserved system campaign so instance-level secrets (the LLM key,
+    #     sandbox tokens) can be sealed in the credential store, whose campaign_id is
+    #     a non-null FK to campaigns. Only on a real DB — in-memory storage has no FK,
+    #     and skipping keeps the hermetic test lane's campaign listings clean. Kept
+    #     inactive so the scheduler never runs it; excluded from campaign listings.
+    try:
+        if getattr(container.storage, "_session", None) is not None:
+            from applicant.core.entities.campaign import Campaign
+            from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
+
+            sid = CampaignId(SYSTEM_CAMPAIGN_ID)
+            if container.storage.campaigns.get(sid) is None:
+                container.storage.campaigns.add(
+                    Campaign(id=sid, name="System (internal)", active=False)
+                )
+                container.storage.commit()
+                log.info("system_campaign_seeded")
+    except Exception as exc:  # pragma: no cover - tolerate first-boot races
+        log.warning("system_campaign_seed_failed", error=str(exc))
+
     # 4) Start the scheduler loop ONLY when enabled (default OFF, hermetic safety).
     if getattr(container.settings, "scheduler_enabled", False) and container.scheduler is not None:
         scheduler_task = asyncio.create_task(_scheduler_loop(container))

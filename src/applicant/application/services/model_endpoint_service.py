@@ -408,11 +408,11 @@ class ModelEndpointService:
     def _seal_key(self, endpoint_id: str, api_key: str, record: dict[str, Any]) -> None:
         ref = f"model.endpoint.{endpoint_id}"
         if self._credentials is not None:
-            from applicant.core.ids import CampaignId
+            from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
             from applicant.ports.driven.credential_store import Credential
 
             self._credentials.store(
-                CampaignId("__system__"),
+                CampaignId(SYSTEM_CAMPAIGN_ID),
                 Credential(tenant_key=ref, username="api_key", secret=api_key),
             )
             record["api_key_ref"] = ref
@@ -425,8 +425,8 @@ class ModelEndpointService:
             return record["api_key"]
         ref = record.get("api_key_ref")
         if ref and self._credentials is not None:
-            from applicant.core.ids import CampaignId
+            from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
 
-            cred = self._credentials.retrieve(CampaignId("__system__"), ref)
+            cred = self._credentials.retrieve(CampaignId(SYSTEM_CAMPAIGN_ID), ref)
             return cred.secret if cred else ""
         return ""
