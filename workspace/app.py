@@ -145,6 +145,7 @@ if AUTH_ENABLED:
         "/api/auth/logout",
         "/api/auth/status",
         "/api/auth/features",
+        "/api/applicant/features",
         "/api/auth/settings",
         "/api/auth/integrations/presets",
         "/api/health",
@@ -671,6 +672,12 @@ app.include_router(setup_vault_routes())
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
+
+# Applicant engine integration (Stage-2 foundation). Exposes the derived
+# Applicant feature-state at /api/applicant/features so the nav activates the
+# engine-backed sections progressively. Read-only; does not touch auth/users.
+from routes.applicant_routes import setup_applicant_routes
+app.include_router(setup_applicant_routes())
 
 # ========= ROUTES (kept in app.py) =========
 

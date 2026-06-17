@@ -37,6 +37,10 @@ services:
       SEARXNG_INSTANCE: ${SEARXNG_INSTANCE:-http://searxng:8080}
       CHROMADB_HOST: ${CHROMADB_HOST:-chromadb}
       CHROMADB_PORT: ${CHROMADB_PORT:-8000}
+      # Stage-2 bridge: where the front-door UI reaches the Applicant ENGINE
+      # (the internal ``api`` service). The UI's engine client + feature layer
+      # read this; default matches the in-network address exposed below.
+      ENGINE_URL: ${ENGINE_URL:-http://api:8000}
       # Stage 1: the UI app keeps its OWN sqlite, persisted on the data volume
       # below (separate from the engine's Postgres). A later stage may converge.
       DATABASE_URL: ${UI_DATABASE_URL:-sqlite:///./data/app.db}

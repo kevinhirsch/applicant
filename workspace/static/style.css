@@ -34456,3 +34456,15 @@ body.theme-frosted .modal {
   background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
   transform: translateX(1px);
 }
+
+/* ── Applicant section gating (Stage-2) ──────────────────────────────────
+   Sections mapped to the Applicant engine activate progressively from
+   /api/applicant/features. Until the engine is configured (or for surfaces
+   that ship present-but-disabled, e.g. Compare) the launcher is greyed and
+   non-interactive but stays VISIBLE — no dead UI that 500s when clicked. */
+.applicant-locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.applicant-locked:hover { opacity: 0.4; }
