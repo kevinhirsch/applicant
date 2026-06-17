@@ -53,6 +53,13 @@ export POSTGRES_USER="${POSTGRES_USER:-applicant}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-applicant}"
 export POSTGRES_DB="${POSTGRES_DB:-applicant}"
 APP_URL="${APP_URL:-http://localhost:8000}"
+# The compose file publishes the front door on ${APP_PORT:-8000}. Derive APP_PORT
+# from APP_URL (unless explicitly set) and EXPORT it so the host port compose
+# publishes, the heartbeat target below, and the persisted .env all agree — without
+# this a custom APP_URL port would be polled while compose still published 8000.
+if [[ -z "${APP_PORT:-}" ]]; then APP_PORT="${APP_URL##*:}"; fi
+[[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+export APP_PORT
 
 for arg in "$@"; do
   case "$arg" in
@@ -120,6 +127,7 @@ POSTGRES_USER=${POSTGRES_USER}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=${POSTGRES_DB}
 APP_URL=${APP_URL}
+APP_PORT=${APP_PORT}
 EOF
   )
 fi
@@ -141,7 +149,7 @@ run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
 # --- 5. Heartbeat: don't claim success until the stack is actually green -----
 if [[ "${APPLY}" -eq 1 ]]; then
-  APP_PORT="${APP_URL##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+  # APP_PORT was derived from APP_URL and exported above (same value compose published).
   heartbeat "${APP_PORT}" || { echo "Install did not come up healthy — see logs above." >&2; exit 1; }
 fi
 

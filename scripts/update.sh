@@ -98,8 +98,17 @@ if [[ "${ROLLBACK}" -eq 1 ]]; then
     exit 1
   fi
   log "Latest backup: ${LATEST}"
-  run docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -f "${LATEST}"
+  # Feed the dump to the container's psql over STDIN (host-side redirect). Do NOT
+  # use `psql -f "${LATEST}"`: -f opens the file INSIDE the postgres container,
+  # where this host path does not exist, so the restore would fail with "No such
+  # file or directory". The backup is written host-side via `pg_dump > file`, so
+  # the restore must read it host-side and pipe it in the same way.
+  if [[ "${APPLY}" -eq 1 ]]; then
+    docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
+      psql -U "${DB_USER}" -d "${DB_NAME}" <"${LATEST}"
+  else
+    echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} <${LATEST}"
+  fi
   log "Rollback complete (or dry-run printed above)."
   exit 0
 fi
@@ -107,6 +116,12 @@ fi
 # --- update path ------------------------------------------------------------
 log "Update flow (sync code → backup → build → migrate → restart)."
 run mkdir -p "${BACKUP_DIR}"
+# Belt-and-suspenders: the default BACKUP_DIR lives inside the repo, and the dumps
+# contain ALL user data. Drop a `*`-ignore so a stray `git add -A` can never commit
+# a database dump even if the repo-root .gitignore lacks a .backups/ entry.
+if [[ "${APPLY}" -eq 1 && ! -e "${BACKUP_DIR}/.gitignore" ]]; then
+  ( umask 077; printf '*\n' >"${BACKUP_DIR}/.gitignore" )
+fi
 
 # --- 0/5 Sync the source checkout -------------------------------------------
 # The whole point of an "update" is to run NEW code. The api image is built from
@@ -161,7 +176,8 @@ log "5/5 Update applied."
 # Heartbeat: verify the stack came back green before declaring success; if not,
 # point the operator at rollback.
 if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" ]]; then
-  APP_PORT="${APP_URL:-}"; APP_PORT="${APP_PORT##*:}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
+  # Prefer APP_PORT from .env (the value compose publishes); else derive from APP_URL.
+  APP_PORT="${APP_PORT:-${APP_URL##*:}}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
   if ! heartbeat "${APP_PORT}"; then
     echo "Update did not come up healthy. Roll back with: scripts/update.sh --rollback --apply" >&2
     exit 1

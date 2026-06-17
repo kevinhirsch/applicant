@@ -146,6 +146,13 @@ whiptail --title "Confirm" --yesno \
   SSH keys: $([[ -n "$SSHKEYS_FILE" ]] && echo "auto-imported" || echo "none")
 and deploy ${APP_NAME} from ${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}?" 14 72 || die "Cancelled."
 
+# Guard: a pre-existing VMID would make `qm create` fail (or a stale lock can hang a
+# later step). Fail fast here — BEFORE any side effects (enabling snippets storage,
+# writing per-VMID user-data, downloading the image) — with a clear recovery hint.
+if qm status "$VMID" >/dev/null 2>&1; then
+  die "VM ${VMID} already exists. Remove it first:  qm stop ${VMID} 2>/dev/null; qm destroy ${VMID} --purge"
+fi
+
 # ---------------------------------------------------------------------------
 # Snippets storage (for cloud-init custom user-data); auto-enable on 'local' if needed
 # ---------------------------------------------------------------------------
@@ -158,7 +165,7 @@ else
   pvesm set local --content "${CUR},snippets" >/dev/null 2>&1 || die "Could not enable snippets on 'local'. Enable a snippets storage manually."
   SNIP_STORE="local"
 fi
-SNIP_DIR="$(pvesh get /storage/${SNIP_STORE} --output-format json 2>/dev/null | grep -oP '"path"\s*:\s*"\K[^"]+' || echo "/var/lib/vz")"
+SNIP_DIR="$(pvesh get "/storage/${SNIP_STORE}" --output-format json 2>/dev/null | grep -oP '"path"\s*:\s*"\K[^"]+' || echo "/var/lib/vz")"
 mkdir -p "${SNIP_DIR}/snippets"
 USERDATA="${SNIP_DIR}/snippets/applicant-${VMID}.yaml"
 
@@ -186,12 +193,6 @@ msg_ok "Cloud-init user-data written: ${SNIP_STORE}:snippets/applicant-${VMID}.y
 # ---------------------------------------------------------------------------
 # Download the Ubuntu Server 24.04 LTS cloud image
 # ---------------------------------------------------------------------------
-# Guard: a pre-existing VMID would make qm create fail (or a stale lock can hang
-# a later step) — fail fast with a clear recovery hint instead.
-if qm status "$VMID" >/dev/null 2>&1; then
-  die "VM ${VMID} already exists. Remove it first:  qm stop ${VMID} 2>/dev/null; qm destroy ${VMID} --purge"
-fi
-
 IMG_TMP="$(mktemp --suffix=.img)"
 msg_info "Downloading Ubuntu Server 24.04 LTS cloud image…"
 wget -qO "$IMG_TMP" "$CLOUDIMG_URL" || die "Cloud image download failed: $CLOUDIMG_URL"
