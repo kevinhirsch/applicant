@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""firehouse-models — install and manage local Ollama models for Firehouse.
+
+A thin, Firehouse-aware wrapper around the `ollama` CLI. It targets the same
+Ollama that Firehouse is configured to use (read from OLLAMA_BASE_URL / OLLAMA_URL
+in .env, falling back to localhost:11434), so the models you manage here are the
+ones that show up in Firehouse's model picker.
+
+    firehouse models list                 # installed local models
+    firehouse models pull llama3.1        # install / update a model
+    firehouse models pull qwen2.5:7b      # a specific tag
+    firehouse models remove llama3.1      # uninstall a model
+    firehouse models running              # models currently loaded in memory
+    firehouse models info llama3.1        # model details (params, license, …)
+    firehouse models endpoint             # show which Ollama this targets
+
+Run `sudo firehouse ollama-setup` first if Ollama isn't installed yet. Pulled
+models appear in Firehouse automatically (it rescans the Ollama endpoint); hit
+"Refresh" in the model picker if you don't see one immediately.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from urllib.parse import urlparse
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _read_env(name: str) -> str | None:
+    """Look up a variable from the process env, then from .env."""
+    if os.environ.get(name):
+        return os.environ[name]
+    env = REPO_ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if line.startswith(f"{name}=") and not line.startswith("#"):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
+def _ollama_host() -> str:
+    """Resolve the host:port the `ollama` CLI should talk to, derived from the
+    endpoint Firehouse uses. host.docker.internal / 0.0.0.0 map to localhost
+    because this CLI runs on the host, not inside the container."""
+    base = _read_env("OLLAMA_BASE_URL") or _read_env("OLLAMA_URL")
+    if not base:
+        return "localhost:11434"
+    parsed = urlparse(base if "//" in base else f"http://{base}")
+    host = parsed.hostname or "localhost"
+    if host in ("host.docker.internal", "0.0.0.0"):
+        host = "localhost"
+    return f"{host}:{parsed.port or 11434}"
+
+
+def _responding(host: str) -> bool:
+    try:
+        urllib.request.urlopen(f"http://{host}/api/tags", timeout=3).read(1)
+        return True
+    except Exception:
+        return False
+
+
+def _ollama(args: list[str], host: str) -> int:
+    """Run an ollama subcommand against `host`, streaming its output."""
+    if not shutil.which("ollama"):
+        sys.exit("ollama is not installed. Run:  sudo firehouse ollama-setup")
+    env = {**os.environ, "OLLAMA_HOST": host}
+    return subprocess.run(["ollama", *args], env=env).returncode
+
+
+def _note_picker() -> None:
+    print("\n(Models appear in Firehouse automatically — hit Refresh in the "
+          "model picker if you don't see a change.)")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="firehouse models",
+        description="Install and manage local Ollama models for Firehouse.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", help="list installed local models")
+    sub.add_parser("running", help="models currently loaded in memory")
+    sub.add_parser("endpoint", help="show which Ollama this targets")
+    p_pull = sub.add_parser("pull", help="install / update a model")
+    p_pull.add_argument("model", help="model name, e.g. llama3.1 or qwen2.5:7b")
+    p_rm = sub.add_parser("remove", help="uninstall a model")
+    p_rm.add_argument("model", help="model name to remove")
+    p_info = sub.add_parser("info", help="show model details")
+    p_info.add_argument("model", help="model name to inspect")
+    args = parser.parse_args(argv)
+
+    host = _ollama_host()
+
+    if args.cmd == "endpoint":
+        base = _read_env("OLLAMA_BASE_URL") or _read_env("OLLAMA_URL")
+        print(f"Ollama CLI target : {host}")
+        print(f"Firehouse endpoint: {base or '(default — http://host.docker.internal:11434/v1)'}")
+        print(f"Reachable         : {'yes' if _responding(host) else 'no'}")
+        return 0
+
+    if not _responding(host):
+        sys.exit(f"Ollama not reachable at {host}. Is it running? "
+                 f"Try:  sudo firehouse ollama-setup")
+
+    if args.cmd == "list":
+        return _ollama(["list"], host)
+    if args.cmd == "running":
+        return _ollama(["ps"], host)
+    if args.cmd == "info":
+        return _ollama(["show", args.model], host)
+    if args.cmd == "pull":
+        rc = _ollama(["pull", args.model], host)
+        if rc == 0:
+            _note_picker()
+        return rc
+    if args.cmd == "remove":
+        rc = _ollama(["rm", args.model], host)
+        if rc == 0:
+            _note_picker()
+        return rc
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
