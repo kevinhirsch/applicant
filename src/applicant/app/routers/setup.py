@@ -47,6 +47,11 @@ class ChannelsIn(BaseModel):
     apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
 
 
+class EndpointModelIn(BaseModel):
+    endpoint_id: str
+    model: str
+
+
 def _status_dict(svc) -> dict:
     s: WizardStatus = svc.status()
     return {
@@ -78,6 +83,35 @@ def configure_llm(body: LLMSettingsIn, svc=Depends(get_setup_service)) -> None:
                 context_window=body.context_window,
             )
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/llm/from-endpoint", status_code=status.HTTP_204_NO_CONTENT)
+def configure_llm_from_endpoint(
+    body: EndpointModelIn, container=Depends(get_container)
+) -> None:
+    """Set the chat model from a saved endpoint + chosen model (setup AI section).
+
+    The browser sends only the endpoint id + model name; the server resolves the
+    sealed API key for that endpoint and wires it into the LLM ladder, so the model
+    the user picks on the setup page is the one the app actually uses.
+    """
+    svc = container.setup_service
+    ep_svc = container.model_endpoint_service
+
+    def _resolve() -> dict | None:
+        rec = ep_svc.get_endpoint(body.endpoint_id)
+        if rec is None:
+            return None
+        return {
+            "base_url": rec.get("base_url", ""),
+            "api_key": ep_svc._resolve_key(rec),
+            "name": rec.get("name", ""),
+        }
+
+    try:
+        svc.configure_llm_from_endpoint(endpoint_resolver=_resolve, model=body.model)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -23,6 +23,7 @@ from applicant.app.routers import (
     documents,
     feedback,
     fonts,
+    model_endpoints,
     onboarding,
     outcomes,
     pending_actions,
@@ -34,8 +35,9 @@ from applicant.app.routers import (
 
 
 def register_routers(app: FastAPI) -> None:
-    # setup first (the LLM gate); ui is ungated (opens the gate).
+    # setup first (the LLM gate); ui + model-endpoints are ungated (they open the gate).
     app.include_router(setup.router)
+    app.include_router(model_endpoints.router)
     app.include_router(ui.router)
     # gated driving-port routers
     app.include_router(campaigns.router)

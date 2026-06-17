@@ -23,10 +23,16 @@ def test_app_constructs_and_healthz(client):
 
 
 @pytest.mark.integration
-def test_wizard_static_resolves(client):
-    res = client.get("/static/applicant/wizard.html")
+def test_setup_page_resolves(client):
+    # The root + /wizard routes serve the settings page (setup folded into it).
+    res = client.get("/static/applicant/setup.html")
     assert res.status_code == 200
-    assert "Applicant setup" in res.text
+    assert "settings-modal" in res.text
+    # The clean routes serve the same page.
+    for route in ("/", "/wizard", "/setup"):
+        r = client.get(route)
+        assert r.status_code == 200
+        assert "settings-modal" in r.text
 
 
 @pytest.mark.integration

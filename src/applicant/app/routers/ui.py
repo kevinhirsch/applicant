@@ -1,9 +1,11 @@
 """UI router (FR-UI-1/2/5).
 
-Serves the wizard/digest/review HTML (the wizard starts with the LLM-settings
-gate) and exposes the dormant-surface flags so the frontend can gray unwired
-surfaces. The wizard is NOT gated (it is how the user opens the gate); digest and
-review are dormant placeholders.
+Serves the app's HTML surfaces and exposes the dormant-surface flags so the
+frontend can gray unwired surfaces. The root and ``/wizard`` routes serve the
+settings page, which on first run opens itself to the setup sections and keeps the
+chat surface locked until the model is connected. None of these HTML routes are
+gated (they are how the user opens the gate); digest and review are dormant
+placeholders.
 """
 
 from __future__ import annotations
@@ -26,16 +28,23 @@ def _screen(name: str, container) -> Path:
 
 @router.get("/", response_class=HTMLResponse)
 def root(container=Depends(get_container)):
-    """Entry point -> the OOBE wizard (first UI deliverable, FR-UI-5)."""
+    """Entry point -> the settings page (auto-opens to setup on first run)."""
     return wizard(container)
 
 
 @router.get("/wizard", response_class=HTMLResponse)
 def wizard(container=Depends(get_container)):
-    path = _screen("wizard.html", container)
+    """The settings page; on first run it opens to the setup sections (FR-UI-5)."""
+    path = _screen("setup.html", container)
     if path.is_file():
         return FileResponse(str(path))
-    return HTMLResponse("<h1>Applicant setup wizard</h1>", status_code=200)
+    return HTMLResponse("<h1>Applicant settings</h1>", status_code=200)
+
+
+@router.get("/setup", response_class=HTMLResponse)
+def setup(container=Depends(get_container)):
+    """Explicit alias for the settings/setup page."""
+    return wizard(container)
 
 
 @router.get("/digest", response_class=HTMLResponse)

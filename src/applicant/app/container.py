@@ -115,6 +115,8 @@ class Container:
     submission_service: Any = None
     prefill_service: Any = None
     material_service: Any = None
+    # Setup-page model sources (add a local/cloud endpoint; auto-list its models).
+    model_endpoint_service: Any = None
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
@@ -241,6 +243,14 @@ def build_container(settings: Settings | None = None) -> Container:
                 model=settings.llm_model,
             )
         )
+
+    # Setup-page model sources: add a local/cloud endpoint and auto-list its models.
+    from applicant.application.services.model_endpoint_service import ModelEndpointService
+
+    model_endpoint_service = ModelEndpointService(
+        config_store=config_store,
+        credentials=credentials,
+    )
 
     llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
     # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
@@ -657,6 +667,7 @@ def build_container(settings: Settings | None = None) -> Container:
         submission_service=submission_service,
         prefill_service=prefill_service,
         material_service=material_service,
+        model_endpoint_service=model_endpoint_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
         request_services_factory=request_services_factory,
