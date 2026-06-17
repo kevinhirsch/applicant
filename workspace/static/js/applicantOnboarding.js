@@ -162,6 +162,7 @@ function _buildOverlay() {
       <div class="admin-tabs" id="ao-rail" role="list" aria-label="Setup progress"></div>
       <div class="modal-body" id="ao-body"></div>
       <div class="ao-foot" id="ao-foot"></div>
+      <div class="ao-nav" id="ao-nav"></div>
     </div>`;
   // Swallow click-throughs to the app behind the overlay (no dismiss-on-backdrop).
   o.addEventListener('click', (ev) => { if (ev.target === o) ev.stopPropagation(); });
@@ -202,13 +203,16 @@ function _err(html) {
 // the wizard's tooltips actually show on hover and look identical to the app.
 // `role="img"` + the `title`/`aria-label` make the help text reachable to AT too.
 function _tip(text) {
-  return `<span class="preset-hint-icon ao-tip" role="img" title="${esc(text)}" aria-label="${esc(text)}" tabindex="0">?</span>`;
+  // data-tip drives the immediate CSS hover/focus bubble; aria-label keeps it
+  // reachable to assistive tech. (No native `title` — it's slow + would double up.)
+  return `<span class="preset-hint-icon ao-tip" role="img" data-tip="${esc(text)}" aria-label="${esc(text)}" tabindex="0">?</span>`;
 }
 
 // ── render the active step ──────────────────────────────────────────────────
 
 async function _renderStep() {
   _renderRail();
+  _renderNav();
   const step = STEPS[_stepIndex];
   // Whenever we render anything other than the LLM step, return the shared
   // endpoint manager to its Settings home so it isn't left detached in the DOM.
@@ -227,17 +231,43 @@ async function _renderStep() {
 }
 
 async function _advanceAndContinue(stepKey) {
-  // Mark the engine step complete (best-effort) then move to the next incomplete.
+  // Mark the engine step complete (best-effort) then move forward (linearly).
   try { _status = await _post(`${SETUP}/advance/${stepKey}`); }
   catch { await _refreshStatus().catch(() => {}); }
-  await _goToFirstIncompleteOrFinish();
+  await _nextStep();
 }
 
-async function _goToFirstIncompleteOrFinish() {
+// Linear navigation. The user can ALWAYS move forward (Skip never blocks) and
+// ALWAYS go Back to correct a previous step. Completing a step is NOT required to
+// advance — the engine still gates real automated work server-side until setup is
+// actually done, so letting the user roam the wizard is safe.
+async function _nextStep() {
   await _refreshStatus().catch(() => {});
-  if (STEPS.every((s) => s.done(_status))) { await _finish(); return; }
-  _stepIndex = _firstIncompleteStep();
+  if (_stepIndex >= STEPS.length - 1) { await _finish(); return; }
+  _stepIndex += 1;
   await _renderStep();
+}
+
+async function _prevStep() {
+  if (_stepIndex <= 0) return;
+  _stepIndex -= 1;
+  await _renderStep();
+}
+
+// Persistent Back / Skip bar shown on every step so no step can trap the user.
+function _renderNav() {
+  const nav = document.getElementById('ao-nav');
+  if (!nav) return;
+  const last = _stepIndex >= STEPS.length - 1;
+  nav.innerHTML =
+    (_stepIndex > 0
+      ? '<button type="button" class="cal-btn" id="ao-back">← Back</button>'
+      : '<span></span>') +
+    `<button type="button" class="cal-btn" id="ao-skip">${last ? 'Finish' : 'Skip for now →'}</button>`;
+  const back = document.getElementById('ao-back');
+  if (back) back.onclick = () => { if (!_busy) _prevStep(); };
+  const skip = document.getElementById('ao-skip');
+  if (skip) skip.onclick = () => { if (!_busy) _nextStep(); };
 }
 
 // ── STEP 1: LLM ─────────────────────────────────────────────────────────────
@@ -347,8 +377,8 @@ async function _renderChannels() {
   let cur = {};
   try { cur = await _fetchJSON(`${SETUP}/channels`); } catch { cur = {}; }
   _setBody(`
-    <h2 class="ao-step-title">Notifications ${_tip('Applicant needs at least one way to reach you — Discord and/or email — so it can send your daily digest and ask for approvals. This step is required.')}</h2>
-    <p class="ao-step-desc">Add at least one channel so Applicant can send you updates and approval requests.</p>
+    <h2 class="ao-step-title">Notifications ${_tip('How Applicant reaches you — Discord and/or email — for your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
+    <p class="ao-step-desc">Add a Discord webhook and/or an email address so Applicant can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
     <div class="admin-card">
       <div class="settings-col">
         <div class="settings-row">
@@ -363,8 +393,24 @@ async function _renderChannels() {
           </label>
           <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
         </div>
-        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Both optional individually — add at least one.</div>
+        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add either or both — or skip for now.</div>
       </div>
+    </div>
+    <div class="admin-card ao-help">
+      <h2>How to set these up</h2>
+      <p style="margin:4px 0 2px;"><strong>Discord webhook</strong></p>
+      <ol style="margin:0 0 8px 18px;padding:0;">
+        <li>In your Discord server: <strong>Server Settings → Integrations → Webhooks</strong>.</li>
+        <li><strong>New Webhook</strong>, choose the channel for your updates, then <strong>Copy Webhook URL</strong>.</li>
+        <li>Paste it into the Discord webhook field above.</li>
+      </ol>
+      <p style="margin:4px 0 2px;"><strong>Email / SMTP</strong> — an Apprise-style URL:</p>
+      <ul style="margin:0 0 6px 18px;padding:0;">
+        <li>Gmail: <code>mailto://you:APP_PASSWORD@gmail.com</code> — use a Google <em>App Password</em>, not your login password.</li>
+        <li>Other SMTP: <code>mailtos://user:pass@smtp.yourhost.com:587</code></li>
+        <li>Add several by separating them with commas.</li>
+      </ul>
+      <p style="margin:0;opacity:0.6;">Full URL formats: github.com/caronc/apprise/wiki</p>
     </div>
     <div class="admin-card">
       <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Test</h2>
@@ -1066,6 +1112,8 @@ async function _finish() {
   _setBody('<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p>Applicant is ready to start working for you.</p></div>');
   _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
   document.getElementById('ao-finish').onclick = _dismiss;
+  const nav = document.getElementById('ao-nav');
+  if (nav) nav.innerHTML = '';
   _renderRail();
 }
 
