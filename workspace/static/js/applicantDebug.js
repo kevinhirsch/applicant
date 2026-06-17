@@ -101,7 +101,7 @@ function _ensureModalEl() {
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
-          Campaign
+          Job search
           <select id="applicant-debug-campaign" style="min-width:180px;"></select>
         </label>
         <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
@@ -163,7 +163,7 @@ async function _loadCampaigns() {
   const campaigns = (data && data.campaigns) || [];
   sel.innerHTML = campaigns.length
     ? campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')
-    : '<option value="">No campaigns yet</option>';
+    : '<option value="">No job searches yet</option>';
   if (!_campaignId && campaigns.length) _campaignId = campaigns[0].id;
   if (_campaignId) sel.value = _campaignId;
   return data && data.engine_available !== false;
@@ -194,7 +194,7 @@ async function _renderTab() {
 
 function _needCampaign() {
   if (!_campaignId) {
-    _body().innerHTML = _empty('Pick a campaign above to see its activity.');
+    _body().innerHTML = _empty('Pick a job search above to see its activity.');
     return false;
   }
   return true;
@@ -205,7 +205,7 @@ async function _renderActivity() {
   const data = await _fetchJSON(`${ADMIN}/history/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const apps = data.applications || [];
-  if (!apps.length) { _body().innerHTML = _empty('No applications recorded for this campaign yet.'); return; }
+  if (!apps.length) { _body().innerHTML = _empty('No applications recorded for this job search yet.'); return; }
   const rows = apps.map((a) => {
     const id = a.application_id || a.id || '';
     const title = a.role_name || a.job_title || id || 'Application';
@@ -285,7 +285,7 @@ async function _renderVariants() {
   const data = await _fetchJSON(`${ADMIN}/variants/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const variants = data.variants || [];
-  if (!variants.length) { _body().innerHTML = _empty('No resume variants built for this campaign yet.'); return; }
+  if (!variants.length) { _body().innerHTML = _empty('No resume variants built for this job search yet.'); return; }
   _body().innerHTML = variants.map((v) => {
     const id = v.variant_id || v.id || 'Variant';
     const scores = v.fit_scores || {};
@@ -355,7 +355,7 @@ async function _renderSources() {
   const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const items = data.items || [];
-  if (!items.length) { _body().innerHTML = _empty('No job-discovery sources available for this campaign.'); return; }
+  if (!items.length) { _body().innerHTML = _empty('No job-discovery sources available for this job search.'); return; }
   _body().innerHTML = items.map((s) => {
     const ys = s.yield_stats || {};
     const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
