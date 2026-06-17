@@ -374,3 +374,46 @@ def test_missing_campaign_is_409_on_write():
     client = _make_client(handler)
     resp = client.post("/api/applicant/memory/attributes", json={"name": "A", "value": "B"})
     assert resp.status_code == 409
+
+
+# Regression (engine-down during implicit campaign resolution): when no explicit
+# campaign_id is given, the proxy must resolve one via GET /api/campaigns. If the
+# engine is unreachable that lookup raises a transport-level EngineError. It used
+# to escape UNCAUGHT (it happens before the per-call try/except), so the proxy
+# 500'd with a leaked traceback instead of degrading. It must now map to a clean
+# 503 like every other engine call, and the engine 500-detail must not leak.
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("GET", "/api/applicant/memory/attributes", None),
+        ("GET", "/api/applicant/memory/learning", None),
+        ("GET", "/api/applicant/memory/criteria", None),
+        ("POST", "/api/applicant/memory/attributes", {"name": "A", "value": "B"}),
+        ("PUT", "/api/applicant/memory/criteria", {"titles": ["SWE"]}),
+        ("POST", "/api/applicant/memory/learning/accept", None),
+    ],
+)
+def test_engine_down_during_resolve_degrades_to_503(method, path, body):
+    def handler(request):
+        # Engine fully offline: every request (incl. /api/campaigns + /healthz)
+        # is a connection error, so campaign resolution itself raises.
+        raise httpx.ConnectError("refused", request=request)
+
+    client = _make_client(handler)
+    resp = client.request(method, path, json=body)
+    assert resp.status_code == 503
+    # No raw-500 traceback / engine internals leaked.
+    assert "Traceback" not in resp.text
+
+
+def test_status_never_500s_when_engine_down():
+    """The readiness probe degrades to a clean 200 not-ready, never a 500."""
+
+    def handler(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/status")
+    assert resp.status_code == 200
+    assert resp.json()["ready"] is False
+    assert resp.json()["engine_available"] is False

@@ -223,3 +223,76 @@ def test_requires_authentication(monkeypatch):
 
     resp = client.get("/api/applicant/documents/library")
     assert resp.status_code == 401
+
+
+# ── privilege gate (writes require can_use_documents) ────────────────────────
+
+
+class _PrivAuthManager:
+    """Minimal AuthManager stand-in: a resolved user whose privileges are fixed.
+
+    Mirrors the real ``require_privilege`` contract (``get_privileges(user)``).
+    """
+
+    is_configured = True
+
+    def __init__(self, privileges):
+        self._privs = privileges
+
+    def get_privileges(self, _user):
+        return dict(self._privs)
+
+
+def _make_priv_client(privileges, *, user="restricted"):
+    """App where the user is authenticated but has the given privilege map."""
+    app = FastAPI()
+    app.state.auth_manager = _PrivAuthManager(privileges)
+
+    @app.middleware("http")
+    async def _set_user(request: Request, call_next):
+        request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(setup_applicant_documents_routes())
+    return TestClient(app)
+
+
+def test_document_writes_require_can_use_documents(monkeypatch):
+    """A user without ``can_use_documents`` is blocked from every write, and the
+    engine is never contacted — matching the native documents surface, so the
+    privilege gate can't be bypassed through the proxy."""
+
+    def _boom(*a, **k):  # pragma: no cover - must not run when forbidden
+        raise AssertionError("engine must not be called when privilege is denied")
+
+    monkeypatch.setattr(docs_routes, "ApplicantEngineClient", _boom)
+    client = _make_priv_client({"can_use_documents": False})
+
+    writes = [
+        ("POST", "/api/applicant/documents/doc-1/turn", {"instruction": "x"}),
+        ("POST", "/api/applicant/documents/doc-1/approve", None),
+        ("POST", "/api/applicant/documents/doc-1/decline", None),
+        ("POST", "/api/applicant/documents/variants/var-1/approve", None),
+        ("POST", "/api/applicant/documents/aggressiveness", {"aggressiveness": 30}),
+    ]
+    for method, path, body in writes:
+        resp = client.request(method, path, json=body)
+        assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"
+
+
+def test_document_reads_allowed_without_write_privilege(monkeypatch):
+    """Reads (and opening a review session) stay available to a user who only
+    lacks the write privilege — the gate applies to mutations, not viewing."""
+    _patch_engine(monkeypatch, result={"application_id": "app-1", "items": []})
+    client = _make_priv_client({"can_use_documents": False})
+    assert client.get("/api/applicant/documents/library").status_code == 200
+    assert client.get("/api/applicant/documents/applications/app-1").status_code == 200
+
+
+def test_document_writes_allowed_with_privilege(monkeypatch):
+    """With the privilege granted, writes go through to the engine as before."""
+    _patch_engine(monkeypatch, result={"id": "doc-1", "approved": True})
+    client = _make_priv_client({"can_use_documents": True})
+    resp = client.post("/api/applicant/documents/doc-1/approve")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("approve_document", ("doc-1",))
