@@ -88,6 +88,7 @@ class AgentLoop:
         sandbox=None,
         orchestrator=None,
         setup_service=None,
+        research_service=None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -107,6 +108,11 @@ class AgentLoop:
         self._final_approval = final_approval_service
         self._sandbox = sandbox
         self._orch = orchestrator
+        # Lane B (Stage 2.5): the CAPPED deep-research tool the agent escalates to
+        # on a genuine company/role knowledge gap while tailoring materials. Optional
+        # (None in legacy/unit tests) and self-gating (skips when the workspace
+        # callback channel is off), so wiring it never changes existing behavior.
+        self._research = research_service
         # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. No NEW automated work
         # (discovery / digest delivery / pipeline starts) may run until onboarding is
         # complete AND channels are configured AND the LLM gate is open. Enforced here
@@ -634,6 +640,14 @@ class AgentLoop:
         jd_terms = self._jd_terms(posting)
         true_source = self._true_source(campaign, app, posting)
         summary: dict[str, Any] = {}
+        # AUTO-ESCALATE (Lane B): on a genuine company/role knowledge gap, escalate
+        # to the capped deep-research tool to better tailor the materials. The tool
+        # dedupes + caches per campaign and self-gates on budget / channel
+        # availability, so this is free on re-use and a no-op when research is off.
+        research_ctx = self._maybe_research_company(campaign, posting)
+        if research_ctx:
+            true_source = f"{true_source}\n\n{research_ctx}" if true_source else research_ctx
+            summary["research_used"] = True
         try:
             sel = self._material.select_or_generate(
                 campaign.id, app.posting_id, jd_terms, true_source, application_id=app.id
@@ -671,6 +685,38 @@ class AgentLoop:
         # pipeline's re-check-on-re-drive means an approval actually advances the flow.
         summary["review_approved"] = self._review_approved(app)
         return summary
+
+    def _maybe_research_company(self, campaign, posting) -> str:
+        """Escalate to the capped deep-research tool for a company/role gap (Lane B).
+
+        Returns a short context block (research summary + key findings) to fold into
+        material generation, or "" when research is not wired, the channel is off,
+        the budget is spent, there is no company to research, or the run fails. The
+        ResearchService itself enforces the per-campaign cap + dedupe + cache, so a
+        repeated company is served free and a runaway can't burn unbounded runs.
+        """
+        if self._research is None or posting is None:
+            return ""
+        company = (getattr(posting, "company", "") or "").strip()
+        if not company:
+            return ""
+        role = (getattr(posting, "title", "") or "").strip()
+        query = f"What should a job applicant know about {company} to tailor their application?"
+        try:
+            report = self._research.research(
+                campaign.id,
+                query,
+                company=company,
+                role=role,
+            )
+        except Exception:  # pragma: no cover - service degrades, never raises
+            return ""
+        if report is None or not (report.summary or report.key_findings):
+            return ""
+        lines = [f"[Company research — {company}]", report.summary.strip()]
+        for finding in report.key_findings[:6]:
+            lines.append(f"- {finding}")
+        return "\n".join(p for p in lines if p).strip()
 
     def _link_variant(self, app: Application, variant_id) -> None:
         """Persist the chosen/generated resume variant on the application row (#1/#4)."""

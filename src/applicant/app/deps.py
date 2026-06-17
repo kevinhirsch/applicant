@@ -122,6 +122,15 @@ def get_tool_registry(container: Container = Depends(get_container)):
     return container.tool_registry
 
 
+def get_research_service(container: Container = Depends(get_container)):
+    """Lane B (Stage 2.5): the capped deep-research tool (container singleton).
+
+    Singleton (not per-request) so its per-campaign budget + dedupe cache persist
+    across requests — re-running an identical query is free and the cap holds.
+    """
+    return container.research_service
+
+
 # --- per-request storage-bound services (CONC-REQ-1) --------------------------
 def get_material_service(
     container: Container = Depends(get_container),

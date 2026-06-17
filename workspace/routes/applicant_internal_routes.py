@@ -271,6 +271,58 @@ def detect_interviews(events: list[dict]) -> list[dict]:
     return out
 
 
+# --- Lane B (research) bounds + helpers ----------------------------------
+#: Default / floor / ceiling for the synchronous research run's max_time (sec).
+_RESEARCH_DEFAULT_MAX_TIME = 180
+_RESEARCH_MIN_MAX_TIME = 30
+_RESEARCH_MAX_MAX_TIME = 600
+#: Bound the returned report so the engine never gets an unbounded payload.
+_RESEARCH_MAX_REPORT_CHARS = 60_000
+_RESEARCH_MAX_SOURCES = 50
+_RESEARCH_MAX_KEY_FINDINGS = 12
+
+
+def _research_handler(request: Request):
+    """The workspace's native deep-research handler, or None when unavailable.
+
+    Prefers ``app.state.research_handler`` (wired in app.py). Tests inject a fake
+    handler the same way, so the route is hermetic without booting the app.
+    """
+    return getattr(getattr(request.app, "state", None), "research_handler", None)
+
+
+def _resolve_research_endpoint_safe():
+    """Resolve (url, model, headers) for research via the same chain as the
+    panel route, or None when nothing is configured. Never raises."""
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+    except Exception:
+        return None
+    for tier in ("research", "utility", "default", "chat"):
+        try:
+            url, model, headers = resolve_endpoint(tier)
+        except Exception:
+            continue
+        if url:
+            return url, model, headers
+    return None
+
+
+def _research_key_findings(findings) -> list:
+    """Distill per-source findings into a short list of key points."""
+    out: list = []
+    for f in findings or []:
+        if not isinstance(f, dict):
+            continue
+        point = (f.get("summary") or f.get("evidence") or "").strip()
+        if not point:
+            continue
+        out.append(point[:500])
+        if len(out) >= _RESEARCH_MAX_KEY_FINDINGS:
+            break
+    return out
+
+
 def _read_owner_calendar_events(owner: str) -> list[dict]:
     """Owner-scoped read of upcoming (next ~30d) events from the native calendar.
 
@@ -358,13 +410,114 @@ def setup_applicant_internal_routes() -> APIRouter:
 
     @router.post("/research")
     async def research(request: Request):
-        """LANE B placeholder — run deep research for the owner.
+        """LANE B — run the workspace's native deep-research for the owner.
 
-        Contract: owner-scoped; body ``{"query": str, ...}`` -> a research run /
-        report handle. 501 until lane B lands.
+        Synchronous "run and return the report" call for the engine: the engine
+        hits this when its autonomous agent (or the user) needs to understand a
+        company/role to tailor materials. Owner-scoped via ``internal_owner`` and
+        bounded (timeout + report length) so a runaway run can't wedge the
+        engine's request.
+
+        Body: ``{"query": str, "company"?: str, "role"?: str, "context"?: str,
+        "max_time"?: int}``. The optional fields are folded into the research
+        query so the report is tailored to the application.
+
+        Returns a structured report:
+        ``{"query", "summary", "key_findings": [...], "sources": [{url,title}],
+        "owner", "truncated": bool}``.
         """
         verify_internal_token(request)
-        raise HTTPException(status_code=501, detail="research not implemented (lane B)")
+        owner = internal_owner(request)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        query = (body.get("query") or "").strip()
+        if not query:
+            raise HTTPException(status_code=400, detail="research requires a non-empty 'query'")
+
+        company = (body.get("company") or "").strip()
+        role = (body.get("role") or "").strip()
+        context = (body.get("context") or "").strip()
+
+        # Bound the run: clamp the caller's max_time into a safe window so a
+        # synchronous engine request can never hang on an unbounded research run.
+        try:
+            max_time = int(body.get("max_time") or _RESEARCH_DEFAULT_MAX_TIME)
+        except (TypeError, ValueError):
+            max_time = _RESEARCH_DEFAULT_MAX_TIME
+        max_time = max(_RESEARCH_MIN_MAX_TIME, min(max_time, _RESEARCH_MAX_MAX_TIME))
+
+        # Fold the optional application context into the research query so the
+        # report is tailored to the role/company the engine is applying to.
+        tailored = query
+        prefix_bits = []
+        if company:
+            prefix_bits.append(f"company: {company}")
+        if role:
+            prefix_bits.append(f"role: {role}")
+        if prefix_bits:
+            tailored = f"{query} ({'; '.join(prefix_bits)})"
+        if context:
+            tailored = f"{tailored}\n\nAdditional context: {context}"
+
+        handler = _research_handler(request)
+        if handler is None:
+            # Research backing not wired (e.g. bare app). Degrade, don't 500.
+            raise HTTPException(status_code=503, detail="research backing unavailable")
+
+        endpoint = _resolve_research_endpoint_safe()
+        if endpoint is None:
+            raise HTTPException(
+                status_code=503,
+                detail="no LLM endpoint configured for research",
+            )
+        ep_url, ep_model, ep_headers = endpoint
+
+        # Run synchronously, capturing the researcher so we can extract sources.
+        entry: dict = {}
+        try:
+            report = await handler.call_research_service(
+                tailored,
+                ep_url,
+                ep_model,
+                max_time=max_time,
+                _task_entry=entry,
+                llm_headers=ep_headers,
+            )
+        except Exception as exc:  # never leak the engine a 500 from a flaky run
+            logger.warning("internal research run failed: %s", exc)
+            raise HTTPException(status_code=502, detail="research run failed") from exc
+
+        report = report or ""
+        truncated = False
+        if len(report) > _RESEARCH_MAX_REPORT_CHARS:
+            report = report[:_RESEARCH_MAX_REPORT_CHARS]
+            truncated = True
+
+        # Sources: prefer the researcher's deduplicated findings.
+        sources: list = []
+        researcher = entry.get("researcher")
+        findings = getattr(researcher, "findings", None) if researcher else None
+        if findings:
+            try:
+                sources = handler._extract_sources(findings)
+            except Exception:
+                sources = []
+        sources = sources[:_RESEARCH_MAX_SOURCES]
+
+        return {
+            "query": query,
+            "summary": report,
+            "key_findings": _research_key_findings(findings),
+            "sources": sources,
+            "owner": owner or None,
+            "truncated": truncated,
+        }
 
     @router.get("/local-models")
     async def local_models(request: Request):
