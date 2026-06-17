@@ -1,13 +1,11 @@
 /*
- * Applicant — debug/observability + tool-toggle + history/variant-library surface.
- * FR-UI-4 (tool toggles), FR-OBS-2 / FR-LOG-3 (logs, screenshots, history,
- * workflow state, variant library), FR-OOBE-4 (in-UI Update button). Phase 4.
+ * Applicant — diagnostics: tool switches, application history, resume variants,
+ * activity log, screenshots, and the in-app updater.
  *
- * Network failures degrade gracefully — an error note is shown, never dead UI
- * presented as live (FR-UI-2). Shares the redirect-aware fetch + DOM builder from
- * ApplicantUI (a 409 from the gate routes to the wizard).
+ * Network failures are handled gracefully — an error note is shown rather than a
+ * broken screen. Shares the redirect-aware fetch and DOM builder from ApplicantUI.
  */
-import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
+import { ApplicantUI, apiFetch, el } from "/static/applicant/js/applicant-ui.js";
 
   const params = new URLSearchParams(location.search);
   const campaignId = document.body.getAttribute("data-campaign-id") || params.get("campaign_id") || "";
@@ -20,7 +18,7 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     container.appendChild(el("p", { className: "admin-empty applicant-note" }, [text]));
   }
 
-  // --- tool toggles (FR-UI-4) ---------------------------------------------
+  // --- tool switches -------------------------------------------------------
   async function loadTools() {
     const list = document.getElementById("tools-list");
     try {
@@ -38,11 +36,11 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
         list.appendChild(el("div", { className: "applicant-toggle-row" }, [el("span", {}, [t.label]), checkbox]));
       });
     } catch (e) {
-      note(list, "Tool registry unavailable.");
+      note(list, "Tools unavailable.");
     }
   }
 
-  // --- per-application history (FR-OBS-2 / FR-LOG-3) -----------------------
+  // --- application history -------------------------------------------------
   async function loadHistory() {
     const tbody = document.getElementById("history-rows");
     try {
@@ -70,7 +68,7 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     }
   }
 
-  // --- variant library (FR-UI-6 / FR-RESUME-6) ----------------------------
+  // --- resume variants -----------------------------------------------------
   async function loadVariants() {
     const tbody = document.getElementById("variants-rows");
     if (!tbody) return;
@@ -93,11 +91,11 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
       });
     } catch (e) {
       tbody.innerHTML = "";
-      tbody.appendChild(el("tr", {}, [el("td", { colSpan: 5, className: "admin-empty applicant-note" }, ["Variant library unavailable."])]));
+      tbody.appendChild(el("tr", {}, [el("td", { colSpan: 5, className: "admin-empty applicant-note" }, ["Resume variants unavailable."])]));
     }
   }
 
-  // --- structured logs tail (FR-LOG-3) ------------------------------------
+  // --- recent activity -----------------------------------------------------
   async function loadLogs() {
     const list = document.getElementById("logs-list");
     if (!list) return;
@@ -118,7 +116,7 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     }
   }
 
-  // --- per-page screenshots (FR-OBS-2) ------------------------------------
+  // --- screenshots ---------------------------------------------------------
   async function loadScreenshots() {
     const list = document.getElementById("screenshots-list");
     if (!list || !applicationId) return;
@@ -141,7 +139,7 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     }
   }
 
-  // --- stealth honesty caveat + egress posture (FR-STEALTH-4/5) -----------
+  // --- stealth caveat + network posture ------------------------------------
   async function loadStealth() {
     const caveat = document.getElementById("stealth-caveat");
     const egress = document.getElementById("stealth-egress");
@@ -159,7 +157,7 @@ import { ApplicantUI, apiFetch, el } from "./applicant-ui.js";
     }
   }
 
-  // --- in-UI Update button (FR-OOBE-4) ------------------------------------
+  // --- in-app updater ------------------------------------------------------
   function wireUpdate() {
     const btn = document.getElementById("update-btn");
     const out = document.getElementById("update-result");

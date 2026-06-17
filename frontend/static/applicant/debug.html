@@ -1,93 +1,88 @@
 <!DOCTYPE html>
 <!--
-  Applicant — Debug / observability + tool-toggle + history/variant-library surface.
-  FR-OBS-2 (debug surface), FR-LOG-3 (logs), FR-UI-4 (tool toggles), FR-UI-6
-  (history + variant library), FR-OOBE-4 (in-UI Update button).
-
-  Phase 4: tool toggles, per-application history, per-page screenshots, durable-
-  workflow state, the structured-log tail, the resume-variant library, and the
-  Update button are all LIVE (wired to /api/admin/* and /api/update/*). Genuinely
-  dormant surfaces (resume-aggressiveness, multi-campaign switcher) remain grayed
-  via .applicant-dormant — present but dormant, never shown as if live (FR-UI-2).
-  Reuses the vendored Odysseus style.
+  Applicant — diagnostics: tool switches, application history, resume variants,
+  recent activity log, screenshots, and the in-app updater. Features that aren't
+  available yet are shown grayed out so nothing looks active when it isn't.
+  Reuses the shared Odysseus design system.
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Applicant — Debug &amp; observability</title>
-  <link rel="stylesheet" href="../style.css" />
-  <link rel="stylesheet" href="applicant.css" />
+  <title>Applicant — Diagnostics</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/applicant/applicant.css" />
 </head>
 <body data-campaign-id="" data-application-id="">
   <main>
-    <!-- Tool registry / toggles (FR-UI-4) — LIVE -->
+    <!-- Tool switches -->
     <section class="admin-card applicant-section" id="tools-section">
-      <h1>Agent tools <span class="admin-badge admin-badge-on">Phase 4 — live</span></h1>
-      <p class="admin-empty">Toggle each agent tool on/off; toggles are enforced at dispatch (FR-UI-4).</p>
+      <h1>Tools <span class="admin-badge admin-badge-on">live</span></h1>
+      <p class="admin-empty">Turn each automation tool on or off. Changes take effect immediately.</p>
       <div id="tools-list"><p class="admin-empty">Loading…</p></div>
     </section>
 
-    <!-- Per-application history (FR-OBS-2 / FR-LOG-3 / FR-UI-6) — LIVE -->
+    <!-- Application history -->
     <section class="admin-card applicant-section" id="history-section">
-      <h2>Application history <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
+      <h2>Application history</h2>
       <table class="admin-card" style="width:100%;" id="history-table">
         <thead><tr><th>Role</th><th>Status</th><th>Work mode</th><th>Shots</th><th>Outcomes</th><th>Workflow</th></tr></thead>
         <tbody id="history-rows"><tr><td colspan="6" class="admin-empty">Loading…</td></tr></tbody>
       </table>
     </section>
 
-    <!-- Variant library (FR-UI-6 / FR-RESUME-6) — LIVE -->
+    <!-- Resume variants -->
     <section class="admin-card applicant-section" id="variants-section">
-      <h2>Variant library <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
-      <p class="admin-empty">Resume variants with lineage, fit scores, and approval state (FR-RESUME-6).</p>
+      <h2>Resume variants</h2>
+      <p class="admin-empty">Your resume versions with their origin, fit scores, and approval state.</p>
       <table class="admin-card" style="width:100%;" id="variants-table">
         <thead><tr><th>Variant</th><th>Parent</th><th>Lineage depth</th><th>Approved</th><th>Signature</th></tr></thead>
         <tbody id="variants-rows"><tr><td colspan="5" class="admin-empty">Loading…</td></tr></tbody>
       </table>
     </section>
 
-    <!-- Structured logs tail (FR-LOG-3 / FR-OBS-2) — LIVE -->
+    <!-- Recent activity -->
     <section class="admin-card applicant-section" id="logs-section">
-      <h2>Logs <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
-      <p class="admin-empty">Recent structured log entries (secrets redacted, FR-LOG-3 / NFR-PRIV-1).</p>
+      <h2>Activity log</h2>
+      <p class="admin-empty">Recent activity (anything sensitive is hidden).</p>
       <div id="logs-list" class="applicant-log"><p class="admin-empty">Loading…</p></div>
     </section>
 
-    <!-- Per-page screenshots (FR-OBS-2) — LIVE -->
+    <!-- Screenshots -->
     <section class="admin-card applicant-section" id="screenshots-section">
-      <h2>Screenshots <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
-      <p class="admin-empty">Per-page screenshots captured during pre-fill/sandbox runs (FR-OBS-2).</p>
-      <div id="screenshots-list"><p class="admin-empty">Set ?application_id=… to inspect a run.</p></div>
+      <h2>Screenshots</h2>
+      <p class="admin-empty">Screenshots captured while filling out or previewing an application.</p>
+      <div id="screenshots-list"><p class="admin-empty">Add ?application_id=… to the URL to inspect a run.</p></div>
     </section>
 
-    <!-- In-UI Update button (FR-OOBE-4) — LIVE (safe dry-run by default) -->
+    <!-- In-app updater -->
     <section class="admin-card applicant-section" id="update-section">
-      <h2>Update <span class="admin-badge admin-badge-on">Phase 4 — live</span></h2>
-      <p class="admin-empty">Runs the one-liner update (backup DB, migrate, rollback support) without SSH (FR-OOBE-4).</p>
-      <button class="admin-btn" id="update-btn" type="button">Check for updates</button>
+      <h2>Update</h2>
+      <p class="admin-empty">Update Applicant in place — no SSH needed.</p>
+      <button class="admin-btn" id="update-btn" type="button"
+              title="Backs up your data, installs the latest version, and can roll back if anything goes wrong.">Check for updates</button>
       <p class="admin-empty applicant-note" id="update-result" hidden></p>
     </section>
 
-    <!-- Stealth honesty caveat + egress posture (FR-STEALTH-4 / FR-STEALTH-5) — LIVE -->
+    <!-- Stealth + network posture -->
     <section class="admin-card applicant-section" id="stealth-section">
-      <h2>Stealth &amp; egress <span class="admin-badge admin-badge-on">live</span></h2>
+      <h2>Stealth &amp; network</h2>
       <p class="admin-empty applicant-note" id="stealth-caveat">Loading…</p>
       <p class="admin-empty applicant-note" id="stealth-egress"></p>
     </section>
 
-    <!-- Dormant: resume aggressiveness (FR-RESUME-9) — grayed by spec for MVP-1. -->
+    <!-- Not available yet: resume aggressiveness -->
     <section class="admin-card applicant-section applicant-dormant" id="aggressiveness-section" aria-disabled="true">
-      <h2>Resume aggressiveness <span class="admin-badge admin-badge-off">dormant</span></h2>
-      <p class="admin-empty">Truthful-framing aggressiveness dial (FR-RESUME-9) — built but grayed for MVP-1.</p>
+      <h2>Resume aggressiveness <span class="admin-badge admin-badge-off">coming soon</span></h2>
+      <p class="admin-empty">A dial for how boldly resumes are framed — built, but not available yet.</p>
     </section>
 
-    <!-- Dormant: multi-campaign switcher (FR-CRIT-4 / NFR-EXT-1) — grayed for MVP-1. -->
+    <!-- Not available yet: multiple job searches -->
     <section class="admin-card applicant-section applicant-dormant" id="campaign-switcher-section" aria-disabled="true">
-      <h2>Multi-campaign switcher <span class="admin-badge admin-badge-off">dormant</span></h2>
-      <p class="admin-empty">Switch/clone campaigns (FR-CRIT-4, NFR-EXT-1) — readiness verified; switcher grayed for MVP-1.</p>
+      <h2>Multiple job searches <span class="admin-badge admin-badge-off">coming soon</span></h2>
+      <p class="admin-empty">Switch between or clone separate job searches — coming soon.</p>
     </section>
   </main>
-  <script type="module" src="./js/admin.js"></script>
+  <script type="module" src="/static/applicant/js/admin.js"></script>
 </body>
 </html>
