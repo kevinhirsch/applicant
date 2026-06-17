@@ -178,10 +178,19 @@ msg_ok "Cloud-init user-data written: ${SNIP_STORE}:snippets/applicant-${VMID}.y
 # ---------------------------------------------------------------------------
 # Download the Ubuntu Server 24.04 LTS cloud image
 # ---------------------------------------------------------------------------
+# Guard: a pre-existing VMID would make qm create fail (or a stale lock can hang
+# a later step) — fail fast with a clear recovery hint instead.
+if qm status "$VMID" >/dev/null 2>&1; then
+  die "VM ${VMID} already exists. Remove it first:  qm stop ${VMID} 2>/dev/null; qm destroy ${VMID} --purge"
+fi
+
 IMG_TMP="$(mktemp --suffix=.img)"
 msg_info "Downloading Ubuntu Server 24.04 LTS cloud image…"
 wget -qO "$IMG_TMP" "$CLOUDIMG_URL" || die "Cloud image download failed: $CLOUDIMG_URL"
-msg_ok "Cloud image downloaded."
+# A truncated/empty download makes the disk import hang/fail cryptically.
+[[ -s "$IMG_TMP" ]] && [[ "$(stat -c%s "$IMG_TMP")" -gt 100000000 ]] \
+  || die "Downloaded cloud image looks too small/empty ($(stat -c%s "$IMG_TMP" 2>/dev/null || echo 0) bytes): $CLOUDIMG_URL"
+msg_ok "Cloud image downloaded ($(( $(stat -c%s "$IMG_TMP") / 1024 / 1024 )) MB)."
 
 # ---------------------------------------------------------------------------
 # Create the VM (cloud-init), import the disk, wire networking + ci
@@ -194,8 +203,11 @@ qm create "$VMID" \
   --description "Applicant — autonomous job-application engine" >/dev/null \
   || die "qm create failed."
 
-# Import the cloud image as scsi0 (one-step import-from; PVE 7.2+).
-qm set "$VMID" --scsi0 "${IMG_STORE}:0,import-from=${IMG_TMP}" >/dev/null || die "disk import failed."
+# Import the cloud image as scsi0 (one-step import-from; PVE 7.2+). Do NOT suppress
+# output — the qemu-img convert can take a few minutes and its progress is the only
+# sign the deploy isn't frozen.
+msg_info "Importing the disk into ${IMG_STORE} (this can take a few minutes; progress below)…"
+qm set "$VMID" --scsi0 "${IMG_STORE}:0,import-from=${IMG_TMP}" || die "disk import failed."
 qm set "$VMID" --ide2 "${IMG_STORE}:cloudinit" --boot order=scsi0 >/dev/null || die "cloudinit drive failed."
 qm set "$VMID" --ipconfig0 "ip=dhcp" --ciuser root --cipassword "$VM_PASS" >/dev/null || die "cloud-init net/user failed."
 [[ -n "$SSHKEYS_FILE" ]] && { qm set "$VMID" --sshkeys "$SSHKEYS_FILE" >/dev/null || true; }
