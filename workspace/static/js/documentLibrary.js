@@ -1821,7 +1821,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // ════════════════════════════════════════════════════════════════════
     const _APPLICANT_BASE = `${API_BASE}/api/applicant/documents`;
     // Last application id the user looked up, so Refresh re-runs the same query.
-    let _applicantLastAppId = '';
+    // Seeded from the deep-link (opts.appId) so the Portal "Review" affordance
+    // opens the materials directly — no typing an application id (D1).
+    let _applicantLastAppId = (opts && opts.appId) ? String(opts.appId) : '';
 
     // Friendly label for an engine document/variant "type" value.
     function _applicantTypeLabel(type) {
@@ -2050,9 +2052,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       panel.innerHTML = '';
       panel.style.cssText = 'display:block;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:8px;';
 
+      // Trust header (D1): make it unmistakable that review is safe — nothing is
+      // sent until the user approves below.
+      const header = document.createElement('div');
+      header.style.cssText = 'font-size:12px;font-weight:600;opacity:0.85;';
+      header.textContent = 'Nothing is submitted until you approve.';
+      panel.appendChild(header);
+
       // Redline: the engine returns a redline_state describing what changed
-      // versus the original. Render the rendered HTML when present, else fall
-      // back to plain add/remove lists, else a neutral note.
+      // versus the base. The engine's side-by-side highlighted redline
+      // (rendered_html: additions AND deletions vs base) is the PRIMARY
+      // rendering; we only fall back to the green/red bullet list when no
+      // rendered_html is returned, then to a neutral note. (D1)
       const rl = session && session.redline_state;
       const redline = document.createElement('div');
       redline.className = 'doclib-applicant-redline';
@@ -2061,10 +2072,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const additions = rl && Array.isArray(rl.additions) ? rl.additions : [];
       const subtractions = rl && Array.isArray(rl.subtractions) ? rl.subtractions : (rl && Array.isArray(rl.removals) ? rl.removals : []);
       if (renderedHtml) {
-        // Engine-rendered redline markup. Insert as-is (same-origin trusted
-        // engine output, consistent with how research reports are rendered).
+        // PRIMARY: the engine-rendered side-by-side highlighted redline (both
+        // additions and deletions vs the base). Insert as-is (same-origin
+        // trusted engine output, consistent with how research reports render).
         redline.innerHTML = renderedHtml;
       } else if (additions.length || subtractions.length) {
+        // FALLBACK: plain add/remove lists when the engine returns no rendered
+        // redline HTML.
         const add = additions.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
         const sub = subtractions.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
         redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Suggested changes</div><ul style="margin:0;padding-left:16px;list-style:none;">${add}${sub}</ul>`;

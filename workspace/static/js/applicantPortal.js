@@ -28,6 +28,8 @@
 
 import uiModule from './ui.js';
 import digestModule from './emailLibrary/applicantDigest.js';
+import remoteModule from './applicantRemote.js';
+import { neverDoesList } from './applicantOnboarding.js';
 
 const API = '/api/applicant/portal';
 const BADGE_POLL_MS = 60000;
@@ -48,6 +50,13 @@ function esc(s) {
 
 function _toast(msg) {
   try { uiModule.showToast(msg); } catch { /* no-op */ }
+}
+
+async function _confirm(message, opts) {
+  try {
+    if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
+  } catch { /* fall through */ }
+  try { return window.confirm(message); } catch { return false; }
 }
 
 async function _fetchJSON(url, opts = {}) {
@@ -121,7 +130,18 @@ const KINDS = {
   },
   final_approval: {
     label: 'Ready for your final approval',
-    affordance: 'review',
+    hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.',
+    affordance: 'final',
+  },
+  'request-final-approval': {
+    label: 'Ready for your final approval',
+    hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.',
+    affordance: 'final',
+  },
+  request_final_approval: {
+    label: 'Ready for your final approval',
+    hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.',
+    affordance: 'final',
   },
   error: {
     label: 'Hit a snag that needs a look',
@@ -141,6 +161,16 @@ function _sessionUrl(payload) {
 
 function _appId(item) {
   return item.application_id || (item.payload && item.payload.application_id) || '';
+}
+
+// Best human "Role · Company" label for an item, from whichever fields the
+// engine carries on the action or its payload.
+function _roleCompany(item) {
+  const p = (item && item.payload) || {};
+  const role = item.role || p.role || item.job_title || p.job_title || p.title || '';
+  const company = item.company || p.company || p.company_name || p.employer || '';
+  if (role && company) return `${role} · ${company}`;
+  return role || company || item.title || '';
 }
 
 // ── Modal scaffold ────────────────────────────────────────────────────────────
@@ -196,6 +226,21 @@ function _renderOffline(body) {
     </div>`;
 }
 
+function _neverDoesHTML() {
+  // D4: reuse the EXACT "what Applicant never does" list from the OOBE (B1).
+  const items = (Array.isArray(neverDoesList) && neverDoesList.length)
+    ? neverDoesList
+    : (window.applicantNeverDoesList || []);
+  if (!items.length) return '';
+  return `
+    <div style="max-width:380px;margin:14px auto 0;text-align:left;border-top:1px solid var(--border);padding-top:12px;">
+      <div style="font-size:11px;opacity:0.7;margin-bottom:4px;">What Applicant never does</div>
+      <ul style="margin:0;padding-left:16px;font-size:11px;opacity:0.75;line-height:1.5;">
+        ${items.map((t) => `<li>${esc(t)}</li>`).join('')}
+      </ul>
+    </div>`;
+}
+
 function _renderEmpty(body) {
   body.innerHTML = `
     <div style="padding:32px 18px;text-align:center;opacity:0.7;">
@@ -205,6 +250,7 @@ function _renderEmpty(body) {
         Nothing needs your attention right now. When a document is ready to review
         or a detail is needed, it'll appear here.
       </div>
+      ${_neverDoesHTML()}
     </div>`;
 }
 
@@ -299,12 +345,42 @@ function _renderDigest(item) {
     <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest" style="font-size:11px;padding:4px 12px;">Review applications</button>`;
 }
 
+// Final-submit approval (D2). Inline in the Portal: confirm the role/company and
+// that materials are approved, then offer the two explicit choices that call the
+// SAME engine endpoints the live-session modal uses — submit-self (open the live
+// session) or authorize-the-engine-to-finish. The live session remains the path
+// for takeover cases.
+function _renderFinal(item) {
+  const hint = _meta(item.kind).hint || 'Choose how to submit — nothing is sent until you do.';
+  const label = _roleCompany(item);
+  const appId = _appId(item);
+  const who = label ? `<div style="font-weight:600;margin-bottom:2px;">${esc(label)}</div>` : '';
+  return `
+    ${who}
+    <div style="font-size:12px;opacity:0.85;margin-bottom:4px;">
+      <span style="color:var(--color-success,#4caf50);">Materials approved ✓</span>
+    </div>
+    <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
+    <div class="applicant-portal-final-caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="cal-btn applicant-portal-final-self"
+              data-app-id="${esc(appId)}" data-label="${esc(label)}"
+              title="Open the live session and click submit yourself"
+              style="font-size:11px;padding:4px 12px;">I'll submit it myself (open live session)</button>
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-final-authorize"
+              data-app-id="${esc(appId)}" data-action-id="${esc(item.id)}" data-label="${esc(label)}"
+              title="Let the assistant click the final submit, just this once"
+              style="font-size:11px;padding:4px 12px;">Authorize Applicant to submit this</button>
+    </div>`;
+}
+
 function _renderRowInner(item) {
   switch (_meta(item.kind).affordance) {
     case 'review': return _renderReview(item);
     case 'missing': return _renderMissing(item);
     case 'session': return _renderSession(item);
     case 'digest': return _renderDigest(item);
+    case 'final': return _renderFinal(item);
     case 'answer':
     default: return _renderAnswer(item);
   }
@@ -323,10 +399,11 @@ function _renderList(body) {
 
 function _openRedline(appId) {
   // Deep-link to the Applications tab in the Library (the existing redline
-  // surface). We do NOT rebuild redline — we link to it.
+  // surface). We do NOT rebuild redline — we link to it, and hand it the
+  // application id so the review opens WITHOUT the user typing an id (D1).
   try {
     if (window.documentModule && typeof window.documentModule.openLibrary === 'function') {
-      window.documentModule.openLibrary({ tab: 'applicant' });
+      window.documentModule.openLibrary({ tab: 'applicant', appId: appId || '' });
       _close();
       return;
     }
@@ -429,6 +506,54 @@ function _wireRows(host) {
   host.querySelectorAll('.applicant-portal-session').forEach((btn) => {
     btn.addEventListener('click', () => _openSession(btn.dataset.appId, btn.dataset.sessionUrl));
   });
+
+  // Final submit (D2): submit-self opens the live session; authorize calls the
+  // SAME engine endpoint the remote modal uses, behind an explicit confirm that
+  // echoes the role/company + "materials approved ✓" (D5).
+  host.querySelectorAll('.applicant-portal-final-self').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      _openSession(btn.dataset.appId, '');
+      _toast('Open the live session and click submit when you’re ready');
+    });
+  });
+  host.querySelectorAll('.applicant-portal-final-authorize').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const appId = btn.dataset.appId;
+      const actionId = btn.dataset.actionId;
+      const label = btn.dataset.label || '';
+      if (!appId) { _toast('No application is linked to this item yet'); return; }
+      let message;
+      try { message = remoteModule.authorizeConfirmMessage({ label }); }
+      catch { message = `Authorize the assistant to submit ${label || 'this application'}? Materials approved ✓ — this cannot be undone.`; }
+      const ok = await _confirm(message, { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Submitting…';
+      try {
+        await remoteModule.authorizeEngineFinish(appId);
+        // Best-effort clear the pending row once the submit is authorized.
+        if (actionId) { try { await _doResolve(actionId); } catch { /* row refreshes anyway */ } }
+        _removeRow(host, actionId);
+        _toast('Authorized — the assistant submitted the application');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not authorize the submission');
+      }
+    });
+  });
+
+  // Surface the honest best-effort / egress caveat (D3) on any final-approval
+  // row. Best-effort: degrade silently if the engine doesn't return one.
+  const caveatSlots = host.querySelectorAll('.applicant-portal-final-caveat');
+  if (caveatSlots.length) {
+    remoteModule.fetchCaveat().then((data) => {
+      const line = data && (data.caveat || data.egress_caveat);
+      if (!line) return;
+      caveatSlots.forEach((slot) => { slot.textContent = String(line); });
+    }).catch(() => { /* silent */ });
+  }
 
   // Missing detail → acquire + resume.
   host.querySelectorAll('.applicant-portal-save-missing').forEach((btn) => {

@@ -950,6 +950,11 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    # Detected provider + local/api category, so consumers can
+                    # reason about the endpoint from the object itself instead of
+                    # re-deriving it from the URL on the client.
+                    "provider": _detect_provider(_normalize_base(r.base_url)),
+                    "category": _classify_endpoint(_normalize_base(r.base_url)),
                 })
             return results
         finally:
