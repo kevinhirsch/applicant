@@ -727,6 +727,12 @@ from routes.applicant_internal_routes import setup_applicant_internal_routes
 # /research callback so the engine can run owner-scoped research synchronously.
 app.state.research_handler = research_handler
 app.include_router(setup_applicant_internal_routes())
+# CRIT-auto: live remote view/takeover + final-submit controls (/api/applicant/remote/*)
+# and the engine credential vault (/api/applicant/vault/*). Auth + owner-scoped.
+from routes.applicant_remote_routes import setup_applicant_remote_routes
+app.include_router(setup_applicant_remote_routes())
+from routes.applicant_vault_routes import setup_applicant_vault_routes
+app.include_router(setup_applicant_vault_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
