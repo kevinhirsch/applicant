@@ -41,6 +41,12 @@ services:
       # (the internal ``api`` service). The UI's engine client + feature layer
       # read this; default matches the in-network address exposed below.
       ENGINE_URL: ${ENGINE_URL:-http://api:8000}
+      # Stage-2.5 reverse channel: the SHARED secret that authenticates the
+      # engine's callbacks INTO this UI app's /api/applicant/internal/* routes.
+      # Generated once by scripts/install.sh and persisted to the repo-root .env
+      # so BOTH containers (here + api) read the same value. Empty => the internal
+      # channel is DISABLED on this side (every callback rejected).
+      APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
       # Stage 1: the UI app keeps its OWN sqlite, persisted on the data volume
       # below (separate from the engine's Postgres). A later stage may converge.
       DATABASE_URL: ${UI_DATABASE_URL:-sqlite:///./data/app.db}
@@ -102,6 +108,13 @@ services:
       DISCOVERY_LIVE: ${DISCOVERY_LIVE:-true}
       NOTIFICATIONS_LIVE: ${NOTIFICATIONS_LIVE:-true}
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # Stage-2.5 reverse channel: where the engine reaches the front-door UI to
+      # call BACK (calendar/research/local-models), plus the SHARED secret it
+      # presents. Same token as applicant-ui above; generated/persisted by
+      # scripts/install.sh. Empty token => the engine's WorkspacePort.available()
+      # is False and callers degrade gracefully (no callback attempted).
+      WORKSPACE_URL: http://applicant-ui:7000
+      APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
       LOG_FORMAT: json
     # INTERNAL ONLY — no host publish. The front-door UI and sibling services
     # reach the engine in-network at http://api:8000.

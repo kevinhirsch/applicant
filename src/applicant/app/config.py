@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
     notifications_live: bool = Field(default=False, alias="NOTIFICATIONS_LIVE")
 
+    # Stage 2.5 — ENGINE -> WORKSPACE callback channel. The engine calls BACK into
+    # the front-door workspace app (``applicant-ui``) over the private docker
+    # network to read calendar interviews / run research / list local models.
+    # ``workspace_url`` is where to reach it (the in-network address); the shared
+    # ``applicant_internal_token`` is the bearer of trust (constant-time compared
+    # by the workspace). Empty token => the channel is OFF and the client's
+    # ``available()`` is False, so callers degrade gracefully.
+    workspace_url: str = Field(default="http://applicant-ui:7000", alias="WORKSPACE_URL")
+    applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
+
     # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).
     fonts_dir: str = Field(default=".applicant_fonts", alias="FONTS_DIR")

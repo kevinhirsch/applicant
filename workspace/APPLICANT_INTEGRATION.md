@@ -304,3 +304,104 @@ additions. Prefer creating a **new** route file per lane and registering it in
 - Hermetic tests for anything new (mock the engine transport).
 - **Keep user management fully intact.**
 - **Zero** references to prior internal codenames in anything added.
+
+---
+
+# Stage 2.5 callback channel (engine → workspace)
+
+Stages 1–2 are one-directional: the workspace UI calls **into** the engine
+(`src/applicant_engine.py`, `ENGINE_URL`). Stage 2.5 adds the **reverse**: the
+**engine** (the internal `api` container) calls **back into the workspace**
+(`applicant-ui`, the front-door app) to read things only the front-door app
+knows. This section is the shared contract + file-ownership map so the three
+Stage-2.5 lanes (A calendar, B research, C cookbook) do not collide.
+
+## Trust model (the token IS the boundary)
+
+The engine reaches the workspace from a **sibling container on the private docker
+network** — so, unlike the existing in-process loopback internal-tool path
+(`core.middleware.INTERNAL_TOOL_*`), these requests are **not loopback** and must
+**not** require it. Trust is a **shared secret**, mandatory:
+
+- `APPLICANT_INTERNAL_TOKEN` is a strong secret (32 hex bytes) generated **once**
+  by `scripts/install.sh` and persisted (umask-protected) to the repo-root
+  `.env`, so **both** containers (`api` + `applicant-ui`) read the **same** value.
+- The engine presents it in `X-Applicant-Internal-Token`; the workspace compares
+  it with `secrets.compare_digest` (constant time).
+- **If the token is unset, the entire `/api/applicant/internal/*` prefix is
+  DISABLED** (every call → 403). There is no open-by-default fallback. On the
+  engine side, `WorkspacePort.available()` is then `False` and callers skip the
+  callback (degrade gracefully).
+- The gate lives in `app.py`'s `AuthMiddleware` (a small branch keyed on the
+  prefix; it does **not** require/weaken the loopback path or any other auth) and
+  is re-checked defensively inside each handler
+  (`routes/applicant_internal_routes.py::verify_internal_token`).
+- Every honored request is **owner-scoped**: the engine sets `X-Applicant-Owner`
+  to the user the work is for; the middleware attributes the request to that user
+  (mirroring the loopback impersonation attribution). Lanes MUST scope reads/
+  writes to `internal_owner(request)` — never trust an owner from the body.
+
+> Trust summary: private docker network + a mandatory, constant-time-compared,
+> install-generated shared secret + per-request owner attribution. Nothing
+> sensitive is exposed without the token.
+
+## Workspace internal route contract — `routes/applicant_internal_routes.py`
+
+Mounted at `/api/applicant/internal/*` (registered in `app.py`). Helpers:
+`verify_internal_token(request)`, `internal_owner(request)`,
+`internal_channel_enabled()`.
+
+| Lane | Method + path | Status now | Shape (when implemented) |
+|---|---|---|---|
+| — | `GET  /api/applicant/internal/ping` | **live** | `{"ok": true, "owner": <str|null>}` |
+| A | `GET  /api/applicant/internal/calendar/interviews` | 501 | `{"interviews": [...]}` (owner-scoped) |
+| B | `POST /api/applicant/internal/research` | 501 | run/report handle; body `{"query": str, ...}` |
+| C | `GET  /api/applicant/internal/local-models` | 501 | `{"models": [...]}` |
+
+Each lane **replaces its own placeholder** in that file (or, preferred, mounts a
+new router under the same prefix and registers it in `app.py`) keeping the path +
+auth contract identical. Always call `verify_internal_token(request)` first and
+scope to `internal_owner(request)`.
+
+## Engine client — `WorkspacePort` + `HttpWorkspaceClient`
+
+- Port: `src/applicant/ports/driven/workspace.py` (`WorkspacePort`,
+  `WorkspaceError`).
+- Adapter: `src/applicant/adapters/workspace/http_workspace_client.py`
+  (`HttpWorkspaceClient`, httpx-only). Reads `WORKSPACE_URL` (default
+  `http://applicant-ui:7000`) + `APPLICANT_INTERNAL_TOKEN` from `Settings`; sets
+  `X-Applicant-Internal-Token` + `X-Applicant-Owner`. Wired into the container as
+  `container.workspace` so lanes inject it.
+
+| Method | Workspace endpoint |
+|---|---|
+| `available() -> bool` | config gate (never networks) — `False` when token unset |
+| `ping(owner=None)` | `GET /ping` |
+| `calendar_interviews(owner=None)` | **lane A** — `GET /calendar/interviews` |
+| `run_research(query, owner=None)` | **lane B** — `POST /research` |
+| `local_models(owner=None)` | **lane C** — `GET /local-models` |
+
+Every failure (timeout / connection refused / non-2xx / bad JSON) raises
+`WorkspaceError` (`.message`, `.status`, `.detail`, `.is_timeout`) — a raw httpx
+exception never escapes. Mock the transport in tests
+(`httpx.MockTransport` — see `tests/unit/test_http_workspace_client.py`).
+
+## Lane file-ownership map (Stage 2.5 — disjoint)
+
+| Lane | Workspace route (owned, fills placeholder/new router) | Engine consumer (owned) | Port method |
+|---|---|---|---|
+| A — Calendar | `internal/calendar/interviews` handler | calendar-detection consumer | `calendar_interviews` |
+| B — Research | `internal/research` handler | research consumer | `run_research` |
+| C — Cookbook | `internal/local-models` handler | model-listing consumer | `local_models` |
+
+**Shared, append-only (coordinate, never rewrite):**
+`workspace/routes/applicant_internal_routes.py` ·
+`workspace/app.py` (AuthMiddleware internal branch + router registration) ·
+`src/applicant/ports/driven/workspace.py` ·
+`src/applicant/adapters/workspace/http_workspace_client.py` ·
+`src/applicant/app/container.py` (`container.workspace`) ·
+`docker/docker-compose.prod.yml` · `scripts/install.sh` · this file.
+
+Adding a lane method: keep it 1:1 with one internal endpoint, owner-scoped, and
+raising `WorkspaceError` on the engine side. Do not refactor another lane's
+method or handler.

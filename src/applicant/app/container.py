@@ -87,6 +87,10 @@ class Container:
     notification: Any
     orchestrator: Any
     tool_registry: Any
+    # Stage 2.5 engine -> workspace callback channel (WorkspacePort). Lanes inject
+    # this to call BACK into the front-door app. ``available()`` is False when no
+    # shared secret is configured, so callers degrade gracefully.
+    workspace: Any
 
     resume_parser: Any
 
@@ -300,6 +304,15 @@ def build_container(settings: Settings | None = None) -> Container:
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
+    # Stage 2.5: outbound client for the engine -> workspace callback channel. The
+    # shared secret gates it (available() is False when unset) so the default/test
+    # lane never tries to reach the workspace.
+    from applicant.adapters.workspace.http_workspace_client import HttpWorkspaceClient
+
+    workspace = HttpWorkspaceClient(
+        base_url=settings.workspace_url,
+        token=settings.applicant_internal_token,
+    )
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (
@@ -643,6 +656,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         orchestrator=orchestrator,
         tool_registry=tool_registry,
+        workspace=workspace,
         resume_parser=resume_parser,
         setup_service=setup_service,
         campaign_service=campaign_service,

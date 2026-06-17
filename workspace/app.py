@@ -241,6 +241,32 @@ if AUTH_ENABLED:
                     return await call_next(request)
             except Exception:
                 pass
+            # Stage 2.5 engine->workspace callback channel. The engine (the
+            # internal ``api`` container) calls BACK into this app over the
+            # private docker network — so, UNLIKE the loopback internal-tool path
+            # above, these requests are NOT loopback and must NOT require it. They
+            # are honored ONLY when (a) APPLICANT_INTERNAL_TOKEN is configured (a
+            # strong shared secret) and (b) X-Applicant-Internal-Token matches it
+            # (constant-time). No token configured => the prefix is DISABLED (the
+            # branch is skipped, so the request falls through to normal auth and
+            # is rejected). This does NOT touch the loopback path or any other
+            # auth. See routes/applicant_internal_routes.py for the contract.
+            if path.startswith("/api/applicant/internal/"):
+                _int_secret = (os.environ.get("APPLICANT_INTERNAL_TOKEN") or "").strip()
+                _int_hdr = request.headers.get("X-Applicant-Internal-Token") or ""
+                if _int_secret and secrets.compare_digest(_int_hdr, _int_secret):
+                    # Owner attribution only (authorization stays in the routes):
+                    # scope the engine's call to the user it set in X-Applicant-Owner.
+                    _owner = (request.headers.get("X-Applicant-Owner") or "").strip()
+                    _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
+                    if _owner and _owner in getattr(_auth_mgr, "users", {}):
+                        request.state.current_user = _owner
+                    else:
+                        request.state.current_user = "internal-engine"
+                    request.state.api_token = False
+                    return await call_next(request)
+                # Token missing/mismatch: do NOT short-circuit — fall through to
+                # the normal auth chain below, which rejects the request.
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
@@ -690,6 +716,11 @@ app.include_router(setup_applicant_chat_routes())
 # Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
 from routes.applicant_email_routes import setup_applicant_email_routes
 app.include_router(setup_applicant_email_routes())
+# Stage 2.5 — ENGINE -> WORKSPACE callback channel (/api/applicant/internal/*).
+# Gated in AuthMiddleware by the shared APPLICANT_INTERNAL_TOKEN (NOT loopback,
+# since the engine calls from a sibling container). Disabled when no token is set.
+from routes.applicant_internal_routes import setup_applicant_internal_routes
+app.include_router(setup_applicant_internal_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
