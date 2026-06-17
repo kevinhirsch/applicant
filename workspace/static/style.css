@@ -34390,137 +34390,56 @@ body.theme-frosted .modal {
 /* CRIT-portal end */
 
 /* ===== First-run setup wizard (static/js/applicantOnboarding.js) =====
-   A blocking, resumable full-screen overlay shown right after login until the
-   engine reports setup + onboarding are complete. Uses the shared design tokens
-   so it tracks the active theme. Additive — namespaced under .ao-* / #applicant-
-   onboarding-overlay so it touches nothing else. */
-.ao-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+   The wizard is re-skinned onto the SHARED workspace components — `.modal` /
+   `.modal-content` / `.modal-header` / `.modal-body` for the overlay, `.admin-tab`
+   for the step rail, `.admin-card` for grouped sections, `.cal-btn` /
+   `.cal-btn-primary` for buttons, and `.admin-error` / `.admin-success` for
+   messages — so it inherits the app's theme + future changes like every other
+   Applicant surface. Only the handful of genuinely-unique layout rules with no
+   shared equivalent remain below, each scoped to `#applicant-onboarding-overlay`
+   so they touch nothing else. */
+
+/* UNIQUE: `.modal` deliberately has no backdrop (pointer-events:none) so tool
+   windows don't dim the app. The first-run wizard is the one BLOCKING modal —
+   it must dim + capture everything until setup is done — so it re-adds the
+   backdrop the same way #styled-confirm-overlay does. */
+#applicant-onboarding-overlay {
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(3px);
-  padding: 24px;
-  box-sizing: border-box;
+  pointer-events: auto;
+  z-index: 100000;
 }
-.ao-card {
-  background: var(--panel, var(--bg-elev, #1c1c1c));
-  color: var(--text, #eee);
-  border: 1px solid var(--border, #333);
-  border-radius: 12px;
-  width: min(640px, 100%);
+/* UNIQUE: taller content frame than the default 520px modal so the long intake
+   forms and the relocated endpoint manager fit without feeling cramped. */
+#applicant-onboarding-overlay .modal-content {
+  width: min(640px, 96vw);
   max-height: 92vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
 }
-.ao-head { padding: 20px 24px 0; }
-.ao-title { font-size: 1.4rem; margin: 0 0 4px; }
-.ao-sub { margin: 0 0 14px; opacity: 0.75; font-size: 0.92rem; }
-.ao-rail {
-  list-style: none;
-  display: flex;
-  gap: 6px;
-  margin: 0;
-  padding: 0 0 14px;
-  flex-wrap: wrap;
-}
-.ao-rail-step {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.82rem;
-  opacity: 0.5;
-  padding: 3px 8px;
-  border-radius: 20px;
-}
-.ao-rail-step.current { opacity: 1; background: var(--hover-bg, rgba(255,255,255,0.06)); }
-.ao-rail-step.done { opacity: 0.85; }
-.ao-rail-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  font-size: 0.72rem;
-  background: var(--border, #333);
-  color: var(--text, #eee);
-}
-.ao-rail-step.done .ao-rail-num { background: var(--accent-primary, var(--accent, #4a90d9)); color: #fff; }
-.ao-rail-step.current .ao-rail-num { background: var(--accent-primary, var(--accent, #4a90d9)); color: #fff; }
-.ao-body { padding: 8px 24px; overflow-y: auto; flex: 1; }
-.ao-foot {
-  padding: 14px 24px;
-  border-top: 1px solid var(--border, #333);
+/* UNIQUE: the step rail builds on `.admin-tabs`/`.admin-tab` but its steps are
+   status indicators, not clickable tabs — mark complete steps and disable the
+   tab hover affordance. */
+#applicant-onboarding-overlay .admin-tab { cursor: default; }
+#applicant-onboarding-overlay .admin-tab.done { color: var(--color-success); }
+#applicant-onboarding-overlay .admin-tab.done:hover,
+#applicant-onboarding-overlay .admin-tab:hover { color: inherit; }
+#applicant-onboarding-overlay .admin-tab.done:hover { color: var(--color-success); }
+/* UNIQUE: footer action row pinned to the bottom of the modal body. */
+#applicant-onboarding-overlay .ao-foot {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
 }
-.ao-step-title { font-size: 1.1rem; margin: 8px 0 4px; }
-.ao-step-desc { margin: 0 0 14px; opacity: 0.78; font-size: 0.9rem; }
-.ao-intake-progress { font-size: 0.78rem; opacity: 0.6; margin: 6px 0; }
-.ao-field { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
-.ao-field label { font-size: 0.86rem; opacity: 0.9; }
-.ao-field input,
-.ao-field select,
-.ao-field textarea {
-  background: var(--input-bg, var(--bg, #111));
-  color: var(--text, #eee);
-  border: 1px solid var(--input-border, var(--border, #333));
-  border-radius: 6px;
-  padding: 8px 10px;
-  font: inherit;
-  width: 100%;
-  box-sizing: border-box;
-}
-.ao-field textarea { resize: vertical; }
-.ao-eeo-detail { margin-top: 6px; }
-.ao-opt { opacity: 0.55; font-weight: normal; font-size: 0.8rem; }
-.ao-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
-.ao-inline-status { font-size: 0.82rem; opacity: 0.75; }
-.ao-installed { font-size: 0.82rem; opacity: 0.7; margin: 12px 0 0; }
-.ao-btn {
-  font: inherit;
-  padding: 8px 16px;
-  border-radius: 7px;
-  border: 1px solid var(--border, #333);
-  cursor: pointer;
-  background: transparent;
-  color: var(--text, #eee);
-}
-.ao-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.ao-btn-primary {
-  background: var(--accent-primary, var(--accent, #4a90d9));
-  border-color: var(--accent-primary, var(--accent, #4a90d9));
-  color: #fff;
-}
-.ao-btn-ghost:hover { background: var(--hover-bg, rgba(255,255,255,0.06)); }
-.ao-error { color: var(--accent-error, #e06c6c); font-size: 0.86rem; margin: 8px 0; }
-.ao-ok { color: #5bbf78; font-size: 0.86rem; margin: 8px 0; }
-.ao-warn { color: var(--accent-warm, #d8a23a); font-size: 0.86rem; margin: 8px 0; }
-/* `.ao-tip` now layers onto the workspace-standard `.preset-hint-icon` help
-   icon (see _tip() in applicantOnboarding.js) so the wizard's `?` markers hover
-   exactly like the rest of the app. Kept as a thin alias for back-compat. */
-.ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; }
-
-/* Step 1 hosts the SHARED Settings endpoint manager (relocated here at runtime).
-   Reset the admin-card width so it fits the narrower wizard body. */
-.ao-llm-manager { margin: 4px 0 8px; }
-.ao-llm-manager .admin-card { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
-.ao-llm-manager #adm-endpoint-manager { width: 100%; }
-.ao-conflict-box,
-.ao-preview-box {
-  border: 1px solid var(--border, #333);
-  border-radius: 8px;
-  padding: 12px;
-  margin: 12px 0;
-  background: var(--bg-elev, rgba(255,255,255,0.03));
-}
-.ao-conflict { margin: 8px 0; display: flex; flex-direction: column; gap: 2px; }
-.ao-conflict label { font-weight: normal; font-size: 0.86rem; }
-.ao-done { text-align: center; padding: 30px 0; }
-.ao-done h2 { margin: 0 0 8px; }
+/* UNIQUE: the wizard's resume / font file inputs reuse fileHandler's `.attach-strip`
+   chips; un-cap the chat strip's max-width inside the narrower wizard body. */
+#applicant-onboarding-overlay .attach-strip { max-width: 100%; padding: 2px 0; }
+/* UNIQUE: per-step heading / description / progress typography (a wizard step
+   header has no exact shared equivalent — `.admin-card h2` is a card title). */
+#applicant-onboarding-overlay .ao-step-title { font-size: 1.05rem; font-weight: 600; margin: 8px 0 4px; }
+#applicant-onboarding-overlay .ao-step-desc { margin: 0 0 14px; opacity: 0.78; font-size: 0.9rem; }
+#applicant-onboarding-overlay .ao-intake-progress { font-size: 0.78rem; opacity: 0.6; margin: 6px 0; }
+/* UNIQUE: the `?` help marker layers onto the workspace-standard
+   `.preset-hint-icon` (see _tip()); only the inline placement is wizard-local. */
+#applicant-onboarding-overlay .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; }
