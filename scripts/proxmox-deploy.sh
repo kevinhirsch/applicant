@@ -7,15 +7,19 @@
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/proxmox-deploy.sh)"
 #
 # Proxmox VE Helper-Scripts style: a whiptail wizard that creates a **Proxmox VM**
-# (per spec FR-INSTALL-1 — "targeting a Proxmox VM (decided)") from the Debian 12
-# cloud image, presets the root password, AUTO-IMPORTS the node's detectable SSH
-# keys, and uses cloud-init to self-provision on first boot: install Docker, clone
-# Applicant, bring up the production Docker Compose stack, and run the DB migrations.
-# Everything after that is configured in-browser (the OOBE wizard) — zero CLI.
+# (per spec FR-INSTALL-1 — "targeting a Proxmox VM (decided)") from the **Ubuntu
+# Server 24.04 LTS** cloud image, presets the root password, AUTO-IMPORTS the node's
+# detectable SSH keys, and uses cloud-init to self-provision on first boot: install
+# Docker, clone Applicant, bring up the production Docker Compose stack, and run the
+# DB migrations. Everything after that is configured in-browser (OOBE) — zero CLI.
 #
 # A VM (not an LXC) is used deliberately: it matches the spec, gives Docker + the
 # browser sandbox clean isolation, and supports the residential-egress posture
 # (FR-STEALTH-4). The whole stack ships inside the VM via Compose (FR-INSTALL-3).
+#
+# The host VM is kept LEAN and HEADLESS (Ubuntu Server, no desktop). The full Ubuntu
+# desktop the user takes over (TAKEOVER_DESKTOP: cinnamon default / xfce / gnome) is a
+# separate web-streamed CONTAINER, not installed on the host (FR-SANDBOX-2/3).
 #
 set -euo pipefail
 
@@ -28,7 +32,10 @@ REPO_BRANCH="${REPO_BRANCH:-main}"
 REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
 APP_NAME="Applicant"
 APP_PORT="${APP_PORT:-8000}"
-CLOUDIMG_URL="${CLOUDIMG_URL:-https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2}"
+# Ubuntu Server 24.04 LTS (noble) cloud image. The .img is qcow2-format and imports
+# cleanly via `qm set ... import-from` just like the old Debian qcow2 did. Override
+# with a noble-daily URL if a newer point release is wanted.
+CLOUDIMG_URL="${CLOUDIMG_URL:-https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img}"
 
 # ---------------------------------------------------------------------------
 # Pretty output
@@ -80,7 +87,7 @@ DEF_IMG="$(pick_default "${IMG_STORES[@]}")"
 VMID="$NEXTID"; NAME="applicant"; DISK="16"; CORES="2"; RAM="4096"; BRIDGE="vmbr0"; IMG_STORE="$DEF_IMG"
 
 MODE="$(whiptail --title "$APP_NAME deploy (Proxmox VM)" --menu \
-  "Create a Docker-ready Debian 12 VM and deploy $APP_NAME.\nChoose a setup mode:" 15 70 2 \
+  "Create a Docker-ready Ubuntu Server 24.04 LTS VM and deploy $APP_NAME.\nChoose a setup mode:" 15 70 2 \
   "default"  "Sensible defaults (recommended)" \
   "advanced" "Customize VMID, resources, storage, network" \
   3>&1 1>&2 2>&3)" || die "Cancelled."
@@ -155,10 +162,10 @@ EOF
 msg_ok "Cloud-init user-data written: ${SNIP_STORE}:snippets/applicant-${VMID}.yaml"
 
 # ---------------------------------------------------------------------------
-# Download the Debian 12 cloud image
+# Download the Ubuntu Server 24.04 LTS cloud image
 # ---------------------------------------------------------------------------
-IMG_TMP="$(mktemp --suffix=.qcow2)"
-msg_info "Downloading Debian 12 cloud image…"
+IMG_TMP="$(mktemp --suffix=.img)"
+msg_info "Downloading Ubuntu Server 24.04 LTS cloud image…"
 wget -qO "$IMG_TMP" "$CLOUDIMG_URL" || die "Cloud image download failed: $CLOUDIMG_URL"
 msg_ok "Cloud image downloaded."
 

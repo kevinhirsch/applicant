@@ -139,6 +139,24 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     return None, None, InMemoryStorage()
 
 
+def _build_remote_view(settings: Settings) -> Any:
+    """Pick the remote-view sub-port by REMOTE_VIEW_BACKEND (FR-SANDBOX-2).
+
+    ``webtop`` (default) -> full Ubuntu webtop desktop with the DE resolved from
+    TAKEOVER_DESKTOP (cinnamon default / xfce / gnome). ``neko`` -> browser-only Neko.
+    """
+    from applicant.adapters.sandbox.remote_view import NekoRemoteView, WebtopRemoteView
+    from applicant.app.config import REMOTE_VIEW_NEKO
+
+    if settings.remote_view_backend == REMOTE_VIEW_NEKO:
+        return NekoRemoteView()
+    return WebtopRemoteView(
+        base_url=settings.takeover_desktop_base_url,
+        desktop=settings.takeover_desktop,
+        image=settings.takeover_desktop_image_resolved,
+    )
+
+
 def _build_orchestrator(settings: Settings) -> Any:
     if settings.orchestrator_backend == "dbos":
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
@@ -242,7 +260,11 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     browser = PatchrightBrowser(egress=egress)
     detection = DetectionMonitor()
-    sandbox = LocalSandbox()
+    # FR-SANDBOX-2/3: the swappable remote-view sub-port. Default is the full Ubuntu
+    # webtop desktop (DE from TAKEOVER_DESKTOP -> resolved image); Neko (browser-only)
+    # stays selectable via REMOTE_VIEW_BACKEND=neko. Image selection + URL/token are
+    # real here; the container/room control plane is integration-gated in the adapter.
+    sandbox = LocalSandbox(remote_view=_build_remote_view(settings))
     # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the
     # engine binary is present at runtime (RESUME_RENDER=auto|on|off, default auto).
     latex_tailor = LatexTailor(render_mode=settings.resume_render)

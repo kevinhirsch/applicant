@@ -4,8 +4,55 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
+#: The takeover desktop is a containerized, web-streamed Ubuntu desktop (the DE is
+#: an image/arg swap). Default Cinnamon; Xfce + full GNOME are also selectable.
+TAKEOVER_DESKTOP_CINNAMON = "cinnamon"
+TAKEOVER_DESKTOP_XFCE = "xfce"
+TAKEOVER_DESKTOP_GNOME = "gnome"
+TAKEOVER_DESKTOPS = (
+    TAKEOVER_DESKTOP_CINNAMON,
+    TAKEOVER_DESKTOP_XFCE,
+    TAKEOVER_DESKTOP_GNOME,
+)
+
+#: DE -> container image resolution table (FR-SANDBOX-2). Cinnamon & Xfce use the
+#: ready-made LinuxServer Ubuntu *webtop* images (X11, browser-stream-friendly).
+#: Full GNOME does NOT ship as a prebuilt webtop (GNOME assumes Wayland/systemd),
+#: so ``gnome`` resolves to a LOCAL custom image built from
+#: ``docker/webtop-gnome/Dockerfile`` (Ubuntu + ubuntu-desktop/GNOME on Xorg/X11 +
+#: a web streamer) — heavier; see README for the trade-off.
+TAKEOVER_DESKTOP_IMAGES: dict[str, str] = {
+    TAKEOVER_DESKTOP_CINNAMON: "lscr.io/linuxserver/webtop:ubuntu-cinnamon",
+    TAKEOVER_DESKTOP_XFCE: "lscr.io/linuxserver/webtop:ubuntu-xfce",
+    TAKEOVER_DESKTOP_GNOME: "applicant/webtop-gnome:latest",
+}
+
+#: Remote-view backends (FR-SANDBOX-2): ``webtop`` (full Ubuntu desktop, default)
+#: or ``neko`` (browser-only, kept selectable/swappable).
+REMOTE_VIEW_WEBTOP = "webtop"
+REMOTE_VIEW_NEKO = "neko"
+REMOTE_VIEW_BACKENDS = (REMOTE_VIEW_WEBTOP, REMOTE_VIEW_NEKO)
+
+
+def resolve_takeover_image(desktop: str, override: str = "") -> str:
+    """Resolve a takeover DE to its container image (FR-SANDBOX-2).
+
+    An explicit ``override`` (advanced ``TAKEOVER_DESKTOP_IMAGE``) wins; otherwise
+    the DE->image table is used. Cinnamon/Xfce -> LinuxServer webtop tags;
+    ``gnome`` -> the local custom ``applicant/webtop-gnome:latest`` image.
+    """
+    if override.strip():
+        return override.strip()
+    try:
+        return TAKEOVER_DESKTOP_IMAGES[desktop]
+    except KeyError as exc:  # pragma: no cover - guarded by config validation
+        raise ValueError(
+            f"Unknown takeover desktop {desktop!r}; choose one of {TAKEOVER_DESKTOPS}."
+        ) from exc
 
 
 class Settings(BaseSettings):
@@ -87,6 +134,50 @@ class Settings(BaseSettings):
     # residential refuses to launch (the datacenter-egress refusal is reachable via
     # config). Set True only when the operator vouches the proxy is residential.
     egress_residential: bool = Field(default=False, alias="EGRESS_RESIDENTIAL")
+
+    # Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5). When the agent hits an
+    # irreducible human step (CAPTCHA / verification / final submit), the user takes
+    # over via a one-click live session. The takeover environment is a containerized,
+    # web-streamed FULL Ubuntu desktop whose DE is configurable here (default
+    # Cinnamon; Xfce + full GNOME also selectable). All three run on X11 (not Wayland)
+    # for remote streaming + automation. ``gnome`` uses the local custom webtop image.
+    takeover_desktop: str = Field(default=TAKEOVER_DESKTOP_CINNAMON, alias="TAKEOVER_DESKTOP")
+    # Advanced override: pin an exact takeover-desktop image (wins over the DE table).
+    takeover_desktop_image: str = Field(default="", alias="TAKEOVER_DESKTOP_IMAGE")
+    # Swappable remote-view backend (FR-SANDBOX-2): ``webtop`` (full desktop, default)
+    # or ``neko`` (browser-only). Neko remains a selectable backend.
+    remote_view_backend: str = Field(default=REMOTE_VIEW_WEBTOP, alias="REMOTE_VIEW_BACKEND")
+    # Base URL the streamed takeover desktop is published at (the one-click link host).
+    takeover_desktop_base_url: str = Field(
+        default="https://sandbox.local/webtop", alias="TAKEOVER_DESKTOP_BASE_URL"
+    )
+
+    @field_validator("takeover_desktop")
+    @classmethod
+    def _validate_takeover_desktop(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in TAKEOVER_DESKTOPS:
+            raise ValueError(
+                f"TAKEOVER_DESKTOP={v!r} is invalid; choose one of {TAKEOVER_DESKTOPS} "
+                "(default 'cinnamon')."
+            )
+        return norm
+
+    @field_validator("remote_view_backend")
+    @classmethod
+    def _validate_remote_view_backend(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in REMOTE_VIEW_BACKENDS:
+            raise ValueError(
+                f"REMOTE_VIEW_BACKEND={v!r} is invalid; choose one of "
+                f"{REMOTE_VIEW_BACKENDS} (default 'webtop')."
+            )
+        return norm
+
+    @property
+    def takeover_desktop_image_resolved(self) -> str:
+        """The container image for the configured takeover DE (FR-SANDBOX-2)."""
+        return resolve_takeover_image(self.takeover_desktop, self.takeover_desktop_image)
 
     @property
     def llm_configured(self) -> bool:

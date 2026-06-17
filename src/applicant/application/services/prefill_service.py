@@ -152,10 +152,22 @@ class PrefillService:
         # 1. Provision the isolated, ephemeral sandbox (FR-SANDBOX-1, FR-PREFILL-1).
         app = application.with_status(ApplicationState.SANDBOX_PROVISIONING)
         session = self._sandbox.provision(aid)
+        # Session-continuity handoff (FR-PREFILL-5 / FR-SANDBOX-3): when the remote
+        # view is the full webtop desktop, tell it which application URL to open so the
+        # human takes over the SAME application the agent was filling. Best-effort and
+        # signature-stable: only the webtop adapter exposes ``bind_application_url``.
+        session_url = session.remote_view_url
+        remote_view = getattr(self._sandbox, "remote_view", None)
+        if callable(remote_view):
+            rv = remote_view()
+            bind = getattr(rv, "bind_application_url", None)
+            if callable(bind):
+                bind(session.session_id, url)
+                session_url = rv.view_url(session.session_id)
         result = PrefillResult(
             application_id=aid,
             state=app.status,
-            sandbox_session_url=session.remote_view_url,
+            sandbox_session_url=session_url,
         )
 
         # 2. Open the first page.
