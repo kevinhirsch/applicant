@@ -18,6 +18,14 @@ class SandboxSession:
     session_id: str
     application_id: ApplicationId
     remote_view_url: str | None = None
+    #: CDP (Chrome DevTools Protocol) endpoint the engine connects to in order to
+    #: DRIVE the browser. For the native Proxmox Windows backend this is the remote
+    #: Windows VM's Chrome ``http://host:port`` endpoint (the engine connects over
+    #: CDP instead of launching a local browser). ``None`` for the local backend.
+    cdp_endpoint: str | None = None
+    #: The application URL the session is for (session continuity / handoff): the
+    #: takeover lands the human on the SAME application the engine was filling.
+    application_url: str | None = None
 
 
 @runtime_checkable

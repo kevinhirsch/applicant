@@ -19,17 +19,43 @@ class WizardStep(str, Enum):
 
     LLM = "llm"
     CHANNELS = "channels"
+    SANDBOX = "sandbox"  # native Proxmox Windows VM connection/login (FR-OOBE)
     FONTS = "fonts"
     ONBOARDING = "onboarding"
 
 
-#: Canonical step order (FR-OOBE-2).
+#: Canonical step order (FR-OOBE-2). The sandbox-connection step sits after channels
+#: and before fonts; it only GATES when the proxmox-windows backend is selected.
 STEP_ORDER: tuple[WizardStep, ...] = (
     WizardStep.LLM,
     WizardStep.CHANNELS,
+    WizardStep.SANDBOX,
     WizardStep.FONTS,
     WizardStep.ONBOARDING,
 )
+
+
+@dataclass(frozen=True)
+class SandboxConnectionSettings:
+    """Native Proxmox Windows VM connection + login data, collected in the UI (FR-OOBE).
+
+    Non-secrets (API URL/node/VMID/CDP/method/RDP user) persist to app-config; the
+    SECRETS (Proxmox API token secret + RDP password) are sealed in the credential
+    vault and NEVER logged or returned (FR-VAULT-3, NFR-PRIV-1).
+    """
+
+    proxmox_api_url: str
+    proxmox_node: str
+    proxmox_token_id: str
+    proxmox_token_secret: str  # SECRET -> vault
+    template_vmid: int
+    clone_mode: str = "snapshot-revert"
+    cdp_host: str = ""
+    cdp_port: int = 9222
+    rdp_username: str = ""
+    rdp_password: str = ""  # SECRET -> vault
+    takeover_method: str = "rdp"
+    takeover_url_template: str = ""
 
 
 @dataclass(frozen=True)

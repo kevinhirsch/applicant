@@ -72,6 +72,12 @@ class _FakeEngine:
     async def setup_test_channels(self):
         return await self._dispatch("setup_test_channels")
 
+    async def setup_get_sandbox_connection(self):
+        return await self._dispatch("setup_get_sandbox_connection")
+
+    async def setup_configure_sandbox_connection(self, body):
+        return await self._dispatch("setup_configure_sandbox_connection", body)
+
     async def list_fonts(self):
         return await self._dispatch("list_fonts")
 
@@ -226,6 +232,66 @@ def test_channels_test(monkeypatch):
     resp = _make_client().post("/api/applicant/setup/channels/test")
     assert resp.status_code == 200
     assert resp.json()["channels"] == ["discord"]
+
+
+# ── automation sandbox backend (FR-SANDBOX-1) ───────────────────────────────
+
+
+def test_sandbox_connection_get_passes_engine_json_through(monkeypatch):
+    payload = {
+        "backend": "local",
+        "connection": {},
+        "configured": False,
+        "backend_ready": True,
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/sandbox-connection")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("setup_get_sandbox_connection", ())
+
+
+def test_sandbox_connection_save_forwards_body_and_keeps_secrets(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {
+        "proxmox_api_url": "https://pve:8006/api2/json",
+        "proxmox_node": "pve",
+        "proxmox_token_id": "root@pam!applicant",
+        "proxmox_token_secret": "s3cr3t",
+        "template_vmid": 100,
+        "clone_mode": "snapshot-revert",
+        "rdp_username": "Administrator",
+        "rdp_password": "p@ss",
+        "takeover_method": "rdp",
+    }
+    resp = _make_client().post("/api/applicant/setup/sandbox-connection", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_sandbox_connection"
+    # The proxy forwards the full body (incl. secrets) to the engine, which vaults
+    # them; nothing is dropped on the way through.
+    assert args[0]["proxmox_node"] == "pve"
+    assert args[0]["template_vmid"] == 100
+    assert args[0]["proxmox_token_secret"] == "s3cr3t"
+    assert args[0]["rdp_password"] == "p@ss"
+
+
+def test_sandbox_connection_engine_400_passed_through(monkeypatch):
+    err = EngineError("bad", status=400, detail="A Windows template/persistent VMID is required")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post(
+        "/api/applicant/setup/sandbox-connection",
+        json={
+            "proxmox_api_url": "https://pve:8006/api2/json",
+            "proxmox_node": "pve",
+            "proxmox_token_id": "id",
+            "proxmox_token_secret": "s",
+            "template_vmid": 0,
+        },
+    )
+    assert resp.status_code == 400
+    assert "VMID" in resp.json()["detail"]
 
 
 def test_fonts_list_detect_install(monkeypatch):
@@ -422,6 +488,18 @@ def test_config_writes_require_can_configure(monkeypatch):
         ("POST", "/api/applicant/setup/llm", {"provider": "x", "model": "m"}, None),
         ("POST", "/api/applicant/setup/channels", {"discord_webhook_url": "d"}, None),
         ("POST", "/api/applicant/setup/channels/test", None, None),
+        (
+            "POST",
+            "/api/applicant/setup/sandbox-connection",
+            {
+                "proxmox_api_url": "https://pve:8006/api2/json",
+                "proxmox_node": "pve",
+                "proxmox_token_id": "id",
+                "proxmox_token_secret": "s",
+                "template_vmid": 100,
+            },
+            None,
+        ),
         ("POST", "/api/applicant/setup/campaigns", {"name": "n"}, None),
         ("POST", "/api/applicant/setup/onboarding/c1/complete", None, None),
     ]
@@ -435,6 +513,7 @@ def test_reads_allowed_without_config_privilege(monkeypatch):
     client = _make_priv_client({"can_configure": False})
     assert client.get("/api/applicant/setup/status").status_code == 200
     assert client.get("/api/applicant/setup/channels").status_code == 200
+    assert client.get("/api/applicant/setup/sandbox-connection").status_code == 200
 
 
 def test_config_writes_allowed_with_privilege(monkeypatch):
