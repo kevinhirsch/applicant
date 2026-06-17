@@ -258,7 +258,12 @@ def build_container(settings: Settings | None = None) -> Container:
         proxy_url=settings.egress_proxy_url,
         residential=settings.egress_residential,
     )
-    browser = PatchrightBrowser(egress=egress)
+    browser = PatchrightBrowser(
+        egress=egress,
+        channel=settings.browser_channel,
+        egress_timezone=settings.egress_timezone,
+        egress_locale=settings.egress_locale,
+    )
     detection = DetectionMonitor()
     # FR-SANDBOX-2/3: the swappable remote-view sub-port. Default is the full Ubuntu
     # webtop desktop (DE from TAKEOVER_DESKTOP -> resolved image); Neko (browser-only)

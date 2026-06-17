@@ -19,15 +19,17 @@ TAKEOVER_DESKTOPS = (
     TAKEOVER_DESKTOP_GNOME,
 )
 
-#: DE -> container image resolution table (FR-SANDBOX-2). Cinnamon & Xfce use the
-#: ready-made LinuxServer Ubuntu *webtop* images (X11, browser-stream-friendly).
-#: Full GNOME does NOT ship as a prebuilt webtop (GNOME assumes Wayland/systemd),
-#: so ``gnome`` resolves to a LOCAL custom image built from
-#: ``docker/webtop-gnome/Dockerfile`` (Ubuntu + ubuntu-desktop/GNOME on Xorg/X11 +
-#: a web streamer) — heavier; see README for the trade-off.
+#: DE -> container image resolution table (FR-SANDBOX-2, FR-STEALTH-1). Every DE
+#: must ship **Google Chrome** so the human takes over the SAME real Chrome the
+#: engine drives (coherent real-Linux/Chrome identity). The stock LinuxServer
+#: webtops do NOT ship Chrome, so Cinnamon & Xfce resolve to LOCAL derived images
+#: (``docker/webtop-chrome/Dockerfile``, ``FROM`` the LinuxServer webtop, adding
+#: google-chrome-stable + a realistic font set). Full GNOME does NOT ship as a
+#: prebuilt webtop (GNOME assumes Wayland/systemd) so ``gnome`` resolves to the
+#: custom ``docker/webtop-gnome/Dockerfile`` (now also Chrome + fonts). See README.
 TAKEOVER_DESKTOP_IMAGES: dict[str, str] = {
-    TAKEOVER_DESKTOP_CINNAMON: "lscr.io/linuxserver/webtop:ubuntu-cinnamon",
-    TAKEOVER_DESKTOP_XFCE: "lscr.io/linuxserver/webtop:ubuntu-xfce",
+    TAKEOVER_DESKTOP_CINNAMON: "applicant/webtop-chrome:cinnamon",
+    TAKEOVER_DESKTOP_XFCE: "applicant/webtop-chrome:xfce",
     TAKEOVER_DESKTOP_GNOME: "applicant/webtop-gnome:latest",
 }
 
@@ -36,6 +38,14 @@ TAKEOVER_DESKTOP_IMAGES: dict[str, str] = {
 REMOTE_VIEW_WEBTOP = "webtop"
 REMOTE_VIEW_NEKO = "neko"
 REMOTE_VIEW_BACKENDS = (REMOTE_VIEW_WEBTOP, REMOTE_VIEW_NEKO)
+
+#: Driving browser channel (FR-STEALTH-1). ``chrome`` = real Google Chrome (the
+#: default, the foundation of the coherent identity — genuine TLS/JA3 + client
+#: hints); ``chromium`` = the bundled Chromium fallback (less coherent; only when
+#: Google Chrome is unavailable). Headless is NEVER used (it is a detection tell).
+BROWSER_CHANNEL_CHROME = "chrome"
+BROWSER_CHANNEL_CHROMIUM = "chromium"
+BROWSER_CHANNELS = (BROWSER_CHANNEL_CHROME, BROWSER_CHANNEL_CHROMIUM)
 
 
 def resolve_takeover_image(desktop: str, override: str = "") -> str:
@@ -135,6 +145,20 @@ class Settings(BaseSettings):
     # config). Set True only when the operator vouches the proxy is residential.
     egress_residential: bool = Field(default=False, alias="EGRESS_RESIDENTIAL")
 
+    # Driving browser channel (FR-STEALTH-1, FR-PREFILL-1). Default real Google
+    # Chrome (the coherent-identity foundation: genuine Chrome TLS/JA3 + correct
+    # Sec-CH-UA client hints). ``chromium`` is a less-coherent fallback. Threaded
+    # into launch_persistent_context(channel=...). Headful only (no headless tell).
+    browser_channel: str = Field(default=BROWSER_CHANNEL_CHROME, alias="BROWSER_CHANNEL")
+
+    # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
+    # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the
+    # egress IP's region in a real deployment; the defaults are a sensible coherent
+    # pair (Phoenix has no DST, a stable choice). Threaded into the browser context
+    # (timezone_id / locale) so the fingerprint never contradicts the exit IP.
+    egress_timezone: str = Field(default="America/Phoenix", alias="EGRESS_TIMEZONE")
+    egress_locale: str = Field(default="en-US", alias="EGRESS_LOCALE")
+
     # Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5). When the agent hits an
     # irreducible human step (CAPTCHA / verification / final submit), the user takes
     # over via a one-click live session. The takeover environment is a containerized,
@@ -160,6 +184,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"TAKEOVER_DESKTOP={v!r} is invalid; choose one of {TAKEOVER_DESKTOPS} "
                 "(default 'cinnamon')."
+            )
+        return norm
+
+    @field_validator("browser_channel")
+    @classmethod
+    def _validate_browser_channel(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in BROWSER_CHANNELS:
+            raise ValueError(
+                f"BROWSER_CHANNEL={v!r} is invalid; choose one of {BROWSER_CHANNELS} "
+                "(default 'chrome' — real Google Chrome)."
             )
         return norm
 

@@ -238,13 +238,19 @@ class PlaywrightPageSource:
     clicking an account-create or final submit (FR-PREFILL-4/5).
     """
 
+    #: The default driving browser channel: real Google Chrome (FR-STEALTH-1).
+    #: Real Chrome (not Chromium, not headless) yields the genuine Chrome TLS/JA3 +
+    #: HTTP/2 fingerprint and the correct Sec-CH-UA client hints automatically.
+    DEFAULT_CHANNEL = "chrome"
+
     def __init__(
         self,
         fingerprint: dict[str, str],
         *,
-        headless: bool = True,
+        headless: bool = False,
         proxy: dict[str, str] | None = None,
         user_data_dir: str = "",
+        channel: str = DEFAULT_CHANNEL,
     ) -> None:
         try:
             # patchright is a drop-in Playwright fork that removes automation tells
@@ -260,6 +266,7 @@ class PlaywrightPageSource:
             ) from exc
 
         self._fingerprint = dict(fingerprint)
+        self._channel = channel
         # FR-STEALTH-4: the residential-egress proxy (or None for direct egress),
         # threaded into the launch kwargs below.
         self._proxy = dict(proxy) if proxy else None
@@ -275,7 +282,11 @@ class PlaywrightPageSource:
         self._expected_host: str | None = None
         try:  # pragma: no cover - integration-gated
             kwargs = self.launch_kwargs(
-                self._fingerprint, headless=headless, proxy=self._proxy, user_data_dir=user_data_dir
+                self._fingerprint,
+                headless=headless,
+                proxy=self._proxy,
+                user_data_dir=user_data_dir,
+                channel=self._channel,
             )
             self._context = self._pw.chromium.launch_persistent_context(**kwargs)
             # FR-STEALTH-1: apply the coherent fingerprint (WebGL vendor/renderer +
@@ -312,24 +323,41 @@ class PlaywrightPageSource:
 
     @staticmethod
     def fingerprint_init_script(fingerprint: dict[str, str]) -> str:
-        """Build the JS init script that spoofs WebGL vendor/renderer + platform.
+        """Build the JS init script applying the coherent real-Linux/Chrome identity.
 
-        Pure + unit-testable (no browser): the default lane asserts the normalized
-        WebGL vendor/renderer and ``navigator.platform`` are baked into the script
-        that is injected into every page (FR-STEALTH-1).
+        Pure + unit-testable (no browser): the default lane asserts the coherent
+        WebGL vendor/renderer, ``navigator.platform`` (``Linux x86_64``),
+        ``navigator.vendor`` (``Google Inc.``) and ``navigator.languages``
+        (``en-US,en``) are baked into the script injected into every page
+        (FR-STEALTH-1). It does NOT touch ``Sec-CH-UA`` — real Google Chrome emits
+        those client hints itself; re-setting them would risk an incoherent double.
         """
         import json as _json
 
         vendor = fingerprint.get("webgl_vendor", "")
         renderer = fingerprint.get("webgl_renderer", "")
         platform = fingerprint.get("platform", "")
+        nav_vendor = fingerprint.get("vendor", "Google Inc.")
+        languages = [
+            lang.strip()
+            for lang in fingerprint.get("languages", "en-US,en").split(",")
+            if lang.strip()
+        ]
         return (
             "(() => {"
             f"  const vendor = {_json.dumps(vendor)};"
             f"  const renderer = {_json.dumps(renderer)};"
             f"  const platform = {_json.dumps(platform)};"
+            f"  const navVendor = {_json.dumps(nav_vendor)};"
+            f"  const languages = {_json.dumps(languages)};"
             "  try {"
             "    Object.defineProperty(navigator, 'platform', {get: () => platform});"
+            "  } catch (e) {}"
+            "  try {"
+            "    Object.defineProperty(navigator, 'vendor', {get: () => navVendor});"
+            "  } catch (e) {}"
+            "  try {"
+            "    Object.defineProperty(navigator, 'languages', {get: () => languages});"
             "  } catch (e) {}"
             "  const patch = (proto) => {"
             "    if (!proto || !proto.getParameter) return;"
@@ -349,28 +377,50 @@ class PlaywrightPageSource:
         """Inject the fingerprint init script into every page in the context."""
         context.add_init_script(self.fingerprint_init_script(self._fingerprint))
 
+    #: Browser launch args that REMOVE automation/headless tells without revealing
+    #: automation (FR-STEALTH-1). ``--disable-blink-features=AutomationControlled``
+    #: drops the ``navigator.webdriver`` tell; we add NO automation-revealing flags
+    #: (no ``--headless``, no ``--enable-automation``). Patchright layers its own
+    #: stealth patches on top of these.
+    _STEALTH_ARGS = ("--disable-blink-features=AutomationControlled",)
+
     @staticmethod
     def launch_kwargs(
         fingerprint: dict[str, str],
         *,
-        headless: bool = True,
+        headless: bool = False,
         proxy: dict[str, str] | None = None,
         user_data_dir: str = "",
+        channel: str = DEFAULT_CHANNEL,
     ) -> dict:
         """Build the ``launch_persistent_context`` kwargs (pure + unit-testable).
 
         Kept pure (no browser) so the default lane can assert the coherent
-        fingerprint (FR-STEALTH-1) AND the residential-egress proxy (FR-STEALTH-4)
-        are threaded into the real launch, without constructing a browser.
+        real-Linux/Chrome fingerprint (FR-STEALTH-1), the driving CHANNEL (real
+        Google Chrome, headful), the tz/locale tied to egress, AND the residential
+        proxy (FR-STEALTH-4) are all threaded into the real launch, without
+        constructing a browser.
         """
         width, _, height = fingerprint.get("resolution", "1920x1080").partition("x")
+        scale = fingerprint.get("device_scale_factor", "1")
+        try:
+            scale_f = float(scale)
+        except (TypeError, ValueError):
+            scale_f = 1.0
         kwargs: dict = {
             "user_data_dir": user_data_dir,  # the adapter supplies a per-tenant dir
+            # Real Google Chrome (channel), HEADFUL (no --headless): the genuine
+            # Chrome TLS/JA3 + client hints come for free (FR-STEALTH-1).
+            "channel": channel,
             "headless": headless,
             "user_agent": fingerprint.get("user_agent"),
             "locale": fingerprint.get("locale", "en-US"),
+            # FR-STEALTH-1 <-> FR-STEALTH-4: tz/locale pinned to the residential
+            # egress geolocation so tz/locale <-> IP are consistent.
             "timezone_id": fingerprint.get("timezone", "America/Phoenix"),
             "viewport": {"width": int(width or 1920), "height": int(height or 1080)},
+            "device_scale_factor": scale_f,
+            "args": list(PlaywrightPageSource._STEALTH_ARGS),
         }
         if proxy:
             # FR-STEALTH-4: residential proxy actually used for automation egress.

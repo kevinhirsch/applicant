@@ -25,56 +25,192 @@ What lives here (and the requirement each satisfies):
 from __future__ import annotations
 
 import random
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 
 # --- FR-STEALTH-1: coherent, honest browser identity ------------------------
-#: A single internally-consistent fingerprint (UA/locale/timezone/resolution).
-#: The OS implied by the UA must match the WebGL/Canvas renderer (no spoofing an
-#: OS the WebGL contradicts) — that internal consistency is the whole point.
-NORMALIZED_FINGERPRINT: dict[str, str] = {
-    "user_agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "locale": "en-US",
-    "timezone": "America/Phoenix",
-    "resolution": "1920x1080",
-    "webgl_vendor": "Google Inc. (Intel)",
-    "webgl_renderer": "ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)",
-    "platform": "Win32",
-}
+#: The Chrome major version this build pins when the real Google Chrome binary
+#: cannot be probed (e.g. the hermetic test lane, no browser installed). The UA,
+#: the ``Sec-CH-UA`` header and the engine all derive from this single value so
+#: they NEVER disagree. Bump this when the bundled/installed Chrome is upgraded.
+PINNED_CHROME_MAJOR = 124
+
+#: OWNER DECISION (FR-STEALTH-1): present a COHERENT REAL Linux + Google Chrome
+#: identity, NOT a spoofed Windows persona. Real Google Chrome on Linux yields the
+#: genuine Chrome TLS/JA3 + HTTP/2 fingerprint and correct Sec-CH-UA client hints
+#: automatically; everything we *do* set below must agree with that real identity.
+#: An internally-consistent honest fingerprint on the residential IP (FR-STEALTH-4)
+#: is stealthier than any incoherent spoof — incoherent spoofs score WORSE.
+#:
+#: Every field here is APPLIED to the launched context (UA/locale/tz/viewport via
+#: the context options; platform/vendor/languages/WebGL via a minimal init script).
+#: The WebGL renderer is a plausible REAL Linux GPU (Mesa) string — NOT a Windows
+#: Direct3D/ANGLE renderer — and it is STABLE (randomization is itself a tell).
+
+
+def _chrome_user_agent(major: int) -> str:
+    """The real Linux x86_64 Google Chrome UA string for a Chrome ``major``."""
+    return (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    )
+
+
+def _sec_ch_ua(major: int) -> str:
+    """The ``Sec-CH-UA`` header value coherent with a Chrome ``major``.
+
+    Real Chrome sends this itself; we compute the identical value so the seam /
+    tests can assert UA <-> CH-UA agreement and so any place that *does* need to
+    set it (non-Chromium fallbacks) stays coherent. The brand list mirrors what
+    Chrome emits: a "Not...A;Brand" GREASE entry plus Chromium + Google Chrome.
+    """
+    return (
+        f'"Chromium";v="{major}", "Google Chrome";v="{major}", '
+        '"Not.A/Brand";v="24"'
+    )
+
+
+def _build_fingerprint(major: int) -> dict[str, str]:
+    """Build the single coherent real-Linux + Chrome fingerprint for ``major``."""
+    return {
+        "user_agent": _chrome_user_agent(major),
+        "chrome_major": str(major),
+        "sec_ch_ua": _sec_ch_ua(major),
+        "sec_ch_ua_platform": "Linux",
+        "sec_ch_ua_mobile": "?0",
+        "locale": "en-US",
+        "languages": "en-US,en",
+        "timezone": "America/Phoenix",
+        "resolution": "1920x1080",
+        "device_scale_factor": "1",
+        # A plausible REAL Linux GPU via Mesa — consistent with X11/Linux, never a
+        # Windows Direct3D/ANGLE renderer. Stable (not randomized — randomization
+        # is itself a detection tell). Mesa/llvmpipe is the ubiquitous Linux
+        # software renderer seen on headful Chrome in containers/VMs.
+        "webgl_vendor": "Google Inc. (Mesa)",
+        "webgl_renderer": (
+            "ANGLE (Mesa, llvmpipe (LLVM 15.0.7, 256 bits), OpenGL 4.5 (Core Profile) "
+            "Mesa 23.2.1)"
+        ),
+        "platform": "Linux x86_64",
+        "vendor": "Google Inc.",
+    }
+
+
+#: A single internally-consistent honest identity: real Linux x86_64 + Google
+#: Chrome, locale ``en-US``, tz ``America/Phoenix``, realistic resolution, a real
+#: Linux/Mesa WebGL renderer. The OS implied by the UA (Linux) agrees with
+#: ``platform``, the ``Sec-CH-UA-Platform`` and the WebGL renderer (FR-STEALTH-1).
+NORMALIZED_FINGERPRINT: dict[str, str] = _build_fingerprint(PINNED_CHROME_MAJOR)
+
+
+def detect_chrome_major(channel: str = "chrome") -> int | None:
+    """Probe the installed Google Chrome binary for its major version, else ``None``.
+
+    So the UA <-> CH-UA <-> engine all agree with the REAL Chrome the human takes
+    over (FR-STEALTH-1): when the ``chrome`` channel's binary is present we derive
+    the major from ``google-chrome --version``; otherwise the caller falls back to
+    :data:`PINNED_CHROME_MAJOR`. Pure-ish + best-effort: any failure -> ``None``
+    (the hermetic lane never has Chrome installed, so this stays ``None`` there).
+    """
+    candidates = (
+        ("google-chrome-stable", "google-chrome", "chrome")
+        if channel == "chrome"
+        else ("chromium", "chromium-browser")
+    )
+    for name in candidates:
+        path = shutil.which(name)
+        if not path:
+            continue
+        try:
+            out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [path, "--version"], capture_output=True, text=True, timeout=5
+            )
+        except (OSError, subprocess.SubprocessError):  # pragma: no cover - env-dependent
+            continue
+        match = re.search(r"(\d+)\.\d+\.\d+", out.stdout or "")
+        if match:
+            return int(match.group(1))
+    return None  # pragma: no cover - covered via monkeypatched PATH in tests
+
+
+def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
+    """The coherent real-Linux/Chrome fingerprint, version-pinned to installed Chrome.
+
+    Derives the Chrome major from the actually-installed Google Chrome when probe-
+    able (so the UA/CH-UA match the real browser the human will take over), else
+    falls back to :data:`PINNED_CHROME_MAJOR`. Always internally coherent.
+    """
+    major = detect_chrome_major(channel) or PINNED_CHROME_MAJOR
+    return _build_fingerprint(major)
 
 #: FR-STEALTH-5: honest best-effort caveat surfaced in UX copy. Anti-detection is
 #: never a guarantee; the user performing the irreducible human steps (account
 #: submit, CAPTCHA, verification, final submit) is the strongest legitimacy lever.
 STEALTH_CAVEAT = (
-    "Anti-detection is best-effort, never a guarantee. The strongest legitimacy "
-    "signal is you performing the irreducible human steps yourself: completing "
-    "account creation, any CAPTCHA or verification, and the final submit in the "
-    "live session. The engine pre-fills; you stay in control of the moments that "
-    "matter."
+    "Anti-detection is best-effort, never a guarantee. Rather than spoof a fake "
+    "persona, the engine presents a REAL, internally-consistent identity — genuine "
+    "Google Chrome on Linux, on your residential connection — because an incoherent "
+    "spoof scores worse than an honest, coherent fingerprint. The strongest "
+    "legitimacy signal is still you performing the irreducible human steps yourself: "
+    "completing account creation, any CAPTCHA or verification, and the final submit "
+    "in the live session. The engine pre-fills; you stay in control of the moments "
+    "that matter."
 )
 
 
 def fingerprint_is_coherent(fp: dict[str, str]) -> bool:
     """True if the fingerprint is internally consistent (FR-STEALTH-1).
 
-    The OS family in the UA must agree with the ``platform`` and the WebGL
-    renderer must not contradict it (e.g. a Windows UA must not carry a macOS
-    Metal renderer). Conservative checks; the real adapter expands these.
+    The OS family in the UA must agree with ``platform``, ``Sec-CH-UA-Platform``
+    and the WebGL renderer (e.g. a Windows UA must not carry a macOS Metal renderer;
+    a Linux UA must not carry a Windows Direct3D renderer). The Chrome major in the
+    UA must match ``Sec-CH-UA`` so UA <-> client-hints never disagree. These are the
+    combos a real browser would never produce — rejecting them is the whole point.
     """
     ua = fp.get("user_agent", "").lower()
     platform = fp.get("platform", "").lower()
     renderer = fp.get("webgl_renderer", "").lower()
+    ch_ua_platform = fp.get("sec_ch_ua_platform", "").lower()
     if "windows" in ua:
         if "win" not in platform:
             return False
         if "metal" in renderer or "apple" in renderer:
             return False
+        if ch_ua_platform and ch_ua_platform != "windows":
+            return False
     if "mac os" in ua:
         if "win" in platform:
             return False
-        if "direct3d" in renderer or "angle" in renderer:
+        if "direct3d" in renderer or "angle (mesa" in renderer:
+            return False
+        if ch_ua_platform and ch_ua_platform != "macos":
+            return False
+    if "linux" in ua:
+        # A real Linux Chrome reports a Linux platform + a Linux GPU stack (Mesa/
+        # llvmpipe/Intel/NVIDIA on Linux) — NEVER a Windows Direct3D renderer or a
+        # Win/Mac platform string. This is the Linux branch the sweep-3 audit found
+        # missing: a "Windows-on-Linux" spoof (Linux UA, Win32 platform, D3D WebGL)
+        # is exactly the incoherent combo we must reject.
+        if "win" in platform or "mac" in platform:
+            return False
+        if "linux" not in platform:
+            return False
+        if "direct3d" in renderer or "d3d11" in renderer:
+            return False
+        if "metal" in renderer or "apple" in renderer:
+            return False
+        if ch_ua_platform and ch_ua_platform != "linux":
+            return False
+    # UA Chrome major must agree with Sec-CH-UA (client hints) when both present.
+    sec_ch_ua = fp.get("sec_ch_ua", "")
+    ua_major_match = re.search(r"chrome/(\d+)", ua)
+    if sec_ch_ua and ua_major_match:
+        ua_major = ua_major_match.group(1)
+        ch_majors = re.findall(r'"(?:google chrome|chromium)";v="(\d+)"', sec_ch_ua.lower())
+        if ch_majors and ua_major not in ch_majors:
             return False
     return bool(fp.get("locale") and fp.get("timezone") and fp.get("resolution"))
 
@@ -206,9 +342,15 @@ class ProfileStore:
     has visited before is recognizably a returning visitor.
     """
 
-    def __init__(self, root_dir: str = "profiles") -> None:
+    def __init__(
+        self, root_dir: str = "profiles", *, fingerprint: dict[str, str] | None = None
+    ) -> None:
         self._root = root_dir.rstrip("/")
         self._profiles: dict[str, BrowserProfile] = {}
+        # The base coherent identity new profiles inherit (FR-STEALTH-1). Defaults to
+        # NORMALIZED_FINGERPRINT; the adapter passes its tz/locale-pinned fingerprint
+        # so every per-tenant profile is consistent with the residential egress.
+        self._fingerprint = dict(fingerprint) if fingerprint else dict(NORMALIZED_FINGERPRINT)
 
     def for_tenant(self, tenant_key: str) -> BrowserProfile:
         profile = self._profiles.get(tenant_key)
@@ -216,6 +358,7 @@ class ProfileStore:
             profile = BrowserProfile(
                 tenant_key=tenant_key,
                 user_data_dir=f"{self._root}/{tenant_key}",
+                fingerprint=dict(self._fingerprint),
             )
             self._profiles[tenant_key] = profile
         profile.visit_count += 1

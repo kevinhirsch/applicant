@@ -56,12 +56,12 @@ def test_invalid_remote_view_backend_rejected():
 
 # --- DE -> image resolution table -------------------------------------------
 def test_de_to_image_resolution_all_three():
-    assert (
-        resolve_takeover_image("cinnamon")
-        == "lscr.io/linuxserver/webtop:ubuntu-cinnamon"
-    )
-    assert resolve_takeover_image("xfce") == "lscr.io/linuxserver/webtop:ubuntu-xfce"
-    # GNOME does NOT ship as a prebuilt webtop -> local custom image.
+    # FR-STEALTH-1: every DE ships Google Chrome, so Cinnamon/Xfce resolve to the
+    # LOCAL derived Chrome-enabled webtop images (stock LinuxServer webtops have no
+    # Chrome), and GNOME (no prebuilt webtop) resolves to the custom GNOME image.
+    assert resolve_takeover_image("cinnamon") == "applicant/webtop-chrome:cinnamon"
+    assert resolve_takeover_image("xfce") == "applicant/webtop-chrome:xfce"
+    # GNOME does NOT ship as a prebuilt webtop -> local custom image (also Chrome).
     assert resolve_takeover_image("gnome") == "applicant/webtop-gnome:latest"
 
 
@@ -75,7 +75,7 @@ def test_image_override_wins():
 
 def test_settings_resolves_configured_de_image():
     s = Settings(_env_file=None, TAKEOVER_DESKTOP="xfce")
-    assert s.takeover_desktop_image_resolved == "lscr.io/linuxserver/webtop:ubuntu-xfce"
+    assert s.takeover_desktop_image_resolved == "applicant/webtop-chrome:xfce"
 
 
 # --- REMOTE_VIEW_BACKEND switches the wired sub-port (webtop <-> neko) -------

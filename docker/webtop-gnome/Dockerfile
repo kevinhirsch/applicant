@@ -51,6 +51,35 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
+# Install REAL Google Chrome (FR-STEALTH-1) so the human takes over the SAME real
+# Chrome the engine drives — genuine Chrome TLS/JA3 + correct Sec-CH-UA client hints
+# (the foundation of the coherent real-Linux/Chrome identity; not Chromium, not
+# headless). Plus a realistic desktop FONT SET so font enumeration looks like a real
+# machine, not a bare container. fc-cache rebuilds the font index.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg && \
+    install -d -m 0755 /etc/apt/keyrings && \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+        > /etc/apt/sources.list.d/google-chrome.list && \
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
+        | debconf-set-selections && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        google-chrome-stable \
+        fonts-liberation \
+        fonts-dejavu-core \
+        fonts-noto-core \
+        fonts-noto-color-emoji \
+        fonts-noto-cjk \
+        fonts-freefont-ttf \
+        ttf-mscorefonts-installer && \
+    fc-cache -f && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
 # Force the X11 (Xorg) GNOME session for the streamed desktop. The LinuxServer image
 # starts an Xorg server and runs the DE start script on it; we point that at a GNOME
 # session under X11. (Wayland is explicitly avoided — see X11 RATIONALE above.)

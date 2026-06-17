@@ -71,16 +71,19 @@ services:
 
   # Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5): a containerized, web-streamed
   # FULL Ubuntu desktop the human drives during an irreducible step (CAPTCHA /
-  # verification / final submit). The DE is an image SWAP — set TAKEOVER_DESKTOP_IMAGE
-  # to the resolved image for the configured DE:
-  #   cinnamon (default) -> lscr.io/linuxserver/webtop:ubuntu-cinnamon
-  #   xfce               -> lscr.io/linuxserver/webtop:ubuntu-xfce
-  #   gnome              -> applicant/webtop-gnome:latest  (custom; build docker/webtop-gnome)
+  # verification / final submit). Every DE ships REAL Google Chrome (FR-STEALTH-1)
+  # so the human takes over the SAME Chrome the engine drives (genuine Chrome
+  # TLS/JA3 + correct Sec-CH-UA client hints — the coherent real-Linux/Chrome
+  # identity). The DE is an image SWAP — set TAKEOVER_DESKTOP_IMAGE to the resolved
+  # image for the configured DE (build these locally; stock webtops have no Chrome):
+  #   cinnamon (default) -> applicant/webtop-chrome:cinnamon (docker/webtop-chrome, BASE=...cinnamon)
+  #   xfce               -> applicant/webtop-chrome:xfce     (docker/webtop-chrome, BASE=...xfce)
+  #   gnome              -> applicant/webtop-gnome:latest     (custom; build docker/webtop-gnome)
   # All run on X11 (not Wayland) for browser streaming + automation. Disabled by
   # default (profile: takeover); enable with `--profile takeover` once a desktop is wanted.
   takeover-desktop:
     profiles: ["takeover"]
-    image: ${TAKEOVER_DESKTOP_IMAGE:-lscr.io/linuxserver/webtop:ubuntu-cinnamon}
+    image: ${TAKEOVER_DESKTOP_IMAGE:-applicant/webtop-chrome:cinnamon}
     environment:
       PUID: "1000"
       PGID: "1000"

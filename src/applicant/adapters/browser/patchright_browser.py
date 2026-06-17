@@ -39,6 +39,7 @@ from applicant.adapters.browser.stealth import (
     EgressPolicy,
     HumanInteraction,
     ProfileStore,
+    coherent_fingerprint,
     fingerprint_is_coherent,
 )
 from applicant.core.ids import ApplicationId
@@ -82,15 +83,30 @@ class PatchrightBrowser:
         rng: random.Random | None = None,
         profiles: ProfileStore | None = None,
         source_factory=None,
+        channel: str = "chrome",
+        egress_timezone: str = "",
+        egress_locale: str = "",
     ) -> None:
-        # FR-STEALTH-1: normalized, coherent identity for every session.
-        self.fingerprint = dict(fingerprint or NORMALIZED_FINGERPRINT)
+        # FR-STEALTH-1: a single coherent REAL Linux + Google Chrome identity for
+        # every session. The Chrome major is version-pinned to the installed Chrome
+        # for the selected channel (so UA <-> CH-UA <-> engine all agree); a caller
+        # may still inject an explicit fingerprint (tests).
+        self._channel = channel or "chrome"
+        self.fingerprint = dict(fingerprint or coherent_fingerprint(self._channel))
+        # FR-STEALTH-1 <-> FR-STEALTH-4: tz/locale pinned to the residential egress
+        # geolocation so tz/locale <-> exit IP stay consistent.
+        if egress_timezone:
+            self.fingerprint["timezone"] = egress_timezone
+        if egress_locale:
+            self.fingerprint["locale"] = egress_locale
         # FR-STEALTH-4: residential egress only — refuse a datacenter exit up front.
         self.egress = egress or EgressPolicy()
         self.egress.validate()
         self._use_real_browser = use_real_browser
         self._rng = rng or random.Random()
-        self._profiles = profiles or ProfileStore()
+        # FR-STEALTH-3: per-tenant profiles inherit the tz/locale-pinned coherent
+        # identity so a returning user is consistent with the residential egress.
+        self._profiles = profiles or ProfileStore(fingerprint=self.fingerprint)
         # Optional page-source factory seam (tests): called as
         # ``factory(ats, fingerprint, user_data_dir=...)`` so the resolved per-tenant
         # ``user_data_dir`` (FR-STEALTH-3) can be asserted without a real browser.
@@ -226,6 +242,7 @@ class PatchrightBrowser:
                 fingerprint,
                 proxy=self.egress.launch_proxy(),
                 user_data_dir=user_data_dir,
+                channel=self._channel,
             )
         return FakePageSource(ats)
 

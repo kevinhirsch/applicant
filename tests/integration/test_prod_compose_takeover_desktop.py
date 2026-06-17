@@ -24,9 +24,10 @@ def test_takeover_desktop_service_parameterized_and_hardened():
     spec = yaml.safe_load(_COMPOSE.read_text())
     svc = spec["services"]["takeover-desktop"]
 
-    # DE is an image swap; defaults to the Cinnamon webtop, override via env.
+    # DE is an image swap; defaults to the Chrome-enabled Cinnamon webtop, override
+    # via env. Every DE ships real Google Chrome (FR-STEALTH-1).
     assert "TAKEOVER_DESKTOP_IMAGE" in svc["image"]
-    assert "ubuntu-cinnamon" in svc["image"]  # default DE
+    assert "webtop-chrome:cinnamon" in svc["image"]  # default DE (+ Chrome)
 
     # Desktop images need a large /dev/shm + relaxed seccomp (browser + DE).
     assert svc["shm_size"]
