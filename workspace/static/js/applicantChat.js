@@ -14,6 +14,7 @@
 // engine is unreachable.
 
 import uiModule from './ui.js';
+import markdownModule from './markdown.js';
 
 const API = '/api/applicant/chat';
 
@@ -164,7 +165,7 @@ function _renderConversation() {
   body.innerHTML = `
     ${_campaignPicker()}
     <div id="applicant-pending" style="margin-bottom:12px;"></div>
-    <div id="applicant-thread" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;"></div>
+    <div id="applicant-thread" class="chat-history" style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
     <div id="applicant-composer" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
                 style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
@@ -196,28 +197,63 @@ function _renderConversation() {
 function _renderThreadIntro() {
   const thread = _modalEl.querySelector('#applicant-thread');
   if (!thread) return;
-  thread.innerHTML = `
-    <div class="applicant-msg applicant-msg-assistant" style="align-self:flex-start;max-width:90%;background:var(--surface,rgba(127,127,127,0.08));border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;">
-      Hi — I can help with your job search. Ask me what needs your attention, or
-      tell me about your preferences and I'll keep them up to date.
-    </div>`;
+  thread.innerHTML = '';
+  _appendMessage('assistant',
+    'Hi — I can help with your job search. Ask me what needs your attention, ' +
+    "or tell me about your preferences and I'll keep them up to date.");
 }
 
-function _appendMessage(role, html) {
+// Lifted from chatRenderer.addMessage (workspace/static/js/chatRenderer.js,
+// ~line 1864) — its "standard single-bubble" path. addMessage itself is wired to
+// the main `#chat-history` (model colors, footers, metrics, TTS, session) and
+// can't be called from this modal, so we reuse its bubble markup + classes
+// verbatim: a `.msg`/`.msg-user`/`.msg-ai` wrapper with `.role` + `.body`, the
+// body rendered through markdownModule exactly like the main chat. This keeps the
+// Job Assistant bubbles styled and behaving like the workspace chat.
+function _appendMessage(role, content, { markdown = true } = {}) {
   const thread = _modalEl.querySelector('#applicant-thread');
   if (!thread) return null;
+
   const wrap = document.createElement('div');
-  wrap.className = `applicant-msg applicant-msg-${role}`;
-  const mine = role === 'user';
-  wrap.style.cssText =
-    `align-self:${mine ? 'flex-end' : 'flex-start'};max-width:90%;` +
-    `background:${mine ? 'var(--accent,#2d6cdf)' : 'var(--surface,rgba(127,127,127,0.08))'};` +
-    `color:${mine ? '#fff' : 'inherit'};` +
-    'border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;white-space:pre-wrap;word-break:break-word;';
-  wrap.innerHTML = html;
+  wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+
+  const r = document.createElement('div');
+  r.className = 'role';
+  r.textContent = role === 'user' ? 'You' : 'Job Assistant';
+
+  const b = document.createElement('div');
+  b.className = 'body';
+  if (markdown) {
+    const text = markdownModule.squashOutsideCode(String(content == null ? '' : content));
+    b.innerHTML = markdownModule.processWithThinking(text);
+  } else {
+    // Caller supplies trusted HTML (e.g. a "thinking…" placeholder).
+    b.innerHTML = content;
+  }
+  wrap.dataset.raw = String(content == null ? '' : content);
+
+  wrap.appendChild(r);
+  wrap.appendChild(b);
   thread.appendChild(wrap);
+  if (window.hljs) {
+    wrap.querySelectorAll('pre code:not(.hljs)').forEach((el) => window.hljs.highlightElement(el));
+  }
   wrap.scrollIntoView({ block: 'nearest' });
   return wrap;
+}
+
+// Update an existing AI bubble's body. `html` may include proposal/gap markup
+// that must be inserted verbatim after the markdown-rendered reply.
+function _setBubbleBody(wrap, replyText, extraHtml = '') {
+  if (!wrap) return;
+  const b = wrap.querySelector('.body');
+  if (!b) return;
+  const text = markdownModule.squashOutsideCode(String(replyText == null ? '' : replyText));
+  b.innerHTML = markdownModule.processWithThinking(text) + (extraHtml || '');
+  wrap.dataset.raw = String(replyText == null ? '' : replyText);
+  if (window.hljs) {
+    b.querySelectorAll('pre code:not(.hljs)').forEach((el) => window.hljs.highlightElement(el));
+  }
 }
 
 function _renderProposals(proposals) {
@@ -266,18 +302,19 @@ async function _send(text) {
   _sending = true;
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
   if (input) input.value = '';
-  _appendMessage('user', esc(message));
-  const thinking = _appendMessage('assistant', '<span style="opacity:0.6;">thinking…</span>');
+  _appendMessage('user', message);
+  const thinking = _appendMessage('assistant', '<span style="opacity:0.6;">thinking…</span>', { markdown: false });
   try {
     const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message });
-    const reply = esc(res.message || '(no reply)');
+    const reply = res.message || '(no reply)';
     if (thinking) {
-      thinking.innerHTML = reply + _renderGaps(res.gaps) + _renderProposals(res.proposed_changes);
+      _setBubbleBody(thinking, reply, _renderGaps(res.gaps) + _renderProposals(res.proposed_changes));
       _wireProposalButtons(thinking, res.proposed_changes || []);
     }
   } catch (e) {
     if (thinking) {
-      thinking.innerHTML = `<span style="opacity:0.8;">Couldn't reach the assistant: ${esc(e.message || 'unknown error')}</span>`;
+      const b = thinking.querySelector('.body');
+      if (b) b.innerHTML = `<span style="opacity:0.8;">Couldn't reach the assistant: ${esc(e.message || 'unknown error')}</span>`;
     }
   } finally {
     _sending = false;
