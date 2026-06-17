@@ -1549,6 +1549,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           <button class="lib-tab" data-doclib-tab="chats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chats</button>
           <button class="lib-tab active" data-doclib-tab="documents"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>Documents</button>
           <button class="lib-tab" data-doclib-tab="research"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Research</button>
+          <button class="lib-tab" data-doclib-tab="applicant" title="Tailored resumes &amp; cover letters generated for your job applications, with a built-in review step before anything is sent."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6"/><path d="M9 16h4"/></svg>Applications</button>
           <button class="lib-tab" data-doclib-tab="archive"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>Archive</button>
         </div>
         <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;overflow:hidden;">
@@ -1633,6 +1634,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <button class="memory-toolbar-btn" id="doclib-research-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div id="doclib-research-grid" class="doclib-grid"></div>
+          </div>
+          <div id="doclib-panel-applicant" data-doclib-panel="applicant" class="admin-card" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
+              <h2 style="margin:0;padding:0;line-height:1;">Applications <span id="doclib-applicant-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <button class="memory-toolbar-btn" id="doclib-applicant-refresh" title="Reload the latest tailored resumes and cover letters." style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Refresh</button>
+            </div>
+            <p class="memory-desc doclib-desc">Tailored resumes and cover letters generated for your job applications. Open one to review the suggested changes, ask for tweaks, then approve it before it is used.</p>
+            <div id="doclib-applicant-grid" class="doclib-grid"></div>
           </div>
           <div data-doclib-panel="documents" class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
@@ -1788,11 +1797,377 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (tab === 'chats') _renderLibChats();
       else if (tab === 'archive') _renderLibArchive();
       else if (tab === 'research') _renderLibResearch();
+      else if (tab === 'applicant') _renderLibApplicant();
     }
 
     _tabBtns.forEach(btn => {
       btn.addEventListener('click', () => _switchLibTab(btn.dataset.doclibTab));
     });
+
+    // Manual refresh for the Applications tab (the engine generates these
+    // asynchronously, so a reload button is handy after new roles are tailored).
+    {
+      const _appRefresh = modal.querySelector('#doclib-applicant-refresh');
+      if (_appRefresh) _appRefresh.addEventListener('click', () => _renderLibApplicant());
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // Applications tab — the engine-backed resume / cover-letter library and
+    // the change-and-review loop. Talks to the workspace proxy at
+    // /api/applicant/documents/* (which forwards to the application engine).
+    // Fully self-contained: reuses the shared library card/grid styles and the
+    // ui.js toast/error helpers, so it matches the rest of the Library without
+    // touching the other tabs. Plain language throughout; no internal jargon.
+    // ════════════════════════════════════════════════════════════════════
+    const _APPLICANT_BASE = `${API_BASE}/api/applicant/documents`;
+    // Last application id the user looked up, so Refresh re-runs the same query.
+    let _applicantLastAppId = '';
+
+    // Friendly label for an engine document/variant "type" value.
+    function _applicantTypeLabel(type) {
+      const t = (type || '').toLowerCase();
+      if (t === 'resume_variant' || t === 'resume') return 'Resume';
+      if (t === 'cover_letter') return 'Cover letter';
+      if (t === 'screening_answer') return 'Screening answer';
+      if (t === 'deferred_essay') return 'Application essay';
+      return (type || 'Document').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // Pull a readable message out of the proxy's error JSON ({error,message,...}).
+    async function _applicantErrText(res) {
+      try {
+        const j = await res.json();
+        return (j && (j.message || j.detail)) || ('Request failed (' + res.status + ')');
+      } catch { return 'Request failed (' + res.status + ')'; }
+    }
+
+    // The Applications panel: a small "look up an application" form plus a
+    // results area. We intentionally key off the application id because the
+    // engine lists generated materials per application (there is no global
+    // dump), and that id is shown wherever an application is tracked.
+    function _renderLibApplicant() {
+      const grid = document.getElementById('doclib-applicant-grid');
+      const stats = document.getElementById('doclib-applicant-stats');
+      if (!grid) return;
+      grid.innerHTML = '';
+
+      const wrap = document.createElement('div');
+      wrap.className = 'doclib-applicant-lookup';
+      wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px;';
+      wrap.innerHTML =
+        '<div class="memory-toolbar" style="gap:6px;">' +
+          '<input type="text" id="doclib-applicant-appid" class="memory-search-input" ' +
+            'placeholder="Application ID…" ' +
+            'title="Paste the ID of the application whose resume and cover letter you want to review." ' +
+            'style="flex:1;min-width:160px;" />' +
+          '<button class="memory-toolbar-btn" id="doclib-applicant-lookup-btn" ' +
+            'title="Show the tailored materials generated for this application.">' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show materials</button>' +
+        '</div>' +
+        '<div id="doclib-applicant-results"></div>';
+      grid.appendChild(wrap);
+
+      const input = wrap.querySelector('#doclib-applicant-appid');
+      const btn = wrap.querySelector('#doclib-applicant-lookup-btn');
+      const results = wrap.querySelector('#doclib-applicant-results');
+      if (_applicantLastAppId) input.value = _applicantLastAppId;
+
+      const _go = () => {
+        const id = (input.value || '').trim();
+        if (!id) { if (uiModule) uiModule.showError('Enter an application ID to see its materials.'); return; }
+        _applicantLastAppId = id;
+        _loadApplicantMaterials(id, results);
+      };
+      btn.addEventListener('click', _go);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _go(); } });
+
+      // Confirm the engine is reachable up front, and give a clear status line.
+      results.innerHTML = '';
+      const note = document.createElement('div');
+      note.className = 'doclib-empty';
+      note.style.cssText = 'padding:14px;';
+      note.textContent = 'Checking the application engine…';
+      results.appendChild(note);
+      fetch(`${_APPLICANT_BASE}/library`, { credentials: 'same-origin' })
+        .then(async (res) => {
+          if (!res.ok) { note.textContent = await _applicantErrText(res); return; }
+          if (stats) stats.textContent = 'engine ready';
+          note.textContent = _applicantLastAppId
+            ? 'Loading…'
+            : 'Enter an application ID above to see its tailored resume and cover letter.';
+          if (_applicantLastAppId) _loadApplicantMaterials(_applicantLastAppId, results);
+        })
+        .catch(() => { note.textContent = 'Could not reach the application engine. Try again shortly.'; });
+    }
+
+    // Fetch + render the materials for one application id.
+    async function _loadApplicantMaterials(appId, results) {
+      if (!results) return;
+      results.innerHTML = '';
+      try {
+        const _sp = spinnerModule.createWhirlpool ? spinnerModule.createWhirlpool(22) : null;
+        if (_sp) { _sp.element.style.cssText = 'margin:18px auto;display:block;'; results.appendChild(_sp.element); }
+        else results.appendChild(spinnerModule.createLoadingRow('Loading…'));
+      } catch { results.innerHTML = '<div class="doclib-empty">Loading…</div>'; }
+
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/applications/${encodeURIComponent(appId)}`, { credentials: 'same-origin' });
+        if (!res.ok) { results.innerHTML = `<div class="doclib-empty" style="padding:14px;">${_esc(await _applicantErrText(res))}</div>`; return; }
+        data = await res.json();
+      } catch {
+        results.innerHTML = '<div class="doclib-empty" style="padding:14px;">Could not reach the application engine. Try again shortly.</div>';
+        return;
+      }
+
+      const items = (data && Array.isArray(data.items)) ? data.items : [];
+      results.innerHTML = '';
+
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;';
+      const gateOk = !!(data && data.all_approved);
+      head.innerHTML =
+        `<span class="memory-count" style="opacity:0.7;">${items.length} item${items.length === 1 ? '' : 's'}</span>` +
+        `<span class="doclib-applicant-gate" title="${gateOk ? 'All materials for this application have been approved.' : 'Some materials still need your approval before this application can be sent.'}" ` +
+          `style="font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);opacity:0.85;">` +
+          `${gateOk ? 'All approved' : 'Needs review'}</span>`;
+      results.appendChild(head);
+
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'doclib-empty';
+        empty.style.cssText = 'padding:14px;';
+        empty.textContent = 'No tailored materials for this application yet. They appear here once the engine has generated them.';
+        results.appendChild(empty);
+        return;
+      }
+
+      const list = document.createElement('div');
+      list.className = 'doclib-grid';
+      items.forEach(item => list.appendChild(_applicantCard(item, appId, results)));
+      results.appendChild(list);
+    }
+
+    // One material card: title, approval state, content preview, and the
+    // actions (open the review loop / quick-approve a resume variant).
+    function _applicantCard(item, appId, results) {
+      const card = document.createElement('div');
+      card.className = 'doclib-card memory-item';
+      card.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+      const approved = !!item.approved;
+      const isVariant = (item.type || '').toLowerCase() === 'resume_variant';
+      const content = (item.content || '').toString();
+      const preview = content.length > 600 ? content.slice(0, 600) + '…' : content;
+
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      header.innerHTML =
+        `<strong style="flex:1;">${_esc(_applicantTypeLabel(item.type))}</strong>` +
+        `<span class="doclib-applicant-state" style="font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);opacity:0.85;" ` +
+          `title="${approved ? 'Approved and ready to use.' : 'Not approved yet — review it before it is sent.'}">` +
+          `${approved ? 'Approved' : 'Draft'}</span>`;
+      card.appendChild(header);
+
+      if (preview) {
+        const body = document.createElement('div');
+        body.className = 'doclib-card-preview-text';
+        body.style.cssText = 'font-size:12px;white-space:pre-wrap;opacity:0.8;max-height:120px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:8px;';
+        body.textContent = preview;
+        card.appendChild(body);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'doclib-card-expanded-actions';
+      actions.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+
+      // Resume variants approve through their own engine endpoint; everything
+      // else goes through the full document review loop.
+      if (isVariant) {
+        const approveBtn = document.createElement('button');
+        approveBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        approveBtn.textContent = approved ? 'Approved' : 'Approve resume';
+        approveBtn.title = 'Approve this tailored resume so it can be used for this application.';
+        approveBtn.disabled = approved;
+        approveBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          approveBtn.disabled = true;
+          approveBtn.textContent = 'Approving…';
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(item.id)}/approve`, { method: 'POST', credentials: 'same-origin' });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            if (uiModule) uiModule.showToast('Resume approved');
+            _loadApplicantMaterials(appId, results);
+          } catch (err) {
+            approveBtn.disabled = false;
+            approveBtn.textContent = 'Approve resume';
+            if (uiModule) uiModule.showError(err.message || String(err));
+          }
+        });
+        actions.appendChild(approveBtn);
+      } else {
+        const reviewBtn = document.createElement('button');
+        reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        reviewBtn.textContent = 'Review & edit';
+        reviewBtn.title = 'Open this document, see the suggested changes, ask for tweaks, then approve it.';
+        reviewBtn.addEventListener('click', (e) => { e.stopPropagation(); _openApplicantReview(item, appId, card, results); });
+        actions.appendChild(reviewBtn);
+      }
+      card.appendChild(actions);
+
+      // Inline review panel mounts here when opened.
+      const panel = document.createElement('div');
+      panel.className = 'doclib-applicant-review';
+      panel.style.display = 'none';
+      card.appendChild(panel);
+      return card;
+    }
+
+    // Open the interactive review session for a non-variant document and render
+    // the redline + change box + approve / decline controls inline in the card.
+    async function _openApplicantReview(item, appId, card, results) {
+      const panel = card.querySelector('.doclib-applicant-review');
+      if (!panel) return;
+      if (panel.style.display !== 'none') { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+      panel.style.display = 'block';
+      panel.innerHTML = '<div style="opacity:0.5;font-size:12px;padding:8px 2px;">Opening review…</div>';
+
+      let session;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/review`, { method: 'POST', credentials: 'same-origin' });
+        if (!res.ok) throw new Error(await _applicantErrText(res));
+        session = await res.json();
+      } catch (err) {
+        panel.innerHTML = `<div class="doclib-empty" style="padding:10px;">${_esc(err.message || String(err))}</div>`;
+        return;
+      }
+      _renderApplicantReview(item, appId, panel, session, card, results);
+    }
+
+    // Render one review session state: the redline (additions / removals), the
+    // turn history, a plain-language "ask for a change" box, and Approve /
+    // Decline. Re-renders itself after each turn.
+    function _renderApplicantReview(item, appId, panel, session, card, results) {
+      panel.innerHTML = '';
+      panel.style.cssText = 'display:block;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:8px;';
+
+      // Redline: the engine returns a redline_state describing what changed
+      // versus the original. Render the rendered HTML when present, else fall
+      // back to plain add/remove lists, else a neutral note.
+      const rl = session && session.redline_state;
+      const redline = document.createElement('div');
+      redline.className = 'doclib-applicant-redline';
+      redline.style.cssText = 'font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow:auto;';
+      const renderedHtml = rl && (rl.rendered_html || rl.html);
+      const additions = rl && Array.isArray(rl.additions) ? rl.additions : [];
+      const subtractions = rl && Array.isArray(rl.subtractions) ? rl.subtractions : (rl && Array.isArray(rl.removals) ? rl.removals : []);
+      if (renderedHtml) {
+        // Engine-rendered redline markup. Insert as-is (same-origin trusted
+        // engine output, consistent with how research reports are rendered).
+        redline.innerHTML = renderedHtml;
+      } else if (additions.length || subtractions.length) {
+        const add = additions.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
+        const sub = subtractions.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
+        redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Suggested changes</div><ul style="margin:0;padding-left:16px;list-style:none;">${add}${sub}</ul>`;
+      } else {
+        redline.innerHTML = '<div style="opacity:0.6;">No tracked changes to show — you can still ask for edits below.</div>';
+      }
+      panel.appendChild(redline);
+
+      // Turn history (what was asked + the engine's response), if any.
+      const turns = session && Array.isArray(session.turns) ? session.turns : [];
+      if (turns.length) {
+        const hist = document.createElement('div');
+        hist.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+        turns.forEach(t => {
+          const row = document.createElement('div');
+          row.style.cssText = 'font-size:12px;border-left:2px solid var(--border);padding-left:8px;';
+          const ask = _esc(t.instruction || t.kind || '');
+          const resp = _esc(t.ai_response || '');
+          row.innerHTML = (ask ? `<div><strong>You asked:</strong> ${ask}</div>` : '') +
+                          (resp ? `<div style="opacity:0.8;">${resp}</div>` : '');
+          hist.appendChild(row);
+        });
+        panel.appendChild(hist);
+      }
+
+      // "Ask for a change" box — drives the engine turn loop (free-text).
+      const ask = document.createElement('div');
+      ask.style.cssText = 'display:flex;gap:6px;align-items:flex-start;';
+      ask.innerHTML =
+        '<textarea class="memory-search-input doclib-applicant-instruction" rows="2" ' +
+          'placeholder="Ask for a change, e.g. “shorten the summary” or “mention my Python experience”" ' +
+          'title="Describe the change in plain language. The engine revises the document and shows the result here." ' +
+          'style="flex:1;resize:vertical;min-height:38px;"></textarea>' +
+        '<button class="doclib-card-text-btn doclib-applicant-send" title="Send this change request to the engine.">Request change</button>';
+      panel.appendChild(ask);
+
+      const instruction = ask.querySelector('.doclib-applicant-instruction');
+      const sendBtn = ask.querySelector('.doclib-applicant-send');
+      sendBtn.addEventListener('click', async () => {
+        const text = (instruction.value || '').trim();
+        if (!text) { if (uiModule) uiModule.showError('Describe the change you want first.'); return; }
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Working…';
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/turn`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'free_text', instruction: text }),
+          });
+          if (!res.ok) throw new Error(await _applicantErrText(res));
+          const next = await res.json();
+          if (uiModule) uiModule.showToast('Change applied');
+          _renderApplicantReview(item, appId, panel, next, card, results);
+        } catch (err) {
+          sendBtn.disabled = false;
+          sendBtn.textContent = 'Request change';
+          if (uiModule) uiModule.showError(err.message || String(err));
+        }
+      });
+
+      // Approve / Decline.
+      const decide = document.createElement('div');
+      decide.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+      approveBtn.textContent = 'Approve';
+      approveBtn.title = 'Approve this document so it can be used for the application.';
+      approveBtn.addEventListener('click', async () => {
+        approveBtn.disabled = true;
+        approveBtn.textContent = 'Approving…';
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/approve`, { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) throw new Error(await _applicantErrText(res));
+          if (uiModule) uiModule.showToast('Document approved');
+          _loadApplicantMaterials(appId, results);
+        } catch (err) {
+          approveBtn.disabled = false;
+          approveBtn.textContent = 'Approve';
+          if (uiModule) uiModule.showError(err.message || String(err));
+        }
+      });
+      const declineBtn = document.createElement('button');
+      declineBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
+      declineBtn.textContent = 'Decline';
+      declineBtn.title = 'Reject this draft. It stays unapproved and will not be sent.';
+      declineBtn.addEventListener('click', async () => {
+        declineBtn.disabled = true;
+        declineBtn.textContent = 'Declining…';
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/decline`, { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) throw new Error(await _applicantErrText(res));
+          if (uiModule) uiModule.showToast('Document declined');
+          _loadApplicantMaterials(appId, results);
+        } catch (err) {
+          declineBtn.disabled = false;
+          declineBtn.textContent = 'Decline';
+          if (uiModule) uiModule.showError(err.message || String(err));
+        }
+      });
+      decide.appendChild(approveBtn);
+      decide.appendChild(declineBtn);
+      panel.appendChild(decide);
+    }
 
     // ── Chats tab state ──
     let _chatsSessions = [];
