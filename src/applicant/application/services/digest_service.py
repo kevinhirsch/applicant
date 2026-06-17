@@ -19,11 +19,30 @@ approve/decline-with-feedback decisions that close the learning loop:
 
 from __future__ import annotations
 
+import html
+
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
 
 EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running (FR-DIG-6)."
+
+#: URL schemes safe to emit as a clickable anchor href in the digest. Anything
+#: else (``javascript:``, ``data:``, ``vbscript:`` ...) is neutralized so a
+#: scraped ``source_url`` cannot smuggle a script-executing link (SECURITY).
+_SAFE_URL_SCHEMES = ("http://", "https://")
+
+
+def _safe_href(url) -> str:
+    """Return an http/https-only, HTML-escaped href, or ``#`` if disallowed.
+
+    The link comes from untrusted scraped rows (JobSpy/SearXNG/RSS) so a
+    ``javascript:``/``data:`` scheme must never reach the emitted anchor.
+    """
+    raw = str(url or "").strip()
+    if raw.lower().startswith(_SAFE_URL_SCHEMES):
+        return html.escape(raw, quote=True)
+    return "#"
 
 
 class DigestService:
@@ -115,17 +134,26 @@ class DigestService:
         payload = self.build_digest_payload(campaign_id, criteria)
         lines = ["<h1>Your daily digest</h1>"]
         if payload["empty"]:
-            lines.append(f"<p><em>{payload['note']}</em></p>")
+            lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
         else:
             lines.append(
                 "<table border='1' cellpadding='6'><tr><th>Role</th><th>Work mode</th>"
                 "<th>Score</th><th>Why suggested</th><th>Link</th></tr>"
             )
             for r in payload["rows"]:
+                # SECURITY: every interpolated cell is untrusted scraped data
+                # (title/company/rationale/work-mode/url) so escape it and bound
+                # the href to an http/https allowlist — no stored XSS in the
+                # emailed/rendered digest.
+                summary = html.escape(str(r["summary"] or ""))
+                work_mode = html.escape(str(r["work_mode"] or "-"))
+                score = html.escape(str(r["viability_score"]))
+                why = html.escape(str(r["why_suggested"] or ""))
+                href = _safe_href(r["link"])
                 lines.append(
-                    f"<tr><td>{r['summary']}</td><td>{r['work_mode'] or '-'}</td>"
-                    f"<td>{r['viability_score']}</td><td>{r['why_suggested']}</td>"
-                    f"<td><a href='{r['link']}'>open</a></td></tr>"
+                    f"<tr><td>{summary}</td><td>{work_mode}</td>"
+                    f"<td>{score}</td><td>{why}</td>"
+                    f"<td><a href='{href}'>open</a></td></tr>"
                 )
             lines.append("</table>")
         return {

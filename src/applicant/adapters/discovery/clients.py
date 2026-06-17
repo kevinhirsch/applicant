@@ -17,6 +17,35 @@ from applicant.observability.logging import get_logger
 log = get_logger(__name__)
 
 
+def _parse_feed_xml(text: str):
+    """Parse an untrusted RSS/Atom feed, guarded against entity-expansion DoS.
+
+    SECURITY: the stdlib ``ElementTree`` parser expands internal entities, so a
+    crafted feed could mount a billion-laughs DoS. Prefer ``defusedxml`` (which
+    refuses entity/DTD expansion) when installed; otherwise fall back to the
+    stdlib parser but first reject any feed declaring a DTD / internal entities.
+    """
+    try:
+        from defusedxml.ElementTree import fromstring as _defused_fromstring
+    except ImportError:
+        _defused_fromstring = None
+
+    if _defused_fromstring is not None:
+        return _defused_fromstring(text)
+
+    # Stdlib fallback: it expands entities, so reject any feed declaring a
+    # DTD / internal entities before parsing (billion-laughs DoS guard).
+    import xml.etree.ElementTree as ET
+
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
+        raise ValueError(
+            "Refusing to parse an RSS/Atom feed declaring a DTD/entities "
+            "(entity-expansion DoS guard)."
+        )
+    return ET.fromstring(text)
+
+
 # --- LIVE clients (network boundary — integration-only) --------------------
 class LiveJobSpyClient:
     """Real python-jobspy board scraper (FR-DISC-2/4).
@@ -95,8 +124,6 @@ class LiveRssClient:
         self._timeout = timeout
 
     def fetch_items(self, *, feed_url: str, proxies: list[str] | None) -> list[dict]:
-        import xml.etree.ElementTree as ET  # lazy stdlib parse
-
         import httpx  # lazy
 
         proxy = proxies[0] if proxies else None
@@ -104,7 +131,7 @@ class LiveRssClient:
             resp = client.get(feed_url)
             resp.raise_for_status()
             text = resp.text
-        root = ET.fromstring(text)
+        root = _parse_feed_xml(text)
         rows: list[dict] = []
         # Support both RSS (<item>) and Atom (<entry>) shapes minimally.
         for item in root.iter():

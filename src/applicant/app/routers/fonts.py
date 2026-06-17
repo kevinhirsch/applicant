@@ -21,6 +21,33 @@ router = APIRouter(
     dependencies=[Depends(require_llm_configured)],  # FR-UI-5 gate
 )
 
+#: Max font/resume upload size (bytes). Bounds the upload body so a hostile client
+#: cannot exhaust memory by streaming a huge payload (SECURITY DoS). Module-level
+#: so it can be monkeypatched/overridden by config.
+MAX_FONT_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
+    """Read an upload body but reject (413) once it exceeds ``max_bytes``.
+
+    Reads in bounded chunks so an over-limit body is rejected WITHOUT buffering
+    the whole payload in memory (SECURITY DoS).
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Upload too large: max {max_bytes} bytes.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 def _report_dict(report) -> dict:
     return {
@@ -61,7 +88,7 @@ async def detect_required(file: UploadFile = File(...), svc=Depends(get_font_ser
     uploads.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or "resume.txt").suffix or ".txt"
     dest = _safe_dest(uploads, f"fontdetect{suffix}")
-    dest.write_bytes(await file.read())
+    dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
     return _report_dict(svc.report_for_document(str(dest)))
 
 
@@ -76,6 +103,6 @@ async def install_font(
     uploads.mkdir(parents=True, exist_ok=True)
     suffix = Path(file.filename or f"{name}.ttf").suffix or ".ttf"
     dest = _safe_dest(uploads, f"{name}{suffix}")
-    dest.write_bytes(await file.read())
+    dest.write_bytes(await _read_capped(file, MAX_FONT_UPLOAD_BYTES))
     report = svc.install(str(dest), name)
     return {"installed": report.installed, "confirmed": name in report.installed}

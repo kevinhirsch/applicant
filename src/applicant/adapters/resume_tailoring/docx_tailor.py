@@ -38,9 +38,22 @@ _R = f"{{{_W}}}r"
 _P = f"{{{_W}}}p"
 
 
+#: Hardened OOXML parser: disable entity resolution / network / huge trees so a
+#: crafted ``document.xml`` cannot mount a billion-laughs entity-expansion DoS or
+#: an external-entity (XXE) fetch (SECURITY). Reused for every parse.
+_SAFE_XML_PARSER = etree.XMLParser(
+    resolve_entities=False, no_network=True, huge_tree=False
+)
+
+
 def _parse(document_xml: str) -> etree._Element:
-    """Parse OOXML preserving namespaces (lxml keeps prefixes + declaration)."""
-    return etree.fromstring(document_xml.encode("utf-8"))
+    """Parse OOXML preserving namespaces with a hardened, no-entity parser.
+
+    SECURITY: lxml's default parser expands internal entities, so a nested-entity
+    bomb in ``document.xml`` could blow up memory. The hardened parser refuses to
+    resolve entities (and to touch the network / build huge trees).
+    """
+    return etree.fromstring(document_xml.encode("utf-8"), parser=_SAFE_XML_PARSER)
 
 
 def _serialize(root: etree._Element) -> str:

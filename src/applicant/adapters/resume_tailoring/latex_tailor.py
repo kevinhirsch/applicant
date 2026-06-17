@@ -101,10 +101,19 @@ class LatexTailor:
         LaTeX is plain text, so a variant/revision is a source-level edit: replace
         ``old -> new`` spans. The em-dash post-filter runs on the result so an edit
         can never re-introduce the tell.
+
+        SECURITY: the *substituted CONTENT* (``new``) is generated/edited resume
+        text, not template control sequences, so it is LaTeX-escaped before being
+        written into the source. This stops content like ``\\input{...}``/``%``/
+        ``&`` from being interpreted as TeX (content injection into the compiled
+        .tex — note ``-shell-escape`` stays OFF). Only the values are escaped; the
+        ``old`` anchors (template control sequences) are matched verbatim.
         """
+        from applicant.adapters.resume_tailoring.moderncv_converter import latex_escape
+
         out = base_source
         for old, new in edits.items():
-            out = out.replace(old, new)
+            out = out.replace(old, latex_escape(new))
         return normalize_emdashes(out)
 
     # --- redline (FR-RESUME-8) --------------------------------------------
