@@ -16,6 +16,7 @@
 //   • Run        — run mode + daily target controls and the latest plain-language
 //                  "what the agent is doing right now" intent (writes config).
 //   • Sources    — turn each job-discovery source on/off + see its yield.
+//   • Tools      — enable/disable the engine's tools (engine-wide; writes).
 //   • Update     — a one-click Update button with confirm + status.
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
@@ -82,6 +83,7 @@ const TABS = [
   ['variants', 'Variants'],
   ['run', 'Run controls'],
   ['sources', 'Sources'],
+  ['tools', 'Tools'],
   ['update', 'Update'],
 ];
 
@@ -178,6 +180,7 @@ async function _renderTab() {
     variants: _renderVariants,
     run: _renderRun,
     sources: _renderSources,
+    tools: _renderTools,
     update: _renderUpdate,
   };
   _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
@@ -355,8 +358,26 @@ async function _renderSources() {
   const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const items = data.items || [];
-  if (!items.length) { _body().innerHTML = _empty('No job-discovery sources available for this job search.'); return; }
-  _body().innerHTML = items.map((s) => {
+  // Exploration budget (FR-LEARN-6): the explore/exploit knob. Shown above the
+  // source list. Editable when the engine reports it; read-only note otherwise.
+  const hasBudget = data.exploration_budget != null && !isNaN(Number(data.exploration_budget));
+  const budgetCard = hasBudget
+    ? `<div class="admin-card" style="margin-bottom:10px;">
+        <div style="font-weight:600;">Exploration budget</div>
+        <div class="admin-toggle-sub" style="opacity:0.7;margin:2px 0 8px;">How much effort to spend trying new or under-used sources instead of the proven ones. 0 sticks to what works; 1 explores the most.</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" id="applicant-explore-budget" class="settings-input" min="0" max="1" step="0.05" value="${esc(Number(data.exploration_budget))}" style="width:90px;" title="A number between 0 and 1." />
+          <button class="cal-btn" id="applicant-explore-save" title="Save the exploration budget">Save</button>
+          <span id="applicant-explore-msg" class="admin-toggle-sub" style="opacity:0.7;"></span>
+        </div>
+      </div>`
+    : '';
+  if (!items.length) {
+    _body().innerHTML = budgetCard + _empty('No job-discovery sources available for this job search.');
+    _wireExploreBudget();
+    return;
+  }
+  _body().innerHTML = budgetCard + items.map((s) => {
     const ys = s.yield_stats || {};
     const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
     const stat = hasFunnel
@@ -381,6 +402,68 @@ async function _renderSources() {
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
         _toast(e.message || 'Could not change that source.');
+      }
+    });
+  });
+  _wireExploreBudget();
+}
+
+function _wireExploreBudget() {
+  const input = _body().querySelector('#applicant-explore-budget');
+  const btn = _body().querySelector('#applicant-explore-save');
+  const msg = _body().querySelector('#applicant-explore-msg');
+  if (!input || !btn) return; // read-only / not exposed by the engine
+  btn.addEventListener('click', async () => {
+    const val = parseFloat(input.value);
+    if (isNaN(val) || val < 0 || val > 1) {
+      if (msg) msg.textContent = 'Enter a number between 0 and 1.';
+      return;
+    }
+    btn.disabled = true;
+    if (msg) msg.textContent = 'Saving…';
+    try {
+      await _put(`${OPS}/discovery/${encodeURIComponent(_campaignId)}/exploration-budget`, { exploration_budget: val });
+      if (msg) msg.textContent = 'Saved.';
+      _toast('Exploration budget saved.');
+    } catch (e) {
+      if (msg) msg.textContent = e.message || 'Could not save that.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+async function _renderTools() {
+  // Engine-wide tool registry (not campaign-scoped): list every tool with an
+  // on/off switch. Mirrors the Sources tab's switch rendering.
+  const data = await _fetchJSON(`${ADMIN}/tools`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const tools = data.tools || [];
+  if (!tools.length) { _body().innerHTML = _empty('No tools reported by the engine.'); return; }
+  _body().innerHTML =
+    `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn the assistant's tools on or off. Disabled tools are never used while it works.</div>` +
+    tools.map((t) => {
+      const key = t.key != null ? t.key : '';
+      const label = t.label || key;
+      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="min-width:0;">
+        <div style="font-weight:600;">${esc(label)}</div>
+        ${t.description ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(t.description)}</div>` : ''}
+      </div>
+      <label class="admin-switch" style="flex-shrink:0;" title="Turn this tool on or off">
+        <input type="checkbox" class="applicant-tool-toggle" data-key="${esc(key)}"${t.enabled ? ' checked' : ''} />
+        <span class="admin-slider"></span>
+      </label>
+    </div>`;
+    }).join('');
+  _body().querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      try {
+        await _post(`${ADMIN}/tools/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
+        _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
+      } catch (e) {
+        cb.checked = !cb.checked; // revert on failure
+        _toast(e.message || 'Could not change that tool.');
       }
     });
   });

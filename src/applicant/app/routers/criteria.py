@@ -8,10 +8,17 @@ HTTP 409. Learned adjustments are surfaced in the response and user-overridable
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from applicant.app.deps import get_criteria_service, require_llm_configured
+from applicant.app.container import Container
+from applicant.app.deps import (
+    get_container,
+    get_criteria_service,
+    require_llm_configured,
+)
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.errors import ConfirmationRequired
 
@@ -29,6 +36,10 @@ class EditCriteriaIn(BaseModel):
     human_readable: str | None = None
     confirm: bool = False
     clear_learned: bool = False
+
+
+class ExplorationBudgetIn(BaseModel):
+    exploration_budget: float
 
 
 class LearnedAdjustmentIn(BaseModel):
@@ -81,3 +92,47 @@ def apply_learned(
         rationale=body.rationale,
     )
     return _to_dict(updated)
+
+
+# === Learned converting-role signature + exploration budget (FR-LEARN-5/6) ===
+# Surfaces what the engine has *learned* converts (the converting-role signature,
+# grouped by facet) and the exploration budget knob, so the front-door can show
+# the learned bias transparently and let the user steer the explore/exploit mix.
+# Co-located here because the criteria surface is "what roles the engine targets"
+# and these are the learned, user-overridable side of the same picture.
+@router.get("/{campaign_id}/signature")
+def converting_signature(
+    campaign_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """The learned converting-role signature + the exploration budget knob.
+
+    ``signature`` is a per-facet (role/seniority/skill/work_mode/comp/source/
+    variant) digest of what actually converts, ordered by learned weight — a
+    transparent, user-overridable view of the learned bias. ``samples`` is how
+    many converting applications it was learned from; ``exploration_budget`` is the
+    fraction of effort reserved for under-sampled/new sources.
+    """
+    model = container.learning_service.load_model(campaign_id)  # type: ignore[arg-type]
+    summary = container.advanced_learning_service.converting_signature_summary(model)
+    return {
+        "campaign_id": campaign_id,
+        "signature": summary,
+        "samples": getattr(model, "converting_samples", 0),
+        "exploration_budget": getattr(model, "exploration_budget", None),
+    }
+
+
+@router.put("/{campaign_id}/exploration-budget")
+def set_exploration_budget(
+    campaign_id: str, body: ExplorationBudgetIn, container: Container = Depends(get_container)
+) -> dict:
+    """Set the exploration budget (0.0–1.0) — the explore/exploit mix (FR-LEARN-6)."""
+    if not (0.0 <= body.exploration_budget <= 1.0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Exploration budget must be between 0 and 1.",
+        )
+    ls = container.learning_service
+    model = ls.load_model(campaign_id)  # type: ignore[arg-type]
+    ls.persist_model(dataclasses.replace(model, exploration_budget=body.exploration_budget))
+    return {"campaign_id": campaign_id, "exploration_budget": body.exploration_budget}

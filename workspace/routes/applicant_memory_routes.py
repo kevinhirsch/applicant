@@ -364,6 +364,24 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    # -- learned converting-role signature (what the engine learned converts) --
+
+    @router.get("/signature")
+    async def converting_signature(request: Request, campaign_id: Optional[str] = None) -> dict:
+        """The learned converting-role signature (per-facet digest of what converts).
+
+        A transparent, read-only view of the bias the engine has learned from the
+        roles that actually convert, so the user can see it next to the learned
+        criteria adjustments (and override the criteria if they disagree).
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                return await _signature_get(engine, cid)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
     return router
 
 
@@ -386,3 +404,8 @@ async def _criteria_get(engine: ApplicantEngineClient, campaign_id: str) -> Any:
 
 async def _criteria_put(engine: ApplicantEngineClient, campaign_id: str, changes: dict) -> Any:
     return await engine._request("PUT", f"/api/criteria/{campaign_id}", json=changes)
+
+
+async def _signature_get(engine: ApplicantEngineClient, campaign_id: str) -> Any:
+    """Read the learned converting-role signature (criteria router, FR-LEARN-5)."""
+    return await engine._request("GET", f"/api/criteria/{campaign_id}/signature")

@@ -215,6 +215,61 @@ async function loadProfileCriteria() {
       body.textContent = typeof learned === 'string' ? learned : JSON.stringify(learned, null, 2);
     } catch (_) { body.textContent = String(learned); }
   }
+  await loadProfileSignature(card);
+}
+
+// The learned converting-role signature (FR-LEARN-5): what the assistant has
+// learned actually converts, grouped by facet. Rendered next to the learned
+// criteria adjustments. The card is injected after the learned-adjustments card
+// (no markup change needed) and stays hidden until there is something to show.
+function _signatureCard(anchor) {
+  let cardEl = el('applicant-crit-signature');
+  if (cardEl) return cardEl;
+  cardEl = document.createElement('div');
+  cardEl.id = 'applicant-crit-signature';
+  cardEl.className = 'hidden';
+  cardEl.style.cssText = 'margin-top:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(127,127,127,0.06)';
+  cardEl.innerHTML =
+    '<div style="font-size:11px;opacity:0.7;margin-bottom:4px;display:flex;align-items:center;gap:6px">' +
+      '<span class="pill" style="font-size:10px;opacity:0.8">learned</span> What tends to convert for you' +
+      '<span id="applicant-crit-signature-samples" style="opacity:0.6"></span>' +
+    '</div>' +
+    '<div id="applicant-crit-signature-body" style="font-size:12px;opacity:0.85"></div>';
+  // Place it right after the learned-adjustments card when present, else after the anchor.
+  const learnedCard = el('applicant-crit-learned');
+  const ref = learnedCard || anchor;
+  if (ref && ref.parentNode) ref.parentNode.insertBefore(cardEl, ref.nextSibling);
+  else if (anchor) anchor.appendChild(cardEl);
+  return cardEl;
+}
+
+const _SIGNATURE_FACET_LABELS = {
+  role: 'Roles', seniority: 'Seniority', skill: 'Skills', work_mode: 'Work mode',
+  comp: 'Compensation', source: 'Sources', variant: 'Resume variant',
+};
+
+async function loadProfileSignature(anchor) {
+  const res = await _profileFetch('/signature');
+  const data = (res && res.ok && res.data) || null;
+  const sig = (data && data.signature) || {};
+  const facets = Object.keys(sig).filter((f) => Array.isArray(sig[f]) && sig[f].length);
+  const cardEl = _signatureCard(anchor);
+  if (!cardEl) return;
+  if (!facets.length) { cardEl.classList.add('hidden'); return; }
+  const samplesEl = el('applicant-crit-signature-samples');
+  if (samplesEl) {
+    const n = data.samples != null ? Number(data.samples) : 0;
+    samplesEl.textContent = n ? `· from ${n} converting application${n === 1 ? '' : 's'}` : '';
+  }
+  const bodyEl = el('applicant-crit-signature-body');
+  if (bodyEl) {
+    bodyEl.innerHTML = facets.map((f) => {
+      const label = _SIGNATURE_FACET_LABELS[f] || f;
+      const vals = sig[f].slice(0, 6).map((v) => `<span class="pill" style="font-size:11px;opacity:0.8">${escapeHtml(String(v))}</span>`).join(' ');
+      return `<div style="margin:3px 0"><span style="opacity:0.6">${escapeHtml(label)}:</span> ${vals}</div>`;
+    }).join('');
+  }
+  cardEl.classList.remove('hidden');
 }
 
 async function saveProfileCriteria(confirm) {

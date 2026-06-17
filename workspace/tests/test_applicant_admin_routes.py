@@ -269,3 +269,76 @@ def test_mark_submitted_hits_exact_engine_path(monkeypatch):
     assert r.status_code == 200
     assert seen["path"] == "/api/outcomes/applications/app1/mark-submitted"
     assert seen["method"] == "POST"
+
+
+# --- tool registry (FR-UI-4): list + toggle --------------------------------
+
+
+def test_list_tools_passthrough_and_exact_path(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"tools": [
+            {"key": "web_search", "label": "Web search", "enabled": True},
+            {"key": "bash", "label": "Shell", "enabled": False},
+        ]})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.get("/api/applicant/admin/tools")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert seen["path"] == "/api/admin/tools"
+    assert {t["key"] for t in body["tools"]} == {"web_search", "bash"}
+
+
+def test_list_tools_soft_degrades_when_engine_down(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.get("/api/applicant/admin/tools")
+    assert r.status_code == 200
+    assert r.json() == {"tools": [], "engine_available": False}
+
+
+def test_toggle_tool_hits_exact_path_with_enabled_param(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["method"] = request.method
+        seen["query"] = dict(request.url.params)
+        return httpx.Response(200, json={"key": "bash", "enabled": True})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.post("/api/applicant/admin/tools/bash", json={"enabled": True})
+    assert r.status_code == 200
+    assert seen["path"] == "/api/admin/tools/bash"
+    assert seen["method"] == "POST"
+    assert seen["query"]["enabled"] == "true"
+    assert r.json()["enabled"] is True
+
+
+def test_toggle_unknown_tool_forwards_404(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "Unknown tool 'nope'"})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.post("/api/applicant/admin/tools/nope", json={"enabled": False})
+    assert r.status_code == 404
+
+
+def test_tools_require_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/tools").status_code == 403

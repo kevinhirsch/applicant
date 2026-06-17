@@ -87,6 +87,19 @@ class FakeEngine:
             raise FakeEngine.raises["toggle"]
         return {"campaign_id": cid, "source_key": key, "enabled": enabled}
 
+    async def _request(self, method, path, *, json=None, params=None):
+        # The exploration-budget read/write (FR-LEARN-6) goes through the client's
+        # request seam (the engine criteria/learning surface). Scripted via the
+        # "signature"/"budget" keys; defaults to a benign read so the source list
+        # still renders when no budget script is set.
+        FakeEngine.calls.append(("_request", method, path, json, params))
+        key = "budget" if method == "PUT" else "signature"
+        if key in FakeEngine.raises:
+            raise FakeEngine.raises[key]
+        if key in FakeEngine.responses:
+            return FakeEngine.responses[key]
+        return {"exploration_budget": 0.1} if key == "signature" else {}
+
 
 @pytest.fixture(autouse=True)
 def _reset():
@@ -209,6 +222,47 @@ def test_toggle_source_forwards_error(client):
     FakeEngine.raises["toggle"] = EngineError("nope", status=404, detail="unknown source")
     r = client.put("/api/applicant/ops/discovery/c1/unknown", json={"enabled": True})
     assert r.status_code == 404
+
+
+# --- exploration budget (FR-LEARN-6) ---------------------------------------
+
+
+def test_list_sources_carries_exploration_budget(client):
+    FakeEngine.responses["sources"] = {"campaign_id": "c1", "items": []}
+    FakeEngine.responses["signature"] = {"exploration_budget": 0.35, "signature": {}}
+    r = client.get("/api/applicant/ops/discovery/c1")
+    assert r.status_code == 200
+    assert r.json()["exploration_budget"] == 0.35
+
+
+def test_list_sources_omits_budget_when_signature_read_fails(client):
+    FakeEngine.responses["sources"] = {"campaign_id": "c1", "items": []}
+    FakeEngine.raises["signature"] = EngineError("no learning surface", status=404)
+    r = client.get("/api/applicant/ops/discovery/c1")
+    assert r.status_code == 200
+    assert "exploration_budget" not in r.json()
+
+
+def test_set_exploration_budget_passthrough(client):
+    FakeEngine.responses["budget"] = {"campaign_id": "c1", "exploration_budget": 0.5}
+    r = client.put("/api/applicant/ops/discovery/c1/exploration-budget", json={"exploration_budget": 0.5})
+    assert r.status_code == 200
+    assert r.json()["exploration_budget"] == 0.5
+
+
+def test_set_exploration_budget_forwards_engine_400(client):
+    FakeEngine.raises["budget"] = EngineError("bad", status=400, detail="Exploration budget must be between 0 and 1.")
+    r = client.put("/api/applicant/ops/discovery/c1/exploration-budget", json={"exploration_budget": 5})
+    assert r.status_code == 400
+
+
+def test_exploration_budget_route_not_swallowed_as_source_key(client):
+    # The specific exploration-budget route must win over the {source_key} catch-all.
+    FakeEngine.responses["budget"] = {"campaign_id": "c1", "exploration_budget": 0.2}
+    r = client.put("/api/applicant/ops/discovery/c1/exploration-budget", json={"exploration_budget": 0.2})
+    assert r.status_code == 200
+    # It went through _request (the budget path), not the source-toggle method.
+    assert not any(c[0] == "toggle" for c in FakeEngine.calls)
 
 
 # --- exact engine paths over a real client + MockTransport ------------------
