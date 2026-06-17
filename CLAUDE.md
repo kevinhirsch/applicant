@@ -23,9 +23,10 @@ wired by the bridge (`workspace/src/applicant_engine.py` → engine; engine→wo
    (`workspace/src/applicant_features.py`). The traceability docs verify only the engine; do not
    trust them for reachability.
 
-3. **White-label, always.** Zero references to any vendor/persona codename
-   (`firehouse`/`orwell`/`odysseus`/`smokey`) and zero `FR-`/`NFR-` jargon in user-facing strings.
-   The product is **Applicant**. Plain language + tooltips.
+3. **White-label, always.** Zero references to the upstream fork's vendor/persona codenames,
+   and zero `FR-`/`NFR-` jargon, in user-facing strings (and in shipped artifacts generally).
+   The product is **Applicant**. Plain language + tooltips. The CI **white-label check**
+   (`.github/workflows/ci.yml`) holds the codename denylist and fails the build on any match.
 
 4. **Front-door proxies; the engine owns logic.** Workspace `/api/applicant/*` routes are thin
    auth-protected, owner-scoped proxies over the engine client; business logic lives in the engine.
