@@ -363,6 +363,28 @@ class LearningService:
             self._storage.commit()
         return result
 
+    def ingest_decline_atomic(
+        self,
+        campaign_id: CampaignId,
+        *,
+        feedback_text: str,
+        criteria_delta: dict | None = None,
+    ) -> LearningModel:
+        """Atomically load -> fold decline feedback -> persist for a campaign (CONC-4).
+
+        FR-LEARN-1/FR-DUR-2: the per-campaign lock serializes this read-modify-write of
+        the shared ``campaign.learning_state`` with the funnel path
+        (``record_funnel_atomic``/``record_source_event``) so a concurrent source-event
+        fold can't lose-update the decline feedback (or vice-versa).
+        """
+        with _campaign_lock(campaign_id):
+            model = self.load_model(campaign_id)
+            model = self.ingest_decline_feedback(
+                model, feedback_text=feedback_text, criteria_delta=criteria_delta
+            )
+            self.persist_model(model)
+        return model
+
     def ingest_decline_feedback(
         self, model: LearningModel, *, feedback_text: str, criteria_delta: dict | None = None
     ) -> LearningModel:

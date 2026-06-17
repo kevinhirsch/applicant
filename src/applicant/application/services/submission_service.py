@@ -95,7 +95,16 @@ class SubmissionService:
 
         FR-RESUME-8: before ANYTHING is recorded, the review gate is enforced — all
         generated material for this application must be approved, else ``ReviewRequired``.
+
+        IDEM-3: idempotent — if a submitted ``OutcomeEvent`` already exists for this
+        application (e.g. the submit step re-ran after a dropped checkpoint, CONC-1),
+        return the existing event WITHOUT recording a second one (no duplicate
+        OutcomeEvent / double-counted submissions funnel).
         """
+        existing_event = self._existing_submission(application.id)
+        if existing_event is not None:
+            log.info("submission_already_recorded", application_id=str(application.id))
+            return existing_event
         self.ensure_submittable(application.id)
         terminal = (
             ApplicationState.FINISHED_BY_ENGINE
@@ -158,6 +167,17 @@ class SubmissionService:
             ],
             "outcomes": [{"type": o.type, "source": o.source.value} for o in outcomes],
         }
+
+    def _existing_submission(self, application_id: ApplicationId) -> OutcomeEvent | None:
+        """Return a prior ``submitted`` OutcomeEvent for this app, if any (IDEM-3)."""
+        try:
+            outcomes = self._storage.outcomes.list_for_application(application_id)
+        except Exception:  # pragma: no cover - defensive
+            return None
+        for ev in outcomes:
+            if ev.type == "submitted":
+                return ev
+        return None
 
     def _record_submission_yield(self, application: Application) -> None:
         """Record the SUBMISSIONS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6)."""

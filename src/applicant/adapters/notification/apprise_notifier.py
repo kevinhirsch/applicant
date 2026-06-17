@@ -44,6 +44,11 @@ log = get_logger(__name__)
 _DISCORD_HOLD_SECONDS = 30
 _EMAIL_TIMEOUT_SECONDS = 15 * 60  # 15 min, UI-configurable
 
+# CONC-3: rotation caps for the in-app inbox + offline capture lists so 24/7
+# operation does not grow them unbounded. The most-recent entries are retained.
+_MAX_INBOX = 1000
+_MAX_CAPTURED = 1000
+
 
 @dataclass
 class _Rung:
@@ -116,6 +121,13 @@ class AppriseNotifier:
         self._inbox: list[CapturedSend] = []
         # Offline capture of every fired dispatch (introspection for tests).
         self._captured: list[CapturedSend] = []
+        # IDEM-1: dedup keys of digest emails already sent (per campaign+day) so a
+        # re-driven delivery never dispatches the same digest email twice.
+        self._sent_emails: set[str] = set()
+        # CONC-3: cap the unbounded in-app inbox + capture lists so 24/7 operation
+        # does not grow them without bound (oldest entries rotate out).
+        self._max_inbox = _MAX_INBOX
+        self._max_captured = _MAX_CAPTURED
 
     # --- channel configuration / gate (FR-OOBE-3) -------------------------
     def configured_channels(self) -> list[str]:
@@ -212,8 +224,13 @@ class AppriseNotifier:
             urgency=notification.urgency.value,
         )
         self._captured.append(captured)
+        if len(self._captured) > self._max_captured:
+            # CONC-3: rotate oldest out so the list is bounded over 24/7.
+            del self._captured[: len(self._captured) - self._max_captured]
         if channel == NotificationChannel.IN_APP.value:
             self._inbox.append(captured)
+            if len(self._inbox) > self._max_inbox:
+                del self._inbox[: len(self._inbox) - self._max_inbox]
         if self._send_real:
             self._send_real_dispatch(channel, notification)
         log.info(
@@ -256,7 +273,14 @@ class AppriseNotifier:
         self._fire_due(delivery, self._now_secs())
         return handle
 
-    def send_email(self, *, subject: str, html: str, deep_link: str | None = None) -> bool:
+    def send_email(
+        self,
+        *,
+        subject: str,
+        html: str,
+        deep_link: str | None = None,
+        dedup_key: str | None = None,
+    ) -> bool:
         """Send a rendered email body directly to the EMAIL channel (FR-DIG-2).
 
         Used by the digest delivery so the daily digest email is actually SENT, not
@@ -264,9 +288,17 @@ class AppriseNotifier:
         already-decided send) but stays behind the same offline-safe boundary: the
         body is captured in memory and only goes over the wire when ``send_real`` is
         on (NOTIFICATIONS_LIVE). Returns True if the email channel is configured.
+
+        IDEM-1: when ``dedup_key`` is supplied, a second send with the same key is a
+        no-op (returns True without re-dispatching) so a re-driven daily digest never
+        sends two emails for the same campaign+day.
         """
         if not self._apprise:
             return False
+        if dedup_key is not None:
+            if dedup_key in self._sent_emails:
+                return True  # already sent this campaign+day — idempotent no-op
+            self._sent_emails.add(dedup_key)
         self._dispatch(
             NotificationChannel.EMAIL.value,
             Notification(

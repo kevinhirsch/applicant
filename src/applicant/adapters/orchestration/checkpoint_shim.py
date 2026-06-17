@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -85,6 +86,19 @@ class CheckpointShimOrchestrator:
         self._workflows: dict[str, Callable[..., Any]] = {}
         self._queues: dict[str, _Queue] = {}
         self._scheduled: dict[str, Callable[..., Any]] = {}
+        # CONC-1: per-workflow / per-queue locks serialize the non-atomic
+        # ``_load -> mutate -> _save`` brackets so the 24/7 scheduler thread and the
+        # request handlers can't drop each other's checkpoint writes. The registry
+        # itself is guarded by ``_registry_lock``. Keyed by workflow id OR queue name.
+        self._locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._registry_lock = threading.Lock()
+        # DUR-1: load any persisted durable-queue state so a restart over the same
+        # dir does not re-grant a held concurrency slot (slot leak).
+        self._load_queues()
+
+    def _lock_for(self, key: str) -> threading.Lock:
+        with self._registry_lock:
+            return self._locks[key]
 
     # --- checkpoint persistence -------------------------------------------
     def _path(self, workflow_id: str) -> Path:
@@ -128,16 +142,22 @@ class CheckpointShimOrchestrator:
         return _ShimHandle(workflow_id=workflow_id, _result=result)
 
     def run_step(self, workflow_id: str, step_name: str, fn: Callable[[], Any]) -> Any:
-        """Run ``fn`` once; return its checkpointed result on any later re-run."""
-        state = self._load(workflow_id)
-        steps = state.setdefault("steps", {})
-        if step_name in steps:
-            # Already completed in a prior (possibly killed) execution — resume.
-            return steps[step_name]
-        result = fn()
-        steps[step_name] = result
-        self._save(workflow_id, state)
-        return result
+        """Run ``fn`` once; return its checkpointed result on any later re-run.
+
+        CONC-1: the ``_load -> mutate -> _save`` bracket is guarded by the
+        per-workflow lock so concurrent steps (scheduler thread vs. request handler)
+        cannot read-modify-write over each other and drop checkpoints.
+        """
+        with self._lock_for(workflow_id):
+            state = self._load(workflow_id)
+            steps = state.setdefault("steps", {})
+            if step_name in steps:
+                # Already completed in a prior (possibly killed) execution — resume.
+                return steps[step_name]
+            result = fn()
+            steps[step_name] = result
+            self._save(workflow_id, state)
+            return result
 
     def completed_steps(self, workflow_id: str) -> list[str]:
         """Introspection helper: which steps have checkpointed results."""
@@ -152,10 +172,11 @@ class CheckpointShimOrchestrator:
         ``recv`` it. This makes the approval gate survive a mid-step restart, which
         the previous in-process dict could not.
         """
-        state = self._load(workflow_id)
-        mailbox = state.setdefault("mailbox", {})
-        mailbox.setdefault(topic, []).append(payload)
-        self._save(workflow_id, state)
+        with self._lock_for(workflow_id):
+            state = self._load(workflow_id)
+            mailbox = state.setdefault("mailbox", {})
+            mailbox.setdefault(topic, []).append(payload)
+            self._save(workflow_id, state)
 
     def recv(self, workflow_id: str, topic: str, timeout: float | None = None) -> Any:
         """Pop the oldest durably-stored message for ``(workflow_id, topic)``.
@@ -164,21 +185,44 @@ class CheckpointShimOrchestrator:
         removed from the persisted mailbox and the checkpoint is re-saved, so a
         decision is delivered exactly once even across restarts.
         """
-        state = self._load(workflow_id)
-        mailbox = state.get("mailbox", {})
-        box = mailbox.get(topic, [])
-        if not box:
-            return None
-        payload = box.pop(0)
-        if not box:
-            mailbox.pop(topic, None)
-        state["mailbox"] = mailbox
-        self._save(workflow_id, state)
-        return payload
+        with self._lock_for(workflow_id):
+            state = self._load(workflow_id)
+            mailbox = state.get("mailbox", {})
+            box = mailbox.get(topic, [])
+            if not box:
+                return None
+            payload = box.pop(0)
+            if not box:
+                mailbox.pop(topic, None)
+            state["mailbox"] = mailbox
+            self._save(workflow_id, state)
+            return payload
+
+    #: The pipeline's final checkpointed step — its presence in a checkpoint means the
+    #: workflow ran to its terminal ``done`` state and must NOT be re-driven (DUR-2).
+    _TERMINAL_STEP = "teardown"
 
     def recover_pending(self) -> list[str]:
-        """Return workflow ids that have a checkpoint file (interrupted/in-flight)."""
-        return [p.stem.replace(".checkpoint", "") for p in self._dir.glob("*.checkpoint.json")]
+        """Return workflow ids with an *interrupted* checkpoint (DUR-2).
+
+        Terminal/done checkpoints are skipped: a workflow that reached its terminal
+        step (``teardown``) is complete, so re-driving it every boot would re-run the
+        whole pipeline (duplicate OutcomeEvent / re-notify). ``clear`` normally removes
+        a done workflow's checkpoint; this is the defense-in-depth filter for any that
+        linger (e.g. a crash between the terminal step and ``clear``).
+        """
+        pending: list[str] = []
+        for p in self._dir.glob("*.checkpoint.json"):
+            wf_id = p.stem.replace(".checkpoint", "")
+            try:
+                state = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            steps = state.get("steps", {})
+            if self._TERMINAL_STEP in steps or state.get("terminal"):
+                continue
+            pending.append(wf_id)
+        return pending
 
     # --- durable queues: concurrency cap / rate limit / pivot (FR-DUR-2/4) -
     def create_queue(
@@ -189,40 +233,102 @@ class CheckpointShimOrchestrator:
         limiter_limit: int | None = None,
         limiter_period: float | None = None,
     ) -> _Queue:
-        q = self._queues.get(name)
-        if q is None:
-            q = _Queue(
-                concurrency=concurrency,
-                limiter_limit=limiter_limit,
-                limiter_period=limiter_period,
-            )
-            self._queues[name] = q
-        return q
+        with self._lock_for(f"queue:{name}"):
+            q = self._queues.get(name)
+            if q is None:
+                q = _Queue(
+                    concurrency=concurrency,
+                    limiter_limit=limiter_limit,
+                    limiter_period=limiter_period,
+                )
+                self._queues[name] = q
+                self._save_queue(name, q)
+            return q
 
     def acquire(self, queue_name: str, work_id: str) -> bool:
         """Admit ``work_id`` if capacity + rate allow; else enqueue it (FR-DUR-2)."""
-        q = self._queues.get(queue_name) or self.create_queue(queue_name)
-        return q.try_admit(work_id, time.monotonic())
+        with self._lock_for(f"queue:{queue_name}"):
+            q = self._queues.get(queue_name)
+            if q is None:
+                q = _Queue()
+                self._queues[queue_name] = q
+            admitted = q.try_admit(work_id, time.monotonic())
+            # DUR-1: persist active/waiting so a restart over the same dir does not
+            # re-grant a slot the cap already handed out (slot leak).
+            self._save_queue(queue_name, q)
+            return admitted
 
     def release(self, queue_name: str, work_id: str) -> str | None:
         """Free ``work_id``'s slot and promote the next waiter — the pivot (FR-DUR-4)."""
-        q = self._queues.get(queue_name)
-        if q is None:
-            return None
-        q.active.discard(work_id)
-        # Pivot: admit the oldest waiter that now fits (capacity yielded by the
-        # blocked/awaiting application FR-AGENT-6).
-        now = time.monotonic()
-        while q.waiting:
-            nxt = q.waiting[0]
-            if q._capacity_ok() and q._rate_ok(now):
-                q.waiting.popleft()
-                q.active.add(nxt)
-                if q.limiter_limit is not None:
-                    q.admit_times.append(now)
-                return nxt
-            break
-        return None
+        with self._lock_for(f"queue:{queue_name}"):
+            q = self._queues.get(queue_name)
+            if q is None:
+                return None
+            q.active.discard(work_id)
+            # Pivot: admit the oldest waiter that now fits (capacity yielded by the
+            # blocked/awaiting application FR-AGENT-6).
+            now = time.monotonic()
+            promoted: str | None = None
+            while q.waiting:
+                nxt = q.waiting[0]
+                if q._capacity_ok() and q._rate_ok(now):
+                    q.waiting.popleft()
+                    q.active.add(nxt)
+                    if q.limiter_limit is not None:
+                        q.admit_times.append(now)
+                    promoted = nxt
+                break
+            self._save_queue(queue_name, q)
+            return promoted
+
+    # --- durable-queue persistence (DUR-1) --------------------------------
+    def _queues_path(self) -> Path:
+        return self._dir / "_queues.json"
+
+    def _save_queue(self, name: str, q: _Queue) -> None:
+        """Persist all queues' admit/wait state so slots survive a restart (DUR-1).
+
+        ``admit_times`` (the rolling rate-limit window) uses ``time.monotonic`` which
+        is not portable across processes, so it is intentionally NOT persisted — only
+        the durable ``active`` set + ``waiting`` FIFO + caps are, which is what guards
+        the concurrency slot against re-grant.
+        """
+        data: dict[str, Any] = {}
+        for qname, queue in self._queues.items():
+            data[qname] = {
+                "concurrency": queue.concurrency,
+                "limiter_limit": queue.limiter_limit,
+                "limiter_period": queue.limiter_period,
+                "active": sorted(queue.active),
+                "waiting": list(queue.waiting),
+            }
+        p = self._queues_path()
+        fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, p)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
+    def _load_queues(self) -> None:
+        """Rehydrate durable-queue state on startup (DUR-1)."""
+        p = self._queues_path()
+        if not p.exists():
+            return
+        try:
+            data = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            return
+        for name, qd in data.items():
+            self._queues[name] = _Queue(
+                concurrency=qd.get("concurrency"),
+                limiter_limit=qd.get("limiter_limit"),
+                limiter_period=qd.get("limiter_period"),
+                active=set(qd.get("active", [])),
+                waiting=deque(qd.get("waiting", [])),
+            )
 
     def enqueue(
         self, queue_name: str, workflow_name: str, workflow_id: str, *args: Any, **kwargs: Any

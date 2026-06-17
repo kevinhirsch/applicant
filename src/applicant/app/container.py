@@ -369,12 +369,94 @@ def build_container(settings: Settings | None = None) -> Container:
         sandbox=sandbox,
         orchestrator=orchestrator,
     )
+    # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
+    # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
+    # FRESH Session + SqlAlchemyStorage + storage-bound services for each tick and
+    # close the session afterwards. The stateless adapters (llm/embedding/notifier/
+    # orchestrator/sandbox/...) and session-free services are reused. With in-memory
+    # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
+    def _build_tick_services(tick_storage):
+        ls = LearningService(tick_storage, embedding)
+        ds = DiscoveryService(
+            tick_storage, discovery, embedding, ls, tool_registry=tool_registry
+        )
+        ss = ScoringService(
+            tick_storage, llm, embedding, learning=ls, tool_registry=tool_registry
+        )
+        cs = CriteriaService(tick_storage, llm)
+        ars = AgentRunService(tick_storage)
+        pas = PendingActionsService(tick_storage)
+        dg = DigestService(
+            tick_storage,
+            notification,
+            ss,
+            learning=ls,
+            criteria=cs,
+            notification_service=notification_service,
+            pending_actions=pas,
+        )
+        sub = SubmissionService(tick_storage, browser, learning=ls)
+        pf = PrefillService(
+            storage=tick_storage,
+            browser=browser,
+            detection=detection,
+            sandbox=sandbox,
+            credentials=credentials,
+            notification=notification,
+            llm=llm,
+        )
+        mat = MaterialService(
+            tick_storage,
+            llm=llm,
+            resume_tailoring=latex_tailor,
+            embedding=embedding,
+            docx_tailoring=docx_tailor,
+            conversion_service=conversion_service,
+            notifications=notification_service,
+            pending_actions=pas,
+            learning=ls,
+        )
+        loop = AgentLoop(
+            storage=tick_storage,
+            agent_run_service=ars,
+            discovery_service=ds,
+            scoring_service=ss,
+            digest_service=dg,
+            prefill_service=pf,
+            material_service=mat,
+            submission_service=sub,
+            learning_service=ls,
+            notification_service=notification_service,
+            capacity_service=capacity_service,
+            final_approval_service=final_approval_service,
+            sandbox=sandbox,
+            orchestrator=orchestrator,
+        )
+        return {
+            "storage": tick_storage,
+            "agent_loop": loop,
+            "digest_service": dg,
+            "notification_service": notification_service,
+            "final_approval_service": final_approval_service,
+        }
+
+    tick_services_factory = None
+    if session_factory is not None:
+        from applicant.adapters.storage.repositories import SqlAlchemyStorage
+
+        def tick_services_factory():  # noqa: F811 - per-tick isolated session (CONC-2)
+            tick_session = session_factory()
+            services = _build_tick_services(SqlAlchemyStorage(tick_session))
+            services["_session"] = tick_session
+            return services
+
     scheduler = Scheduler(
         storage=storage,
         agent_loop=agent_loop,
         digest_service=digest_service,
         notification_service=notification_service,
         final_approval_service=final_approval_service,
+        tick_services_factory=tick_services_factory,
     )
 
     return Container(

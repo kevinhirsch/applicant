@@ -104,9 +104,10 @@ def test_recover_pending_finds_interrupted_workflow(tmp_path):
     ckpt = str(tmp_path / "ckpt2")
     orch = CheckpointShimOrchestrator(ckpt)
     register(orch)
-    orch.send("app-99", FINAL_APPROVAL_TOPIC, {"decision": "finished_by_engine"})
+    # No final-approval decision is sent: the workflow parks at the recv gate
+    # (awaiting_final_approval) — genuinely INTERRUPTED, not terminal (DUR-2).
     orch.start_workflow(WORKFLOW_NAME, "app-99", ctx=_ctx([]))
-    # A fresh orchestrator (restart) can find the workflow's checkpoint.
+    # A fresh orchestrator (restart) can find the interrupted workflow's checkpoint.
     assert "app-99" in CheckpointShimOrchestrator(ckpt).recover_pending()
 
 

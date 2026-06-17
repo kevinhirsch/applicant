@@ -164,10 +164,18 @@ class AgentLoop:
         # restart) is the single source of truth between ticks — no double counting.
         key = (str(campaign_id), now.date())
         self._acted.pop(key, None)
+        # CONC-3: prune per-day dedup ledgers older than today so the in-memory maps
+        # do not grow unbounded over 24/7 operation.
+        self._prune_daily(now.date())
         try:
             return self._tick(campaign_id, now)
         finally:
             self._acted.pop(key, None)
+
+    def _prune_daily(self, today: date) -> None:
+        """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
+        self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
+        self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
 
     def _tick(self, campaign_id: CampaignId, now: datetime) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
@@ -284,11 +292,21 @@ class AgentLoop:
             return
         for app in self._storage.applications.list_for_campaign(campaign_id):
             if app.status in _IN_FLIGHT_RESUMABLE:
-                campaign = self._storage.campaigns.get(campaign_id)
-                wf_id = self._workflow_id(app.id)
-                ctx = self._build_context(campaign, app)
-                outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
-                self._apply_outcome(app, outcome, result)
+                # A resume that raises must NOT leak the sandbox slot nor abort the
+                # whole tick (it would stall every other app). Mirror _start_pipeline:
+                # release the slot + tear down the session, log, and continue.
+                try:
+                    campaign = self._storage.campaigns.get(campaign_id)
+                    wf_id = self._workflow_id(app.id)
+                    ctx = self._build_context(campaign, app)
+                    outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
+                    self._apply_outcome(app, outcome, result)
+                except Exception:
+                    if self._capacity is not None:
+                        self._capacity.release_sandbox(str(app.id))
+                    self._teardown_sandbox(app.id)
+                    log.warning("resume_failed_slot_released", application_id=str(app.id))
+                    continue
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:
         """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).
@@ -331,6 +349,9 @@ class AgentLoop:
             # Terminal: release the sandbox slot so the next waiter is admitted.
             if self._capacity is not None:
                 self._capacity.release_sandbox(str(app.id))
+            # DUR-2: a done workflow is complete — clear its checkpoint so it is not
+            # re-driven on every restart (unbounded growth + duplicate outcomes).
+            self._clear_checkpoint(app.id)
         elif status in ("handoff", "awaiting_final_approval"):
             handoff_state = outcome.get("handoff_state", status)
             result.handoffs.append(str(app.id))
@@ -445,6 +466,18 @@ class AgentLoop:
 
     def _workflow_id(self, application_id: ApplicationId) -> str:
         return f"application:{application_id}"
+
+    def _clear_checkpoint(self, application_id: ApplicationId) -> None:
+        """Remove a terminal workflow's durable checkpoint (DUR-2). Defensive."""
+        if self._orch is None:
+            return
+        clear = getattr(self._orch, "clear", None)
+        if clear is None:
+            return
+        try:
+            clear(self._workflow_id(application_id))
+        except Exception:  # pragma: no cover - clearing must never break teardown
+            log.warning("checkpoint_clear_failed", application_id=str(application_id))
 
     def _viable_count(self, campaign_id: CampaignId) -> int:
         if self._scoring is None:

@@ -635,8 +635,19 @@ class PrefillService:
         session_url: str | None,
         payload: dict | None = None,
     ) -> PendingActionId:
-        """Land a pending action + notify (every waiting state does this, §7)."""
+        """Land a pending action + notify (every waiting state does this, §7).
+
+        IDEM-2: deduped by ``(application_id, kind)`` — ``_resume_in_flight`` re-drives
+        an in-flight app every ~60s tick, re-landing the same waiting state; without
+        this guard each redrive piled up another identical pending action.
+        """
         cid: CampaignId = application.campaign_id
+        for existing in self._storage.pending_actions.list_open(cid):
+            if (
+                str(getattr(existing, "application_id", "")) == str(application.id)
+                and existing.kind == kind
+            ):
+                return existing.id
         pid = PendingActionId(new_id())
         body = dict(payload or {})
         if session_url:

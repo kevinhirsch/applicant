@@ -159,10 +159,19 @@ class DigestService:
                 str(campaign_id), count=len(payload["rows"])
             )
             # Actually send the rendered email body to the email channel (FR-DIG-2).
+            # IDEM-1: a per-(campaign, UTC day) dedup key makes the email send
+            # idempotent so a re-driven/duplicate delivery never sends two digest
+            # emails for the same campaign+day.
+            from datetime import UTC, datetime
+
+            dedup_key = (
+                f"digest_email:{campaign_id}:{datetime.now(UTC).date().isoformat()}"
+            )
             email_sent = self._notification_service.send_digest_email(
                 subject=email["subject"],
                 html=email["html"],
                 deep_link=f"/digest?campaign={campaign_id}",
+                dedup_key=dedup_key,
             )
         if self._pending is not None:
             for row in payload["rows"]:
@@ -282,14 +291,25 @@ class DigestService:
         if campaign_id is None:
             return
         # Fold the feedback into the learning model (FR-DIG-5, FR-LEARN-3).
+        # CONC-4: route through the per-campaign-locked atomic fold so this
+        # load->fold->persist of the shared learning_state can't lose-update against a
+        # concurrent funnel record (approval/submission/match) for the same campaign.
         if self._learning is not None:
-            model = self._learning.load_model(campaign_id)
-            model = self._learning.ingest_decline_feedback(
-                model,
-                feedback_text=decision.feedback_text,
-                criteria_delta=decision.criteria_delta,
-            )
-            self._learning.persist_model(model)
+            atomic = getattr(self._learning, "ingest_decline_atomic", None)
+            if atomic is not None:
+                atomic(
+                    campaign_id,
+                    feedback_text=decision.feedback_text,
+                    criteria_delta=decision.criteria_delta,
+                )
+            else:  # pragma: no cover - all wired learning services expose the atomic API
+                model = self._learning.load_model(campaign_id)
+                model = self._learning.ingest_decline_feedback(
+                    model,
+                    feedback_text=decision.feedback_text,
+                    criteria_delta=decision.criteria_delta,
+                )
+                self._learning.persist_model(model)
         # Bias the NEXT run's criteria from the structured delta (FR-DIG-5, FR-CRIT-3).
         if self._criteria is not None and decision.criteria_delta:
             self._criteria.apply_learned_adjustment(
