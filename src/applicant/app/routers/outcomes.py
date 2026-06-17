@@ -56,7 +56,8 @@ def detect_submission(
         # user (→SUBMITTED_BY_USER); an AUTO/FINISHED_BY_ENGINE detect is illegal.
         # Surface it as a 409 conflict rather than letting it escape as a 500.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    _close_conversion_loop(container, app)
+    # Conversion learning is now folded inside SubmissionService.record_submission so
+    # EVERY submit path closes the loop exactly once (#2) — do not double-fold here.
     return {
         "application_id": application_id,
         "detected": True,
@@ -79,7 +80,7 @@ def mark_submitted(
     except ReviewRequired as exc:
         # FR-RESUME-8: review-before-submission applies to the one-tap path too.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    _close_conversion_loop(container, app)
+    # Conversion learning is folded inside SubmissionService.record_submission (#2).
     return {"outcome_id": event.id, "type": event.type, "source": event.source.value}
 
 
@@ -87,26 +88,6 @@ def mark_submitted(
 def get_log(application_id: str, container: Container = Depends(get_container)) -> dict:
     """Retrieve the logged application detail + screenshots + outcomes (FR-LOG-3)."""
     return container.submission_service.get_log(application_id)  # type: ignore[arg-type]
-
-
-def _close_conversion_loop(container: Container, app: Application) -> None:
-    """Fold the now-converted application into per-campaign learning (FR-LEARN-2).
-
-    Conversion = approval (state) PLUS submission (the OutcomeEvent just recorded).
-    The advanced learning service reads the outcomes from storage, folds the rich
-    converting-role signature, and persists it so the next run is biased and the
-    state survives restart. Defensive: learning must never break a submission.
-    """
-    advanced = getattr(container, "advanced_learning_service", None)
-    if advanced is None or not app.campaign_id:
-        return
-    posting = None
-    if app.posting_id:
-        posting = container.storage.postings.get(app.posting_id)  # type: ignore[arg-type]
-    try:
-        advanced.record_and_persist_conversion(app.campaign_id, app, posting=posting)
-    except Exception:  # pragma: no cover - defensive: never fail the submission
-        pass
 
 
 def _load_or_stub(container: Container, application_id: str) -> Application:

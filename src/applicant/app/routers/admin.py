@@ -51,13 +51,18 @@ def toggle_tool(
 
 # === Debug surface (FR-OBS-2 / FR-LOG-3) ===================================
 @router.get("/history/{campaign_id}")
-def application_history(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+def application_history(
+    campaign_id: str, limit: int = 200, container: Container = Depends(get_container)
+) -> dict:
     """Per-application history for the debug surface (FR-OBS-2 / FR-LOG-3 / FR-UI-6).
 
     Each row carries its logged detail: status, role, work mode, the variant used,
-    captured-screenshot count, and recorded outcome events.
+    captured-screenshot count, and recorded outcome events. ``limit`` bounds the rows
+    so a long-running campaign's history never returns an unbounded list (#14).
     """
-    rows = container.admin_query_service.application_history(campaign_id)  # type: ignore[arg-type]
+    rows = container.admin_query_service.application_history(
+        campaign_id, limit=limit  # type: ignore[arg-type]
+    )
     return {"campaign_id": campaign_id, "applications": rows}
 
 

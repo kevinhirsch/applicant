@@ -78,6 +78,7 @@ class AgentLoop:
         discovery_service=None,
         scoring_service=None,
         digest_service=None,
+        criteria_service=None,
         prefill_service=None,
         material_service=None,
         submission_service=None,
@@ -94,6 +95,10 @@ class AgentLoop:
         self._discovery = discovery_service
         self._scoring = scoring_service
         self._digest = digest_service
+        # FR-AGENT-3 / #6: campaign criteria so discovery + scoring + digest all use
+        # the same ``get_criteria(campaign.id)`` (onboarding-seeded + learned), instead
+        # of the loop scoring against empty default criteria.
+        self._criteria = criteria_service
         self._prefill = prefill_service
         self._material = material_service
         self._submission = submission_service
@@ -117,6 +122,11 @@ class AgentLoop:
         # Guards the loop's own delivery so a ~60s scheduler tick does not re-send the
         # digest email + Discord ready-ping every tick.
         self._digest_sent: dict[tuple[str, date], bool] = {}
+        # application_id -> last time it was re-driven by _resume_in_flight (#9 backoff)
+        # so a human-gated app is not re-driven every ~60s tick.
+        self._last_resume: dict[str, datetime] = {}
+        #: minimum seconds between resume re-drives of the same parked app (#9).
+        self._resume_backoff_seconds: float = 300.0
         # Register the durable pipeline once if an orchestrator is present.
         if self._orch is not None:
             try:
@@ -139,12 +149,24 @@ class AgentLoop:
         return self._persisted_acted_today(campaign_id, now) + self._acted.get(key, 0)
 
     def _persisted_acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
-        """Sum durably-recorded ``pipelines_started`` over today's agent runs."""
+        """Sum durably-recorded ``pipelines_started`` over today's agent runs (#11).
+
+        Prefers the indexed ``AgentRunRepository.count_pipelines_started_on`` (a single
+        aggregate query for the day) over scanning the ENTIRE agent-run history every
+        tick. Falls back to a today-filtered scan where the method is not yet present.
+        """
+        repo = self._storage.agent_runs
+        counter = getattr(repo, "count_pipelines_started_on", None)
+        today = now.date()
+        if counter is not None:
+            try:
+                return int(counter(campaign_id, today))
+            except Exception:  # pragma: no cover - defensive
+                return 0
         try:
-            runs = self._storage.agent_runs.list_for_campaign(campaign_id)
+            runs = repo.list_for_campaign(campaign_id)
         except Exception:  # pragma: no cover - defensive
             return 0
-        today = now.date()
         total = 0
         for run in runs:
             ts = getattr(run, "timestamp", None)
@@ -222,7 +244,7 @@ class AgentLoop:
         # tick advances in-flight work even when the budget is exhausted (FR-DUR-1/4).
         # This is recovery re-drive (NOT new automated work) so it runs even while the
         # automated-work gate is closed.
-        self._resume_in_flight(campaign_id, result)
+        self._resume_in_flight(campaign_id, result, now)
 
         # FR-ONBOARD-2 / FR-OOBE-3: no NEW automated work until onboarding is complete
         # AND channels are configured AND the LLM gate is open. With the gate closed we
@@ -251,19 +273,40 @@ class AgentLoop:
     # ``run_once`` is the explicit single-pass entry point (alias of tick).
     run_once = tick
 
+    # --- criteria (FR-AGENT-3 / #6) ---------------------------------------
+    def _criteria_for(self, campaign_id: CampaignId):
+        """Return the campaign's SearchCriteria so discovery/scoring use it (#6).
+
+        Without this the loop scored every posting against empty default criteria
+        (a uniform neutral score), so the onboarding-seeded + learned criteria never
+        reached scoring/discovery. ``None`` when no criteria service is wired.
+        """
+        if self._criteria is None:
+            return None
+        try:
+            return self._criteria.get_criteria(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            return None
+
     # --- discovery + digest ----------------------------------------------
     def _discover_and_digest(self, campaign, result: TickResult, now: datetime) -> None:
+        criteria = self._criteria_for(campaign.id)
         if self._discovery is not None:
             try:
-                found = self._discovery.run_discovery(campaign.id)
+                # #6: discovery uses the campaign criteria (it accepts an optional
+                # criteria arg; older signatures ignore it via the fallback).
+                found = self._run_discovery(campaign.id, criteria)
                 result.discovered = len(found)
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("discovery_failed", campaign_id=str(campaign.id), error=str(exc))
-        # Score every fresh posting so UNTIL_N_VIABLE and the digest have scores.
+        # #8: score ONLY the postings not yet scored this campaign (was: re-score the
+        # ENTIRE posting history every tick, reloading the LearningModel per posting).
+        # The LearningModel is loaded once per tick inside ScoringService via the
+        # criteria-aware score; here we only feed it the unscored backlog.
         if self._scoring is not None:
-            for posting in self._storage.postings.list_for_campaign(campaign.id):
+            for posting in self._unscored_postings(campaign.id):
                 try:
-                    self._scoring.score_viability(posting.id)
+                    self._scoring.score_viability(posting.id, criteria)
                 except Exception:  # pragma: no cover - defensive
                     pass
         if self._digest is not None:
@@ -278,6 +321,30 @@ class AgentLoop:
                     self._digest_sent[key] = True
                 except Exception as exc:  # pragma: no cover - defensive
                     log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))
+
+    def _run_discovery(self, campaign_id: CampaignId, criteria):
+        """Call discovery with criteria (#6), tolerating older no-criteria signatures."""
+        try:
+            return self._discovery.run_discovery(campaign_id, criteria)
+        except TypeError:  # pragma: no cover - legacy signature without criteria
+            return self._discovery.run_discovery(campaign_id)
+
+    def _unscored_postings(self, campaign_id: CampaignId) -> list:
+        """Postings not yet viability-scored this campaign (#8).
+
+        Prefers the indexed ``JobPostingRepository.list_unscored_for_campaign`` so the
+        loop scores only the fresh backlog. Falls back to filtering the full list by
+        an unset ``viability_score`` where the repo method is not yet available.
+        """
+        repo = self._storage.postings
+        lister = getattr(repo, "list_unscored_for_campaign", None)
+        if lister is not None:
+            return list(lister(campaign_id))
+        return [
+            p
+            for p in repo.list_for_campaign(campaign_id)
+            if getattr(p, "viability_score", None) is None
+        ]
 
     # --- approvals -> applications -> durable pipeline --------------------
     def _process_approvals(self, campaign, result: TickResult, now: datetime) -> None:
@@ -318,27 +385,59 @@ class AgentLoop:
         result.pipelines_started.append(str(app.id))
         self._apply_outcome(app, outcome, result)
 
-    def _resume_in_flight(self, campaign_id: CampaignId, result: TickResult) -> None:
-        """Re-drive applications parked at a waiting state that may now be unblocked."""
+    def _resume_in_flight(
+        self, campaign_id: CampaignId, result: TickResult, now: datetime
+    ) -> None:
+        """Re-drive applications parked at a waiting state that may now be unblocked (#9).
+
+        Was: re-drive EVERY app in the campaign every tick (a full scan + a workflow
+        start per app). Now drives ONLY apps in a resumable state (indexed
+        ``ApplicationRepository.list_by_status``) AND applies a per-app backoff so a
+        human-gated app is not re-driven every ~60s tick (it churns the sandbox + the
+        orchestrator for no progress until the human acts).
+        """
         if self._orch is None:
             return
-        for app in self._storage.applications.list_for_campaign(campaign_id):
-            if app.status in _IN_FLIGHT_RESUMABLE:
-                # A resume that raises must NOT leak the sandbox slot nor abort the
-                # whole tick (it would stall every other app). Mirror _start_pipeline:
-                # release the slot + tear down the session, log, and continue.
-                try:
-                    campaign = self._storage.campaigns.get(campaign_id)
-                    wf_id = self._workflow_id(app.id)
-                    ctx = self._build_context(campaign, app)
-                    outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
-                    self._apply_outcome(app, outcome, result)
-                except Exception:
-                    if self._capacity is not None:
-                        self._capacity.release_sandbox(str(app.id))
-                    self._teardown_sandbox(app.id)
-                    log.warning("resume_failed_slot_released", application_id=str(app.id))
-                    continue
+        for app in self._resumable_apps(campaign_id):
+            if not self._resume_due(app.id, now):
+                continue
+            # A resume that raises must NOT leak the sandbox slot nor abort the
+            # whole tick (it would stall every other app). Mirror _start_pipeline:
+            # release the slot + tear down the session, log, and continue.
+            try:
+                campaign = self._storage.campaigns.get(campaign_id)
+                wf_id = self._workflow_id(app.id)
+                ctx = self._build_context(campaign, app)
+                outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
+                self._apply_outcome(app, outcome, result)
+                self._mark_resumed(app.id, now)
+            except Exception:
+                if self._capacity is not None:
+                    self._capacity.release_sandbox(str(app.id))
+                self._teardown_sandbox(app.id)
+                self._mark_resumed(app.id, now)
+                log.warning("resume_failed_slot_released", application_id=str(app.id))
+                continue
+
+    def _resumable_apps(self, campaign_id: CampaignId) -> list[Application]:
+        """Apps in a resumable state via the indexed repo, scan fallback (#9)."""
+        repo = self._storage.applications
+        lister = getattr(repo, "list_by_status", None)
+        if lister is not None:
+            return list(lister(campaign_id, _IN_FLIGHT_RESUMABLE))
+        return [
+            a for a in repo.list_for_campaign(campaign_id) if a.status in _IN_FLIGHT_RESUMABLE
+        ]
+
+    def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
+        """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
+        last = self._last_resume.get(str(application_id))
+        if last is None:
+            return True
+        return (now - last).total_seconds() >= self._resume_backoff_seconds
+
+    def _mark_resumed(self, application_id: ApplicationId, now: datetime) -> None:
+        self._last_resume[str(application_id)] = now
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:
         """Re-drive ONE recovered durable workflow with a LIVE context (FR-DUR-1).
@@ -410,26 +509,30 @@ class AgentLoop:
                 return {"state": ApplicationState.AWAITING_FINAL_APPROVAL.value}
             attrs = self._storage.attributes.list_for_campaign(campaign.id)
             url = current.root_url or (self._posting_url(current.posting_id) or "")
-            # ``current`` is APPROVED; PrefillService advances it to SANDBOX_PROVISIONING
-            # itself, so pass it through unchanged.
-            res = self._prefill.prefill_application(current, url, attrs)
+            # #4: a re-driven app that is parked at a BLOCKED_* / AWAITING_ACCOUNT state
+            # must RESUME from where it stalled, not restart the whole pre-fill. Choose
+            # the right ``resume_after_*`` for the persisted blocked state; only a fresh
+            # (APPROVED / provisioning) app does a full ``prefill_application``.
+            res = self._run_prefill_step(current, url, attrs)
             # Persist where pre-fill landed so resume/yield see the real §7 state.
             self._sync_status(current, res.state)
             return {"state": res.state.value}
 
         def _material_warranted() -> bool:
+            # #3: material is warranted when there is generated work to do for this
+            # application: a tailored resume variant always (the core FR-RESUME-1
+            # output), a cover letter when the role/campaign asks for one, or a
+            # deferred essay screening question pre-fill recorded.
             if self._material is None:
                 return False
-            try:
-                return self._material.cover_letter_warranted(campaign_default=False)
-            except Exception:  # pragma: no cover - defensive
-                return False
+            return self._material_warranted_for(campaign, app)
 
         def _prepare_material() -> dict:
-            # Routing generated material to review is a human-in-the-loop gate; the
-            # MaterialService emits the review notification + pending action. The
-            # pipeline treats unapproved material as a hand-off (MATERIAL_REVIEW).
-            return {"review_approved": False}
+            # #3: actually GENERATE the material and route it to review. The
+            # MaterialService persists each doc unapproved + emits the review
+            # notification + pending action; the pipeline treats unapproved material as
+            # a MATERIAL_REVIEW hand-off until the user approves the redline.
+            return self._prepare_material_for(campaign, app)
 
         def _request_approval() -> Any:
             current = self._storage.applications.get(aid) or app
@@ -480,6 +583,113 @@ class AgentLoop:
             approval_timeout=0.0,
         )
 
+    def _run_prefill_step(self, current: Application, url: str, attrs):
+        """Choose the right pre-fill entry point for the app's §7 state (#4).
+
+        Was: always ``prefill_application`` (a full restart) even for an app already
+        parked at AWAITING_ACCOUNT_HUMAN_STEP / BLOCKED_MISSING_ATTR — orphaning the
+        in-progress session. Now a re-driven blocked app resumes from where it stalled.
+        """
+        status = current.status
+        if status is ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
+            return self._prefill.resume_after_account(current, attrs)
+        if status is ApplicationState.BLOCKED_MISSING_ATTR:
+            return self._prefill.resume_after_missing_attr(current, attrs)
+        # BLOCKED_QUESTION / BLOCKED_DETECTION re-drive through the normal loop; a fresh
+        # APPROVED app starts the full pre-fill.
+        return self._prefill.prefill_application(current, url, attrs)
+
+    # --- material generation (#3) ----------------------------------------
+    def _jd_terms(self, posting) -> list[str]:
+        """Cheap JD terms for material targeting: title + work mode tokens."""
+        if posting is None:
+            return []
+        bits = [posting.title or "", posting.work_mode or ""]
+        terms: list[str] = []
+        for b in bits:
+            for tok in str(b).replace(",", " ").split():
+                if len(tok) >= 3 and tok not in terms:
+                    terms.append(tok)
+        return terms
+
+    def _material_warranted_for(self, campaign, app: Application) -> bool:
+        """True when this application has generated material to produce (#3)."""
+        # A tailored resume variant is the baseline FR-RESUME-1 output, so material is
+        # always warranted when a material service is wired; cover-letter / deferred
+        # essays are additive. Defensive: never break the pipeline.
+        return self._material is not None
+
+    def _prepare_material_for(self, campaign, app: Application) -> dict:
+        """Generate the application's material + route to review (#3).
+
+        Selects-or-generates a resume variant (truthful adaptation toward the JD),
+        generates a cover letter when the role/campaign warrants one, and generates an
+        answer for each deferred essay screening question pre-fill recorded. Each doc
+        is stored UNAPPROVED and routed to review, so the pipeline hands off at
+        MATERIAL_REVIEW until the user approves the redline.
+        """
+        if self._material is None:
+            return {"review_approved": True}
+        posting = self._storage.postings.get(app.posting_id) if app.posting_id else None
+        jd_terms = self._jd_terms(posting)
+        true_source = self._true_source(campaign, app, posting)
+        summary: dict[str, Any] = {"review_approved": False}
+        try:
+            sel = self._material.select_or_generate(
+                campaign.id, app.posting_id, jd_terms, true_source
+            )
+            summary["variant_id"] = str(sel.variant.id)
+            summary["variant_generated"] = sel.generated
+        except Exception as exc:  # pragma: no cover - defensive: never crash the tick
+            log.warning("material_variant_failed", application_id=str(app.id), error=str(exc))
+        # Cover letter on demand (FR-RESUME-10) when the role/campaign warrants one.
+        try:
+            if self._material.cover_letter_warranted(campaign_default=False):
+                self._material.generate_cover_letter(
+                    campaign.id, app.id, true_source, jd_terms, campaign_default=False
+                )
+                summary["cover_letter"] = True
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("material_cover_letter_failed", application_id=str(app.id), error=str(exc))
+        # Deferred essay screening questions recorded during pre-fill (FR-ANSWER-1).
+        for deferred in self._deferred_questions(app):
+            try:
+                self._material.generate_for_deferred_question(
+                    campaign.id, app.id, deferred, true_source
+                )
+                summary["deferred_essays"] = summary.get("deferred_essays", 0) + 1
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("material_deferred_failed", application_id=str(app.id), error=str(exc))
+        return summary
+
+    def _true_source(self, campaign, app: Application, posting) -> str:
+        """Flatten the candidate's TRUE source for truthful generation (#3)."""
+        try:
+            return self._material.true_attribute_text(campaign.id, "")
+        except Exception:  # pragma: no cover - defensive
+            return ""
+
+    def _deferred_questions(self, app: Application) -> list[dict]:
+        """Open deferred essay screening questions for this app from pending actions."""
+        out: list[dict] = []
+        try:
+            for pa in self._storage.pending_actions.list_open(app.campaign_id):
+                if (
+                    getattr(pa, "kind", "") == "agent_question"
+                    and str(getattr(pa, "application_id", "")) == str(app.id)
+                ):
+                    payload = pa.payload or {}
+                    out.append(
+                        {
+                            "label": payload.get("question"),
+                            "selector": payload.get("field_selector"),
+                            "url": payload.get("url"),
+                        }
+                    )
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return out
+
     # --- helpers ----------------------------------------------------------
     def _teardown_sandbox(self, application_id: ApplicationId) -> None:
         """Destroy the application's live sandbox session if any (FR-SANDBOX-4).
@@ -517,22 +727,52 @@ class AgentLoop:
             log.warning("checkpoint_clear_failed", application_id=str(application_id))
 
     def _viable_count(self, campaign_id: CampaignId) -> int:
+        """Count viable postings from the PERSISTED viability score (#8).
+
+        Was: re-score every posting every tick (and reload the LearningModel per
+        posting). Now reads the durable ``viability_score`` the scoring step already
+        persisted, so UNTIL_N_VIABLE costs an O(n) read, not an O(n) re-score.
+        """
         if self._scoring is None:
             return 0
+        threshold = getattr(self._scoring, "threshold", 70)
         count = 0
         for posting in self._storage.postings.list_for_campaign(campaign_id):
-            try:
-                scoring = self._scoring.score_posting(posting)
-                if self._scoring.is_viable(scoring):
-                    count += 1
-            except Exception:  # pragma: no cover - defensive
-                pass
+            score = getattr(posting, "viability_score", None)
+            if score is None:
+                # Not yet scored (e.g. first tick before discovery scored it). Fall
+                # back to a one-off score so the gate is never under-counted.
+                try:
+                    scoring = self._scoring.score_posting(posting)
+                    if self._scoring.is_viable(scoring):
+                        count += 1
+                except Exception:  # pragma: no cover - defensive
+                    pass
+                continue
+            if score * 100.0 >= threshold:
+                count += 1
         return count
 
     def _approved_posting_ids(self, campaign_id: CampaignId) -> list[JobPostingId]:
-        """Posting ids the user approved in the digest (decisions keyed by posting id)."""
+        """Posting ids the user approved in the digest (#10).
+
+        Prefers the indexed ``DecisionRepository.list_approved_postings_for_campaign``
+        (one query) over the prior N+1 — a decisions lookup per posting plus a full
+        postings scan. Falls back to the per-posting scan where the repo method is not
+        yet available.
+        """
+        repo = self._storage.decisions
+        lister = getattr(repo, "list_approved_postings_for_campaign", None)
+        if lister is not None:
+            seen: set[str] = set()
+            out: list[JobPostingId] = []
+            for pid in lister(campaign_id):
+                if str(pid) not in seen:
+                    out.append(JobPostingId(str(pid)))
+                    seen.add(str(pid))
+            return out
         approved: list[JobPostingId] = []
-        seen: set[str] = set()
+        seen = set()
         postings = {str(p.id) for p in self._storage.postings.list_for_campaign(campaign_id)}
         for posting in self._storage.postings.list_for_campaign(campaign_id):
             decisions = self._storage.decisions.list_for_application(
@@ -547,10 +787,14 @@ class AgentLoop:
     def _ensure_application(
         self, campaign_id: CampaignId, posting_id: JobPostingId
     ) -> Application | None:
-        """Create (or fetch) the Application row for an approved posting, in APPROVED."""
-        for app in self._storage.applications.list_for_campaign(campaign_id):
-            if str(app.posting_id) == str(posting_id):
-                return app
+        """Create (or fetch) the Application row for an approved posting, in APPROVED.
+
+        #10: prefers ``ApplicationRepository.get_by_posting`` (indexed) over scanning
+        the campaign's whole application list to find the row for one posting.
+        """
+        existing = self._app_by_posting(campaign_id, posting_id)
+        if existing is not None:
+            return existing
         posting = self._storage.postings.get(posting_id)
         if posting is None:
             return None
@@ -566,6 +810,19 @@ class AgentLoop:
         self._storage.applications.add(app)
         self._storage.commit()
         return app
+
+    def _app_by_posting(
+        self, campaign_id: CampaignId, posting_id: JobPostingId
+    ) -> Application | None:
+        """Fetch the application for a posting via the indexed repo, scan fallback (#10)."""
+        repo = self._storage.applications
+        getter = getattr(repo, "get_by_posting", None)
+        if getter is not None:
+            return getter(campaign_id, posting_id)
+        for app in repo.list_for_campaign(campaign_id):
+            if str(app.posting_id) == str(posting_id):
+                return app
+        return None
 
     def _posting_url(self, posting_id: JobPostingId) -> str | None:
         posting = self._storage.postings.get(posting_id)

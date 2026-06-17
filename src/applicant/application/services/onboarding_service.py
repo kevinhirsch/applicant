@@ -58,6 +58,19 @@ class OnboardingService:
         self._storage = storage
         self._config = config_store
         self._parser = resume_parser
+        # #6: bridges into the engine, wired additively (set_* below) to avoid a
+        # construction cycle. When present, onboarding criteria flow into
+        # CriteriaService and typed intake sections upsert into the attribute cloud.
+        self._criteria_service = None
+        self._attribute_cloud_service = None
+
+    def set_criteria_service(self, criteria_service) -> None:
+        """Wire the CriteriaService so CAMPAIGN_CRITERIA intake reaches the engine (#6)."""
+        self._criteria_service = criteria_service
+
+    def set_attribute_cloud_service(self, attribute_cloud_service) -> None:
+        """Wire the AttributeCloudService so typed intake upserts attributes (#6)."""
+        self._attribute_cloud_service = attribute_cloud_service
 
     # --- persistence -------------------------------------------------------
     def _key(self, campaign_id: str) -> str:
@@ -116,8 +129,69 @@ class OnboardingService:
         if section is IntakeSection.EEO:
             self._store_eeo_attributes(campaign_id, data)
 
+        # #6: bridge the onboarding intake into the engine so criteria + attributes are
+        # not stranded in the onboarding blob (the loop reads them via get_criteria /
+        # the attribute cloud). Best-effort: a bridge hiccup never breaks intake save.
+        self._bridge_section_to_engine(campaign_id, section, data)
+
         log.info("onboarding_section_saved", campaign_id=campaign_id, section=section.value)
         return self._to_state(campaign_id, rec)
+
+    # --- #6: onboarding -> engine bridge ----------------------------------
+    def _bridge_section_to_engine(
+        self, campaign_id: str, section: IntakeSection, data: dict[str, Any]
+    ) -> None:
+        """Flow saved intake into CriteriaService / the attribute cloud (#6)."""
+        try:
+            if section is IntakeSection.CAMPAIGN_CRITERIA:
+                self._bridge_criteria(campaign_id, data)
+            else:
+                self._bridge_attributes(campaign_id, section, data)
+        except Exception:  # pragma: no cover - never let the bridge break intake save
+            log.warning(
+                "onboarding_bridge_failed", campaign_id=campaign_id, section=section.value
+            )
+
+    def _bridge_criteria(self, campaign_id: str, data: dict[str, Any]) -> None:
+        """CAMPAIGN_CRITERIA intake -> CriteriaService.edit_criteria(confirm=True) (#6)."""
+        if self._criteria_service is None:
+            return
+        changes: dict[str, Any] = {}
+        for key in ("titles", "locations", "work_modes", "keywords"):
+            val = data.get(key)
+            if val:
+                changes[key] = list(val) if not isinstance(val, list) else val
+        if data.get("salary_floor") not in (None, ""):
+            changes["salary_floor"] = data["salary_floor"]
+        if data.get("human_readable"):
+            changes["human_readable"] = data["human_readable"]
+        if not changes:
+            return
+        # confirm=True: onboarding is the user's own explicit intake, so integral
+        # criteria fields (titles/locations/salary_floor) are user-confirmed (FR-FB-3).
+        self._criteria_service.edit_criteria(
+            CampaignId(campaign_id), changes=changes, confirm=True
+        )
+
+    def _bridge_attributes(
+        self, campaign_id: str, section: IntakeSection, data: dict[str, Any]
+    ) -> None:
+        """Typed intake section -> attribute-cloud upserts (#6)."""
+        if self._attribute_cloud_service is None:
+            return
+        integral_sections = {IntakeSection.IDENTITY}
+        is_integral = section in integral_sections
+        for name, value in data.items():
+            if value in (None, "") or isinstance(value, (dict, list)):
+                continue
+            # confirm=True: onboarding is the user's explicit, first-party data entry.
+            self._attribute_cloud_service.upsert(
+                CampaignId(campaign_id),
+                str(name),
+                str(value),
+                is_integral=is_integral,
+                confirm=True,
+            )
 
     def complete(self, campaign_id: str) -> OnboardingState:
         rec = self._load(campaign_id)

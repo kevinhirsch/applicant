@@ -18,7 +18,7 @@ a scheduled tick and tests can step it directly.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime
 
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.notification import Notification, NotificationUrgency
@@ -29,6 +29,11 @@ log = get_logger(__name__)
 class NotificationService:
     def __init__(self, notification) -> None:
         self._notification = notification
+        # (campaign_id, UTC date) the digest-ready ping already fired for (#15). This
+        # service instance is SHARED across the scheduler's fresh-per-tick AgentLoops,
+        # so this per-day marker survives the loop's empty ``_digest_sent`` and makes
+        # the ready ping fire exactly once per campaign per UTC day even in prod.
+        self._digest_ready_sent: dict[tuple[str, date], str] = {}
 
     def dedup_key(self, decision_ref: str) -> str:
         """Stable cross-channel idempotency key for a decision (FR-NOTIF-3)."""
@@ -96,15 +101,32 @@ class NotificationService:
 
     # --- digest-ready ping (FR-DIG-2) -------------------------------------
     def notify_digest_ready(
-        self, campaign_id: str, *, count: int, deep_link: str | None = None
+        self,
+        campaign_id: str,
+        *,
+        count: int,
+        deep_link: str | None = None,
+        now: datetime | None = None,
     ) -> str:
-        """Discord/in-app 'your digest is ready' ping (FR-DIG-2)."""
+        """Discord/in-app 'your digest is ready' ping (FR-DIG-2), once per UTC day.
+
+        #15: per-(campaign, UTC-day) idempotency. In prod ``tick_services_factory``
+        builds a fresh ``AgentLoop`` each tick (its ``_digest_sent`` is empty), so
+        without a per-day guard HERE the ready ping re-fired every ~60s tick. This
+        service is shared across ticks, so the marker holds and 3 same-day ticks send
+        exactly 1 ready ping (a new UTC day pings again).
+        """
+        day = (now or datetime.now(UTC)).date()
+        key = (str(campaign_id), day)
+        prior = self._digest_ready_sent.get(key)
+        if prior is not None:
+            return prior
         body = (
             f"{count} viable role(s) await your review."
             if count
             else "No new viable roles today; tap to see what was searched and why."
         )
-        return self._notification.notify(
+        handle = self._notification.notify(
             Notification(
                 title="Daily digest ready",
                 body=body,
@@ -113,6 +135,12 @@ class NotificationService:
                 dedup_key=f"digest:{campaign_id}",
             )
         )
+        self._digest_ready_sent[key] = handle
+        # Prune stale days so the marker map does not grow unbounded over 24/7 ops.
+        self._digest_ready_sent = {
+            k: v for k, v in self._digest_ready_sent.items() if k[1] == day
+        }
+        return handle
 
     # --- digest email (FR-DIG-2) ------------------------------------------
     def send_digest_email(

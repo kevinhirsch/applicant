@@ -46,6 +46,28 @@ from applicant.ports.driven.browser_automation import DetectedField
 #: Topic the durable orchestrator uses for the final-approval gate (FR-NOTIF-2).
 FINAL_APPROVAL_TOPIC = "final_approval"
 
+
+def ping_ref(application_id, kind: str) -> str:
+    """Stable ref for a prefill blocked-state ping (#7).
+
+    ``NotificationService.notify_decision`` keys a ping at ``decision:<ref>`` and
+    ``NotificationService.acted(<ref>)`` expires exactly that key. Prefill pings now
+    use this same ``prefill:<app>:<kind>`` ref so resolving a blocked state expires
+    its ping via ``acted(ping_ref(app, kind))`` — the old un-prefixed
+    ``<app>:<kind>`` key could never be expired by ``acted``.
+    """
+    return f"prefill:{application_id}:{kind}"
+
+
+def ping_dedup_key(application_id, kind: str, _suffix: str | None = None) -> str:
+    """The notification dedup key for a prefill ping (mirrors NotificationService).
+
+    Equal to ``decision:<ping_ref>`` so ``NotificationService.acted(ping_ref(...))``
+    expires it. ``_suffix`` is accepted for call-site symmetry but intentionally NOT
+    folded into the key, so the key stays exactly expirable by ``acted``.
+    """
+    return f"decision:{ping_ref(application_id, kind)}"
+
 #: Per-task starting tier for field-mapping escalation (FR-LLM-4). Mapping an
 #: ambiguous form field to a stored attribute is a small reasoning task that the
 #: trivial L1 rung handles poorly, so the ladder STARTS at L2 (it still climbs on
@@ -567,7 +589,11 @@ class PrefillService:
                     title=title,
                     body=f"Application {app.id} needs you.",
                     deep_link=None,
-                    dedup_key=f"{app.id}:{kind}:{dedup_key or title}",
+                    # #7: consistent ``decision:prefill:{ref}`` key so resolving the
+                    # blocked state can expire this ping via
+                    # ``NotificationService.acted(f"prefill:{ref}")`` — the un-prefixed
+                    # ``{app.id}:{kind}:...`` key could never be expired by ``acted``.
+                    dedup_key=ping_dedup_key(app.id, kind, dedup_key or title),
                 )
             )
         return pid
@@ -689,7 +715,9 @@ class PrefillService:
                     title=title,
                     body=f"Application {application.id} awaits you.",
                     deep_link=session_url,
-                    dedup_key=f"{application.id}:{kind}",
+                    # #7: consistent ``decision:prefill:{ref}`` key so the resolution
+                    # path expires this ping via ``NotificationService.acted``.
+                    dedup_key=ping_dedup_key(application.id, kind),
                 )
             )
         return pid

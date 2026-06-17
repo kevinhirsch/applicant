@@ -132,9 +132,15 @@ class DigestService:
         return "; ".join(bits) or "default criteria across the enabled sources"
 
     # --- delivery (FR-DIG-1/2) --------------------------------------------
-    def render_email(self, campaign_id: CampaignId, criteria=None) -> dict:
-        """Email payload — its OWN template, exempt from the Odysseus style (FR-DIG-2)."""
-        payload = self.build_digest_payload(campaign_id, criteria)
+    def render_email(self, campaign_id: CampaignId, criteria=None, *, payload: dict | None = None) -> dict:
+        """Email payload — its OWN template, exempt from the Odysseus style (FR-DIG-2).
+
+        #13: accepts an already-built ``payload`` so ``deliver`` builds + scores the
+        digest ONCE and passes it in, instead of ``render_email`` re-scoring the full
+        set a second time per delivery.
+        """
+        if payload is None:
+            payload = self.build_digest_payload(campaign_id, criteria)
         lines = ["<h1>Your daily digest</h1>"]
         if payload["empty"]:
             lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
@@ -181,8 +187,10 @@ class DigestService:
         per viable row so the portal lists them (FR-UI-3). Returns the assembled
         payloads + the notify handle + whether the email was sent.
         """
+        # #13: build + score the digest ONCE and reuse the payload for the email body
+        # (previously ``render_email`` re-built + re-scored the full set per delivery).
         payload = self.build_digest_payload(campaign_id, criteria)
-        email = self.render_email(campaign_id, criteria)
+        email = self.render_email(campaign_id, criteria, payload=payload)
         # Materialize the durable per-row pending actions BEFORE any external ping
         # (FR-UI-3): the portal items must survive even if a notifier/email send
         # raises, so the "ready" ping never points at a digest with no acted-on

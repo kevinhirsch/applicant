@@ -224,3 +224,42 @@ def test_concurrent_record_source_event_no_lost_update(learning, campaign):
     stats = reloaded.source_yield_stats["indeed"]
     assert stats["approvals"] == 1
     assert stats["submissions"] == 1  # neither update was dropped
+
+
+# === #12: feature_stats blob is capped (no unbounded growth) ================
+@pytest.mark.unit
+def test_record_decision_caps_feature_stats():
+    """#12: record_decision bounds feature_stats to the top-N features so the JSONB
+    blob never grows without bound across folds."""
+    from applicant.application.services.learning_service import (
+        _FEATURE_STATS_CAP,
+        LearningService,
+    )
+    from applicant.core.entities.learning_model import LearningModel
+
+    svc = LearningService(InMemoryStorage(), LocalEmbedding())
+    model = LearningModel(campaign_id=CampaignId(new_id()))
+    # Fold many distinct features (far beyond the cap).
+    for i in range(_FEATURE_STATS_CAP + 50):
+        model = svc.record_decision(model, approved=True, features={f"skill:s{i}": "x"})
+    assert len(model.feature_stats) <= _FEATURE_STATS_CAP
+
+
+@pytest.mark.unit
+def test_persist_model_drops_raw_feedback_tokens(learning, campaign):
+    """#12: raw free-text feedback tokens are dropped from the persisted blob."""
+    model = learning.load_model(campaign.id)
+    import dataclasses
+
+    model = dataclasses.replace(
+        model,
+        feature_stats={
+            "skill:python": {"approve": 3},
+            "free_text:lorem": {"approve": 1},
+            "free_text:ipsum": {"decline": 1},
+        },
+    )
+    learning.persist_model(model)
+    reloaded = learning.load_model(campaign.id)
+    assert "skill:python" in reloaded.feature_stats
+    assert not any(k.startswith("free_text:") for k in reloaded.feature_stats)

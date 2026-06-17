@@ -151,7 +151,11 @@ def vnc_handoff_notification(p2ctx, prefill, storage):
     assert "token=" in result.sandbox_session_url
     # The notification carried the deep link (FR-NOTIF-2 / FR-PREFILL-4).
     notifier: AppriseNotifier = prefill._notification  # phase-local introspection
-    dedup = f"{result.application_id}:account_human_step"
+    # #7: prefill pings now use the consistent ``decision:prefill:{app}:{kind}`` key
+    # so resolving the blocked state can expire them via NotificationService.acted.
+    from applicant.application.services.prefill_service import ping_dedup_key
+
+    dedup = ping_dedup_key(result.application_id, "account_human_step")
     assert notifier.is_active(dedup)
     # And a pending action landed in the portal.
     pending = storage.pending_actions.list_open(p2ctx["campaign_id"])

@@ -37,12 +37,17 @@ log = get_logger(__name__)
 
 
 class SubmissionService:
-    def __init__(self, storage, browser=None, *, learning=None) -> None:
+    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None) -> None:
         self._storage = storage
         self._browser = browser
         # Optional LearningService so a real submission records the SUBMISSIONS leg of
         # the source-yield funnel (FR-DISC-5/FR-LEARN-6) — the conversion target.
         self._learning = learning
+        # Optional AdvancedLearningService so EVERY submit path (remote terminal,
+        # outcomes auto-detect / mark-submitted, the durable pipeline) folds the
+        # converting-role signature once a real conversion lands (FR-LEARN-2). Moving
+        # this here means the remote path no longer silently skips conversion learning.
+        self._advanced_learning = advanced_learning
 
     # --- detection (FR-LOG-4) ---------------------------------------------
     def detect_submission(self, application_id: ApplicationId) -> bool:
@@ -127,6 +132,10 @@ class SubmissionService:
         self._storage.outcomes.add(event)
         self._storage.commit()
         self._record_submission_yield(application)
+        # FR-LEARN-2: a recorded submission (with approval) is a REAL conversion —
+        # fold the converting-role signature here so EVERY submit path closes the
+        # learning loop, not only the outcomes router (#2). Best-effort.
+        self._close_conversion_loop(logged)
         log.info(
             "submission_recorded",
             application_id=str(application.id),
@@ -178,6 +187,30 @@ class SubmissionService:
             if ev.type == "submitted":
                 return ev
         return None
+
+    def _close_conversion_loop(self, application: Application) -> None:
+        """Fold the now-converted application into per-campaign learning (FR-LEARN-2).
+
+        Conversion = approval (the terminal state just logged) PLUS submission (the
+        OutcomeEvent just recorded). Reads outcomes from storage, folds the rich
+        converting-role signature, persists. Defensive: learning never breaks a
+        recorded submission. Moved here from the outcomes router so the remote
+        terminal path (and any future submit path) also closes the loop (#2).
+        """
+        if self._advanced_learning is None or not application.campaign_id:
+            return
+        posting = None
+        if application.posting_id:
+            try:
+                posting = self._storage.postings.get(application.posting_id)
+            except Exception:  # pragma: no cover - defensive
+                posting = None
+        try:
+            self._advanced_learning.record_and_persist_conversion(
+                application.campaign_id, application, posting=posting
+            )
+        except Exception:  # pragma: no cover - learning must never break a submission
+            pass
 
     def _record_submission_yield(self, application: Application) -> None:
         """Record the SUBMISSIONS leg of the source-yield funnel (FR-DISC-5/FR-LEARN-6)."""

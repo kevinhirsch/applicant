@@ -196,3 +196,45 @@ def test_acting_on_digest_item_expires_digest_ready_ping():
     # Acting on a digest item (approve) expires the campaign's ready ping.
     digest.approve(aid)
     assert not notifier.is_active(ready_key)
+
+
+# === #13: deliver builds + scores the digest ONCE per delivery =============
+import pytest  # noqa: E402
+
+
+@pytest.mark.unit
+def test_deliver_scores_each_posting_once_per_delivery():
+    """#13: deliver builds + scores the full set ONCE (it used to build the payload
+    AND have render_email re-build it, scoring every posting twice per delivery)."""
+    storage = InMemoryStorage()
+    embedding = LocalEmbedding()
+    notifier = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
+    notif_svc = NotificationService(notifier)
+    pending = PendingActionsService(storage)
+    inner = ScoringService(storage, llm=None, embedding=embedding, threshold=0)
+
+    class _CountingScoring:
+        def __init__(self, inner):
+            self._inner = inner
+            self.score_posting_calls = 0
+
+        def score_posting(self, posting, criteria=None):
+            self.score_posting_calls += 1
+            return self._inner.score_posting(posting, criteria)
+
+        def is_viable(self, scoring):
+            return self._inner.is_viable(scoring)
+
+    counting = _CountingScoring(inner)
+    digest = DigestService(
+        storage,
+        notifier,
+        counting,
+        notification_service=notif_svc,
+        pending_actions=pending,
+    )
+    cid = _seed_campaign(storage)  # one viable posting
+
+    digest.deliver(cid)
+    # Exactly one score per posting per delivery (was two before the fix).
+    assert counting.score_posting_calls == 1
