@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""firehouse-models — install and manage local Ollama models for Firehouse.
+"""applicant-models — install and manage local Ollama models for Applicant.
 
-A thin, Firehouse-aware wrapper around the `ollama` CLI. It targets the same
-Ollama that Firehouse is configured to use (read from OLLAMA_BASE_URL / OLLAMA_URL
+A thin, Applicant-aware wrapper around the `ollama` CLI. It targets the same
+Ollama that Applicant is configured to use (read from OLLAMA_BASE_URL / OLLAMA_URL
 in .env, falling back to localhost:11434), so the models you manage here are the
-ones that show up in Firehouse's model picker.
+ones that show up in Applicant's model picker.
 
-    firehouse models list                 # installed local models
-    firehouse models pull llama3.1        # install / update a model
-    firehouse models pull qwen2.5:7b      # a specific tag
-    firehouse models remove llama3.1      # uninstall a model
-    firehouse models running              # models currently loaded in memory
-    firehouse models info llama3.1        # model details (params, license, …)
-    firehouse models endpoint             # show which Ollama this targets
+    applicant models list                 # installed local models
+    applicant models pull llama3.1        # install / update a model
+    applicant models pull qwen2.5:7b      # a specific tag
+    applicant models remove llama3.1      # uninstall a model
+    applicant models running              # models currently loaded in memory
+    applicant models info llama3.1        # model details (params, license, …)
+    applicant models endpoint             # show which Ollama this targets
 
-Run `sudo firehouse ollama-setup` first if Ollama isn't installed yet. Pulled
-models appear in Firehouse automatically (it rescans the Ollama endpoint); hit
+Run `sudo applicant ollama-setup` first if Ollama isn't installed yet. Pulled
+models appear in Applicant automatically (it rescans the Ollama endpoint); hit
 "Refresh" in the model picker if you don't see one immediately.
 """
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _read_env(name: str) -> str | None:
 
 def _ollama_host() -> str:
     """Resolve the host:port the `ollama` CLI should talk to, derived from the
-    endpoint Firehouse uses. host.docker.internal / 0.0.0.0 map to localhost
+    endpoint Applicant uses. host.docker.internal / 0.0.0.0 map to localhost
     because this CLI runs on the host, not inside the container."""
     base = _read_env("OLLAMA_BASE_URL") or _read_env("OLLAMA_URL")
     if not base:
@@ -70,20 +70,20 @@ def _responding(host: str) -> bool:
 def _ollama(args: list[str], host: str) -> int:
     """Run an ollama subcommand against `host`, streaming its output."""
     if not shutil.which("ollama"):
-        sys.exit("ollama is not installed. Run:  sudo firehouse ollama-setup")
+        sys.exit("ollama is not installed. Run:  sudo applicant ollama-setup")
     env = {**os.environ, "OLLAMA_HOST": host}
     return subprocess.run(["ollama", *args], env=env).returncode
 
 
 def _note_picker() -> None:
-    print("\n(Models appear in Firehouse automatically — hit Refresh in the "
+    print("\n(Models appear in Applicant automatically — hit Refresh in the "
           "model picker if you don't see a change.)")
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        prog="firehouse models",
-        description="Install and manage local Ollama models for Firehouse.",
+        prog="applicant models",
+        description="Install and manage local Ollama models for Applicant.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="list installed local models")
@@ -102,13 +102,13 @@ def main(argv: list[str]) -> int:
     if args.cmd == "endpoint":
         base = _read_env("OLLAMA_BASE_URL") or _read_env("OLLAMA_URL")
         print(f"Ollama CLI target : {host}")
-        print(f"Firehouse endpoint: {base or '(default — http://host.docker.internal:11434/v1)'}")
+        print(f"Applicant endpoint: {base or '(default — http://host.docker.internal:11434/v1)'}")
         print(f"Reachable         : {'yes' if _responding(host) else 'no'}")
         return 0
 
     if not _responding(host):
         sys.exit(f"Ollama not reachable at {host}. Is it running? "
-                 f"Try:  sudo firehouse ollama-setup")
+                 f"Try:  sudo applicant ollama-setup")
 
     if args.cmd == "list":
         return _ollama(["list"], host)

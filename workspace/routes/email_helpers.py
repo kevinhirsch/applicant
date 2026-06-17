@@ -259,10 +259,10 @@ def _cleanup_compose_uploads(tokens) -> None:
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
-# Override at deploy time via FIREHOUSE_MAIL_ATTACHMENTS_DIR. Defaults to a
+# Override at deploy time via APPLICANT_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without
 # a hardcoded /home/<user>/ path.
-ATTACHMENTS_DIR = Path(os.environ.get("FIREHOUSE_MAIL_ATTACHMENTS_DIR", str(DATA_DIR / "mail-attachments")))
+ATTACHMENTS_DIR = Path(os.environ.get("APPLICANT_MAIL_ATTACHMENTS_DIR", str(DATA_DIR / "mail-attachments")))
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -436,8 +436,8 @@ def _init_scheduled_db():
         cols = [r[1] for r in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]
         if "account_id" not in cols:
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN account_id TEXT")
-        if "firehouse_kind" not in cols:
-            conn.execute("ALTER TABLE scheduled_emails ADD COLUMN firehouse_kind TEXT")
+        if "applicant_kind" not in cols:
+            conn.execute("ALTER TABLE scheduled_emails ADD COLUMN applicant_kind TEXT")
     except Exception:
         pass
     # Lazy migration: add turns_json to email_boundaries for server-side
@@ -1291,8 +1291,8 @@ class SendEmailRequest(BaseModel):
     attachments: Optional[List[str]] = None
     # Which account to send from. None = default account.
     account_id: Optional[str] = None
-    # Internal marker for Firehouse-generated mail (e.g. reminder, scheduled).
-    firehouse_kind: Optional[str] = None
+    # Internal marker for Applicant-generated mail (e.g. reminder, scheduled).
+    applicant_kind: Optional[str] = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.
     wait_for_delivery: bool = False
 

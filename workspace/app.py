@@ -76,8 +76,8 @@ app.add_middleware(
         "Content-Type",
         "X-API-Key",
         "X-Auth-Token",
-        "X-Firehouse-Internal-Token",
-        "X-Firehouse-Owner",
+        "X-Applicant-Internal-Token",
+        "X-Applicant-Owner",
         "X-Requested-With",
         "X-TZ-Offset",
     ],
@@ -202,7 +202,7 @@ if AUTH_ENABLED:
         forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
         unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
         loopback, so a remote visitor would otherwise inherit local trust and
-        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Firehouse's own
+        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Applicant's own
         in-process agent loopback calls carry none of these headers, so they still
         qualify."""
         host = request.client.host if request.client else None
@@ -227,10 +227,10 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Firehouse-Owner, attribute the request to that user only
+                    # X-Applicant-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
                     # is just owner attribution for notes/calendar/etc.
-                    _impersonate = (request.headers.get("X-Firehouse-Owner") or "").strip()
+                    _impersonate = (request.headers.get("X-Applicant-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
@@ -938,13 +938,13 @@ async def startup_event():
 
     # Start scheduled task runner — skip when running under a cron-driven
     # deployment where an external worker drives task firing. Mirrors
-    # `FIREHOUSE_INPROCESS_POLLERS` from the email pollers.
-    _tasks_inprocess = os.environ.get("FIREHOUSE_INPROCESS_TASKS", "1").strip().lower()
+    # `APPLICANT_INPROCESS_POLLERS` from the email pollers.
+    _tasks_inprocess = os.environ.get("APPLICANT_INPROCESS_TASKS", "1").strip().lower()
     if _tasks_inprocess not in ("0", "false", "no", "off", ""):
         await task_scheduler.start()
     else:
         logger.info(
-            "In-process task scheduler disabled (FIREHOUSE_INPROCESS_TASKS=0); "
+            "In-process task scheduler disabled (APPLICANT_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
@@ -992,11 +992,11 @@ async def startup_event():
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
 
-    # Proactive awareness loop — OFF by default. Enable with FIREHOUSE_AWARENESS=1.
+    # Proactive awareness loop — OFF by default. Enable with APPLICANT_AWARENESS=1.
     # Every `awareness_interval_seconds` (default 900 = 15 min) it runs one tick
     # per owner who has the can_use_awareness privilege AND >=1 enabled trigger.
     # Change-detection + cooldowns keep idle ticks cheap (services/awareness).
-    _awareness_on = os.environ.get("FIREHOUSE_AWARENESS", "0").strip().lower()
+    _awareness_on = os.environ.get("APPLICANT_AWARENESS", "0").strip().lower()
     if _awareness_on in ("1", "true", "yes", "on"):
         async def _awareness_loop():
             from services.awareness.service import AwarenessService
@@ -1036,7 +1036,7 @@ async def startup_event():
                     logger.warning(f"Awareness loop cycle failed: {e}")
 
         _startup_tasks.append(asyncio.create_task(_awareness_loop()))
-        logger.info("Proactive awareness loop enabled (FIREHOUSE_AWARENESS=1)")
+        logger.info("Proactive awareness loop enabled (APPLICANT_AWARENESS=1)")
 
     logger.info("Application startup complete")
 

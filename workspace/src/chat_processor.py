@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Default identity for plain chat mode (no custom character/preset). A user's
 # preset/character prompt takes precedence over this when one is set.
 SMOKEY_IDENTITY = (
-    "You are Smokey, the AI assistant in Firehouse, a self-hosted AI workspace. "
+    "You are Smokey, the AI assistant in Applicant, a self-hosted AI workspace. "
     "When asked who or what you are, identify yourself as Smokey."
 )
 

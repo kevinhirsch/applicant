@@ -106,15 +106,15 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'highlight' || uiData.ui_event === 'highlight') {
-      document.querySelectorAll('.firehouse-highlight').forEach(function(e) { e.classList.remove('firehouse-highlight'); });
-      document.querySelectorAll('.firehouse-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.applicant-highlight').forEach(function(e) { e.classList.remove('applicant-highlight'); });
+      document.querySelectorAll('.applicant-hl-label').forEach(function(e) { e.remove(); });
       var target = document.querySelector(uiData.selector);
       if (target) {
-        target.classList.add('firehouse-highlight');
+        target.classList.add('applicant-highlight');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         if (uiData.label) {
           var lbl = document.createElement('div');
-          lbl.className = 'firehouse-hl-label';
+          lbl.className = 'applicant-hl-label';
           lbl.textContent = uiData.label;
           if (!target.style.position) target.style.position = 'relative';
           target.appendChild(lbl);
@@ -122,8 +122,8 @@ export function handleUIControl(uiData) {
       }
 
     } else if (uiEvent === 'clear_highlight' || uiData.ui_event === 'clear_highlight') {
-      document.querySelectorAll('.firehouse-highlight').forEach(function(e) { e.classList.remove('firehouse-highlight'); });
-      document.querySelectorAll('.firehouse-hl-label').forEach(function(e) { e.remove(); });
+      document.querySelectorAll('.applicant-highlight').forEach(function(e) { e.classList.remove('applicant-highlight'); });
+      document.querySelectorAll('.applicant-hl-label').forEach(function(e) { e.remove(); });
 
     } else if (uiEvent === 'research_started' || uiData.ui_event === 'research_started') {
       // Agent kicked off deep research — adopt the session into the

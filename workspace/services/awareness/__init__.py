@@ -2,7 +2,7 @@
 
 The pure decision logic lives in ``engine`` (no DB/LLM/IO) so it is fully
 unit-testable; the live loop, collectors, and notification dispatch are wired
-on top of it in a later increment, behind the ``FIREHOUSE_AWARENESS`` flag.
+on top of it in a later increment, behind the ``APPLICANT_AWARENESS`` flag.
 """
 
 from services.awareness.engine import (

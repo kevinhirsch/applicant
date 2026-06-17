@@ -48,12 +48,12 @@ export function initKeyboardShortcuts(modules) {
     _closeCompareIfActive, _deactivateIncognito, API_BASE
   } = modules;
 
-  window._firehouseKeybinds = { ..._defaultKeybinds };
+  window._applicantKeybinds = { ..._defaultKeybinds };
 
   // Load saved keybinds
   fetch('/api/auth/settings', { credentials: 'same-origin' })
     .then(r => r.json())
-    .then(s => { if (s.keybinds) window._firehouseKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
+    .then(s => { if (s.keybinds) window._applicantKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
     .catch(() => {});
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
@@ -137,7 +137,7 @@ export function initKeyboardShortcuts(modules) {
   };
 
   document.addEventListener('keydown', (e) => {
-    const kb = window._firehouseKeybinds;
+    const kb = window._applicantKeybinds;
 
     if (_matchesCombo(e, kb.search)) {
       e.preventDefault();

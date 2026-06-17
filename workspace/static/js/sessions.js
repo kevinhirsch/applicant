@@ -21,7 +21,7 @@ const SIDEBAR_MAX_VISIBLE = 10;
 const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
-let _sortMode = Storage.get('firehouse-session-sort') || 'active'; // default to last active
+let _sortMode = Storage.get('applicant-session-sort') || 'active'; // default to last active
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -82,8 +82,8 @@ function _deselectCurrentSession(sid) {
 export function initDependencies() {}
 
 // ── Folder state persistence ──
-const FOLDER_STATE_KEY = 'firehouse-folder-state';
-const FOLDER_ORDER_KEY = 'firehouse-folder-order';
+const FOLDER_STATE_KEY = 'applicant-folder-state';
+const FOLDER_ORDER_KEY = 'applicant-folder-order';
 
 function loadFolderState() {
   return Storage.getJSON(FOLDER_STATE_KEY, {});
@@ -1467,7 +1467,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     currentSessionId = id;
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
-    // URL hash — the user complained that coming back to Firehouse kept
+    // URL hash — the user complained that coming back to Applicant kept
     // landing them on the auto-firing task-log chat instead of their last
     // real conversation.
     const _meta = sessions.find(s => s.id === id);
@@ -1675,7 +1675,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (window.documentModule) {
       const docBtn = document.getElementById('overflow-doc-btn');
       const meta = sessions.find(s => s.id === id);
-      const shouldOpen = localStorage.getItem('firehouse-doc-open-' + id) === '1';
+      const shouldOpen = localStorage.getItem('applicant-doc-open-' + id) === '1';
       const hasDocs = !!(meta && meta.has_documents);
       if (docBtn) {
         docBtn.classList.remove('active');
@@ -3009,8 +3009,8 @@ export function closeArchive() {
 export function getSortMode() { return _sortMode; }
 export function setSortMode(mode) {
   _sortMode = mode || null;
-  if (mode) Storage.set('firehouse-session-sort', mode);
-  else Storage.remove('firehouse-session-sort');
+  if (mode) Storage.set('applicant-session-sort', mode);
+  else Storage.remove('applicant-session-sort');
   renderSessionList();
 }
 

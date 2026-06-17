@@ -81,7 +81,7 @@ def main():
         db.close()
 
     print(f"\nDone! All ownerless data now belongs to {owner}")
-    print("Restart the server: sudo systemctl restart firehouse-ui")
+    print("Restart the server: sudo systemctl restart applicant-ui")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 memory_server.py
 
 MCP server exposing memory management (list, add, edit, delete, search).
-Imports MemoryManager and MemoryVectorStore from the Firehouse codebase.
+Imports MemoryManager and MemoryVectorStore from the Applicant codebase.
 """
 
 import asyncio

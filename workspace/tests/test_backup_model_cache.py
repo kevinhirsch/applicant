@@ -1,4 +1,4 @@
-"""firehouse-backup should skip re-downloadable model caches by default.
+"""applicant-backup should skip re-downloadable model caches by default.
 
 data/huggingface/ and data/fastembed_cache/ are pure caches (often many GB)
 the app re-fetches on demand; including them only bloats the tarball.
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "firehouse-backup"
+_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "applicant-backup"
 
 
 def _load_backup_module():

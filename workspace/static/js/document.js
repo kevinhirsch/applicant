@@ -90,7 +90,7 @@ import * as Modals from './modalManager.js';
   }
 
   async function _resolveComposeSendAccountId() {
-    const activeAccountId = window.__firehouseActiveEmailAccount || null;
+    const activeAccountId = window.__applicantActiveEmailAccount || null;
     if (!activeAccountId) return null;
     const accounts = await _getEmailAccountsCached();
     const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
@@ -112,8 +112,8 @@ import * as Modals from './modalManager.js';
   let _lastSessionId = '';          // session context for "+" button
   const docs = new Map();           // docId -> { id, title, language, content, version, sessionId }
 
-  const _docOpenKey = (sessionId) => 'firehouse-doc-open-' + sessionId;
-  const _docMinimizedKey = (sessionId) => 'firehouse-doc-minimized-' + sessionId;
+  const _docOpenKey = (sessionId) => 'applicant-doc-open-' + sessionId;
+  const _docMinimizedKey = (sessionId) => 'applicant-doc-minimized-' + sessionId;
 
   function _markDocVisibleState(sessionId, state) {
     if (!sessionId) return;
@@ -3021,7 +3021,7 @@ import * as Modals from './modalManager.js';
           body_html: bodyHtml,
           in_reply_to: inReplyTo || null,
           references: references || null,
-          account_id: window.__firehouseActiveEmailAccount || null,
+          account_id: window.__applicantActiveEmailAccount || null,
         }),
       });
       const data = await res.json();
@@ -4425,7 +4425,7 @@ import * as Modals from './modalManager.js';
     const editorWrap = document.getElementById('doc-editor-wrap');
     const _fontSizes = ['s', 'm', 'l'];
     const _iconSizes = [12, 14, 16];
-    let _fontIdx = parseInt(localStorage.getItem('firehouse-doc-fontsize') || '0', 10);
+    let _fontIdx = parseInt(localStorage.getItem('applicant-doc-fontsize') || '0', 10);
     if (!(_fontIdx >= 0 && _fontIdx < 3)) _fontIdx = 0;
     function _applyDocFont() {
       const richEmailBody = document.getElementById('doc-email-richbody');
@@ -4445,7 +4445,7 @@ import * as Modals from './modalManager.js';
           el.style.display = active ? '' : 'none';
         });
       }
-      localStorage.setItem('firehouse-doc-fontsize', _fontIdx);
+      localStorage.setItem('applicant-doc-fontsize', _fontIdx);
     }
     _applyDocFont();
     // Click cycles through the sizes (S → M → L → S).
@@ -5357,7 +5357,7 @@ import * as Modals from './modalManager.js';
   }
 
   /** Collapse action buttons into overflow "..." menu (3 most-used visible) */
-  const _DOC_RECENTS_KEY = 'firehouse-doc-actions-recent';
+  const _DOC_RECENTS_KEY = 'applicant-doc-actions-recent';
   const _DOC_MAX_VISIBLE = 2;
 
   function _getDocRecent() {
@@ -6650,16 +6650,16 @@ import * as Modals from './modalManager.js';
     if (!activeDocId) return;
     const data = _activeSuggestions.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason }));
     if (data.length) {
-      localStorage.setItem('firehouse-suggestions-' + activeDocId, JSON.stringify(data));
+      localStorage.setItem('applicant-suggestions-' + activeDocId, JSON.stringify(data));
     } else {
-      localStorage.removeItem('firehouse-suggestions-' + activeDocId);
+      localStorage.removeItem('applicant-suggestions-' + activeDocId);
     }
   }
 
   /** Restore suggestions from localStorage for a doc */
   function _restoreSuggestionsFromStorage(docId) {
     try {
-      const raw = localStorage.getItem('firehouse-suggestions-' + docId);
+      const raw = localStorage.getItem('applicant-suggestions-' + docId);
       if (!raw) return;
       const data = JSON.parse(raw);
       if (!Array.isArray(data) || !data.length) return;

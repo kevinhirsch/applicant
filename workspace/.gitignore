@@ -18,7 +18,7 @@ venv/
 data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
-# Local snapshots from scripts/firehouse-backup (multi-GB tarballs of data/)
+# Local snapshots from scripts/applicant-backup (multi-GB tarballs of data/)
 backups/
 logs/
 *.log

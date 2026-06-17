@@ -330,11 +330,11 @@ async def dispatch_reminder(
                 msg["To"] = recipient
                 _t = title or 'Note'
                 _t = _t[len('Reminder:'):].strip() if _t.lower().startswith('reminder:') else _t
-                msg["Subject"] = f"Reminder (Firehouse): {_t}"
+                msg["Subject"] = f"Reminder (Applicant): {_t}"
                 msg["Date"] = _dt.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
-                msg["X-Firehouse-Origin"] = "firehouse-ui"
-                msg["X-Firehouse-Kind"] = "reminder"
-                msg["X-Firehouse-Ref"] = str(note_id)
+                msg["X-Applicant-Origin"] = "applicant-ui"
+                msg["X-Applicant-Kind"] = "reminder"
+                msg["X-Applicant-Ref"] = str(note_id)
                 # Body shape: synthesis (warm sentence) → blank line → bold
                 # title header → note details. The title was previously only
                 # in the subject line, so the email read like a faceless

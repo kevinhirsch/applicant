@@ -1231,7 +1231,7 @@ class TaskScheduler:
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
-            else "You are Smokey, the AI assistant in Firehouse, executing a scheduled task. Use available tools to complete the task thoroughly."
+            else "You are Smokey, the AI assistant in Applicant, executing a scheduled task. Use available tools to complete the task thoroughly."
         )
         # Inject current time so the model knows what's past vs upcoming
         tz_name = _resolve_task_timezone(db, task)
@@ -1438,9 +1438,9 @@ class TaskScheduler:
             msg["From"] = from_addr
             msg["To"] = to_addr
             msg["Subject"] = f"[Task] {task.name}"
-            msg["X-Firehouse-Origin"] = "firehouse-ui"
-            msg["X-Firehouse-Kind"] = "task"
-            msg["X-Firehouse-Ref"] = str(task.id)
+            msg["X-Applicant-Origin"] = "applicant-ui"
+            msg["X-Applicant-Kind"] = "task"
+            msg["X-Applicant-Ref"] = str(task.id)
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
             logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
@@ -1456,7 +1456,7 @@ class TaskScheduler:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
-        system_content = system_prompt or "You are Smokey, the AI assistant in Firehouse, executing a scheduled task. Use available tools to complete the task thoroughly."
+        system_content = system_prompt or "You are Smokey, the AI assistant in Applicant, executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
         messages = [
             {"role": "system", "content": system_content},
@@ -1749,9 +1749,9 @@ class TaskScheduler:
             "subject": f"[Task] {task.name}",
             "body": result,
             "headers": {
-                "X-Firehouse-Origin": "firehouse-ui",
-                "X-Firehouse-Kind": "task",
-                "X-Firehouse-Ref": str(task.id),
+                "X-Applicant-Origin": "applicant-ui",
+                "X-Applicant-Kind": "task",
+                "X-Applicant-Ref": str(task.id),
             },
         }
         if recipient:

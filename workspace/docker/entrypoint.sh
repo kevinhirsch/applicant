@@ -16,12 +16,12 @@ PGID="${PGID:-1000}"
 
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
-# and "firehouse" already exists at the same id). Otherwise create.
+# and "applicant" already exists at the same id). Otherwise create.
 if ! getent group "$PGID" >/dev/null 2>&1; then
-    groupadd -g "$PGID" firehouse
+    groupadd -g "$PGID" applicant
 fi
 if ! getent passwd "$PUID" >/dev/null 2>&1; then
-    useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app firehouse
+    useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app applicant
 fi
 
 # Repair ownership on every writable path the app touches at runtime.

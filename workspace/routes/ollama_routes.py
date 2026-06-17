@@ -1,6 +1,6 @@
 """Ollama model-management routes.
 
-A thin, admin-gated proxy to the Ollama instance Firehouse is wired to (the
+A thin, admin-gated proxy to the Ollama instance Applicant is wired to (the
 `ollama` Docker service, host Ollama, or whatever `OLLAMA_BASE_URL` points at).
 Lets the UI install / list / remove local models without touching the command
 line. Pull progress is streamed back as Server-Sent Events.

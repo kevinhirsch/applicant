@@ -539,7 +539,7 @@ function _restoreSidebar() {
 
 // ── Badge ──
 
-const BADGE_SEEN_KEY = 'firehouse-calendar-badge-seen';
+const BADGE_SEEN_KEY = 'applicant-calendar-badge-seen';
 
 function _todayStr() {
   const d = new Date();
@@ -1783,7 +1783,7 @@ function _wireAll(body) {
       // the day-detail pane up and down on every character.
       const alreadySet = calBody.style.getPropertyValue('--cal-detail-h');
       if (!alreadySet) {
-        const saved = parseInt(localStorage.getItem('firehouse.cal.detailH') || '0', 10);
+        const saved = parseInt(localStorage.getItem('applicant.cal.detailH') || '0', 10);
         if (saved && saved > 80) calBody.style.setProperty('--cal-detail-h', saved + 'px');
       }
       let startY = 0, startH = 240, dragging = false;
@@ -1808,7 +1808,7 @@ function _wireAll(body) {
         document.removeEventListener('touchend', onUp);
         const cur = calBody.style.getPropertyValue('--cal-detail-h');
         const px = parseInt(cur, 10);
-        if (px) { try { localStorage.setItem('firehouse.cal.detailH', String(px)); } catch {} }
+        if (px) { try { localStorage.setItem('applicant.cal.detailH', String(px)); } catch {} }
       };
       const onDown = (ev) => {
         ev.preventDefault();
@@ -1830,7 +1830,7 @@ function _wireAll(body) {
       let _lastTap = 0;
       const resetSplit = () => {
         calBody.style.removeProperty('--cal-detail-h');
-        try { localStorage.removeItem('firehouse.cal.detailH'); } catch {}
+        try { localStorage.removeItem('applicant.cal.detailH'); } catch {}
       };
       splitter.addEventListener('dblclick', resetSplit);
       splitter.addEventListener('touchend', () => {
@@ -3282,7 +3282,7 @@ function isCalendarOpen() {
 }
 
 // ── Persistent cache (localStorage) ──
-const LS_KEY = 'firehouse-calendar-cache';
+const LS_KEY = 'applicant-calendar-cache';
 const LS_TTL = 10 * 60 * 1000; // 10 min
 
 function _saveCache() {

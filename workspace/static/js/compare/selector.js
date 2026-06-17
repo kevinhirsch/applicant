@@ -393,11 +393,11 @@ async function showModelSelector() {
     listContainer.appendChild(_loadingDiv);
 
     // Restore last used selections from storage (per-mode)
-    const _selKey = 'firehouse-compare-selections-' + (state._compareMode || 'chat');
-    let selections = Storage.getJSON(_selKey) || Storage.getJSON('firehouse-compare-selections') || [];
+    const _selKey = 'applicant-compare-selections-' + (state._compareMode || 'chat');
+    let selections = Storage.getJSON(_selKey) || Storage.getJSON('applicant-compare-selections') || [];
     // Restore synthesis models for search/research
     if (state._compareMode === 'search' || state._compareMode === 'research') {
-      const savedSynth = Storage.getJSON('firehouse-compare-synth-' + state._compareMode);
+      const savedSynth = Storage.getJSON('applicant-compare-synth-' + state._compareMode);
       if (savedSynth) state._searchSynthModels = savedSynth;
     }
     // Validate saved selections against available models (done after models load)

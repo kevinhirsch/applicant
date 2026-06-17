@@ -3,8 +3,8 @@
 
 // ── Key constants ──
 export const KEYS = {
-  THEME: 'firehouse-theme',
-  TOGGLES: 'firehouse-toggles',
+  THEME: 'applicant-theme',
+  TOGGLES: 'applicant-toggles',
   SIDEBAR_COLLAPSED: 'sidebar-collapsed',
   SIDEBAR_WIDTH: 'sidebar-width',
   SIDEBAR_SIDE: 'sidebar-side',
@@ -13,17 +13,17 @@ export const KEYS = {
   COMPARE_CHAT: 'compare-continue-chat',
   COMPARE_BLIND: 'compare-blind',
   COMPARE_RANDOM: 'compare-randomize',
-  MODELS_EXPANDED: 'firehouse-model-expanded',
-  MODEL_ENDPOINTS: 'firehouse-model-endpoints',
-  MODEL_SELECTED: 'firehouse-selected-model',
-  SORT_ORDER: 'firehouse-sessions-sort',
-  CHAT_SEARCH_SCOPE: 'firehouse-search-scope',
-  INCOGNITO: 'firehouse-incognito',
-  RAG_ACTIVE: 'firehouse-rag-active',
-  MCP_ACTIVE: 'firehouse-mcp-active',
+  MODELS_EXPANDED: 'applicant-model-expanded',
+  MODEL_ENDPOINTS: 'applicant-model-endpoints',
+  MODEL_SELECTED: 'applicant-selected-model',
+  SORT_ORDER: 'applicant-sessions-sort',
+  CHAT_SEARCH_SCOPE: 'applicant-search-scope',
+  INCOGNITO: 'applicant-incognito',
+  RAG_ACTIVE: 'applicant-rag-active',
+  MCP_ACTIVE: 'applicant-mcp-active',
   SECTION_ORDER: 'sidebar-section-order',
   ADMIN_LAST_TAB: 'admin-last-tab',
-  DENSITY: 'firehouse-density'
+  DENSITY: 'applicant-density'
 };
 
 /**

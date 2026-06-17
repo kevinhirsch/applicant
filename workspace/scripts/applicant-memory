@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""firehouse-memory — shell wrapper for the AI memory store.
+"""applicant-memory — shell wrapper for the AI memory store.
 
 The chat assistant accumulates durable facts about the user (name,
 projects, preferences, contacts) into `data/memory.json`. This CLI
 lets you inspect, search, and prune them from the shell.
 
-    firehouse-memory list                          # all entries (paged)
-    firehouse-memory list --category preference
-    firehouse-memory search "tokyo"                # substring match
-    firehouse-memory show MEMORY_ID
-    firehouse-memory add "User lives in Tokyo" --category fact
-    firehouse-memory delete MEMORY_ID
-    firehouse-memory categories                    # counts per category
+    applicant-memory list                          # all entries (paged)
+    applicant-memory list --category preference
+    applicant-memory search "tokyo"                # substring match
+    applicant-memory show MEMORY_ID
+    applicant-memory add "User lives in Tokyo" --category fact
+    applicant-memory delete MEMORY_ID
+    applicant-memory categories                    # counts per category
 
 Reads/writes the same `data/memory.json` the web UI uses via the
 `MemoryManager` helper. Atomic — the manager handles the temp-file
@@ -114,7 +114,7 @@ def cmd_categories(args):
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
-    p = argparse.ArgumentParser(prog="firehouse-memory", parents=[common])
+    p = argparse.ArgumentParser(prog="applicant-memory", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

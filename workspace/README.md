@@ -1,9 +1,9 @@
-# Firehouse
+# Applicant
 ───────────────────────────────────────────────
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Firehouse vers. 1.0
+ ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Applicant vers. 1.0
 ───────────────────────────────────────────────
 
-![Firehouse](docs/firehouse.jpg)
+![Applicant](docs/applicant.jpg)
 
 A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
 
@@ -46,9 +46,9 @@ Defaults work out of the box: clone, run, then configure models/search/email
 inside **Settings**. Only edit `.env` for deployment-level overrides like
 `APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
-On first setup, Firehouse creates an admin account (`admin` unless
-`FIREHOUSE_ADMIN_USER` is set) and prints a temporary password in the terminal.
-For Docker installs, the same line is in `docker compose logs firehouse`.
+On first setup, Applicant creates an admin account (`admin` unless
+`APPLICANT_ADMIN_USER` is set) and prints a temporary password in the terminal.
+For Docker installs, the same line is in `docker compose logs applicant`.
 Use that for the first login, then change it in **Settings**.
 
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
@@ -63,8 +63,8 @@ pull request guidelines.
 
 ### Docker (recommended)
 ```bash
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
@@ -77,7 +77,7 @@ taken, set `APP_PORT=7001` in `.env` and recreate the container. Set
 #### Updating
 To pull the newest version from GitHub and restart:
 ```bash
-./scripts/firehouse-update            # backup data, pull code + images, rebuild & restart
+./scripts/applicant-update            # backup data, pull code + images, rebuild & restart
 ```
 It snapshots `data/` first, pulls the latest code and service images, then
 rebuilds and recreates the containers. Your `data/` and `.env` are left in
@@ -86,8 +86,8 @@ place and the app runs its schema migrations automatically on startup. Pass
 
 ### Native Linux / macOS
 ```bash
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -100,11 +100,11 @@ LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
-M-series Mac, run Firehouse natively:
+M-series Mac, run Applicant natively:
 
 ```bash
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 ./start-macos.sh
 ```
 
@@ -130,16 +130,16 @@ These topics now have dedicated guides:
 server; safe to re-run):
 
 ```powershell
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
 
 Or do it by hand:
 
 ```powershell
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 python -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -152,14 +152,14 @@ email, calendar, deep research) runs fully native. For full **Cookbook** backgro
 model downloads and the agent shell tool, also install
 [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
 Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
-[Ollama](https://ollama.com/download) is the easiest path — point Firehouse at
+[Ollama](https://ollama.com/download) is the easiest path — point Applicant at
 `http://localhost:11434/v1` in Settings.
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
 ## Security Notes
-Firehouse is a self-hosted workspace with powerful local tools (shell, uploads,
+Applicant is a self-hosted workspace with powerful local tools (shell, uploads,
 model downloads, web research, email/calendar, API tokens) — treat it like an
 admin console. The essentials:
 
@@ -199,7 +199,7 @@ ChromaDB, auth, and scheduling setting — is in
 [Configuration](docs/configuration.md).
 
 ## Architecture
-Firehouse is a FastAPI app: a static SPA front end over a JSON/SSE API, with
+Applicant is a FastAPI app: a static SPA front end over a JSON/SSE API, with
 business logic in `src/` and `services/`, infrastructure in `core/`, and
 persistence in SQLite plus the `data/` directory (and optional ChromaDB for
 semantic memory and search). All user data lives in `data/` (gitignored).
@@ -209,11 +209,11 @@ request flow, subsystems, storage, background work, and the auth model.
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=kevinhirsch%2Ffirehouse&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=kevinhirsch%2Fapplicant&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=kevinhirsch/firehouse&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=kevinhirsch/firehouse&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=kevinhirsch/firehouse&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=kevinhirsch/applicant&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=kevinhirsch/applicant&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=kevinhirsch/applicant&type=date&legend=top-left" />
  </picture>
 </a>
 

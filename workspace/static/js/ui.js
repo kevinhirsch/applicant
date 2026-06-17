@@ -163,8 +163,8 @@ function _activateSpaceCard(card) {
 }
 
 function _initHoverCardSpaceToggle() {
-  if (document._firehouseHoverCardSpaceToggle) return;
-  document._firehouseHoverCardSpaceToggle = true;
+  if (document._applicantHoverCardSpaceToggle) return;
+  document._applicantHoverCardSpaceToggle = true;
   document.addEventListener('pointerover', (e) => {
     _lastPointerClientX = e.clientX;
     _lastPointerClientY = e.clientY;

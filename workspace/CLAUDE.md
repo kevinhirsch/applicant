@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Firehouse is a self-hosted, multi-user AI workspace: a FastAPI (Python 3.11+) backend, a vanilla-JS front-end (no framework, ES6 modules served statically), SQLite/SQLAlchemy persistence, and a provider-agnostic LLM layer with an agentic tool loop. It bundles chat, an agent, deep research, model comparison, a document editor, persistent memory/skills, email, calendar, notes/tasks, image generation/editing, and "Cookbook" (hardware-aware local model serving).
+Applicant is a self-hosted, multi-user AI workspace: a FastAPI (Python 3.11+) backend, a vanilla-JS front-end (no framework, ES6 modules served statically), SQLite/SQLAlchemy persistence, and a provider-agnostic LLM layer with an agentic tool loop. It bundles chat, an agent, deep research, model comparison, a document editor, persistent memory/skills, email, calendar, notes/tasks, image generation/editing, and "Cookbook" (hardware-aware local model serving).
 
 ## Commands
 
@@ -15,7 +15,7 @@ python setup.py                      # first-run: creates data/ dirs, DB, admin 
 
 # Docker (recommended for full-stack testing — bundles chromadb, searxng, ntfy)
 docker compose up -d --build
-docker compose logs --tail=120 firehouse
+docker compose logs --tail=120 applicant
 docker compose config                # validate compose changes
 
 # Tests (pytest, asyncio_mode=auto, testpaths=tests)
@@ -29,7 +29,7 @@ python -m py_compile app.py routes/*.py src/*.py
 node --check static/js/<file-you-changed>.js   # front-end has no build step
 ```
 
-Note: some `tests/test_*_js.py` files shell out to `node --check` to validate front-end modules, so Node must be available for the full suite. The first-run admin password is printed to the terminal (or `docker compose logs firehouse`).
+Note: some `tests/test_*_js.py` files shell out to `node --check` to validate front-end modules, so Node must be available for the full suite. The first-run admin password is printed to the terminal (or `docker compose logs applicant`).
 
 ## Layered architecture (the big picture)
 
@@ -51,9 +51,9 @@ static/ (browser SPA)  →  app.py (FastAPI + middleware/auth gate)  →  routes
 ## Key cross-cutting concepts
 
 **Auth has three request pathways** (all handled in `app.py`'s auth gate):
-1. Cookie session (`firehouse_session`), validated via `AuthManager`.
+1. Cookie session (`applicant_session`), validated via `AuthManager`.
 2. `Bearer ody_*` API tokens — prefix-indexed in-memory cache, bcrypt-verified per request, scoped.
-3. `X-Firehouse-Internal-Token` loopback — lets the agent's tool layer call admin-gated `/api/*` routes in-process (and impersonate an owner via `X-Firehouse-Owner`).
+3. `X-Applicant-Internal-Token` loopback — lets the agent's tool layer call admin-gated `/api/*` routes in-process (and impersonate an owner via `X-Applicant-Owner`).
 
 **Ownership/multi-user model.** Most data is owner-scoped via the `owner` column. The standard filter is `owner == user OR owner IS NULL` (see `src/auth_helpers.py` `owner_filter`). Admins bypass privilege checks; an hourly startup sweep reassigns null-owner rows to the primary admin. When adding any user-data route, scope queries with the existing owner helpers — there are many `*_owner_scope` / `*_isolation` regression tests guarding this.
 

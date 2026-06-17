@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""firehouse-logs — unified view of log files across the app.
+"""applicant-logs — unified view of log files across the app.
 
 Right now logs live in two places:
   - logs/                       app-level (compound.log, future runtime)
-  - /tmp/firehouse-tmux/*.log    per-tmux-session model download/serve logs
+  - /tmp/applicant-tmux/*.log    per-tmux-session model download/serve logs
 
 This CLI surfaces them so you don't have to remember which directory
 holds what.
 
-    firehouse-logs list                    # every log we know about
-    firehouse-logs tail NAME               # tail -f a specific log
-    firehouse-logs tail NAME --lines 200   # last N lines only (no follow)
-    firehouse-logs cat NAME                # print full content
-    firehouse-logs clean                   # delete tmux logs older than 7 days
+    applicant-logs list                    # every log we know about
+    applicant-logs tail NAME               # tail -f a specific log
+    applicant-logs tail NAME --lines 200   # last N lines only (no follow)
+    applicant-logs cat NAME                # print full content
+    applicant-logs clean                   # delete tmux logs older than 7 days
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 _APP_LOGS = _REPO_ROOT / "logs"
-_TMUX_LOGS = Path("/tmp/firehouse-tmux")
+_TMUX_LOGS = Path("/tmp/applicant-tmux")
 
 
 def _enumerate() -> list[dict]:
@@ -78,7 +78,7 @@ def cmd_list(args):
 def cmd_tail(args):
     p = _resolve(args.name)
     if p is None:
-        fail(f"no log matching {args.name!r}; run `firehouse-logs list`")
+        fail(f"no log matching {args.name!r}; run `applicant-logs list`")
     if args.follow:
         # Exec tail -f so signals + buffering are native.
         os.execvp("tail", ["tail", "-n", str(args.lines), "-f", str(p)])
@@ -116,7 +116,7 @@ def cmd_clean(args):
 
 
 def _build_parser():
-    p = common_parser("firehouse-logs", "Tail / list logs across the app.")
+    p = common_parser("applicant-logs", "Tail / list logs across the app.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=p._common_parents)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""firehouse-tasks — shell wrapper for the scheduled-tasks feature.
+"""applicant-tasks — shell wrapper for the scheduled-tasks feature.
 
-    firehouse-tasks list [--status active|paused|completed] [--limit N]
-    firehouse-tasks show TASK_ID
-    firehouse-tasks pause TASK_ID
-    firehouse-tasks resume TASK_ID
-    firehouse-tasks runs [--task TASK_ID] [--limit N]
+    applicant-tasks list [--status active|paused|completed] [--limit N]
+    applicant-tasks show TASK_ID
+    applicant-tasks pause TASK_ID
+    applicant-tasks resume TASK_ID
+    applicant-tasks runs [--task TASK_ID] [--limit N]
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
 
-    p = argparse.ArgumentParser(prog="firehouse-tasks", parents=[common])
+    p = argparse.ArgumentParser(prog="applicant-tasks", parents=[common])
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])

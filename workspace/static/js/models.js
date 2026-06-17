@@ -17,10 +17,10 @@ let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
-const COLLAPSE_KEY = 'firehouse-models-collapsed';
-const FAVORITES_KEY = 'firehouse-model-favorites';
-const USAGE_KEY = 'firehouse-model-usage';
-const SORT_KEY = 'firehouse-model-sort';
+const COLLAPSE_KEY = 'applicant-models-collapsed';
+const FAVORITES_KEY = 'applicant-model-favorites';
+const USAGE_KEY = 'applicant-model-usage';
+const SORT_KEY = 'applicant-model-sort';
 
 export function init(apiBase) {
   API_BASE = apiBase;

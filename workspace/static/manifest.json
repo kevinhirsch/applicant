@@ -1,6 +1,6 @@
 {
-  "name": "Firehouse",
-  "short_name": "Firehouse",
+  "name": "Applicant",
+  "short_name": "Applicant",
   "description": "Self-hosted AI chat with memory, documents, and tools",
   "start_url": "/",
   "scope": "/",

@@ -25,9 +25,9 @@ export const WAVE_FRAMES = ['▁▂▃', '▂▃▄', '▃▄▅', '▄▅▆', 
 
 // ── Storage keys & limits ──
 
-export const VOTES_STORAGE_KEY = 'firehouse-compare-votes';
+export const VOTES_STORAGE_KEY = 'applicant-compare-votes';
 export const VOTES_MAX = 200;
-export const POOL_STORAGE_KEY = 'firehouse-shuffle-pool-excluded';
+export const POOL_STORAGE_KEY = 'applicant-shuffle-pool-excluded';
 
 // ── Evaluation prompt templates ──
 //

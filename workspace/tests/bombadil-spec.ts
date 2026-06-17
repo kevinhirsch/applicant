@@ -1,5 +1,5 @@
 /**
- * Bombadil spec for Firehouse UI
+ * Bombadil spec for Applicant UI
  */
 import { extract, always, eventually, now, actions } from "@antithesishq/bombadil";
 export * from "@antithesishq/bombadil/defaults";

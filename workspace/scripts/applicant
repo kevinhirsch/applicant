@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""firehouse — one entrypoint for every firehouse-* CLI.
+"""applicant — one entrypoint for every applicant-* CLI.
 
-Discovers `scripts/firehouse-<name>` siblings and dispatches to them, the
+Discovers `scripts/applicant-<name>` siblings and dispatches to them, the
 same way `git` finds `git-foo`. Pure passthrough: any flags after the
-subcommand name are forwarded as-is, so `firehouse mail list --pretty`
-behaves exactly like `firehouse-mail list --pretty`.
+subcommand name are forwarded as-is, so `applicant mail list --pretty`
+behaves exactly like `applicant-mail list --pretty`.
 
-    firehouse                       # list every subcommand + short help
-    firehouse <name>                # run firehouse-<name>
-    firehouse <name> <args...>      # run firehouse-<name> <args...>
-    firehouse help                  # alias for `firehouse` (the listing)
-    firehouse help <name>           # show the subcommand's own --help
-    firehouse --version             # print version
+    applicant                       # list every subcommand + short help
+    applicant <name>                # run applicant-<name>
+    applicant <name> <args...>      # run applicant-<name> <args...>
+    applicant help                  # alias for `applicant` (the listing)
+    applicant help <name>           # show the subcommand's own --help
+    applicant --version             # print version
 
 Designed to live in `scripts/`. Symlink it onto `$PATH` (`ln -s
-$PWD/scripts/firehouse ~/.local/bin/firehouse`) to use it without typing
+$PWD/scripts/applicant ~/.local/bin/applicant`) to use it without typing
 the full path.
 """
 from __future__ import annotations
@@ -31,15 +31,15 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 
 
 def _list_subcommands() -> list[Path]:
-    """Find every executable `firehouse-*` next to this file (excluding
+    """Find every executable `applicant-*` next to this file (excluding
     the dispatcher itself + any .bak / .pre-* migration leftovers)."""
     out = []
     for p in sorted(SCRIPTS_DIR.iterdir()):
         if not p.is_file():
             continue
-        if p.name == "firehouse":
+        if p.name == "applicant":
             continue
-        if not p.name.startswith("firehouse-"):
+        if not p.name.startswith("applicant-"):
             continue
         if any(p.name.endswith(suf) for suf in (".bak", ".pre-cli-refactor", ".pyc")):
             continue
@@ -64,23 +64,23 @@ def _short_help(path: Path) -> str:
         return ""
     # First non-blank line, strip the leading "name — " noise.
     first = next((ln for ln in body.splitlines() if ln.strip()), "")
-    first = re.sub(r"^firehouse-\w+\s*—\s*", "", first).strip()
+    first = re.sub(r"^applicant-\w+\s*—\s*", "", first).strip()
     return first
 
 
 def _print_listing() -> None:
-    """`firehouse` with no args (or `firehouse help`) — print the table."""
-    sys.stdout.write(f"firehouse {VERSION} — every feature, on the shell.\n\n")
-    sys.stdout.write("Usage:  firehouse <subcommand> [args...]\n\n")
+    """`applicant` with no args (or `applicant help`) — print the table."""
+    sys.stdout.write(f"applicant {VERSION} — every feature, on the shell.\n\n")
+    sys.stdout.write("Usage:  applicant <subcommand> [args...]\n\n")
     sys.stdout.write("Available subcommands:\n")
     subs = _list_subcommands()
-    width = max((len(p.name[len("firehouse-"):]) for p in subs), default=10)
+    width = max((len(p.name[len("applicant-"):]) for p in subs), default=10)
     for p in subs:
-        name = p.name[len("firehouse-"):]
+        name = p.name[len("applicant-"):]
         desc = _short_help(p)
         sys.stdout.write(f"  {name:<{width + 2}}{desc}\n")
     sys.stdout.write(
-        "\nRun `firehouse help <subcommand>` for that tool's own --help.\n"
+        "\nRun `applicant help <subcommand>` for that tool's own --help.\n"
     )
 
 
@@ -92,27 +92,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv[0] in ("-v", "--version"):
-        sys.stdout.write(f"firehouse {VERSION}\n")
+        sys.stdout.write(f"applicant {VERSION}\n")
         return 0
 
     if argv[0] == "help":
-        # `firehouse help foo` → `firehouse-foo --help`
+        # `applicant help foo` → `applicant-foo --help`
         if len(argv) < 2:
             _print_listing()
             return 0
-        sub = SCRIPTS_DIR / f"firehouse-{argv[1]}"
+        sub = SCRIPTS_DIR / f"applicant-{argv[1]}"
         if not sub.exists():
-            sys.stderr.write(f"firehouse: unknown subcommand {argv[1]!r}\n")
+            sys.stderr.write(f"applicant: unknown subcommand {argv[1]!r}\n")
             return 1
         return subprocess.call([str(sub), "--help"])
 
-    # `firehouse foo ...` → exec `firehouse-foo ...` under the project venv.
+    # `applicant foo ...` → exec `applicant-foo ...` under the project venv.
     name = argv[0]
-    sub = SCRIPTS_DIR / f"firehouse-{name}"
+    sub = SCRIPTS_DIR / f"applicant-{name}"
     if not sub.exists():
         sys.stderr.write(
-            f"firehouse: unknown subcommand {name!r}. "
-            f"Try `firehouse help` to see available ones.\n"
+            f"applicant: unknown subcommand {name!r}. "
+            f"Try `applicant help` to see available ones.\n"
         )
         return 1
     # Run the subcommand with the project's venv Python so dependencies

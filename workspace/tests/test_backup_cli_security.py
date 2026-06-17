@@ -9,8 +9,8 @@ import pytest
 
 
 def _load_backup_cli():
-    path = Path(__file__).resolve().parent.parent / "scripts" / "firehouse-backup"
-    loader = importlib.machinery.SourceFileLoader("firehouse_backup_under_test", str(path))
+    path = Path(__file__).resolve().parent.parent / "scripts" / "applicant-backup"
+    loader = importlib.machinery.SourceFileLoader("applicant_backup_under_test", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

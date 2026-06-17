@@ -3,7 +3,7 @@
 ``decide_tick`` is a pure orchestration over ``engine`` (fully unit-tested).
 ``AwarenessService`` is the thin DB-backed layer: trigger CRUD, notification
 records + outcomes, and an async ``run_tick`` that the (default-off) background
-loop calls. Nothing here runs unless ``FIREHOUSE_AWARENESS`` is enabled and the
+loop calls. Nothing here runs unless ``APPLICANT_AWARENESS`` is enabled and the
 owner has the ``can_use_awareness`` privilege with ≥1 enabled trigger.
 """
 

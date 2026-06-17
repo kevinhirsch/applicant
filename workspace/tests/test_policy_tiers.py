@@ -48,9 +48,9 @@ def test_min_tier_override_can_gate_medium():
 
 
 def test_is_enforced_reads_env(monkeypatch):
-    monkeypatch.setenv("FIREHOUSE_RISK_POLICY", "1")
+    monkeypatch.setenv("APPLICANT_RISK_POLICY", "1")
     importlib.reload(policy)
     assert policy.is_enforced() is True
-    monkeypatch.setenv("FIREHOUSE_RISK_POLICY", "0")
+    monkeypatch.setenv("APPLICANT_RISK_POLICY", "0")
     importlib.reload(policy)
     assert policy.is_enforced() is False

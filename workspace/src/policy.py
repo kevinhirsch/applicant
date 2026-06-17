@@ -1,14 +1,14 @@
 """Risk-tier action policy (Smokey parity, ADR-010 analogue).
 
 Classifies agent/awareness actions into risk tiers and decides when an action
-needs explicit confirmation. Firehouse already gates *capabilities* via
+needs explicit confirmation. Applicant already gates *capabilities* via
 per-user privileges (can/can't); this adds graduated *per-action* risk so the
 agent can act freely on low-risk reads while outward/irreversible actions
 (send email, control the home, shell, bulk delete) are confirmed.
 
 Phase 0 ships the classifier + decision logic only. Enforcement is wired into
 the agent tool dispatch in a later phase and is gated behind the
-``FIREHOUSE_RISK_POLICY`` env flag (default off), so this module changes no
+``APPLICANT_RISK_POLICY`` env flag (default off), so this module changes no
 behavior on its own.
 
 Pure standard-library — safe to import anywhere and unit-test without app deps.
@@ -100,9 +100,9 @@ def classify_action(name: Optional[str]) -> str:
 def is_enforced() -> bool:
     """Whether risk-tier confirmation is actively enforced.
 
-    Off by default (Phase 0). Enable with ``FIREHOUSE_RISK_POLICY=1``.
+    Off by default (Phase 0). Enable with ``APPLICANT_RISK_POLICY=1``.
     """
-    return os.getenv("FIREHOUSE_RISK_POLICY", "0").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("APPLICANT_RISK_POLICY", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def requires_confirmation(

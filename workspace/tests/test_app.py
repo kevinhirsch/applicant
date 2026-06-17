@@ -1,5 +1,5 @@
 """
-Basic tests for firehouse-ui application structure
+Basic tests for applicant-ui application structure
 """
 import pytest
 import sys

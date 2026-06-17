@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""firehouse-update — pull the newest Firehouse from GitHub and restart.
+"""applicant-update — pull the newest Applicant from GitHub and restart.
 
 Backs up data/, pulls the latest code + service images, then rebuilds and
 recreates the Docker containers. Your data/ and .env are left untouched; the
 app runs its SQLite schema migrations automatically on the next startup.
 
-    firehouse update                # backup, pull code + images, rebuild & restart
-    firehouse update --no-backup    # skip the pre-update backup
+    applicant update                # backup, pull code + images, rebuild & restart
+    applicant update --no-backup    # skip the pre-update backup
 
 If any step fails the update aborts before the restart, so a failed pull or
 backup never leaves you on a half-updated stack.
@@ -31,15 +31,15 @@ def _sh(*cmd: str) -> None:
     proc = subprocess.run(cmd, cwd=REPO_ROOT)
     if proc.returncode != 0:
         sys.exit(
-            f"\nfirehouse-update: `{' '.join(cmd)}` failed "
+            f"\napplicant-update: `{' '.join(cmd)}` failed "
             f"(exit {proc.returncode}); aborting before restart."
         )
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        prog="firehouse update",
-        description="Pull the newest Firehouse from GitHub and restart.",
+        prog="applicant update",
+        description="Pull the newest Applicant from GitHub and restart.",
     )
     parser.add_argument(
         "--no-backup", action="store_true",
@@ -51,7 +51,7 @@ def main(argv: list[str]) -> int:
         _step("Skipping backup (--no-backup)")
     elif (REPO_ROOT / "data").is_dir():
         _step("Backing up data/ ...")
-        _sh(sys.executable, str(REPO_ROOT / "scripts" / "firehouse-backup"), "snapshot")
+        _sh(sys.executable, str(REPO_ROOT / "scripts" / "applicant-backup"), "snapshot")
     else:
         _step("No data/ dir yet — nothing to back up")
 

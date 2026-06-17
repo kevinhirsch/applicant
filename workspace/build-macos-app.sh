@@ -1,22 +1,22 @@
 #!/bin/bash
-# Build a downloadable macOS launcher app + .dmg for Firehouse.
+# Build a downloadable macOS launcher app + .dmg for Applicant.
 #
 #   ./build-macos-app.sh
 #
 # Produces:
-#   dist/Firehouse.app   — double-click: starts the local server (using this
+#   dist/Applicant.app   — double-click: starts the local server (using this
 #                         repo's venv) and opens the UI in an app-style window.
-#   dist/Firehouse.dmg   — drag-to-Applications disk image (the downloadable).
+#   dist/Applicant.dmg   — drag-to-Applications disk image (the downloadable).
 #
 # This is a *launcher* wrapper: it drives the venv we set up in this repo, it
 # does not bundle Python. The install path is baked into the app at build time,
-# so rebuild if you move the repo. Override the port with FIREHOUSE_PORT.
+# so rebuild if you move the repo. Override the port with APPLICANT_PORT.
 set -e
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_NAME="Firehouse"
+APP_NAME="Applicant"
 INSTALL_DIR="$REPO_DIR"
-PORT="${FIREHOUSE_PORT:-7860}"
+PORT="${APPLICANT_PORT:-7860}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -27,22 +27,22 @@ echo "  port:        $PORT"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# ── Icon (best effort) — center-crop docs/firehouse.jpg to a square .icns ──
-if [ -f "$REPO_DIR/docs/firehouse.jpg" ] && command -v sips >/dev/null 2>&1; then
+# ── Icon (best effort) — center-crop docs/applicant.jpg to a square .icns ──
+if [ -f "$REPO_DIR/docs/applicant.jpg" ] && command -v sips >/dev/null 2>&1; then
   TMPIMG="$(mktemp -d)"
   # Center-crop to a square, scale to 512 (sips' icns encoder caps at 512), and
   # let sips emit the .icns directly — more robust across macOS versions than
   # building an .iconset by hand.
-  sips -c 720 720 "$REPO_DIR/docs/firehouse.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/firehouse.jpg" "$TMPIMG/sq.png"
+  sips -c 720 720 "$REPO_DIR/docs/applicant.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/applicant.jpg" "$TMPIMG/sq.png"
   sips -z 512 512 "$TMPIMG/sq.png" --out "$TMPIMG/icon.png" >/dev/null 2>&1
-  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/firehouse.icns" >/dev/null 2>&1; then
-    echo "  icon:        firehouse.icns"
+  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/applicant.icns" >/dev/null 2>&1; then
+    echo "  icon:        applicant.icns"
   else
     echo "  icon:        (skipped — conversion failed)"
   fi
   rm -rf "$TMPIMG"
 else
-  echo "  icon:        (skipped — no docs/firehouse.jpg)"
+  echo "  icon:        (skipped — no docs/applicant.jpg)"
 fi
 
 # ── Info.plist ──
@@ -53,12 +53,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
     <key>CFBundleName</key>            <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>     <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>      <string>com.firehouse.launcher</string>
+    <key>CFBundleIdentifier</key>      <string>com.applicant.launcher</string>
     <key>CFBundleVersion</key>         <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>$APP_NAME</string>
-    <key>CFBundleIconFile</key>        <string>firehouse</string>
+    <key>CFBundleIconFile</key>        <string>applicant</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <false/>
@@ -69,22 +69,22 @@ PLIST
 # ── Launcher executable (placeholders filled below) ──
 cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 #!/bin/bash
-# Firehouse.app — start the local server and open the UI in an app window.
+# Applicant.app — start the local server and open the UI in an app window.
 INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
-LOG="$INSTALL_DIR/logs/firehouse-app.log"
+LOG="$INSTALL_DIR/logs/applicant-app.log"
 
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Firehouse\"" >/dev/null 2>&1; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Applicant\"" >/dev/null 2>&1; }
 die_gui() {
-  /usr/bin/osascript -e "display dialog \"$1\" with title \"Firehouse\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
+  /usr/bin/osascript -e "display dialog \"$1\" with title \"Applicant\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Firehouse isn't set up yet. Open Terminal and run:
+[ -x "$UVICORN" ] || die_gui "Applicant isn't set up yet. Open Terminal and run:
 
 cd $INSTALL_DIR
 python3.11 -m venv venv
@@ -129,7 +129,7 @@ trap 'kill $SERVER_PID 2>/dev/null; exit 0' TERM INT
 READY=0
 for i in $(seq 1 120); do
   /usr/bin/curl -s -o /dev/null --max-time 2 "$URL" && { READY=1; break; }
-  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Firehouse failed to start. Log:
+  kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Applicant failed to start. Log:
 $LOG"
   sleep 1
 done
@@ -137,7 +137,7 @@ done
 if [ "$READY" = "1" ]; then
   open_ui
 else
-  notify "Firehouse is taking a while — open $URL once it finishes starting."
+  notify "Applicant is taking a while — open $URL once it finishes starting."
 fi
 wait "$SERVER_PID"
 LAUNCHER
@@ -166,4 +166,4 @@ echo "  $APP"
 echo "  $DIST/$APP_NAME.dmg"
 echo ""
 echo "Run it:        open '$APP'"
-echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag Firehouse to Applications)"
+echo "Install:       open '$DIST/$APP_NAME.dmg'  (drag Applicant to Applications)"

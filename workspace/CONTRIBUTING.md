@@ -1,4 +1,4 @@
-# Contributing to Firehouse
+# Contributing to Applicant
 
 Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
 
@@ -21,8 +21,8 @@ how the app is wired (entry point, routers, subsystems, storage, auth), and
 Docker is the recommended path for normal testing:
 
 ```bash
-git clone https://github.com/kevinhirsch/firehouse.git
-cd firehouse
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 cp .env.example .env
 docker compose up -d --build
 ```
@@ -53,7 +53,7 @@ For Docker-related changes:
 ```bash
 docker compose config
 docker compose up -d --build
-docker compose logs --tail=120 firehouse
+docker compose logs --tail=120 applicant
 ```
 
 Mention what you ran in the pull request description. If you could not run a check, say so.

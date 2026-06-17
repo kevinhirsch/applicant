@@ -178,7 +178,7 @@ class WebhookManager:
     async def deliver_test(self, webhook_id: str, url: str, encrypted_secret: Optional[str]):
         """Public method for the test-webhook route."""
         decrypted = self._decrypt_secret(encrypted_secret)
-        await self._deliver(webhook_id, url, decrypted, "webhook.test", {"message": "Test ping from Firehouse"})
+        await self._deliver(webhook_id, url, decrypted, "webhook.test", {"message": "Test ping from Applicant"})
 
     async def _deliver(self, webhook_id: str, url: str, secret: Optional[str], event: str, payload: dict):
         """Internal delivery. Never call directly from outside this class (use deliver_test)."""
@@ -192,12 +192,12 @@ class WebhookManager:
         body = json.dumps({"event": event, "timestamp": datetime.utcnow().isoformat(), "data": payload})
         headers = {
             "Content-Type": "application/json",
-            "X-Firehouse-Event": event,
-            "User-Agent": "Firehouse-Webhook/1.0",
+            "X-Applicant-Event": event,
+            "User-Agent": "Applicant-Webhook/1.0",
         }
         if secret:
             sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
-            headers["X-Firehouse-Signature"] = sig
+            headers["X-Applicant-Signature"] = sig
 
         db = SessionLocal()
         try:

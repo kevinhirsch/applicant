@@ -3,7 +3,7 @@
 
 Owner-scoped; every endpoint requires the opt-in ``can_control_home``
 privilege. State-changing calls are constrained to the user's entity allowlist
-and, when the risk policy is enforced (``FIREHOUSE_RISK_POLICY``), require an
+and, when the risk policy is enforced (``APPLICANT_RISK_POLICY``), require an
 explicit ``confirm`` because ``ha_call_service`` is classified HIGH risk.
 The agent reaches these via the existing ``app_api`` loopback tool.
 """

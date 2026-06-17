@@ -11,7 +11,7 @@
 #   3. Brings up the ollama service, pulls the model, and warms it (the slow
 #      cold-load happens once here, off the request path).
 #
-# Usage (run from the firehouse repo root, e.g. ~/firehouse):
+# Usage (run from the applicant repo root, e.g. ~/applicant):
 #   ./scripts/setup-local-model.sh
 #   ./scripts/setup-local-model.sh "hf.co/owner/Some-Model-GGUF:Q4_K_M"
 #
@@ -22,7 +22,7 @@ ENV_FILE=".env"
 BASE_OVERLAY="docker/ollama.yml"
 TUNING_OVERLAY="docker/ollama.tuning.yml"
 
-[ -f docker-compose.yml ] || { echo "ERROR: run this from the firehouse repo root (docker-compose.yml not found)."; exit 1; }
+[ -f docker-compose.yml ] || { echo "ERROR: run this from the applicant repo root (docker-compose.yml not found)."; exit 1; }
 command -v docker >/dev/null || { echo "ERROR: docker is not installed/on PATH."; exit 1; }
 
 echo "==> Model: $MODEL"
@@ -84,7 +84,7 @@ cat <<EOF
 
 ==> Done.
     - $MODEL is pulled and loaded, and will stay resident (OLLAMA_KEEP_ALIVE=-1).
-    - Firehouse reaches it at http://ollama:11434; select it under
+    - Applicant reaches it at http://ollama:11434; select it under
       Settings -> model endpoints.
     - Re-run this script any time to re-apply the config or warm the model.
 EOF
