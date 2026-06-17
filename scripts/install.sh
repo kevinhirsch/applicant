@@ -52,6 +52,19 @@ fi
 export POSTGRES_USER="${POSTGRES_USER:-applicant}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-applicant}"
 export POSTGRES_DB="${POSTGRES_DB:-applicant}"
+# Stage-2.5 reverse channel: the SHARED secret that authenticates the engine's
+# callbacks into the front-door UI's /api/applicant/internal/* routes. Generated
+# ONCE here and persisted to .env (same lifecycle as POSTGRES_PASSWORD) so BOTH
+# containers (api + applicant-ui) read the same value. The loaded .env above
+# already populated it on re-runs, so this only mints one on first install.
+if [[ -z "${APPLICANT_INTERNAL_TOKEN:-}" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    APPLICANT_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+  else
+    APPLICANT_INTERNAL_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  fi
+fi
+export APPLICANT_INTERNAL_TOKEN
 APP_URL="${APP_URL:-http://localhost:8000}"
 # The compose file publishes the front door on ${APP_PORT:-8000}. Derive APP_PORT
 # from APP_URL (unless explicitly set) and EXPORT it so the host port compose
@@ -126,6 +139,7 @@ if [[ "${APPLY}" -eq 1 && ! -f "${ENV_FILE}" ]]; then
 POSTGRES_USER=${POSTGRES_USER}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=${POSTGRES_DB}
+APPLICANT_INTERNAL_TOKEN=${APPLICANT_INTERNAL_TOKEN}
 APP_URL=${APP_URL}
 APP_PORT=${APP_PORT}
 EOF
