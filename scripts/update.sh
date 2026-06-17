@@ -77,10 +77,25 @@ if [[ "${ROLLBACK}" -eq 1 ]]; then
 fi
 
 # --- update path ------------------------------------------------------------
-log "Update flow (backup → pull → migrate → restart)."
+log "Update flow (sync code → backup → build → migrate → restart)."
 run mkdir -p "${BACKUP_DIR}"
 
-log "1/4 Backing up the database to ${DUMP_FILE}"
+# --- 0/5 Sync the source checkout -------------------------------------------
+# The whole point of an "update" is to run NEW code. The api image is built from
+# this local checkout (pull_policy: build), so without syncing git first every
+# rebuild just reproduces the old image. Fetch + hard-reset to the tracked branch
+# (the deploy tree is not edited by hand). .env / .backups are untracked/ignored
+# and survive the reset.
+APPLICANT_BRANCH="${APPLICANT_BRANCH:-main}"
+if [[ -d "${REPO_ROOT}/.git" ]]; then
+  log "0/5 Syncing source to origin/${APPLICANT_BRANCH}"
+  run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
+  run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
+else
+  log "0/5 No git checkout at ${REPO_ROOT}; skipping source sync."
+fi
+
+log "1/5 Backing up the database to ${DUMP_FILE}"
 # Back up BEFORE migrate so rollback is always possible (FR-INSTALL-2). A failed or
 # empty backup MUST abort the update — never proceed to migrate with no valid dump.
 if [[ "${APPLY}" -eq 1 ]]; then
@@ -101,14 +116,17 @@ else
   echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
 fi
 
-log "2/4 Pulling new images"
-run docker compose -f "${COMPOSE_FILE}" pull
+log "2/5 Pulling base images + rebuilding the api from synced source"
+run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
+run docker compose -f "${COMPOSE_FILE}" build api
 
-log "3/4 Running database migrations"
+log "3/5 Running database migrations"
 run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
-log "4/4 Restarting the stack"
-run docker compose -f "${COMPOSE_FILE}" up -d
+log "4/5 Restarting the stack on the freshly built image"
+run docker compose -f "${COMPOSE_FILE}" up -d --build
+
+log "5/5 Update applied."
 
 if [[ "${APPLY}" -eq 1 ]]; then
   log "Update complete. If anything looks wrong, run: scripts/update.sh --rollback --apply"
