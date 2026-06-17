@@ -21,7 +21,19 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
+ENV_FILE="${REPO_ROOT}/.env"
 BACKUP_DIR="${APPLICANT_BACKUP_DIR:-${REPO_ROOT}/.backups}"
+
+# Load persisted DB credentials so backup/migrate/restart authenticate with the
+# SAME password Postgres baked into its data volume at first install. Without this
+# the migration step fails ("password authentication failed"). Explicit env wins.
+if [[ -f "${ENV_FILE}" ]]; then
+  while IFS='=' read -r _k _v; do
+    [[ "${_k}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+    [[ -n "${!_k:-}" ]] || export "${_k}=${_v}"
+  done <"${ENV_FILE}"
+fi
+
 DB_SERVICE="postgres"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"
