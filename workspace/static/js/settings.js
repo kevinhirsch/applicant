@@ -2094,6 +2094,16 @@ function initAll() {
   initClose();
   initOpacityToggle();
   initialized = true;
+  // Re-run the guided setup/onboarding wizard (exposed globally by applicantOnboarding.js).
+  const rerunSetupBtn = el('settings-rerun-setup');
+  if (rerunSetupBtn) {
+    rerunSetupBtn.addEventListener('click', () => {
+      if (typeof window.launchApplicantSetup === 'function') {
+        if (modalEl) modalEl.classList.add('hidden');
+        window.launchApplicantSetup();
+      }
+    });
+  }
   initDefaultChat();
   initTeacherModel();
   initUtilityModel();

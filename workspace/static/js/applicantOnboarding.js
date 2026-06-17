@@ -507,57 +507,58 @@ async function _renderSandbox() {
       <div class="admin-card">
         <div class="settings-col">
           <div class="settings-row">
-            <label class="settings-label">Proxmox API URL ${_tip('Your Proxmox node API base, e.g. https://pve.example.com:8006/api2/json')}</label>
+            <label class="settings-label">Proxmox API URL ${_tip('Your Proxmox API base, e.g. https://pve.example.com:8006/api2/json')}</label>
             <input id="ao-sb-apiurl" class="settings-select" type="text" placeholder="https://pve.example.com:8006/api2/json" value="${esc(conn.proxmox_api_url || '')}" />
           </div>
           <div class="settings-row">
-            <label class="settings-label">Node name ${_tip('The Proxmox node that hosts the Windows VM, e.g. pve.')}</label>
+            <label class="settings-label">Node ${_tip('The Proxmox node hosting the VM, e.g. pve.')}</label>
             <input id="ao-sb-node" class="settings-select" type="text" placeholder="pve" value="${esc(conn.proxmox_node || '')}" />
           </div>
           <div class="settings-row">
-            <label class="settings-label">API token id ${_tip('A Proxmox API token id, e.g. root@pam!applicant. The token secret is stored encrypted, never shown.')}</label>
-            <input id="ao-sb-tokenid" class="settings-select" type="text" placeholder="root@pam!applicant" value="${esc(conn.proxmox_token_id || '')}" />
+            <label class="settings-label">API token ${_tip('A Proxmox API token id + its secret. The secret is sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
+            <div style="display:flex;gap:6px;">
+              <input id="ao-sb-tokenid" class="settings-select" type="text" placeholder="root@pam!applicant" value="${esc(conn.proxmox_token_id || '')}" style="flex:2;" />
+              <input id="ao-sb-tokensecret" class="settings-select" type="password" placeholder="secret" autocomplete="new-password" style="flex:1;" />
+            </div>
           </div>
           <div class="settings-row">
-            <label class="settings-label">API token secret ${_tip('The secret half of the API token. Sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
-            <input id="ao-sb-tokensecret" class="settings-select" type="password" placeholder="••••••••" autocomplete="new-password" />
-          </div>
-          <div class="settings-row">
-            <label class="settings-label">Windows template / VM id ${_tip('The VMID of your licensed Windows VM (with Chrome + guest agent + RDP), used as the template/persistent VM.')}</label>
+            <label class="settings-label">Windows VM id ${_tip('The VMID of your licensed Windows VM (Chrome + guest agent + RDP enabled).')}</label>
             <input id="ao-sb-vmid" class="settings-select" type="number" placeholder="100" value="${esc(conn.template_vmid || '')}" />
           </div>
           <div class="settings-row">
-            <label class="settings-label">Per-session mode</label>
-            <select id="ao-sb-clone" class="settings-select">
-              <option value="snapshot-revert"${(conn.clone_mode || 'snapshot-revert') === 'snapshot-revert' ? ' selected' : ''}>Reuse one VM, roll back each session</option>
-              <option value="linked-clone"${conn.clone_mode === 'linked-clone' ? ' selected' : ''}>Fresh clone each session</option>
-            </select>
-          </div>
-        </div>
-      </div>
-      <div class="admin-card">
-        <div class="settings-col">
-          <div class="settings-row">
-            <label class="settings-label">Take-over method</label>
+            <label class="settings-label">Take over with</label>
             <select id="ao-sb-tomethod" class="settings-select">
               <option value="rdp"${(conn.takeover_method || 'rdp') === 'rdp' ? ' selected' : ''}>RDP (one-click rdp:// link)</option>
-              <option value="web-console"${conn.takeover_method === 'web-console' ? ' selected' : ''}>Web console (Guacamole / web RDP)</option>
+              <option value="web-console"${conn.takeover_method === 'web-console' ? ' selected' : ''}>Web console (Guacamole)</option>
             </select>
           </div>
-          <div class="settings-row">
-            <label class="settings-label">RDP username ${_tip('The Windows account you sign in with when you take over the session.')}</label>
-            <input id="ao-sb-rdpuser" class="settings-select" type="text" placeholder="Administrator" value="${esc(conn.rdp_username || '')}" />
+          <div class="settings-row" id="ao-sb-rdp" style="display:${conn.takeover_method === 'web-console' ? 'none' : 'flex'}">
+            <label class="settings-label">RDP sign-in ${_tip('The Windows account you take over with. Password is sealed in the vault — leave blank to keep the saved one.')}</label>
+            <div style="display:flex;gap:6px;">
+              <input id="ao-sb-rdpuser" class="settings-select" type="text" placeholder="Administrator" value="${esc(conn.rdp_username || '')}" style="flex:1;" />
+              <input id="ao-sb-rdppass" class="settings-select" type="password" placeholder="password" autocomplete="new-password" style="flex:1;" />
+            </div>
           </div>
-          <div class="settings-row">
-            <label class="settings-label">RDP password ${_tip('Sealed in the encrypted vault — leave blank to keep the saved one.')}</label>
-            <input id="ao-sb-rdppass" class="settings-select" type="password" placeholder="••••••••" autocomplete="new-password" />
-          </div>
-          <div class="settings-row">
-            <label class="settings-label">Web console URL template ${_tip('Only for the web console method. Use {host}/{token}/{vmid}/{node} placeholders.')}</label>
+          <div class="settings-row" id="ao-sb-web" style="display:${conn.takeover_method === 'web-console' ? 'flex' : 'none'}">
+            <label class="settings-label">Web console URL ${_tip('Your web-RDP URL with {host}/{token}/{vmid}/{node} placeholders.')}</label>
             <input id="ao-sb-tourl" class="settings-select" type="text" placeholder="https://guac.example.com/#/?host={host}&token={token}" value="${esc(conn.takeover_url_template || '')}" />
           </div>
         </div>
       </div>
+      <details class="ao-adv">
+        <summary>Advanced</summary>
+        <div class="admin-card" style="margin-top:8px;">
+          <div class="settings-col">
+            <div class="settings-row">
+              <label class="settings-label">Per-session mode</label>
+              <select id="ao-sb-clone" class="settings-select">
+                <option value="snapshot-revert"${(conn.clone_mode || 'snapshot-revert') === 'snapshot-revert' ? ' selected' : ''}>Reuse one VM, roll back each session</option>
+                <option value="linked-clone"${conn.clone_mode === 'linked-clone' ? ' selected' : ''}>Fresh clone each session</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
     <div id="ao-sb-msg"></div>
   `);
@@ -567,6 +568,16 @@ async function _renderSandbox() {
   const winBox = document.getElementById('ao-sb-win');
   backendSel.onchange = () => {
     winBox.style.display = (backendSel.value === 'proxmox-windows') ? 'block' : 'none';
+  };
+
+  // Take-over method toggles which one field-set is relevant (never both at once).
+  const methodSel = document.getElementById('ao-sb-tomethod');
+  if (methodSel) methodSel.onchange = () => {
+    const web = methodSel.value === 'web-console';
+    const rdpBox = document.getElementById('ao-sb-rdp');
+    const webBox = document.getElementById('ao-sb-web');
+    if (rdpBox) rdpBox.style.display = web ? 'none' : 'flex';
+    if (webBox) webBox.style.display = web ? 'flex' : 'none';
   };
 
   const val = (id) => (document.getElementById(id).value || '').trim();
@@ -1153,4 +1164,19 @@ export async function maybeLaunchOnboarding() {
   await _renderStep();
 }
 
-export default { maybeLaunchOnboarding };
+// Force-open the wizard (e.g. the "Re-run setup" button in Settings) regardless of
+// completion, starting at the first step so any prior choice can be reviewed/changed.
+export async function launchOnboarding() {
+  if (_overlay) return;
+  _overlay = _buildOverlay();
+  document.body.appendChild(_overlay);
+  try { await _refreshStatus(); } catch { /* engine down — still show the wizard */ }
+  if (_status && _status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
+  _stepIndex = 0;
+  await _renderStep();
+}
+
+// Expose a global so the Settings panel can relaunch setup without importing this module.
+if (typeof window !== 'undefined') window.launchApplicantSetup = launchOnboarding;
+
+export default { maybeLaunchOnboarding, launchOnboarding };

@@ -34466,3 +34466,9 @@ body.theme-frosted .modal {
 #applicant-onboarding-overlay .ao-help code {
   background: var(--card-bg, #2a2a2a); padding: 1px 5px; border-radius: 4px; font-size: 11px;
 }
+/* Collapsed "Advanced" disclosure inside a wizard step. */
+#applicant-onboarding-overlay .ao-adv { margin-top: 8px; }
+#applicant-onboarding-overlay .ao-adv > summary {
+  cursor: pointer; font-size: 12px; opacity: 0.75; padding: 4px 0; user-select: none; list-style: revert;
+}
+#applicant-onboarding-overlay .ao-adv > summary:hover { opacity: 1; }
