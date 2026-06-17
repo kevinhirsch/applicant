@@ -9611,6 +9611,11 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   font-size: 11px;
   height: 24px;
+  /* Center the label in the fixed 24px height — without flex the text
+     baseline-aligned to the bottom edge (same drop the mode-toggle had). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0 8px;
   border-radius: 6px;
   cursor: pointer;
