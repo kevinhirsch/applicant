@@ -90,8 +90,10 @@ def test_trigger_real_dispatch_when_enabled(tmp_path, monkeypatch):
     result = UpdateTrigger(script_path=script).trigger_update()
     assert result.started is True
     assert "Started" in result.message
-    # The guarded dispatch invoked /bin/bash with the fixed script path (not user input).
-    assert calls == [["/bin/bash", str(script)]]
+    # CRIT-ops fix: the enabled path MUST pass --apply so the script actually
+    # performs the update (backup/migrate/restart) instead of a no-op dry run.
+    assert calls == [["/bin/bash", str(script), "--apply"]]
+    assert "--apply" in result.message
 
 
 def test_default_script_path_points_at_repo_scripts():

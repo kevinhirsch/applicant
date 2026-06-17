@@ -1,0 +1,271 @@
+"""Hermetic tests for the crit-ops Debug/Activity ↔ engine proxy.
+
+Mounts only ``routes/applicant_admin_routes.py`` on a bare FastAPI app with a tiny
+middleware that sets the authenticated user + an ``auth_manager`` stub on app
+state (the real global auth gate lives in ``app.py`` and is out of scope here).
+The engine is faked two ways:
+
+* a scripted ``FakeEngine`` patched in for ``ApplicantEngineClient`` (happy paths,
+  soft-degrade on unreachable, and write error forwarding), and
+* a real :class:`ApplicantEngineClient` over an ``httpx.MockTransport`` to prove
+  the exact engine paths are hit.
+
+Zero network either way.
+"""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+import routes.applicant_admin_routes as mod
+from routes.applicant_admin_routes import setup_applicant_admin_routes
+from src.applicant_engine import ApplicantEngineClient, EngineError
+
+
+class _AuthMgr:
+    def __init__(self, *, configured: bool, admins: set[str] | None = None):
+        self.is_configured = configured
+        self._admins = admins or set()
+
+    def is_admin(self, user: str) -> bool:
+        return user in self._admins
+
+
+def _make_app(*, user="alice", configured=True, admins=("alice",)) -> FastAPI:
+    app = FastAPI()
+    app.state.auth_manager = _AuthMgr(configured=configured, admins=set(admins))
+
+    @app.middleware("http")
+    async def _auth(request, call_next):
+        request.state.current_user = user
+        return await call_next(request)
+
+    app.include_router(setup_applicant_admin_routes())
+    return app
+
+
+class FakeEngine:
+    available = True
+    calls: list = []
+    responses: dict = {}
+    raises: dict = {}
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def _maybe(self, key, *args, default=None):
+        FakeEngine.calls.append((key, *args))
+        if key in FakeEngine.raises:
+            raise FakeEngine.raises[key]
+        return FakeEngine.responses.get(key, default)
+
+    async def engine_available(self):
+        FakeEngine.calls.append(("engine_available",))
+        return FakeEngine.available
+
+    async def admin_application_history(self, cid, limit=200):
+        return await self._maybe("history", cid, default={"campaign_id": cid, "applications": []})
+
+    async def admin_application_outcomes(self, aid):
+        return await self._maybe("outcomes", aid, default={"application_id": aid, "outcomes": []})
+
+    async def admin_detections(self, cid):
+        return await self._maybe("detections", cid, default={"campaign_id": cid, "detections": []})
+
+    async def admin_workflow_state(self, aid):
+        return await self._maybe("workflow", aid, default={"application_id": aid, "steps": []})
+
+    async def admin_screenshots(self, aid):
+        return await self._maybe("screenshots", aid, default={"application_id": aid, "screenshots": []})
+
+    async def admin_logs(self, limit=100):
+        return await self._maybe("logs", default={"entries": []})
+
+    async def admin_variants(self, cid):
+        return await self._maybe("variants", cid, default={"campaign_id": cid, "variants": []})
+
+    async def admin_stealth(self):
+        return await self._maybe("stealth", default={})
+
+    async def outcome_log(self, aid):
+        return await self._maybe("log", aid, default={"application_id": aid})
+
+    async def outcome_mark_submitted(self, aid, body=None):
+        return await self._maybe("mark", aid, default={"outcome_id": "o1", "type": "submitted"})
+
+    async def outcome_detect(self, aid):
+        return await self._maybe("detect", aid, default={"detected": True})
+
+
+@pytest.fixture(autouse=True)
+def _reset():
+    FakeEngine.available = True
+    FakeEngine.calls = []
+    FakeEngine.responses = {}
+    FakeEngine.raises = {}
+    yield
+
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    return TestClient(_make_app())
+
+
+# --- auth / scoping ---------------------------------------------------------
+
+
+def test_non_admin_is_rejected(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/logs").status_code == 403
+
+
+def test_single_user_mode_allows_lone_owner(monkeypatch):
+    # Unconfigured auth manager -> no admin distinction; the lone owner is allowed.
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="", configured=False, admins=()))
+    assert c.get("/api/applicant/admin/logs").status_code == 200
+
+
+def test_configured_unauthenticated_is_rejected(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user=None, configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/logs").status_code == 401
+
+
+# --- read surfaces ----------------------------------------------------------
+
+
+def test_history_passthrough(client):
+    FakeEngine.responses["history"] = {
+        "campaign_id": "c1",
+        "applications": [{"id": "a1", "role": "SWE", "status": "submitted", "screenshot_count": 3}],
+    }
+    r = client.get("/api/applicant/admin/history/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["applications"][0]["role"] == "SWE"
+
+
+def test_history_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["history"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/history/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["applications"] == []
+
+
+def test_logs_soft_degrades(client):
+    FakeEngine.raises["logs"] = EngineError("down")
+    r = client.get("/api/applicant/admin/logs")
+    assert r.status_code == 200
+    assert r.json() == {"entries": [], "engine_available": False}
+
+
+def test_variants_passthrough(client):
+    FakeEngine.responses["variants"] = {"campaign_id": "c1", "variants": [{"id": "v1", "score": 0.9}]}
+    r = client.get("/api/applicant/admin/variants/c1")
+    assert r.status_code == 200
+    assert r.json()["variants"][0]["id"] == "v1"
+
+
+def test_workflow_and_screenshots_and_outcomes(client):
+    assert client.get("/api/applicant/admin/workflow/a1").status_code == 200
+    assert client.get("/api/applicant/admin/screenshots/a1").status_code == 200
+    assert client.get("/api/applicant/admin/outcomes/a1").status_code == 200
+
+
+def test_status_probe(client):
+    FakeEngine.available = False
+    r = client.get("/api/applicant/admin/status")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": False}
+
+
+# --- writes: mark-submitted / detect ---------------------------------------
+
+
+def test_mark_submitted_passthrough(client):
+    FakeEngine.responses["mark"] = {"outcome_id": "o9", "type": "submitted", "source": "user"}
+    r = client.post("/api/applicant/admin/applications/a1/mark-submitted", json={})
+    assert r.status_code == 200
+    assert r.json()["outcome_id"] == "o9"
+    assert ("mark", "a1") in FakeEngine.calls
+
+
+def test_mark_submitted_forwards_409_review_gate(client):
+    FakeEngine.raises["mark"] = EngineError("nope", status=409, detail="review required")
+    r = client.post("/api/applicant/admin/applications/a1/mark-submitted", json={})
+    assert r.status_code == 409
+    assert r.json()["detail"] == "review required"
+
+
+def test_mark_submitted_maps_unreachable_to_503(client):
+    FakeEngine.raises["mark"] = EngineError("conn refused")  # no status -> transport failure
+    r = client.post("/api/applicant/admin/applications/a1/mark-submitted", json={})
+    assert r.status_code == 503
+
+
+def test_detect_passthrough(client):
+    FakeEngine.responses["detect"] = {"detected": True, "outcome_id": "o2"}
+    r = client.post("/api/applicant/admin/applications/a1/detect")
+    assert r.status_code == 200
+    assert r.json()["detected"] is True
+
+
+# --- exact engine paths over a real client + MockTransport ------------------
+
+
+def _mock_transport_app(handler):
+    class TransportEngine(ApplicantEngineClient):
+        def __init__(self, *a, **k):
+            super().__init__(base_url="http://api:8000", transport=httpx.MockTransport(handler))
+
+    app = _make_app()
+    return app, TransportEngine
+
+
+def test_history_hits_exact_engine_path(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = dict(request.url.params)
+        return httpx.Response(200, json={"campaign_id": "c1", "applications": []})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.get("/api/applicant/admin/history/c1?limit=50")
+    assert r.status_code == 200
+    assert seen["path"] == "/api/admin/history/c1"
+    assert seen["query"]["limit"] == "50"
+
+
+def test_mark_submitted_hits_exact_engine_path(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["method"] = request.method
+        return httpx.Response(201, json={"outcome_id": "o1", "type": "submitted", "source": "user"})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.post("/api/applicant/admin/applications/app1/mark-submitted", json={"attributes_used": {"a": 1}})
+    assert r.status_code == 200
+    assert seen["path"] == "/api/outcomes/applications/app1/mark-submitted"
+    assert seen["method"] == "POST"

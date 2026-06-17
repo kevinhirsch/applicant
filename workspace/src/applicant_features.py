@@ -99,6 +99,21 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "channels_configured",
         "present_but_disabled": False,
     },
+    # CRIT-ops: Debug / Activity surface — read-only observability (history,
+    # screenshots, redacted logs, workflow state, variant library) plus the
+    # operator controls (update / run mode / discovery sources). The admin/ops
+    # engine routers are gated behind the engine's LLM gate, so this activates
+    # once a model is configured. nav_ids match the launcher in index.html.
+    {
+        "key": "debug",
+        "lane": None,
+        "title": "Activity / debug",
+        "nav_ids": ["tool-debug-btn"],
+        "dormant_keys": [],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
+    # end CRIT-ops
     # Compare has NO Applicant engine backing. Per the brief it ships
     # present-but-DISABLED: visible in the nav, greyed, never wired.
     {

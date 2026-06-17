@@ -728,6 +728,15 @@ from routes.applicant_internal_routes import setup_applicant_internal_routes
 app.state.research_handler = research_handler
 app.include_router(setup_applicant_internal_routes())
 
+# CRIT-ops: Debug/Activity (read-only observability) + Update button + run-mode/
+# throughput controls + discovery-source toggles. Admin-scoped engine proxies;
+# additive, disjoint prefixes (/api/applicant/admin, /api/applicant/ops).
+from routes.applicant_admin_routes import setup_applicant_admin_routes
+app.include_router(setup_applicant_admin_routes())
+from routes.applicant_ops_routes import setup_applicant_ops_routes
+app.include_router(setup_applicant_ops_routes())
+# end CRIT-ops
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
