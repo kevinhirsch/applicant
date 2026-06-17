@@ -67,6 +67,13 @@ class AggressivenessIn(BaseModel):
     aggressiveness: int = 20
 
 
+class BannedPhrasesIn(BaseModel):
+    """The owner's "no-AI-look" phrase list (FR-RESUME-5). Each phrase is stripped
+    from every generated resume/letter before it reaches review."""
+
+    phrases: list[str] = []
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
@@ -207,6 +214,34 @@ def setup_applicant_documents_routes() -> APIRouter:
                 data = await engine.set_document_aggressiveness(body.aggressiveness)
         except EngineError as exc:
             logger.info("applicant aggressiveness set failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    # ── banned-phrase ("no-AI-look") list (FR-RESUME-5) ─────────────────
+
+    @router.get("/banned-phrases")
+    async def get_banned_phrases(request: Request) -> JSONResponse:
+        """The owner's editable "no-AI-look" phrase list plus the curated baseline
+        (engine ``GET /api/documents/banned-phrases``)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.get_banned_phrases()
+        except EngineError as exc:
+            logger.info("applicant banned-phrases read unavailable: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/banned-phrases")
+    async def set_banned_phrases(body: BannedPhrasesIn, request: Request) -> JSONResponse:
+        """Replace the owner's "no-AI-look" phrase list
+        (engine ``POST /api/documents/banned-phrases``)."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.set_banned_phrases(body.phrases)
+        except EngineError as exc:
+            logger.info("applicant banned-phrases set failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 

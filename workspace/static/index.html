@@ -416,6 +416,57 @@
             <p class="memory-desc" style="margin:0;">This becomes available once the job-application assistant is set up. Finish its first-run setup, then reopen this tab.</p>
           </div>
           <div id="applicant-profile-body">
+            <!-- CRIT-profile: what-roles-to-target editor (criteria) -->
+            <div class="admin-card" id="applicant-criteria-card">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <h2 style="margin:0;font-size:1em;">What jobs to look for</h2>
+                <span style="flex:1"></span>
+                <button id="applicant-criteria-refresh-btn" class="memory-toolbar-btn" title="Reload from the assistant">Refresh</button>
+              </div>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The kinds of roles the assistant searches and applies to for you. Edit any field below — these stay plain and under your control.</p>
+              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Locations <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site">
+                </div>
+                <div>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
+                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention">
+                </div>
+                <div style="max-width:240px">
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Lowest acceptable salary</label>
+                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)">
+                </div>
+              </div>
+              <div id="applicant-crit-learned" class="hidden" style="margin-top:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(127,127,127,0.06)">
+                <div style="font-size:11px;opacity:0.7;margin-bottom:4px;display:flex;align-items:center;gap:6px"><span class="pill" style="font-size:10px;opacity:0.8">auto-tuned</span> Adjustments the assistant made from your feedback</div>
+                <div id="applicant-crit-learned-body" style="font-size:12px;opacity:0.85;white-space:pre-wrap"></div>
+                <button id="applicant-crit-clear-learned-btn" class="memory-toolbar-btn" style="margin-top:6px" title="Discard the assistant's auto-tuning and keep only your own settings">Clear auto-tuning</button>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button id="applicant-crit-save-btn" class="primary-btn" title="Save your search settings">Save</button>
+              </div>
+            </div>
+
+            <!-- CRIT-profile: AI-suggested attributes awaiting confirmation (FR-ATTR-4) -->
+            <div class="admin-card hidden" id="applicant-suggested-card">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <h2 style="margin:0;font-size:1em;">Suggested details <span id="applicant-suggested-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal"></span></h2>
+                <span style="flex:1"></span>
+                <button id="applicant-suggested-refresh-btn" class="memory-toolbar-btn" title="Reload suggestions">Refresh</button>
+              </div>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The assistant noticed these details while working. Add the ones you want; ignore the rest. Nothing is saved until you confirm it.</p>
+              <div id="applicant-suggested-list" style="display:flex;flex-direction:column;gap:8px"></div>
+            </div>
+
             <div class="admin-card">
               <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
                 <div style="flex:1;min-width:140px">
@@ -450,6 +501,40 @@
               <p class="memory-desc doclib-desc" style="margin:0 0 6px;">When the assistant prepares your resume it picks a format. Review its choice and keep it or switch back — nothing is locked in without you.</p>
               <div id="applicant-learning-body" style="font-size:13px;opacity:0.7">Loading…</div>
               <div id="applicant-learning-actions" style="display:flex;gap:8px;margin-top:8px"></div>
+            </div>
+
+            <!-- CRIT-profile: writing-style controls — banned phrases (FR-RESUME-5) + aggressiveness dial (FR-RESUME-9) -->
+            <div class="admin-card" id="applicant-style-card">
+              <h2 style="margin:0 0 4px;font-size:1em;">Writing style</h2>
+              <p class="memory-desc doclib-desc" style="margin:0 0 8px;">Keep your resumes and letters sounding like you — not like a robot.</p>
+
+              <div style="margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <label style="font-size:12px;font-weight:600">Phrases to never use</label>
+                  <span style="flex:1"></span>
+                  <button id="applicant-banned-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
+                </div>
+                <p class="memory-desc" style="margin:0 0 6px;font-size:11px;opacity:0.7">These get removed from anything the assistant writes. One phrase per line.</p>
+                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text"></textarea>
+                <div id="applicant-banned-seed" style="font-size:11px;opacity:0.6;margin-top:6px"></div>
+                <div style="margin-top:6px">
+                  <button id="applicant-banned-save-btn" class="primary-btn" title="Save your phrase list">Save phrases</button>
+                </div>
+              </div>
+
+              <div style="border-top:1px solid var(--border);padding-top:10px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <label style="font-size:12px;font-weight:600" for="applicant-aggr-slider">Tone</label>
+                  <span class="pill" style="font-size:10px;opacity:0.7" title="This control is not active yet — it is shown for an upcoming release.">coming soon</span>
+                </div>
+                <p class="memory-desc" style="margin:4px 0 6px;font-size:11px;opacity:0.7">How assertively wording leans — from measured to bold. Always truthful; this only changes framing. <em>Preview only for now.</em></p>
+                <div style="display:flex;align-items:center;gap:10px;opacity:0.5">
+                  <span style="font-size:11px">Measured</span>
+                  <input type="range" id="applicant-aggr-slider" min="0" max="100" value="20" step="5" style="flex:1" disabled aria-disabled="true" title="Not active yet">
+                  <span style="font-size:11px">Bold</span>
+                  <span id="applicant-aggr-value" style="font-size:11px;width:28px;text-align:right">20</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

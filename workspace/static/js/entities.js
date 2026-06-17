@@ -170,7 +170,197 @@ async function loadApplicantProfile() {
   _show('applicant-profile-unready', !ready);
   _show('applicant-profile-body', ready);
   if (!ready) return;
-  await Promise.all([loadProfileAttributes(), loadProfileLearning()]);
+  await Promise.all([
+    loadProfileAttributes(),
+    loadProfileLearning(),
+    loadProfileCriteria(),
+    loadSuggestedAttributes(),
+    loadBannedPhrases(),
+  ]);
+}
+
+// ===========================================================================
+// Criteria — what jobs to look for (FR-CRIT-2/3). UI-editable titles/locations/
+// work-modes/keywords/salary floor, with learned (auto-tuned) adjustments shown
+// and clearable. Integral edits route through the engine's 409 confirm gate.
+// ===========================================================================
+
+let _criteria = null;
+
+function _csvToList(s) {
+  return String(s || '').split(',').map((x) => x.trim()).filter(Boolean);
+}
+function _listToCsv(arr) {
+  return (Array.isArray(arr) ? arr : []).join(', ');
+}
+
+async function loadProfileCriteria() {
+  const res = await _profileFetch('/criteria');
+  if (!res.ok) { _criteria = null; return; }
+  _criteria = res.data || {};
+  const set = (id, v) => { const e = el(id); if (e) e.value = v; };
+  set('applicant-crit-titles', _listToCsv(_criteria.titles));
+  set('applicant-crit-locations', _listToCsv(_criteria.locations));
+  set('applicant-crit-workmodes', _listToCsv(_criteria.work_modes));
+  set('applicant-crit-keywords', _listToCsv(_criteria.keywords));
+  set('applicant-crit-salary', _criteria.salary_floor != null ? _criteria.salary_floor : '');
+  // Learned adjustments (auto-tuning the assistant applied from your feedback).
+  const learned = _criteria.learned_adjustments;
+  const card = el('applicant-crit-learned');
+  const body = el('applicant-crit-learned-body');
+  const has = learned && (Array.isArray(learned) ? learned.length : Object.keys(learned).length);
+  _show('applicant-crit-learned', !!has);
+  if (has && body) {
+    try {
+      body.textContent = typeof learned === 'string' ? learned : JSON.stringify(learned, null, 2);
+    } catch (_) { body.textContent = String(learned); }
+  }
+}
+
+async function saveProfileCriteria(confirm) {
+  const salaryRaw = (el('applicant-crit-salary') && el('applicant-crit-salary').value || '').trim();
+  const body = {
+    titles: _csvToList(el('applicant-crit-titles') && el('applicant-crit-titles').value),
+    locations: _csvToList(el('applicant-crit-locations') && el('applicant-crit-locations').value),
+    work_modes: _csvToList(el('applicant-crit-workmodes') && el('applicant-crit-workmodes').value),
+    keywords: _csvToList(el('applicant-crit-keywords') && el('applicant-crit-keywords').value),
+    confirm: !!confirm,
+  };
+  if (salaryRaw !== '') {
+    const n = parseInt(salaryRaw, 10);
+    if (!isNaN(n)) body.salary_floor = n;
+  }
+  const res = await _profileFetch('/criteria', { method: 'PUT', body: JSON.stringify(body) });
+  if (res.ok) { showToast('Search settings saved'); _criteria = res.data || _criteria; await loadProfileCriteria(); return; }
+  if (res.status === 409) {
+    // Integral change — the engine wants explicit confirmation.
+    if (window.confirm('This is a major change to what jobs are targeted. Save it anyway?')) await saveProfileCriteria(true);
+    return;
+  }
+  if (res.status === 503) { showError('The assistant is not ready yet. Try again shortly.'); return; }
+  showError(_detailOf(res.data, 'Could not save your search settings'));
+}
+
+async function clearLearnedCriteria() {
+  if (!window.confirm('Discard the assistant’s auto-tuning and keep only your own settings?')) return;
+  // clear_learned is honoured by the engine PUT; send it with confirm so an
+  // integral reset is not blocked by the gate.
+  const res = await _profileFetch('/criteria', { method: 'PUT', body: JSON.stringify({ clear_learned: true, confirm: true }) });
+  if (res.ok) { showToast('Auto-tuning cleared'); await loadProfileCriteria(); return; }
+  showError(_detailOf(res.data, 'Could not clear auto-tuning'));
+}
+
+// ===========================================================================
+// Suggested attributes — the confirm queue for engine-proposed details
+// (FR-ATTR-4). The assistant proposes non-sensitive details it noticed; the
+// owner confirms (commit via ai-add) or dismisses. We surface suggestions from
+// the status payload's pending list when present; otherwise the section hides.
+// ===========================================================================
+
+const _dismissedSuggestions = new Set();
+
+async function loadSuggestedAttributes() {
+  // Suggestions ride along on /status (engine-proposed, awaiting confirm). If the
+  // engine does not surface any, the card stays hidden — no empty noise.
+  let items = [];
+  try {
+    const res = await _profileFetch('/status');
+    const s = res.data || {};
+    const raw = s.suggested_attributes || s.pending_attributes || [];
+    if (Array.isArray(raw)) items = raw;
+  } catch (_) { items = []; }
+  items = items.filter((it) => it && it.name && !_dismissedSuggestions.has(it.name + '=' + (it.value || '')));
+  const card = el('applicant-suggested-card');
+  const list = el('applicant-suggested-list');
+  const count = el('applicant-suggested-count');
+  if (count) count.textContent = items.length ? items.length : '';
+  _show('applicant-suggested-card', items.length > 0);
+  if (!list) return;
+  list.innerHTML = '';
+  items.forEach((it) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:10px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;gap:8px';
+    row.innerHTML = `<div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">${escapeHtml(it.name)}</div>
+        <div style="font-size:12px;opacity:0.75;word-break:break-word">${escapeHtml(it.value || '')}</div>
+      </div>`;
+    const add = document.createElement('button');
+    add.className = 'primary-btn'; add.textContent = 'Add'; add.title = 'Confirm and save this detail';
+    add.addEventListener('click', () => confirmSuggestedAttribute(it));
+    const skip = document.createElement('button');
+    skip.className = 'memory-toolbar-btn'; skip.textContent = 'Dismiss'; skip.title = 'Ignore this suggestion';
+    skip.addEventListener('click', () => { _dismissedSuggestions.add(it.name + '=' + (it.value || '')); loadSuggestedAttributes(); });
+    row.appendChild(add); row.appendChild(skip);
+    list.appendChild(row);
+  });
+}
+
+async function confirmSuggestedAttribute(it, confirm) {
+  const body = { name: it.name, value: it.value || '', confirm: !!confirm };
+  const res = await _profileFetch('/attributes/ai-add', { method: 'POST', body: JSON.stringify(body) });
+  if (res.ok) {
+    showToast('Detail added');
+    _dismissedSuggestions.add(it.name + '=' + (it.value || ''));
+    await Promise.all([loadSuggestedAttributes(), loadProfileAttributes()]);
+    return;
+  }
+  if (res.status === 409) {
+    if (window.confirm(`"${it.name}" looks like a core detail. Add it anyway?`)) await confirmSuggestedAttribute(it, true);
+    return;
+  }
+  if (res.status === 422) { showError('Sensitive details must be typed in by you — they are never guessed.'); return; }
+  showError(_detailOf(res.data, 'Could not add that detail'));
+}
+
+// ===========================================================================
+// Writing style — banned "no-AI-look" phrases (FR-RESUME-5) and the grayed
+// aggressiveness dial (FR-RESUME-9). Banned phrases call the documents proxy.
+// ===========================================================================
+
+const DOCS_API = `${window.location.origin}/api/applicant/documents`;
+
+async function _docsFetch(path, opts) {
+  try {
+    const r = await fetch(`${DOCS_API}${path}`, {
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      ...(opts || {}),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    console.error('docsFetch', path, e);
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+async function loadBannedPhrases() {
+  const res = await _docsFetch('/banned-phrases');
+  const input = el('applicant-banned-input');
+  const seed = el('applicant-banned-seed');
+  if (!res.ok) {
+    if (seed) seed.textContent = '';
+    return;
+  }
+  const d = res.data || {};
+  if (input) input.value = (d.phrases || []).join('\n');
+  if (seed) {
+    const baseline = d.seed_phrases || [];
+    seed.textContent = baseline.length
+      ? `Always removed (built-in): ${baseline.join(', ')}`
+      : '';
+  }
+}
+
+async function saveBannedPhrases() {
+  const input = el('applicant-banned-input');
+  const phrases = String(input && input.value || '')
+    .split('\n').map((x) => x.trim()).filter(Boolean);
+  const res = await _docsFetch('/banned-phrases', { method: 'POST', body: JSON.stringify({ phrases }) });
+  if (res.ok) { showToast('Phrase list saved'); await loadBannedPhrases(); return; }
+  if (res.status === 403) { showError('You do not have permission to change this.'); return; }
+  showError((res.data && res.data.message) || 'Could not save the phrase list');
 }
 
 async function loadProfileAttributes() {
@@ -190,13 +380,127 @@ async function loadProfileAttributes() {
     const tags = [];
     if (a.is_sensitive) tags.push('<span class="pill" style="font-size:10px;opacity:0.7" title="Only ever taken from what you type — never guessed">sensitive</span>');
     if (a.is_integral) tags.push('<span class="pill" style="font-size:10px;opacity:0.7" title="A core detail — changing it asks you to confirm">core</span>');
-    card.innerHTML = `
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:13px">${escapeHtml(a.name)} ${tags.join(' ')}</div>
-        <div style="font-size:12px;opacity:0.75;word-break:break-word">${escapeHtml(a.value)}</div>
-      </div>`;
+    const main = document.createElement('div');
+    main.style.cssText = 'flex:1;min-width:0';
+    main.innerHTML = `
+      <div style="font-weight:600;font-size:13px">${escapeHtml(a.name)} ${tags.join(' ')}</div>
+      <div style="font-size:12px;opacity:0.75;word-break:break-word">${escapeHtml(a.value)}</div>`;
+    card.appendChild(main);
+
+    // Edit / Bind / Delete affordances (FR-ATTR-2/3).
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0';
+    const editBtn = document.createElement('button');
+    editBtn.className = 'memory-toolbar-btn';
+    editBtn.textContent = 'Edit';
+    editBtn.title = 'Change this value';
+    editBtn.addEventListener('click', () => startAttrEdit(card, a));
+    const bindBtn = document.createElement('button');
+    bindBtn.className = 'memory-toolbar-btn';
+    bindBtn.textContent = 'Bind';
+    bindBtn.title = 'Pin this detail to a specific application form field';
+    bindBtn.addEventListener('click', () => startAttrBind(card, a));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'memory-toolbar-btn danger';
+    delBtn.textContent = 'Delete';
+    delBtn.title = 'Remove this detail';
+    delBtn.addEventListener('click', () => deleteProfileAttribute(a));
+    actions.appendChild(editBtn);
+    actions.appendChild(bindBtn);
+    actions.appendChild(delBtn);
+    card.appendChild(actions);
     list.appendChild(card);
   });
+}
+
+// --- attribute edit (re-uses the upsert endpoint; same name overwrites) -----
+function startAttrEdit(card, a) {
+  const row = document.createElement('div');
+  row.style.cssText = 'flex:1;display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = a.value;
+  input.style.cssText = 'flex:1;min-width:120px';
+  const save = document.createElement('button');
+  save.className = 'primary-btn';
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.className = 'memory-toolbar-btn';
+  cancel.textContent = 'Cancel';
+  row.appendChild(input);
+  row.appendChild(save);
+  row.appendChild(cancel);
+  card.innerHTML = '';
+  const label = document.createElement('div');
+  label.style.cssText = 'font-weight:600;font-size:13px;margin-right:8px';
+  label.textContent = a.name;
+  card.appendChild(label);
+  card.appendChild(row);
+  input.focus();
+  input.select();
+  cancel.addEventListener('click', loadProfileAttributes);
+  const commit = async (confirm) => {
+    const value = input.value.trim();
+    if (!value) { showError('Value cannot be empty'); return; }
+    const body = { name: a.name, value, is_sensitive: !!a.is_sensitive, is_integral: !!a.is_integral, confirm: !!confirm };
+    const res = await _profileFetch('/attributes', { method: 'POST', body: JSON.stringify(body) });
+    if (res.ok) { showToast('Detail updated'); await loadProfileAttributes(); return; }
+    if (res.status === 409) {
+      if (window.confirm(`"${a.name}" is a core detail. Save the new value anyway?`)) await commit(true);
+      return;
+    }
+    if (res.status === 422) { showError('Sensitive details must be typed in by you — they are never guessed.'); return; }
+    showError(_detailOf(res.data, 'Could not update that detail'));
+  };
+  save.addEventListener('click', () => commit(false));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(false); if (e.key === 'Escape') loadProfileAttributes(); });
+}
+
+// --- attribute -> form-field binding (FR-ATTR-2) ----------------------------
+function startAttrBind(card, a) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:6px';
+  wrap.innerHTML = `<div style="font-weight:600;font-size:13px">Pin “${escapeHtml(a.name)}” to a form field</div>`;
+  const siteIn = document.createElement('input');
+  siteIn.type = 'text'; siteIn.placeholder = 'Site (e.g. greenhouse)'; siteIn.title = 'Which application site this field is on';
+  const selIn = document.createElement('input');
+  selIn.type = 'text'; selIn.placeholder = 'Field (e.g. #phone)'; selIn.title = 'The form field this detail should fill';
+  const sharedLabel = document.createElement('label');
+  sharedLabel.style.cssText = 'font-size:11px;opacity:0.75;display:flex;align-items:center;gap:5px';
+  sharedLabel.innerHTML = '<input type="checkbox"> Reuse this mapping across sites';
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:6px';
+  const save = document.createElement('button');
+  save.className = 'primary-btn'; save.textContent = 'Save mapping';
+  const cancel = document.createElement('button');
+  cancel.className = 'memory-toolbar-btn'; cancel.textContent = 'Cancel';
+  btnRow.appendChild(save); btnRow.appendChild(cancel);
+  wrap.appendChild(siteIn); wrap.appendChild(selIn); wrap.appendChild(sharedLabel); wrap.appendChild(btnRow);
+  card.innerHTML = '';
+  card.style.alignItems = 'stretch';
+  card.appendChild(wrap);
+  siteIn.focus();
+  cancel.addEventListener('click', loadProfileAttributes);
+  save.addEventListener('click', async () => {
+    const site_key = siteIn.value.trim();
+    const field_selector = selIn.value.trim();
+    if (!site_key || !field_selector) { showError('Enter both a site and a field'); return; }
+    const body = {
+      site_key, field_selector, attribute_id: a.id,
+      shared: !!sharedLabel.querySelector('input').checked,
+    };
+    const res = await _profileFetch('/attributes/bind', { method: 'POST', body: JSON.stringify(body) });
+    if (res.ok) { showToast('Field mapping saved'); await loadProfileAttributes(); return; }
+    if (res.status === 503) { showError('The assistant is not ready yet. Try again shortly.'); return; }
+    showError(_detailOf(res.data, 'Could not save that mapping'));
+  });
+}
+
+async function deleteProfileAttribute(a) {
+  if (!window.confirm(`Remove "${a.name}"?`)) return;
+  const res = await _profileFetch(`/attributes/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
+  if (res.ok) { showToast('Detail removed'); await loadProfileAttributes(); return; }
+  showError(_detailOf(res.data, 'Could not remove that detail'));
 }
 
 async function addProfileAttribute(confirm) {
@@ -301,8 +605,27 @@ export function initApplicantProfile() {
   // Enter-to-add from the value field.
   const valueEl = el('applicant-attr-value');
   if (valueEl) valueEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') addProfileAttribute(false); });
+
+  // Criteria editor.
+  const critSave = el('applicant-crit-save-btn'); if (critSave) critSave.addEventListener('click', () => saveProfileCriteria(false));
+  const critRefresh = el('applicant-criteria-refresh-btn'); if (critRefresh) critRefresh.addEventListener('click', loadProfileCriteria);
+  const critClear = el('applicant-crit-clear-learned-btn'); if (critClear) critClear.addEventListener('click', clearLearnedCriteria);
+
+  // Suggested-attribute queue.
+  const sugRefresh = el('applicant-suggested-refresh-btn'); if (sugRefresh) sugRefresh.addEventListener('click', loadSuggestedAttributes);
+
+  // Writing style — banned phrases + (grayed) aggressiveness.
+  const banSave = el('applicant-banned-save-btn'); if (banSave) banSave.addEventListener('click', saveBannedPhrases);
+  const banRefresh = el('applicant-banned-refresh-btn'); if (banRefresh) banRefresh.addEventListener('click', loadBannedPhrases);
+  const aggr = el('applicant-aggr-slider');
+  const aggrVal = el('applicant-aggr-value');
+  if (aggr && aggrVal) aggr.addEventListener('input', () => { aggrVal.textContent = aggr.value; });
 }
 
-const entitiesModule = { loadEntities, initEntities, initApplicantProfile, loadApplicantProfile };
+const entitiesModule = {
+  loadEntities, initEntities, initApplicantProfile, loadApplicantProfile,
+  loadProfileCriteria, saveProfileCriteria, clearLearnedCriteria,
+  loadSuggestedAttributes, loadBannedPhrases, saveBannedPhrases,
+};
 export default entitiesModule;
 window.entitiesModule = entitiesModule;

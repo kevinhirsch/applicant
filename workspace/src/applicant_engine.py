@@ -346,6 +346,21 @@ class ApplicantEngineClient:
     async def acquire_missing_attribute(self, body: dict) -> Any:
         return await self._request("POST", "/api/attributes/acquire-missing", json=body)
 
+    # CRIT-profile: attribute delete (FR-ATTR-3) + banned-phrase list (FR-RESUME-5).
+    async def delete_attribute(self, campaign_id: str, attribute_id: str) -> Any:
+        return await self._request(
+            "DELETE", f"/api/attributes/{campaign_id}/{attribute_id}"
+        )
+
+    async def get_banned_phrases(self) -> Any:
+        return await self._request("GET", "/api/documents/banned-phrases")
+
+    async def set_banned_phrases(self, phrases: list[str]) -> Any:
+        return await self._request(
+            "POST", "/api/documents/banned-phrases", json={"phrases": phrases}
+        )
+    # CRIT-profile: end
+
     # -- conversion / learning (Lane B) ----------------------------------
 
     async def conversion_engine(self, campaign_id: str) -> Any:

@@ -249,6 +249,22 @@ def test_bind_attribute_maps_fields():
     assert "greenhouse" in captured["body"] and "#phone" in captured["body"]
 
 
+def test_delete_attribute_maps_to_engine_delete():
+    seen = {}
+
+    def handler(request):
+        if request.url.path == "/api/attributes/camp-1/a7" and request.method == "DELETE":
+            seen["hit"] = True
+            return httpx.Response(200, json={"deleted": True, "id": "a7"})
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.delete("/api/applicant/memory/attributes/a7")
+    assert resp.status_code == 200
+    assert seen.get("hit") is True
+    assert resp.json()["deleted"] is True
+
+
 def test_acquire_missing():
     def handler(request):
         if request.url.path == "/api/attributes/acquire-missing" and request.method == "POST":

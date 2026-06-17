@@ -317,6 +317,11 @@ class AttributeRepo:
         ).all()
         return [_attr_to_entity(r) for r in rows]
 
+    def delete(self, attribute_id: AttributeId) -> None:  # CRIT-profile: FR-ATTR-3
+        row = self._s.get(m.AttributeModel, attribute_id)
+        if row is not None:
+            self._s.delete(row)
+
 
 class JobPostingRepo:
     def __init__(self, session: Session) -> None:

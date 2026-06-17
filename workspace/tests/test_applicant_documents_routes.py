@@ -66,6 +66,12 @@ class _FakeEngine:
     async def set_document_aggressiveness(self, value):
         return await self._dispatch("set_document_aggressiveness", value)
 
+    async def get_banned_phrases(self):
+        return await self._dispatch("get_banned_phrases")
+
+    async def set_banned_phrases(self, phrases):
+        return await self._dispatch("set_banned_phrases", phrases)
+
 
 def _make_client(*, authed: bool = True):
     """Bare app with only the documents router mounted.
@@ -163,6 +169,27 @@ def test_aggressiveness_forwards_value(monkeypatch):
     )
     assert resp.status_code == 200
     assert _FakeEngine.last_call == ("set_document_aggressiveness", (42,))
+
+
+# ── banned phrases (FR-RESUME-5) ─────────────────────────────────────────────
+
+
+def test_banned_phrases_get_passes_through(monkeypatch):
+    payload = {"phrases": ["circle back"], "seed_phrases": ["delve into"]}
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/banned-phrases")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("get_banned_phrases", ())
+
+
+def test_banned_phrases_set_forwards_list(monkeypatch):
+    _patch_engine(monkeypatch, result={"phrases": ["circle back"], "seed_phrases": []})
+    resp = _make_client().post(
+        "/api/applicant/documents/banned-phrases", json={"phrases": ["circle back"]}
+    )
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("set_banned_phrases", (["circle back"],))
 
 
 # ── error translation ───────────────────────────────────────────────────────
