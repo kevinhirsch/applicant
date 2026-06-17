@@ -1215,7 +1215,7 @@ async function _finish() {
 
   const list = missing.map((m) => m.label).join(', ').replace(/, ([^,]*)$/, ' and $1');
   const jumpBtns = missing.map((m) =>
-    `<button class="cal-btn ao-finish-jump" data-step="${esc(m.key)}" style="margin:4px 6px 0 0;">${esc(m.label.replace(/^./, (c) => c.toUpperCase()))}</button>`
+    `<button class="cal-btn ao-finish-jump" data-step="${esc(m.key)}">${esc(m.label.replace(/^./, (c) => c.toUpperCase()))}</button>`
   ).join('');
   _setBody(`
     <div style="padding:24px 0;text-align:center;">
@@ -1223,7 +1223,7 @@ async function _finish() {
       <p style="max-width:440px;margin:0 auto 12px;">
         To let Applicant start, ${esc(list)}.
       </p>
-      <div style="display:flex;flex-wrap:wrap;justify-content:center;">${jumpBtns}</div>
+      <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:4px;">${jumpBtns}</div>
     </div>`);
   _setFoot('');
   const nav = document.getElementById('ao-nav');

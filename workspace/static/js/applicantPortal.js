@@ -188,7 +188,7 @@ function _ensureModalEl() {
           Pending
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-portal-refresh" title="Refresh the list" style="font-size:11px;padding:2px 10px;">Refresh</button>
+          <button class="cal-btn" id="applicant-portal-refresh" title="Refresh the list">Refresh</button>
           <button class="close-btn" id="applicant-portal-close" title="Close">✖</button>
         </div>
       </div>
@@ -261,13 +261,13 @@ function _rowShell(item, inner) {
   const title = item.title || meta.label;
   const where = item.campaign_name ? `<span style="opacity:0.55;">· ${esc(item.campaign_name)}</span>` : '';
   return `
-    <div class="applicant-portal-row" data-action-id="${esc(item.id)}" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;">
+    <div class="admin-card applicant-portal-row" data-action-id="${esc(item.id)}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(title)}</div>
           <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${where}</div>
         </div>
-        <button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="font-size:11px;padding:2px 8px;flex-shrink:0;">Done</button>
+        <button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>
       </div>
       <div class="applicant-portal-row-body" style="margin-top:8px;">${inner}</div>
     </div>`;
@@ -279,7 +279,7 @@ function _renderAnswer(item) {
     <div style="display:flex;gap:8px;align-items:flex-end;">
       <textarea class="applicant-portal-answer" rows="2" placeholder="Type your answer…"
                 style="flex:1;resize:vertical;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:12px;"></textarea>
-      <button type="button" class="cal-btn cal-btn-primary applicant-portal-send-answer" data-action-id="${esc(item.id)}" style="font-size:11px;padding:4px 12px;">Send</button>
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-send-answer" data-action-id="${esc(item.id)}">Send</button>
     </div>`;
 }
 
@@ -287,7 +287,7 @@ function _renderReview(item) {
   const hint = _meta(item.kind).hint || 'Open the side-by-side review.';
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
-    <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${esc(_appId(item))}" style="font-size:11px;padding:4px 12px;">Review</button>`;
+    <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${esc(_appId(item))}">Review</button>`;
 }
 
 function _renderMissing(item) {
@@ -304,7 +304,7 @@ function _renderMissing(item) {
       <input type="text" class="applicant-portal-missing-value" placeholder="Value"
              style="flex:2;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-save-missing"
-              data-action-id="${esc(item.id)}" data-campaign-id="${esc(cid)}" style="font-size:11px;padding:5px 12px;">Save &amp; continue</button>
+              data-action-id="${esc(item.id)}" data-campaign-id="${esc(cid)}">Save &amp; continue</button>
     </div>`;
 }
 
@@ -332,7 +332,7 @@ function _renderSession(item) {
   let action = '';
   if (url || appId) {
     action = `<button type="button" class="cal-btn cal-btn-primary applicant-portal-session"
-                data-app-id="${esc(appId)}" data-session-url="${esc(url)}" style="font-size:11px;padding:4px 12px;">Open live session</button>`;
+                data-app-id="${esc(appId)}" data-session-url="${esc(url)}">Open live session</button>`;
   } else {
     action = `<div style="font-size:12px;opacity:0.7;">When the live session is ready, a link will appear here.</div>`;
   }
@@ -342,7 +342,7 @@ function _renderSession(item) {
 function _renderDigest(item) {
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">Review the matched roles and approve or skip each one.</div>
-    <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest" style="font-size:11px;padding:4px 12px;">Review applications</button>`;
+    <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review applications</button>`;
 }
 
 // Final-submit approval (D2). Inline in the Portal: confirm the role/company and
@@ -365,12 +365,10 @@ function _renderFinal(item) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="button" class="cal-btn applicant-portal-final-self"
               data-app-id="${esc(appId)}" data-label="${esc(label)}"
-              title="Open the live session and click submit yourself"
-              style="font-size:11px;padding:4px 12px;">I'll submit it myself (open live session)</button>
+              title="Open the live session and click submit yourself">I'll submit it myself (open live session)</button>
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-final-authorize"
               data-app-id="${esc(appId)}" data-action-id="${esc(item.id)}" data-label="${esc(label)}"
-              title="Let the assistant click the final submit, just this once"
-              style="font-size:11px;padding:4px 12px;">Authorize Applicant to submit this</button>
+              title="Let the assistant click the final submit, just this once">Authorize Applicant to submit this</button>
     </div>`;
 }
 
@@ -629,8 +627,8 @@ function _digestHost() {
 
 function _digestSectionShell() {
   const picker = (_digestCampaigns.length > 1)
-    ? `<select id="applicant-portal-digest-campaign" title="Choose which job search to show today's roles for"
-               style="margin-left:auto;max-width:200px;font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);"></select>`
+    ? `<select id="applicant-portal-digest-campaign" class="settings-select" title="Choose which job search to show today's roles for"
+               style="flex:0 1 auto;margin-left:auto;max-width:200px;"></select>`
     : '';
   return `
     <div style="display:flex;align-items:center;gap:8px;margin:2px 2px 6px;">

@@ -102,7 +102,7 @@ function _ensureModalEl() {
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
           Job search
-          <select id="applicant-debug-campaign" style="min-width:180px;"></select>
+          <select id="applicant-debug-campaign" class="settings-select" style="min-width:180px;"></select>
         </label>
         <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
       </div>
@@ -218,8 +218,8 @@ async function _renderActivity() {
         </div>
       </div>
       <div style="display:flex;gap:6px;flex-shrink:0;">
-        <button class="admin-btn applicant-debug-detail" data-app="${esc(id)}">Details</button>
-        <button class="admin-btn applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
+        <button class="admin-btn-sm applicant-debug-detail" data-app="${esc(id)}">Details</button>
+        <button class="admin-btn-sm applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
       </div>
     </div>`;
   }).join('');
@@ -246,7 +246,7 @@ async function _showAppDetail(appId) {
   host.innerHTML = `<div class="admin-card" style="border:1px solid var(--border,#3334);">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <strong>Application ${esc(appId)}</strong>
-      <button class="admin-btn" id="applicant-debug-detail-close">Close</button>
+      <button class="admin-btn-sm" id="applicant-debug-detail-close">Close</button>
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Screenshots</strong> (${shotList.length})</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
@@ -325,15 +325,15 @@ async function _renderRun() {
     <div class="admin-card">
       <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">How it runs
-        <select id="applicant-run-mode" style="display:block;margin-top:4px;min-width:220px;">
+        <select id="applicant-run-mode" class="settings-select" style="display:block;margin-top:4px;min-width:220px;">
           ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(last.run_mode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
       </label>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">Applications per day (target)
-        <input type="number" id="applicant-run-target" min="0" value="${esc(last.throughput_target != null ? last.throughput_target : '')}" style="display:block;margin-top:4px;width:120px;" />
+        <input type="number" id="applicant-run-target" class="settings-select" min="0" value="${esc(last.throughput_target != null ? last.throughput_target : '')}" style="display:block;margin-top:4px;width:120px;" />
       </label>
       <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
-      <button class="admin-btn" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
+      <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
     </div>`;
   _body().querySelector('#applicant-run-save').addEventListener('click', async () => {
     const mode = _body().querySelector('#applicant-run-mode').value;
@@ -397,7 +397,7 @@ async function _renderUpdate() {
         Runs the safe one-click update: backs up your data, applies the latest version, and restarts.
         No command line needed. If updates aren't enabled on this install, it will tell you what it would do.
       </div>
-      <button class="admin-btn" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
+      <button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
       <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
     </div>`;
   _body().querySelector('#applicant-update-go').addEventListener('click', async () => {

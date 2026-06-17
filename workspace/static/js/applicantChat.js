@@ -117,8 +117,8 @@ function _renderNoCampaign(body) {
         anything you like.
       </div>
       <div style="display:flex;gap:8px;justify-content:center;max-width:360px;margin:0 auto;">
-        <input type="text" id="applicant-new-campaign" placeholder="e.g. Backend roles 2026"
-               style="flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);" />
+        <input type="text" id="applicant-new-campaign" class="settings-select" placeholder="e.g. Backend roles 2026"
+               style="flex:1;" />
         <button type="button" class="cal-btn cal-btn-primary" id="applicant-create-campaign">Create</button>
       </div>
     </div>`;
@@ -155,8 +155,8 @@ function _campaignPicker() {
   ).join('');
   return `
     <label class="assistant-field" style="margin-bottom:10px;">
-      <span style="font-size:11px;opacity:0.7;">Job search</span>
-      <select id="applicant-campaign-pick" style="width:100%;">${opts}</select>
+      <span>Job search</span>
+      <select id="applicant-campaign-pick">${opts}</select>
     </label>`;
 }
 
@@ -265,7 +265,7 @@ function _renderProposals(proposals) {
       ? '<span style="color:var(--success,#3a8a3a);font-size:11px;">saved automatically</span>'
       : (needs ? '' : '<span style="opacity:0.6;font-size:11px;">no change needed</span>');
     const confirmBtn = needs
-      ? `<button type="button" class="cal-btn cal-btn-primary applicant-confirm-btn" data-idx="${i}" style="font-size:11px;padding:2px 10px;">Confirm</button>`
+      ? `<button type="button" class="cal-btn cal-btn-primary applicant-confirm-btn" data-idx="${i}">Confirm</button>`
       : '';
     return `
       <div class="applicant-proposal" data-idx="${i}" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;">
@@ -375,7 +375,7 @@ async function _loadPending() {
           <strong>${esc(count)} item${count === 1 ? '' : 's'} need your attention</strong>
           <div style="opacity:0.6;font-size:11px;">Review and act on these in your Pending home base.</div>
         </div>
-        <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="font-size:11px;padding:2px 10px;flex-shrink:0;">Open Pending</button>
+        <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="flex-shrink:0;">Open Pending</button>
       </div>`;
     const openBtn = host.querySelector('#applicant-open-portal');
     if (openBtn) {
