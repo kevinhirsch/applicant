@@ -1404,6 +1404,14 @@ function initializeEventListeners() {
     .then(m => m.maybeLaunchOnboarding && m.maybeLaunchOnboarding())
     .catch(() => {});
 
+  // CRIT-portal: load the standalone Pending-Actions Portal. It self-boots (wires
+  // the #rail-portal launcher, seeds + polls its live count badge, and opens its
+  // own modal). The portal is NOT gated by the Applicant feature layer — it is a
+  // primary home-base that aggregates across all of the owner's campaigns — so it
+  // is intentionally imported here unconditionally and not added to nav gating.
+  import('./js/applicantPortal.js').catch(() => {});
+  // CRIT-portal end
+
   // Hide Gallery when image generation is disabled in settings
   const _prefetchedSettings = sessionStorage.getItem('ody-prefetch-settings');
   sessionStorage.removeItem('ody-prefetch-settings');

@@ -719,6 +719,12 @@ app.include_router(setup_applicant_chat_routes())
 # Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
 from routes.applicant_email_routes import setup_applicant_email_routes
 app.include_router(setup_applicant_email_routes())
+# CRIT-portal: Pending-Actions Portal (primary home-base) — aggregates every open
+# pending action across ALL the owner's campaigns into one feed + resolve +
+# supply-a-missing-detail (/api/applicant/portal/*). Auth-protected, owner-scoped.
+from routes.applicant_portal_routes import setup_applicant_portal_routes
+app.include_router(setup_applicant_portal_routes())
+# CRIT-portal end
 # Stage 2.5 — ENGINE -> WORKSPACE callback channel (/api/applicant/internal/*).
 # Gated in AuthMiddleware by the shared APPLICANT_INTERNAL_TOKEN (NOT loopback,
 # since the engine calls from a sibling container). Disabled when no token is set.
