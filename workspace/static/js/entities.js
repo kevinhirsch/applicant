@@ -374,68 +374,110 @@ async function loadProfileAttributes() {
   list.innerHTML = '';
   if (!items.length) { if (empty) empty.style.display = ''; return; }
   if (empty) empty.style.display = 'none';
+  // Lifted from memory.js renderMemoryList (workspace/static/js/memory.js,
+  // ~line 579): a `.memory-item` row with `.memory-item-content`
+  // (`.memory-item-text` + `.memory-item-meta` pill badges) and a hover-revealed
+  // `.memory-item-actions` cluster of `.memory-item-btn`s. Reusing the same
+  // markup + classes gives the Profile attributes the workspace memory styling
+  // and inline-edit behavior. The engine-backed proxy calls below are unchanged.
   items.forEach((a) => {
-    const card = document.createElement('div');
-    card.style.cssText = 'padding:10px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;gap:8px';
-    const tags = [];
-    if (a.is_sensitive) tags.push('<span class="pill" style="font-size:10px;opacity:0.7" title="Only ever taken from what you type — never guessed">sensitive</span>');
-    if (a.is_integral) tags.push('<span class="pill" style="font-size:10px;opacity:0.7" title="A core detail — changing it asks you to confirm">core</span>');
-    const main = document.createElement('div');
-    main.style.cssText = 'flex:1;min-width:0';
-    main.innerHTML = `
-      <div style="font-weight:600;font-size:13px">${escapeHtml(a.name)} ${tags.join(' ')}</div>
-      <div style="font-size:12px;opacity:0.75;word-break:break-word">${escapeHtml(a.value)}</div>`;
-    card.appendChild(main);
+    const item = document.createElement('div');
+    item.className = 'memory-item';
 
-    // Edit / Bind / Delete affordances (FR-ATTR-2/3).
+    const content = document.createElement('div');
+    content.className = 'memory-item-content';
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'memory-item-text';
+    textSpan.innerHTML = `<strong>${escapeHtml(a.name)}</strong>: ${escapeHtml(a.value)}`;
+    textSpan.style.cursor = 'text';
+    textSpan.title = 'Double-click to edit';
+    textSpan.addEventListener('dblclick', (e) => { e.stopPropagation(); startAttrEdit(item, a); });
+
+    const meta = document.createElement('div');
+    meta.className = 'memory-item-meta';
+    if (a.is_sensitive) {
+      const b = document.createElement('span');
+      b.className = 'memory-cat-badge';
+      b.textContent = 'sensitive';
+      b.title = 'Only ever taken from what you type — never guessed';
+      meta.appendChild(b);
+    }
+    if (a.is_integral) {
+      const b = document.createElement('span');
+      b.className = 'memory-cat-badge memory-cat-pinned';
+      b.textContent = 'core';
+      b.title = 'A core detail — changing it asks you to confirm';
+      meta.appendChild(b);
+    }
+
+    content.appendChild(textSpan);
+    content.appendChild(meta);
+    item.appendChild(content);
+
+    // Edit / Bind / Delete affordances — same `.memory-item-actions` /
+    // `.memory-item-btn` cluster as the memory rows.
     const actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;gap:4px;flex-shrink:0';
+    actions.className = 'memory-item-actions';
     const editBtn = document.createElement('button');
-    editBtn.className = 'memory-toolbar-btn';
-    editBtn.textContent = 'Edit';
+    editBtn.className = 'memory-item-btn';
+    editBtn.textContent = 'edit';
     editBtn.title = 'Change this value';
-    editBtn.addEventListener('click', () => startAttrEdit(card, a));
+    editBtn.addEventListener('click', () => startAttrEdit(item, a));
     const bindBtn = document.createElement('button');
-    bindBtn.className = 'memory-toolbar-btn';
-    bindBtn.textContent = 'Bind';
+    bindBtn.className = 'memory-item-btn';
+    bindBtn.textContent = 'bind';
     bindBtn.title = 'Pin this detail to a specific application form field';
-    bindBtn.addEventListener('click', () => startAttrBind(card, a));
+    bindBtn.addEventListener('click', () => startAttrBind(item, a));
     const delBtn = document.createElement('button');
-    delBtn.className = 'memory-toolbar-btn danger';
-    delBtn.textContent = 'Delete';
+    delBtn.className = 'memory-item-btn delete';
+    delBtn.textContent = 'delete';
     delBtn.title = 'Remove this detail';
     delBtn.addEventListener('click', () => deleteProfileAttribute(a));
     actions.appendChild(editBtn);
     actions.appendChild(bindBtn);
     actions.appendChild(delBtn);
-    card.appendChild(actions);
-    list.appendChild(card);
+    item.appendChild(actions);
+
+    list.appendChild(item);
   });
 }
 
 // --- attribute edit (re-uses the upsert endpoint; same name overwrites) -----
-function startAttrEdit(card, a) {
-  const row = document.createElement('div');
-  row.style.cssText = 'flex:1;display:flex;gap:6px;align-items:center;flex-wrap:wrap';
+// Lifted from memory.js startInlineEdit (~line 862): swap the row for a
+// `.memory-edit-row` holding a `.memory-item-edit-input`, plus a
+// `.memory-item-actions` save/cancel pair, with Enter=save / Escape=cancel.
+function startAttrEdit(item, a) {
+  item.innerHTML = '';
+  item.className = 'memory-item memory-item-editing';
+
+  const editRow = document.createElement('div');
+  editRow.className = 'memory-edit-row';
+  const label = document.createElement('span');
+  label.className = 'memory-item-text';
+  label.style.cssText = 'flex-shrink:0;align-self:center';
+  label.innerHTML = `<strong>${escapeHtml(a.name)}</strong>`;
   const input = document.createElement('input');
   input.type = 'text';
+  input.className = 'memory-item-edit-input';
   input.value = a.value;
-  input.style.cssText = 'flex:1;min-width:120px';
+  editRow.appendChild(label);
+  editRow.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'memory-item-actions';
+  actions.style.opacity = '1';
   const save = document.createElement('button');
-  save.className = 'primary-btn';
-  save.textContent = 'Save';
+  save.className = 'memory-item-btn save';
+  save.textContent = 'save';
   const cancel = document.createElement('button');
-  cancel.className = 'memory-toolbar-btn';
-  cancel.textContent = 'Cancel';
-  row.appendChild(input);
-  row.appendChild(save);
-  row.appendChild(cancel);
-  card.innerHTML = '';
-  const label = document.createElement('div');
-  label.style.cssText = 'font-weight:600;font-size:13px;margin-right:8px';
-  label.textContent = a.name;
-  card.appendChild(label);
-  card.appendChild(row);
+  cancel.className = 'memory-item-btn';
+  cancel.textContent = 'cancel';
+  actions.appendChild(save);
+  actions.appendChild(cancel);
+
+  item.appendChild(editRow);
+  item.appendChild(actions);
   input.focus();
   input.select();
   cancel.addEventListener('click', loadProfileAttributes);
@@ -456,29 +498,34 @@ function startAttrEdit(card, a) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(false); if (e.key === 'Escape') loadProfileAttributes(); });
 }
 
-// --- attribute -> form-field binding (FR-ATTR-2) ----------------------------
-function startAttrBind(card, a) {
+// --- attribute -> form-field binding ----------------------------------------
+// Same inline-edit-in-place pattern as startAttrEdit: replace the
+// `.memory-item` row's contents with the bind form.
+function startAttrBind(item, a) {
+  item.innerHTML = '';
+  item.className = 'memory-item memory-item-editing';
   const wrap = document.createElement('div');
   wrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:6px';
-  wrap.innerHTML = `<div style="font-weight:600;font-size:13px">Pin “${escapeHtml(a.name)}” to a form field</div>`;
+  wrap.innerHTML = `<div class="memory-item-text"><strong>Pin “${escapeHtml(a.name)}” to a form field</strong></div>`;
   const siteIn = document.createElement('input');
-  siteIn.type = 'text'; siteIn.placeholder = 'Site (e.g. greenhouse)'; siteIn.title = 'Which application site this field is on';
+  siteIn.type = 'text'; siteIn.className = 'memory-item-edit-input';
+  siteIn.placeholder = 'Site (e.g. greenhouse)'; siteIn.title = 'Which application site this field is on';
   const selIn = document.createElement('input');
-  selIn.type = 'text'; selIn.placeholder = 'Field (e.g. #phone)'; selIn.title = 'The form field this detail should fill';
+  selIn.type = 'text'; selIn.className = 'memory-item-edit-input';
+  selIn.placeholder = 'Field (e.g. #phone)'; selIn.title = 'The form field this detail should fill';
   const sharedLabel = document.createElement('label');
   sharedLabel.style.cssText = 'font-size:11px;opacity:0.75;display:flex;align-items:center;gap:5px';
   sharedLabel.innerHTML = '<input type="checkbox"> Reuse this mapping across sites';
   const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:6px';
+  btnRow.className = 'memory-item-actions';
+  btnRow.style.opacity = '1';
   const save = document.createElement('button');
-  save.className = 'primary-btn'; save.textContent = 'Save mapping';
+  save.className = 'memory-item-btn save'; save.textContent = 'save mapping';
   const cancel = document.createElement('button');
-  cancel.className = 'memory-toolbar-btn'; cancel.textContent = 'Cancel';
+  cancel.className = 'memory-item-btn'; cancel.textContent = 'cancel';
   btnRow.appendChild(save); btnRow.appendChild(cancel);
   wrap.appendChild(siteIn); wrap.appendChild(selIn); wrap.appendChild(sharedLabel); wrap.appendChild(btnRow);
-  card.innerHTML = '';
-  card.style.alignItems = 'stretch';
-  card.appendChild(wrap);
+  item.appendChild(wrap);
   siteIn.focus();
   cancel.addEventListener('click', loadProfileAttributes);
   save.addEventListener('click', async () => {
@@ -497,7 +544,8 @@ function startAttrBind(card, a) {
 }
 
 async function deleteProfileAttribute(a) {
-  if (!window.confirm(`Remove "${a.name}"?`)) return;
+  // Same delete-confirm pattern as memory.js deleteMemory (~line 1040).
+  if (!await uiModule.styledConfirm(`Remove "${a.name}"?`, { confirmText: 'Delete', danger: true })) return;
   const res = await _profileFetch(`/attributes/${encodeURIComponent(a.id)}`, { method: 'DELETE' });
   if (res.ok) { showToast('Detail removed'); await loadProfileAttributes(); return; }
   showError(_detailOf(res.data, 'Could not remove that detail'));
