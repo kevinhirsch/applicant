@@ -63,6 +63,11 @@ class LocalEmbedding:
             return 1.0
         if not a or not b:
             return 0.0
-        # Map cosine [-1, 1] -> [0, 1] so the port's documented range holds.
+        # The port contract says ~0 for unrelated text and ~1 for identical.
+        # The old ``(cos + 1) / 2`` remap pushed genuinely-disjoint texts (cosine
+        # near 0) to ~0.5, which inflated off-topic JD viability scores to ~50/100.
+        # Clamp the raw cosine into [0, 1] instead: orthogonal (no token overlap)
+        # vectors land near 0, related vectors stay high. Negative cosine (anti-
+        # correlated hash signs) also floors at 0.
         cos = _cosine(_vector(a), _vector(b))
-        return max(0.0, min(1.0, (cos + 1.0) / 2.0))
+        return max(0.0, min(1.0, cos))

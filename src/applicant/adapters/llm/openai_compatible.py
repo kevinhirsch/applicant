@@ -73,8 +73,66 @@ def _looks_low_confidence(text: str) -> bool:
     return any(marker in low for marker in _LOW_CONFIDENCE_MARKERS)
 
 
+def _strip_trailing_commas(candidate: str) -> str:
+    """Remove a trailing comma before a closing ``}``/``]`` (lenient JSON)."""
+    return re.sub(r",(\s*[}\]])", r"\1", candidate)
+
+
+def _try_load_object(candidate: str) -> dict[str, Any] | None:
+    """Parse ``candidate`` as a JSON object, tolerating a trailing comma."""
+    for attempt in (candidate, _strip_trailing_commas(candidate)):
+        try:
+            obj = json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _balanced_object_spans(text: str):
+    """Yield every balanced ``{...}`` substring, brace-/string-aware.
+
+    Scans left-to-right tracking brace depth while skipping braces that appear
+    inside string literals (so ``{"k": "a } b"}`` is one span, not a false end).
+    Each top-level balanced object is yielded in document order, so a decoy
+    ``{...}`` before the real object is tried first and a later parseable object
+    is still reachable.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    yield text[start : i + 1]
+
+
 def _extract_json(text: str) -> dict[str, Any] | None:
-    """Defensively pull a JSON object out of free-form model text (FR-LLM-4a)."""
+    """Defensively pull a JSON object out of free-form model text (FR-LLM-4a).
+
+    Robust to: prose-wrapped JSON, a decoy ``{...}`` appearing before the real
+    object, trailing commas, and braces inside string values. Strategy: strip
+    code fences, try a whole-string parse, then scan every balanced ``{...}``
+    span (in order) and return the first one that parses as an object.
+    """
     if not text:
         return None
     text = text.strip()
@@ -82,19 +140,36 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
-    try:
-        obj = json.loads(text)
-        return obj if isinstance(obj, dict) else None
-    except json.JSONDecodeError:
-        pass
-    # Last resort: grab the outermost {...} span.
-    start, end = text.find("{"), text.rfind("}")
-    if 0 <= start < end:
-        try:
-            obj = json.loads(text[start : end + 1])
-            return obj if isinstance(obj, dict) else None
-        except json.JSONDecodeError:
-            return None
+    # Fast path: the whole (fenced) text is JSON.
+    whole = _try_load_object(text)
+    if whole is not None:
+        return whole
+    # Scan balanced-brace candidates in document order; first parseable wins.
+    for candidate in _balanced_object_spans(text):
+        obj = _try_load_object(candidate)
+        if obj is not None:
+            return obj
+    return None
+
+
+def _tool_call_arguments(message: dict[str, Any]) -> str | None:
+    """Extract the first tool/function call's ``arguments`` JSON string.
+
+    Supports the OpenAI ``tool_calls[].function.arguments`` shape and the legacy
+    ``function_call.arguments`` shape. Returns the raw arguments string (which is
+    itself a JSON object) or ``None`` when there is no tool call.
+    """
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            if isinstance(fn, dict) and isinstance(fn.get("arguments"), str):
+                return fn["arguments"]
+    legacy = message.get("function_call")
+    if isinstance(legacy, dict) and isinstance(legacy.get("arguments"), str):
+        return legacy["arguments"]
     return None
 
 
@@ -345,6 +420,12 @@ class OpenAICompatibleLLM:
             message = choices[0].get("message")
             if isinstance(message, dict):
                 text = message.get("content") or ""
+                # Native tool/function call (FR-LLM-4a): the structured payload may
+                # arrive as ``content: null`` + ``tool_calls[].function.arguments``
+                # (a JSON string). Surface those arguments as the text so the
+                # downstream ``_extract_json`` parses the structured object.
+                if not text:
+                    text = _tool_call_arguments(message) or ""
         return text, raw
 
     def _call_ollama(

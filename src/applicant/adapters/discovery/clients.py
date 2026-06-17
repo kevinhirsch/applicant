@@ -12,6 +12,8 @@ committed; ``None`` means direct egress.
 
 from __future__ import annotations
 
+import json
+
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -82,6 +84,19 @@ class LiveSearxngClient:
     """Real SearXNG metasearch client over JSON output (FR-DISC-4).
 
     Hits ``{base_url}/search?format=json``; maps result rows into the normalize shape.
+
+    OPERATOR NOTE: SearXNG disables the JSON output format by default and answers
+    ``?format=json`` with an HTML 403 page (or 403 status). The instance's
+    ``settings.yml`` MUST enable it and set a ``secret_key``::
+
+        search:
+          formats: [html, json]
+        server:
+          secret_key: "<random>"
+
+    The compose/settings file is owned by another lane; this client only detects
+    the misconfiguration, logs a clear remediation hint, and returns ``[]`` instead
+    of silently yielding nothing or crashing on a JSON-decode error.
     """
 
     def __init__(self, base_url: str, *, timeout: float = 15.0) -> None:
@@ -97,8 +112,35 @@ class LiveSearxngClient:
                 f"{self._base_url}/search",
                 params={"q": query, "format": "json", "categories": "general"},
             )
-            resp.raise_for_status()
+        # SearXNG returns 403 (and/or an HTML body) when the json format is not
+        # enabled. Detect both the status and a non-JSON content-type, surface a
+        # clear, actionable error in the log, and return [] rather than crash.
+        content_type = resp.headers.get("content-type", "")
+        if resp.status_code == 403 or "application/json" not in content_type.lower():
+            log.warning(
+                "searxng_json_disabled",
+                status=resp.status_code,
+                content_type=content_type,
+                base_url=self._base_url,
+                hint=(
+                    "SearXNG must enable the JSON output format and set a secret_key "
+                    "in settings.yml (search.formats: [html, json]); ?format=json is "
+                    "disabled by default and returns 403/HTML."
+                ),
+            )
+            return []
+        try:
             data = resp.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            log.warning(
+                "searxng_non_json_response",
+                base_url=self._base_url,
+                error=str(exc),
+                hint="Enable search.formats: [html, json] + secret_key in settings.yml.",
+            )
+            return []
+        if not isinstance(data, dict):
+            return []
         rows: list[dict] = []
         for r in data.get("results", []):
             rows.append(
@@ -138,16 +180,34 @@ class LiveRssClient:
             tag = item.tag.rsplit("}", 1)[-1]
             if tag not in {"item", "entry"}:
                 continue
-            title = link = desc = None
+            title = desc = None
+            link = None
+            link_fallback = None
             for child in item:
                 ctag = child.tag.rsplit("}", 1)[-1]
                 if ctag == "title":
                     title = (child.text or "").strip()
                 elif ctag == "link":
-                    link = (child.text or child.get("href") or "").strip()
+                    # RSS puts the URL in the element text; Atom uses <link href=...>
+                    # with a ``rel`` (alternate/self/enclosure). Prefer the
+                    # ``rel="alternate"`` href (the human-facing page); fall back to
+                    # a rel-less link, then to the element text (RSS).
+                    rel = (child.get("rel") or "").strip().lower()
+                    href = (child.get("href") or "").strip()
+                    candidate = href or (child.text or "").strip()
+                    if not candidate:
+                        continue
+                    if rel == "alternate":
+                        link = candidate
+                    elif rel in ("", "alternate") or not rel:
+                        # rel-less RSS/Atom link: a reasonable fallback.
+                        if link_fallback is None:
+                            link_fallback = candidate
+                    elif link_fallback is None:
+                        link_fallback = candidate
                 elif ctag in {"description", "summary", "content"}:
                     desc = (child.text or "").strip()
-            rows.append({"title": title, "url": link, "description": desc})
+            rows.append({"title": title, "url": link or link_fallback, "description": desc})
         return rows
 
 

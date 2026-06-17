@@ -94,6 +94,31 @@ class LatexTailor:
             or shutil.which("xelatex")
         )
 
+    def _compile_env(self, engine_bin: str) -> dict[str, str]:
+        """Build the subprocess env for the TeX compile.
+
+        Starts from a copy of ``os.environ`` so HOME/TEXMFVAR/etc. survive — the
+        old code replaced the entire env with only TEXINPUTS+PATH, which broke the
+        xelatex/lualatex first-run cache build (it needs HOME/TEXMFVAR to write the
+        font cache). The vendored asset dirs are PREPENDED to any existing
+        TEXINPUTS, keeping the trailing ``:`` so the engine still searches the
+        default tree. PATH keeps the engine's own bin dir plus the inherited PATH.
+        """
+        import os
+
+        env = os.environ.copy()
+        vendored = f"{self._template_root / 'OpenFonts'}:{self._template_root / 'cover'}:"
+        existing_texinputs = env.get("TEXINPUTS", "")
+        # Prepend vendored dirs; trailing ':' (in ``vendored``) preserves the
+        # default search tree even when there is no pre-existing TEXINPUTS.
+        env["TEXINPUTS"] = vendored + existing_texinputs
+        engine_dir = str(Path(engine_bin).parent)
+        inherited_path = env.get("PATH", "")
+        env["PATH"] = (
+            f"{engine_dir}:{inherited_path}" if inherited_path else f"{engine_dir}:/usr/bin:/bin"
+        )
+        return env
+
     # --- source editing (LaTeX is plain text) -----------------------------
     def edit_source(self, base_source: str, edits: dict[str, str]) -> str:
         """Apply literal substitutions to the LaTeX source (FR-RESUME-3).
@@ -270,13 +295,11 @@ class LatexTailor:
         work.mkdir(parents=True, exist_ok=True)
         tex_path = work / "resume.tex"
         tex_path.write_text(source, encoding="utf-8")
-        # Make the vendored fonts/classes discoverable to the engine.
-        env_input = f"{self._template_root / 'OpenFonts'}:{self._template_root / 'cover'}:"
         try:
             subprocess.run(
                 [engine_bin, "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
                 cwd=str(work),
-                env={"TEXINPUTS": env_input, "PATH": str(Path(engine_bin).parent) + ":/usr/bin:/bin"},
+                env=self._compile_env(engine_bin),
                 capture_output=True,
                 timeout=120,
                 check=False,
@@ -362,23 +385,35 @@ class LatexTailor:
 
 
 def _font_is_embedded(font: object) -> bool:
-    """True if a PDF font dict (or its descendants) carries an embedded font file."""
+    """True ONLY if a PDF font dict (or its descendants) carries an embedded file.
+
+    Conservative (FR-RESUME-4, FR-FONT-2): the fidelity guarantee is that EVERY
+    font ships its own file. The old check returned True when a font carried no
+    descriptor ("standard-14 base font") and when a descriptor existed but had no
+    ``/FontFile*`` stream — both are NON-embedded fonts and were false positives.
+    We now require an actual ``/FontFile``/``/FontFile2``/``/FontFile3`` stream.
+    """
     if not hasattr(font, "get"):
-        return True
+        # Unknown shape: cannot prove embedding -> treat as NOT embedded.
+        return False
     descriptor = font.get("/FontDescriptor")
     if descriptor is not None:
         desc = descriptor.get_object()
         if any(k in desc for k in ("/FontFile", "/FontFile2", "/FontFile3")):
             return True
+        # Descriptor present but no font file stream -> NOT embedded.
+        return False
     # Composite (Type0) fonts carry the descriptor on a descendant font.
     descendants = font.get("/DescendantFonts")
     if descendants is not None:
-        for child in descendants:
-            if _font_is_embedded(child.get_object()):
-                return True
-        return False
-    # No descriptor at all -> a standard-14 base font (treated as embeddable).
-    return descriptor is None
+        # Every descendant must be embedded for the composite font to count.
+        children = list(descendants)
+        return bool(children) and all(
+            _font_is_embedded(child.get_object()) for child in children
+        )
+    # No descriptor and no descendants -> a standard-14 base font referenced by
+    # name, which is NOT embedded.
+    return False
 
 
 def _esc(text: str) -> str:
