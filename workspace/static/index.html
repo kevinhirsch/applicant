@@ -2531,6 +2531,11 @@
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
+<!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
+     before app.js so the window.openApplicantRemoteSession / openApplicantVault
+     seams exist for other lanes to call. -->
+<script type="module" src="/static/js/applicantRemote.js"></script>
+<script type="module" src="/static/js/applicantVault.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

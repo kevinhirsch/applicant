@@ -504,6 +504,78 @@ class ApplicantEngineClient:
             json={"enabled": enabled},
         )
     # === end CRIT-ops ========================================================
+    # -- live remote session / takeover (CRIT-auto: automation surface) ----
+    # Maps 1:1 to the engine's ``remote`` router (FR-SANDBOX-2/3/4, FR-PREFILL-5).
+    # The final-submit/authorize methods hit the engine's EXPLICIT authorize
+    # endpoints, which route the click through the core pre-fill stop-boundary —
+    # the engine can never self-authorize the final submit.
+
+    async def list_remote_sessions(self) -> Any:
+        """All currently live sandbox sessions (multi-session picker)."""
+        return await self._request("GET", "/api/remote/sessions")
+
+    async def open_remote_session(self, application_id: str) -> Any:
+        """Provision a sandbox for an application; returns its one-click view URL."""
+        return await self._request(
+            "POST", "/api/remote/sessions", json={"application_id": application_id}
+        )
+
+    async def remote_session_view_url(self, session_id: str) -> Any:
+        """The (token-bearing) live-session URL for an existing session."""
+        return await self._request("GET", f"/api/remote/sessions/{session_id}/view-url")
+
+    async def takeover_remote_session(self, session_id: str) -> Any:
+        """Hand live control of the session to the user (204 -> None)."""
+        return await self._request("POST", f"/api/remote/sessions/{session_id}/takeover")
+
+    async def request_final_approval(self, application_id: str) -> Any:
+        """Notify the user that an application awaits final approval."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/request-final-approval"
+        )
+
+    async def submit_self(self, application_id: str) -> Any:
+        """User submitted themselves in the live session (terminal decision)."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/submit-self"
+        )
+
+    async def authorize_engine_finish(self, application_id: str) -> Any:
+        """Explicitly authorize the engine to click the final submit (boundary-gated)."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/authorize-engine-finish"
+        )
+
+    async def resume_account_step(self, application_id: str) -> Any:
+        """Resume pre-fill after the user completed the human account-creation step."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/resume-account-step"
+        )
+
+    async def resume_detection_step(self, application_id: str) -> Any:
+        """Resume pre-fill after the user cleared a detection challenge."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/resume-detection-step"
+        )
+
+    async def stealth_caveat(self) -> Any:
+        """The honest best-effort anti-detection + egress caveat copy + posture."""
+        return await self._request("GET", "/api/admin/stealth")
+
+    # -- credential vault (CRIT-auto: applicant vault, FR-VAULT-2) ---------
+    # The engine seals secrets at rest; list NEVER returns plaintext.
+
+    async def vault_store_credential(self, body: dict) -> Any:
+        """Manually bank a per-tenant credential set in the vault."""
+        return await self._request("POST", "/api/credentials", json=body)
+
+    async def vault_capture_credential(self, body: dict) -> Any:
+        """Auto-capture credentials entered during a live account-creation."""
+        return await self._request("POST", "/api/credentials/capture", json=body)
+
+    async def vault_list_tenants(self, campaign_id: str) -> Any:
+        """Tenant keys that have stored credentials (no secrets returned)."""
+        return await self._request("GET", f"/api/credentials/{campaign_id}/tenants")
 
 
 # ---------------------------------------------------------------------------
