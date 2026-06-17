@@ -316,7 +316,7 @@ function initializeEventListeners() {
       e.stopPropagation();
       exportMenu.classList.remove('open');
       const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-      const sessionName = meta ? meta.name : 'Smokey';
+      const sessionName = meta ? meta.name : 'Applicant';
       const originalTitle = document.title;
       document.title = sessionName;
       const chatHistory = document.getElementById('chat-history');
@@ -1351,7 +1351,10 @@ function initializeEventListeners() {
   // engine handler. The state is derived server-side from the engine setup
   // status + dormant-surface registry; this only reflects it in the nav. It is
   // additive — it never touches auth, user management, or the toggles above.
-  window._applicantFeaturesReady = fetch(`${API_BASE}/api/applicant/features`, { credentials: 'same-origin' })
+  // Exposed so the first-run setup wizard can re-run activation on completion
+  // (when the engine gate flips open) without a full page reload.
+  window.refreshApplicantFeatures = function () {
+    return fetch(`${API_BASE}/api/applicant/features`, { credentials: 'same-origin' })
     .then(r => r.json())
     .then(features => {
       const sections = (features && features.sections) || {};
@@ -1389,6 +1392,16 @@ function initializeEventListeners() {
         });
       });
     })
+    .catch(() => {});
+  };
+  window._applicantFeaturesReady = window.refreshApplicantFeatures();
+
+  // First-run setup wizard: lazy-import the module and let it decide whether to
+  // present the blocking overlay (it self-skips if setup/onboarding is already
+  // complete or the engine is unreachable). Resumable; mirrors how the other
+  // Applicant modules attach. Additive — no other boot path changes.
+  import('./js/applicantOnboarding.js')
+    .then(m => m.maybeLaunchOnboarding && m.maybeLaunchOnboarding())
     .catch(() => {});
 
   // Hide Gallery when image generation is disabled in settings

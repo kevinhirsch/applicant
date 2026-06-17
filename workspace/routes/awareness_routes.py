@@ -1,5 +1,5 @@
 # routes/awareness_routes.py
-"""HTTP API for the proactive Awareness loop (Phase 2, Smokey parity).
+"""HTTP API for the proactive Awareness loop (Phase 2, Applicant parity).
 
 Owner-scoped; every endpoint requires the opt-in ``can_use_awareness``
 privilege. The background loop itself only runs when ``APPLICANT_AWARENESS`` is

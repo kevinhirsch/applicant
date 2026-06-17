@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 # Default identity for plain chat mode (no custom character/preset). A user's
 # preset/character prompt takes precedence over this when one is set.
-SMOKEY_IDENTITY = (
-    "You are Smokey, the AI assistant in Applicant, a self-hosted AI workspace. "
-    "When asked who or what you are, identify yourself as Smokey."
+APPLICANT_IDENTITY = (
+    "You are Applicant, Applicant, a self-hosted AI workspace assistant. "
+    "When asked who or what you are, identify yourself as Applicant."
 )
 
 # ── Stopwords & tokenizer ──
@@ -187,7 +187,7 @@ class ChatProcessor:
         rag_sources = []
 
         # Add preset system prompt if specified. Otherwise, in plain chat mode,
-        # give the assistant its default Smokey identity. Agent mode gets its
+        # give the assistant its default Applicant identity. Agent mode gets its
         # identity from the agent system prompt (_AGENT_PREAMBLE), so skip it
         # here to avoid a duplicate identity message.
         if preset_system_prompt:
@@ -198,7 +198,7 @@ class ChatProcessor:
         elif not agent_mode:
             preface.append({
                 "role": "system",
-                "content": SMOKEY_IDENTITY,
+                "content": APPLICANT_IDENTITY,
             })
         preface.append({
             "role": "system",

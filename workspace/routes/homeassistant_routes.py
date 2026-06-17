@@ -1,5 +1,5 @@
 # routes/homeassistant_routes.py
-"""HTTP API for Home Assistant control (Phase 4, Smokey parity).
+"""HTTP API for Home Assistant control (Phase 4, Applicant parity).
 
 Owner-scoped; every endpoint requires the opt-in ``can_control_home``
 privilege. State-changing calls are constrained to the user's entity allowlist
