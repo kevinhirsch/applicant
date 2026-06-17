@@ -149,6 +149,9 @@ function _ensurePanel(modal) {
       <button type="button" class="memory-toolbar-btn" id="applicant-digest-feedback" title="Send the assistant a quick note about its suggestions">
         Send feedback
       </button>
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-survey" title="Answer a few quick questions to help the assistant tune what it sends">
+        Quick survey
+      </button>
     </div>
     <p class="memory-desc" style="margin:6px 0 4px;opacity:0.7;font-size:11px;">
       Roles your job-search assistant flagged today. The same summary is emailed to you; act on anything right here.
@@ -353,6 +356,175 @@ async function _onFeedback(panel, campaignId) {
   }
 }
 
+// --- guided survey (a few structured questions) ----------------------------
+//
+// A short, optional survey that complements the free-text note above: instead
+// of an open box it asks a handful of pointed questions with fixed choices, so
+// the answers fold cleanly into the next run's learning. Each question carries a
+// plain-language label, a one-line "why we ask" hint, and a small set of
+// choices. Answers post to the survey endpoint as a {question_key: choice} map;
+// blank (skipped) questions are dropped so a partial survey is fine. The whole
+// thing is self-contained here (its own lightweight modal) so the shared prompt
+// helpers stay single-purpose.
+const _SURVEY_QUESTIONS = [
+  {
+    key: 'relevance',
+    label: 'How on-target were today’s roles?',
+    hint: 'Whether the suggestions matched the kind of job you actually want.',
+    choices: [
+      { value: 'great', label: 'Spot on' },
+      { value: 'ok', label: 'Mixed' },
+      { value: 'off', label: 'Mostly off' },
+    ],
+  },
+  {
+    key: 'resume_quality',
+    label: 'How well did the tailored resume read?',
+    hint: 'Your take on the resume the assistant prepared for these roles.',
+    choices: [
+      { value: 'strong', label: 'Strong' },
+      { value: 'fine', label: 'Fine' },
+      { value: 'needs_work', label: 'Needs work' },
+    ],
+  },
+  {
+    key: 'pacing',
+    label: 'How does the volume feel?',
+    hint: 'Whether you’re getting too many, too few, or about the right number of suggestions.',
+    choices: [
+      { value: 'too_many', label: 'Too many' },
+      { value: 'just_right', label: 'About right' },
+      { value: 'too_few', label: 'Too few' },
+    ],
+  },
+];
+
+// Build + show a small modal of the survey questions. Resolves to a
+// {question_key: choice_value} map of the answered questions (skipped ones are
+// omitted), or null if the user cancels / dismisses. Self-contained: it creates
+// its own overlay (reused across opens) and never touches the shared modals.
+function _askSurvey() {
+  return new Promise(resolve => {
+    let overlay = document.getElementById('applicant-survey-overlay');
+    if (overlay) overlay.remove();   // rebuild fresh so choices always reset
+
+    overlay = _el('div', { cls: 'modal', attrs: { id: 'applicant-survey-overlay' } });
+    const box = _el('div', { cls: 'modal-content styled-confirm-box' });
+    box.style.cssText = 'max-width:440px;';
+
+    const header = _el('div', { cls: 'modal-header' });
+    header.appendChild(_el('h4', { text: 'Quick survey' }));
+    box.appendChild(header);
+
+    const bodyEl = _el('div', { cls: 'modal-body' });
+    bodyEl.appendChild(_el('p', {
+      text: 'A few quick questions help the assistant tune what it sends. Answer any that apply — skip the rest.',
+      style: 'margin:0 0 10px;font-size:12px;opacity:0.8;',
+    }));
+
+    // question_key -> currently selected choice value
+    const selected = {};
+
+    for (const q of _SURVEY_QUESTIONS) {
+      const group = _el('div', { style: 'margin-bottom:12px;' });
+      const lbl = _el('div', {
+        text: q.label,
+        title: q.hint,
+        style: 'font-weight:600;font-size:12px;display:flex;align-items:center;gap:5px;',
+      });
+      // Inline "why we ask" tooltip marker (hover for the hint).
+      lbl.appendChild(_el('span', {
+        text: '?',
+        title: q.hint,
+        attrs: { 'aria-label': q.hint },
+        style: 'display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid currentColor;font-size:9px;opacity:0.6;cursor:help;',
+      }));
+      group.appendChild(lbl);
+
+      const opts = _el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;' });
+      for (const c of q.choices) {
+        const chip = _el('button', {
+          cls: 'memory-toolbar-btn',
+          text: c.label,
+          attrs: { type: 'button' },
+          style: 'font-size:11px;',
+        });
+        chip.addEventListener('click', () => {
+          // Toggle: clicking the selected chip clears it (skip the question).
+          const already = selected[q.key] === c.value;
+          opts.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+          if (already) {
+            delete selected[q.key];
+          } else {
+            selected[q.key] = c.value;
+            chip.classList.add('active');
+          }
+        });
+        opts.appendChild(chip);
+      }
+      group.appendChild(opts);
+      bodyEl.appendChild(group);
+    }
+    box.appendChild(bodyEl);
+
+    const footer = _el('div', { cls: 'modal-footer' });
+    const cancelBtn = _el('button', {
+      cls: 'confirm-btn confirm-btn-secondary', text: 'Cancel', attrs: { type: 'button' },
+    });
+    const okBtn = _el('button', {
+      cls: 'confirm-btn confirm-btn-primary', text: 'Send', attrs: { type: 'button' },
+    });
+    footer.appendChild(cancelBtn);
+    footer.appendChild(okBtn);
+    box.appendChild(footer);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    function cleanup(result) {
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      try { overlay.remove(); } catch (_) {}
+      resolve(result);
+    }
+    function onOk() { cleanup({ ...selected }); }
+    function onCancel() { cleanup(null); }
+    function onBackdrop(e) { if (e.target === overlay) cleanup(null); }
+    function onKey(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        cleanup(null);
+      }
+    }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+    okBtn.focus();
+  });
+}
+
+async function _onSurvey(panel, campaignId) {
+  if (!campaignId) { showToast('Pick a job search first.'); return; }
+  const answers = await _askSurvey();
+  if (answers == null) return;                       // cancelled
+  if (!Object.keys(answers).length) {
+    showToast('Pick at least one answer, or use Send feedback for a free note.');
+    return;
+  }
+  try {
+    await _api('/feedback/survey', {
+      method: 'POST',
+      body: { campaign_id: campaignId, answers },
+    });
+    showToast('Thanks — that helps the assistant tune things.');
+  } catch (e) {
+    showToast(e.message || 'Could not send the survey right now.');
+  }
+}
+
 // --- load + wire -----------------------------------------------------------
 
 async function _loadDigest(panel, campaignId) {
@@ -424,6 +596,8 @@ function _wire(panel) {
   if (refresh) refresh.addEventListener('click', () => _loadDigest(panel, _currentCampaign(panel)));
   const fb = panel.querySelector('#applicant-digest-feedback');
   if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel)));
+  const survey = panel.querySelector('#applicant-digest-survey');
+  if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel)));
 }
 
 // Tell the engine the user is reading updates in-app right now, so it can hold
