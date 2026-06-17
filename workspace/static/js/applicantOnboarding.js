@@ -4,7 +4,9 @@
 // login when the engine reports setup/onboarding is incomplete. It walks a brand
 // new user through, in order:
 //
-//   1. Connect a model  -> /api/applicant/setup/llm (+ model-endpoints catalog)
+//   1. Connect a model  -> REUSES the Settings Local/Remote endpoint manager
+//                           (admin.js mountEndpointManager + /api/model-endpoints),
+//                           then opens the engine gate via /api/applicant/setup/llm
 //   2. Notifications     -> /api/applicant/setup/channels (gating step)
 //   3. Fonts             -> /api/applicant/setup/fonts/*
 //   4. Your profile      -> /api/applicant/setup/onboarding/* + base-resume +
@@ -170,8 +172,12 @@ function _err(html) {
   return `<p class="ao-error" role="alert">${html}</p>`;
 }
 
+// Help marker. Uses the SAME `?` help-icon the rest of the workspace uses
+// (`preset-hint-icon`, a native-`title` hover icon — see Settings → Presets) so
+// the wizard's tooltips actually show on hover and look identical to the app.
+// `role="img"` + the `title`/`aria-label` make the help text reachable to AT too.
 function _tip(text) {
-  return `<span class="ao-tip" title="${esc(text)}" aria-label="${esc(text)}">?</span>`;
+  return `<span class="preset-hint-icon ao-tip" role="img" title="${esc(text)}" aria-label="${esc(text)}" tabindex="0">?</span>`;
 }
 
 // ── render the active step ──────────────────────────────────────────────────
@@ -179,6 +185,9 @@ function _tip(text) {
 async function _renderStep() {
   _renderRail();
   const step = STEPS[_stepIndex];
+  // Whenever we render anything other than the LLM step, return the shared
+  // endpoint manager to its Settings home so it isn't left detached in the DOM.
+  if (step.key !== 'llm') _restoreEndpointManager();
   try {
     if (step.key === 'llm') return await _renderLLM();
     if (step.key === 'channels') return await _renderChannels();
@@ -206,82 +215,93 @@ async function _goToFirstIncompleteOrFinish() {
 }
 
 // ── STEP 1: LLM ─────────────────────────────────────────────────────────────
+//
+// This step REUSES the existing, working Local/Remote endpoint manager from
+// Settings → Services rather than its own bespoke provider form. admin.js owns
+// the manager (add local / add remote provider, test, enable/disable, per-model
+// toggles) and the proven `/api/model-endpoints` backend; here we just relocate
+// that exact node into the wizard (mountEndpointManager) and, once the user has
+// an enabled endpoint with a selected model, open the engine gate from the chosen
+// values via the engine setup proxy `/api/applicant/setup/llm`.
+
+// True once the manager node has been moved into the wizard, so we can move it
+// back to Settings on advance/dismiss.
+let _llmManagerMounted = false;
+
+function _adminModule() {
+  return (typeof window !== 'undefined' && window.adminModule) ? window.adminModule : null;
+}
+
+// Move the shared endpoint manager back to its Settings home (best-effort).
+function _restoreEndpointManager() {
+  if (!_llmManagerMounted) return;
+  const adm = _adminModule();
+  try { adm && adm.unmountEndpointManager && adm.unmountEndpointManager(); } catch { /* no-op */ }
+  _llmManagerMounted = false;
+}
 
 async function _renderLLM() {
   _setBody(`
-    <h2 class="ao-step-title">Connect a model ${_tip('Applicant uses an AI model to read job posts and write your materials. Pick a provider, paste a key, and choose a model.')}</h2>
-    <p class="ao-step-desc">Add a provider below, then pick the model you want to use.</p>
-    <div class="ao-field">
-      <label>Provider address
-        ${_tip('For a cloud provider paste its API base URL (e.g. OpenRouter). For a local model, paste your Ollama address. The model list is fetched for you.')}
-      </label>
-      <input id="ao-llm-url" type="text" placeholder="https://openrouter.ai/api/v1  or  http://localhost:11434" />
-    </div>
-    <div class="ao-field">
-      <label>API key <span class="ao-opt">(leave blank for a local model)</span></label>
-      <input id="ao-llm-key" type="password" autocomplete="off" placeholder="sk-..." />
-    </div>
-    <div class="ao-row">
-      <button class="ao-btn ao-btn-ghost" id="ao-llm-load">Load models</button>
-      <span id="ao-llm-load-status" class="ao-inline-status"></span>
-    </div>
-    <div class="ao-field" id="ao-llm-model-wrap" style="display:none">
-      <label>Model</label>
-      <select id="ao-llm-model"></select>
-    </div>
+    <h2 class="ao-step-title">Connect a model ${_tip('Applicant uses an AI model to read job posts and write your materials. Add a local model or a cloud provider below, then enable it and pick a model.')}</h2>
+    <p class="ao-step-desc">Add a model source below — a local model (e.g. Ollama) or a cloud API. Once it is enabled and shows a model, continue.</p>
+    <div id="ao-llm-manager" class="ao-llm-manager"></div>
     <div id="ao-llm-msg"></div>
   `);
-  _setFoot(`<button class="ao-btn ao-btn-primary" id="ao-llm-save" disabled>Save &amp; continue</button>`);
+  _setFoot(`<button class="ao-btn ao-btn-primary" id="ao-llm-save">Save &amp; continue</button>`);
 
-  let endpointId = null;
-
-  document.getElementById('ao-llm-load').onclick = async () => {
-    const url = (document.getElementById('ao-llm-url').value || '').trim();
-    const key = document.getElementById('ao-llm-key').value || '';
-    const statusEl = document.getElementById('ao-llm-load-status');
-    if (!url) { statusEl.textContent = 'Enter a provider address first.'; return; }
-    statusEl.textContent = 'Loading models…';
-    try {
-      const fd = new FormData();
-      fd.append('base_url', url);
-      fd.append('api_key', key);
-      fd.append('name', url);
-      fd.append('model_type', 'llm');
-      const res = await _postForm(`${SETUP}/model-endpoints`, fd);
-      endpointId = res.id || (res.endpoint && res.endpoint.id) || null;
-      const models = res.models || (res.endpoint && res.endpoint.models) || [];
-      const sel = document.getElementById('ao-llm-model');
-      const names = models.map((m) => (typeof m === 'string' ? m : (m.id || m.name))).filter(Boolean);
-      if (!names.length) { statusEl.textContent = 'No models found at that address.'; return; }
-      sel.innerHTML = names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-      document.getElementById('ao-llm-model-wrap').style.display = '';
-      document.getElementById('ao-llm-save').disabled = false;
-      statusEl.textContent = `Found ${names.length} model${names.length === 1 ? '' : 's'}.`;
-    } catch (e) {
-      statusEl.textContent = '';
-      document.getElementById('ao-llm-msg').innerHTML = _err(esc(e.message || 'Could not load models.'));
-    }
-  };
+  // Mount the SAME endpoint manager Settings uses. No bespoke add/test/list logic
+  // lives here — admin.js drives the form, the live list, and /api/model-endpoints.
+  const adm = _adminModule();
+  const host = document.getElementById('ao-llm-manager');
+  if (adm && typeof adm.mountEndpointManager === 'function' && host && adm.mountEndpointManager(host)) {
+    _llmManagerMounted = true;
+  } else if (host) {
+    host.innerHTML = _err('The model manager is unavailable. Please reload and try again.');
+  }
 
   document.getElementById('ao-llm-save').onclick = async () => {
     if (_busy) return;
-    const model = document.getElementById('ao-llm-model').value;
-    if (!model) return;
+    const msgEl = document.getElementById('ao-llm-msg');
+    if (msgEl) msgEl.innerHTML = '';
+    // Read the chosen endpoint + model straight from the shared manager's live
+    // list (the same /api/model-endpoints the manager renders from).
+    let chosen = null;
+    try { chosen = adm && adm.getSelectedLlmEndpoint ? await adm.getSelectedLlmEndpoint() : null; }
+    catch { chosen = null; }
+    if (!chosen || !chosen.model) {
+      if (msgEl) msgEl.innerHTML = _err('Add a model source above, enable it, and make sure it lists at least one model — then continue.');
+      return;
+    }
     _busy = true;
-    document.getElementById('ao-llm-save').disabled = true;
+    const saveBtn = document.getElementById('ao-llm-save');
+    if (saveBtn) saveBtn.disabled = true;
     try {
-      if (endpointId) {
-        await _post(`${SETUP}/llm/from-endpoint`, { endpoint_id: endpointId, model });
-      } else {
-        const url = (document.getElementById('ao-llm-url').value || '').trim();
-        const key = document.getElementById('ao-llm-key').value || '';
-        const provider = /localhost|127\.0\.0\.1|11434/.test(url) ? 'ollama' : 'openai';
-        await _post(`${SETUP}/llm`, { provider, base_url: url, api_key: key, model });
+      // Open the ENGINE gate from the chosen values. /api/applicant/setup/llm is a
+      // direct provider/model/key save on the engine (NOT the model-endpoints proxy
+      // that 500s). Best-effort: a local model needs no key; a cloud provider's key
+      // already lives with the saved endpoint, so we send what we have and surface a
+      // clear message if the engine rejects it.
+      const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0|::1|11434/.test(chosen.base_url || '');
+      const provider = isLocal ? 'ollama' : 'openai';
+      try {
+        await _post(`${SETUP}/llm`, {
+          provider,
+          base_url: chosen.base_url || '',
+          api_key: '',
+          model: chosen.model,
+        });
+      } catch (gateErr) {
+        if (msgEl) {
+          msgEl.innerHTML = _err(esc(
+            `Saved your model, but the application engine could not be configured automatically: ${gateErr.message || 'unknown error'}. You can continue; if job features stay locked, re-open this step.`,
+          ));
+        }
       }
+      _restoreEndpointManager();
       await _advanceAndContinue('llm');
     } catch (e) {
-      document.getElementById('ao-llm-msg').innerHTML = _err(esc(e.message || 'Could not save the model.'));
-      document.getElementById('ao-llm-save').disabled = false;
+      if (msgEl) msgEl.innerHTML = _err(esc(e.message || 'Could not save the model.'));
+      if (saveBtn) saveBtn.disabled = false;
     } finally {
       _busy = false;
     }
@@ -790,6 +810,7 @@ async function _nextIntakeOrComplete() {
 // ── finish ──────────────────────────────────────────────────────────────────
 
 async function _finish() {
+  _restoreEndpointManager();
   _setBody('<div class="ao-done"><h2>You’re all set!</h2><p>Applicant is ready to start working for you.</p></div>');
   _setFoot('<button class="ao-btn ao-btn-primary" id="ao-finish">Get started</button>');
   document.getElementById('ao-finish').onclick = _dismiss;
@@ -797,6 +818,9 @@ async function _finish() {
 }
 
 function _dismiss() {
+  // Hand the shared endpoint manager back to Settings before tearing down the
+  // overlay, so it isn't removed from the DOM along with the overlay.
+  _restoreEndpointManager();
   if (_overlay && _overlay.parentNode) _overlay.parentNode.removeChild(_overlay);
   _overlay = null;
   // Re-run the feature-activation layer so the job sections light up now that the
