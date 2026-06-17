@@ -48,7 +48,9 @@ class CapacityService:
         llm_period: float | None = None,
     ) -> None:
         self._orch = orchestrator
-        self._orch.create_queue(SANDBOX_QUEUE, concurrency=sandbox_concurrency)
+        # Defense in depth alongside the config ge=1 clamp: never create a 0/negative
+        # concurrency queue (it would admit no application and stall all work).
+        self._orch.create_queue(SANDBOX_QUEUE, concurrency=max(1, sandbox_concurrency))
         if llm_limit is not None and llm_period is not None:
             self._orch.create_queue(
                 LLM_QUEUE, limiter_limit=llm_limit, limiter_period=llm_period

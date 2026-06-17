@@ -29,15 +29,19 @@ def test_rollback_restore_uses_stdin_not_psql_dash_f():
     # Static guard scoped to the restore: the apply branch must pipe the dump in via a
     # STDIN redirect, and no `psql -f` (which would read the path inside the container).
     text = _SCRIPT.read_text(encoding="utf-8")
-    rollback_block = text.split("update path")[0]
+    # The restore is now a shared ``restore_dump`` helper (used by --rollback AND the
+    # migration auto-rollback), defined before the "update path" marker.
+    restore_block = text.split("update path")[0]
     # Real command lines only (skip comments, which legitimately mention `psql -f`).
     restore_lines = [
-        ln for ln in rollback_block.splitlines()
+        ln for ln in restore_block.splitlines()
         if "psql" in ln and not ln.lstrip().startswith("#")
     ]
-    assert restore_lines, "rollback block should invoke psql"
-    assert any('<"${LATEST}"' in ln for ln in restore_lines), (
-        'the applied restore must stream the dump over STDIN (<"${LATEST}")'
+    assert restore_lines, "restore helper should invoke psql"
+    # The applied restore must stream the dump over a STDIN redirect (host-side file
+    # piped into the container's psql), e.g. ``... psql ... <"${file}"``.
+    assert any('<"${' in ln for ln in restore_lines), (
+        "the applied restore must stream the dump over STDIN (host-side redirect)"
     )
     # `psql -f` (text after the `psql` token), as opposed to the compose `-f <file>` flag.
     assert not any("-f " in ln.split("psql", 1)[1] for ln in restore_lines), (
