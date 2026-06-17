@@ -58,26 +58,38 @@ def _chrome_user_agent(major: int) -> str:
     )
 
 
-def _sec_ch_ua(major: int) -> str:
-    """The ``Sec-CH-UA`` header value coherent with a Chrome ``major``.
+def _sec_ch_ua(major: int, *, channel: str = "chrome") -> str:
+    """The ``Sec-CH-UA`` header value coherent with a Chrome/Chromium ``major``.
 
     Real Chrome sends this itself; we compute the identical value so the seam /
     tests can assert UA <-> CH-UA agreement and so any place that *does* need to
     set it (non-Chromium fallbacks) stays coherent. The brand list mirrors what
-    Chrome emits: a "Not...A;Brand" GREASE entry plus Chromium + Google Chrome.
+    the engine emits: a "Not...A;Brand" GREASE entry plus Chromium and, ONLY for
+    the Google Chrome channel, a "Google Chrome" brand.
+
+    FR-STEALTH-1: a real *Chromium* (the ``chromium`` channel) emits NO
+    "Google Chrome" brand — only "Chromium" + GREASE — so advertising a Google
+    Chrome brand on the chromium channel is an incoherent UA<->CH-UA divergence.
     """
+    if channel == "chromium":
+        return f'"Chromium";v="{major}", "Not.A/Brand";v="24"'
     return (
         f'"Chromium";v="{major}", "Google Chrome";v="{major}", '
         '"Not.A/Brand";v="24"'
     )
 
 
-def _build_fingerprint(major: int) -> dict[str, str]:
-    """Build the single coherent real-Linux + Chrome fingerprint for ``major``."""
+def _build_fingerprint(major: int, *, channel: str = "chrome") -> dict[str, str]:
+    """Build the single coherent real-Linux + Chrome/Chromium fingerprint.
+
+    FR-STEALTH-1: the ``chromium`` channel must present a Chromium-only identity
+    (no "Google Chrome" brand in either the UA or the ``Sec-CH-UA`` header) so the
+    UA and the client hints never disagree about whether this is Google Chrome.
+    """
     return {
         "user_agent": _chrome_user_agent(major),
         "chrome_major": str(major),
-        "sec_ch_ua": _sec_ch_ua(major),
+        "sec_ch_ua": _sec_ch_ua(major, channel=channel),
         "sec_ch_ua_platform": "Linux",
         "sec_ch_ua_mobile": "?0",
         "locale": "en-US",
@@ -144,7 +156,7 @@ def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
     falls back to :data:`PINNED_CHROME_MAJOR`. Always internally coherent.
     """
     major = detect_chrome_major(channel) or PINNED_CHROME_MAJOR
-    return _build_fingerprint(major)
+    return _build_fingerprint(major, channel=channel)
 
 #: FR-STEALTH-5: honest best-effort caveat surfaced in UX copy. Anti-detection is
 #: never a guarantee; the user performing the irreducible human steps (account
@@ -468,7 +480,13 @@ class EgressPolicy:
         """
         mode_norm = (mode or EGRESS_DIRECT).strip() or EGRESS_DIRECT
         url = (proxy_url or "").strip() or None
-        # `direct` uses the host's own (residential) connection; a proxied exit is
-        # residential only when the operator explicitly attests it.
-        attested = True if mode_norm == EGRESS_DIRECT else bool(residential)
-        return cls(proxy_url=url, residential=attested, mode=mode_norm)
+        # FR-STEALTH-4: `direct` means the HOST's own (residential) connection —
+        # so any leftover EGRESS_PROXY_URL must be DROPPED, not silently routed
+        # through. Previously we kept the proxy and force-attested it, so a
+        # leftover datacenter proxy would egress automation through an unattested
+        # exit. In direct mode there is no proxy: url=None, residential by the
+        # definition of the home node.
+        if mode_norm == EGRESS_DIRECT:
+            return cls(proxy_url=None, residential=True, mode=mode_norm)
+        # A proxied exit is residential only when the operator explicitly attests it.
+        return cls(proxy_url=url, residential=bool(residential), mode=mode_norm)
