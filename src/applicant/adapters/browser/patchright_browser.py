@@ -197,6 +197,20 @@ class PatchrightBrowser:
         """True at the account step — sign-in OR create-account (FR-PREFILL-4)."""
         return self._source(application_id).is_account_gate()
 
+    def log_in(self, application_id: ApplicationId, username: str, password: str) -> bool:
+        """Attempt an email/password sign-in from a stored credential; return success.
+
+        A benign navigation/fill (NAVIGATE) — the engine drives login from a credential
+        the user provided (automate-by-default). OAuth ("Sign in with Google") is NOT
+        driven here."""
+        ensure_action_allowed(StepKind.NAVIGATE)
+        return self._source(application_id).log_in(username, password)
+
+    def tenant_key(self, application_id: ApplicationId) -> str:
+        """The credential-store key for the application's ATS host (e.g.
+        ``workday:acme.wd5.myworkdayjobs.com``)."""
+        return self._session(application_id).tenant_key
+
     def is_final_submit_page(self, application_id: ApplicationId) -> bool:
         return self._source(application_id).is_final_submit_page()
 

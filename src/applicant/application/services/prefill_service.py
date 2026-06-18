@@ -217,6 +217,15 @@ class PrefillService:
                     return self._account_handoff(
                         app, result, result.sandbox_session_url, signal_type=event.signal_type
                     )
+            # Automate-by-default: if we hold a stored credential for this ATS, log in
+            # ourselves (email/password) and proceed straight to the form — no per-
+            # application human sign-in. Login failure / no credential / OAuth fall
+            # through to the human hand-off below (which the persistent session + the
+            # 2FA flow build on next).
+            credential = self._lookup_credential(app)
+            if credential is not None and self._try_log_in(aid, credential):
+                self._capture_screenshot(aid, result)
+                return self._prefill_pages(app, attributes, result, cautious=cautious)
             blocked = self._fill_current_page(
                 app, attributes, result, block_on_missing=False
             )
@@ -387,6 +396,42 @@ class PrefillService:
             # Advance; if there is no next page we are done filling.
             if self._browser.advance(aid) is None:
                 return self._reach_final_approval(app, result)
+
+    # --- credential auto-login (automate-by-default) ----------------------
+    def _lookup_credential(self, app):
+        """Retrieve a stored ATS credential for this application's tenant, or ``None``.
+
+        Defensive: no vault wired / no tenant key resolvable / nothing stored → None,
+        so the caller cleanly falls back to the human hand-off."""
+        store = self._credentials
+        if store is None:
+            return None
+        tenant_of = getattr(self._browser, "tenant_key", None)
+        if not callable(tenant_of):
+            return None
+        try:
+            tenant_key = tenant_of(app.id)
+        except Exception:
+            return None
+        if not tenant_key:
+            return None
+        try:
+            return store.retrieve(app.campaign_id, tenant_key)
+        except Exception:  # pragma: no cover - defensive
+            return None
+
+    def _try_log_in(self, aid, credential) -> bool:
+        """Attempt an email/password sign-in from a stored credential; return success.
+
+        Signature-stable: a browser without ``log_in`` (a minimal stub) returns False,
+        so the flow falls back to the hand-off."""
+        log_in = getattr(self._browser, "log_in", None)
+        if not callable(log_in):
+            return False
+        try:
+            return bool(log_in(aid, credential.username, credential.secret))
+        except Exception:  # pragma: no cover - defensive: login failure -> hand off
+            return False
 
     def _blocked_detection(self, app, result, event) -> PrefillResult:
         """Pause + hand off on a detection signal (cautious mode, FR-PREFILL-6)."""
