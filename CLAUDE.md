@@ -25,6 +25,10 @@ uv sync                                            # install deps (incl. dev: ru
 uv run pytest -q                                   # full engine suite (testpaths=tests; integration tests are @pytest.mark.integration)
 uv run pytest tests/unit/test_x.py::test_name      # single test (or: -k "keyword")
 uv run pytest -m "not integration"                 # default-style run (hermetic only)
+# Gotcha: DATABASE_URL defaults to localhost:5432, so when a Postgres is reachable
+# (deploy stack / dev container up) the suite uses the REAL DB. Force the hermetic
+# in-memory lane with an unreachable URL — this is the green-increment test command:
+DATABASE_URL='postgresql+psycopg://x:x@127.0.0.1:1/none' uv run pytest -q -m "not integration"
 uv run ruff check .                                # lint (workspace/ is extend-excluded)
 uv run python -c "from applicant.app.main import app"   # import/boot smoke
 uv run alembic heads                               # MUST be a single head
@@ -58,8 +62,13 @@ on all workspace JS, `docker compose config`, and the white-label codename denyl
 resume_tailoring, discovery, workspace-callback — swappable per NFR-EXT-1), `application/services/`
 (use-cases), `app/` (FastAPI: `routers/`, `container.py` DI, per-request DB session, `config.py`,
 lifespan), `observability/`. Durable orchestration (DBOS or the default in-process "shim") survives
-restarts; an in-process scheduler drives the 24/7 loop. Safety is enforced in the core: review-before-
-submit and the pre-fill stop-boundary mean the engine **cannot** self-authorize a final submit.
+restarts; an in-process scheduler drives the 24/7 loop. **The scheduler rebuilds a fresh `AgentLoop`
+per tick** (per-tick Session isolation, `container._build_tick_services`), so any state that must
+persist across ticks (e.g. the resume backoff/failure ledger) lives in a process-lived object
+injected into every loop — NOT on the instance, or it silently resets each tick. Safety is enforced
+in the core: review-before-submit and the pre-fill stop-boundary mean the engine **cannot**
+self-authorize a final submit. Enforce such guards server-side (e.g. the fabrication guard derives
+its own ground truth) — never rely on a caller-supplied input to opt a safety check in.
 
 **The bridge (bidirectional):**
 - workspace → engine: `workspace/src/applicant_engine.py` (`ApplicantEngineClient`, `ENGINE_URL`,
