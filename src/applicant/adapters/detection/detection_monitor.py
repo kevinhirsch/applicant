@@ -13,18 +13,34 @@ from __future__ import annotations
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.ids import ApplicationId, DetectionEventId, new_id
 
-#: Substrings (lowercased) in page text/markup that indicate a challenge.
-_CHALLENGE_MARKERS: dict[str, str] = {
+#: Widget-style challenges (reCAPTCHA/hCaptcha/Turnstile/DataDome). These are
+#: matched ONLY against the explicit ``signals`` tuple the browser adapter assembles
+#: — NEVER against the raw page body. Modern login/account pages (Workday, etc.)
+#: routinely EMBED an invisible reCAPTCHA Enterprise script, so the token sits in the
+#: markup with no active challenge; matching it in raw HTML made the engine hand off
+#: on essentially every such page, defeating automate-by-default (FR-PREFILL-6). The
+#: adapter only emits these when a challenge element is actually VISIBLE.
+_WIDGET_SIGNALS: dict[str, str] = {
     "captcha": "captcha",
     "recaptcha": "captcha",
     "hcaptcha": "captcha",
     "turnstile": "turnstile",
-    "cf-challenge": "cloudflare",
-    "cloudflare": "cloudflare",
-    "checking your browser": "cloudflare",
     "datadome": "datadome",
+}
+
+#: Interstitial / challenge TEXT that is only present when a block page is actually
+#: shown to the user (Cloudflare/CAPTCHA/PerimeterX). Safe to match in the page body
+#: because these human-visible phrases do not appear merely from an embedded script.
+_INTERSTITIAL_MARKERS: dict[str, str] = {
+    "checking your browser": "cloudflare",
+    "attention required": "cloudflare",
+    "needs to review the security of your connection": "cloudflare",
     "are you a robot": "captcha",
     "verify you are human": "captcha",
+    "complete the captcha": "captcha",
+    "complete the security check": "captcha",
+    "press & hold": "captcha",
+    "press and hold": "captcha",
 }
 
 #: HTTP status codes that indicate blocking / rate-limiting (FR-PREFILL-6).
@@ -53,22 +69,32 @@ def classify_signals(page_signals: dict) -> str | None:
     Recognized keys: ``status`` (int), ``body``/``markup`` (str),
     ``signals`` (iterable of strings), and ``url`` + ``expected_host`` for
     anomalous-redirect detection. Returns ``None`` when nothing is detected.
+
+    Widget challenges (reCAPTCHA/hCaptcha/Turnstile/DataDome) are recognized ONLY
+    from the explicit ``signals`` tuple (which the adapter emits when a challenge is
+    actually visible), never from the raw ``body`` — an embedded but invisible
+    widget script is not a blocker. Genuine full-page interstitial *phrases* are
+    still matched in the body.
     """
     # 1. HTTP status block / rate-limit.
     status = page_signals.get("status")
     if isinstance(status, int) and status in _BLOCKING_STATUSES:
         return "rate_limited" if status == 429 else "blocked_403"
 
-    # 2. Explicit signals already extracted by the browser adapter.
-    explicit = [str(s).lower() for s in page_signals.get("signals", ())]
-    haystack = " ".join(explicit)
-    body = (page_signals.get("body") or page_signals.get("markup") or "")
-    haystack = f"{haystack} {body}".lower()
-    for marker, signal_type in _CHALLENGE_MARKERS.items():
-        if marker in haystack:
+    # 2. Widget challenges — ONLY from the adapter's explicit, visibility-vetted
+    #    signal tuple (not raw HTML).
+    explicit = " ".join(str(s).lower() for s in page_signals.get("signals", ()))
+    for marker, signal_type in _WIDGET_SIGNALS.items():
+        if marker in explicit:
             return signal_type
 
-    # 3. Account-creation friction (lockouts / repeated failures) (FR-PREFILL-6).
+    # 3. Interstitial / friction TEXT — these phrases are only present on an actual
+    #    block page, so matching them in the body (or explicit signals) is safe.
+    body = (page_signals.get("body") or page_signals.get("markup") or "")
+    haystack = f"{explicit} {body}".lower()
+    for marker, signal_type in _INTERSTITIAL_MARKERS.items():
+        if marker in haystack:
+            return signal_type
     for marker in _FRICTION_MARKERS:
         if marker in haystack:
             return "account_friction"

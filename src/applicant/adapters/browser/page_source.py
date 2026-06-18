@@ -832,19 +832,53 @@ class PlaywrightPageSource:
         """The HTTP status of the last main-frame response, if captured."""
         return getattr(self, "_status", None)
 
+    #: Selectors for ACTIVE (rendered) challenge widgets. An embedded-but-invisible
+    #: reCAPTCHA script is NOT one of these — only a visible challenge counts, so the
+    #: engine doesn't hand off on the many login/account pages that merely include the
+    #: script (FR-PREFILL-6 / automate-by-default).
+    _VISIBLE_CHALLENGE_SELECTORS: tuple[tuple[str, str], ...] = (
+        ("recaptcha", "iframe[src*='recaptcha'][src*='bframe']"),  # the challenge popup, not the invisible badge
+        ("recaptcha", "iframe[title*='recaptcha challenge']"),
+        ("hcaptcha", "iframe[src*='hcaptcha'][src*='challenge']"),
+        ("turnstile", ".cf-turnstile, iframe[src*='challenges.cloudflare.com']"),
+        ("captcha", "[id*='px-captcha'], [class*='px-captcha']"),  # PerimeterX press & hold
+    )
+
+    #: Full-page interstitial / challenge TEXT that only appears when a block page is
+    #: actually shown (so matching it in the body is safe, unlike a widget script).
+    _INTERSTITIAL_BODY_MARKERS: tuple[str, ...] = (
+        "checking your browser",
+        "attention required",
+        "needs to review the security of your connection",
+        "verify you are human",
+        "are you a robot",
+        "complete the captcha",
+        "complete the security check",
+        "press & hold",
+    )
+
     def _detection_signals(self, body: str) -> tuple[str, ...]:  # pragma: no cover
-        """Extract challenge markers from the page body (Cloudflare/CAPTCHA/etc)."""
+        """Extract challenge markers, distinguishing an ACTIVE challenge from a page
+        that merely embeds a (usually invisible) bot-detection script.
+
+        Widget markers (recaptcha/hcaptcha/turnstile/captcha) are emitted ONLY when a
+        challenge element is actually rendered + visible; the bare script token in the
+        markup is ignored. Genuine full-page interstitial phrases still match on text.
+        """
+        signals: list[str] = []
+        for marker, selector in self._VISIBLE_CHALLENGE_SELECTORS:
+            try:
+                el = self._page.query_selector(selector)
+                if el is not None and el.is_visible():
+                    signals.append(marker)
+            except Exception:
+                continue
         low = (body or "").lower()
-        markers = (
-            "captcha",
-            "recaptcha",
-            "hcaptcha",
-            "turnstile",
-            "cloudflare",
-            "checking your browser",
-            "datadome",
-        )
-        return tuple(m for m in markers if m in low)
+        for marker in self._INTERSTITIAL_BODY_MARKERS:
+            if marker in low:
+                signals.append(marker)
+        # De-dup while preserving order.
+        return tuple(dict.fromkeys(signals))
 
     def detect_fields(self) -> list[DetectedField]:  # pragma: no cover
         fields: list[DetectedField] = []
