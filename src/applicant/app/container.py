@@ -447,6 +447,7 @@ def build_container(settings: Settings | None = None) -> Container:
         learning_service,
         criteria=criteria_service,
         advanced_learning=advanced_learning_service,
+        pending_actions=pending_actions_service,
     )
     # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
     # routing integral changes through the shared confirmation gate (FR-FB-3).
@@ -666,7 +667,8 @@ def build_container(settings: Settings | None = None) -> Container:
             req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
         )
         rs_feedback = FeedbackService(
-            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv
+            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
+            pending_actions=rs_pas,
         )
         rs_chat = ChatService(
             attribute_service=rs_attr,

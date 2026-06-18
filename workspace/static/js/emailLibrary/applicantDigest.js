@@ -732,11 +732,18 @@ async function _onSurvey(panel, campaignId) {
     return;
   }
   try {
-    await _api('/feedback/survey', {
+    const res = await _api('/feedback/survey', {
       method: 'POST',
       body: { campaign_id: campaignId, answers },
     });
-    showToast('Thanks — that helps the assistant tune things.');
+    // A core detail inferred from the survey is held for confirmation (FR-FB-3) and
+    // now waits in the portal — point the user there instead of a silent "thanks".
+    const pending = (res && Array.isArray(res.pending)) ? res.pending.length : 0;
+    if (pending > 0) {
+      showToast(`Thanks — ${pending} change${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your OK in your to-do list.`);
+    } else {
+      showToast('Thanks — that helps the assistant tune things.');
+    }
   } catch (e) {
     showToast(e.message || 'Could not send the survey right now.');
   }

@@ -73,8 +73,8 @@ class FakeEngine:
             raise FakeEngine.raises[("list_pending_actions", cid)]
         return FakeEngine.pending.get(cid, {"campaign_id": cid, "count": 0, "items": []})
 
-    async def resolve_pending_action(self, aid):
-        FakeEngine.calls.append(("resolve_pending_action", aid))
+    async def resolve_pending_action(self, aid, body=None):
+        FakeEngine.calls.append(("resolve_pending_action", aid, body))
         if ("resolve_pending_action", aid) in FakeEngine.raises:
             raise FakeEngine.raises[("resolve_pending_action", aid)]
         return None
@@ -186,11 +186,23 @@ def test_pending_empty_when_no_campaigns(client):
 # --- resolve ----------------------------------------------------------------
 
 
+def _resolve_calls():
+    return [c for c in FakeEngine.calls if isinstance(c, tuple) and c[0] == "resolve_pending_action"]
+
+
 def test_resolve_action_ok(client):
     r = client.post("/api/applicant/portal/actions/a1/resolve")
     assert r.status_code == 200
     assert r.json() == {"resolved": True, "action_id": "a1"}
-    assert ("resolve_pending_action", "a1") in FakeEngine.calls
+    # Plain resolve (no JSON body) → forwarded with no body.
+    assert any(c[1] == "a1" and c[2] is None for c in _resolve_calls())
+
+
+def test_resolve_action_forwards_apply_body(client):
+    # FR-FB-3: confirming a held integral change forwards {"apply": true} to the engine.
+    r = client.post("/api/applicant/portal/actions/a1/resolve", json={"apply": True})
+    assert r.status_code == 200
+    assert any(c[1] == "a1" and c[2] == {"apply": True} for c in _resolve_calls())
 
 
 def test_resolve_action_forwards_error(client):
@@ -225,7 +237,7 @@ def test_missing_attribute_acquires_and_resolves(client):
     acquire = [c for c in FakeEngine.calls if isinstance(c, tuple) and c[0] == "acquire_missing_attribute"]
     assert acquire and acquire[0][1]["name"] == "phone"
     assert acquire[0][1]["value"] == "555-1212"
-    assert ("resolve_pending_action", "a2") in FakeEngine.calls
+    assert any(c[1] == "a2" for c in _resolve_calls())
 
 
 def test_missing_attribute_resolves_campaign_when_omitted(client):

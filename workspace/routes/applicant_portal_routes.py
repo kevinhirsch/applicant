@@ -189,11 +189,21 @@ def setup_applicant_portal_routes() -> APIRouter:
 
     @router.post("/actions/{action_id}/resolve")
     async def resolve_action(action_id: str, request: Request) -> dict:
-        """Mark one pending action handled once the user has acted on it."""
+        """Mark one pending action handled once the user has acted on it.
+
+        An optional JSON body (e.g. ``{"apply": true}``) is forwarded so a held
+        integral change can be confirmed/applied before the item clears (FR-FB-3).
+        """
         _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = None
         async with ApplicantEngineClient() as engine:
             try:
-                await engine.resolve_pending_action(action_id)
+                await engine.resolve_pending_action(action_id, body)
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
         return {"resolved": True, "action_id": action_id}

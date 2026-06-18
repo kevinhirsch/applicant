@@ -229,6 +229,11 @@ const KINDS = {
     label: 'Hit a snag that needs a look',
     affordance: 'answer',
   },
+  integral_change: {
+    label: 'A core detail was inferred and needs your OK',
+    hint: 'Confirm the change to apply it, or keep your current value.',
+    affordance: 'confirm_change',
+  },
 };
 
 function _meta(kind) {
@@ -427,6 +432,27 @@ function _renderDigest(item) {
     <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review applications</button>`;
 }
 
+// Held integral change (FR-FB-3 / FR-LEARN-4): a core detail was inferred from a
+// passive input (a survey answer or a parsed résumé) and is NOT applied until the
+// user confirms. Show the from → to and offer confirm (apply) or reject (keep).
+function _renderConfirmChange(item) {
+  const p = item.payload || {};
+  const name = p.attribute_name || p.name || 'this detail';
+  const current = (p.current_value == null || p.current_value === '') ? '(not set)' : p.current_value;
+  const proposed = p.proposed_value || '';
+  const reason = p.reason || _meta(item.kind).hint || '';
+  return `
+    ${reason ? `<div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(reason)}</div>` : ''}
+    <div style="font-size:12px;margin-bottom:8px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;">
+      <div style="opacity:0.6;margin-bottom:2px;">${esc(name)}</div>
+      <div>${esc(current)} &rarr; <strong>${esc(proposed)}</strong></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-confirm-change" data-action-id="${esc(item.id)}">Confirm change</button>
+      <button type="button" class="cal-btn applicant-portal-reject-change" data-action-id="${esc(item.id)}">Keep current</button>
+    </div>`;
+}
+
 // Google 2FA hand-off: a held application needs the user to approve a Google
 // two-factor prompt. "Continue" triggers the push and waits up to 60s for the
 // on-device approval; on approval the application picks up where it stopped, on
@@ -479,6 +505,7 @@ function _renderRowInner(item) {
     case 'session': return _renderSession(item);
     case 'two_factor': return _renderTwoFactor(item);
     case 'digest': return _renderDigest(item);
+    case 'confirm_change': return _renderConfirmChange(item);
     case 'final': return _renderFinal(item);
     case 'answer':
     default: return _renderAnswer(item);
@@ -628,6 +655,33 @@ function _wireRows(host) {
       }
     });
   });
+
+  // Confirm / reject a held integral change (FR-FB-3). Confirm applies the
+  // proposed value through the engine's confirmation gate before clearing the item;
+  // reject just clears it (keeps the current value).
+  const _resolveChange = (selector, apply, okToast) => {
+    host.querySelectorAll(selector).forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.actionId;
+        const row = btn.closest('.applicant-portal-row');
+        const buttons = row ? row.querySelectorAll('button') : [btn];
+        buttons.forEach((b) => { b.disabled = true; });
+        const orig = btn.textContent;
+        btn.textContent = '…';
+        try {
+          await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, { apply });
+          _removeRow(host, id);
+          _toast(okToast);
+        } catch (e) {
+          buttons.forEach((b) => { b.disabled = false; });
+          btn.textContent = orig;
+          _toast(e.message || 'Could not update that');
+        }
+      });
+    });
+  };
+  _resolveChange('.applicant-portal-confirm-change', true, 'Change applied');
+  _resolveChange('.applicant-portal-reject-change', false, 'Kept your current value');
 
   // Review → deep-link to the redline surface.
   host.querySelectorAll('.applicant-portal-review').forEach((btn) => {

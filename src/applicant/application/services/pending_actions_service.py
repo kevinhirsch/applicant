@@ -23,6 +23,9 @@ KIND_MISSING_ATTR = "missing_attr"
 KIND_AGENT_QUESTION = "agent_question"
 KIND_FINAL_APPROVAL = "final_approval"
 KIND_ERROR = "error"
+#: A held integral attribute change inferred from a PASSIVE input (guided survey /
+#: résumé-parse) awaiting the user's explicit confirm-or-reject (FR-FB-3, FR-LEARN-4).
+KIND_INTEGRAL_CHANGE = "integral_change"
 
 
 class PendingActionsService:
@@ -105,7 +108,42 @@ class PendingActionsService:
             campaign_id, KIND_AGENT_QUESTION, question, payload=payload
         )
 
+    def integral_change_confirmation(
+        self,
+        campaign_id: CampaignId,
+        *,
+        attribute_name: str,
+        proposed_value: str,
+        current_value: str | None = None,
+        reason: str = "",
+    ) -> PendingAction:
+        """Hold an integral attribute change inferred from a passive input for the
+        user's explicit confirm-or-reject (FR-FB-3, FR-LEARN-4).
+
+        The proposed change is carried in the payload (not applied) and deduped per
+        attribute so re-surfacing the same survey doesn't pile up duplicates; the
+        latest proposed value wins. Applied via the resolve path with ``apply=true``.
+        """
+        body = {
+            "attribute_name": attribute_name,
+            "proposed_value": proposed_value,
+            "current_value": current_value,
+            "reason": reason
+            or "A core detail was inferred from your input and needs your confirmation.",
+        }
+        return self.materialize(
+            campaign_id,
+            KIND_INTEGRAL_CHANGE,
+            f"Confirm a change to {attribute_name}",
+            payload=body,
+            dedup_key=f"integral_change:{attribute_name}",
+        )
+
     # --- query + resolve (FR-UI-3) ----------------------------------------
+    def get(self, action_id: PendingActionId) -> PendingAction | None:
+        """Fetch one pending action by id (used by the apply-on-resolve path)."""
+        return self._storage.pending_actions.get(action_id)
+
     def list_pending(self, campaign_id: CampaignId) -> list[PendingAction]:
         return self._storage.pending_actions.list_open(campaign_id)
 
