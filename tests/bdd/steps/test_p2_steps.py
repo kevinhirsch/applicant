@@ -333,8 +333,20 @@ def app_awaiting_final(p2ctx, app_client):
     # (FR-ONBOARD-2/FR-OOBE-3) in addition to the LLM gate.
     open_automated_work_gate(app_client)
     p2ctx["client"] = app_client
-    p2ctx["application_id"] = new_id()
-    r = app_client.post("/api/remote/sessions", json={"application_id": p2ctx["application_id"]})
+    # Persist a real application parked at the final-approval gate (the terminal submit
+    # handoffs now 404 an unknown id instead of FK-crashing on a real DB).
+    aid = ApplicationId(new_id())
+    p2ctx["application_id"] = aid
+    app_client.app.state.container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    app_client.app.state.container.storage.commit()
+    r = app_client.post("/api/remote/sessions", json={"application_id": aid})
     assert r.status_code == 201
     p2ctx["session"] = r.json()
 

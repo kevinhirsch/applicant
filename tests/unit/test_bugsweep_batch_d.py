@@ -220,7 +220,22 @@ def test_authorize_engine_finish_clicks_before_recording(client):
         return orig_click(application_id, engine_submit_authorized=engine_submit_authorized)
 
     container.browser.click_final_submit = spy
-    aid = new_id()
+    # Persist a real application at the final-approval gate (the endpoint now 404s an
+    # unknown id before touching the browser).
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
+    from applicant.core.state_machine import ApplicationState
+
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    container.storage.commit()
     r = client.post(f"/api/remote/applications/{aid}/authorize-engine-finish")
     assert r.status_code == 201, r.text
     assert clicks, "click_final_submit must be invoked before recording the outcome"

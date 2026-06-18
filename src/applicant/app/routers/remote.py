@@ -248,6 +248,11 @@ def submit_self(
     recording out-of-band and leaving the pipeline stuck at ``recv`` forever. The
     pipeline's submit step records the single OutcomeEvent — no double-recording here.
     """
+    # An outcome can only be recorded for a real application; a bogus/stale id would
+    # otherwise hit a foreign-key IntegrityError (-> 500) at record_submission on a real
+    # DB. Fail cleanly with 404, mirroring resume-account/resume-detection.
+    if storage.applications.get(application_id) is None:  # type: ignore[arg-type]
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
     event = _deliver_decision(
         container, storage, submission, application_id, DECISION_SUBMIT_SELF, OutcomeSource.MANUAL
     )
@@ -273,6 +278,11 @@ def authorize_engine_finish(
     self-authorize). #1: the decision is then delivered THROUGH the durable gate so
     the pipeline's submit/teardown steps run (one OutcomeEvent, capacity released).
     """
+    # Reject a bogus/stale application id up front (404) before touching the browser
+    # or the durable gate — recording an outcome for a non-existent app would FK-crash
+    # (-> 500) at record_submission on a real DB. Mirrors the other handoff endpoints.
+    if storage.applications.get(application_id) is None:  # type: ignore[arg-type]
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
     try:
         ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
     except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
