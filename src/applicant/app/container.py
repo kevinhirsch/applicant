@@ -508,8 +508,14 @@ def build_container(settings: Settings | None = None) -> Container:
     research_service = ResearchService(workspace=workspace)
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
-    from applicant.application.services.agent_loop import AgentLoop
+    from applicant.application.services.agent_loop import AgentLoop, ResumeLedger
     from applicant.application.services.scheduler import Scheduler
+
+    # ONE resume ledger for the whole process. The scheduler rebuilds a fresh
+    # AgentLoop every tick (per-tick Session isolation), so the resume backoff + the
+    # failure cap must live OUTSIDE the loop instance or they reset every tick and
+    # never take effect. Injected into both the shared loop and each per-tick loop.
+    resume_ledger = ResumeLedger()
 
     agent_loop = AgentLoop(
         storage=storage,
@@ -529,6 +535,7 @@ def build_container(settings: Settings | None = None) -> Container:
         orchestrator=orchestrator,
         setup_service=setup_service,
         research_service=research_service,
+        resume_ledger=resume_ledger,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -599,6 +606,7 @@ def build_container(settings: Settings | None = None) -> Container:
             orchestrator=orchestrator,
             setup_service=setup_service,
             research_service=research_service,
+            resume_ledger=resume_ledger,
         )
         return {
             "storage": tick_storage,
