@@ -290,11 +290,16 @@ class OnboardingService:
             val = f"{e.degree} {e.institution} ({e.start_year}-{e.end_year})".strip()
             self._upsert_attribute(campaign_id, f"education:{i}", val, is_integral=False)
 
-        # Record the parsed resume + detected fonts for the font/conversion steps.
+        # Record the parsed resume + detected fonts for the font/conversion steps, and
+        # keep the raw résumé text as ground truth for the fabrication guard: the
+        # attribute cloud only captures parsed/structured fields (work-history
+        # flattening can drop the achievement prose + its metrics), so the truthful
+        # generators read this back via ``true_attribute_text`` (FR-RESUME-2).
         intake[IntakeSection.BASE_RESUME.value] = {
             "document_path": document_path,
             "detected_fonts": list(parsed.detected_fonts),
             "parsed": True,
+            "raw_text": parsed.raw_text,
         }
         rec["intake"] = intake
         done = set(rec.get("sections_complete", []))

@@ -337,3 +337,36 @@ def test_approved_generated_material_submittable():
 def test_pristine_base_resume_not_gated():
     mats = [ReviewableMaterial("base", is_generated=False, approved=False)]
     assert review_gate.can_submit(mats)
+
+
+# --- numeric grounding (FR-RESUME-2): match figures by value, not spelling ---
+@pytest.mark.unit
+def test_prose_reformatted_numbers_are_not_fabrications():
+    """A figure that merely reformats a source figure must NOT flag: 40k≡40,000,
+    $30M≡$30,000,000, 27%≡27. (Real cover letters reformat metrics constantly.)"""
+    true = "Served 40k requests/sec, cut cost 27%, processed $30M/yr, 99.95% uptime."
+    letter = (
+        "I served 40,000 requests per second, cut costs by 27 percent, processed "
+        "$30,000,000 per year, and held 99.95% uptime."
+    )
+    assert truthfulness.unsupported_prose_claims(true, letter) == []
+
+
+@pytest.mark.unit
+def test_prose_invented_number_is_still_flagged():
+    """An invented quantity (a 38% source figure surfacing as 80%) is still caught."""
+    true = "Cut p99 latency by 38%."
+    flagged = truthfulness.unsupported_prose_claims(true, "I cut p99 latency by 80%.")
+    assert any(f.strip("%") == "80" for f in flagged), flagged
+
+
+@pytest.mark.unit
+def test_strict_check_value_matches_reformatted_numbers():
+    """The strict (résumé-bullet) check also matches figures by value: a reformatted
+    figure is supported, an invented one is flagged (other prose words aside)."""
+    # 40,000 ≡ 40k -> no digit-bearing token is flagged.
+    flagged_ok = truthfulness.unsupported_claims("handled 40k req/s", "handled 40,000 req/s")
+    assert not any(c.isdigit() for f in flagged_ok for c in f), flagged_ok
+    # 90,000 has no basis in the source -> the figure IS flagged.
+    flagged_bad = truthfulness.unsupported_claims("handled 40k req/s", "handled 90,000 req/s")
+    assert any("90" in f for f in flagged_bad), flagged_bad

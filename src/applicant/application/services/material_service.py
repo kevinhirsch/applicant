@@ -232,7 +232,59 @@ class MaterialService:
             val = getattr(a, "value", None)
             if val:
                 parts.append(str(val))
+        # Include the uploaded base-résumé text as ground truth. The attribute cloud
+        # only captures structured/parsed fields (and work-history flattening can drop
+        # the achievement prose with its metrics), so without this a real achievement
+        # the candidate genuinely has ("cut p99 latency 38%") would read as a
+        # fabrication in a generated cover letter / answer (FR-RESUME-2).
+        resume_text = self._base_resume_text(campaign_id)
+        if resume_text:
+            parts.append(resume_text)
         return "\n".join(p for p in parts if p)
+
+    def _base_resume_text(self, campaign_id: CampaignId) -> str:
+        """The raw text of the uploaded base résumé, if persisted (best-effort)."""
+        repo = getattr(self._storage, "onboarding_profiles", None)
+        if repo is None:
+            return ""
+        try:
+            profile = repo.get_for_campaign(campaign_id)
+            intake = getattr(profile, "intake", None) or {}
+            base = intake.get("base_resume", {}) if isinstance(intake, dict) else {}
+            return str(base.get("raw_text", "") or "")
+        except Exception:  # pragma: no cover - defensive; never break generation
+            return ""
+
+    def _with_application_context(self, true_source: str, application_id) -> str:
+        """Append the application's target company + role title to the fabrication
+        check source. These name the addressee/position the material is FOR; they are
+        never claims about the candidate's history, so allowing them keeps a letter
+        that names the employer from self-reporting as a fabrication. Best-effort."""
+        ctx = self._posting_context(application_id)
+        return f"{true_source}\n{ctx}" if ctx else true_source
+
+    def _posting_context(self, application_id) -> str:
+        """Target company + role title text for the application (``""`` if unavailable)."""
+        try:
+            app = self._storage.applications.get(application_id)
+        except Exception:
+            app = None
+        if app is None:
+            return ""
+        bits = [getattr(app, "role_name", "") or "", getattr(app, "job_title", "") or ""]
+        pid = getattr(app, "posting_id", None)
+        if pid is not None:
+            try:
+                posting = self._storage.postings.get(pid)
+            except Exception:
+                posting = None
+            if posting is not None:
+                bits += [
+                    getattr(posting, "company", "") or "",
+                    getattr(posting, "title", "") or "",
+                    getattr(posting, "location", "") or "",
+                ]
+        return " ".join(b for b in bits if b)
 
     def reframe_truthfully(self, true_source: str, jd_terms: list[str]) -> str:
         """Reframe/re-emphasize TRUE source toward the JD without fabricating.
@@ -545,7 +597,11 @@ class MaterialService:
         report = self.apply_post_filter(body)
         # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
         # narrative wording passes while invented skills/orgs/credentials are caught.
-        self.assert_no_fabrication(true_source, report.text, prose=True)
+        # The target company + role title are the addressee/position, not claims about
+        # the candidate, so allow them as context (else a letter naming the employer
+        # it is addressed to would self-report as a fabrication).
+        check_source = self._with_application_context(true_source, application_id)
+        self.assert_no_fabrication(check_source, report.text, prose=True)
         doc = self._store_document(
             campaign_id, application_id, DocumentType.COVER_LETTER, report.text
         )
@@ -599,9 +655,11 @@ class MaterialService:
         # compares against true_source) does not apply to them (FR-ATTR-6).
         if kind is not ScreeningKind.SENSITIVE:
             # Essay answers are free prose (entity-shaped check); factual answers are
-            # terse and stay on the strict per-token check.
+            # terse and stay on the strict per-token check. The target company/role is
+            # legitimate context (the position being answered about), not a claim.
+            check_source = self._with_application_context(true_source, application_id)
             self.assert_no_fabrication(
-                true_source, report.text, prose=(kind is ScreeningKind.ESSAY)
+                check_source, report.text, prose=(kind is ScreeningKind.ESSAY)
             )
         doc = self._store_document(
             campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text

@@ -396,20 +396,80 @@ def _source_token_set(true_text: str) -> frozenset[str]:
     )
 
 
+# --- numeric grounding (FR-RESUME-2): match figures by VALUE, not spelling --------
+# A generated figure legitimately reformats a source figure ("40k" -> "40,000",
+# "$30M" -> "$30,000,000", "27%" -> "27"); flagging that as fabrication blocked real
+# cover letters / screening answers. We compare numeric VALUES so reformatting passes
+# while a genuinely invented quantity (a 38% source figure surfacing as 80%) is still
+# caught. Numbers are handled separately from word claims because the token split
+# shreds "40,000" into "40"/"000" before a per-token check could ever see it.
+_NUM_TOKEN_RE = re.compile(
+    r"\$?\d[\d,]*(?:\.\d+)?(?:\s?(?:k|m|b|thousand|million|billion)(?![a-z]))?",
+    re.IGNORECASE,
+)
+_NUM_MULTIPLIER = {
+    "k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6, "b": 1e9, "billion": 1e9,
+}
+
+
+def _number_value(token: str) -> float | None:
+    """Canonical numeric value of a figure token (``$``/``,``/``%`` stripped, k/M/B applied)."""
+    s = token.strip().lower().lstrip("$").rstrip("%").strip()
+    mult = 1.0
+    for suffix, factor in _NUM_MULTIPLIER.items():
+        if s.endswith(suffix):
+            s = s[: -len(suffix)].strip()
+            mult = factor
+            break
+    s = s.replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s) * mult
+    except ValueError:
+        return None
+
+
+def _numeric_values(text: str) -> set[float]:
+    """Set of canonical numeric values appearing in ``text`` (for value-matching)."""
+    vals: set[float] = set()
+    for m in _NUM_TOKEN_RE.finditer(text):
+        v = _number_value(m.group(0))
+        if v is not None:
+            vals.add(v)
+    return vals
+
+
+def _unsupported_numbers(generated: str, source_values: set[float]) -> list[str]:
+    """Figure tokens in ``generated`` whose VALUE is absent from the source (FR-RESUME-2)."""
+    flagged: list[str] = []
+    for m in _NUM_TOKEN_RE.finditer(generated):
+        token = m.group(0).strip()
+        value = _number_value(token)
+        if value is None:
+            continue
+        if value not in source_values and token not in flagged:
+            flagged.append(token)
+    return flagged
+
+
 def unsupported_claims(true_text: str, generated: str) -> list[str]:
     """Return claim tokens in ``generated`` absent from the candidate's TRUE text.
 
     ``true_text`` is the candidate's real attribute set / work history / base
     source flattened to a string. Anything the generated material claims that is
     not traceable there (by WHOLE-TOKEN membership, not substring) is a fabrication
-    candidate (FR-RESUME-2). Deterministic.
+    candidate (FR-RESUME-2). Figures are value-matched (``40k`` ≡ ``40,000``) rather
+    than spelling-matched. Deterministic.
     """
     if not generated:
         return []
     source_tokens = _source_token_set(true_text)
-    flagged: list[str] = []
+    flagged: list[str] = _unsupported_numbers(generated, _numeric_values(true_text))
     for line in generated.splitlines():
         for token in candidate_claim_tokens(line):
+            if any(c.isdigit() for c in token):
+                continue  # figures are value-matched above, not spelling-matched
             if token.lower() not in source_tokens and token not in flagged:
                 flagged.append(token)
     return flagged
@@ -475,7 +535,9 @@ def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
     if not generated:
         return []
     source = _prose_source_tokens(true_text)
-    flagged: list[str] = []
+    # Figures are matched by VALUE (40k ≡ 40,000) up front; the word loop then skips
+    # any digit-bearing token so a reformatted number is never a false fabrication.
+    flagged: list[str] = _unsupported_numbers(generated, _numeric_values(true_text))
     # Split into sentences so we can tell a sentence-initial capital (grammar) from
     # a mid-sentence proper noun (a real entity claim).
     for sentence in re.split(r"(?<=[.!?])\s+", generated):
@@ -492,6 +554,8 @@ def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
                 first = False
                 if len(word) < 2 or word.lower() in _NON_CLAIM:
                     continue
+                if any(c.isdigit() for c in word):
+                    continue  # figures handled by value-matching above
                 low = word.lower()
                 if low in source or (low.endswith("s") and low[:-1] in source):
                     continue
