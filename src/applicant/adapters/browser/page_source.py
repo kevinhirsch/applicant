@@ -104,6 +104,10 @@ class PageSource(Protocol):
     def is_account_create_page(self) -> bool:
         ...
 
+    def is_account_gate(self) -> bool:
+        """True at the account step (sign-in OR create-account) — hand off / log in."""
+        ...
+
     def is_final_submit_page(self) -> bool:
         ...
 
@@ -173,6 +177,10 @@ class FakePageSource:
         return None
 
     def is_account_create_page(self) -> bool:
+        return self._page.is_account_create
+
+    def is_account_gate(self) -> bool:
+        # The fake model marks the account-create page as the gate.
         return self._page.is_account_create
 
     def is_final_submit_page(self) -> bool:
@@ -717,6 +725,32 @@ class PlaywrightPageSource:
         if login_only:
             return False
         return url_hit or content_hit
+
+    #: Auth-entry controls that mark the account/sign-in GATE (Workday's combined
+    #: "Create Account / Sign In" step renders these as buttons before any form field).
+    #: Specific enough not to fire on a stray header "Sign In" link or a later form
+    #: page. "Sign in with Google/LinkedIn" are OAuth flows the engine cannot drive —
+    #: they are hand-offs, the same as the email path is before a stored credential.
+    _ACCOUNT_GATE_MARKERS = (
+        "sign in with email",
+        "sign in with google",
+        "sign in with linkedin",
+        "sign in manually",
+        "use my last application",
+        "create account",
+    )
+
+    def is_account_gate(self) -> bool:  # pragma: no cover
+        """True when the page is the account step — the user (or a stored credential)
+        must SIGN IN or CREATE AN ACCOUNT before the application form is reachable.
+
+        Broader than :meth:`is_account_create_page` (create-only): a Workday account
+        step often renders sign-in *options* (buttons) before any input, so the loop
+        must hand off here instead of mistaking a field-less gate for 'done'."""
+        if self.is_account_create_page():
+            return True
+        text = self._heading_and_buttons().lower()
+        return any(m in text for m in self._ACCOUNT_GATE_MARKERS)
 
     def is_final_submit_page(self) -> bool:  # pragma: no cover
         # Robust: a "review" personal-info page is NOT the final submit. Require a

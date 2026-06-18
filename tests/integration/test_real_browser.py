@@ -116,6 +116,45 @@ def test_real_browser_enter_application_clicks_into_the_flow():
 @pytest.mark.skipif(
     not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
 )
+def test_real_browser_recognizes_sign_in_gate():
+    """FR-PREFILL-4: a Workday "Create Account / Sign In" step shows auth *buttons*
+    ("Sign in with email" / "Sign in with Google") before any form field. The loop
+    must recognize this as the account gate (so it hands off / logs in) rather than
+    mistaking a field-less page for 'done' — exactly the live NVIDIA failure where the
+    engine sailed past the Sign In page to AWAITING_FINAL_APPROVAL. "Sign in with
+    Google" is an OAuth flow the engine cannot drive, so it still counts as a gate."""
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+    from applicant.adapters.browser.stealth import coherent_fingerprint
+
+    channel = _working_channel()
+    signin = (
+        "<html><body><h2>Sign In</h2>"
+        "<button>Sign in with Google</button>"
+        "<button>Sign in with email</button></body></html>"
+    )
+    form = (
+        "<html><body><h2>My Information</h2>"
+        "<input name='firstName' aria-label='First Name'></body></html>"
+    )
+    src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
+    try:
+        src.open("data:text/html," + signin)
+        # The Sign In gate has no inputs yet but MUST be recognized as the account gate.
+        assert src.detect_fields() == []
+        assert src.is_account_gate() is True
+        assert src.is_account_create_page() is False  # it's sign-in, not create
+        # A real form page (fields present) is NOT an account gate.
+        src.open("data:text/html," + form)
+        assert src.is_account_gate() is False
+    finally:
+        src.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _HAS_DRIVER, reason="No browser driver (patchright/playwright) installed.")
+@pytest.mark.skipif(
+    not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
+)
 def test_real_browser_identity_is_coherent_real_linux_chrome():
     """Live coherence check (FR-STEALTH-1): the identity holds together in a real
     browser — UA, platform, CH-UA platform, languages and WebGL all consistent

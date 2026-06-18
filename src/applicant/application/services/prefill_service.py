@@ -191,8 +191,17 @@ class PrefillService:
         if callable(enter_application):
             enter_application(aid)
 
-        # 3. Account-creation page (if any) → pre-fill, then hand off (FR-PREFILL-4).
-        if self._browser.is_account_create_page(aid):
+        # 3. Account GATE (sign-in OR create-account) → pre-fill what we can, then hand
+        # off (FR-PREFILL-4). Broader than create-only: a Workday account step often
+        # shows sign-in *options* (incl. OAuth "Sign in with Google", which the engine
+        # cannot drive) before any field, so the loop must hand off here rather than
+        # mistake a field-less gate for 'done'. Signature-stable: a minimal stub browser
+        # without is_account_gate falls back to the create-only check.
+        _gate = getattr(self._browser, "is_account_gate", None)
+        on_account_gate = (
+            _gate(aid) if callable(_gate) else self._browser.is_account_create_page(aid)
+        )
+        if on_account_gate:
             app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
             # FR-PREFILL-6: run a cautious detection check BEFORE filling the account
             # page — a CAPTCHA/Cloudflare/etc. there must pause + hand off, never fill.
