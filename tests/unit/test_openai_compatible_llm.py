@@ -121,6 +121,33 @@ def test_complete_basic_openai():
     assert res.model == "gpt-4o-mini"
 
 
+def test_complete_openrouter_hits_chat_completions_not_ollama():
+    # Regression: OpenRouter's base "https://openrouter.ai/api/v1" contains "/api/",
+    # which used to misclassify it as Ollama and POST to /api/api/chat (404), silently
+    # falling back to the deterministic stub. An explicit non-ollama provider must
+    # take the OpenAI path: <base>/chat/completions.
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["path"] = request.url.path
+        return httpx.Response(
+            200, json={"choices": [{"message": {"role": "assistant", "content": "real reply"}}]}
+        )
+
+    llm = OpenAICompatibleLLM(
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-x",
+        model="z-ai/glm-5.2",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete([ChatMessage(role="user", content="hi")])
+    assert res.text == "real reply"
+    assert seen["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert "/api/api/chat" not in seen["url"]
+
+
 def test_complete_basic_ollama():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/chat"
