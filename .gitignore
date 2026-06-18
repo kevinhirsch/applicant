@@ -55,3 +55,7 @@ workspace/.local/
 
 # Runtime résumé/cover render output (xelatex/lualatex work dirs + PDFs)
 .artifacts/
+
+# Runtime per-tenant browser profiles (FR-STEALTH-3 persistent contexts: cookies,
+# session storage). Created by ProfileStore (default root_dir="profiles") at runtime.
+profiles/
