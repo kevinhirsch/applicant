@@ -40,6 +40,7 @@
 import fileHandlerModule from './fileHandler.js';
 
 const SETUP = '/api/applicant/setup';
+const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
 
 let _overlay = null;
 let _campaignId = null;
@@ -1425,10 +1426,51 @@ try { if (typeof window !== 'undefined') window.applicantNeverDoesList = neverDo
 // `.ao-settings-foot` children inside it so the renderer's body+foot land there.
 // (The renderers detect "Settings, not wizard" at save time via the absent
 // _overlay, so they save through the engine proxies without driving navigation.)
+// In-settings Update button (FR-OOBE-4 / FR-UI-6 / FR-INSTALL-2). The same
+// one-click update the Debug tool exposes, lifted here so it's reachable where an
+// operator looks for it — Settings — without SSH/CLI. Talks to the engine ops
+// proxy (GET status + POST trigger); degrades cleanly when updates aren't enabled.
+async function _renderUpdate() {
+  let status = { engine_available: true };
+  try { status = await _fetchJSON(`${OPS}/update`); } catch { status = { engine_available: false }; }
+  if (status && status.engine_available === false) {
+    _setBody('<div class="admin-card"><div class="admin-toggle-sub">The update service is offline right now. Try again shortly.</div></div>');
+    _setFoot('');
+    return;
+  }
+  _setBody(`
+    <h2 class="ao-step-title">Update Applicant ${_tip('Runs the safe one-click update — it backs up your data, applies the latest version, and restarts. No command line needed.')}</h2>
+    <p class="ao-step-desc">Get the latest version without the command line. Applicant backs up your data first, applies the update, then restarts. If updates aren’t enabled on this install, it will tell you what it would do.</p>
+    <div class="admin-card">
+      <div style="font-weight:600;">One-click update</div>
+      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">Back up &rarr; apply the latest version &rarr; restart. Safe to run any time.</div>
+      <button class="cal-btn cal-btn-primary" id="ao-update-go" style="margin-top:12px;">Check for &amp; install update</button>
+      <div id="ao-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
+    </div>
+  `);
+  _setFoot('');
+  const btn = document.getElementById('ao-update-go');
+  const out = document.getElementById('ao-update-result');
+  if (btn) btn.onclick = async () => {
+    if (!window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.')) return;
+    btn.disabled = true;
+    out.textContent = 'Working…';
+    try {
+      const res = await _post(`${OPS}/update/trigger`, {});
+      out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
+    } catch (e) {
+      out.textContent = e.message || 'Could not start the update right now.';
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
 const _SETTINGS_RENDERERS = {
   channels: _renderChannels,
   sandbox: _renderSandbox,
   fonts: _renderFonts,
+  update: _renderUpdate,
 };
 
 export async function mountSettingsStep(stepKey, container) {

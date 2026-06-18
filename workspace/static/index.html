@@ -1504,6 +1504,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             <span>Automation</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="update">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Update</span>
+          </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 2: Comms (Integrations → Email → Reminders).
                Integrations leads here because it's where the underlying
@@ -2190,6 +2194,19 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Automation sandbox</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Where Applicant runs the browser it drives — and that you take over when a human step is needed. Most people keep the built-in sandbox.</div>
             <div id="ao-settings-sandbox"></div>
+          </div>
+        </div>
+
+        <!-- ═══ UPDATE TAB ═══
+             The in-settings one-click Update button (FR-OOBE-4 / FR-UI-6). The card
+             body is rendered by applicantOnboarding.js _renderUpdate via
+             mountApplicantSettingsStep — the same one-click update the Debug tool
+             exposes, surfaced where an operator looks for it. -->
+        <div data-settings-panel="update" class="hidden">
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Update Applicant</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Install the latest version without the command line — your data is backed up first, then the app restarts.</div>
+            <div id="ao-settings-update"></div>
           </div>
         </div>
 

@@ -47,6 +47,8 @@ const RELOCATED_SETUP_STEPS = {
   notifications: { step: 'channels', host: 'ao-settings-notifications' },
   fonts: { step: 'fonts', host: 'ao-settings-fonts' },
   sandbox: { step: 'sandbox', host: 'ao-settings-sandbox' },
+  // FR-OOBE-4 / FR-UI-6: the in-settings one-click Update button.
+  update: { step: 'update', host: 'ao-settings-update' },
 };
 
 function mountRelocatedSetupStep(tab) {
