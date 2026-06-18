@@ -95,6 +95,12 @@ class PageSource(Protocol):
         """Move to the next page; ``None`` once past the last page."""
         ...
 
+    def enter_application(self) -> PageState | None:
+        """Click the ATS "Apply" entry into the application flow (FR-PREFILL-1).
+
+        Returns the new page, or ``None`` when not needed (already in-flow)."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
@@ -159,6 +165,12 @@ class FakePageSource:
             return None
         self._index += 1
         return self.current()
+
+    def enter_application(self) -> PageState | None:
+        # The fake model's pages() already starts at the application's first page
+        # (account-create), so there is no separate posting/landing page to click
+        # through — a no-op that keeps the flow on the current page.
+        return None
 
     def is_account_create_page(self) -> bool:
         return self._page.is_account_create
@@ -480,12 +492,77 @@ class PlaywrightPageSource:
         "[role='button']:has-text('Continue')",
     )
 
+    #: "Apply" entry controls on a job posting / landing page (Workday first), tried
+    #: in order to move from the posting INTO the application flow (FR-PREFILL-1). A
+    #: Workday posting renders an "Apply" button (``adventureButton``); the form lives
+    #: behind it, so without this click the engine only ever sees the posting page.
+    _APPLY_SELECTORS = (
+        "a[data-automation-id='adventureButton']",
+        "button[data-automation-id='adventureButton']",
+        "button:has-text('Apply')",
+        "a:has-text('Apply')",
+        "[role='button']:has-text('Apply')",
+    )
+    #: After the first Apply click, prefer a MANUAL application over résumé-autofill or
+    #: a third-party (LinkedIn/Indeed) sign-in entry, so the engine drives the real form.
+    _APPLY_MANUALLY_SELECTORS = (
+        "a[data-automation-id='applyManually']",
+        "button[data-automation-id='applyManually']",
+        "button:has-text('Apply Manually')",
+        "a:has-text('Apply Manually')",
+        "[role='button']:has-text('Apply Manually')",
+    )
+
+    def _settle(self, timeout_ms: int = 12_000) -> None:  # pragma: no cover - integration-gated
+        """Wait for an SPA to finish hydrating before the page is inspected.
+
+        Workday (and most modern ATSes) render an empty shell on the ``load`` event
+        and hydrate the real DOM afterward, so a field-scan / screenshot taken at
+        ``load`` is blank. Wait for network to go idle — bounded + best-effort
+        (never raises; a slow page just proceeds with whatever has rendered)."""
+        try:
+            self._page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+
+    def _click_first(self, selectors) -> bool:  # pragma: no cover - integration-gated
+        """Click the first present + enabled selector; return whether one was clicked."""
+        for sel in selectors:
+            try:
+                loc = self._page.locator(sel).first
+                if loc.count() == 0 or not loc.is_enabled():
+                    continue
+                loc.click()
+                return True
+            except Exception:
+                continue
+        return False
+
     def open(self, url: str) -> None:  # pragma: no cover - integration-gated
         # Remember the host we expected so an anomalous redirect is detectable.
         self._expected_host = url.split("//", 1)[-1].split("/", 1)[0] or None
         response = self._page.goto(url)
         if response is not None:
             self._status = response.status
+        # FR-PREFILL-1: let the SPA hydrate so the field-scan / screenshot / page
+        # predicates see the real DOM, not the empty shell rendered at ``load``.
+        self._settle()
+
+    def enter_application(self) -> PageState | None:  # pragma: no cover - integration-gated
+        """Click the ATS "Apply" entry to move from the posting/landing page into the
+        application flow (sign-in / create-account / form).
+
+        Best-effort and idempotent: returns the new :class:`PageState` when an entry
+        was clicked, else ``None`` (the URL already lands inside the flow, or there is
+        no entry control). A benign navigation — never an irreducible human step."""
+        if not self._click_first(self._APPLY_SELECTORS):
+            return None
+        self._settle()
+        # Workday usually offers "Apply Manually" alongside résumé-autofill / 3rd-party
+        # sign-in; take the manual path so the engine drives the real fields.
+        if self._click_first(self._APPLY_MANUALLY_SELECTORS):
+            self._settle()
+        return self.current()
 
     def current(self) -> PageState:  # pragma: no cover - integration-gated
         # Populate status/body/detection markers so cautious mode (FR-PREFILL-6) is

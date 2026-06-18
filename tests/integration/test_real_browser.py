@@ -72,6 +72,50 @@ def test_real_browser_navigates_and_detects_fields():
 @pytest.mark.skipif(
     not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
 )
+def test_real_browser_enter_application_clicks_into_the_flow():
+    """FR-PREFILL-1: a Workday-shaped posting renders an "Apply" button with the form
+    behind it. ``enter_application()`` must click that entry so the real form becomes
+    inspectable — without it the engine only ever sees the posting page (no fields),
+    which is exactly what a live NVIDIA Workday run exhibited (blank page, 0 fields)."""
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+    from applicant.adapters.browser.stealth import coherent_fingerprint
+
+    channel = _working_channel()
+    # Posting page: an Apply button (Workday `adventureButton`) injects the
+    # create-account form on click — so the form is NOT in the DOM until we apply.
+    html = (
+        "<html><body><h1>Senior Engineer at Acme</h1>"
+        "<button data-automation-id='adventureButton' id='applyBtn'>Apply</button>"
+        "<div id='signin'></div>"
+        "<script>document.getElementById('applyBtn').addEventListener('click',function(){"
+        "document.getElementById('signin').innerHTML="
+        "'<h2>Create Account</h2>'"
+        "+'<input name=\"email\" aria-label=\"Email Address\" type=\"text\">'"
+        "+'<input name=\"password\" aria-label=\"Password\" type=\"password\">';});"
+        "</script></body></html>"
+    )
+    src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
+    try:
+        src.open("data:text/html," + html)
+        # Before applying: the posting page exposes no fillable fields.
+        assert src.detect_fields() == []
+        assert src.is_account_create_page() is False
+        # Click "Apply" -> the create-account form is revealed.
+        src.enter_application()
+        fields = src.detect_fields()
+        assert any(f.selector == '[name="email"]' for f in fields)
+        assert any(f.selector == '[name="password"]' for f in fields)
+        # And the revealed page is now recognized as the account-create gate.
+        assert src.is_account_create_page() is True
+    finally:
+        src.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _HAS_DRIVER, reason="No browser driver (patchright/playwright) installed.")
+@pytest.mark.skipif(
+    not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
+)
 def test_real_browser_identity_is_coherent_real_linux_chrome():
     """Live coherence check (FR-STEALTH-1): the identity holds together in a real
     browser — UA, platform, CH-UA platform, languages and WebGL all consistent

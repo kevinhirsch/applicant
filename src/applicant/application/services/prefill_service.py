@@ -182,6 +182,15 @@ class PrefillService:
         else:
             self._browser.open(aid, url)
 
+        # 2b. Move from the job posting/landing page INTO the application flow (click
+        # "Apply"). A no-op when the URL already lands inside the flow, or for the
+        # in-memory fake source (FR-PREFILL-1). Without this the engine inspects the
+        # posting page (no form fields) and finishes having filled nothing. Signature-
+        # stable: a minimal stub browser without this method simply skips the entry.
+        enter_application = getattr(self._browser, "enter_application", None)
+        if callable(enter_application):
+            enter_application(aid)
+
         # 3. Account-creation page (if any) → pre-fill, then hand off (FR-PREFILL-4).
         if self._browser.is_account_create_page(aid):
             app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
