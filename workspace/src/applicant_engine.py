@@ -302,6 +302,10 @@ class ApplicantEngineClient:
     async def documents_for_application(self, application_id: str) -> Any:
         return await self._request("GET", f"/api/documents/applications/{application_id}")
 
+    async def list_variants(self, campaign_id: str) -> Any:
+        """Owner-scoped résumé-variant library (lineage / scores / approval state)."""
+        return await self._request("GET", f"/api/documents/variants/{campaign_id}")
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 

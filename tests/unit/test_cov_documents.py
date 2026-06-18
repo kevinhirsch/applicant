@@ -167,6 +167,38 @@ def test_approve_variant_succeeds_for_existing_variant(client):
     assert body["campaign_id"] == str(cid)
 
 
+def test_owner_variant_library_endpoint_reports_lineage(client):
+    """FR-RESUME-6 / FR-UI-6: the owner-scoped variant-library endpoint (the
+    user-facing equivalent of the admin Variants view) returns lineage + approval."""
+    from applicant.core.entities.resume_variant import ResumeVariant
+    from applicant.core.ids import CampaignId, ResumeVariantId, new_id
+
+    container = client.app.state.container
+    storage = container.storage
+    cid = CampaignId(new_id())
+    root = ResumeVariant(id=ResumeVariantId(new_id()), campaign_id=cid, storage_path="root.tex")
+    child = ResumeVariant(
+        id=ResumeVariantId(new_id()),
+        campaign_id=cid,
+        storage_path="child.tex",
+        parent_id=root.id,
+        approved=True,
+        fit_scores={"posting-1": 0.8},
+    )
+    storage.resume_variants.add(root)
+    storage.resume_variants.add(child)
+    storage.commit()
+
+    res = client.get(f"/api/documents/variants/{cid}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["campaign_id"] == str(cid)
+    lib = {v["variant_id"]: v for v in body["variants"]}
+    assert lib[str(root.id)]["is_root"] is True
+    assert lib[str(child.id)]["lineage_depth"] == 1
+    assert lib[str(child.id)]["approved"] is True
+
+
 def test_material_service_fallback_builds_from_container_adapters(app):
     """The module-level ``_material_service`` helper builds a MaterialService from the
     frozen container's adapters when no per-request service exists (CONC-REQ-1)."""

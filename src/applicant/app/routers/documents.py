@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import (
+    get_admin_query_service,
     get_container,  # CRIT-profile: container singleton for the banned-phrase list
     get_material_service,
     get_pending_actions_service,
@@ -281,6 +282,19 @@ def set_banned_phrases(
         custom = []
     return {"phrases": custom, "seed_phrases": list(BANNED_PHRASES)}
 # CRIT-profile: end
+
+
+@router.get("/variants/{campaign_id}")
+def list_variants(campaign_id: str, admin_query=Depends(get_admin_query_service)) -> dict:
+    """Owner-scoped résumé-variant library: lineage / fit scores / approval state
+    (FR-RESUME-6, FR-UI-6).
+
+    Reuses the same read-model as the debug surface, but reachable from the
+    user-facing document library (not admin-gated) so the variant library is a real
+    user surface, not an operator-only view.
+    """
+    variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "variants": variants}
 
 
 @router.post("/{document_id}/review", status_code=201)
