@@ -200,9 +200,16 @@ class AgentLoop:
 
     # --- the tick (one step of one campaign's work) -----------------------
     def tick(
-        self, campaign_id: CampaignId, now: datetime | None = None
+        self, campaign_id: CampaignId, now: datetime | None = None, *, force: bool = False
     ) -> TickResult:
-        """Advance one campaign's work by one step. Safe to call repeatedly."""
+        """Advance one campaign's work by one step. Safe to call repeatedly.
+
+        ``force=True`` is the operator's explicit "Run now": it runs a single pass
+        even when the schedule is paused (campaign inactive) or the run-mode's
+        auto-stop condition is met. It NEVER bypasses the automated-work gate
+        (onboarding/LLM must be configured) nor the daily throughput cap — those are
+        safety limits, not schedule state.
+        """
         now = now or datetime.now(UTC)
         # The in-memory ledger holds ONLY this tick's not-yet-persisted delta; the
         # durable ``agent_runs`` carry the cross-tick total (FR-AGENT-1). Reset it at
@@ -215,7 +222,7 @@ class AgentLoop:
         # do not grow unbounded over 24/7 operation.
         self._prune_daily(now.date())
         try:
-            return self._tick(campaign_id, now)
+            return self._tick(campaign_id, now, force=force)
         finally:
             with self._state_lock:
                 self._acted.pop(key, None)
@@ -239,7 +246,7 @@ class AgentLoop:
             self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
             self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
 
-    def _tick(self, campaign_id: CampaignId, now: datetime) -> TickResult:
+    def _tick(self, campaign_id: CampaignId, now: datetime, force: bool = False) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
         campaign = self._storage.campaigns.get(campaign_id)
         if campaign is None:
@@ -247,8 +254,10 @@ class AgentLoop:
             return result
 
         # 1. Run-mode gate (FR-AGENT-2). UNTIL_N_VIABLE counts viable postings so far.
+        # A manual "Run now" (force) bypasses this gate — the schedule may be paused
+        # or the mode's auto-stop met, but the operator explicitly asked for one pass.
         viable_count = self._viable_count(campaign_id)
-        if not self._runs.should_continue(
+        if not force and not self._runs.should_continue(
             campaign, now=now, viable_count=viable_count
         ):
             result.reason = "run_mode_stop"

@@ -711,6 +711,53 @@ def test_resume_failure_cap_gives_up_and_alerts(tmp_path):
 
 
 @pytest.mark.unit
+def test_force_tick_runs_even_when_paused(tmp_path):
+    """'Run now' (force) runs one pass even when the campaign is paused, while a
+    normal scheduled tick on a paused campaign is a no-op (run_mode_stop)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    AgentRunService(storage).set_active(cid, False)  # pause the schedule
+    loop = _loop(storage, orch)
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+
+    # Normal tick: paused -> does not run.
+    normal = loop.tick(cid, now=now)
+    assert normal.ran is False
+    assert normal.reason == "run_mode_stop"
+
+    # Manual Run-now (force): runs a pass despite the pause.
+    forced = loop.run_once(cid, now=now, force=True)
+    assert forced.ran is True
+    assert forced.reason != "run_mode_stop"
+
+
+@pytest.mark.unit
+def test_force_tick_still_respects_automated_work_gate(tmp_path):
+    """Force bypasses the pause/run-mode stop but NOT the automated-work gate
+    (onboarding/LLM): a manual Run-now before setup still starts no new work."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+
+    class _ClosedGate:
+        def is_automated_work_allowed(self):
+            return False
+
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        orchestrator=orch,
+        setup_service=_ClosedGate(),
+    )
+    forced = loop.run_once(cid, now=datetime(2026, 6, 16, tzinfo=UTC), force=True)
+    # It "ran" past the run-mode gate but the closed automated-work gate stops new work.
+    assert forced.reason == "automated_work_gated"
+
+
+@pytest.mark.unit
 def test_resume_failure_streak_resets_on_success(tmp_path):
     """A clean resume clears the failure streak so transient blips never accumulate
     toward the give-up cap."""

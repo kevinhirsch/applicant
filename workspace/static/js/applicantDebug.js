@@ -500,7 +500,13 @@ async function _renderRun() {
     try {
       const res = await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/run`, {});
       if (res.ran === false) {
-        _toast(res.reason || 'Nothing to run right now.');
+        // Map the engine's machine reason to a plain-language message.
+        const reasons = {
+          budget_exhausted: "Today's application limit is reached — it'll resume tomorrow.",
+          automated_work_gated: 'Finish setup (model, profile) before the agent can run.',
+          campaign_not_found: 'That job search no longer exists.',
+        };
+        _toast(reasons[res.reason] || res.reason || 'Nothing to run right now.');
       } else {
         const found = res.discovered != null ? `Found ${res.discovered} posting(s).` : 'Run complete.';
         _toast(found);
