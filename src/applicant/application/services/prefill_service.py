@@ -107,6 +107,10 @@ class PrefillResult:
     sensitive_declined: list[str] = field(default_factory=list)
     #: essay screening questions deferred to Phase 3 generation (FR-ANSWER-1).
     deferred_essay_questions: list[dict] = field(default_factory=list)
+    #: screening answers DRAFTED from the profile by the LLM (truthful, review-gated).
+    #: ``[{selector, label, answer, url}]`` — surfaced for the user's review before
+    #: any submit (FR-ANSWER-1, FR-RESUME-8).
+    generated_answers: list[dict] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
     #: page url for each screenshot in ``screenshots`` (parallel list, FR-LOG-2).
     screenshot_pages: list[str] = field(default_factory=list)
@@ -748,6 +752,17 @@ class PrefillService:
                 )
                 continue
             page_log[fld.selector] = resolved.value
+            if resolved.generated:
+                # A DRAFTED screening answer — record it so it is surfaced for the
+                # user's review before any submit (FR-ANSWER-1, FR-RESUME-8).
+                result.generated_answers.append(
+                    {
+                        "selector": fld.selector,
+                        "label": fld.label,
+                        "answer": resolved.value,
+                        "url": state.url,
+                    }
+                )
             if resolved.is_sensitive and resolved.from_explicit:
                 result.sensitive_filled_from_explicit.append(fld.selector)
             elif resolved.is_sensitive:
@@ -764,6 +779,8 @@ class PrefillService:
         is_sensitive: bool = False
         from_explicit: bool = False
         defer_essay: bool = False
+        #: value was DRAFTED by the LLM from the profile (review-gated, FR-ANSWER-1).
+        generated: bool = False
 
     def _resolve_value(
         self, fld: DetectedField, attributes: list[Attribute], result: PrefillResult
@@ -794,7 +811,17 @@ class PrefillService:
         if explicit is not None:
             return self._Resolved(value=explicit)
         guessed = self._escalate_mapping(fld, attributes)
-        return self._Resolved(value=guessed)
+        if guessed is not None:
+            return self._Resolved(value=guessed)
+        # Free-text screening QUESTION we could not map → draft a truthful answer from
+        # the profile (FR-ANSWER-1). Review-gated (FR-RESUME-8); fabrication-checked so
+        # it never invents facts; returns None (→ ask the user) when the profile lacks
+        # enough to answer truthfully.
+        if self._is_screening_question(fld):
+            drafted = self._generate_screening_answer(fld, attributes)
+            if drafted is not None:
+                return self._Resolved(value=drafted, generated=True)
+        return self._Resolved(value=None)
 
     def _escalate_mapping(
         self, fld: DetectedField, attributes: list[Attribute]
@@ -837,6 +864,70 @@ class PrefillService:
             if attr.matches(choice) and not is_sensitive_field(attr.name):
                 return attr.value
         return None
+
+    @staticmethod
+    def _is_screening_question(fld: DetectedField) -> bool:
+        """A free-text answer field we draft for, vs a plain data field (name/email).
+        A ``<textarea>`` is inherently a free-text prompt; a text input qualifies only
+        when its label READS like a question (ends with '?' or is a long-form prompt).
+        Never sensitive (FR-ATTR-6 — EEO is never AI-drafted)."""
+        if is_sensitive_field(fld.label):
+            return False
+        if fld.field_type == "textarea":
+            return True
+        if fld.field_type not in ("text", SCREENING_FACTUAL):
+            return False
+        label = (fld.label or "").strip()
+        return label.endswith("?") or len([w for w in label.split() if w]) >= 6
+
+    def _generate_screening_answer(
+        self, fld: DetectedField, attributes: list[Attribute]
+    ) -> str | None:
+        """Draft a TRUTHFUL answer to a screening question from the profile (FR-ANSWER-1).
+
+        Uses ONLY the candidate's stored facts; the answer is fabrication-checked
+        against those facts (FR-RESUME-2) and run through the non-AI post-filter
+        (FR-RESUME-5). Returns ``None`` — so the caller asks the user — when the LLM is
+        absent, signals INSUFFICIENT, is low-confidence, or the draft would fabricate.
+        The drafted answer is review-gated by the caller (FR-RESUME-8)."""
+        if self._llm is None or not attributes:
+            return None
+        from applicant.core.rules.truthfulness import (
+            normalize_emdashes,
+            strip_banned_phrases,
+            unsupported_prose_claims,
+        )
+        from applicant.ports.driven.llm import ChatMessage
+
+        facts = "\n".join(
+            f"{a.name}: {a.value}" for a in attributes if not is_sensitive_field(a.name)
+        )
+        prompt = (
+            "You are completing a job application for the candidate described below. "
+            "Answer the application QUESTION truthfully and concisely, using ONLY the "
+            "candidate's facts. Do NOT invent employers, job titles, dates, skills, "
+            "degrees, or numbers. If the facts do not contain enough to answer the "
+            "question truthfully, reply with exactly: INSUFFICIENT.\n\n"
+            f"CANDIDATE FACTS:\n{facts}\n\nQUESTION: {fld.label}\n\nANSWER:"
+        )
+        try:
+            res = self._llm.complete(
+                [ChatMessage(role="user", content=prompt)],
+                start_tier=FIELD_MAPPING_START_TIER,
+            )
+        except Exception:
+            return None
+        if getattr(res, "low_confidence", False):
+            return None
+        answer = (res.text or "").strip()
+        if not answer or answer.upper().startswith("INSUFFICIENT"):
+            return None
+        # Truthfulness guard (FR-RESUME-2): reject anything the profile can't support
+        # rather than fill a fabricated claim — fall back to asking the user.
+        if unsupported_prose_claims(facts, answer):
+            return None
+        # FR-RESUME-5 non-AI post-filter (no em dashes / banned phrases).
+        return normalize_emdashes(strip_banned_phrases(answer))
 
     @staticmethod
     def _lookup(label: str, attributes: list[Attribute]) -> str | None:
