@@ -196,8 +196,11 @@ class Scheduler:
                 "ran": False,
                 "reason": "a run is already in progress for this campaign",
             }
+        # Show "working now" while the manual run executes, but DON'T overwrite
+        # ``_last_tick_at``: that tracks the SCHEDULED cadence (it drives the
+        # next-tick estimate), and a manual Run-now must not make the status chip
+        # claim the scheduler just ticked / shift its next-run countdown.
         self._tick_running = True
-        self._last_tick_at = now
         try:
             # force=True: a manual Run-now runs one pass even if the schedule is
             # paused / the run-mode auto-stop is met (the operator explicitly asked).
