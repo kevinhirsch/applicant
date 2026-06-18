@@ -246,6 +246,52 @@ For each finding:
 
 ---
 
+## 8a. CODE-LEVEL SAFETY AUDIT (static — beyond the visual sweep)
+
+The UI sweep finds reachability + visual defects; it does NOT find a **safety
+guarantee that is silently inert on the reachable path**. Audit those statically
+with one lens: **for each stated promise, is it actually enforced where the
+front-door reaches?** Trace promise → the rule → every call site → the reachable
+caller's inputs. Real bugs found this way (each shipped as a focused PR):
+
+- **A guard that no-ops when the caller omits an optional input.** The redline
+  revision (`MaterialService.apply_turn`) ran the fabrication guard only `if
+  true_source is not None`, but the front-door turn sends none → every in-app
+  revision skipped it (NFR-TRUTH-1). Fix: derive ground truth server-side; never
+  trust the caller to opt into a safety guard.
+- **In-memory state defeated by a per-tick rebuild.** The scheduler builds a fresh
+  `AgentLoop` every tick, so its in-memory resume backoff + failure-cap reset each
+  tick — both inert under the real 24/7 loop though green in unit tests. Fix: a
+  process-lived ledger injected into every per-tick instance. **Check any
+  per-tick-rebuilt service for cross-tick in-memory state** (caches/dedup/counters).
+- **A manual action polluting scheduled state.** `run_now` overwrote the
+  scheduler's `_last_tick_at`, corrupting the "next run" estimate.
+- **A permanently-failing retry with no cap.** A stuck application re-drove forever;
+  add a consecutive-failure cap + a single deduped alert.
+
+**Safety-property checklist (all verified enforced as of this audit — re-verify):**
+- **No engine self-submit.** The pipeline `recv` final-approval gate PARKS on
+  timeout (never proceeds); submit only fires on an explicit user-delivered
+  decision; the browser final-submit click is gated by `engine_submit_authorized`
+  (True only on the `authorize-engine-finish` endpoint); `record_submission`
+  enforces the review gate (`ensure_submittable`).
+- **No secret leakage.** Credentials are libsodium-sealed at rest; `store` logs only
+  metadata; GET endpoints return tenant keys, never secrets; tier `get_tiers` omits
+  keys (exposes only an `api_key_ref` marker).
+- **Fabrication guard + non-AI-voice post-filter on EVERY material path** —
+  resume/cover/screening generation AND revision (post-filter before the guard).
+- **Confirmation gate (FR-FB-3).** Integral attribute/criterion changes route
+  through `ensure_change_allowed`; chat never auto-commits integral.
+- **Internal callback channel.** Token unset ⇒ 403 (disabled); constant-time
+  `secrets.compare_digest`; `verify_internal_token` is the first statement of every
+  handler.
+- **No unbounded memory growth** in process-lived singletons (research cache is
+  budget-bounded; the notifier prunes).
+- **Every new proxy route carries an auth guard** (`_require_admin` /
+  `require_user` / `require_privilege`).
+
+---
+
 ## 9. INITIALIZATION VECTOR (what a fresh agent does, in order)
 
 1. Acknowledge comprehension; obtain the **API key**.
@@ -257,5 +303,7 @@ For each finding:
    surface (§2), through every settings panel and dialog (§3).
 7. For each finding, run the **note→debug→fix→re-run loop** (§7), judging LLM
    quality (§5a) along the way.
+8. Run the **code-level safety audit** (§8a): for each safety promise, trace it to
+   the reachable caller and confirm it is actually enforced (not inert).
 8. Maintain a single PR; keep CI green; deliver before/after screenshots.
 9. Remind the user to **revoke the API key** when done.
