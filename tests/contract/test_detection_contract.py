@@ -60,8 +60,20 @@ class TestDetectionMonitorContract:
         assert classify_signals({"status": 200}) is None
         assert classify_signals({"signals": ("hCaptcha",)}) == "captcha"
 
+    def test_embedded_widget_script_in_body_is_not_a_challenge(self):
+        # REGRESSION (live PwC playtest): a bare reCAPTCHA token in the page markup
+        # (an invisible, embedded script) is NOT a challenge — only the adapter's
+        # visibility-vetted ``signals`` tuple flags a widget. Otherwise the engine
+        # would hand off on essentially every modern login page (automate-by-default).
+        assert classify_signals({"body": "grecaptcha.render(...)", "status": 200}) is None
+        assert classify_signals(
+            {"body": "<script src='/recaptcha/api.js'></script>", "status": 200}
+        ) is None
+        # But the adapter-vetted explicit signal still classifies.
+        assert classify_signals({"signals": ("recaptcha",)}) == "captcha"
+
     def test_event_detail_never_includes_raw_body(self, adapter, aid):
-        # Body can contain a challenge token; the event detail must not carry it.
-        event = adapter.evaluate(aid, {"body": "captcha", "status": 200})
+        # Body can contain a challenge phrase; the event detail must not carry it.
+        event = adapter.evaluate(aid, {"body": "Please complete the CAPTCHA", "status": 200})
         assert event is not None
         assert "body" not in event.detail
