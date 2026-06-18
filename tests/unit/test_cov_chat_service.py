@@ -150,6 +150,27 @@ def test_no_gaps_uses_short_deterministic_reply():
     assert "integral will be confirmed" in result.message
 
 
+def test_canonical_onboarding_keys_are_not_reported_missing():
+    """Regression: onboarding stores full_name/email/title/phone (canonical keys),
+    not the spaced display labels. The gap-finder must treat those as satisfying the
+    core needs so a completed profile is never falsely shown as 'still missing'."""
+    from applicant.application.services.campaign_service import CampaignService
+
+    svc, storage = _svc()
+    cid = CampaignService(storage).create_campaign("Engineer").id
+    for name, value in [
+        ("full_name", "Ada Lovelace"),
+        ("email", "ada@x.com"),
+        ("phone", "555-0100"),
+        ("title", "Staff Engineer"),
+    ]:
+        svc.confirm_change(cid, name, value)
+    svc._criteria.edit_criteria(
+        cid, changes={"titles": ["Engineer"], "human_readable": "Engineer roles"}, confirm=True
+    )
+    assert svc.identify_gaps(cid) == []
+
+
 # === learning fold (FR-LEARN-3) ============================================
 def test_chat_taste_folds_via_atomic_api():
     learning = _AtomicLearning()
