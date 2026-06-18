@@ -347,6 +347,32 @@ def test_option_match_exact_loose_and_decline():
     assert P._option_match("prefer not to say", "I don't wish to answer") == "loose"
     assert P._option_match("prefer not to say", "I do not want to answer") == "loose"
     assert P._option_match("Male", "Female") is None  # not a false decline match
+    # A dialing-code suffix must not block a country match.
+    assert P._option_match("United States of America", "United States +1") == "loose"
+    assert P._option_match("United States of America", "United Kingdom +44") is None
+
+
+def test_filter_query_uses_first_meaningful_words():
+    from applicant.adapters.browser.page_source import PlaywrightPageSource as P
+
+    assert P._filter_query("United States of America") == "United States"
+    assert P._filter_query("Mobile") == "Mobile"
+
+
+def test_combobox_country_matches_despite_dialing_code():
+    # REGRESSION (live Greenhouse phone country): type a short filter query, then match
+    # "United States of America" to the option labelled "United States +1".
+    page = _StubPage()
+    page._elements_by_sel["#country"] = _StubElement(
+        tag="input", attrs={"role": "combobox", "aria-autocomplete": "list"}
+    )
+    us = _StubOption("United States +1", visible=False)
+    page._role_options = [_StubOption("United Kingdom +44", visible=False), us]
+    page.keyboard.reveal_on_type = page._role_options
+    src = _bare_source(page)
+    src.type_value("#country", "United States of America")
+    assert page.keyboard.typed == ["United States"]  # short filter query, not the full value
+    assert us.clicked is True
 
 
 def test_listbox_skips_hidden_options_from_other_dropdowns():
