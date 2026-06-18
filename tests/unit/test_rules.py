@@ -130,6 +130,77 @@ def test_fabrication_detection_flags_unsupported_claims():
 
 
 @pytest.mark.unit
+def test_fabrication_guard_passes_natural_cover_letter_prose():
+    # FR-RESUME-10/NFR-TRUTH-1: a free-prose cover letter whose only substantive
+    # claims are grounded in the true source must NOT be flagged. Ordinary English /
+    # connective / scaffolding words ("Dear", "spent", "would", "challenges") are not
+    # fabrications — only named skills/tech/orgs/qualifications absent from the source
+    # are. Regression: a narrow filler list flagged every prose word and blocked all
+    # LLM-generated cover letters.
+    true = (
+        "Kevin Hirsch, staff software engineer. Skills: Python, Go, Kubernetes, "
+        "distributed systems, leadership. Led a team of engineers. Shipped a data "
+        "platform. Migrated to Kubernetes and reduced deployment time."
+    )
+    letter = (
+        "Dear Hiring Manager, I have spent the last several years building "
+        "distributed systems in Python and Go. I led a team of engineers and "
+        "shipped a data platform. I migrated our infrastructure to Kubernetes and "
+        "reduced deployment time. I would genuinely welcome the chance to talk about "
+        "how my background aligns with this role. Warmly, Kevin Hirsch"
+    )
+    assert truthfulness.unsupported_claims(true, letter) == []
+
+
+@pytest.mark.unit
+def test_fabrication_guard_still_catches_fabricated_skill_in_prose():
+    # The prose-friendly stopword list must NOT weaken real detection: a named skill
+    # the candidate never had is still flagged even amid natural cover-letter prose.
+    true = "Kevin Hirsch, Python and Go engineer. Shipped a data platform."
+    letter = (
+        "Dear Hiring Manager, I would love this role. I am also a certified Rust "
+        "expert with a PhD from Stanford. Warmly, Kevin Hirsch"
+    )
+    flagged = truthfulness.unsupported_claims(true, letter)
+    assert "Rust" in flagged
+    assert "PhD" in flagged
+    assert "Stanford" in flagged
+
+
+@pytest.mark.unit
+def test_prose_claims_pass_open_vocabulary_cover_letter():
+    # FR-RESUME-10: the prose check tolerates an open-ended narrative vocabulary
+    # (content words absent from the terse source) and contractions, flagging only
+    # entity-shaped fabrications. A grounded cover letter must produce no flags.
+    true = (
+        "Kevin Hirsch, staff software engineer. Python, Go, Kubernetes, distributed "
+        "systems. Shipped an LLM-powered platform serving 5M requests."
+    )
+    letter = (
+        "Dear Hiring Manager, I've spent years building distributed systems and I'm "
+        "drawn to the low-latency, high-traffic problems your team is solving. I "
+        "enjoy designing for reliability and tightening the feedback loop so teams "
+        "ship with confidence. Lately I've explored practical applications of LLMs. "
+        "I'd welcome the chance to talk. Warmly, Kevin"
+    )
+    assert truthfulness.unsupported_prose_claims(true, letter) == []
+
+
+@pytest.mark.unit
+def test_prose_claims_still_flag_entity_fabrications():
+    # The prose check must still catch invented named entities: a degree, school,
+    # and technology the candidate never had, even amid natural prose.
+    true = "Kevin Hirsch, Python and Go engineer. Shipped a data platform."
+    letter = (
+        "I'd love this role. I hold a PhD from Stanford and I'm a certified Rust and "
+        "Kubernetes expert who shipped on AWS in 2015."
+    )
+    flagged = truthfulness.unsupported_prose_claims(true, letter)
+    for entity in ("PhD", "Stanford", "Rust", "Kubernetes", "AWS", "2015"):
+        assert entity in flagged, f"{entity} should be flagged: {flagged}"
+
+
+@pytest.mark.unit
 def test_fabrication_detection_catches_lowercase_and_uses_whole_token():
     # FR-RESUME-2/NFR-TRUTH-1: (a) lowercase claims are not exempt from detection;
     # (b) whole-token membership, not substring, so "Java" never "supports"

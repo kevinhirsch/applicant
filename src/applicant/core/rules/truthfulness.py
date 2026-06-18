@@ -245,20 +245,121 @@ def voice_alignment(profile: VoiceProfile, text: str) -> float:
 
 # === fabrication detection (FR-RESUME-2, NFR-TRUTH-1) =====================
 #: Tokens that are not skill/qualification claims (keeps the check conservative).
+#
+# The fabrication guard flags any whole token in generated material that is NOT in
+# the candidate's true source. To catch a fabricated *skill / technology / proper
+# noun / qualification* (e.g. "Kubernetes", "PhD", "Stanford") it must NOT also flag
+# the ordinary English prose a cover letter is made of ("Dear", "spent", "would",
+# "challenges"). Capitalization gating can't separate them — a lowercase fabricated
+# skill ("kubernetes") must still be caught (NFR-TRUTH-1) — so the discriminator is a
+# stopword list: common English / connective / scaffolding words are not claims;
+# named technologies, organizations, degrees and the like are not stopwords and stay
+# flagged. This is intentionally broad (free-prose cover letters, FR-RESUME-10).
 _NON_CLAIM = frozenset(
     {
-        "the", "and", "for", "with", "from", "that", "this", "have", "has", "was",
-        "were", "are", "our", "their", "your", "you", "led", "built", "drove",
-        "managed", "worked", "experience", "team", "teams", "role", "roles",
-        "year", "years", "company", "i", "we", "my", "me", "a", "an", "of", "to",
-        "in", "on", "at", "as", "by", "is", "it", "be", "or", "but",
-        # Generic verbs/adjectives/nouns that are framing, not skill claims. Without
-        # capitalization gating these must be excluded so ordinary prose ("SQL
-        # work", "skilled dev") is not flagged as fabrication (NFR-TRUTH-1).
-        "work", "works", "working", "expert", "experienced", "skilled", "proficient",
-        "dev", "developer", "engineer", "professional", "using", "used", "use",
-        "wrote", "write", "writing", "and/or", "also", "well", "strong", "solid",
-        "deep", "wide", "broad", "various", "across", "including", "such", "etc",
+        # articles / determiners / quantifiers
+        "the", "a", "an", "this", "that", "these", "those", "such", "some", "any",
+        "all", "both", "each", "every", "few", "many", "most", "more", "much",
+        "several", "no", "nor", "not", "other", "another", "same", "own", "only",
+        "enough", "less", "least",
+        # pronouns
+        "i", "me", "my", "mine", "myself", "we", "us", "our", "ours", "ourselves",
+        "you", "your", "yours", "yourself", "he", "him", "his", "she", "her", "hers",
+        "it", "its", "they", "them", "their", "theirs", "who", "whom", "whose",
+        "which", "what", "whatever", "whoever", "whichever", "someone", "anyone",
+        "everyone", "something", "anything", "everything", "nothing",
+        # interrogative / relative adverbs
+        "how", "why", "when", "where", "here", "there", "whenever", "wherever",
+        "whence", "hence", "thus",
+        # prepositions / conjunctions / connectives
+        "of", "to", "in", "on", "at", "as", "by", "for", "with", "from", "and", "or",
+        "but", "yet", "so", "if", "then", "else", "than", "because", "since", "until",
+        "till", "while", "whilst", "though", "although", "however", "whereas",
+        "whether", "unless", "despite", "into", "onto", "upon", "over", "under",
+        "above", "below", "between", "among", "amongst", "through", "throughout",
+        "during", "before", "after", "about", "around", "along", "against", "toward",
+        "towards", "within", "without", "off", "out", "up", "down", "again",
+        "further", "once", "beyond", "across", "via", "per", "plus", "etc", "eg",
+        "ie", "vs", "and/or",
+        # be / have / do / modal + common auxiliary forms
+        "is", "am", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "having", "do", "does", "did", "doing", "done", "will", "would", "shall",
+        "should", "can", "could", "may", "might", "must", "ought",
+        # common verbs (and their frequent inflections) — framing, not skill claims
+        "get", "gets", "got", "getting", "gotten", "make", "makes", "made", "making",
+        "take", "takes", "took", "taken", "taking", "go", "goes", "went", "gone",
+        "going", "come", "comes", "came", "coming", "see", "sees", "saw", "seen",
+        "seeing", "know", "knows", "knew", "known", "knowing", "think", "thinks",
+        "thought", "thinking", "want", "wants", "wanted", "need", "needs", "needed",
+        "help", "helps", "helped", "helping", "work", "works", "worked", "working",
+        "build",
+        "builds", "built", "building", "lead", "leads", "led", "leading", "ship",
+        "ships", "shipped", "shipping", "run", "runs", "ran", "running", "give",
+        "gives", "gave", "given", "giving", "find", "finds", "found", "finding",
+        "spend", "spends", "spent", "spending", "bring", "brings", "brought", "hold",
+        "holds", "held", "holding", "move", "moves", "moved", "moving", "draw",
+        "draws", "drew", "drawn", "drawing", "drive", "drove", "drives", "driven",
+        "driving", "keep", "keeps", "kept", "keeping", "put", "puts", "set", "sets",
+        "show", "shows", "showed", "shown", "try", "tries", "tried", "trying", "ask",
+        "asks", "asked", "turn", "turns", "turned", "start", "starts", "started",
+        "starting", "begin", "begins", "began", "begun", "become", "becomes",
+        "became", "becoming", "continue", "continues", "continued", "continuing",
+        "grow", "grows", "grew", "grown", "growing", "teach", "teaches", "taught",
+        "learn", "learns", "learned", "learning", "serve", "serves", "served",
+        "serving", "reduce", "reduces", "reduced", "reducing", "design", "designs",
+        "designed", "designing", "scale", "scales", "scaled", "scaling", "explore",
+        "explores", "explored", "exploring", "mentor", "mentors", "mentored",
+        "mentoring", "clear", "clears", "cleared", "clearing", "break", "breaks",
+        "broke", "broken", "breaking", "align", "aligns", "aligned", "aligning",
+        "welcome", "welcomes", "welcomed", "talk", "talks", "talked", "tend", "tends",
+        "tended", "require", "requires", "required", "allow", "allows", "allowed",
+        "enable", "enables", "enabled", "deliver", "delivers", "delivered",
+        "managed", "manage", "manages", "use", "used", "using", "uses",
+        "wrote", "write", "writes", "writing", "written", "apply", "applies",
+        "applied", "applying", "improve", "improves", "improved", "improving",
+        # adjectives / adverbs — framing, not skill claims
+        "good", "great", "best", "better", "strong", "solid", "deep", "deeper",
+        "wide", "broad", "recent", "recently", "last", "first", "second", "third",
+        "new", "old", "real", "very", "well", "just", "also", "even", "quite",
+        "really", "genuinely", "mostly", "roughly", "clearly", "simply", "especially",
+        "particularly", "highly", "truly", "fully", "currently", "lately", "now",
+        "soon", "ago", "today", "complex", "simple", "practical", "reliable",
+        "rewarding", "right", "wrong", "able", "key", "core", "major", "minor",
+        "significant", "important", "large", "small", "big", "high", "low", "fast",
+        "slow", "quick", "quickly", "careful", "carefully", "effective", "efficient",
+        "successful", "proven", "various", "including", "include", "includes",
+        "expert", "experienced", "skilled", "proficient", "professional", "hands-on",
+        # generic professional / prose nouns — not specific fabricable claims
+        "experience", "team", "teams", "role", "roles", "year", "years", "company",
+        "companies", "time", "times", "way", "ways", "thing", "things", "people",
+        "person", "project", "projects", "challenge", "challenges", "path", "paths",
+        "effort", "efforts", "load", "loads", "intersection", "product", "products",
+        "user", "users", "trust", "confidence", "care", "lot", "lots", "system",
+        "systems", "platform", "platforms", "service", "services", "application",
+        "applications", "deployment", "deployments", "migration", "migrations",
+        "infrastructure", "architecture", "pipeline", "pipelines", "solution",
+        "solutions", "process", "processes", "approach", "approaches", "result",
+        "results", "impact", "value", "goal", "goals", "focus", "opportunity",
+        "opportunities", "position", "positions", "candidate", "requirement",
+        "requirements", "skill", "skills", "qualification", "qualifications",
+        "background", "history", "summary", "objective", "responsibility",
+        "responsibilities", "environment", "environments", "growth", "leadership",
+        "collaboration", "communication", "ownership", "delivery", "quality",
+        "reliability", "performance", "engineer", "engineers", "engineering",
+        "developer", "developers", "dev", "manager", "management", "member",
+        "members", "contributor", "contribution", "contributions", "chance",
+        # salutation / cover-letter scaffolding
+        "dear", "hi", "hello", "hey", "hiring", "sincerely", "regards", "warmly",
+        "thanks", "thank", "name", "signature", "letter", "cover", "applicant",
+        "resume", "résumé", "attached", "enclosed", "organization", "organisation",
+        "firm",
+        # number words (spelled-out quantities are too noisy to treat as claims)
+        "zero", "one", "ones", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+        "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+        "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+        "hundred", "thousand", "million", "millions", "billion", "percent", "dozen",
+        "dozens", "half", "quarter",
     }
 )
 
@@ -311,4 +412,90 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
         for token in candidate_claim_tokens(line):
             if token.lower() not in source_tokens and token not in flagged:
                 flagged.append(token)
+    return flagged
+
+
+#: Quote/apostrophe code points stripped from token edges (straight + curly).
+_QUOTE_CHARS = "'\"’‘“”"
+
+
+def _prose_source_tokens(true_text: str) -> frozenset[str]:
+    """Lenient source-token set for free-prose checking.
+
+    Like :func:`_source_token_set` but also splits on hyphens (so "LLM-powered"
+    contributes "llm") and adds a crude singular for plural tokens (so a "LLMs"
+    mention is supported by an "LLM" in the source). This looseness is acceptable
+    for the prose check, which only ever inspects entity-shaped tokens.
+    """
+    toks: set[str] = set()
+    for raw in re.split(r"[\s,.;:()\[\]{}/\-]+", true_text):
+        t = raw.strip(_QUOTE_CHARS).lower()
+        if not t:
+            continue
+        toks.add(t)
+        if len(t) > 3 and t.endswith("s"):
+            toks.add(t[:-1])
+    return frozenset(toks)
+
+
+def _is_entity_shaped(word: str, *, sentence_initial: bool) -> bool:
+    """True if ``word`` looks like a named claim (skill / org / acronym / number).
+
+    Free prose is full of ordinary lowercase words that are not claims; the things
+    a cover letter could *fabricate* are named entities — proper nouns (Stanford,
+    Kubernetes), acronyms (AWS, SQL, MBA), mixed-case tech (FastAPI, PostgreSQL),
+    and numbers/dates (2015, 70%). A leading-capital word is only treated as a
+    proper noun when it is NOT sentence-initial, since sentence-initial capitals are
+    just grammar ("Lately, …", "Based on …").
+    """
+    if any(c.isdigit() for c in word):
+        return True
+    letters = [c for c in word if c.isalpha()]
+    if len(letters) >= 2 and all(c.isupper() for c in letters):
+        return True  # ALL-CAPS acronym
+    if any(c.isupper() for c in word[1:]):
+        return True  # internal/camel caps (FastAPI, PostgreSQL)
+    if not sentence_initial and word[:1].isupper() and any(c.islower() for c in word):
+        return True  # mid-sentence proper noun
+    return False
+
+
+def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
+    """Fabrication check tuned for FREE PROSE (cover letters, essays; FR-RESUME-10).
+
+    A cover letter legitimately uses an open-ended vocabulary of ordinary words
+    that will never all appear in the terse résumé source, so the strict per-token
+    :func:`unsupported_claims` (right for résumé bullets) rejects every natural
+    letter. Here we only flag *entity-shaped* tokens (named skills / orgs /
+    acronyms / numbers, see :func:`_is_entity_shaped`) that are absent from the
+    source — so an invented "Stanford" / "AWS" / "PhD" / "2015" is still caught,
+    while narrative prose passes. Contractions are split on the apostrophe so
+    "I've"/"it's" never read as proper nouns. Deterministic.
+    """
+    if not generated:
+        return []
+    source = _prose_source_tokens(true_text)
+    flagged: list[str] = []
+    # Split into sentences so we can tell a sentence-initial capital (grammar) from
+    # a mid-sentence proper noun (a real entity claim).
+    for sentence in re.split(r"(?<=[.!?])\s+", generated):
+        first = True
+        # Split on whitespace/punctuation AND hyphens + markdown markers (*`~_|<>#),
+        # so "LLM-powered" matches the hyphen-split source and "**Subject**" sheds its
+        # bold markers instead of reading as a fabricated proper noun.
+        for raw in re.split(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+", sentence):
+            for piece in re.split(r"['’‘]", raw):  # split contractions
+                word = piece.strip(_QUOTE_CHARS)
+                if not word:
+                    continue
+                sentence_initial = first
+                first = False
+                if len(word) < 2 or word.lower() in _NON_CLAIM:
+                    continue
+                low = word.lower()
+                if low in source or (low.endswith("s") and low[:-1] in source):
+                    continue
+                if _is_entity_shaped(word, sentence_initial=sentence_initial):
+                    if word not in flagged:
+                        flagged.append(word)
     return flagged
