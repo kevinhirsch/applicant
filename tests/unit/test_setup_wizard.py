@@ -144,6 +144,33 @@ def test_quiet_hours_default_is_24_7():
     assert qh["start"] == "22:00" and qh["end"] == "07:00"
 
 
+def test_email_timeout_defaults_to_15_minutes():
+    assert _svc().get_email_timeout_minutes() == 15
+
+
+def test_email_timeout_persists_and_clamps():
+    store = InMemoryAppConfigStore()
+    svc = _svc(store)
+    svc.configure_channels(apprise_urls="mailto://u:p@smtp.test", email_timeout_minutes=45)
+    # New instance over the same store = simulated restart (FR-OOBE-1, FR-NOTIF-2).
+    assert _svc(store).get_email_timeout_minutes() == 45
+    # Out-of-range values are clamped to the sane window, never 0 (instant email).
+    svc.configure_channels(email_timeout_minutes=0)
+    assert _svc(store).get_email_timeout_minutes() == SetupService.EMAIL_TIMEOUT_MIN_MINUTES
+    svc.configure_channels(email_timeout_minutes=10_000)
+    assert _svc(store).get_email_timeout_minutes() == SetupService.EMAIL_TIMEOUT_MAX_MINUTES
+
+
+def test_email_timeout_only_update_keeps_channels():
+    # Changing just the email timeout must not wipe configured channels.
+    store = InMemoryAppConfigStore()
+    _svc(store).configure_channels(apprise_urls="mailto://u:p@smtp.test")
+    _svc(store).configure_channels(email_timeout_minutes=20)
+    svc = _svc(store)
+    assert svc.channels_configured() is True
+    assert svc.get_email_timeout_minutes() == 20
+
+
 def test_quiet_hours_persist_across_instances():
     store = InMemoryAppConfigStore()
     svc1 = _svc(store)

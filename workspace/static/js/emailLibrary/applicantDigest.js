@@ -817,18 +817,62 @@ function _wire(panel) {
   if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel)));
 }
 
-// Tell the engine the user is reading updates in-app right now, so it can hold
-// back the duplicate chat/Discord push for the same digest. Fire-and-forget.
-function _signalPresence() {
+// Web-presence heartbeat (FR-NOTIF-2). Tells the engine the user is verifiably
+// here — focused tab + recent input — so it pre-empts the duplicate chat/Discord
+// push only while that is TRUE, and the signal DECAYS the moment they leave. The
+// engine treats a presence signal as fresh for ~90s, so we re-signal well inside
+// that window and explicitly send present:false on blur / hidden / unload. (Replaces
+// the old one-shot present:true, which suppressed Discord indefinitely after a
+// single digest view.)
+let _presenceTimer = null;
+let _presenceBound = false;
+let _lastActivityTs = 0;
+
+function _postPresence(present) {
   try {
     fetch(`${API_BASE}/api/applicant/email/presence`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ present: true }),
+      body: JSON.stringify({ present: !!present }),
       keepalive: true,
     }).catch(() => {});
   } catch (_) {}
+}
+
+function _markPresenceActivity() { _lastActivityTs = Date.now(); }
+
+// Verifiably present = tab visible AND focused AND user-active within ~90s.
+function _isVerifiablyHere() {
+  const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  const focused = typeof document === 'undefined' || !document.hasFocus || document.hasFocus();
+  const active = (Date.now() - _lastActivityTs) < 90000;
+  return !hidden && focused && active;
+}
+
+function _signalPresence() {
+  _markPresenceActivity();
+  _postPresence(true);
+  if (_presenceTimer) return; // heartbeat already running for this page session
+  if (typeof window !== 'undefined' && !_presenceBound) {
+    _presenceBound = true;
+    ['pointerdown', 'keydown', 'pointermove', 'scroll'].forEach((ev) => {
+      try { window.addEventListener(ev, _markPresenceActivity, { passive: true }); } catch (_) {}
+    });
+    const leave = () => _postPresence(false);
+    const enter = () => { _markPresenceActivity(); _postPresence(true); };
+    try {
+      document.addEventListener('visibilitychange', () => {
+        (document.visibilityState === 'hidden') ? leave() : enter();
+      });
+      window.addEventListener('blur', leave);
+      window.addEventListener('focus', enter);
+      window.addEventListener('pagehide', leave);
+    } catch (_) {}
+  }
+  // Re-signal inside the engine's ~90s freshness window; each beat reflects whether
+  // the user is still verifiably here, so presence lapses on its own when they go.
+  try { _presenceTimer = setInterval(() => _postPresence(_isVerifiablyHere()), 60000); } catch (_) {}
 }
 
 /**

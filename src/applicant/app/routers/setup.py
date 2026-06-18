@@ -49,6 +49,9 @@ class LadderIn(BaseModel):
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
+    #: UI-configurable email-escalation delay in minutes (FR-NOTIF-2); None = leave
+    #: the persisted value (default 15) untouched.
+    email_timeout_minutes: int | None = None
 
 
 class QuietHoursIn(BaseModel):
@@ -195,6 +198,7 @@ def get_channels(svc=Depends(get_setup_service)) -> dict:
         "email_configured": bool(chan.get("apprise_urls")),
         "channels_configured": svc.channels_configured(),
         "quiet_hours": svc.get_quiet_hours(),
+        "email_timeout_minutes": svc.get_email_timeout_minutes(),
     }
 
 
@@ -206,18 +210,25 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
     LLM + onboarding, ungates automated work (FR-OOBE-3). The live notifier is
     reconfigured in place so no restart is needed (zero-CLI).
     """
-    if not (body.discord_webhook_url or body.apprise_urls):
+    if not (
+        body.discord_webhook_url or body.apprise_urls or body.email_timeout_minutes is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Add a Discord webhook and/or an email address so notifications can reach you.",
         )
     container.setup_service.configure_channels(
-        discord_webhook_url=body.discord_webhook_url, apprise_urls=body.apprise_urls
+        discord_webhook_url=body.discord_webhook_url,
+        apprise_urls=body.apprise_urls,
+        email_timeout_minutes=body.email_timeout_minutes,
     )
     if hasattr(container.notification, "configure"):
+        # Reconfigure the live notifier in place (zero-CLI). Use the persisted,
+        # clamped email-timeout so the running ladder matches what was saved.
         container.notification.configure(
             discord_webhook_url=body.discord_webhook_url or None,
             apprise_urls=body.apprise_urls or None,
+            email_timeout_seconds=container.setup_service.get_email_timeout_minutes() * 60,
         )
 
 

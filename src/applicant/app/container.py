@@ -379,6 +379,9 @@ def build_container(settings: Settings | None = None) -> Container:
         quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
         quiet_tz=quiet["tz"],
         always_on=not quiet["enabled"],
+        # The UI-configurable email-escalation delay (FR-NOTIF-2) persists across
+        # restarts via the channels config (default 15 min).
+        email_timeout_seconds=setup_service.get_email_timeout_minutes() * 60,
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
