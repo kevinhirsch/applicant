@@ -34555,3 +34555,16 @@ body.theme-frosted .modal {
   white-space: nowrap;
   max-width: 100%;
 }
+
+/* Live "working now" status dot in the Activity → Run controls tab: a gentle
+   expanding-ring pulse so the agent's running state reads at a glance. The dot
+   degrades to a solid colour where the animation is unsupported. Honors reduced
+   motion. */
+@keyframes applicantPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(63, 185, 80, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [style*="applicantPulse"] { animation: none !important; }
+}

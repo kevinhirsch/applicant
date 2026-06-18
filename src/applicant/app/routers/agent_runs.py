@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from applicant.app.deps import (
     get_agent_run_service,
+    get_scheduler,
     require_automated_work,
     require_llm_configured,
 )
@@ -49,6 +50,45 @@ def configure_run(campaign_id: str, body: ConfigureRunIn, svc=Depends(get_agent_
 @router.get("/{campaign_id}/intent")
 def latest_intent(campaign_id: str, svc=Depends(get_agent_run_service)) -> dict:
     return {"campaign_id": campaign_id, "intent": svc.latest_intent(campaign_id)}  # type: ignore[arg-type]
+
+
+@router.get("/{campaign_id}/status")
+def run_status(
+    campaign_id: str,
+    svc=Depends(get_agent_run_service),
+    scheduler=Depends(get_scheduler),
+) -> dict:
+    """Live agent status: per-campaign config + latest intent/stats + today's count,
+    plus the scheduler heartbeat (running / last-tick / next-tick) (FR-AGENT-7)."""
+    out = svc.status(campaign_id)  # type: ignore[arg-type]
+    out["scheduler"] = scheduler.state() if scheduler is not None else None
+    return out
+
+
+@router.post("/{campaign_id}/run")
+def run_now(campaign_id: str, scheduler=Depends(get_scheduler)) -> dict:
+    """Run one tick for this campaign immediately (the operator 'Run now').
+
+    No 60s wait: discovers → scores → delivers digest → advances approved pipelines
+    one step. Returns the tick result; reports ``ran=False`` if a run is already in
+    flight for the campaign or the automated-work conditions aren't met this tick."""
+    if scheduler is None:  # pragma: no cover - scheduler is always wired in prod
+        return {"campaign_id": campaign_id, "ran": False, "reason": "scheduler unavailable"}
+    return scheduler.run_now(campaign_id)
+
+
+@router.post("/{campaign_id}/pause")
+def pause_run(campaign_id: str, svc=Depends(get_agent_run_service)) -> dict:
+    """Pause the campaign's automated work (NFR-ZEROCLI-1) — no restart required."""
+    c = svc.set_active(campaign_id, False)  # type: ignore[arg-type]
+    return {"campaign_id": c.id, "active": c.active, "paused": not c.active}
+
+
+@router.post("/{campaign_id}/resume")
+def resume_run(campaign_id: str, svc=Depends(get_agent_run_service)) -> dict:
+    """Resume a paused campaign's automated work (NFR-ZEROCLI-1)."""
+    c = svc.set_active(campaign_id, True)  # type: ignore[arg-type]
+    return {"campaign_id": c.id, "active": c.active, "paused": not c.active}
 
 
 @router.get("/{campaign_id}")

@@ -513,6 +513,18 @@ class ApplicantEngineClient:
     async def agent_run_configure(self, campaign_id: str, body: dict) -> Any:
         return await self._request("PUT", f"/api/agent-runs/{campaign_id}/config", json=body)
 
+    async def agent_run_status(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/agent-runs/{campaign_id}/status")
+
+    async def agent_run_now(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/run")
+
+    async def agent_run_pause(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/pause")
+
+    async def agent_run_resume(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/resume")
+
     # -- discovery-source toggles + yield (engine routers/discovery_sources.py)
 
     async def discovery_sources_list(self, campaign_id: str) -> Any:

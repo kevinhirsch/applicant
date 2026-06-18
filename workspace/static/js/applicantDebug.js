@@ -312,28 +312,90 @@ const RUN_MODES = [
   ['until_n_viable', 'Until target reached'],
 ];
 
+// Short relative time from an ISO timestamp, e.g. "12s ago" / "in 48s" / "3m ago".
+// Returns '' for missing/unparseable input so callers can omit the line cleanly.
+function _relWhen(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '';
+  let secs = Math.round((t - Date.now()) / 1000);
+  const future = secs > 0;
+  secs = Math.abs(secs);
+  let txt;
+  if (secs < 60) txt = `${secs}s`;
+  else if (secs < 3600) txt = `${Math.round(secs / 60)}m`;
+  else if (secs < 86400) txt = `${Math.round(secs / 3600)}h`;
+  else txt = `${Math.round(secs / 86400)}d`;
+  return future ? `in ${txt}` : `${txt} ago`;
+}
+
+// A coloured live-status chip (Running / Idle / Paused / Setup needed) for the
+// Run controls tab, built from the engine status payload (FR-AGENT-7/FR-OBS-2).
+function _statusChip(status) {
+  const sched = status.scheduler || {};
+  let label;
+  let color;
+  let pulse = false;
+  if (status.paused === true || status.active === false) {
+    label = 'Paused'; color = '#d29922';
+  } else if (sched.running === true) {
+    label = 'Working now'; color = '#3fb950'; pulse = true;
+  } else {
+    label = 'Idle'; color = '#8b949e';
+  }
+  const dot = `<span aria-hidden="true" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;${pulse ? 'box-shadow:0 0 0 0 ' + color + ';animation:applicantPulse 1.4s infinite;' : ''}"></span>`;
+  const bits = [];
+  if (sched.last_tick) bits.push(`last run ${esc(_relWhen(sched.last_tick))}`);
+  if (sched.next_tick && status.paused !== true) bits.push(`next ${esc(_relWhen(sched.next_tick))}`);
+  if (status.applied_today != null) {
+    const cap = status.daily_budget != null ? status.daily_budget : status.throughput_target;
+    bits.push(`${esc(status.applied_today)}${cap != null ? ` / ${esc(cap)}` : ''} today`);
+  }
+  return `
+    <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div style="display:flex;align-items:center;font-weight:600;">${dot}${esc(label)}</div>
+      <div class="admin-toggle-sub" style="opacity:0.75;">${bits.join(' · ')}</div>
+    </div>`;
+}
+
 async function _renderRun() {
   if (!_needCampaign()) return;
   let intent = { intent: null };
   let runs = { items: [] };
+  let status = {};
+  try { status = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}/status`); } catch { /* soft */ }
   try { intent = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}/intent`); } catch { /* soft */ }
   try { runs = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}`); } catch { /* soft */ }
-  if (intent.engine_available === false && runs.engine_available === false) { _renderOffline(); return; }
+  if (intent.engine_available === false && runs.engine_available === false && status.engine_available === false) {
+    _renderOffline(); return;
+  }
   const last = (runs.items || [])[0] || {};
+  // Prefer the live status payload for the config defaults; fall back to the latest run.
+  const curMode = status.run_mode || last.run_mode;
+  const curTarget = status.throughput_target != null ? status.throughput_target : last.throughput_target;
+  const intentText = intent.intent || status.latest_intent;
+  const paused = status.paused === true || status.active === false;
+  const haveStatus = status.engine_available !== false && status.campaign_id;
   _body().innerHTML = `
+    ${haveStatus ? _statusChip(status) : ''}
     <div class="admin-card">
       <div style="font-weight:600;">What the agent is doing</div>
-      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${esc(intent.intent || 'No run yet — set a mode and target below to start.')}</div>
+      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${esc(intentText || 'No run yet — use “Run now” or set a mode and target below to start.')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+        <button class="cal-btn cal-btn-primary" id="applicant-run-now">Run now</button>
+        <button class="cal-btn" id="applicant-run-pause">${paused ? 'Resume' : 'Pause'}</button>
+      </div>
+      <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">“Run now” discovers, scores and refreshes the digest immediately instead of waiting for the next scheduled pass.</span>
     </div>
     <div class="admin-card">
       <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">How it runs
         <select id="applicant-run-mode" class="settings-select" style="display:block;margin-top:4px;min-width:220px;">
-          ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(last.run_mode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+          ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(curMode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
       </label>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">Applications per day (target)
-        <input type="number" id="applicant-run-target" class="settings-select" min="0" value="${esc(last.throughput_target != null ? last.throughput_target : '')}" style="display:block;margin-top:4px;width:120px;" />
+        <input type="number" id="applicant-run-target" class="settings-select" min="0" value="${esc(curTarget != null ? curTarget : '')}" style="display:block;margin-top:4px;width:120px;" />
       </label>
       <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
       <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
@@ -349,6 +411,40 @@ async function _renderRun() {
       _renderRun();
     } catch (e) {
       _toast(e.message || 'Could not save run settings.');
+    }
+  });
+  const runNowBtn = _body().querySelector('#applicant-run-now');
+  if (runNowBtn) runNowBtn.addEventListener('click', async () => {
+    runNowBtn.disabled = true;
+    const prev = runNowBtn.textContent;
+    runNowBtn.textContent = 'Running…';
+    try {
+      const res = await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/run`, {});
+      if (res.ran === false) {
+        _toast(res.reason || 'Nothing to run right now.');
+      } else {
+        const found = res.discovered != null ? `Found ${res.discovered} posting(s).` : 'Run complete.';
+        _toast(found);
+      }
+    } catch (e) {
+      _toast(e.message || 'Could not run now.');
+    } finally {
+      runNowBtn.disabled = false;
+      runNowBtn.textContent = prev;
+      _renderRun();
+    }
+  });
+  const pauseBtn = _body().querySelector('#applicant-run-pause');
+  if (pauseBtn) pauseBtn.addEventListener('click', async () => {
+    pauseBtn.disabled = true;
+    try {
+      await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/${paused ? 'resume' : 'pause'}`, {});
+      _toast(paused ? 'Resumed automated work.' : 'Paused automated work.');
+    } catch (e) {
+      _toast(e.message || 'Could not change run state.');
+    } finally {
+      pauseBtn.disabled = false;
+      _renderRun();
     }
   });
 }

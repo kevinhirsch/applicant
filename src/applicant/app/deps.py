@@ -103,6 +103,12 @@ def get_agent_run_service(container: Container = Depends(get_container)):
     return container.agent_run_service
 
 
+def get_scheduler(container: Container = Depends(get_container)):
+    """The 24/7 scheduler singleton — its live heartbeat backs the status endpoint
+    and its per-campaign lock backs the on-demand 'Run now' (FR-AGENT-7/FR-OBS-2)."""
+    return container.scheduler
+
+
 def get_discovery_service(container: Container = Depends(get_container)):
     return container.discovery_service
 

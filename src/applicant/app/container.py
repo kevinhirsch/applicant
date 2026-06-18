@@ -715,6 +715,7 @@ def build_container(settings: Settings | None = None) -> Container:
         final_approval_service=final_approval_service,
         tick_services_factory=tick_services_factory,
         setup_service=setup_service,
+        interval_seconds=settings.scheduler_interval_seconds,
     )
 
     return Container(

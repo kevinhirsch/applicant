@@ -78,6 +78,28 @@ class FakeEngine:
             raise FakeEngine.raises["configure"]
         return FakeEngine.responses.get("configure", {"campaign_id": cid, "run_mode": body.get("run_mode"), "throughput_target": body.get("throughput_target"), "hard_cap": 30})
 
+    async def agent_run_status(self, cid):
+        return await self._maybe(
+            "status",
+            cid,
+            default={
+                "campaign_id": cid,
+                "active": True,
+                "paused": False,
+                "run_mode": "continuous",
+                "scheduler": {"running": False, "last_tick": None, "next_tick": None},
+            },
+        )
+
+    async def agent_run_now(self, cid):
+        return await self._maybe("run_now", cid, default={"campaign_id": cid, "ran": True})
+
+    async def agent_run_pause(self, cid):
+        return await self._maybe("pause", cid, default={"campaign_id": cid, "active": False, "paused": True})
+
+    async def agent_run_resume(self, cid):
+        return await self._maybe("resume", cid, default={"campaign_id": cid, "active": True, "paused": False})
+
     async def discovery_sources_list(self, cid):
         return await self._maybe("sources", cid, default={"campaign_id": cid, "items": []})
 
@@ -196,6 +218,66 @@ def test_configure_run_rejects_bad_mode(client):
 def test_configure_run_rejects_negative_target(client):
     r = client.put("/api/applicant/ops/runs/c1/config", json={"throughput_target": -1})
     assert r.status_code == 400
+
+
+# --- live status / run-now / pause-resume -----------------------------------
+
+
+def test_run_status_passthrough(client):
+    FakeEngine.responses["status"] = {
+        "campaign_id": "c1",
+        "active": True,
+        "paused": False,
+        "run_mode": "continuous",
+        "applied_today": 2,
+        "scheduler": {"running": True, "last_tick": "2026-06-18T00:00:00+00:00"},
+    }
+    r = client.get("/api/applicant/ops/runs/c1/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["scheduler"]["running"] is True
+    assert body["applied_today"] == 2
+
+
+def test_run_status_soft_degrades(client):
+    FakeEngine.raises["status"] = EngineError("down")
+    r = client.get("/api/applicant/ops/runs/c1/status")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": False, "campaign_id": "c1"}
+
+
+def test_run_now_passthrough(client):
+    FakeEngine.responses["run_now"] = {"campaign_id": "c1", "ran": True, "discovered": 4}
+    r = client.post("/api/applicant/ops/runs/c1/run")
+    assert r.status_code == 200
+    assert r.json()["ran"] is True
+    assert ("run_now", "c1") in FakeEngine.calls
+
+
+def test_run_now_maps_unreachable_to_503(client):
+    FakeEngine.raises["run_now"] = EngineError("conn refused")
+    r = client.post("/api/applicant/ops/runs/c1/run")
+    assert r.status_code == 503
+
+
+def test_pause_and_resume_passthrough(client):
+    r = client.post("/api/applicant/ops/runs/c1/pause")
+    assert r.status_code == 200
+    assert r.json()["paused"] is True
+    assert ("pause", "c1") in FakeEngine.calls
+    r = client.post("/api/applicant/ops/runs/c1/resume")
+    assert r.status_code == 200
+    assert r.json()["active"] is True
+    assert ("resume", "c1") in FakeEngine.calls
+
+
+def test_run_controls_reject_non_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", admins=("alice",)))
+    assert c.post("/api/applicant/ops/runs/c1/run").status_code == 403
+    assert c.post("/api/applicant/ops/runs/c1/pause").status_code == 403
+    assert c.get("/api/applicant/ops/runs/c1/status").status_code == 403
 
 
 # --- discovery sources ------------------------------------------------------

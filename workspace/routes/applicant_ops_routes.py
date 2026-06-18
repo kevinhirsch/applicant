@@ -187,6 +187,54 @@ def setup_applicant_ops_routes() -> APIRouter:
                 raise _engine_http_error(exc) from exc
         return result or {}
 
+    @router.get("/runs/{campaign_id}/status")
+    async def run_status(campaign_id: str, request: Request) -> dict:
+        """Live agent status: is it running, last/next tick, today's count, intent."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.agent_run_status(campaign_id)
+            except EngineError as exc:
+                logger.debug("run_status: engine unavailable: %s", exc)
+                return {"engine_available": False, "campaign_id": campaign_id}
+        out = data if isinstance(data, dict) else {}
+        out.setdefault("campaign_id", campaign_id)
+        out["engine_available"] = True
+        return out
+
+    @router.post("/runs/{campaign_id}/run")
+    async def run_now(campaign_id: str, request: Request) -> dict:
+        """Run one agent tick immediately (no 60s wait) — the operator 'Run now'."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.agent_run_now(campaign_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
+
+    @router.post("/runs/{campaign_id}/pause")
+    async def pause_run(campaign_id: str, request: Request) -> dict:
+        """Pause this campaign's automated work (no restart needed)."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.agent_run_pause(campaign_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
+
+    @router.post("/runs/{campaign_id}/resume")
+    async def resume_run(campaign_id: str, request: Request) -> dict:
+        """Resume this campaign's automated work."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.agent_run_resume(campaign_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
+
     # -- discovery sources ------------------------------------------------
 
     @router.get("/discovery/{campaign_id}")
