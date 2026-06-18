@@ -514,8 +514,12 @@ export function mdToHtml(src) {
         return placeholder;
       } catch (e) { return match; }
     });
-    // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines)
-    s = s.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (match, math) => {
+    // Inline math: $...$  (not preceded/followed by $ or digit, not spanning multiple lines).
+    // The digit guard is load-bearing: without it a reply with two currency amounts
+    // ("$185,000 ... $200,000") was parsed as a single inline-math span and typeset as
+    // garbled math. An opening $ followed by a digit, or either delimiter adjacent to a
+    // digit, is treated as currency, not math.
+    s = s.replace(/(?<![\$\d])\$(?!\$)(?!\d)([^\$\n]+?)\$(?![\$\d])/g, (match, math) => {
       try {
         const raw = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
         const placeholder = `___MATH_BLOCK_${mathBlocks.length}___`;
