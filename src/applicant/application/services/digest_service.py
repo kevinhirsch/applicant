@@ -76,10 +76,31 @@ class DigestService:
         self._pending = pending_actions
 
     # --- digest assembly (FR-DIG-3/4) -------------------------------------
+    def _resolve_criteria(
+        self, campaign_id: CampaignId, criteria: SearchCriteria | None
+    ) -> SearchCriteria | None:
+        """Load the campaign's saved criteria when a caller omits it (FR-DIG-3/4).
+
+        The front-door ``GET /api/digest/{id}`` and ``render_webpage`` build the
+        digest without threading criteria, so without this fallback every posting
+        was re-scored against *no* criteria — a uniform neutral 75 that ignored the
+        onboarding-seeded + learned search criteria entirely (the same failure the
+        agent loop's ``_criteria_for`` already guards against). Resolve it from the
+        injected criteria service; a load failure degrades to ``None`` (neutral)
+        rather than 500-ing the digest hot path.
+        """
+        if criteria is not None or self._criteria is None:
+            return criteria
+        try:
+            return self._criteria.get_criteria(campaign_id)
+        except Exception:
+            return None
+
     def build_digest(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> list[dict]:
         """Assemble digest rows for every viable posting in the campaign."""
+        criteria = self._resolve_criteria(campaign_id, criteria)
         postings = self._storage.postings.list_for_campaign(campaign_id)
         rows: list[dict] = []
         for posting in postings:
@@ -94,7 +115,10 @@ class DigestService:
                 "source": posting.source_key,
             }
             if self._scoring is not None:
-                scoring = self._scoring.score_posting(posting, criteria)
+                # Prefer the reuse-aware digest scorer (bounds LLM cost across repeated
+                # digest GETs); fall back to plain score_posting for lightweight doubles.
+                score_fn = getattr(self._scoring, "score_for_digest", None) or self._scoring.score_posting
+                scoring = score_fn(posting, criteria)
                 if not self._scoring.is_viable(scoring):
                     continue  # below threshold; excluded from the digest (FR-AGENT-3)
                 row["viability_score"] = round(scoring.score * 100)
@@ -114,6 +138,7 @@ class DigestService:
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> dict:
         """Full digest payload incl. the empty-day note (FR-DIG-6)."""
+        criteria = self._resolve_criteria(campaign_id, criteria)
         rows = self.build_digest(campaign_id, criteria)
         searched = self._searched_summary(campaign_id, criteria)
         return {
