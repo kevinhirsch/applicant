@@ -576,6 +576,22 @@ class MaterialService:
             campaign_default=campaign_default, role_requires=role_requires
         )
 
+    def _resolve_true_source(self, campaign_id: CampaignId, true_source: str) -> str:
+        """The ground-truth text for generation: the caller's, or derived server-side
+        when omitted (on-demand generation, FR-RESUME-10 / FR-ANSWER-1).
+
+        On-demand requests from the front-door supply only the application — the
+        truthfulness ground truth is built HERE from the base résumé + the flattened
+        attribute cloud + work history (the same source the agent loop uses), never
+        from a caller-supplied blob. The fabrication guard always checks against this.
+        """
+        if (true_source or "").strip():
+            return true_source
+        try:
+            return self.true_attribute_text(campaign_id, self._base_resume_text(campaign_id))
+        except Exception:  # pragma: no cover - defensive
+            return true_source or ""
+
     def generate_cover_letter(
         self,
         campaign_id: CampaignId,
@@ -598,6 +614,7 @@ class MaterialService:
             campaign_default=campaign_default, role_requires=role_requires
         ):
             return None
+        true_source = self._resolve_true_source(campaign_id, true_source)
         body = self._generate_text(true_source, jd_terms, kind="cover_letter")
         report = self.apply_post_filter(body)
         # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
@@ -634,6 +651,7 @@ class MaterialService:
         history, voice + em-dash filtered, and routed through review. All go through
         the post-filter + truthfulness check and the review gate.
         """
+        true_source = self._resolve_true_source(campaign_id, true_source)
         kind = (
             (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
             if essay is not None

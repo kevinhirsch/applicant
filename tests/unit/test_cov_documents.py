@@ -71,6 +71,56 @@ def test_list_for_application_reflects_generated_unapproved_doc(client):
     assert listing["all_approved"] is False
 
 
+def _seed_profile(client, cid):
+    """Seed attributes so the server-derived true_source is substantive."""
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.ids import AttributeId, CampaignId, new_id
+
+    storage = client.app.state.container.storage
+    for name, value in (
+        ("Full Name", "Jordan Mercer"),
+        ("Current Job Title", "Data Engineer"),
+        ("Skills", "Python, SQL, building data pipelines and analytics dashboards"),
+    ):
+        storage.attributes.add(
+            Attribute(id=AttributeId(new_id()), campaign_id=CampaignId(cid), name=name, value=value)
+        )
+    storage.commit()
+
+
+def test_screening_answer_derives_true_source_when_omitted(client):
+    """FR-ANSWER-1 on-demand: the front-door sends just the question; the truthful
+    ground-truth is built server-side from the profile (no résumé blob from the UI)."""
+    cid, aid = "camp-gen-1", "app-gen-1"
+    _seed_profile(client, cid)
+    made = client.post(
+        "/api/documents/screening-answer",
+        json={"campaign_id": cid, "application_id": aid, "question": "Why this role?"},
+    )
+    assert made.status_code == 201
+    body = made.json()
+    assert body["type"] == "screening_answer"
+    assert body["approved"] is False
+    # It lands in the review list (review-gated before any use).
+    listing = client.get(f"/api/documents/applications/{aid}/").json()
+    assert any(i["id"] == body["id"] for i in listing["items"])
+
+
+def test_cover_letter_on_demand_derives_true_source(client):
+    """FR-RESUME-10 on-demand: role_requires forces generation; true_source derived."""
+    cid, aid = "camp-gen-2", "app-gen-2"
+    _seed_profile(client, cid)
+    res = client.post(
+        "/api/documents/cover-letter",
+        json={"campaign_id": cid, "application_id": aid, "role_requires": True},
+    )
+    assert res.status_code == 201
+    body = res.json()
+    assert body["generated"] is True
+    assert body["type"] == "cover_letter"
+    assert body["approved"] is False
+
+
 def test_redline_renders_additions_and_subtractions(client):
     res = client.post(
         "/api/documents/redline",

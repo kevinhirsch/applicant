@@ -63,7 +63,9 @@ class TurnIn(BaseModel):
 class CoverLetterIn(BaseModel):
     campaign_id: str
     application_id: str
-    true_source: str
+    # Optional: derived server-side from the profile (base résumé + attribute cloud)
+    # when blank, so the front-door can request one with just the application.
+    true_source: str = ""
     jd_terms: list[str] = []
     # On-demand decision (FR-RESUME-10): per-campaign default + optional role override.
     campaign_default: bool = False
@@ -74,7 +76,7 @@ class ScreeningAnswerIn(BaseModel):
     campaign_id: str
     application_id: str
     question: str
-    true_source: str
+    true_source: str = ""  # derived server-side when blank (see CoverLetterIn)
     # None -> classify (factual vs essay vs sensitive); else force essay/factual.
     essay: bool | None = None
     # Explicit stored EEO answer, used ONLY for sensitive fields (never AI-guessed).

@@ -81,6 +81,29 @@ class BannedPhrasesIn(BaseModel):
     phrases: list[str] = []
 
 
+class CoverLetterIn(BaseModel):
+    """On-demand cover-letter generation request (FR-RESUME-10). The user clicks
+    "generate" for an application; the ground-truth text is derived server-side, so
+    the UI sends just the campaign + application (``role_requires`` forces it)."""
+
+    campaign_id: str
+    application_id: str
+    jd_terms: list[str] = []
+    campaign_default: bool = True
+    role_requires: bool | None = True
+
+
+class ScreeningAnswerIn(BaseModel):
+    """On-demand screening-answer generation request (FR-ANSWER-1). The user supplies
+    the question; the answer is drafted from the profile, voice-filtered, and
+    review-gated before any use."""
+
+    campaign_id: str
+    application_id: str
+    question: str
+    essay: bool | None = None
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
@@ -155,6 +178,36 @@ def setup_applicant_documents_routes() -> APIRouter:
             logger.info("applicant variant library unavailable: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
+
+    # ── on-demand generation (FR-RESUME-10, FR-ANSWER-1) ─────────────────
+
+    @router.post("/cover-letter")
+    async def generate_cover_letter(body: CoverLetterIn, request: Request) -> JSONResponse:
+        """Generate a cover letter for an application on demand (engine
+        ``POST /api/documents/cover-letter``); the result lands in the review list.
+        The ground-truth text is derived server-side from the profile."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.generate_cover_letter(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant cover-letter generation failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
+
+    @router.post("/screening-answer")
+    async def generate_screening_answer(body: ScreeningAnswerIn, request: Request) -> JSONResponse:
+        """Draft an answer to a screening question on demand (engine
+        ``POST /api/documents/screening-answer``); the result lands in the review
+        list. Truthful, voice-filtered, and review-gated before any use."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.generate_screening_answer(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant screening-answer generation failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
 
     # ── review / change loop ────────────────────────────────────────────
 

@@ -51,6 +51,12 @@ class _FakeEngine:
     async def list_variants(self, campaign_id):
         return await self._dispatch("list_variants", campaign_id)
 
+    async def generate_cover_letter(self, body):
+        return await self._dispatch("generate_cover_letter", body)
+
+    async def generate_screening_answer(self, body):
+        return await self._dispatch("generate_screening_answer", body)
+
     async def review_document(self, document_id):
         return await self._dispatch("review_document", document_id)
 
@@ -136,6 +142,34 @@ def test_variant_library_requires_auth(monkeypatch):
     _patch_engine(monkeypatch, result={"variants": []})
     resp = _make_client(authed=False).get("/api/applicant/documents/variants/camp-3")
     assert resp.status_code in (401, 403)
+
+
+def test_cover_letter_generation_forwards_body(monkeypatch):
+    _patch_engine(monkeypatch, result={"generated": True, "id": "doc-9", "type": "cover_letter"})
+    resp = _make_client().post(
+        "/api/applicant/documents/cover-letter",
+        json={"campaign_id": "c1", "application_id": "a1"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["id"] == "doc-9"
+    name, args = _FakeEngine.last_call
+    assert name == "generate_cover_letter"
+    # No true_source goes over the wire — the engine derives it from the profile.
+    assert "true_source" not in args[0]
+    assert args[0]["campaign_id"] == "c1" and args[0]["application_id"] == "a1"
+
+
+def test_screening_answer_generation_forwards_body(monkeypatch):
+    _patch_engine(monkeypatch, result={"id": "doc-10", "type": "screening_answer"})
+    resp = _make_client().post(
+        "/api/applicant/documents/screening-answer",
+        json={"campaign_id": "c1", "application_id": "a1", "question": "Why us?"},
+    )
+    assert resp.status_code == 201
+    name, args = _FakeEngine.last_call
+    assert name == "generate_screening_answer"
+    assert args[0]["question"] == "Why us?"
+    assert "true_source" not in args[0]
 
 
 def test_open_review(monkeypatch):
