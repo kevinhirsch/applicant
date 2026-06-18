@@ -884,21 +884,29 @@ class PlaywrightPageSource:
     def detect_fields(self) -> list[DetectedField]:  # pragma: no cover
         fields: list[DetectedField] = []
         for handle in self._page.query_selector_all("input, select, textarea"):
+            # A typeable ARIA combobox (react-select) is an <input> too — skip it here
+            # so it is handled once by the dropdown path below (type-to-filter + pick),
+            # not typed into as a plain text field (which leaves a filter string, no
+            # selection). Avoids double-detecting the same field.
+            if self._is_combobox(handle):
+                continue
             # The logical key (name/id) for bookkeeping AND a REAL selector usable by
             # Playwright fill/type. A raw ``name``/``id`` attribute value is NOT a
             # selector — fields never resolved. Build ``[name="..."]`` / ``#id``.
             name = handle.get_attribute("name") or ""
             elem_id = handle.get_attribute("id") or ""
             selector = self._build_selector(name, elem_id, handle)
-            label = (
-                handle.get_attribute("aria-label")
-                or handle.get_attribute("placeholder")
-                or name
-                or elem_id
-            )
+            label = self._best_label(handle) or name or elem_id
             ftype = handle.get_attribute("type") or handle.evaluate("e => e.tagName.toLowerCase()")
             if selector:
-                fields.append(DetectedField(selector=selector, label=label, field_type=ftype))
+                fields.append(
+                    DetectedField(
+                        selector=selector,
+                        label=label,
+                        field_type=ftype,
+                        required=self._field_required(handle),
+                    )
+                )
         # Workday-style custom dropdowns are <button aria-haspopup="listbox"> (or an
         # ARIA combobox) — NOT <select>, so the query above misses them entirely.
         # Real Workday uses these for Country, Phone Device Type, and every EEO field;
@@ -910,16 +918,61 @@ class PlaywrightPageSource:
             elem_id = handle.get_attribute("id") or ""
             selector = self._build_selector(name, elem_id, handle)
             label = (
-                handle.get_attribute("aria-label")
+                self._best_label(handle)
                 or handle.get_attribute("data-automation-id")
                 or name
                 or elem_id
             )
             if selector:
                 fields.append(
-                    DetectedField(selector=selector, label=label, field_type="listbox")
+                    DetectedField(
+                        selector=selector,
+                        label=label,
+                        field_type="listbox",
+                        required=self._field_required(handle),
+                    )
                 )
         return fields
+
+    @staticmethod
+    def _best_label(handle) -> str:  # pragma: no cover - integration-gated
+        """Resolve a field's human label the way a person reads the form.
+
+        Order: ``aria-label`` → ``aria-labelledby`` target → the associated
+        ``<label>`` (``el.labels`` / wrapping label) → ``placeholder`` → ``title``.
+        Most real ATS forms (Greenhouse, Lever, iCIMS) label fields with a separate
+        ``<label for=…>`` element, NOT ``aria-label`` — without this the engine only
+        saw the opaque field id and could not map the field (universal-ATS support)."""
+        try:
+            text = handle.evaluate(
+                """el => {
+                  const t = s => (s || '').replace(/\\s+/g, ' ').trim();
+                  if (el.getAttribute('aria-label')) return t(el.getAttribute('aria-label'));
+                  const lb = el.getAttribute('aria-labelledby');
+                  if (lb) { const e = document.getElementById(lb); if (e) return t(e.innerText); }
+                  if (el.labels && el.labels.length) return t(el.labels[0].innerText);
+                  const wrap = el.closest('label'); if (wrap) return t(wrap.innerText);
+                  if (el.getAttribute('placeholder')) return t(el.getAttribute('placeholder'));
+                  if (el.getAttribute('title')) return t(el.getAttribute('title'));
+                  return '';
+                }"""
+            )
+            return (text or "").strip()
+        except Exception:
+            try:
+                return (handle.get_attribute("aria-label") or "").strip()
+            except Exception:
+                return ""
+
+    @staticmethod
+    def _field_required(handle) -> bool:  # pragma: no cover - integration-gated
+        """Whether the DOM marks a field required (``required`` / ``aria-required``)."""
+        try:
+            if handle.get_attribute("required") is not None:
+                return True
+            return (handle.get_attribute("aria-required") or "").lower() == "true"
+        except Exception:
+            return False
 
     @staticmethod
     def _build_selector(name: str, elem_id: str, handle=None) -> str:  # pragma: no cover
@@ -1006,31 +1059,46 @@ class PlaywrightPageSource:
                 return
         raise ValueError(f"no <option> matching {value!r}")
 
-    def _is_listbox_button(self, selector: str) -> bool:  # pragma: no cover
-        """True if ``selector`` is a Workday-style custom dropdown (a button that
-        opens a listbox, or an ARIA combobox) rather than a typeable input."""
+    @staticmethod
+    def _is_combobox(handle) -> bool:  # pragma: no cover
+        """True if a handle is an ARIA dropdown — a custom <button> listbox OR a
+        typeable combobox input (react-select etc.)."""
         try:
-            el = self._page.query_selector(selector)
-            if el is None:
-                return False
-            haspopup = (el.get_attribute("aria-haspopup") or "").lower()
-            role = (el.get_attribute("role") or "").lower()
-            return haspopup == "listbox" or role == "combobox"
+            haspopup = (handle.get_attribute("aria-haspopup") or "").lower()
+            role = (handle.get_attribute("role") or "").lower()
+            autocomplete = (handle.get_attribute("aria-autocomplete") or "").lower()
+            return haspopup == "listbox" or role == "combobox" or autocomplete in ("list", "both")
         except Exception:
             return False
+
+    def _is_listbox_button(self, selector: str) -> bool:  # pragma: no cover
+        """True if ``selector`` is a custom dropdown — a button that opens a listbox,
+        or an ARIA combobox (incl. a typeable react-select input) — vs a plain input."""
+        el = self._page.query_selector(selector)
+        return el is not None and self._is_combobox(el)
 
     def _choose_listbox_option(self, selector: str, value: str) -> None:  # pragma: no cover
         """Open a custom dropdown and click the option matching ``value``.
 
-        Clicks the trigger, waits for the listbox to render, then clicks the VISIBLE
-        ``[role=option]`` whose label/text matches (exact, then contains). Visibility
-        scoping avoids matching options from other (closed) dropdowns on the page.
-        Raises if nothing matches so the caller records a genuinely unmappable field.
+        Handles BOTH kinds of ARIA dropdown: a <button> listbox (Workday — click
+        opens, options are already there) and a TYPEABLE combobox input (react-select,
+        common on Greenhouse/Lever — you must type to FILTER before the option appears).
+        Clicks/opens, types into a combobox input, then clicks the VISIBLE
+        ``[role=option]`` matching (exact, then contains). Visibility scoping avoids
+        matching options from other closed dropdowns. Raises if nothing matches.
         """
         trigger = self._page.query_selector(selector)
         if trigger is None:
             raise ValueError(f"dropdown not found: {selector!r}")
         trigger.click()
+        is_input = str(trigger.evaluate("e => e.tagName")).lower() in ("input", "textarea")
+        if is_input:
+            # react-select: type the value so the option list filters down to it.
+            try:
+                trigger.fill("")
+            except Exception:
+                pass
+            self._page.keyboard.type(value, delay=15)
         want = value.strip().lower()
         deadline = time.monotonic() + 4.0
         contains: object | None = None
@@ -1058,6 +1126,14 @@ class PlaywrightPageSource:
                 contains.click()  # type: ignore[attr-defined]
                 return
             time.sleep(0.1)
+        # A typeable combobox left a filter string in the box — clear it so we don't
+        # leave a half-typed value behind, then report the field as unmappable.
+        if is_input:
+            try:
+                self._page.keyboard.press("Escape")
+                trigger.fill("")
+            except Exception:
+                pass
         raise ValueError(f"no listbox option matching {value!r}")
 
     def screenshot(self) -> str:  # pragma: no cover - integration-gated

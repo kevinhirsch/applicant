@@ -41,6 +41,39 @@ def _attr(cid, name, value, sensitive=False):
     )
 
 
+@pytest.mark.unit
+def test_optional_unmapped_field_is_skipped_not_blocked():
+    """Universal-ATS support: a required-TYPE field the form marks OPTIONAL
+    (``required is False``) and that maps to nothing must be SKIPPED, not block the
+    whole application — real ATS forms carry many optional free-text questions."""
+    from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+    class _OptionalFieldBrowser:
+        def current_state(self, aid):
+            return PageState(url="https://x/form", fields=())
+
+        def detect_fields(self, aid):
+            return [
+                DetectedField(
+                    selector="#opt", label="Anything else to add?",
+                    field_type="text", required=False,
+                )
+            ]
+
+        def fill_field(self, *a, **k):  # pragma: no cover - must not be called
+            raise AssertionError("an unmappable OPTIONAL field must be skipped, not filled")
+
+    cid = CampaignId(new_id())
+    svc = PrefillService(
+        storage=InMemoryStorage(), browser=_OptionalFieldBrowser(),
+        detection=DetectionMonitor(), sandbox=LocalSandbox(), credentials=None, llm=None,
+    )
+    app = _app(cid)
+    result = PrefillResult(application_id=app.id, state=app.status)
+    # No value resolves (empty attributes) → the optional field is skipped, no block.
+    assert svc._fill_current_page(app, [], result) is None
+
+
 def _full_answers(cid):
     return [
         _attr(cid, "Email Address", "kevin@kevinhirsch.com"),

@@ -23,8 +23,12 @@ class _StubHandle:
     def get_attribute(self, name):
         return self._attrs.get(name)
 
-    def evaluate(self, _script):
-        return "input"
+    def evaluate(self, script):
+        # Two evaluate uses: tagName lookup, and the _best_label resolver. The stub
+        # can't run JS, so simulate: tagName -> "input"; label resolver -> aria-label.
+        if "tagName" in script:
+            return "input"
+        return self._attrs.get("aria-label", "") or self._inner
 
     def inner_text(self):
         return self._inner
@@ -50,6 +54,18 @@ class _StubLocator:
 
     def press_sequentially(self, ch, delay=0.0):
         self.pressed.append((ch, delay))
+
+
+class _StubKeyboard:
+    def __init__(self):
+        self.typed: list[str] = []
+        self.pressed: list[str] = []
+
+    def type(self, text, delay=0):
+        self.typed.append(text)
+
+    def press(self, key):
+        self.pressed.append(key)
 
 
 class _StubOption:
@@ -112,6 +128,7 @@ class _StubPage:
         self.selected: list[tuple[str, dict]] = []
         # Options returned for query_selector_all("[role='option']") (custom dropdown).
         self._role_options: list = []
+        self.keyboard = _StubKeyboard()
 
     # query / read
     def query_selector_all(self, sel):
@@ -283,6 +300,21 @@ def test_type_value_chooses_listbox_option():
     assert page.typed == []  # never routed through the text-type path
 
 
+def test_type_value_typeable_combobox_filters_then_picks():
+    # REGRESSION (live Greenhouse): a react-select combobox is an <input
+    # role="combobox" aria-autocomplete="list"> — you must TYPE to filter the options
+    # before clicking. The engine types the value, then clicks the matching option.
+    page = _StubPage()
+    cb = _StubElement(tag="input", attrs={"role": "combobox", "aria-autocomplete": "list"})
+    page._elements_by_sel["#country"] = cb
+    page._role_options = [_StubOption("Canada"), _StubOption("United States")]
+    src = _bare_source(page)
+    src.type_value("#country", "United States")
+    assert "United States" in page.keyboard.typed  # typed to filter
+    assert page._role_options[1].clicked is True     # matching option picked
+    assert page._role_options[0].clicked is False
+
+
 def test_listbox_skips_hidden_options_from_other_dropdowns():
     # Options from a closed dropdown (not visible) must NOT be chosen — only the
     # visible option of the opened dropdown.
@@ -314,6 +346,21 @@ def test_detect_fields_builds_real_selectors():
     assert selectors[2] == '[data-automation-id="phone"]'
     # All are usable Playwright selector strings, not raw attribute values.
     assert all(s.startswith(("[", "#")) for s in selectors)
+
+
+def test_detect_fields_resolves_label_and_required():
+    # Universal-ATS support: the engine reads the field's real label (here via the
+    # aria-label the stub returns from its label-resolver evaluate) and captures the
+    # DOM's required flag — so it can map fields and block only on required ones.
+    page = _StubPage()
+    page._handles_by_sel["input, select, textarea"] = [
+        _StubHandle({"id": "q1", "type": "text", "aria-label": "Why do you want this job?",
+                     "required": "true"}),
+        _StubHandle({"id": "q2", "type": "text", "aria-label": "Portfolio URL"}),  # optional
+    ]
+    fields = {f.label: f for f in _bare_source(page).detect_fields()}
+    assert fields["Why do you want this job?"].required is True
+    assert fields["Portfolio URL"].required is False
 
 
 # --- advance traverses N pages then ends -----------------------------------
