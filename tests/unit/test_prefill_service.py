@@ -190,6 +190,48 @@ class TestMissingAttribute:
         result = service.prefill_application(_app(cid), WORKDAY_URL, attrs)
         assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
 
+    def test_credential_auto_login_skips_the_human_handoff(self, tmp_path):
+        # Automate-by-default: a stored ATS credential makes the engine sign in itself
+        # at the account gate and walk the rest of the flow — NO per-application human
+        # sign-in. (FR-PREFILL: login from a user-provided credential is the user's
+        # intent; the engine drives it.)
+        from applicant.adapters.credentials.pg_credential_store import (
+            Credential,
+            InMemoryCredentialStore,
+        )
+
+        cid = CampaignId(new_id())
+        creds = InMemoryCredentialStore(str(tmp_path / "master.key"))
+        creds.store(
+            cid,
+            Credential(
+                tenant_key="workday:acme.myworkdayjobs.com",
+                username="kevin@kevinhirsch.com",
+                secret="s3cret",
+            ),
+        )
+        storage = InMemoryStorage()
+        service = _service(storage)
+        service._credentials = creds  # noqa: SLF001 - inject the seeded vault
+        result = service.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        # Signed in + walked to the end — no account hand-off pending action.
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
+        assert not any(
+            p.kind == "account_human_step" for p in storage.pending_actions.list_open(cid)
+        )
+
+    def test_no_credential_still_hands_off_at_the_gate(self, tmp_path):
+        # Without a stored credential the engine hands off at the account gate (the
+        # human signs in / creates the account) — unchanged behavior.
+        from applicant.adapters.credentials.pg_credential_store import InMemoryCredentialStore
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        service._credentials = InMemoryCredentialStore(str(tmp_path / "master.key"))  # empty
+        result = service.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
     def test_value_reused_after_resolve(self):
         # FR-ATTR-5: once supplied, the value is reused and the loop proceeds.
         cid = CampaignId(new_id())

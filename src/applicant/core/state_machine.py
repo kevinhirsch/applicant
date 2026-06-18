@@ -66,7 +66,10 @@ _TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
     S.DIGESTED: frozenset({S.DECLINED, S.APPROVED}),
     S.APPROVED: frozenset({S.SANDBOX_PROVISIONING}),
     S.SANDBOX_PROVISIONING: frozenset({S.ACCOUNT_PREFILL, S.PREFILLING}),
-    S.ACCOUNT_PREFILL: frozenset({S.AWAITING_ACCOUNT_HUMAN_STEP}),
+    # The engine fills + hands off (human creates/signs in), OR — when it holds a
+    # stored credential — logs in itself and proceeds straight to PREFILLING
+    # (automate-by-default; login from a user-provided credential is the user's intent).
+    S.ACCOUNT_PREFILL: frozenset({S.AWAITING_ACCOUNT_HUMAN_STEP, S.PREFILLING}),
     S.AWAITING_ACCOUNT_HUMAN_STEP: frozenset({S.PREFILLING}),
     S.PREFILLING: frozenset(
         {

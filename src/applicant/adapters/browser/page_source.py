@@ -101,6 +101,10 @@ class PageSource(Protocol):
         Returns the new page, or ``None`` when not needed (already in-flow)."""
         ...
 
+    def log_in(self, username: str, password: str) -> bool:
+        """Attempt an email/password sign-in at the account gate; return success."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
@@ -175,6 +179,13 @@ class FakePageSource:
         # (account-create), so there is no separate posting/landing page to click
         # through — a no-op that keeps the flow on the current page.
         return None
+
+    def log_in(self, username: str, password: str) -> bool:
+        # Simulate a successful sign-in: advance past the account gate. (The fake
+        # assumes the supplied credential is valid; failure paths are exercised with
+        # dedicated stubs.)
+        self.advance()
+        return True
 
     def is_account_create_page(self) -> bool:
         return self._page.is_account_create
@@ -571,6 +582,65 @@ class PlaywrightPageSource:
         if self._click_first(self._APPLY_MANUALLY_SELECTORS):
             self._settle()
         return self.current()
+
+    #: Controls that reveal the email/password sign-in form (Workday shows OAuth +
+    #: "Sign in with email" first; click that to get the credential form).
+    _SIGN_IN_WITH_EMAIL_SELECTORS = (
+        "button:has-text('Sign in with email')",
+        "a:has-text('Sign in with email')",
+        "button:has-text('Sign in with Email')",
+        "[data-automation-id='signInWithEmail']",
+    )
+    #: Submit controls for the email/password sign-in form.
+    _LOGIN_SUBMIT_SELECTORS = (
+        "button[data-automation-id='signInSubmitButton']",
+        "button[data-automation-id='click_filter']",
+        "button:has-text('Sign In')",
+        "button:has-text('Log In')",
+        "button[type='submit']",
+    )
+
+    def log_in(self, username: str, password: str) -> bool:  # pragma: no cover - integration-gated
+        """Attempt an email/password sign-in at the account gate (automate-by-default).
+
+        Reveals the email form (Workday shows "Sign in with email" before the inputs),
+        fills the email + password from the stored credential, submits, and settles.
+        Returns True when we appear to be PAST the gate (login likely succeeded), else
+        False — the caller then holds the sandbox + hands off. Never raises.
+
+        Does NOT drive OAuth ("Sign in with Google") — that path is handled separately
+        via a persistent session + the 2FA hand-off (see the plan)."""
+        # Reveal the email/password form if it is behind a "Sign in with email" button.
+        self._click_first(self._SIGN_IN_WITH_EMAIL_SELECTORS)
+        self._settle()
+        if not self._fill_login_fields(username, password):
+            return False
+        self._click_first(self._LOGIN_SUBMIT_SELECTORS)
+        self._settle()
+        # Success heuristic: the account gate is no longer the current page.
+        try:
+            return not self.is_account_gate()
+        except Exception:
+            return False
+
+    def _fill_login_fields(self, username: str, password: str) -> bool:  # pragma: no cover
+        """Fill the email/identifier + password inputs on a login form; return whether
+        both were found and filled."""
+        email_sel = pwd_sel = None
+        for fld in self.detect_fields():
+            ftype = (fld.field_type or "").lower()
+            label = (fld.label or "").lower()
+            if pwd_sel is None and ftype == "password":
+                pwd_sel = fld.selector
+            elif email_sel is None and (
+                "email" in label or "user" in label or ftype in ("text", "email")
+            ):
+                email_sel = fld.selector
+        if not email_sel or not pwd_sel:
+            return False
+        self.type_value(email_sel, username)
+        self.type_value(pwd_sel, password)
+        return True
 
     def current(self) -> PageState:  # pragma: no cover - integration-gated
         # Populate status/body/detection markers so cautious mode (FR-PREFILL-6) is
