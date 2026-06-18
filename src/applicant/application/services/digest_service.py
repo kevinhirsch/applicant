@@ -364,7 +364,7 @@ class DigestService:
             # FR-FB-1 (MINOR): raise the domain ``InvalidInput`` so the global handler
             # maps it (422), instead of a plain ``ValueError`` that would surface as 500.
             raise InvalidInput(
-                "Decline feedback is required (FR-FB-1): say briefly why this role "
+                "Decline feedback is required: say briefly why this role "
                 "is not a fit so the next run learns."
             )
         app_id = self._application_for(application_id, status=ApplicationState.DECLINED)

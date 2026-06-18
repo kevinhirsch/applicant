@@ -28,5 +28,5 @@ def ensure_change_allowed(*, is_integral: bool, user_confirmed: bool) -> None:
     """
     if requires_confirmation(is_integral) and not user_confirmed:
         raise ConfirmationRequired(
-            "Integral change requires explicit user confirmation before commit (FR-FB-3)."
+            "Integral change requires explicit user confirmation before commit."
         )

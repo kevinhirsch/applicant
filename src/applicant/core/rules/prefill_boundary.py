@@ -64,9 +64,9 @@ def ensure_action_allowed(step: StepKind, *, engine_submit_authorized: bool = Fa
     """
     if is_irreducible_human_step(step):
         raise PrefillBoundaryViolation(
-            f"Engine must hand off at irreducible human step: {step.value} (FR-PREFILL-4)."
+            f"Engine must hand off at irreducible human step: {step.value}."
         )
     if step is StepKind.FINAL_SUBMIT and not engine_submit_authorized:
         raise PrefillBoundaryViolation(
-            "Final submit requires explicit user authorization (FR-PREFILL-5)."
+            "Final submit requires explicit user authorization."
         )

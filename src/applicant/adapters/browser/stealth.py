@@ -400,7 +400,7 @@ EGRESS_CAVEAT = (
     "Egress residential-classification is best-effort: the engine refuses a "
     "self-flagged datacenter exit and, in residential-proxy mode, requires an "
     "attested residential proxy that is threaded into the browser launch — but "
-    "IP/ASN residential classification cannot be fully proven (FR-STEALTH-4)."
+    "IP/ASN residential classification cannot be fully proven."
 )
 
 
@@ -434,12 +434,12 @@ class EgressPolicy:
         if self.proxy_url is not None and not self.residential:
             raise DatacenterEgressRefused(
                 "Refusing datacenter egress: configure a residential connection "
-                "(direct or residential proxy/Tailscale exit) (FR-STEALTH-4)."
+                "(direct or residential proxy/Tailscale exit)."
             )
         if self.mode == EGRESS_RESIDENTIAL_PROXY and not (self.proxy_url or "").strip():
             raise DatacenterEgressRefused(
                 "Residential-proxy egress required but no proxy is configured; "
-                "refusing to launch (would egress from the datacenter) (FR-STEALTH-4)."
+                "refusing to launch (would egress from the datacenter)."
             )
         if self.mode == EGRESS_RESIDENTIAL_PROXY and not self.residential:
             # A residential-proxy that is NOT operator-attested residential must
@@ -448,7 +448,7 @@ class EgressPolicy:
             raise DatacenterEgressRefused(
                 "Residential-proxy mode requires an operator-attested residential "
                 "proxy (set EGRESS_RESIDENTIAL=true). Refusing to launch with an "
-                "un-attested proxy that may egress from a datacenter (FR-STEALTH-4)."
+                "un-attested proxy that may egress from a datacenter."
             )
 
     @property

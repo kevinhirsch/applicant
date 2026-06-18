@@ -114,7 +114,7 @@ def decide_sensitive_fill(
     if ai_suggested is not None:
         raise SensitiveFieldViolation(
             f"Refusing to AI-guess sensitive field {field_label!r}; "
-            "sensitive fields fill only from explicit stored answers (FR-ATTR-6)."
+            "sensitive fields fill only from explicit stored answers."
         )
 
     if explicit_answer:

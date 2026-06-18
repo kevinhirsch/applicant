@@ -330,11 +330,11 @@ class SetupService:
         NEVER logged or returned (FR-VAULT-3, NFR-PRIV-1).
         """
         if not (settings.proxmox_api_url and settings.proxmox_node):
-            raise ValueError("Proxmox API URL and node are required (FR-OOBE).")
+            raise ValueError("Proxmox API URL and node are required.")
         if not settings.template_vmid:
-            raise ValueError("A Windows template/persistent VMID is required (FR-OOBE).")
+            raise ValueError("A Windows template/persistent VMID is required.")
         if not (settings.proxmox_token_id and settings.proxmox_token_secret):
-            raise ValueError("Proxmox API token id + secret are required (FR-OOBE).")
+            raise ValueError("Proxmox API token id + secret are required.")
         record: dict[str, Any] = {
             "proxmox_api_url": settings.proxmox_api_url,
             "proxmox_node": settings.proxmox_node,
@@ -441,7 +441,7 @@ class SetupService:
     def configure_llm(self, settings: LLMSettings) -> None:
         """Set the L1 tier (creates or replaces the first ladder rung)."""
         if not settings.provider or not settings.model:
-            raise ValueError("LLM provider and model are required (FR-LLM-2).")
+            raise ValueError("LLM provider and model are required.")
         # Item 12 (SSRF): the LLM base_url is operator-supplied; reject non-http(s) /
         # cloud-metadata targets (local Ollama / private endpoints are allowed).
         validate_operator_url(settings.base_url, field="LLM base_url")
@@ -503,7 +503,7 @@ class SetupService:
         tier never clobbers the secret another tier is preserving by ref.
         """
         if not tiers:
-            raise ValueError("At least one tier is required (FR-LLM-3).")
+            raise ValueError("At least one tier is required.")
         if len(tiers) > _DEFAULT_MAX_TIERS:
             raise ValueError(f"At most {_DEFAULT_MAX_TIERS} tiers are supported.")
         # Item 12 (SSRF): each tier's operator-supplied base_url is guarded.
@@ -523,7 +523,7 @@ class SetupService:
         ]
         for r in records:
             if not r["provider"] or not r["model"]:
-                raise ValueError("Each tier needs provider and model (FR-LLM-3).")
+                raise ValueError("Each tier needs provider and model.")
         self._save_tiers(records)
         log.info("llm_ladder_set", tiers=len(records))
 
@@ -611,7 +611,7 @@ class SetupService:
     def advance_step(self, step: WizardStep) -> WizardStatus:
         """Mark a wizard step complete (FR-OOBE-2). LLM is gated by its config."""
         if step is WizardStep.LLM and not self.is_setup_gate_open():
-            raise ValueError("Configure the LLM before completing the LLM step (FR-UI-5).")
+            raise ValueError("Configure the LLM before completing the LLM step.")
         if step is WizardStep.SANDBOX and not self._sandbox_step_complete_now():
             raise ValueError(
                 "The Proxmox Windows connection is not configured; collect it before "
@@ -622,8 +622,7 @@ class SetupService:
             # (FR-ONBOARD-2). When no real gate is wired, the local flag is used.
             if self._onboarding_gate is not None:
                 raise ValueError(
-                    "Onboarding intake is not complete; finish it before advancing "
-                    "(FR-ONBOARD-2)."
+                    "Onboarding intake is not complete; finish it before advancing."
                 )
         if step is WizardStep.FONTS:
             self._fonts_ready = True
