@@ -24,6 +24,24 @@ def test_local_backend_wires_local_sandbox():
 
 
 @pytest.mark.unit
+def test_browser_real_defaults_off_so_ci_is_hermetic(monkeypatch):
+    # Without BROWSER_REAL the engine uses the in-memory FakePageSource (no browser
+    # binary) — tests/CI stay deterministic and browserless.
+    monkeypatch.delenv("BROWSER_REAL", raising=False)
+    container = build_container(Settings(_env_file=None))
+    assert container.browser._use_real_browser is False
+
+
+@pytest.mark.unit
+def test_browser_real_setting_drives_real_browser():
+    # BROWSER_REAL=true (the production default in docker-compose.prod.yml) makes the
+    # container launch a real Chrome/Chromium for pre-fill (FR-PREFILL-1/2). Without
+    # this wiring the engine would only ever SIMULATE pre-fill.
+    container = build_container(Settings(_env_file=None, BROWSER_REAL=True))
+    assert container.browser._use_real_browser is True
+
+
+@pytest.mark.unit
 def test_proxmox_backend_falls_back_until_configured_but_persona_native():
     # No OOBE sandbox-connection step done -> backend not usable yet, so the app
     # still boots on LocalSandbox; the persona is already native (it IS Windows).

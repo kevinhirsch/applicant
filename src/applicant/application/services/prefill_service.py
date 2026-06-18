@@ -199,7 +199,9 @@ class PrefillService:
                     return self._account_handoff(
                         app, result, result.sandbox_session_url, signal_type=event.signal_type
                     )
-            blocked = self._fill_current_page(app, attributes, result)
+            blocked = self._fill_current_page(
+                app, attributes, result, block_on_missing=False
+            )
             if blocked is not None:
                 return blocked
             self._capture_screenshot(aid, result)
@@ -426,12 +428,20 @@ class PrefillService:
         self._persist(app)
         return result
 
-    def _fill_current_page(self, app, attributes, result) -> PrefillResult | None:
+    def _fill_current_page(
+        self, app, attributes, result, *, block_on_missing: bool = True
+    ) -> PrefillResult | None:
         """Fill every detected field on the current page via the core rules.
 
         Returns ``None`` on success, or a terminated :class:`PrefillResult` when the
         page blocks (missing attribute → BLOCKED_MISSING_ATTR, essay screening
         question → BLOCKED_QUESTION).
+
+        ``block_on_missing=False`` is used for the account-creation page: that page
+        always hands off to the human (the engine never creates an account), so a
+        required field we cannot fill must NOT raise a ``BLOCKED_MISSING_ATTR``
+        transition the ACCOUNT_PREFILL state forbids — the human completes it when
+        they take over the live session.
         """
         aid = app.id
         state = self._browser.current_state(aid)
@@ -453,6 +463,11 @@ class PrefillService:
 
             if resolved.value is None:
                 if fld.field_type in self._required_types:
+                    if not block_on_missing:
+                        # Account page: hand off to the human for anything we can't
+                        # fill (they create the account anyway); never raise the
+                        # BLOCKED_MISSING_ATTR transition ACCOUNT_PREFILL forbids.
+                        continue
                     # Required field with no value → missing-attr soft error (FR-ATTR-5).
                     return self._block_missing_attr(app, fld, result)
                 continue  # optional field with no value → skip.

@@ -220,6 +220,14 @@ class Settings(BaseSettings):
     # into launch_persistent_context(channel=...). Headful only (no headless tell).
     browser_channel: str = Field(default=BROWSER_CHANNEL_CHROME, alias="BROWSER_CHANNEL")
 
+    # Drive a REAL browser (patchright + a real Chrome/Chromium binary) for pre-fill
+    # instead of the hermetic in-memory FakePageSource. Default OFF so tests/CI stay
+    # browserless and deterministic; the production deploy sets BROWSER_REAL=true (see
+    # docker-compose.prod.yml) so the api container actually launches Chrome and
+    # pre-fills live ATS pages (FR-PREFILL-1/2). Without this the engine would only
+    # ever SIMULATE pre-fill.
+    browser_real: bool = Field(default=False, alias="BROWSER_REAL")
+
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
     # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the
     # egress IP's region in a real deployment; the defaults are a sensible coherent

@@ -120,6 +120,11 @@ services:
       # SMTP (FR-NOTIF-1), and the wired internal SearXNG metasearch (FR-DISC-2).
       DISCOVERY_LIVE: ${DISCOVERY_LIVE:-true}
       NOTIFICATIONS_LIVE: ${NOTIFICATIONS_LIVE:-true}
+      # Drive a REAL Chrome for pre-fill (FR-PREFILL-1/2). Default OFF in config.py so
+      # CI/tests stay browserless; ON here so the api container actually launches the
+      # Chrome baked into the image and pre-fills live ATS pages (BROWSER_CHANNEL
+      # defaults to chrome). Without this the engine would only SIMULATE pre-fill.
+      BROWSER_REAL: ${BROWSER_REAL:-true}
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       # Stage-2.5 reverse channel: where the engine reaches the front-door UI to
       # call BACK (calendar/research/local-models), plus the SHARED secret it

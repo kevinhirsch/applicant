@@ -337,6 +337,10 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     browser = PatchrightBrowser(
         egress=egress,
+        # Drive a real Chrome/Chromium for pre-fill in the deploy (BROWSER_REAL=true);
+        # tests/CI leave it off and use the hermetic in-memory FakePageSource. Without
+        # this the engine only ever SIMULATES pre-fill (FR-PREFILL-1/2).
+        use_real_browser=settings.browser_real,
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,

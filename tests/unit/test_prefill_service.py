@@ -179,6 +179,17 @@ class TestMissingAttribute:
         pending = storage.pending_actions.list_open(cid)
         assert any(p.kind == "missing_attr" for p in pending)
 
+    def test_missing_required_field_on_account_page_hands_off_not_crash(self):
+        # Regression (surfaced by a live Workday run): a required field with no stored
+        # value ON THE ACCOUNT-CREATE PAGE must hand off to the human account step, not
+        # raise the illegal ACCOUNT_PREFILL -> BLOCKED_MISSING_ATTR transition. The
+        # human creates the account and fills anything the engine could not.
+        cid = CampaignId(new_id())
+        attrs = [a for a in _full_answers(cid) if a.name != "Email Address"]
+        service = _service(InMemoryStorage())
+        result = service.prefill_application(_app(cid), WORKDAY_URL, attrs)
+        assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
     def test_value_reused_after_resolve(self):
         # FR-ATTR-5: once supplied, the value is reused and the loop proceeds.
         cid = CampaignId(new_id())
