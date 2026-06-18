@@ -924,7 +924,16 @@ async function _loadDigestRows() {
     const payload = await digestModule.fetchDigest(_digestCampaignId);
     _renderDigestRows(payload);
   } catch (e) {
-    if (dbody) dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Could not load today’s roles right now.</div>`;
+    if (!dbody) return;
+    if (e && e.status === 409) {
+      // 409 here means automated work isn't enabled yet (setup/onboarding still
+      // in progress) — a normal pre-setup state, not a failure. The Portal is the
+      // post-login home, so this is the common case before setup is finished;
+      // point to setup instead of showing an alarming error.
+      dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Finish setting up Applicant to start seeing matched roles here.</div>`;
+    } else {
+      dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Could not load today’s roles right now.</div>`;
+    }
   }
 }
 
