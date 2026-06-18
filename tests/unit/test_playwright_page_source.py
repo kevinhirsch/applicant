@@ -52,12 +52,22 @@ class _StubLocator:
         self.pressed.append((ch, delay))
 
 
+class _StubElement:
+    def __init__(self, visible=True):
+        self._visible = visible
+
+    def is_visible(self):
+        return self._visible
+
+
 class _StubPage:
     def __init__(self, *, url="https://acme.myworkdayjobs.com/job/1"):
         self.url = url
         self._content = "<html><body></body></html>"
         self._handles_by_sel: dict[str, list[_StubHandle]] = {}
         self._locators: dict[str, _StubLocator] = {}
+        # Selector -> _StubElement for query_selector (visible-challenge detection).
+        self._elements_by_sel: dict[str, _StubElement] = {}
         self._body_text = ""
         self.filled: list[str] = []
         self.typed: list[tuple[str, str, int]] = []
@@ -66,6 +76,9 @@ class _StubPage:
     # query / read
     def query_selector_all(self, sel):
         return self._handles_by_sel.get(sel, [])
+
+    def query_selector(self, sel):
+        return self._elements_by_sel.get(sel)
 
     def content(self):
         return self._content
@@ -105,6 +118,7 @@ def _bare_source(page):
 
 # --- current() populates status/body/detection (FR-PREFILL-6) -------------
 def test_current_populates_status_body_and_detection():
+    # A genuine, user-visible interstitial PHRASE is a real challenge marker.
     page = _StubPage()
     page._content = "<html>please complete the captcha to continue</html>"
     src = _bare_source(page)
@@ -112,9 +126,44 @@ def test_current_populates_status_body_and_detection():
     src._expected_host = "acme.myworkdayjobs.com"
     state = src.current()
     assert state.status == 403
-    assert "captcha" in state.body
-    assert "captcha" in state.detection_signals
+    assert "complete the captcha" in state.body
+    assert "complete the captcha" in state.detection_signals
     assert state.expected_host == "acme.myworkdayjobs.com"
+
+
+def test_embedded_invisible_recaptcha_script_is_not_a_signal():
+    # REGRESSION (live PwC playtest): a page that merely EMBEDS an (invisible)
+    # reCAPTCHA script must NOT be flagged — the login form is fillable. Without a
+    # visible challenge element or interstitial phrase, detection_signals is empty.
+    page = _StubPage()
+    page._content = (
+        "<html><head>"
+        "<script src='https://www.google.com/recaptcha/api.js'></script>"
+        "</head><body><form><input name='email'><input type='password'>"
+        "</form></body></html>"
+    )
+    src = _bare_source(page)
+    state = src.current()
+    assert state.detection_signals == ()
+
+
+def test_visible_challenge_widget_is_a_signal():
+    # A RENDERED + visible reCAPTCHA challenge iframe IS a real challenge → flagged.
+    page = _StubPage()
+    page._content = "<html><body>sign in</body></html>"
+    page._elements_by_sel["iframe[src*='recaptcha'][src*='bframe']"] = _StubElement(visible=True)
+    src = _bare_source(page)
+    state = src.current()
+    assert "recaptcha" in state.detection_signals
+
+
+def test_invisible_challenge_widget_element_is_not_a_signal():
+    # The reCAPTCHA badge iframe exists but is NOT visible (invisible reCAPTCHA) →
+    # not a blocker.
+    page = _StubPage()
+    page._elements_by_sel["iframe[src*='recaptcha'][src*='bframe']"] = _StubElement(visible=False)
+    src = _bare_source(page)
+    assert src.current().detection_signals == ()
 
 
 # --- detect_fields returns REAL selectors ----------------------------------
