@@ -228,6 +228,13 @@ class Settings(BaseSettings):
     # ever SIMULATE pre-fill.
     browser_real: bool = Field(default=False, alias="BROWSER_REAL")
 
+    # Let the engine CREATE an account at the ATS account gate from a predefined
+    # credential set (ADR-0004), not just log in to an existing one. Default OFF: the
+    # account-create submit stays an irreducible hand-off unless the operator opts in.
+    # Server-derived gate — never opted in by a request input. CAPTCHA + email/SMS
+    # verification + final-submit remain irreducible regardless.
+    allow_automated_accounts: bool = Field(default=False, alias="ALLOW_AUTOMATED_ACCOUNTS")
+
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
     # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the
     # egress IP's region in a real deployment; the defaults are a sensible coherent

@@ -341,6 +341,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # tests/CI leave it off and use the hermetic in-memory FakePageSource. Without
         # this the engine only ever SIMULATES pre-fill (FR-PREFILL-1/2).
         use_real_browser=settings.browser_real,
+        # ADR-0004: gate for automated account creation (default OFF). Threaded into the
+        # boundary so the create-account submit is permitted only when opted in.
+        automated_accounts=settings.allow_automated_accounts,
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,
@@ -478,6 +481,7 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
         notification=notification,
         llm=llm,
+        allow_automated_accounts=settings.allow_automated_accounts,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).

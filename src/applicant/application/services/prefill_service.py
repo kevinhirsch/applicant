@@ -32,6 +32,7 @@ tested; swapping in the real Playwright page-source is the only change to go liv
 
 from __future__ import annotations
 
+import secrets
 import time
 from dataclasses import dataclass, field
 
@@ -50,6 +51,11 @@ FINAL_APPROVAL_TOPIC = "final_approval"
 #: Credential-vault key for the user's Google account (one account reused across all
 #: tenants' "Sign in with Google", vs. per-ATS-tenant direct credentials).
 GOOGLE_CREDENTIAL_KEY = "google"
+
+#: Credential-vault key for the predefined account set used to CREATE new ATS accounts
+#: (ADR-0004): its ``username`` is the email; a strong password is generated per tenant
+#: and banked under the tenant's key on success.
+PREDEFINED_CREDENTIAL_KEY = "predefined:account"
 
 
 def ping_ref(application_id, kind: str) -> str:
@@ -120,6 +126,7 @@ class PrefillService:
         *,
         llm=None,
         required_field_types: frozenset[str] | None = None,
+        allow_automated_accounts: bool = False,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -127,6 +134,8 @@ class PrefillService:
         self._sandbox = sandbox
         self._credentials = credentials
         self._notification = notification
+        # ADR-0004: only attempt automated account creation when the operator opted in.
+        self._allow_automated_accounts = bool(allow_automated_accounts)
         # LLM port for ambiguous-mapping escalation (FR-PREFILL-3). Optional: when
         # absent, an unresolved non-sensitive field becomes a missing-attr soft error.
         self._llm = llm
@@ -238,7 +247,17 @@ class PrefillService:
                     return self._prefill_pages(app, attributes, result, cautious=cautious)
                 if status == "two_factor":
                     return self._two_factor_handoff(app, result)
-                # "failed" → fall through to the human hand-off below.
+                # "failed" → fall through (try account creation / hand off).
+            # No working login: create an account from the predefined set if the
+            # operator opted in (ADR-0004). On success continue; if it triggers email
+            # verification, bank the credential and hand off (verify is irreducible).
+            created = self._maybe_create_account(app)
+            if created == "ok":
+                self._capture_screenshot(aid, result)
+                return self._prefill_pages(app, attributes, result, cautious=cautious)
+            if created == "email_verify":
+                self._capture_screenshot(aid, result)
+                return self._account_handoff(app, result, result.sandbox_session_url)
             blocked = self._fill_current_page(
                 app, attributes, result, block_on_missing=False
             )
@@ -527,6 +546,43 @@ class PrefillService:
             return str(login(aid, credential.username, credential.secret))
         except Exception:  # pragma: no cover - defensive
             return "failed"
+
+    def _maybe_create_account(self, app) -> str | None:
+        """Create an account from the predefined set if enabled (ADR-0004). Returns
+        'ok' | 'email_verify' on a created account (credential banked), else ``None``
+        (not enabled / no predefined set / stub browser / creation failed → hand off)."""
+        if not self._allow_automated_accounts:
+            return None
+        predefined = self._lookup_credential(app, tenant_key=PREDEFINED_CREDENTIAL_KEY)
+        if predefined is None:
+            return None
+        create = getattr(self._browser, "create_account", None)
+        if not callable(create):
+            return None
+        username = predefined.username
+        password = secrets.token_urlsafe(16)
+        try:
+            status = str(create(app.id, username, password))
+        except Exception:  # pragma: no cover - boundary/browser error -> hand off
+            return None
+        if status in ("ok", "email_verify"):
+            self._capture_credential(app, username, password)
+            return status
+        return None
+
+    def _capture_credential(self, app, username: str, password: str) -> None:
+        """Bank a freshly-created account credential under the ATS tenant key so future
+        applications at this tenant log in automatically (FR-VAULT-2)."""
+        store = self._credentials
+        tenant_of = getattr(self._browser, "tenant_key", None)
+        if store is None or not callable(tenant_of):
+            return
+        try:
+            tenant_key = tenant_of(app.id)
+            if tenant_key:
+                store.capture(app.campaign_id, tenant_key, username, password)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def _two_factor_handoff(self, app, result) -> PrefillResult:
         """Google sign-in needs a second factor the engine cannot produce. Hold the
