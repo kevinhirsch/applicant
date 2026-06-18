@@ -102,6 +102,25 @@ def test_run_now_runs_one_tick_and_returns_result():
 
 
 @pytest.mark.unit
+def test_run_now_does_not_pollute_scheduled_heartbeat():
+    """A manual Run-now must NOT overwrite the scheduled-cadence heartbeat: it
+    shows activity while running but leaves last_tick (the next-tick estimate) to
+    the scheduled tick, so the status chip's countdown stays truthful."""
+    storage = _storage()
+    cid = _campaign(storage)
+    sched = Scheduler(storage=storage, agent_loop=_RecordingLoop(), interval_seconds=60.0)
+
+    scheduled = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+    sched.tick(scheduled)  # a real scheduled tick sets the heartbeat
+    assert sched.state()["last_tick"] == scheduled.isoformat()
+
+    # A manual run an hour later must NOT move last_tick / next_tick.
+    sched.run_now(cid, now=scheduled + timedelta(hours=1))
+    assert sched.state()["last_tick"] == scheduled.isoformat()
+    assert sched.state()["running"] is False  # cleared after the manual run
+
+
+@pytest.mark.unit
 def test_run_now_is_single_flight_per_campaign():
     """A manual run never races a scheduled tick: if the campaign lock is held, the
     manual run reports ran=False rather than piling a second concurrent tick on."""
