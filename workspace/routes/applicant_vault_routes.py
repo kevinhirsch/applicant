@@ -58,6 +58,17 @@ class CaptureIn(BaseModel):
     secret: str
 
 
+class AccountCredentialIn(BaseModel):
+    """A GLOBAL account sign-in set once in Settings and reused across every job
+    search: ``kind`` is the well-known account-credential key (the user's Google
+    sign-in or the default set for creating new accounts); ``secret`` is the
+    password — never logged, sealed by the engine under the SYSTEM campaign."""
+
+    kind: str
+    username: str
+    secret: str
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     if exc.status is None:
         status_code = 502
@@ -121,6 +132,36 @@ def setup_applicant_vault_routes() -> APIRouter:
                 data = await engine.vault_capture_credential(body.model_dump())
         except EngineError as exc:
             logger.info("applicant vault capture failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
+
+    @router.get("/account")
+    async def account_status(request: Request) -> JSONResponse:
+        """Which GLOBAL account sign-ins are set — no secrets returned
+        (engine ``GET /api/credentials/account``)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.vault_account_status()
+        except EngineError as exc:
+            logger.info("applicant vault account status unavailable: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data or {"google": False, "predefined_account": False})
+
+    @router.post("/account")
+    async def store_account_credential(
+        body: AccountCredentialIn, request: Request
+    ) -> JSONResponse:
+        """Bank a GLOBAL account sign-in (Google / default new-account set), reused
+        across every job search (engine ``POST /api/credentials/account``). Secret is
+        never logged."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.vault_store_account_credential(body.model_dump())
+        except EngineError as exc:
+            # exc carries no secret; body is intentionally not logged.
+            logger.info("applicant vault account store failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
 

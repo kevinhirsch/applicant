@@ -57,6 +57,12 @@ GOOGLE_CREDENTIAL_KEY = "google"
 #: and banked under the tenant's key on success.
 PREDEFINED_CREDENTIAL_KEY = "predefined:account"
 
+#: Account-level credentials that are NOT tied to one job search: the user sets them
+#: once in Settings and they apply to every campaign. They are banked under the global
+#: SYSTEM campaign; ``_lookup_credential`` falls back to that scope for these keys so
+#: "sign in to Google once and reuse it everywhere" actually holds across campaigns.
+SHARED_CREDENTIAL_KEYS = (GOOGLE_CREDENTIAL_KEY, PREDEFINED_CREDENTIAL_KEY)
+
 
 def ping_ref(application_id, kind: str) -> str:
     """Stable ref for a prefill blocked-state ping (#7).
@@ -497,10 +503,23 @@ class PrefillService:
                 return None
         if not tenant_key:
             return None
-        try:
-            return store.retrieve(app.campaign_id, tenant_key)
-        except Exception:  # pragma: no cover - defensive
-            return None
+        # Per-tenant ATS credentials live under the application's campaign. The shared
+        # account credentials (Google / the default new-account set) are global: a
+        # campaign-specific entry still wins as an override, but we fall back to the
+        # SYSTEM campaign so a single Settings entry applies to every job search.
+        scopes = [app.campaign_id]
+        if tenant_key in SHARED_CREDENTIAL_KEYS:
+            from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
+
+            scopes.append(CampaignId(SYSTEM_CAMPAIGN_ID))
+        for scope in scopes:
+            try:
+                cred = store.retrieve(scope, tenant_key)
+            except Exception:  # pragma: no cover - defensive
+                cred = None
+            if cred is not None:
+                return cred
+        return None
 
     def _try_log_in(self, aid, credential) -> bool:
         """Attempt an email/password sign-in from a stored credential; return success.

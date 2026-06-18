@@ -632,6 +632,16 @@ class ApplicantEngineClient:
         """Tenant keys that have stored credentials (no secrets returned)."""
         return await self._request("GET", f"/api/credentials/{campaign_id}/tenants")
 
+    async def vault_store_account_credential(self, body: dict) -> Any:
+        """Bank a GLOBAL account credential (Google / default new-account set) under
+        the SYSTEM campaign so it applies to every job search — set once, reused
+        everywhere."""
+        return await self._request("POST", "/api/credentials/account", json=body)
+
+    async def vault_account_status(self) -> Any:
+        """Which global account credentials are set (no secrets returned)."""
+        return await self._request("GET", "/api/credentials/account")
+
     # -- manual deep-research trigger (engine routers/research.py) ----------
     # The agent auto-escalates to research already; these expose the engine's
     # SAME capped/deduped/cached path as an explicit, user-initiated run + a

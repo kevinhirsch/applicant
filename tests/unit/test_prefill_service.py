@@ -348,6 +348,22 @@ class TestMissingAttribute:
         result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
         assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
 
+    def test_global_google_credential_applies_across_campaigns(self, tmp_path):
+        # The Google sign-in is set once (banked under the SYSTEM campaign) and reused
+        # everywhere: an application in a DIFFERENT campaign with no per-campaign entry
+        # still finds it and continues — "sign in to Google once, reuse it everywhere".
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        creds, gkey, svc, Credential = _google_service(storage, "ok", tmp_path)
+        creds.store(
+            CampaignId(SYSTEM_CAMPAIGN_ID),
+            Credential(tenant_key=gkey, username="me@gmail.com", secret="g"),
+        )
+        result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
+
     @staticmethod
     def _held_2fa(base):
         return (

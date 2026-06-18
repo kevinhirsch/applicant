@@ -159,10 +159,14 @@ resume vs. yield + re-provision), and the exact per-ATS "login success" signal.
   (`enter_application`) + account-gate recognition (`is_account_gate`, incl. sign-in/Google). Verified
   live: the engine drives the real NVIDIA Workday from posting → Apply → the Create-Account/Sign-In
   gate. Remaining: per-step field detection + step-walk refinement on the post-login form.
-- **Phase 2 — credential auto-login (in progress).** Settings for the credential set (per-tenant ATS
-  + Google) + `PrefillService` auto-login: direct email/password (fill+submit+detect), "Sign in with
-  Google" via persistent session + stored creds, and the **2FA notify→continue→60s-wait→retry** flow
-  (§5). Failure/any-impediment → hold+notify+pivot.
+- **Phase 2 — credential auto-login. DONE (PR #95–#102 + the Settings vault UI).** Settings for the
+  credential set (per-tenant ATS + Google) + `PrefillService` auto-login: direct email/password
+  (fill+submit+detect), "Sign in with Google" via persistent session + stored creds, and the **2FA
+  notify→continue→60s-wait→retry** flow (§5, reachable end-to-end through the Portal). The credential
+  vault is surfaced in Settings → "Saved sign-ins": **global account sign-ins** (Google + the default
+  new-account set, banked under the SYSTEM campaign so one entry applies to every job search) plus
+  per-site sign-ins. `_lookup_credential` falls back to the SYSTEM campaign for the shared keys.
+  Failure/any-impediment → hold+notify+pivot.
 - **Phase 3 — account creation (gated).** The `ALLOW_AUTOMATED_ACCOUNTS` guard + `submit_account()`
   implementation + `capture()` into the vault + the `ACCOUNT_PREFILL → PREFILLING` conditional
   transition. Security-review ADR. CAPTCHA/verify still hand off.
@@ -188,6 +192,10 @@ integration + the Phase-0 fixtures.
 
 1. **Predefined credential set** shape: one fixed email + generated per-tenant passwords? an email
    alias per tenant (`you+acme@…`)? where stored (vault under SYSTEM campaign)?
+   - **RESOLVED:** stored as a GLOBAL account credential under the SYSTEM campaign (key
+     `predefined:account`), set once in Settings → "Saved sign-ins" and reused across every job
+     search. The Google sign-in (key `google`) is stored the same way. A strong per-tenant password
+     is still generated and banked under the tenant key on a successful account creation (ADR-0004).
 2. **Held-sandbox vs concurrency cap**: hold the slot for instant resume (cap counts held sessions)
    or yield + re-provision on resume (frees capacity, slower resume)? The requested "hold as-is for
    quick resumption" favors holding — confirm cap sizing.

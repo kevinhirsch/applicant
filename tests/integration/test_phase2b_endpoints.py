@@ -59,6 +59,35 @@ def test_capture_hook(client):
     assert "x" not in str(body)
 
 
+@pytest.mark.integration
+def test_global_account_credential_bank_and_status(client):
+    """Account sign-ins (Google / default new-account set) are global — banked under
+    the SYSTEM campaign and reflected in the status endpoint (no secret leaked)."""
+    _open_gate(client)
+    assert client.get("/api/credentials/account").json() == {
+        "google": False,
+        "predefined_account": False,
+    }
+    r = client.post(
+        "/api/credentials/account",
+        json={"kind": "google", "username": "me@gmail.com", "secret": "g-secret"},
+    )
+    assert r.status_code == 201 and r.json()["scope"] == "global"
+    status = client.get("/api/credentials/account").json()
+    assert status["google"] is True and status["predefined_account"] is False
+    assert "g-secret" not in str(status)  # NFR-PRIV-1: never returns the secret
+
+
+@pytest.mark.integration
+def test_global_account_credential_rejects_unknown_kind(client):
+    _open_gate(client)
+    r = client.post(
+        "/api/credentials/account",
+        json={"kind": "workday:acme", "username": "u", "secret": "s"},
+    )
+    assert r.status_code == 422
+
+
 # === Submission detection + logging + retrieval (FR-LOG-3/4) ===============
 @pytest.mark.integration
 def test_mark_submitted_then_retrieve_log(client):
