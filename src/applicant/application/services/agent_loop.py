@@ -62,6 +62,26 @@ _RESUME_FAILURE_CAP = 5
 
 
 @dataclass
+class ResumeLedger:
+    """Cross-tick resume bookkeeping that must OUTLIVE a single AgentLoop instance.
+
+    The 24/7 scheduler rebuilds a fresh ``AgentLoop`` every tick (to isolate the DB
+    Session — see ``container._build_tick_services``), so any per-instance state is
+    discarded each tick. The resume **backoff** (#9) and the resume-**failure cap**
+    both need to persist ACROSS ticks, or they reset every ~60s and never take
+    effect: a parked application would be re-driven every tick, and a permanently
+    failing one would never reach the give-up cap. The container creates ONE of these
+    for the process and injects it into every per-tick loop, with its own lock since
+    each per-tick loop has a different ``_state_lock``.
+    """
+
+    last_resume: dict[str, datetime] = field(default_factory=dict)
+    failures: dict[str, int] = field(default_factory=dict)
+    giveup: set[str] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
 class TickResult:
     """Structured outcome of one ``tick`` (introspection + tests)."""
 
@@ -99,6 +119,7 @@ class AgentLoop:
         orchestrator=None,
         setup_service=None,
         research_service=None,
+        resume_ledger: ResumeLedger | None = None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -137,18 +158,21 @@ class AgentLoop:
         # Guards the loop's own delivery so a ~60s scheduler tick does not re-send the
         # digest email + Discord ready-ping every tick.
         self._digest_sent: dict[tuple[str, date], bool] = {}
-        # application_id -> last time it was re-driven by _resume_in_flight (#9 backoff)
-        # so a human-gated app is not re-driven every ~60s tick.
-        self._last_resume: dict[str, datetime] = {}
         #: minimum seconds between resume re-drives of the same parked app (#9).
         self._resume_backoff_seconds: float = 300.0
-        # application_id -> consecutive resume failures, and the set of apps we've
-        # GIVEN UP re-driving (>= _RESUME_FAILURE_CAP). A permanently-stuck app would
-        # otherwise churn the sandbox every backoff window forever and never alert the
-        # operator; instead we stop re-driving it and surface it once. In-memory: a
-        # restart re-attempts (the issue may have resolved), which is the right default.
-        self._resume_failures: dict[str, int] = {}
-        self._resume_giveup: set[str] = set()
+        # Resume bookkeeping (#9 backoff + the failure cap) lives in a ledger that
+        # OUTLIVES this instance: the scheduler rebuilds the loop every tick, so
+        # per-instance dicts would reset each tick and neither the backoff nor the
+        # give-up cap would ever take effect. The container injects one shared ledger;
+        # when none is given (unit tests / direct use) a fresh per-instance one is used.
+        # ``last_resume``: application_id -> last re-drive time (#9). ``failures``:
+        # consecutive resume failures. ``giveup``: apps we've stopped re-driving and
+        # surfaced once (>= _RESUME_FAILURE_CAP). Aliased for readability + tests; all
+        # mutations take ``self._resume_ledger.lock`` (NOT the per-instance state lock).
+        self._resume_ledger = resume_ledger if resume_ledger is not None else ResumeLedger()
+        self._last_resume = self._resume_ledger.last_resume
+        self._resume_failures = self._resume_ledger.failures
+        self._resume_giveup = self._resume_ledger.giveup
         # CONC: the scheduler tick now runs OFF the event loop (worker thread). Guard the
         # read-modify-write of the per-run ledgers (``_acted`` / ``_digest_sent`` /
         # ``_last_resume``) so two overlapping ticks can't lose-update them. A single
@@ -443,7 +467,7 @@ class AgentLoop:
                 self._apply_outcome(app, outcome, result)
                 self._mark_resumed(app.id, now)
                 # A clean resume clears the failure streak (the app made progress).
-                with self._state_lock:
+                with self._resume_ledger.lock:
                     self._resume_failures.pop(str(app.id), None)
             except Exception:
                 if self._capacity is not None:
@@ -462,7 +486,7 @@ class AgentLoop:
         operator. At the cap we give up re-driving it and surface ONE deduped error.
         """
         key = str(application_id)
-        with self._state_lock:
+        with self._resume_ledger.lock:
             n = self._resume_failures.get(key, 0) + 1
             self._resume_failures[key] = n
             capped = n >= _RESUME_FAILURE_CAP and key not in self._resume_giveup
@@ -493,7 +517,7 @@ class AgentLoop:
         Apps we've given up re-driving (>= _RESUME_FAILURE_CAP consecutive failures)
         are excluded so a permanently-stuck app no longer churns every backoff window.
         """
-        with self._state_lock:
+        with self._resume_ledger.lock:
             giveup = frozenset(self._resume_giveup)
         return [
             a
@@ -505,14 +529,14 @@ class AgentLoop:
 
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
-        with self._state_lock:
+        with self._resume_ledger.lock:
             last = self._last_resume.get(str(application_id))
         if last is None:
             return True
         return (now - last).total_seconds() >= self._resume_backoff_seconds
 
     def _mark_resumed(self, application_id: ApplicationId, now: datetime) -> None:
-        with self._state_lock:
+        with self._resume_ledger.lock:
             self._last_resume[str(application_id)] = now
 
     def redrive_recovered(self, workflow_id: str) -> dict | None:

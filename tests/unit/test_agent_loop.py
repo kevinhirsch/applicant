@@ -758,6 +758,42 @@ def test_force_tick_still_respects_automated_work_gate(tmp_path):
 
 
 @pytest.mark.unit
+def test_resume_ledger_persists_across_loop_instances():
+    """The scheduler rebuilds a fresh AgentLoop every tick, so the resume backoff and
+    the failure cap MUST live in a shared ledger or they reset each tick. A shared
+    ResumeLedger carries last_resume/failures/giveup across instances; a loop without
+    one keeps its own state (regression guard)."""
+    from applicant.application.services.agent_loop import _RESUME_FAILURE_CAP, ResumeLedger
+
+    storage = InMemoryStorage()
+    ledger = ResumeLedger()
+
+    def fresh():  # a new AgentLoop, as the scheduler builds per tick
+        return AgentLoop(
+            storage=storage,
+            agent_run_service=AgentRunService(storage),
+            resume_ledger=ledger,
+        )
+
+    aid = "app-shared"
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+
+    # Instance A records a resume; instance B (a later "tick") sees the 300s backoff.
+    fresh()._mark_resumed(aid, now)
+    assert fresh()._resume_due(aid, now + timedelta(seconds=60)) is False
+    assert fresh()._resume_due(aid, now + timedelta(seconds=400)) is True
+
+    # Failures accumulate across instances to the cap (each tick is a new instance).
+    for _ in range(_RESUME_FAILURE_CAP):
+        fresh()._record_resume_failure(aid)
+    assert aid in ledger.giveup
+
+    # A loop with NO shared ledger keeps its own empty state (not contaminated).
+    solo = AgentLoop(storage=storage, agent_run_service=AgentRunService(storage))
+    assert solo._resume_due(aid, now + timedelta(seconds=60)) is True
+
+
+@pytest.mark.unit
 def test_resume_failure_streak_resets_on_success(tmp_path):
     """A clean resume clears the failure streak so transient blips never accumulate
     toward the give-up cap."""
