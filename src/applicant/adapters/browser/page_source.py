@@ -890,15 +890,17 @@ class PlaywrightPageSource:
             name = handle.get_attribute("name") or ""
             elem_id = handle.get_attribute("id") or ""
             selector = self._build_selector(name, elem_id, handle)
-            label = (
-                handle.get_attribute("aria-label")
-                or handle.get_attribute("placeholder")
-                or name
-                or elem_id
-            )
+            label = self._best_label(handle) or name or elem_id
             ftype = handle.get_attribute("type") or handle.evaluate("e => e.tagName.toLowerCase()")
             if selector:
-                fields.append(DetectedField(selector=selector, label=label, field_type=ftype))
+                fields.append(
+                    DetectedField(
+                        selector=selector,
+                        label=label,
+                        field_type=ftype,
+                        required=self._field_required(handle),
+                    )
+                )
         # Workday-style custom dropdowns are <button aria-haspopup="listbox"> (or an
         # ARIA combobox) — NOT <select>, so the query above misses them entirely.
         # Real Workday uses these for Country, Phone Device Type, and every EEO field;
@@ -910,16 +912,61 @@ class PlaywrightPageSource:
             elem_id = handle.get_attribute("id") or ""
             selector = self._build_selector(name, elem_id, handle)
             label = (
-                handle.get_attribute("aria-label")
+                self._best_label(handle)
                 or handle.get_attribute("data-automation-id")
                 or name
                 or elem_id
             )
             if selector:
                 fields.append(
-                    DetectedField(selector=selector, label=label, field_type="listbox")
+                    DetectedField(
+                        selector=selector,
+                        label=label,
+                        field_type="listbox",
+                        required=self._field_required(handle),
+                    )
                 )
         return fields
+
+    @staticmethod
+    def _best_label(handle) -> str:  # pragma: no cover - integration-gated
+        """Resolve a field's human label the way a person reads the form.
+
+        Order: ``aria-label`` → ``aria-labelledby`` target → the associated
+        ``<label>`` (``el.labels`` / wrapping label) → ``placeholder`` → ``title``.
+        Most real ATS forms (Greenhouse, Lever, iCIMS) label fields with a separate
+        ``<label for=…>`` element, NOT ``aria-label`` — without this the engine only
+        saw the opaque field id and could not map the field (universal-ATS support)."""
+        try:
+            text = handle.evaluate(
+                """el => {
+                  const t = s => (s || '').replace(/\\s+/g, ' ').trim();
+                  if (el.getAttribute('aria-label')) return t(el.getAttribute('aria-label'));
+                  const lb = el.getAttribute('aria-labelledby');
+                  if (lb) { const e = document.getElementById(lb); if (e) return t(e.innerText); }
+                  if (el.labels && el.labels.length) return t(el.labels[0].innerText);
+                  const wrap = el.closest('label'); if (wrap) return t(wrap.innerText);
+                  if (el.getAttribute('placeholder')) return t(el.getAttribute('placeholder'));
+                  if (el.getAttribute('title')) return t(el.getAttribute('title'));
+                  return '';
+                }"""
+            )
+            return (text or "").strip()
+        except Exception:
+            try:
+                return (handle.get_attribute("aria-label") or "").strip()
+            except Exception:
+                return ""
+
+    @staticmethod
+    def _field_required(handle) -> bool:  # pragma: no cover - integration-gated
+        """Whether the DOM marks a field required (``required`` / ``aria-required``)."""
+        try:
+            if handle.get_attribute("required") is not None:
+                return True
+            return (handle.get_attribute("aria-required") or "").lower() == "true"
+        except Exception:
+            return False
 
     @staticmethod
     def _build_selector(name: str, elem_id: str, handle=None) -> str:  # pragma: no cover
