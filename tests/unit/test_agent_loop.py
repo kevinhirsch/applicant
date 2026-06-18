@@ -133,6 +133,29 @@ def _loop(
 
 # --- tests ---------------------------------------------------------------
 @pytest.mark.unit
+def test_context_is_lacking_gates_research(tmp_path):
+    """Deep research fires before writing only when context is lacking: a thin
+    profile or an uncovered JD requirement, never when the source already covers
+    the role (so a well-covered application keeps its research budget)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    loop = _loop(storage, orch)
+
+    rich = (
+        "Kevin Hirsch, staff software engineer with deep experience in Python, Go, "
+        "Kubernetes, distributed systems, and team leadership across many years of "
+        "shipping platforms at scale. " * 4
+    )
+    assert len(rich) >= 400  # not thin, so only term coverage decides
+    # Source covers every JD term -> not lacking -> no research.
+    assert loop._context_is_lacking(rich, ["Python", "Kubernetes"]) is False
+    # An uncovered JD requirement -> lacking -> research.
+    assert loop._context_is_lacking(rich, ["Python", "Rust"]) is True
+    # A thin source -> lacking regardless of terms.
+    assert loop._context_is_lacking("Python dev.", ["Python"]) is True
+
+
+@pytest.mark.unit
 def test_tick_advances_pipeline_for_approved_item(tmp_path):
     """FR-AGENT-7 / FR-DUR-1: an approved digest item runs the durable pipeline."""
     storage = InMemoryStorage()
