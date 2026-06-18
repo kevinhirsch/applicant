@@ -420,7 +420,14 @@ class SetupService:
         return [{k: v for k, v in t.items() if k != "api_key"} for t in self._load_tiers()]
 
     def set_tiers(self, tiers: list[TierSettings]) -> None:
-        """Replace the whole ladder (reorder/add/remove; 1-N, FR-LLM-3)."""
+        """Replace the whole ladder (reorder/add/remove; 1-N, FR-LLM-3).
+
+        Key preservation: a tier may carry only an ``api_key_ref`` (no new
+        ``api_key``) to keep its already-sealed key across an edit/reorder. We
+        resolve EVERY tier's effective key against the CURRENT stored state FIRST
+        (phase 1), then re-seal at the new positions (phase 2) — so re-sealing one
+        tier never clobbers the secret another tier is preserving by ref.
+        """
         if not tiers:
             raise ValueError("At least one tier is required (FR-LLM-3).")
         if len(tiers) > _DEFAULT_MAX_TIERS:
@@ -428,7 +435,18 @@ class SetupService:
         # Item 12 (SSRF): each tier's operator-supplied base_url is guarded.
         for t in tiers:
             validate_operator_url(t.base_url, field="LLM base_url")
-        records = [self._tier_to_record(t, i + 1) for i, t in enumerate(tiers)]
+        # Phase 1 — resolve effective keys from current state (reads only, no writes).
+        effective_keys: list[str] = []
+        for t in tiers:
+            key = t.api_key
+            if not key and getattr(t, "api_key_ref", ""):
+                key = self._resolve_secret({"api_key_ref": t.api_key_ref})
+            effective_keys.append(key or "")
+        # Phase 2 — build + seal at the new positions.
+        records = [
+            self._tier_to_record(t, i + 1, effective_keys[i])
+            for i, t in enumerate(tiers)
+        ]
         for r in records:
             if not r["provider"] or not r["model"]:
                 raise ValueError("Each tier needs provider and model (FR-LLM-3).")
@@ -452,21 +470,26 @@ class SetupService:
         ]
         return TierLadder(tiers=configs)
 
-    def _tier_to_record(self, tier: TierSettings, tier_no: int) -> dict[str, Any]:
+    def _tier_to_record(
+        self, tier: TierSettings, tier_no: int, key: str | None = None
+    ) -> dict[str, Any]:
         record: dict[str, Any] = {
             "provider": tier.provider,
             "base_url": tier.base_url,
             "model": tier.model,
             "context_window": tier.context_window,
         }
-        if tier.api_key:
+        # ``key`` is the pre-resolved effective key (phase 1 of set_tiers); when not
+        # supplied, fall back to the tier's inline key (direct callers).
+        effective = key if key is not None else tier.api_key
+        if effective:
             if self._credentials is not None:
                 # Seal the key in the credential store; persist only a marker.
-                self._store_secret(f"llm.tier{tier_no}", tier.api_key)
+                self._store_secret(f"llm.tier{tier_no}", effective)
                 record["api_key_ref"] = f"llm.tier{tier_no}"
             else:
                 # No credential store wired (tests): keep inline but never logged.
-                record["api_key"] = tier.api_key
+                record["api_key"] = effective
         return record
 
     def _resolve_secret(self, record: dict[str, Any]) -> str:

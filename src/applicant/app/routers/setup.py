@@ -36,6 +36,9 @@ class TierIn(BaseModel):
     base_url: str = ""
     model: str
     api_key: str = ""
+    # The non-secret marker the UI got back from GET /llm/tiers. Sent back (with a
+    # blank api_key) to keep an already-sealed key across an edit/reorder (FR-LLM-3).
+    api_key_ref: str = ""
     context_window: int = 8192
 
 
@@ -155,6 +158,7 @@ def set_tiers(body: LadderIn, svc=Depends(get_setup_service)) -> None:
                     base_url=t.base_url,
                     model=t.model,
                     api_key=t.api_key,
+                    api_key_ref=t.api_key_ref,
                     context_window=t.context_window,
                 )
                 for t in body.tiers

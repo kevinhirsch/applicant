@@ -50,6 +50,18 @@ const RELOCATED_SETUP_STEPS = {
 };
 
 function mountRelocatedSetupStep(tab) {
+  // The AI tab also hosts the model escalation ladder editor (FR-LLM-3), a
+  // self-contained module mounted into its own host card.
+  if (tab === 'ai') {
+    const ladderHost = document.getElementById('ao-settings-model-ladder');
+    const mountLadder = window.mountApplicantModelLadder;
+    if (ladderHost && typeof mountLadder === 'function') {
+      ladderHost.innerHTML = '';
+      Promise.resolve(mountLadder(ladderHost)).catch(() => {
+        ladderHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load the model ladder.</p>';
+      });
+    }
+  }
   const cfg = RELOCATED_SETUP_STEPS[tab];
   if (!cfg) return;
   const host = document.getElementById(cfg.host);

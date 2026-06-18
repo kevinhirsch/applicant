@@ -95,3 +95,42 @@ def test_secret_routed_through_credential_store(credential_store):
     # ...but build_ladder resolves it from the credential store for actual calls.
     ladder = svc.build_ladder()
     assert ladder.at(0).api_key == "sk-secret"
+
+
+def test_set_tiers_preserves_key_by_ref_on_edit(credential_store):
+    """FR-LLM-3 editor: editing a tier without re-typing its key keeps the key.
+
+    The UI gets back ``api_key_ref`` (a non-secret marker) from get_tiers and sends
+    it back with a blank api_key; set_tiers re-seals the existing secret."""
+    svc = _svc(credentials=credential_store)
+    svc.set_tiers(
+        [TierSettings(provider="openrouter", base_url="https://openrouter.ai/api/v1", model="gpt-4o", api_key="sk-keep")]
+    )
+    ref = svc.get_tiers()[0].get("api_key_ref")
+    assert ref  # a marker is exposed, not the secret
+    # Edit the model only; carry the ref, leave api_key blank.
+    svc.set_tiers(
+        [TierSettings(provider="openrouter", base_url="https://openrouter.ai/api/v1", model="gpt-4o-mini", api_key="", api_key_ref=ref)]
+    )
+    ladder = svc.build_ladder()
+    assert ladder.at(0).model == "gpt-4o-mini"
+    assert ladder.at(0).api_key == "sk-keep"  # key survived the edit
+
+
+def test_set_tiers_preserves_keys_across_reorder(credential_store):
+    """Reordering two keyed tiers keeps EACH tier's own key (two-phase re-seal)."""
+    svc = _svc(credentials=credential_store)
+    svc.set_tiers([
+        TierSettings(provider="openai", base_url="https://a.test/v1", model="m-a", api_key="key-A"),
+        TierSettings(provider="openai", base_url="https://b.test/v1", model="m-b", api_key="key-B"),
+    ])
+    got = svc.get_tiers()
+    ref_a, ref_b = got[0]["api_key_ref"], got[1]["api_key_ref"]
+    # Swap their order, carrying each tier's ref, no re-typed keys.
+    svc.set_tiers([
+        TierSettings(provider="openai", base_url="https://b.test/v1", model="m-b", api_key="", api_key_ref=ref_b),
+        TierSettings(provider="openai", base_url="https://a.test/v1", model="m-a", api_key="", api_key_ref=ref_a),
+    ])
+    ladder = svc.build_ladder()
+    assert (ladder.at(0).model, ladder.at(0).api_key) == ("m-b", "key-B")
+    assert (ladder.at(1).model, ladder.at(1).api_key) == ("m-a", "key-A")

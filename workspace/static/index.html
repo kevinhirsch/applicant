@@ -1565,6 +1565,13 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Re-run the guided setup — connect a model and set up notifications, fonts, and your profile.</div>
             <button class="admin-btn-add" id="settings-rerun-setup" type="button">Re-run setup</button>
           </div>
+          <!-- ═══ MODEL ESCALATION LADDER ═══
+               applicantModelLadder.js mounts here when the AI tab opens (FR-LLM-3). -->
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>Model escalation ladder</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Rank the models Applicant uses, from your cheapest capable model to your strongest. It starts low and steps up only when a task needs more — including writing your resume or cover letters.</div>
+            <div id="ao-settings-model-ladder"></div>
+          </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Saved sign-ins</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Securely store a site sign-in (e.g. your Workday account) so Applicant can sign in for you. Add them upfront to avoid interruptions later.</div>
@@ -2492,6 +2499,7 @@
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
+<script type="module" src="/static/js/applicantModelLadder.js"></script>  <!-- FR-LLM-3: model escalation ladder editor (Settings → AI) -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
      seams exist for other lanes to call. -->

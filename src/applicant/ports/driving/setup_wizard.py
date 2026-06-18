@@ -69,12 +69,19 @@ class LLMSettings:
 
 @dataclass(frozen=True)
 class TierSettings:
-    """One ladder tier as set via the UI (FR-LLM-3)."""
+    """One ladder tier as set via the UI (FR-LLM-3).
+
+    ``api_key_ref`` lets the editor preserve an already-sealed key across an
+    edit/reorder without re-typing it: the UI sends back the ref it received from
+    ``get_tiers`` and leaves ``api_key`` blank, and ``set_tiers`` re-seals the
+    existing secret at the tier's new position (see SetupService.set_tiers).
+    """
 
     provider: str
     base_url: str
     model: str
     api_key: str = ""
+    api_key_ref: str = ""
     context_window: int = 8192
 
 
