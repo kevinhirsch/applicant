@@ -292,6 +292,45 @@ class TestMissingAttribute:
         result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
         assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
 
+    @staticmethod
+    def _held_2fa(base):
+        return (
+            base.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+        )
+
+    def test_resume_two_factor_success_continues_into_form(self, tmp_path):
+        # The user tapped "continue" and approved 2FA on-device: the engine re-drives
+        # Google (push), the gate clears, and it proceeds into the application form.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        creds, gkey, svc, Credential = _google_service(storage, "ok", tmp_path)
+        creds.store(cid, Credential(tenant_key=gkey, username="me@gmail.com", secret="g"))
+        base = _app(cid)
+        svc._browser.open(base.id, WORKDAY_URL)  # held session is open
+        result = svc.resume_two_factor(
+            self._held_2fa(base), _full_answers(cid), timeout_s=1.0, poll_s=0.0
+        )
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
+
+    def test_resume_two_factor_timeout_emits_retry_notification(self, tmp_path):
+        # No approval within the window → re-notify for a retry; the app stays held.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        creds, gkey, svc, Credential = _google_service(storage, "two_factor", tmp_path)
+        creds.store(cid, Credential(tenant_key=gkey, username="me@gmail.com", secret="g"))
+        base = _app(cid)
+        svc._browser.open(base.id, WORKDAY_URL)
+        result = svc.resume_two_factor(
+            self._held_2fa(base), _full_answers(cid), timeout_s=0.0, poll_s=0.0
+        )
+        assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+        retries = [
+            p for p in storage.pending_actions.list_open(cid) if p.kind == "two_factor"
+        ]
+        assert retries and retries[-1].payload.get("retry") is True
+
     def test_value_reused_after_resolve(self):
         # FR-ATTR-5: once supplied, the value is reused and the loop proceeds.
         cid = CampaignId(new_id())
