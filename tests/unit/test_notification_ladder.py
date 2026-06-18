@@ -118,6 +118,92 @@ def test_always_on_ignores_quiet_hours():
     assert "discord" in n.sent_channels("a1")
 
 
+# === FR-NOTIF-5: quiet-window math (HH:MM precision, wrap-around, timezone) ====
+def test_quiet_window_hhmm_inside_and_outside():
+    # An "HH:MM" window is evaluated to the minute, not just the hour.
+    n = _notifier(_Clock(), quiet_hours=("22:30", "07:15"))
+    inside_late = datetime(2026, 1, 1, 22, 45, tzinfo=UTC)
+    inside_early = datetime(2026, 1, 2, 7, 0, tzinfo=UTC)
+    boundary_just_before = datetime(2026, 1, 1, 22, 29, tzinfo=UTC)
+    at_end = datetime(2026, 1, 2, 7, 15, tzinfo=UTC)  # end is exclusive
+    assert n._in_quiet_hours(inside_late) is True
+    assert n._in_quiet_hours(inside_early) is True
+    assert n._in_quiet_hours(boundary_just_before) is False
+    assert n._in_quiet_hours(at_end) is False
+
+
+def test_quiet_window_same_day_no_wrap():
+    # A daytime window that does NOT cross midnight (09:00-17:00).
+    n = _notifier(_Clock(), quiet_hours=("09:00", "17:00"))
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 12, 0, tzinfo=UTC)) is True
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 8, 59, tzinfo=UTC)) is False
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 17, 0, tzinfo=UTC)) is False
+
+
+def test_quiet_window_equal_start_end_is_disabled():
+    n = _notifier(_Clock(), quiet_hours=("08:00", "08:00"))
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 8, 0, tzinfo=UTC)) is False
+
+
+def test_quiet_window_respects_timezone():
+    # 22:00-07:00 in America/Phoenix (UTC-7, no DST). 06:00 UTC == 23:00 MST = quiet;
+    # 16:00 UTC == 09:00 MST = not quiet. Without the tz it would read UTC hours.
+    n = _notifier(_Clock(), quiet_hours=("22:00", "07:00"), quiet_tz="America/Phoenix")
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 6, 0, tzinfo=UTC)) is True
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 16, 0, tzinfo=UTC)) is False
+
+
+def test_quiet_window_bad_timezone_degrades_to_utc():
+    # An unknown tz name must not crash the dispatch path — it falls back to UTC.
+    n = _notifier(_Clock(), quiet_hours=("22:00", "07:00"), quiet_tz="Not/AZone")
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 23, 0, tzinfo=UTC)) is True
+
+
+def test_errors_immediate_during_hhmm_quiet_window():
+    # FR-NOTIF-5: errors fan out to every channel even mid-quiet-window.
+    clock = _Clock()
+    clock.now = datetime(2026, 1, 1, 23, 30, tzinfo=UTC)  # inside 22:30-07:15
+    n = _notifier(clock, quiet_hours=("22:30", "07:15"))
+    n.notify(
+        Notification(
+            title="Run failed",
+            body="boom",
+            urgency=NotificationUrgency.IMMEDIATE,
+            dedup_key="e-qh",
+        )
+    )
+    assert {"discord", "in_app", "email"} <= set(n.sent_channels("e-qh"))
+
+
+def test_info_held_then_delivered_after_hhmm_quiet_window():
+    # FR-NOTIF-5: a NORMAL approval created mid-window holds the push channels and
+    # delivers them once the window ends (the existing escalation-hold mechanism).
+    clock = _Clock()
+    clock.now = datetime(2026, 1, 1, 23, 30, tzinfo=UTC)  # inside 22:30-07:15
+    n = _notifier(clock, quiet_hours=("22:30", "07:15"))
+    n.notify(Notification(title="Approve?", body="role", dedup_key="q-hhmm"))
+    # In-app always surfaces; Discord/email held while quiet.
+    assert "in_app" in n.sent_channels("q-hhmm")
+    assert "discord" not in n.sent_channels("q-hhmm")
+    # Step to 07:16 (just past the window end) and advance.
+    clock.now = datetime(2026, 1, 2, 7, 16, tzinfo=UTC)
+    n.advance()
+    assert "discord" in n.sent_channels("q-hhmm")
+
+
+def test_configure_sets_quiet_hours_live():
+    # The live adapter can flip quiet hours on/off without a restart (zero-CLI).
+    clock = _Clock()
+    clock.now = datetime(2026, 1, 1, 23, 30, tzinfo=UTC)
+    n = _notifier(clock)  # no quiet hours initially
+    assert n._in_quiet_hours(clock.now) is False
+    n.configure(quiet_hours=("22:00", "07:00"), quiet_tz="", always_on=False)
+    assert n._in_quiet_hours(clock.now) is True
+    # 24/7 mode (always_on) turns it back off.
+    n.configure(always_on=True)
+    assert n._in_quiet_hours(clock.now) is False
+
+
 @pytest.mark.contract
 def test_in_app_inbox_feeds_portal():
     # In-app notifications are captured for the pending-actions feed (FR-UI-3).

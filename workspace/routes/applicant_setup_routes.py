@@ -112,6 +112,20 @@ class ChannelsIn(BaseModel):
     apprise_urls: str = ""
 
 
+class QuietHoursIn(BaseModel):
+    """Quiet-hours window for approvals/digests (FR-NOTIF-5).
+
+    ``enabled=False`` is 24/7 mode (always notify). Errors always surface
+    immediately, any hour — quiet hours only defer approval/digest push channels.
+    Times are HH:MM in ``tz`` (UTC when blank). Thin proxy mirroring the engine.
+    """
+
+    enabled: bool = False
+    start: str = "22:00"
+    end: str = "07:00"
+    tz: str = ""
+
+
 class SectionIn(BaseModel):
     section: str
     data: dict = {}
@@ -344,6 +358,32 @@ def setup_applicant_setup_routes() -> APIRouter:
             logger.info("applicant test channels failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
+
+    # ── quiet hours (FR-NOTIF-5): defer approvals/digests, errors always go ──
+
+    @router.get("/channels/quiet-hours")
+    async def get_quiet_hours(request: Request) -> JSONResponse:
+        """Current quiet-hours window (enabled/start/end/tz)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_quiet_hours()
+        except EngineError as exc:
+            logger.info("applicant get quiet hours failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/channels/quiet-hours")
+    async def configure_quiet_hours(body: QuietHoursIn, request: Request) -> JSONResponse:
+        """Save the quiet-hours window (or 24/7 mode when disabled)."""
+        require_privilege(request, _CONFIG_PRIV)
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_configure_quiet_hours(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant configure quiet hours failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
 
     # ── automation sandbox backend (FR-SANDBOX-1) ──────────────────────
 

@@ -134,3 +134,47 @@ def test_set_tiers_preserves_keys_across_reorder(credential_store):
     ladder = svc.build_ladder()
     assert (ladder.at(0).model, ladder.at(0).api_key) == ("m-b", "key-B")
     assert (ladder.at(1).model, ladder.at(1).api_key) == ("m-a", "key-A")
+
+
+# === FR-NOTIF-5: quiet-hours persistence ====================================
+def test_quiet_hours_default_is_24_7():
+    svc = _svc()
+    qh = svc.get_quiet_hours()
+    assert qh["enabled"] is False  # 24/7 by default — nothing is deferred
+    assert qh["start"] == "22:00" and qh["end"] == "07:00"
+
+
+def test_quiet_hours_persist_across_instances():
+    store = InMemoryAppConfigStore()
+    svc1 = _svc(store)
+    svc1.set_quiet_hours(enabled=True, start="22:30", end="7:15", tz="America/Phoenix")
+    # New instance over the same store = simulated restart (FR-OOBE-1).
+    qh = _svc(store).get_quiet_hours()
+    assert qh["enabled"] is True
+    assert qh["start"] == "22:30" and qh["end"] == "07:15"  # zero-padded
+    assert qh["tz"] == "America/Phoenix"
+
+
+def test_quiet_hours_alongside_channels():
+    # Saving quiet hours must not clobber existing channel config (same record).
+    store = InMemoryAppConfigStore()
+    svc = _svc(store)
+    svc.configure_channels(discord_webhook_url="https://discord.com/api/webhooks/x")
+    svc.set_quiet_hours(enabled=True, start="23:00", end="06:00")
+    assert svc.channels_configured() is True
+    assert svc.get_quiet_hours()["enabled"] is True
+
+
+def test_quiet_hours_rejects_bad_time():
+    svc = _svc()
+    with pytest.raises(ValueError):
+        svc.set_quiet_hours(enabled=True, start="25:00", end="07:00")
+    with pytest.raises(ValueError):
+        svc.set_quiet_hours(enabled=True, start="10pm", end="07:00")
+
+
+def test_quiet_hours_disable_is_24_7():
+    svc = _svc()
+    svc.set_quiet_hours(enabled=True, start="22:00", end="07:00")
+    svc.set_quiet_hours(enabled=False)
+    assert svc.get_quiet_hours()["enabled"] is False
