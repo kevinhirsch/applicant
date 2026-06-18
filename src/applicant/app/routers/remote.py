@@ -196,6 +196,44 @@ def resume_account_step(
     return {"application_id": application_id, "state": result.state.value}
 
 
+@router.post("/applications/{application_id}/continue-two-factor", status_code=200)
+def continue_two_factor(
+    application_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+    prefill=Depends(get_prefill_service),
+    pending_actions=Depends(get_pending_actions_service),
+) -> dict:
+    """Continue a Google 2FA hand-off (the link the notification carries).
+
+    Triggers the 2FA push and waits up to 60s for the user's on-device approval
+    (``PrefillService.resume_two_factor``). On approval the app proceeds into the form
+    and the 2FA pending action + ping are cleared; on timeout the app stays held and a
+    retry notification is emitted (ADR-0004 / FR-PREFILL)."""
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
+    if app.status is not ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Application is not awaiting the account step (state={app.status.value}).",
+        )
+    attrs = storage.attributes.list_for_campaign(app.campaign_id)
+    result = prefill.resume_two_factor(app, attrs)
+    # Approved + continued (state moved off the account-step) → clear the 2FA action.
+    if result.state is not ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
+        try:
+            for action in pending_actions.list_pending(app.campaign_id):
+                if action.kind == "two_factor" and str(
+                    getattr(action, "application_id", "")
+                ) == application_id:
+                    pending_actions.resolve(action.id)
+            container.notification_service.acted(f"prefill:{application_id}:two_factor")
+        except Exception:  # pragma: no cover - defensive
+            pass
+    return {"application_id": application_id, "state": result.state.value}
+
+
 @router.post("/applications/{application_id}/resume-detection-step", status_code=200)
 def resume_detection_step(
     application_id: str,

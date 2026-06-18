@@ -140,6 +140,32 @@ def test_resume_account_step_wrong_state_409(client):
     assert "not awaiting the account step" in res.json()["detail"]
 
 
+def test_continue_two_factor_unknown_application_404(client):
+    res = client.post("/api/remote/applications/no-such-app/continue-two-factor")
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Unknown application"
+
+
+def test_continue_two_factor_wrong_state_409(client):
+    """The 2FA continue is only valid while the app is held at the account step."""
+    container = client.app.state.container
+    storage = container.storage
+    aid = ApplicationId(new_id())
+    storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.APPROVED,
+            root_url="https://acme.example/job/2fa",
+        )
+    )
+    storage.commit()
+    res = client.post(f"/api/remote/applications/{aid}/continue-two-factor")
+    assert res.status_code == 409
+    assert "not awaiting the account step" in res.json()["detail"]
+
+
 def test_resume_detection_step_unknown_application_404(client):
     res = client.post("/api/remote/applications/no-such-app/resume-detection-step")
     assert res.status_code == 404

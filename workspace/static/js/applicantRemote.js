@@ -324,6 +324,13 @@ export function authorizeEngineFinish(applicationId) {
   return _post(`${API}/applications/${encodeURIComponent(applicationId)}/authorize-engine-finish`);
 }
 
+/** Continue a Google 2FA hand-off: trigger the push, wait up to 60s for the
+ *  on-device approval, then continue pre-fill (or the engine re-notifies for a
+ *  retry on timeout). Returns the resulting application state. */
+export function continueTwoFactor(applicationId) {
+  return _post(`${API}/applications/${encodeURIComponent(applicationId)}/continue-two-factor`);
+}
+
 /** The honest best-effort / egress caveat copy (best-effort; never throws). */
 export async function fetchCaveat() {
   try { return await _fetchJSON(`${API}/caveat`); }
@@ -438,6 +445,7 @@ const applicantRemoteModule = {
   closeRemoteSession,
   submitSelf,
   authorizeEngineFinish,
+  continueTwoFactor,
   fetchCaveat,
   authorizeConfirmMessage,
   submitSelfConfirmMessage,
