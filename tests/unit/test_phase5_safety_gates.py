@@ -203,7 +203,14 @@ def test_fr_onboard_2_digest_build_blocked_until_gate_open(client):
 @pytest.mark.integration
 def test_fr_fb_1_blank_decline_feedback_rejected(client):
     open_automated_work_gate(client)
-    aid = new_id()
+    # Seed a real application so the accepted decline has a valid FK target (the
+    # mandatory-feedback gate runs BEFORE the application is resolved, so the blank
+    # checks still 422 regardless).
+    storage = client.app.state.container.storage
+    app = _app()
+    storage.applications.add(app)
+    storage.commit()
+    aid = app.id
     # Blank/whitespace feedback rejected with 422.
     r = client.post(
         f"/api/digest/applications/{aid}/decline", json={"feedback_text": "   "}
