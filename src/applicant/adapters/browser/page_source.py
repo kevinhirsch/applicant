@@ -1051,17 +1051,25 @@ class PlaywrightPageSource:
         low = (text or "").lower()
         return any(m in low for m in cls._DECLINE_MARKERS)
 
+    @staticmethod
+    def _significant_tokens(norm: str) -> set[str]:  # pragma: no cover
+        """Word tokens excluding pure-number ones, so 'United States +1' (a dialing
+        code) still matches 'United States of America'."""
+        return {t for t in norm.split() if not t.isdigit()}
+
     @classmethod
     def _option_match(cls, want: str, opt: str) -> str | None:  # pragma: no cover
-        """Match a wanted value to an option text: 'exact', 'loose' (one's WORD set is
-        a subset of the other's, OR same decline-intent), or None. Token-based so a
-        substring like 'male' does NOT match 'female'. Punctuation/case-insensitive."""
+        """Match a wanted value to an option text: 'exact', 'loose' (one's significant
+        WORD set is a subset of the other's, OR same decline-intent), or None.
+        Token-based so a substring like 'male' does NOT match 'female'; pure-number
+        tokens are ignored so a '+1' phone code does not block a country match.
+        Punctuation/case-insensitive."""
         w, o = cls._norm_text(want), cls._norm_text(opt)
         if not w or not o:
             return None
         if w == o:
             return "exact"
-        wt, ot = set(w.split()), set(o.split())
+        wt, ot = cls._significant_tokens(w), cls._significant_tokens(o)
         if wt and ot and (wt <= ot or ot <= wt):
             return "loose"
         if cls._is_decline(want) and cls._is_decline(opt):
@@ -1144,15 +1152,17 @@ class PlaywrightPageSource:
         #    synonym/decline case, which typing would WRONGLY filter to nothing.
         if self._pick_visible_option(value, 1.5):
             return
-        # 2. Typeable combobox with a long/filtered list (e.g. country): type to narrow
-        #    it down, then match the filtered options.
+        # 2. Typeable combobox with a long/filtered list (e.g. country): type a SHORT
+        #    filter query — the first couple of meaningful words — to narrow it down
+        #    (typing the full value, e.g. "United States of America", often matches an
+        #    option labelled "United States +1" literally → nothing), then match.
         is_input = str(trigger.evaluate("e => e.tagName")).lower() in ("input", "textarea")
         if is_input:
             try:
                 trigger.fill("")
             except Exception:
                 pass
-            self._page.keyboard.type(value, delay=15)
+            self._page.keyboard.type(self._filter_query(value), delay=15)
             if self._pick_visible_option(value, 4.0):
                 return
             # Leave no half-typed filter string behind.
@@ -1162,6 +1172,13 @@ class PlaywrightPageSource:
             except Exception:
                 pass
         raise ValueError(f"no listbox option matching {value!r}")
+
+    @classmethod
+    def _filter_query(cls, value: str) -> str:  # pragma: no cover
+        """A short query to FILTER a long combobox list: the first couple of meaningful
+        words (skip pure-number tokens). Typing the full value often matches nothing."""
+        words = [w for w in value.split() if not cls._norm_text(w).isdigit()]
+        return " ".join(words[:2]) if words else value
 
     def _pick_visible_option(self, value: str, timeout_s: float) -> bool:  # pragma: no cover
         """Poll up to ``timeout_s`` for a VISIBLE ``[role=option]`` matching ``value``
