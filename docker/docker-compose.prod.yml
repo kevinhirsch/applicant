@@ -112,6 +112,10 @@ services:
       # by a named volume (below) so checkpoint state survives container recreation
       # on `up`/recreate. (Set ORCHESTRATOR_BACKEND=dbos to co-reside state in PG.)
       CHECKPOINT_DIR: ${CHECKPOINT_DIR:-/data/checkpoints}
+      # FR-STEALTH-3: persist signed-in browser sessions (Workday/Google cookies) on a
+      # named volume so the user signs in once and the session survives container
+      # recreation — reused across applications instead of re-prompting each time.
+      BROWSER_PROFILES_DIR: ${BROWSER_PROFILES_DIR:-/data/profiles}
       # 24/7 scheduler ON in prod: ticks each campaign's run loop, delivers the
       # daily digest, and advances the notification escalation ladder (NFR-247-1).
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
@@ -147,6 +151,9 @@ services:
       - secrets:/data/secrets
       # Runtime-installed fonts (FR-FONT-1/2): persisted across container recreation.
       - fonts:/data/fonts
+      # Signed-in browser sessions (FR-STEALTH-3): persisted so a one-time sign-in is
+      # reused across applications and survives recreation.
+      - browser-profiles:/data/profiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -274,6 +281,7 @@ volumes:
   checkpoints:  # durable shim checkpoint/mailbox state (FR-INSTALL-3/FR-DUR-3)
   secrets:       # credential vault master key (FR-VAULT-3) — MUST persist across update
   fonts:         # runtime-installed fonts (FR-FONT-1/2) — persist across update
+  browser-profiles:  # signed-in browser sessions (FR-STEALTH-3) — persist across update
   ui-data:       # front-door UI app data (its own sqlite, prefs, caches)
   ui-logs:       # front-door UI app logs
   chromadb-data: # UI vector store

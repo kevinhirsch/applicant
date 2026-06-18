@@ -189,6 +189,12 @@ class Settings(BaseSettings):
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).
     fonts_dir: str = Field(default=".applicant_fonts", alias="FONTS_DIR")
 
+    # Persistent per-tenant browser profiles (FR-STEALTH-3): the user-data dirs that
+    # cache a signed-in session (Workday/Google cookies) so the user signs in ONCE and
+    # the engine reuses the session across applications + restarts. Point at a persisted
+    # volume in the deploy (docker-compose.prod.yml) so sessions survive recreation.
+    browser_profiles_dir: str = Field(default=".applicant_profiles", alias="BROWSER_PROFILES_DIR")
+
     # Resume render fidelity (FR-RESUME-4). "auto" (default) auto-enables the real
     # xelatex/lualatex compile + LibreOffice docx->PDF convert when the engine binary
     # is present at runtime, else degrades to the deterministic stub (so the hermetic

@@ -57,5 +57,6 @@ workspace/.local/
 .artifacts/
 
 # Runtime per-tenant browser profiles (FR-STEALTH-3 persistent contexts: cookies,
-# session storage). Created by ProfileStore (default root_dir="profiles") at runtime.
+# session storage). Created by ProfileStore at runtime.
 profiles/
+.applicant_profiles/

@@ -42,6 +42,14 @@ def test_browser_real_setting_drives_real_browser():
 
 
 @pytest.mark.unit
+def test_browser_profiles_dir_is_wired_from_settings():
+    # FR-STEALTH-3: the per-tenant profile root is configurable so the deploy persists
+    # signed-in sessions on a named volume (sign in once, reuse across applications).
+    container = build_container(Settings(_env_file=None, BROWSER_PROFILES_DIR="/data/profiles"))
+    assert container.browser._profiles._root == "/data/profiles"
+
+
+@pytest.mark.unit
 def test_proxmox_backend_falls_back_until_configured_but_persona_native():
     # No OOBE sandbox-connection step done -> backend not usable yet, so the app
     # still boots on LocalSandbox; the persona is already native (it IS Windows).
