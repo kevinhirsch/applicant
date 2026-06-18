@@ -20,6 +20,7 @@
 // — there is no client path that bypasses that.
 
 import uiModule from './ui.js';
+import { openApplicantVault } from './applicantVault.js';
 
 const API = '/api/applicant/remote';
 
@@ -289,14 +290,39 @@ async function _resume(step) {
   if (_busy || !_needSession()) return;
   const appId = _activeSession.application_id;
   _busy = true;
+  let resp = null;
   try {
-    await _post(`${API}/applications/${encodeURIComponent(appId)}/${step}`);
+    resp = await _post(`${API}/applications/${encodeURIComponent(appId)}/${step}`);
     _toast('Continuing the application');
   } catch (e) {
     _toast(e.message || 'Could not continue');
   } finally {
     _busy = false;
   }
+  // The account step is where the user just signed in / created an account in the
+  // live session. Offer to SAVE that sign-in so the engine can reuse it next time
+  // (FR-VAULT-2). Outside the busy guard so the offer never blocks the resume.
+  if (resp && step === 'resume-account-step') _offerSaveSignIn(resp);
+}
+
+// FR-VAULT-2 auto-capture trigger. We can't read the password out of the sandboxed
+// live session, so accepting opens the vault's add-a-sign-in form pre-scoped to this
+// job search + site, where the user types the username + password they just chose —
+// reusing the existing, tested capture UI (no new credential form). Non-blocking;
+// declining is silent.
+async function _offerSaveSignIn(resp) {
+  const tenantKey = (resp && resp.tenant_key) || '';
+  const campaignId = (resp && resp.campaign_id) || '';
+  if (!tenantKey && !campaignId) return;
+  const site = tenantKey ? tenantKey.split(':').pop() : 'this site';
+  const proceed = await _confirm(
+    `Save the sign-in you just used for ${site} so the assistant can reuse it next `
+    + 'time? Your password is encrypted and never shown again.',
+    { confirmText: 'Save it', cancelText: 'Not now' });
+  if (!proceed) return;
+  try {
+    await openApplicantVault(campaignId, { prefillTenant: tenantKey });
+  } catch { /* vault open is best-effort */ }
 }
 
 async function _confirm(message, opts) {
