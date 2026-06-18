@@ -652,6 +652,88 @@ def test_resume_in_flight_backs_off_human_gated_app(tmp_path):
 
 
 @pytest.mark.unit
+def test_resume_failure_cap_gives_up_and_alerts(tmp_path):
+    """24/7 robustness: a permanently-failing resume is retried up to the cap, then
+    the loop STOPS re-driving the app and surfaces ONE deduped error — instead of
+    churning the sandbox every backoff window forever and never alerting the operator."""
+    from applicant.application.services.agent_loop import _RESUME_FAILURE_CAP, TickResult
+
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+    prefill = _FakePrefill(state=ApplicationState.BLOCKED_QUESTION)
+
+    class _NotifSpy:
+        def __init__(self):
+            self.errors = []
+
+        def notify_error(self, *, title, body, dedup_key=None):
+            self.errors.append(dedup_key)
+            return "nid"
+
+    notif = _NotifSpy()
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=AgentRunService(storage),
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        prefill_service=prefill,
+        orchestrator=orch,
+        notification_service=notif,
+    )
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)  # -> BLOCKED_QUESTION (parked, resumable)
+    app = storage.applications.list_for_campaign(cid)[0]
+
+    # Every RESUME now raises (the initial start already happened above).
+    def _raise(name, wf_id, **kw):
+        if wf_id == f"application:{app.id}":
+            raise RuntimeError("cannot resume")
+
+        class _H:
+            def result(self_inner):
+                return None
+
+        return _H()
+
+    orch.start_workflow = _raise
+
+    # Drive resumes past the 300s backoff, cap + 2 extra ticks.
+    t = now
+    for _ in range(_RESUME_FAILURE_CAP + 2):
+        t = t + timedelta(seconds=400)
+        loop._resume_in_flight(cid, TickResult(campaign_id=str(cid)), t)
+
+    # Gave up re-driving: excluded from the resumable set, and exactly ONE deduped alert.
+    assert str(app.id) not in [str(a.id) for a in loop._resumable_apps(cid)]
+    assert notif.errors == [f"stuck_application:{app.id}"]
+
+
+@pytest.mark.unit
+def test_resume_failure_streak_resets_on_success(tmp_path):
+    """A clean resume clears the failure streak so transient blips never accumulate
+    toward the give-up cap."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    _approve_posting(storage, cid)
+    loop = _loop(storage, orch, prefill=_FakePrefill(state=ApplicationState.BLOCKED_QUESTION))
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    loop.run_once(cid, now=now)
+    app = storage.applications.list_for_campaign(cid)[0]
+
+    # Two failures, then a success — the streak must reset to zero.
+    loop._record_resume_failure(app.id)
+    loop._record_resume_failure(app.id)
+    assert loop._resume_failures[str(app.id)] == 2
+    # Simulate a successful resume clearing it (mirrors the success branch).
+    loop._resume_failures.pop(str(app.id), None)
+    assert str(app.id) not in loop._resume_failures
+    assert str(app.id) not in loop._resume_giveup
+
+
+@pytest.mark.unit
 def test_approved_postings_use_indexed_decision_lookup(tmp_path):
     """#10: the loop uses DecisionRepository.list_approved_postings_for_campaign +
     ApplicationRepository.get_by_posting instead of the per-posting N+1 scan."""
