@@ -560,6 +560,110 @@ class TestLLMEscalation:
         assert all("gender" not in c.lower() for c in ShouldNotBeAskedLLM.asked_labels)
 
 
+class _ScreeningBrowser:
+    """Minimal browser stub that surfaces ONE field for ``_fill_current_page``."""
+
+    def __init__(self, field):
+        self._field = field
+        self.filled: dict[str, str] = {}
+
+    def current_state(self, aid):
+        from applicant.ports.driven.browser_automation import PageState
+
+        return PageState(url="https://x/form", fields=())
+
+    def detect_fields(self, aid):
+        return [self._field]
+
+    def fill_field(self, aid, selector, value):
+        self.filled[selector] = value
+
+
+def _draft_llm(answer: str):
+    class _L:
+        def complete(self, messages, **kw):
+            from applicant.ports.driven.llm import LLMResult
+
+            return LLMResult(text=answer, tier=2, model="fake")
+
+        def list_models(self):
+            return ["fake"]
+
+        def is_configured(self):
+            return True
+
+    return _L()
+
+
+def _screening_svc(browser, llm):
+    return PrefillService(
+        storage=InMemoryStorage(), browser=browser, detection=DetectionMonitor(),
+        sandbox=LocalSandbox(), credentials=None, llm=llm,
+    )
+
+
+@pytest.mark.unit
+class TestScreeningAnswerGeneration:
+    def test_drafts_truthful_answer_and_records_for_review(self):
+        # FR-ANSWER-1: a free-text screening question we can't map is DRAFTED from the
+        # profile, filled, and recorded for the user's review (FR-RESUME-8).
+        from applicant.ports.driven.browser_automation import DetectedField
+
+        cid = CampaignId(new_id())
+        fld = DetectedField(
+            selector="#q", label="Why do you want this role?",
+            field_type="textarea", required=False,
+        )
+        browser = _ScreeningBrowser(fld)
+        svc = _screening_svc(browser, _draft_llm("I am genuinely excited about this opportunity."))
+        app = _app(cid)
+        result = PrefillResult(application_id=app.id, state=app.status)
+        assert svc._fill_current_page(app, [_attr(cid, "current_title", "Engineer")], result) is None
+        assert browser.filled["#q"] == "I am genuinely excited about this opportunity."
+        assert result.generated_answers and result.generated_answers[0]["label"] == "Why do you want this role?"
+
+    def test_insufficient_facts_asks_the_user(self):
+        # The LLM reports it cannot answer truthfully from the profile → the engine does
+        # NOT fabricate; a required question blocks for the user (FR-ATTR-5).
+        from applicant.ports.driven.browser_automation import DetectedField
+
+        cid = CampaignId(new_id())
+        fld = DetectedField(
+            selector="#q", label="Do you have an active security clearance?",
+            field_type="text", required=True,
+        )
+        browser = _ScreeningBrowser(fld)
+        svc = _screening_svc(browser, _draft_llm("INSUFFICIENT"))
+        app = (
+            _app(cid)
+            .with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        result = PrefillResult(application_id=app.id, state=app.status)
+        out = svc._fill_current_page(app, [_attr(cid, "current_title", "Engineer")], result)
+        assert out is not None and out.state == ApplicationState.BLOCKED_MISSING_ATTR
+        assert "#q" not in browser.filled
+        assert result.generated_answers == []
+
+    def test_fabricated_answer_is_rejected_not_filled(self):
+        # FR-RESUME-2: a draft that invents a fact (an employer not in the profile) is
+        # rejected by the fabrication guard → not filled; the user is asked instead.
+        from applicant.ports.driven.browser_automation import DetectedField
+
+        cid = CampaignId(new_id())
+        fld = DetectedField(
+            selector="#q", label="Describe your most relevant experience.",
+            field_type="textarea", required=False,
+        )
+        browser = _ScreeningBrowser(fld)
+        svc = _screening_svc(browser, _draft_llm("I led the engineering team at Tesla for five years."))
+        app = _app(cid)
+        result = PrefillResult(application_id=app.id, state=app.status)
+        assert svc._fill_current_page(app, [_attr(cid, "current_title", "Engineer")], result) is None
+        assert "#q" not in browser.filled
+        assert result.generated_answers == []
+
+
 @pytest.mark.unit
 class TestErrorProducer:
     def test_fill_failure_materializes_error_pending_action(self):
