@@ -43,6 +43,12 @@ class _FakeEngine:
     async def vault_list_tenants(self, campaign_id):
         return await self._dispatch("vault_list_tenants", campaign_id)
 
+    async def vault_store_account_credential(self, body):
+        return await self._dispatch("vault_store_account_credential", body)
+
+    async def vault_account_status(self):
+        return await self._dispatch("vault_account_status")
+
 
 def _make_client(*, authed: bool = True):
     app = FastAPI()
@@ -103,6 +109,24 @@ def test_capture_maps_to_capture_endpoint(monkeypatch):
     name, args = _FakeEngine.last_call
     assert name == "vault_capture_credential"
     assert args[0] == body
+
+
+def test_account_status_maps_to_engine(monkeypatch):
+    _patch_engine(monkeypatch, result={"google": True, "predefined_account": False})
+    resp = _make_client().get("/api/applicant/vault/account")
+    assert resp.status_code == 200
+    assert resp.json() == {"google": True, "predefined_account": False}
+    assert _FakeEngine.last_call == ("vault_account_status", ())
+
+
+def test_store_account_forwards_full_body_including_secret(monkeypatch):
+    _patch_engine(monkeypatch, result={"kind": "google", "scope": "global"})
+    body = {"kind": "google", "username": "me@gmail.com", "secret": "g-secret"}
+    resp = _make_client().post("/api/applicant/vault/account", json=body)
+    assert resp.status_code == 201
+    name, args = _FakeEngine.last_call
+    assert name == "vault_store_account_credential"
+    assert args[0] == body  # secret must reach the (sealing) engine
 
 
 def test_missing_fields_rejected_before_engine(monkeypatch):
@@ -176,6 +200,8 @@ def test_writes_require_privilege(monkeypatch):
     body = {"campaign_id": "c1", "tenant_key": "t", "username": "u", "secret": "s"}
     assert client.post("/api/applicant/vault/credentials", json=body).status_code == 403
     assert client.post("/api/applicant/vault/capture", json=body).status_code == 403
+    account = {"kind": "google", "username": "u", "secret": "s"}
+    assert client.post("/api/applicant/vault/account", json=account).status_code == 403
 
 
 def test_list_allowed_without_write_privilege(monkeypatch):

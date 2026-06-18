@@ -82,7 +82,43 @@ function _ensureModalEl() {
           back to this screen.
         </p>
 
+        <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
+          <h3 style="margin:0;font-size:0.95em;">Account sign-ins (used everywhere)</h3>
+          <p style="margin:0;opacity:0.7;font-size:12px;">
+            Set these once — they apply to every job search. Your Google sign-in
+            lets the assistant use “Sign in with Google” on any site; the default
+            sign-in is used only if a site requires creating a brand-new account.
+          </p>
+
+          <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:8px;">
+            <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;">
+              Google sign-in
+              <span id="applicant-vault-google-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
+            </div>
+            <input id="applicant-vault-google-username" class="settings-select" type="text" autocomplete="off"
+                   placeholder="you@gmail.com" style="width:100%;">
+            <input id="applicant-vault-google-secret" class="settings-select" type="password" autocomplete="new-password"
+                   placeholder="Google password" style="width:100%;">
+            <button id="applicant-vault-google-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
+                    title="Encrypt and save your Google sign-in">Save Google sign-in</button>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:8px;">
+            <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;">
+              Default sign-in for new accounts
+              <span id="applicant-vault-default-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
+            </div>
+            <input id="applicant-vault-default-username" class="settings-select" type="text" autocomplete="off"
+                   placeholder="you@example.com" style="width:100%;">
+            <input id="applicant-vault-default-secret" class="settings-select" type="password" autocomplete="new-password"
+                   placeholder="Password to use for new accounts" style="width:100%;">
+            <button id="applicant-vault-default-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
+                    title="Encrypt and save the default sign-in used when a site needs a new account">Save default sign-in</button>
+          </div>
+        </div>
+
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
+          <h3 style="margin:0;font-size:0.95em;">A specific site sign-in</h3>
           <label style="font-size:12px;opacity:0.8;">Site / employer
             <input id="applicant-vault-tenant" class="settings-select" type="text" placeholder="acme.workday.com"
                    title="The job site or employer tenant this sign-in is for"
@@ -125,6 +161,8 @@ function _wire(modal) {
   };
   on('applicant-vault-close', 'click', closeApplicantVault);
   on('applicant-vault-save', 'click', _onSave);
+  on('applicant-vault-google-save', 'click', () => _onSaveAccount('google'));
+  on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
   on('applicant-vault-refresh', 'click', () => _loadTenants().catch(() => {}));
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeApplicantVault();
@@ -205,6 +243,54 @@ async function _onSave() {
   if (ok && secret) secret.value = ''; // clear the password from the DOM after save
 }
 
+// ── account sign-ins (global: Google + the default new-account set) ───────────
+//
+// These are NOT scoped to a job search: the engine banks them under its SYSTEM
+// campaign so a single Settings entry applies to every campaign ("sign in to
+// Google once, reuse it everywhere"). The status line shows which are set
+// WITHOUT ever reading a secret back.
+
+const _ACCOUNT_FIELDS = {
+  'google': { user: 'applicant-vault-google-username', secret: 'applicant-vault-google-secret', set: 'applicant-vault-google-set' },
+  'predefined:account': { user: 'applicant-vault-default-username', secret: 'applicant-vault-default-secret', set: 'applicant-vault-default-set' },
+};
+
+async function _loadAccountStatus() {
+  if (!_modalEl) return;
+  let data;
+  try {
+    data = await _fetchJSON(`${API}/account`);
+  } catch { return; /* leave the default "not set" labels */ }
+  const mark = (id, on) => {
+    const el = _modalEl.querySelector('#' + id);
+    if (el) { el.textContent = on ? 'saved ✓' : 'not set'; el.style.opacity = on ? '0.8' : '0.6'; }
+  };
+  mark('applicant-vault-google-set', !!(data && data.google));
+  mark('applicant-vault-default-set', !!(data && data.predefined_account));
+}
+
+async function _onSaveAccount(kind) {
+  const f = _ACCOUNT_FIELDS[kind];
+  if (!f || !_modalEl) return;
+  const userEl = _modalEl.querySelector('#' + f.user);
+  const secretEl = _modalEl.querySelector('#' + f.secret);
+  const username = userEl ? userEl.value.trim() : '';
+  const secret = secretEl ? secretEl.value : '';
+  if (!username || !secret) { _toast('Fill in the username and password'); return; }
+  if (_busy) return;
+  _busy = true;
+  try {
+    await _post(`${API}/account`, { kind, username, secret });
+    _toast('Sign-in saved');
+    if (secretEl) secretEl.value = ''; // clear the password from the DOM after save
+    await _loadAccountStatus().catch(() => {});
+  } catch (e) {
+    _toast(e.message || 'Could not save the sign-in');
+  } finally {
+    _busy = false;
+  }
+}
+
 // ── public surface ──────────────────────────────────────────────────────────
 
 // Resolve a default campaign when the vault is opened proactively (e.g. from the
@@ -221,11 +307,13 @@ async function _resolveDefaultCampaign() {
   return _campaignId;
 }
 
-/** Open the vault UI, scoped to a job search (campaign). */
+/** Open the vault UI. Account sign-ins (Google / default new-account) are global;
+ *  per-site sign-ins are scoped to a job search (campaign). */
 export async function openApplicantVault(campaignId) {
   if (campaignId) _campaignId = String(campaignId);
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
+  await _loadAccountStatus().catch(() => {});
   if (!_campaignId) await _resolveDefaultCampaign();
   await _loadTenants().catch(() => {});
 }

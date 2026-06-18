@@ -13,12 +13,16 @@ Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import get_container, require_llm_configured
-from applicant.core.ids import CampaignId
+from applicant.application.services.prefill_service import (
+    GOOGLE_CREDENTIAL_KEY,
+    PREDEFINED_CREDENTIAL_KEY,
+)
+from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
 from applicant.ports.driven.credential_store import Credential
 
 router = APIRouter(
@@ -27,10 +31,22 @@ router = APIRouter(
     dependencies=[Depends(require_llm_configured)],
 )
 
+#: The two account-level credential kinds the user sets once in Settings and that
+#: apply to every job search (stored under the global SYSTEM campaign): their Google
+#: sign-in (for "Sign in with Google" gates) and the default set used to create a
+#: brand-new account when a site requires one (ADR-0004).
+_ACCOUNT_KEYS = (GOOGLE_CREDENTIAL_KEY, PREDEFINED_CREDENTIAL_KEY)
+
 
 class BankIn(BaseModel):
     campaign_id: str
     tenant_key: str
+    username: str
+    secret: str
+
+
+class AccountIn(BaseModel):
+    kind: str  # one of _ACCOUNT_KEYS
     username: str
     secret: str
 
@@ -59,6 +75,33 @@ def capture(body: CaptureIn, container: Container = Depends(get_container)) -> d
         CampaignId(body.campaign_id), body.tenant_key, body.username, body.secret
     )
     return {"campaign_id": body.campaign_id, "tenant_key": body.tenant_key, "source": "captured"}
+
+
+@router.post("/account", status_code=201)
+def bank_account(body: AccountIn, container: Container = Depends(get_container)) -> dict:
+    """Bank a GLOBAL account credential (Google / the default new-account set).
+
+    Stored under the SYSTEM campaign so it applies to every job search — set once,
+    reused everywhere (FR-VAULT-2). Rejects unknown kinds so only the two well-known
+    account credentials can be banked here; per-site credentials use the campaign path.
+    """
+    if body.kind not in _ACCOUNT_KEYS:
+        raise HTTPException(status_code=422, detail="Unknown account credential kind")
+    container.credentials.store(
+        CampaignId(SYSTEM_CAMPAIGN_ID),
+        Credential(tenant_key=body.kind, username=body.username, secret=body.secret),
+    )
+    return {"kind": body.kind, "scope": "global", "source": "manual"}
+
+
+@router.get("/account")
+def account_status(container: Container = Depends(get_container)) -> dict:
+    """Which global account credentials are set (no secrets/usernames returned)."""
+    tenants = set(container.credentials.list_tenants(CampaignId(SYSTEM_CAMPAIGN_ID)))
+    return {
+        "google": GOOGLE_CREDENTIAL_KEY in tenants,
+        "predefined_account": PREDEFINED_CREDENTIAL_KEY in tenants,
+    }
 
 
 @router.get("/{campaign_id}/tenants")
