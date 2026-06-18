@@ -56,6 +56,18 @@ class _StubLocator:
         self.pressed.append((ch, delay))
 
 
+class _StubKeyboard:
+    def __init__(self):
+        self.typed: list[str] = []
+        self.pressed: list[str] = []
+
+    def type(self, text, delay=0):
+        self.typed.append(text)
+
+    def press(self, key):
+        self.pressed.append(key)
+
+
 class _StubOption:
     def __init__(self, text, visible=True):
         self._text = text
@@ -116,6 +128,7 @@ class _StubPage:
         self.selected: list[tuple[str, dict]] = []
         # Options returned for query_selector_all("[role='option']") (custom dropdown).
         self._role_options: list = []
+        self.keyboard = _StubKeyboard()
 
     # query / read
     def query_selector_all(self, sel):
@@ -285,6 +298,21 @@ def test_type_value_chooses_listbox_option():
     assert opt_match.clicked is True
     assert opt_other.clicked is False
     assert page.typed == []  # never routed through the text-type path
+
+
+def test_type_value_typeable_combobox_filters_then_picks():
+    # REGRESSION (live Greenhouse): a react-select combobox is an <input
+    # role="combobox" aria-autocomplete="list"> — you must TYPE to filter the options
+    # before clicking. The engine types the value, then clicks the matching option.
+    page = _StubPage()
+    cb = _StubElement(tag="input", attrs={"role": "combobox", "aria-autocomplete": "list"})
+    page._elements_by_sel["#country"] = cb
+    page._role_options = [_StubOption("Canada"), _StubOption("United States")]
+    src = _bare_source(page)
+    src.type_value("#country", "United States")
+    assert "United States" in page.keyboard.typed  # typed to filter
+    assert page._role_options[1].clicked is True     # matching option picked
+    assert page._role_options[0].clicked is False
 
 
 def test_listbox_skips_hidden_options_from_other_dropdowns():
