@@ -13,12 +13,26 @@
 \moderncvstyle{banking}
 \moderncvcolor{blue}
 
+%% Large name styling, tolerant of the moderncv version on the host: modern
+%% moderncv (>= v2.x, the version texlive-latex-extra ships) renders the whole
+%% name through \namestyle, while older releases styled \firstnamestyle and
+%% \lastnamestyle separately. \providecommand defines each hook only when the
+%% installed moderncv lacks it (so the following \renewcommand can never fail with
+%% "undefined command"), then we apply the same large style to all three so the
+%% name renders identically whichever command moderncv actually uses.
+\providecommand*{\namestyle}[1]{#1}
+\providecommand*{\firstnamestyle}[1]{#1}
+\providecommand*{\lastnamestyle}[1]{#1}
+\renewcommand*{\namestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
 \renewcommand*{\firstnamestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
 \renewcommand*{\lastnamestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
 \renewcommand*{\sectionstyle}[1]{{\sectionfont\color{color1}#1}}
 
 \usepackage[utf8]{inputenc}
-\usepackage{hyperref}
+%% NB: do not \usepackage{hyperref} here — moderncv loads it itself as
+%% \RequirePackage[unicode]{hyperref} at the end of the preamble, so an explicit
+%% optionless load raises "Option clash for package hyperref" and aborts the
+%% compile. Its macros (\href etc.) remain available from moderncv's own load.
 \usepackage[scale=0.80]{geometry}
 \usepackage{needspace}  %% guard against orphaned entry titles (fidelity check)
 

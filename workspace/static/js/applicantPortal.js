@@ -497,7 +497,7 @@ function _renderList(body) {
   const actionRows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
   const notifRows = infos.map((n) => _renderNotifRow(n)).join('');
   const actionHdr = _items.length
-    ? `<div style="font-size:11px;opacity:0.7;margin:2px 2px 2px;">${_items.length} item${_items.length === 1 ? '' : 's'} need your attention</div>`
+    ? `<div style="font-size:11px;opacity:0.7;margin:2px 2px 2px;">${_items.length} item${_items.length === 1 ? '' : 's'} need${_items.length === 1 ? 's' : ''} your attention</div>`
     : '';
   const notifHdr = infos.length
     ? `<div style="font-size:11px;opacity:0.7;margin:10px 2px 2px;">Recent updates</div>`

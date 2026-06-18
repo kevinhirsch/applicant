@@ -32,6 +32,13 @@ AppConfigId = NewType("AppConfigId", str)
 PendingActionId = NewType("PendingActionId", str)
 
 
+#: Reserved sentinel campaign that scopes instance-level secrets (LLM keys, sandbox
+#: tokens) in the credential store, whose ``campaign_id`` is a non-null FK to
+#: ``campaigns``. Seeded (inactive) at startup on a real DB; excluded from campaign
+#: listings so it never surfaces as a real campaign.
+SYSTEM_CAMPAIGN_ID = "__system__"
+
+
 def new_id() -> str:
     """Generate a fresh opaque identifier (UUID4 hex)."""
     return uuid.uuid4().hex

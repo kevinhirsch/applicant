@@ -11,8 +11,8 @@ from __future__ import annotations
 import pytest
 
 from applicant.application.services.campaign_service import CampaignService
-from applicant.core.entities.campaign import RunMode
-from applicant.core.ids import CampaignId, new_id
+from applicant.core.entities.campaign import Campaign, RunMode
+from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId, new_id
 
 
 class _RecordingCriteria:
@@ -26,6 +26,21 @@ class _RecordingCriteria:
         self.calls.append((campaign_id, changes, confirm))
         if self._raises:
             raise RuntimeError("criteria store is down")
+
+
+def test_list_campaigns_excludes_reserved_system_sentinel(storage):
+    # Regression: the reserved "__system__" campaign exists only so instance secrets
+    # (the LLM key / sandbox tokens) satisfy the credential-store's non-null campaign
+    # FK. It must never surface as a real campaign in listings (/api/campaigns).
+    storage.campaigns.add(
+        Campaign(id=CampaignId(SYSTEM_CAMPAIGN_ID), name="System (internal)", active=False)
+    )
+    svc = CampaignService(storage)
+    real = svc.create_campaign("Backend roles")
+
+    ids = [c.id for c in svc.list_campaigns()]
+    assert real.id in ids
+    assert SYSTEM_CAMPAIGN_ID not in ids
 
 
 def test_create_campaign_persists_and_commits(storage):

@@ -423,26 +423,30 @@ export async function openApplicantChat() {
 }
 
 function _wireLauncher() {
-  const btn = document.getElementById('rail-assistant');
-  if (!btn || btn._applicantWired) return;
-  btn._applicantWired = true;
-  btn.addEventListener('click', () => {
-    // Respect the feature-activation lock — if app.js greyed the launcher
-    // (engine/model not ready) its capture-phase guard already stopped this
-    // handler; reaching here means the section is active.
-    openApplicantChat();
-  });
+  // Two launchers: the desktop sidebar item (#tool-assistant-btn) and the compact
+  // icon-rail button (#rail-assistant, used on mobile). Wire whichever are present.
+  for (const id of ['tool-assistant-btn', 'rail-assistant']) {
+    const btn = document.getElementById(id);
+    if (!btn || btn._applicantWired) continue;
+    btn._applicantWired = true;
+    btn.addEventListener('click', () => {
+      // Respect the feature-activation lock — if app.js greyed the launcher
+      // (engine/model not ready) its capture-phase guard already stopped this
+      // handler; reaching here means the section is active.
+      openApplicantChat();
+    });
+  }
 }
 
 function _boot() {
   _wireLauncher();
-  // The rail button may be (re)rendered after boot; retry briefly so the
-  // launcher always gets wired without a hard dependency on load order.
+  // The launchers may be (re)rendered after boot; retry briefly so they always
+  // get wired without a hard dependency on load order.
   let tries = 0;
   const iv = setInterval(() => {
     tries += 1;
     _wireLauncher();
-    if (document.getElementById('rail-assistant')?._applicantWired || tries > 20) {
+    if (document.getElementById('tool-assistant-btn')?._applicantWired || tries > 20) {
       clearInterval(iv);
     }
   }, 500);

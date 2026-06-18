@@ -112,12 +112,12 @@ class ScoringService:
         if not criteria_text:
             # No stated criteria yet: neutral-positive so nothing is silently dropped.
             base = 0.75
-            rationale = "no criteria stated; neutral viability (FR-AGENT-3 default)"
+            rationale = "No search criteria set yet — scored neutral so nothing is dropped."
         else:
             base = self._embedding.similarity(criteria_text, jd_text)
             rationale = (
-                f"local viability {base * 100:.0f}/100 from JD/criteria overlap "
-                f"(threshold {self._threshold}; zero-token, FR-AGENT-3/NFR-TOKEN-1)"
+                f"Match {base * 100:.0f}/100 from overlap between the role and your "
+                f"criteria (threshold {self._threshold})."
             )
         score = base
         alignment = self._signature_alignment(posting.campaign_id, jd_text)

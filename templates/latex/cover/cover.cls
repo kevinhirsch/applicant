@@ -14,7 +14,11 @@
 \usepackage[usenames,dvipsnames]{xcolor}
 \usepackage{titlesec}
 \usepackage[absolute]{textpos}
-\usepackage{fontspec,xltxtra,xunicode}
+% fontspec only: xltxtra + xunicode are deprecated XeTeX-ONLY packages that abort
+% under lualatex (the engine the resume renderer uses by default), with "this
+% package currently works only with XeTeX". Modern fontspec supersedes both on
+% xelatex AND lualatex, so dropping them lets the cover letter compile on either.
+\usepackage{fontspec}
 
 % Publications
 \usepackage{cite}
@@ -30,7 +34,9 @@
 % Set main fonts
 \usepackage{fontspec}
 \setmainfont[Color=primary, Path = OpenFonts/fonts/lato/,BoldItalicFont=Lato-RegIta,BoldFont=Lato-Reg,ItalicFont=Lato-LigIta]{Lato-Lig}
-\setsansfont[Scale=MatchLowercase,Mapping=tex-text, Path = OpenFonts/fonts/raleway/]{Raleway-ExtraLight}
+% Ligatures=TeX is the engine-agnostic replacement for the old xunicode-era
+% Mapping=tex-text (which required xunicode/XeTeX); it works on lualatex too.
+\setsansfont[Scale=MatchLowercase,Ligatures=TeX, Path = OpenFonts/fonts/raleway/]{Raleway-ExtraLight}
 
 % Date command
 \usepackage[absolute]{textpos}

@@ -34503,8 +34503,19 @@ body.theme-frosted .modal {
    settings.js mountRelocatedSetupStep). Re-apply the wizard-local typography /
    help-bubble / footer styles there so the reused markup looks identical outside
    the overlay. (The shared `.admin-card`/`.settings-row` classes already style. */
-.ao-settings-body .ao-step-title { font-size: 1.05rem; font-weight: 600; margin: 4px 0 4px; }
-.ao-settings-body .ao-step-desc { margin: 0 0 14px; opacity: 0.78; font-size: 0.9rem; }
+/* In Settings, each panel's own card already supplies the heading + description,
+   so the reused wizard renderer's title/description would duplicate them (and would
+   leak wizard-only wording like "Skip for now"). Hide the inner copies; the outer
+   card heading is settings-appropriate and carries the section icon. */
+.ao-settings-body .ao-step-title,
+.ao-settings-body .ao-step-desc { display: none; }
+
+/* Applicant front-door is agent-only: hide the composer's Agent/Chat mode switch
+   (chat.js defaults the mode to "agent"). The buttons stay in the DOM so existing
+   mode JS keeps working; only the control is hidden. */
+.chat-input-bar .mode-toggle,
+.input-wrap .mode-toggle,
+.mode-toggle { display: none !important; }
 .ao-settings-body .attach-strip { max-width: 100%; padding: 2px 0; }
 .ao-settings-body .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; position: relative; }
 .ao-settings-body .ao-tip:hover::after,

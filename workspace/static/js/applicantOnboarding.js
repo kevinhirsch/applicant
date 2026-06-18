@@ -1146,10 +1146,14 @@ async function _buildPreview() {
   try {
     const p = await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/preview`, {});
     const note = p.fidelity_ok ? 'Looks like a faithful match.' : 'Some formatting may differ.';
+    // `notes` may come back as an array, a single string, or be absent — coerce to
+    // an array so a string value doesn't crash the preview on `.map` (it has a
+    // truthy `.length` but no `.map`), which surfaced as "Preview unavailable".
+    const notesList = Array.isArray(p.notes) ? p.notes : (p.notes ? [String(p.notes)] : []);
     wrap.innerHTML = `
       <div class="admin-card">
         <p style="margin:0 0 8px;">We built a high-fidelity version of your resume (${esc(String(p.page_count || '?'))} page(s)). ${esc(note)}</p>
-        ${(p.notes && p.notes.length) ? `<ul>${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+        ${notesList.length ? `<ul>${notesList.map((n) => `<li>${esc(String(n))}</li>`).join('')}</ul>` : ''}
         <div class="settings-row" style="margin-top:6px;">
           <button class="cal-btn cal-btn-primary" id="ao-prev-accept">Use this version</button>
           <button class="cal-btn" id="ao-prev-reject">Keep my original</button>

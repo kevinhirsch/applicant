@@ -126,7 +126,7 @@ def complete(campaign_id: str, svc=Depends(get_onboarding_service)) -> dict:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": "Onboarding intake incomplete (FR-ONBOARD-2).",
+                "message": "Onboarding intake incomplete — a few required sections are still missing.",
                 "missing_sections": state.missing_sections,
             },
         )

@@ -47,7 +47,10 @@ class CampaignService:
         return self._storage.campaigns.get(campaign_id)
 
     def list_campaigns(self) -> list[Campaign]:
-        return self._storage.campaigns.list()
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+        # Exclude the reserved system campaign (it only scopes instance secrets).
+        return [c for c in self._storage.campaigns.list() if c.id != SYSTEM_CAMPAIGN_ID]
 
     def clone_campaign(self, source_id: CampaignId, name: str) -> Campaign:
         source = self._storage.campaigns.get(source_id)

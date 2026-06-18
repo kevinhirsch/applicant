@@ -480,18 +480,18 @@ class SetupService:
 
     # --- credential-store helpers (LLM keys reuse the vault path) ---------
     def _store_secret(self, ref: str, secret: str) -> None:
-        from applicant.core.ids import CampaignId
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
         from applicant.ports.driven.credential_store import Credential
 
         self._credentials.store(
-            CampaignId("__system__"),
+            CampaignId(SYSTEM_CAMPAIGN_ID),
             Credential(tenant_key=ref, username="api_key", secret=secret),
         )
 
     def _retrieve_secret(self, ref: str) -> str | None:
-        from applicant.core.ids import CampaignId
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
 
-        cred = self._credentials.retrieve(CampaignId("__system__"), ref)
+        cred = self._credentials.retrieve(CampaignId(SYSTEM_CAMPAIGN_ID), ref)
         return cred.secret if cred else None
 
     # --- gate + step advance ---------------------------------------------

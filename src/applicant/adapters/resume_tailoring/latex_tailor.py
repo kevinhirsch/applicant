@@ -119,6 +119,29 @@ class LatexTailor:
         )
         return env
 
+    def _link_vendored_fonts(self, work: Path) -> None:
+        """Make the vendored ``OpenFonts/`` tree reachable from the compile cwd.
+
+        cover.cls loads fonts via a path relative to the working directory; the
+        compile happens in a temp dir, so we expose OpenFonts there. Prefer a
+        symlink (cheap); fall back to a copy when symlinks are unavailable (e.g.
+        some container filesystems). Best-effort: a failure here just means the
+        cover compile degrades to the stub, never a crash.
+        """
+        src = self._template_root / "OpenFonts"
+        dst = work / "OpenFonts"
+        if not src.is_dir() or dst.exists():
+            return
+        try:
+            dst.symlink_to(src, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            try:
+                import shutil as _shutil
+
+                _shutil.copytree(src, dst)
+            except OSError:  # pragma: no cover - never let asset wiring break render
+                pass
+
     # --- source editing (LaTeX is plain text) -----------------------------
     def edit_source(self, base_source: str, edits: dict[str, str]) -> str:
         """Apply literal substitutions to the LaTeX source (FR-RESUME-3).
@@ -293,6 +316,14 @@ class LatexTailor:
         out_root.mkdir(parents=True, exist_ok=True)
         work = out_root / str(variant_id)
         work.mkdir(parents=True, exist_ok=True)
+        # The cover-letter class loads its bundled fonts via a path RELATIVE to the
+        # compile cwd (``\setmainfont[Path = OpenFonts/fonts/...]``). The compile runs
+        # in this temp work dir, so make the vendored OpenFonts tree reachable here
+        # (symlink, copy fallback) — otherwise fontspec aborts with "font cannot be
+        # found" and no PDF is produced. Harmless for the résumé path, which uses
+        # system fonts. (TEXINPUTS already exposes cover.cls; only files loaded by an
+        # explicit relative Path need to sit next to the cwd.)
+        self._link_vendored_fonts(work)
         tex_path = work / "resume.tex"
         tex_path.write_text(source, encoding="utf-8")
         try:

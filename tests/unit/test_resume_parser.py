@@ -55,6 +55,29 @@ def test_parse_txt_extracts_work_history_with_dates(parser, tmp_path):
     assert "Present" in first.end_date
 
 
+def test_parse_txt_parenthesized_dates_no_dangling_bracket(parser, tmp_path):
+    """A 'Title - Company (2020-Present)' line must not leak the '(' into the
+    company. Regression: the date regex matched inside the parens, leaving the
+    opening bracket dangling so the company rendered as 'Acme Corp (' in the
+    compiled moderncv résumé (FR-RESUME-3)."""
+    resume = (
+        "Experience:\n"
+        "Staff Software Engineer - Acme Corp (2020-Present)\n"
+        "Senior Software Engineer - Globex (2016-2020)\n"
+    )
+    p = tmp_path / "resume.txt"
+    p.write_text(resume, encoding="utf-8")
+    parsed = parser.parse(str(p))
+    companies = {w.company for w in parsed.work_history}
+    assert "Acme Corp" in companies
+    assert "Globex" in companies
+    # No company carries a stray bracket or separator.
+    for w in parsed.work_history:
+        assert not w.company.endswith(("(", "[", "{", "-"))
+        assert "(" not in w.company
+        assert w.title == w.title.strip()
+
+
 def test_parse_txt_extracts_education_and_skills(parser, tmp_path):
     p = tmp_path / "resume.txt"
     p.write_text(_TXT_RESUME, encoding="utf-8")

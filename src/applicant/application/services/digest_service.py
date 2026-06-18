@@ -29,7 +29,7 @@ from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running (FR-DIG-6)."
+EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running."
 
 #: Cap on how many role rows the digest EMAIL renders inline. A campaign can
 #: surface 1000+ viable roles; rendering one HTML row each makes a multi-MB email
