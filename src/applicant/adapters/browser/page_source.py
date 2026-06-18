@@ -377,6 +377,15 @@ class PlaywrightPageSource:
                 if self._persona != "native":
                     self._apply_fingerprint_overrides(self._context)
                 self._page = self._context.new_page()
+            # Fail fast on a stuck control: a single unfillable field must not hang the
+            # whole walk on Playwright's 30s default (a real Lever form otherwise took
+            # 100s+). Navigation keeps a longer budget; per-action (fill/click/type) is
+            # short so the soft-error path triggers quickly (universal-ATS robustness).
+            try:
+                self._context.set_default_timeout(8_000)
+                self._context.set_default_navigation_timeout(30_000)
+            except Exception:
+                pass
             self._page.on("response", self._on_response)
         except Exception:
             self._safe_teardown()
