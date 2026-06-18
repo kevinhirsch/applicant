@@ -55,6 +55,11 @@ log = get_logger(__name__)
 #: from, so deep research is worth a call before writing (see _context_is_lacking).
 _THIN_SOURCE_CHARS = 400
 
+#: Consecutive failed resume attempts after which the loop STOPS re-driving a parked
+#: application and surfaces it to the operator once, instead of churning the sandbox
+#: every backoff window forever (24/7 robustness).
+_RESUME_FAILURE_CAP = 5
+
 
 @dataclass
 class TickResult:
@@ -137,6 +142,13 @@ class AgentLoop:
         self._last_resume: dict[str, datetime] = {}
         #: minimum seconds between resume re-drives of the same parked app (#9).
         self._resume_backoff_seconds: float = 300.0
+        # application_id -> consecutive resume failures, and the set of apps we've
+        # GIVEN UP re-driving (>= _RESUME_FAILURE_CAP). A permanently-stuck app would
+        # otherwise churn the sandbox every backoff window forever and never alert the
+        # operator; instead we stop re-driving it and surface it once. In-memory: a
+        # restart re-attempts (the issue may have resolved), which is the right default.
+        self._resume_failures: dict[str, int] = {}
+        self._resume_giveup: set[str] = set()
         # CONC: the scheduler tick now runs OFF the event loop (worker thread). Guard the
         # read-modify-write of the per-run ledgers (``_acted`` / ``_digest_sent`` /
         # ``_last_resume``) so two overlapping ticks can't lose-update them. A single
@@ -421,21 +433,66 @@ class AgentLoop:
                 outcome = self._orch.start_workflow(WORKFLOW_NAME, wf_id, ctx=ctx).result()
                 self._apply_outcome(app, outcome, result)
                 self._mark_resumed(app.id, now)
+                # A clean resume clears the failure streak (the app made progress).
+                with self._state_lock:
+                    self._resume_failures.pop(str(app.id), None)
             except Exception:
                 if self._capacity is not None:
                     self._capacity.release_sandbox(str(app.id))
                 self._teardown_sandbox(app.id)
                 self._mark_resumed(app.id, now)
-                log.warning("resume_failed_slot_released", application_id=str(app.id))
+                self._record_resume_failure(app.id)
                 continue
 
+    def _record_resume_failure(self, application_id: ApplicationId) -> None:
+        """Count a failed resume; after the cap, stop re-driving + alert once.
+
+        Without this a permanently-stuck application (corrupt context, a sandbox that
+        can never launch, a deleted dependency) is re-driven every backoff window
+        forever — churning the sandbox and logging on every pass, never reaching the
+        operator. At the cap we give up re-driving it and surface ONE deduped error.
+        """
+        key = str(application_id)
+        with self._state_lock:
+            n = self._resume_failures.get(key, 0) + 1
+            self._resume_failures[key] = n
+            capped = n >= _RESUME_FAILURE_CAP and key not in self._resume_giveup
+            if capped:
+                self._resume_giveup.add(key)
+        if not capped:
+            log.warning("resume_failed_slot_released", application_id=key, failures=n)
+            return
+        log.error("resume_giving_up", application_id=key, failures=n)
+        # Surface it to the operator once (deduped), so a stuck application becomes a
+        # visible action item instead of silent churn. Never let this break the tick.
+        if self._notifications is not None:
+            try:
+                self._notifications.notify_error(
+                    title="An application needs a look",
+                    body=(
+                        "Applicant couldn't resume one of your applications after "
+                        f"{n} tries and has paused work on it. Open Activity to review it."
+                    ),
+                    dedup_key=f"stuck_application:{key}",
+                )
+            except Exception:  # pragma: no cover - notification must never break the loop
+                pass
+
     def _resumable_apps(self, campaign_id: CampaignId) -> list[Application]:
-        """Apps in a resumable state via the indexed ``list_by_status`` (#9)."""
-        return list(
-            self._storage.applications.list_by_status(
+        """Apps in a resumable state via the indexed ``list_by_status`` (#9).
+
+        Apps we've given up re-driving (>= _RESUME_FAILURE_CAP consecutive failures)
+        are excluded so a permanently-stuck app no longer churns every backoff window.
+        """
+        with self._state_lock:
+            giveup = frozenset(self._resume_giveup)
+        return [
+            a
+            for a in self._storage.applications.list_by_status(
                 campaign_id, tuple(_IN_FLIGHT_RESUMABLE)
             )
-        )
+            if str(a.id) not in giveup
+        ]
 
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
