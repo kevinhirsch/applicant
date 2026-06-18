@@ -70,6 +70,12 @@ class TestPatchrightBrowserContract:
         with pytest.raises(KeyError):
             adapter.detect_fields(aid)
 
+    def test_account_gate_recognizes_the_account_step(self, adapter, aid):
+        # FR-PREFILL-4: the account GATE (sign-in OR create-account) is where the loop
+        # hands off / logs in. The fake's first page is the account-create gate.
+        adapter.open(aid, WORKDAY_URL)
+        assert adapter.is_account_gate(aid) is True
+
     def test_enter_application_is_a_benign_navigation(self, adapter, aid):
         # FR-PREFILL-1: clicking the "Apply" entry to move into the application flow is
         # a benign navigation (NAVIGATE), not an irreducible human step — it must NOT

@@ -193,6 +193,10 @@ class PatchrightBrowser:
     def is_account_create_page(self, application_id: ApplicationId) -> bool:
         return self._source(application_id).is_account_create_page()
 
+    def is_account_gate(self, application_id: ApplicationId) -> bool:
+        """True at the account step — sign-in OR create-account (FR-PREFILL-4)."""
+        return self._source(application_id).is_account_gate()
+
     def is_final_submit_page(self, application_id: ApplicationId) -> bool:
         return self._source(application_id).is_final_submit_page()
 
