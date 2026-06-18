@@ -176,6 +176,18 @@ class PatchrightBrowser:
         cadence_ms = [k.delay_ms for k in plan]
         session.source.type_value(selector, value, cadence_ms=cadence_ms)
 
+    def upload_file(self, application_id: ApplicationId, selector: str, file_path: str) -> None:
+        """Attach the rendered base résumé to a file input (FR-RESUME-4).
+
+        Routes through the boundary as an ``UPLOAD_DOCUMENT`` step (always allowed —
+        a deterministic pre-fill, never a submit), then hands the path to the page
+        source's ``set_input_files`` (Playwright's native file-chooser drive).
+        """
+        ensure_action_allowed(StepKind.UPLOAD_DOCUMENT)
+        session = self._session(application_id)
+        session.human.think_delay()
+        session.source.set_input_files(selector, file_path)
+
     def screenshot(self, application_id: ApplicationId) -> str:
         """Capture and store a per-page screenshot; return its ref (FR-LOG-2)."""
         ensure_action_allowed(StepKind.SCREENSHOT)

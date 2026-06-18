@@ -27,6 +27,7 @@ from applicant.adapters.llm.openai_compatible import OpenAICompatibleLLM
 from applicant.adapters.notification.apprise_notifier import AppriseNotifier
 from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
 from applicant.adapters.resume_parser.resume_parser import ResumeParser
+from applicant.adapters.resume_tailoring.base_resume_provider import BaseResumeProvider
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.app_config_store import (
@@ -484,6 +485,7 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
         notification=notification,
         llm=llm,
+        resume_provider=BaseResumeProvider(storage),
         allow_automated_accounts=settings.allow_automated_accounts,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
@@ -586,6 +588,7 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             notification=notification,
             llm=llm,
+            resume_provider=BaseResumeProvider(tick_storage),
         )
         mat = MaterialService(
             tick_storage,
@@ -682,6 +685,7 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             notification=notification,
             llm=llm,
+            resume_provider=BaseResumeProvider(req_storage),
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(

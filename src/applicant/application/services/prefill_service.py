@@ -111,6 +111,9 @@ class PrefillResult:
     #: ``[{selector, label, answer, url}]`` — surfaced for the user's review before
     #: any submit (FR-ANSWER-1, FR-RESUME-8).
     generated_answers: list[dict] = field(default_factory=list)
+    #: résumé/CV files uploaded into ATS file inputs (FR-RESUME-4).
+    #: ``[{selector, label, path, url}]`` — the base résumé attached during pre-fill.
+    uploaded_documents: list[dict] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
     #: page url for each screenshot in ``screenshots`` (parallel list, FR-LOG-2).
     screenshot_pages: list[str] = field(default_factory=list)
@@ -135,6 +138,7 @@ class PrefillService:
         notification=None,
         *,
         llm=None,
+        resume_provider=None,
         required_field_types: frozenset[str] | None = None,
         allow_automated_accounts: bool = False,
     ) -> None:
@@ -144,6 +148,9 @@ class PrefillService:
         self._sandbox = sandbox
         self._credentials = credentials
         self._notification = notification
+        # FR-RESUME-4: resolves the uploadable résumé file for an application (the
+        # uploaded base résumé by default). Optional: absent → file inputs are skipped.
+        self._resume_provider = resume_provider
         # ADR-0004: only attempt automated account creation when the operator opted in.
         self._allow_automated_accounts = bool(allow_automated_accounts)
         # LLM port for ambiguous-mapping escalation (FR-PREFILL-3). Optional: when
@@ -702,10 +709,12 @@ class PrefillService:
         state = self._browser.current_state(aid)
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
-            # File uploads (résumé / cover letter) can't be text-filled and must not
-            # count as a missing-attribute block — document upload is a separate step
-            # (FR-RESUME). Skip them so the rest of the form still pre-fills.
+            # File inputs can't be text-filled and never count as a missing-attribute
+            # block. A résumé/CV input gets the rendered base résumé attached (FR-RESUME-4,
+            # Phase 2: upload the base résumé as-is); cover-letter / unknown file inputs
+            # are still skipped so the rest of the form pre-fills regardless.
             if fld.field_type == "file":
+                self._maybe_upload_resume(app, fld, state.url, result)
                 continue
             resolved = self._resolve_value(fld, attributes, result)
 
@@ -771,6 +780,62 @@ class PrefillService:
         if page_log:
             result.filled_by_page[state.url] = page_log
         return None
+
+    #: Label/selector markers that identify a résumé/CV file input (as opposed to a
+    #: cover-letter or unrelated attachment). Kept narrow so we only ever upload the
+    #: base résumé into a control that is actually asking for it.
+    _RESUME_INPUT_MARKERS: tuple[str, ...] = (
+        "resume", "résumé", "resumé", "cv", "curriculum vitae", "curriculum-vitae",
+    )
+
+    @classmethod
+    def _is_resume_input(cls, fld: DetectedField) -> bool:
+        """True when a file input is asking for a résumé/CV (FR-RESUME-4).
+
+        Token-aware so the bare ``cv`` marker matches "Resume/CV" or an ``id=cv`` but
+        not a substring inside an unrelated word; matches on the label OR the selector.
+        """
+        import re
+
+        hay = f"{fld.label or ''} {fld.selector or ''}".lower()
+        tokens = set(re.split(r"[^a-z]+", hay))
+        for marker in cls._RESUME_INPUT_MARKERS:
+            if " " in marker:
+                if marker in hay:
+                    return True
+            elif marker in tokens:
+                return True
+        return False
+
+    def _maybe_upload_resume(
+        self, app, fld: DetectedField, url: str, result: PrefillResult
+    ) -> None:
+        """Attach the base résumé to a résumé/CV file input (FR-RESUME-4).
+
+        Best-effort: no provider, no résumé file, a non-résumé file input, or any
+        upload failure all simply skip — a file input never blocks the pre-fill loop.
+        """
+        if self._resume_provider is None or not self._is_resume_input(fld):
+            return
+        try:
+            path = self._resume_provider.resume_file_for(app)
+        except Exception:  # noqa: BLE001 — never crash the loop on provider error
+            path = None
+        if not path:
+            return
+        try:
+            self._browser.upload_file(app.id, fld.selector, path)
+        except Exception as exc:  # noqa: BLE001 — soft failure, surface but continue
+            self._emit_error(
+                app,
+                title=f"Could not upload résumé: {fld.label}",
+                detail=str(exc),
+                selector=fld.selector,
+            )
+            return
+        result.uploaded_documents.append(
+            {"selector": fld.selector, "label": fld.label, "path": path, "url": url}
+        )
 
     # --- field resolution -------------------------------------------------
     @dataclass

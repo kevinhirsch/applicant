@@ -30,6 +30,8 @@ class FakePage:
     detection_signals: tuple[str, ...] = ()
     #: selector -> filled value (mutated by the fake page source).
     filled: dict[str, str] = field(default_factory=dict)
+    #: selector -> uploaded file path (mutated by the fake page source, FR-RESUME-4).
+    uploaded: dict[str, str] = field(default_factory=dict)
     #: whether this page is an account-creation form (boundary applies).
     is_account_create: bool = False
     #: whether this page is the final-submit step (boundary applies).
