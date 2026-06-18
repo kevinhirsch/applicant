@@ -53,9 +53,20 @@ _LOW_CONFIDENCE_MARKERS = (
 
 
 def _ollama_provider(provider: str, base_url: str) -> bool:
-    """Detect an Ollama endpoint by provider name or URL shape (FR-LLM-2)."""
-    if provider.lower() == "ollama":
+    """Detect an Ollama endpoint by provider name or URL shape (FR-LLM-2).
+
+    An explicitly-named non-Ollama provider (openai, openrouter, …) is NEVER
+    Ollama and must short-circuit: the URL-shape heuristic below false-positives
+    on OpenRouter's ``https://openrouter.ai/api/v1`` base (it contains ``/api/``),
+    which would route cloud completions to Ollama's ``/api/chat`` — i.e.
+    ``https://openrouter.ai/api/api/chat`` → 404 → silent fallback to the stub.
+    The heuristic only applies when the provider is unspecified.
+    """
+    p = provider.strip().lower()
+    if p == "ollama":
         return True
+    if p:
+        return False
     return "11434" in base_url or "/api/" in base_url
 
 
