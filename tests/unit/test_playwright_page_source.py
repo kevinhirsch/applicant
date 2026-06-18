@@ -23,8 +23,12 @@ class _StubHandle:
     def get_attribute(self, name):
         return self._attrs.get(name)
 
-    def evaluate(self, _script):
-        return "input"
+    def evaluate(self, script):
+        # Two evaluate uses: tagName lookup, and the _best_label resolver. The stub
+        # can't run JS, so simulate: tagName -> "input"; label resolver -> aria-label.
+        if "tagName" in script:
+            return "input"
+        return self._attrs.get("aria-label", "") or self._inner
 
     def inner_text(self):
         return self._inner
@@ -314,6 +318,21 @@ def test_detect_fields_builds_real_selectors():
     assert selectors[2] == '[data-automation-id="phone"]'
     # All are usable Playwright selector strings, not raw attribute values.
     assert all(s.startswith(("[", "#")) for s in selectors)
+
+
+def test_detect_fields_resolves_label_and_required():
+    # Universal-ATS support: the engine reads the field's real label (here via the
+    # aria-label the stub returns from its label-resolver evaluate) and captures the
+    # DOM's required flag — so it can map fields and block only on required ones.
+    page = _StubPage()
+    page._handles_by_sel["input, select, textarea"] = [
+        _StubHandle({"id": "q1", "type": "text", "aria-label": "Why do you want this job?",
+                     "required": "true"}),
+        _StubHandle({"id": "q2", "type": "text", "aria-label": "Portfolio URL"}),  # optional
+    ]
+    fields = {f.label: f for f in _bare_source(page).detect_fields()}
+    assert fields["Why do you want this job?"].required is True
+    assert fields["Portfolio URL"].required is False
 
 
 # --- advance traverses N pages then ends -----------------------------------

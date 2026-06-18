@@ -469,21 +469,22 @@ class PrefillService:
                 self._capture_screenshot(aid, result)
                 return self._account_handoff(app, result, result.sandbox_session_url)
 
-            # If this is the final-submit page, all fillable pages are done.
-            if self._browser.is_final_submit_page(aid):
-                return self._reach_final_approval(app, result)
-
-            # Pre-fill every fillable field on this page (maximal pre-fill).
+            # Pre-fill every fillable field on this page FIRST (maximal pre-fill).
+            # A SINGLE-PAGE application (Greenhouse / Lever / Ashby) has the whole form
+            # AND the Submit button on one page, so filling must happen BEFORE we decide
+            # the page is the final-submit page — otherwise the engine sees "Submit
+            # Application" and skips the entire form (universal-ATS support, FR-PREFILL-2/3).
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
                 return blocked
             self._capture_screenshot(aid, result)
 
-            # Advance; if there is no next page we are done filling.
+            # Now stop at the final review/submit page (the engine never clicks the
+            # final submit), otherwise advance to the next page; no next page → done.
+            if self._browser.is_final_submit_page(aid):
+                return self._reach_final_approval(app, result)
             if self._browser.advance(aid) is None:
                 return self._reach_final_approval(app, result)
-
-    # --- credential auto-login (automate-by-default) ----------------------
     def _lookup_credential(self, app, *, tenant_key: str | None = None):
         """Retrieve a stored credential, or ``None``. Defaults to the application's ATS
         tenant; pass ``tenant_key`` (e.g. ``GOOGLE_CREDENTIAL_KEY``) for a shared one.
@@ -697,6 +698,11 @@ class PrefillService:
         state = self._browser.current_state(aid)
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
+            # File uploads (résumé / cover letter) can't be text-filled and must not
+            # count as a missing-attribute block — document upload is a separate step
+            # (FR-RESUME). Skip them so the rest of the form still pre-fills.
+            if fld.field_type == "file":
+                continue
             resolved = self._resolve_value(fld, attributes, result)
 
             if resolved.defer_essay:
@@ -712,7 +718,13 @@ class PrefillService:
                 continue
 
             if resolved.value is None:
-                if fld.field_type in self._required_types:
+                # Block only on fields that are genuinely required. ``required is False``
+                # (the real DOM says optional) → skip an unmappable field rather than
+                # stall the whole application on an optional free-text question — real
+                # ATS forms have many (universal-ATS support). ``required is None``
+                # (unknown / fake source) preserves the legacy "required by type" rule.
+                is_optional = getattr(fld, "required", None) is False
+                if fld.field_type in self._required_types and not is_optional:
                     if not block_on_missing:
                         # Account page: hand off to the human for anything we can't
                         # fill (they create the account anyway); never raise the

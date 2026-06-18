@@ -22,6 +22,12 @@ class DetectedField:
     label: str
     field_type: str  # text/select/checkbox/radio/file...
     options: tuple[str, ...] = ()
+    #: Whether the form marks the field required. ``None`` = unknown (the source did
+    #: not determine it) → callers keep the legacy "required by type" behavior; ``True``
+    #: / ``False`` come from the real DOM (``required`` / ``aria-required``) so the
+    #: engine blocks only on TRULY required unmapped fields and skips optional ones
+    #: (universal-ATS support: real forms carry many optional free-text questions).
+    required: bool | None = None
 
 
 @dataclass(frozen=True)
