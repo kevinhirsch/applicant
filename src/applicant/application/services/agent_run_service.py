@@ -64,6 +64,23 @@ class AgentRunService:
         self._storage.commit()
         return updated
 
+    def set_active(self, campaign_id: CampaignId, active: bool) -> Campaign:
+        """Pause/resume a campaign's automated work at runtime (NFR-ZEROCLI-1).
+
+        Flips the persisted ``active`` flag: a paused (``active=False``) campaign is
+        skipped by ``Scheduler._active_campaigns`` and short-circuited by
+        ``should_continue``, so the 24/7 loop starts no new work for it — without a
+        restart or any CLI. Resume re-includes it on the next tick. Persisted, so the
+        pause survives restarts.
+        """
+        campaign = self._storage.campaigns.get(campaign_id)
+        if campaign is None:
+            raise NotFound(f"campaign not found: {campaign_id}")
+        updated = dataclasses.replace(campaign, active=bool(active))
+        self._storage.campaigns.add(updated)
+        self._storage.commit()
+        return updated
+
     # --- per-run intent (FR-AGENT-7) --------------------------------------
     def start_run(
         self, campaign_id: CampaignId, intent_sentence: str, *, stats: dict | None = None
@@ -134,6 +151,41 @@ class AgentRunService:
         """
         run = self._storage.agent_runs.latest(campaign_id)
         return run.intent_sentence if run is not None else None
+
+    def status(self, campaign_id: CampaignId, *, now: datetime | None = None) -> dict:
+        """Live per-campaign agent status for the operator (FR-AGENT-7/FR-OBS-2).
+
+        Combines the persisted run config (mode/throughput/active) with the latest
+        run's intent + stats and today's applied-count vs the daily budget, so the
+        front-door can answer 'is the agent working, and what has it done today'.
+        """
+        now = now or datetime.now(UTC)
+        campaign = self._storage.campaigns.get(campaign_id)
+        if campaign is None:
+            raise NotFound(f"campaign not found: {campaign_id}")
+        latest = self._storage.agent_runs.latest(campaign_id)
+        try:
+            applied_today = int(
+                self._storage.agent_runs.count_pipelines_started_on(campaign_id, now.date())
+            )
+        except Exception:  # pragma: no cover - defensive: count is best-effort
+            applied_today = 0
+        return {
+            "campaign_id": str(campaign_id),
+            "active": bool(campaign.active),
+            "paused": not bool(campaign.active),
+            "run_mode": campaign.run_mode.value,
+            "throughput_target": campaign.throughput_target,
+            "daily_budget": clamp_throughput(campaign.throughput_target),
+            "applied_today": applied_today,
+            "latest_intent": latest.intent_sentence if latest is not None else None,
+            "latest_stats": dict(latest.stats) if latest is not None else {},
+            "last_run_at": (
+                latest.timestamp.isoformat()
+                if latest is not None and latest.timestamp is not None
+                else None
+            ),
+        }
 
     # --- run-mode stop condition (FR-AGENT-2) -----------------------------
     def should_continue(

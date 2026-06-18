@@ -42,12 +42,22 @@ class Scheduler:
         final_approval_service=None,
         tick_services_factory=None,
         setup_service=None,
+        interval_seconds: float | None = None,
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
         self._digest = digest_service
         self._notifications = notification_service
         self._final_approval = final_approval_service
+        # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
+        # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
+        # None when unknown (in-memory / unit-driven schedulers).
+        self._interval_seconds = interval_seconds
+        # Live observability (FR-AGENT-7/FR-OBS-2): when the most recent tick ran and
+        # whether one is executing right now. Set by ``tick``; read by ``state``. The
+        # 24/7 loop owns the only writer, so a plain attribute is enough.
+        self._last_tick_at: datetime | None = None
+        self._tick_running: bool = False
         # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. Each per-campaign loop tick
         # consults this and starts NO new work (discovery/digest/pipeline) while the
         # gate is closed — only in-flight recovery re-drive proceeds. The scheduler
@@ -83,6 +93,8 @@ class Scheduler:
         configured; the ladder advance (no storage) always uses the shared notifier.
         """
         now = now or datetime.now(UTC)
+        self._tick_running = True
+        self._last_tick_at = now
         # CONC-3: prune stale per-day dedup entries so the maps don't grow unbounded
         # over 24/7 operation.
         self._prune_daily_sent(now)
@@ -115,6 +127,7 @@ class Scheduler:
                 finally:
                     lock.release()
         finally:
+            self._tick_running = False
             if session is not None:
                 try:
                     session.close()
@@ -137,6 +150,72 @@ class Scheduler:
             "daily_digests": [],
             "ladder_fired": fired,
         }
+
+    def state(self, now: datetime | None = None) -> dict:
+        """Live scheduler heartbeat for the status endpoint (FR-AGENT-7/FR-OBS-2).
+
+        ``running`` is true while a tick executes; ``last_tick`` is when the most
+        recent tick started; ``next_tick`` is the estimated next fire (``last_tick``
+        + the configured interval) when the cadence is known. All timestamps ISO-8601.
+        """
+        now = now or datetime.now(UTC)
+        last = self._last_tick_at
+        nxt = None
+        if last is not None and self._interval_seconds:
+            from datetime import timedelta
+
+            nxt = last + timedelta(seconds=float(self._interval_seconds))
+        return {
+            "running": bool(self._tick_running),
+            "last_tick": last.isoformat() if last else None,
+            "next_tick": nxt.isoformat() if nxt else None,
+            "interval_seconds": self._interval_seconds,
+            "now": now.isoformat(),
+        }
+
+    def run_now(self, campaign_id, now: datetime | None = None) -> dict:
+        """Run a single tick for one campaign on demand (the operator 'Run now').
+
+        Reuses the per-campaign lock so a manual run never races a scheduled tick: if
+        a tick for this campaign is already in flight, this returns ``ran=False`` with
+        a reason rather than piling a second concurrent tick onto it. Builds a fresh
+        per-tick storage/session via the factory (CONC-2) just like the scheduled
+        path, so it never touches the request-scoped Session.
+        """
+        import dataclasses
+
+        now = now or datetime.now(UTC)
+        services = self._tick_services_factory() if self._tick_services_factory else None
+        loop = services["agent_loop"] if services else self._loop
+        session = services.get("_session") if services else None
+
+        lock = self._campaign_lock(campaign_id)
+        if not lock.acquire(blocking=False):
+            return {
+                "campaign_id": str(campaign_id),
+                "ran": False,
+                "reason": "a run is already in progress for this campaign",
+            }
+        self._tick_running = True
+        self._last_tick_at = now
+        try:
+            result = loop.tick(campaign_id, now)
+            if dataclasses.is_dataclass(result):
+                payload = dataclasses.asdict(result)
+            elif isinstance(result, dict):
+                payload = dict(result)
+            else:
+                payload = {"ran": True}
+            payload.setdefault("campaign_id", str(campaign_id))
+            return payload
+        finally:
+            self._tick_running = False
+            lock.release()
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:  # pragma: no cover - defensive
+                    pass
 
     def _campaign_lock(self, campaign_id) -> threading.Lock:
         """Return the per-campaign non-reentrant lock, creating it once (CONC)."""

@@ -23,6 +23,7 @@ never fabricates.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
@@ -1012,7 +1013,7 @@ class MaterialService:
                     # climbs further on low confidence / context overflow.
                     start_tier=_HEAVY_WRITING_START_TIER,
                 )
-                return result.text
+                return _strip_llm_preamble(result.text)
             except Exception:
                 pass  # fall back to deterministic reframing; never block
         return self.reframe_truthfully(true_source, terms)
@@ -1072,7 +1073,7 @@ class MaterialService:
                 ],
                 start_tier=_HEAVY_WRITING_START_TIER,
             )
-            text = (result.text or "").strip()
+            text = _strip_llm_preamble((result.text or "").strip())
             return text or None
         except Exception:
             return None
@@ -1118,6 +1119,33 @@ _SYSTEM_PROMPT = (
     "re-term true history. You NEVER fabricate skills, titles, dates, or claims. "
     "No em-dashes. Write in the candidate's own warm, direct, first-person voice."
 )
+
+#: A leading meta-preamble an LLM sometimes prepends before the real document
+#: ("Here's a cover letter draft in your voice, emphasizing X…:", "Sure, here is the
+#: revised version:"). Matched ONLY at the very start and only stripped when ample
+#: real content remains, so it can never eat a legitimate opening sentence.
+_PREAMBLE_RE = re.compile(
+    r"^\s*(?:sure[,!.]?\s+|certainly[,!.]?\s+|of course[,!.]?\s+|okay[,!.]?\s+)?"
+    r"(?:here(?:'s| is)|below is|this is|i(?:'ve| have)\s+\w+)\b[^\n]*?"
+    r"(?:draft|version|cover letter|letter|answer|r[ée]sum[ée]|revis\w+|"
+    r"in your voice|as requested|for you|below)[^\n]*?[:.],?\s+",
+    re.IGNORECASE,
+)
+
+
+def _strip_llm_preamble(text: str) -> str:
+    """Drop a leading 'Here's a draft…:' meta-sentence the model may prepend.
+
+    Conservative: only when the match is at the very start AND >= 60 chars of real
+    content remain after it, so a genuine opening line is never removed.
+    """
+    if not text:
+        return text
+    m = _PREAMBLE_RE.match(text)
+    if m and (len(text) - m.end()) >= 60:
+        return text[m.end():].lstrip(" ,.\n")
+    return text
+
 
 #: Writing application material (résumé variants, cover letters, essay answers) is a
 #: heavy, quality-sensitive task, so it starts at the escalation tier (L2) instead of

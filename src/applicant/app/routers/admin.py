@@ -19,6 +19,7 @@ from applicant.app.container import Container
 from applicant.app.deps import (
     get_admin_query_service,
     get_container,
+    get_learning_service,
     get_storage,
     require_llm_configured,
 )
@@ -132,6 +133,19 @@ def variant_library(campaign_id: str, admin_query=Depends(get_admin_query_servic
     """Resume-variant library: lineage / scores / approval state (FR-UI-6 / FR-RESUME-6)."""
     variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
     return {"campaign_id": campaign_id, "variants": variants}
+
+
+@router.get("/learning/{campaign_id}")
+def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) -> dict:
+    """What the system has learned for a campaign, in plain language (FR-LEARN-5/6).
+
+    A read-only operator-visibility view: the conversion totals across all sources,
+    each source's funnel (matched -> approved -> submitted) ranked by how well it
+    converts, the roles that actually convert, and the exploration budget. Built
+    purely from persisted learning state (no LLM, no secrets) so the operator can
+    see and trust the bias the engine applies.
+    """
+    return learning.build_summary(campaign_id)  # type: ignore[arg-type]
 
 
 # === Stealth honesty + egress (FR-STEALTH-4 / FR-STEALTH-5) ================

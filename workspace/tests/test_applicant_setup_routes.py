@@ -51,6 +51,12 @@ class _FakeEngine:
     async def setup_configure_llm_from_endpoint(self, body):
         return await self._dispatch("setup_configure_llm_from_endpoint", body)
 
+    async def setup_get_tiers(self):
+        return await self._dispatch("setup_get_tiers")
+
+    async def setup_set_tiers(self, body):
+        return await self._dispatch("setup_set_tiers", body)
+
     async def list_model_endpoints(self, refresh=False):
         return await self._dispatch("list_model_endpoints", refresh)
 
@@ -71,6 +77,12 @@ class _FakeEngine:
 
     async def setup_test_channels(self):
         return await self._dispatch("setup_test_channels")
+
+    async def setup_get_quiet_hours(self):
+        return await self._dispatch("setup_get_quiet_hours")
+
+    async def setup_configure_quiet_hours(self, body):
+        return await self._dispatch("setup_configure_quiet_hours", body)
 
     async def setup_get_sandbox_connection(self):
         return await self._dispatch("setup_get_sandbox_connection")
@@ -171,6 +183,46 @@ def test_configure_llm_forwards_body(monkeypatch):
     assert args[0]["model"] == "m"
 
 
+def test_get_tiers_passes_through(monkeypatch):
+    payload = {"tiers": [{"provider": "openrouter", "model": "deepseek/deepseek-v4-flash", "api_key_ref": "llm.tier1"}]}
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/llm/tiers")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["engine_available"] is True
+    assert body["tiers"][0]["model"] == "deepseek/deepseek-v4-flash"
+    assert "api_key" not in body["tiers"][0]  # secret omitted by the engine
+    assert _FakeEngine.last_call == ("setup_get_tiers", ())
+
+
+def test_get_tiers_soft_degrades(monkeypatch):
+    _patch_engine(monkeypatch, error=EngineError("down"))
+    resp = _make_client().get("/api/applicant/setup/llm/tiers")
+    assert resp.status_code == 200
+    assert resp.json() == {"tiers": [], "engine_available": False}
+
+
+def test_set_tiers_forwards_ladder(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {"tiers": [
+        {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-v4-flash", "api_key": "sk", "context_window": 128000},
+        {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-v4-pro", "api_key_ref": "llm.tier2", "context_window": 128000},
+    ]}
+    resp = _make_client().put("/api/applicant/setup/llm/tiers", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_tiers"
+    assert len(args[0]["tiers"]) == 2
+    assert args[0]["tiers"][1]["api_key_ref"] == "llm.tier2"  # ref carried through
+
+
+def test_set_tiers_rejects_empty(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().put("/api/applicant/setup/llm/tiers", json={"tiers": []})
+    assert resp.status_code == 400
+
+
 def test_llm_from_endpoint_forwards_body(monkeypatch):
     _patch_engine(monkeypatch, result=None)
     resp = _make_client().post(
@@ -232,6 +284,43 @@ def test_channels_test(monkeypatch):
     resp = _make_client().post("/api/applicant/setup/channels/test")
     assert resp.status_code == 200
     assert resp.json()["channels"] == ["discord"]
+
+
+# ── quiet hours (FR-NOTIF-5) ────────────────────────────────────────────────
+
+
+def test_quiet_hours_get_and_save(monkeypatch):
+    _patch_engine(
+        monkeypatch,
+        result={"enabled": True, "start": "22:00", "end": "07:00", "tz": ""},
+    )
+    r = _make_client().get("/api/applicant/setup/channels/quiet-hours")
+    assert r.status_code == 200
+    assert r.json()["enabled"] is True
+    assert _FakeEngine.last_call == ("setup_get_quiet_hours", ())
+
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "22:30", "end": "07:15", "tz": "America/Phoenix"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_quiet_hours"
+    assert args[0]["enabled"] is True
+    assert args[0]["start"] == "22:30"
+    assert args[0]["tz"] == "America/Phoenix"
+
+
+def test_quiet_hours_engine_400_passed_through(monkeypatch):
+    err = EngineError("bad", status=400, detail="Quiet-hours start must be a time")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "25:00", "end": "07:00"},
+    )
+    assert resp.status_code == 400
 
 
 # ── automation sandbox backend (FR-SANDBOX-1) ───────────────────────────────

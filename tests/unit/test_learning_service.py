@@ -245,6 +245,75 @@ def test_record_decision_caps_feature_stats():
     assert len(model.feature_stats) <= _FEATURE_STATS_CAP
 
 
+# === operator-visibility summary (Insights surface, FR-LEARN-5/6) ===========
+@pytest.mark.unit
+def test_build_summary_ranks_sources_with_funnel_and_totals(learning, campaign):
+    """build_summary surfaces ranked source funnels + overall conversion totals."""
+    model = learning.model_for(campaign.id)
+    model = learning.record_source_funnel(
+        model,
+        {
+            "low_convert": {"matches": 20},
+            "high_convert": {"matches": 4, "approvals": 2, "submissions": 2},
+        },
+    )
+    learning.persist_model(model)
+
+    out = learning.build_summary(campaign.id)
+    assert out["campaign_id"] == str(campaign.id)
+    # Totals are summed across all sources.
+    assert out["summary"]["total_matched"] == 24
+    assert out["summary"]["total_submitted"] == 2
+    assert out["summary"]["sources_seen"] == 2
+    # The converting source is ranked first and carries its real funnel.
+    first = out["sources"][0]
+    assert first["source"] == "high_convert"
+    assert first["matched"] == 4 and first["approved"] == 2 and first["submitted"] == 2
+    assert first["conversion_rate"] == 50.0
+    # A source with matches but no conversions reads as a 0% rate (not None).
+    last = out["sources"][-1]
+    assert last["source"] == "low_convert"
+    assert last["conversion_rate"] == 0.0
+    # A source seen with zero matches has no rate to normalize against.
+    model = learning.load_model(campaign.id)
+    model = learning.record_source_funnel(model, {"cold": {"approvals": 1}})
+    learning.persist_model(model)
+    cold = next(s for s in learning.build_summary(campaign.id)["sources"] if s["source"] == "cold")
+    assert cold["matched"] == 0 and cold["conversion_rate"] is None
+
+
+@pytest.mark.unit
+def test_build_summary_exposes_roles_and_budget_no_vector(learning, campaign):
+    """Summary shows converting role titles + the exploration budget, never the raw vector."""
+    from dataclasses import replace
+
+    model = learning.model_for(campaign.id)
+    model = learning.record_converting_role(
+        model, "senior backend engineer", title="Senior Backend Engineer"
+    )
+    model = replace(model, exploration_budget=0.25)
+    learning.persist_model(model)
+
+    out = learning.build_summary(campaign.id)
+    assert "Senior Backend Engineer" in out["converting_roles"]
+    assert out["converting_samples"] == 1
+    assert out["exploration_budget"] == pytest.approx(0.25)
+    # No embedding vector / secrets leak into the operator view.
+    import json
+
+    assert "vector" not in json.dumps(out)
+
+
+@pytest.mark.unit
+def test_build_summary_empty_campaign_is_safe(learning, campaign):
+    """A brand-new campaign with no learning yet returns a clean empty summary."""
+    out = learning.build_summary(campaign.id)
+    assert out["summary"]["total_matched"] == 0
+    assert out["sources"] == []
+    assert out["converting_roles"] == []
+    assert out["exploration_budget"] == pytest.approx(0.1)
+
+
 @pytest.mark.unit
 def test_persist_model_drops_raw_feedback_tokens(learning, campaign):
     """#12: raw free-text feedback tokens are dropped from the persisted blob."""

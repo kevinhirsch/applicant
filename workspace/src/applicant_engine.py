@@ -230,6 +230,14 @@ class ApplicantEngineClient:
     async def setup_test_channels(self) -> Any:
         return await self._request("POST", "/api/setup/channels/test")
 
+    async def setup_get_quiet_hours(self) -> Any:
+        """The persisted quiet-hours window for approvals/digests (FR-NOTIF-5)."""
+        return await self._request("GET", "/api/setup/channels/quiet-hours")
+
+    async def setup_configure_quiet_hours(self, body: dict) -> Any:
+        """Set the quiet-hours window (enabled/start/end/tz). 204 -> None."""
+        return await self._request("POST", "/api/setup/channels/quiet-hours", json=body)
+
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
@@ -475,6 +483,14 @@ class ApplicantEngineClient:
     async def admin_variants(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/admin/variants/{campaign_id}")
 
+    async def admin_learning(self, campaign_id: str) -> Any:
+        """Plain-language summary of what the engine has learned for a campaign.
+
+        Conversion totals, the source funnel ranked by conversion, the roles that
+        actually convert, and the exploration budget — read-only operator visibility.
+        """
+        return await self._request("GET", f"/api/admin/learning/{campaign_id}")
+
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 
@@ -512,6 +528,18 @@ class ApplicantEngineClient:
 
     async def agent_run_configure(self, campaign_id: str, body: dict) -> Any:
         return await self._request("PUT", f"/api/agent-runs/{campaign_id}/config", json=body)
+
+    async def agent_run_status(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/agent-runs/{campaign_id}/status")
+
+    async def agent_run_now(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/run")
+
+    async def agent_run_pause(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/pause")
+
+    async def agent_run_resume(self, campaign_id: str) -> Any:
+        return await self._request("POST", f"/api/agent-runs/{campaign_id}/resume")
 
     # -- discovery-source toggles + yield (engine routers/discovery_sources.py)
 

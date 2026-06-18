@@ -31,6 +31,7 @@ import itertools
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.notification import (
@@ -61,6 +62,47 @@ _INBOX_MAX_AGE = timedelta(hours=24)
 # so a few days of retention keeps re-driven same-day sends idempotent while never
 # growing one key per campaign+day forever over 24/7 operation.
 _SENT_EMAIL_RETENTION_DAYS = 3
+
+#: Minutes in a day — the quiet-hours window is expressed as a [start, end) span of
+#: minutes-since-midnight so it supports HH:MM precision (FR-NOTIF-5), not just whole
+#: hours. A whole-hour ``(start_hour, end_hour)`` tuple is still accepted and scaled up.
+_MINUTES_PER_DAY = 24 * 60
+
+
+def _to_minutes(value: int | str) -> int:
+    """Coerce a clock position to minutes-since-midnight (0..1439).
+
+    Accepts an int hour (0-23, the legacy form), an int already in minutes, or an
+    ``"HH:MM"`` string (the UI form). Out-of-range values wrap into the day so a
+    malformed window can never crash the dispatch path.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if ":" in text:
+            hh, _, mm = text.partition(":")
+            minutes = int(hh) * 60 + int(mm or 0)
+        else:
+            minutes = int(text) * 60  # bare "22" => 22:00
+    elif value <= 24:
+        minutes = int(value) * 60  # legacy whole-hour form (0-24)
+    else:
+        minutes = int(value)
+    return minutes % _MINUTES_PER_DAY
+
+
+def _normalize_quiet_window(
+    quiet_hours: tuple[int | str, int | str] | None,
+) -> tuple[int, int] | None:
+    """Normalize a quiet-hours window to a ``(start_min, end_min)`` minute span.
+
+    Returns ``None`` when quiet hours are not configured. A window with equal start
+    and end means "no quiet hours" (an empty span) and is also returned as-is for the
+    caller to treat as inactive.
+    """
+    if not quiet_hours:
+        return None
+    start, end = quiet_hours
+    return (_to_minutes(start), _to_minutes(end))
 
 
 class NotificationDeliveryError(RuntimeError):
@@ -126,7 +168,8 @@ class AppriseNotifier:
         email_timeout_seconds: int = _EMAIL_TIMEOUT_SECONDS,
         clock: Callable[[], datetime] | None = None,
         presence: Callable[[], bool] | None = None,
-        quiet_hours: tuple[int, int] | None = None,
+        quiet_hours: tuple[int | str, int | str] | None = None,
+        quiet_tz: str = "",
         always_on: bool = False,
         send_real: bool = False,
     ) -> None:
@@ -139,9 +182,13 @@ class AppriseNotifier:
         # Presence signal (FR-NOTIF-2): True when the user is verifiably present in
         # the web UI (focused tab + recent input + open socket). Default: absent.
         self._presence = presence
-        # Quiet hours (FR-NOTIF-5): (start_hour, end_hour) in local 24h; NORMAL
-        # notifications defer into this window unless the campaign is 24/7.
-        self._quiet_hours = quiet_hours
+        # Quiet hours (FR-NOTIF-5): a [start, end) span of minutes-since-midnight in
+        # the configured timezone; NORMAL notifications (approvals/digests) defer into
+        # this window unless the user is in 24/7 mode (``always_on``). Errors always
+        # fire. Accepts HH:MM strings or whole-hour ints (legacy). Empty => disabled.
+        self._quiet_hours = _normalize_quiet_window(quiet_hours)
+        # The timezone the window is interpreted in. Empty => UTC (the clock's tz).
+        self._quiet_tz = quiet_tz or ""
         self._always_on = always_on
         self._send_real = send_real
         # dedup_key -> active delivery (deactivated on expiry, FR-NOTIF-3)
@@ -192,17 +239,32 @@ class AppriseNotifier:
         return bool(self._apprise)
 
     def configure(
-        self, *, discord_webhook_url: str | None = None, apprise_urls: str | None = None
+        self,
+        *,
+        discord_webhook_url: str | None = None,
+        apprise_urls: str | None = None,
+        quiet_hours: tuple[int | str, int | str] | None = None,
+        quiet_tz: str | None = None,
+        always_on: bool | None = None,
     ) -> None:
-        """Update channel config on the live adapter (wizard wiring, FR-OOBE-2).
+        """Update channel + quiet-hours config on the live adapter (FR-OOBE-2, FR-NOTIF-5).
 
-        Lets the OOBE channels step reconfigure the running notifier without a
-        restart (zero-CLI). Only provided channels are updated.
+        Lets Settings / the OOBE channels step reconfigure the running notifier
+        without a restart (zero-CLI). Only the provided fields are updated; passing
+        ``quiet_hours=None`` together with ``always_on=True`` is how the UI selects
+        24/7 mode (quiet hours off). To CLEAR a configured window, pass
+        ``always_on=True`` (the window is then ignored).
         """
         if discord_webhook_url is not None:
             self._discord = discord_webhook_url
         if apprise_urls is not None:
             self._apprise = apprise_urls
+        if quiet_hours is not None:
+            self._quiet_hours = _normalize_quiet_window(quiet_hours)
+        if quiet_tz is not None:
+            self._quiet_tz = quiet_tz or ""
+        if always_on is not None:
+            self._always_on = always_on
 
     # --- ladder construction (FR-NOTIF-2) ---------------------------------
     def _now_secs(self) -> float:
@@ -245,16 +307,40 @@ class AppriseNotifier:
 
     # --- quiet hours (FR-NOTIF-5) -----------------------------------------
     def _in_quiet_hours(self, when: datetime) -> bool:
+        """True when ``when`` falls inside the configured quiet window.
+
+        24/7 mode (``always_on``) and an unset/empty window always return False so
+        errors-immediate is never affected (that gate lives in the caller, but this
+        keeps the window check pure). The window is a [start, end) minute span in the
+        configured timezone, evaluated to the minute so HH:MM windows are exact, and
+        wraps correctly across midnight (e.g. 22:30 -> 07:15).
+        """
         if self._always_on or not self._quiet_hours:
             return False
         start, end = self._quiet_hours
-        hour = when.hour
         if start == end:
-            return False
+            return False  # empty span => effectively 24/7
+        local = self._localize(when)
+        minutes = local.hour * 60 + local.minute
         if start < end:
-            return start <= hour < end
-        # Window wraps midnight (e.g. 22 -> 7).
-        return hour >= start or hour < end
+            return start <= minutes < end
+        # Window wraps midnight (e.g. 22:00 -> 07:00).
+        return minutes >= start or minutes < end
+
+    def _localize(self, when: datetime) -> datetime:
+        """Convert ``when`` into the quiet-hours timezone (UTC when unset/invalid).
+
+        The ladder clock yields UTC instants; the user configures quiet hours in
+        their own timezone, so the window must be evaluated in that zone. An unknown
+        timezone name degrades to UTC rather than crashing the dispatch path.
+        """
+        if not self._quiet_tz:
+            return when
+        try:
+            tz = ZoneInfo(self._quiet_tz)
+        except (ZoneInfoNotFoundError, ValueError, OSError):
+            return when
+        return when.astimezone(tz)
 
     # --- dispatch ---------------------------------------------------------
     @staticmethod

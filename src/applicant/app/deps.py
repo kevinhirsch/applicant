@@ -103,6 +103,12 @@ def get_agent_run_service(container: Container = Depends(get_container)):
     return container.agent_run_service
 
 
+def get_scheduler(container: Container = Depends(get_container)):
+    """The 24/7 scheduler singleton — its live heartbeat backs the status endpoint
+    and its per-campaign lock backs the on-demand 'Run now' (FR-AGENT-7/FR-OBS-2)."""
+    return container.scheduler
+
+
 def get_discovery_service(container: Container = Depends(get_container)):
     return container.discovery_service
 
@@ -203,6 +209,13 @@ def get_prefill_service(
     services: dict | None = Depends(get_request_services),
 ):
     return _resolved(services, container, "prefill_service")
+
+
+def get_learning_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    return _resolved(services, container, "learning_service")
 
 
 def require_tool_enabled(tool_key: str):

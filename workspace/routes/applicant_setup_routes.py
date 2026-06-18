@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -94,9 +94,36 @@ class LLMFromEndpointIn(BaseModel):
     model: str
 
 
+class TierItemIn(BaseModel):
+    provider: str
+    base_url: str = ""
+    model: str
+    api_key: str = ""
+    api_key_ref: str = ""  # carried back to keep an existing key across edit/reorder
+    context_window: int = 8192
+
+
+class LadderIn(BaseModel):
+    tiers: list[TierItemIn]
+
+
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""
+
+
+class QuietHoursIn(BaseModel):
+    """Quiet-hours window for approvals/digests (FR-NOTIF-5).
+
+    ``enabled=False`` is 24/7 mode (always notify). Errors always surface
+    immediately, any hour — quiet hours only defer approval/digest push channels.
+    Times are HH:MM in ``tz`` (UTC when blank). Thin proxy mirroring the engine.
+    """
+
+    enabled: bool = False
+    start: str = "22:00"
+    end: str = "07:00"
+    tz: str = ""
 
 
 class SectionIn(BaseModel):
@@ -194,6 +221,35 @@ def setup_applicant_setup_routes() -> APIRouter:
                 await engine.setup_configure_llm_from_endpoint(body.model_dump())
         except EngineError as exc:
             logger.info("applicant configure llm from-endpoint failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
+
+    @router.get("/llm/tiers")
+    async def get_llm_tiers(request: Request) -> JSONResponse:
+        """The model escalation ladder (Level 1 → N), secrets omitted (FR-LLM-3)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_tiers()
+        except EngineError as exc:
+            logger.debug("get llm tiers: engine unavailable: %s", exc)
+            return JSONResponse(content={"tiers": [], "engine_available": False})
+        out = data if isinstance(data, dict) else {"tiers": data or []}
+        out.setdefault("tiers", [])
+        out["engine_available"] = True
+        return JSONResponse(content=out)
+
+    @router.put("/llm/tiers")
+    async def set_llm_tiers(body: LadderIn, request: Request) -> JSONResponse:
+        """Reorder / add / remove model tiers (1–N; position = escalation level)."""
+        require_privilege(request, _CONFIG_PRIV)
+        if not body.tiers:
+            raise HTTPException(status_code=400, detail="Add at least one model tier.")
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_set_tiers(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant set llm tiers failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content={"ok": True})
 
@@ -302,6 +358,32 @@ def setup_applicant_setup_routes() -> APIRouter:
             logger.info("applicant test channels failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
+
+    # ── quiet hours (FR-NOTIF-5): defer approvals/digests, errors always go ──
+
+    @router.get("/channels/quiet-hours")
+    async def get_quiet_hours(request: Request) -> JSONResponse:
+        """Current quiet-hours window (enabled/start/end/tz)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_quiet_hours()
+        except EngineError as exc:
+            logger.info("applicant get quiet hours failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/channels/quiet-hours")
+    async def configure_quiet_hours(body: QuietHoursIn, request: Request) -> JSONResponse:
+        """Save the quiet-hours window (or 24/7 mode when disabled)."""
+        require_privilege(request, _CONFIG_PRIV)
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_configure_quiet_hours(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant configure quiet hours failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
 
     # ── automation sandbox backend (FR-SANDBOX-1) ──────────────────────
 

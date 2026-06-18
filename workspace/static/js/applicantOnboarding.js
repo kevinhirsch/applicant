@@ -457,6 +457,7 @@ function _inferProvider(chosen) {
 async function _renderChannels() {
   let cur = {};
   try { cur = await _fetchJSON(`${SETUP}/channels`); } catch { cur = {}; }
+  const qh = (cur && cur.quiet_hours) || { enabled: false, start: '22:00', end: '07:00', tz: '' };
   _setBody(`
     <h2 class="ao-step-title">Notifications ${_tip('How Applicant reaches you — Discord and/or email — for your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
     <p class="ao-step-desc">Add a Discord webhook and/or an email address so Applicant can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
@@ -501,6 +502,38 @@ async function _renderChannels() {
         <button class="admin-btn-add" id="ao-ch-test" style="margin-left:auto;">Send a test</button>
       </div>
     </div>
+    <div class="admin-card">
+      <h2>Quiet hours ${_tip('When on, Applicant holds approval requests and your daily digest until quiet hours end, so it never pings you overnight. Anything urgent — like an error that needs you — always comes through right away.')}</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">Pause non-urgent pushes (Discord and email) during a nightly window. In-app updates still appear in your portal, and errors always reach you immediately.</div>
+      <div class="settings-col">
+        <div class="settings-row">
+          <label class="settings-label">Notify me</label>
+          <select id="ao-qh-mode" class="settings-select">
+            <option value="always"${qh.enabled ? '' : ' selected'}>Any time (24/7)</option>
+            <option value="quiet"${qh.enabled ? ' selected' : ''}>Except during quiet hours</option>
+          </select>
+        </div>
+        <div id="ao-qh-window" style="display:${qh.enabled ? 'block' : 'none'}">
+          <div class="settings-row">
+            <label class="settings-label">Quiet from ${_tip('Start of the quiet window, 24-hour HH:MM. Wraps past midnight — e.g. 22:00 to 07:00.')}</label>
+            <input id="ao-qh-start" class="settings-select" type="time" value="${esc(qh.start || '22:00')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Quiet until</label>
+            <input id="ao-qh-end" class="settings-select" type="time" value="${esc(qh.end || '07:00')}" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">Time zone ${_tip('Optional. An IANA name like America/Phoenix or Europe/London. Leave blank to use UTC.')}</label>
+            <input id="ao-qh-tz" class="settings-select" type="text" placeholder="UTC" value="${esc(qh.tz || '')}" />
+          </div>
+        </div>
+      </div>
+      <div id="ao-qh-msg" style="margin-top:6px;"></div>
+      <div class="settings-row" style="margin-top:8px;">
+        <span id="ao-qh-save-msg" style="font-size:11px;"></span>
+        <button class="admin-btn-add" id="ao-qh-save" style="margin-left:auto;">Save quiet hours</button>
+      </div>
+    </div>
     <div id="ao-ch-msg"></div>
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-ch-save">Save &amp; continue</button>`);
@@ -530,6 +563,37 @@ async function _renderChannels() {
       testMsg.textContent = 'Failed: ' + (e.message || 'Test failed.'); testMsg.className = 'admin-error';
     } finally {
       testBtn.disabled = false;
+    }
+  };
+
+  // Quiet hours (FR-NOTIF-5). The mode select reveals the window, mirroring the
+  // sandbox-backend reveal above. Saving is independent of the channel save so it
+  // works the same in the wizard and in Settings (where there's no "continue").
+  const qhMode = document.getElementById('ao-qh-mode');
+  const qhWindow = document.getElementById('ao-qh-window');
+  if (qhMode) qhMode.onchange = () => {
+    qhWindow.style.display = (qhMode.value === 'quiet') ? 'block' : 'none';
+  };
+  const qhSave = document.getElementById('ao-qh-save');
+  const qhSaveMsg = document.getElementById('ao-qh-save-msg');
+  if (qhSave) qhSave.onclick = async () => {
+    const enabled = qhMode.value === 'quiet';
+    const body = {
+      enabled,
+      start: (document.getElementById('ao-qh-start').value || '22:00'),
+      end: (document.getElementById('ao-qh-end').value || '07:00'),
+      tz: (document.getElementById('ao-qh-tz').value || '').trim(),
+    };
+    qhSave.disabled = true;
+    qhSaveMsg.textContent = 'Saving…'; qhSaveMsg.className = '';
+    try {
+      await _post(`${SETUP}/channels/quiet-hours`, body);
+      qhSaveMsg.textContent = enabled ? 'Quiet hours saved.' : 'Notifications on 24/7.';
+      qhSaveMsg.className = 'admin-success';
+    } catch (e) {
+      qhSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); qhSaveMsg.className = 'admin-error';
+    } finally {
+      qhSave.disabled = false;
     }
   };
 

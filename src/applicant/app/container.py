@@ -357,10 +357,17 @@ def build_container(settings: Settings | None = None) -> Container:
     font_installer = FontInstaller(install_root=settings.fonts_dir)
     # Channel config: wizard-persisted (FR-OOBE-2) overrides env defaults; real
     # network send is opt-in (NOTIFICATIONS_LIVE) so the default lane is hermetic.
+    # Quiet hours (FR-NOTIF-5) are persisted alongside the channels and rehydrated on
+    # boot so the deferral window survives restarts; ``enabled=False`` is 24/7 mode
+    # (always_on), which the notifier treats as "no quiet hours" — errors always fire.
     chan = setup_service.get_channels()
+    quiet = setup_service.get_quiet_hours()
     notification = AppriseNotifier(
         discord_webhook_url=chan.get("discord_webhook_url") or settings.discord_webhook_url,
         apprise_urls=chan.get("apprise_urls") or settings.apprise_urls,
+        quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
+        quiet_tz=quiet["tz"],
+        always_on=not quiet["enabled"],
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
@@ -715,6 +722,7 @@ def build_container(settings: Settings | None = None) -> Container:
         final_approval_service=final_approval_service,
         tick_services_factory=tick_services_factory,
         setup_service=setup_service,
+        interval_seconds=settings.scheduler_interval_seconds,
     )
 
     return Container(

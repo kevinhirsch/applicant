@@ -78,6 +78,44 @@ def test_test_notification_is_hermetic(client):
 
 
 @pytest.mark.integration
+def test_quiet_hours_round_trip_and_24_7(client):
+    # FR-NOTIF-5: quiet hours default to 24/7 (disabled) and round-trip through the
+    # dedicated endpoint, reconfiguring the live notifier in place.
+    _open_llm_gate(client)
+    qh = client.get("/api/setup/channels/quiet-hours").json()
+    assert qh["enabled"] is False  # 24/7 by default
+
+    r = client.post(
+        "/api/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "22:30", "end": "07:15", "tz": "America/Phoenix"},
+    )
+    assert r.status_code == 204
+    saved = client.get("/api/setup/channels/quiet-hours").json()
+    assert saved == {
+        "enabled": True,
+        "start": "22:30",
+        "end": "07:15",
+        "tz": "America/Phoenix",
+    }
+    # It also rides along on the channels GET so the UI renders it in one fetch.
+    assert client.get("/api/setup/channels").json()["quiet_hours"]["enabled"] is True
+
+    # Switching back to 24/7 disables the window.
+    assert client.post("/api/setup/channels/quiet-hours", json={"enabled": False}).status_code == 204
+    assert client.get("/api/setup/channels/quiet-hours").json()["enabled"] is False
+
+
+@pytest.mark.integration
+def test_quiet_hours_rejects_bad_time(client):
+    _open_llm_gate(client)
+    r = client.post(
+        "/api/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "25:00", "end": "07:00"},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.integration
 @pytest.mark.skipif(
     os.getenv("NOTIF_LIVE_TEST") != "1",
     reason="Set NOTIF_LIVE_TEST=1 + DISCORD_WEBHOOK_URL to send a real notification.",
