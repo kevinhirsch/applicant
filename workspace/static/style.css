@@ -4472,7 +4472,16 @@ body.bg-pattern-sparkles {
       #research-overlay,
       #theme-modal,
       #settings-modal,
-      #email-lib-modal {
+      #email-lib-modal,
+      /* Applicant tool windows are floating windows like the rest, so they
+         belong in this list too — without it they centered on the full
+         viewport and sat shifted under the sidebar instead of in the chat
+         area. (The onboarding wizard is deliberately NOT here: it is the one
+         blocking, full-viewport modal — see #applicant-onboarding-overlay.) */
+      #applicant-portal-modal,
+      #applicant-chat-modal,
+      #applicant-vault-modal,
+      #applicant-remote-modal {
         left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px));
         width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
         box-sizing: border-box;
