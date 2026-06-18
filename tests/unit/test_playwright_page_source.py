@@ -53,18 +53,31 @@ class _StubLocator:
 
 
 class _StubOption:
-    def __init__(self, text):
+    def __init__(self, text, visible=True):
         self._text = text
+        self._visible = visible
+        self.clicked = False
 
     def inner_text(self):
         return self._text
 
+    def is_visible(self):
+        return self._visible
+
+    def get_attribute(self, name):
+        return self._text if name == "data-automation-label" else None
+
+    def click(self):
+        self.clicked = True
+
 
 class _StubElement:
-    def __init__(self, visible=True, tag="div", options=None):
+    def __init__(self, visible=True, tag="div", options=None, attrs=None):
         self._visible = visible
         self._tag = tag
         self._options = [_StubOption(o) for o in (options or [])]
+        self._attrs = attrs or {}
+        self.clicked = False
 
     def is_visible(self):
         return self._visible
@@ -72,6 +85,12 @@ class _StubElement:
     def evaluate(self, _script):
         # Mimics page.evaluate("e => e.tagName") → uppercase tag name.
         return self._tag.upper()
+
+    def get_attribute(self, name):
+        return self._attrs.get(name)
+
+    def click(self):
+        self.clicked = True
 
     def query_selector_all(self, sel):
         return self._options if sel == "option" else []
@@ -91,9 +110,13 @@ class _StubPage:
         self.screenshots: list[str] = []
         # select_option calls: (selector, kwargs) — and which option (label) won.
         self.selected: list[tuple[str, dict]] = []
+        # Options returned for query_selector_all("[role='option']") (custom dropdown).
+        self._role_options: list = []
 
     # query / read
     def query_selector_all(self, sel):
+        if sel == "[role='option']":
+            return self._role_options
         return self._handles_by_sel.get(sel, [])
 
     def query_selector(self, sel):
@@ -228,6 +251,52 @@ def test_text_input_still_typed_not_selected():
     src.type_value("[name='email']", "a@b.com")
     assert page.selected == []
     assert page.typed and page.typed[0][0] == "[name='email']"
+
+
+# --- Workday custom <button> dropdowns (aria-haspopup=listbox) --------------
+def test_detect_fields_includes_listbox_buttons():
+    # REGRESSION (Workday mock playtest): Workday's Country/Phone-type/EEO fields are
+    # <button aria-haspopup="listbox"> — NOT <select> — so the input/select/textarea
+    # query missed them. They must be detected as 'listbox' fields.
+    page = _StubPage()
+    page._handles_by_sel["button[aria-haspopup='listbox'], [role='combobox']"] = [
+        _StubHandle({"aria-haspopup": "listbox", "data-automation-id": "gender", "aria-label": "gender"})
+    ]
+    fields = _bare_source(page).detect_fields()
+    assert any(f.field_type == "listbox" and f.label == "gender" for f in fields)
+
+
+def test_type_value_chooses_listbox_option():
+    # The dropdown is opened (trigger clicked) and the matching VISIBLE option is
+    # clicked — never typed into.
+    page = _StubPage()
+    trigger = _StubElement(tag="button", attrs={"aria-haspopup": "listbox"})
+    page._elements_by_sel['[data-automation-id="gender"]'] = trigger
+    opt_other = _StubOption("Male")
+    opt_match = _StubOption("Prefer not to say")
+    page._role_options = [opt_other, opt_match]
+    src = _bare_source(page)
+    src.type_value('[data-automation-id="gender"]', "prefer not to say")
+    assert trigger.clicked is True
+    assert opt_match.clicked is True
+    assert opt_other.clicked is False
+    assert page.typed == []  # never routed through the text-type path
+
+
+def test_listbox_skips_hidden_options_from_other_dropdowns():
+    # Options from a closed dropdown (not visible) must NOT be chosen — only the
+    # visible option of the opened dropdown.
+    page = _StubPage()
+    page._elements_by_sel['[data-automation-id="veteran_status"]'] = _StubElement(
+        tag="button", attrs={"aria-haspopup": "listbox"}
+    )
+    hidden = _StubOption("Decline to self-identify", visible=False)  # other, closed dropdown
+    visible = _StubOption("I am not a protected veteran", visible=True)
+    page._role_options = [hidden, visible]
+    src = _bare_source(page)
+    src.type_value('[data-automation-id="veteran_status"]', "i am not a protected veteran")
+    assert visible.clicked is True
+    assert hidden.clicked is False
 
 
 # --- detect_fields returns REAL selectors ----------------------------------
