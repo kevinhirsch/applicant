@@ -924,6 +924,13 @@ class PlaywrightPageSource:
     def type_value(
         self, selector: str, value: str, *, cadence_ms: list[float] | None = None
     ) -> None:  # pragma: no cover
+        # A <select> dropdown cannot be typed into — it must be chosen via
+        # select_option (real forms use selects for EEO, work-authorization,
+        # country/state, yes/no, etc.). Without this branch every dropdown failed to
+        # fill (FR-PREFILL-2/3). Detect the element kind and route accordingly.
+        if self._is_select(selector):
+            self._select_option(selector, value)
+            return
         # Apply the per-keystroke cadence (FR-STEALTH-2): the adapter computes a
         # dwell-per-character plan; feed it to Playwright press-by-press instead of
         # the old constant 80ms delay. Fall back to a constant delay only when no
@@ -935,6 +942,42 @@ class PlaywrightPageSource:
                 locator.press_sequentially(ch, delay=max(0.0, float(delay)))
         else:
             self._page.type(selector, value, delay=80)
+
+    def _is_select(self, selector: str) -> bool:  # pragma: no cover
+        """True if ``selector`` resolves to a <select> element."""
+        try:
+            el = self._page.query_selector(selector)
+            if el is None:
+                return False
+            return str(el.evaluate("e => e.tagName")).lower() == "select"
+        except Exception:
+            return False
+
+    def _select_option(self, selector: str, value: str) -> None:  # pragma: no cover
+        """Choose a dropdown option matching ``value`` (label, then value, then a
+        case-insensitive contains-match against option texts). Raises if nothing
+        matches so the caller's soft-error path records an unmappable field."""
+        for kwargs in ({"label": value}, {"value": value}):
+            try:
+                self._page.select_option(selector, **kwargs)
+                return
+            except Exception:
+                continue
+        # Tolerant fallback: match an option whose visible text overlaps the value
+        # (e.g. resolved "decline to self-identify" vs an option with extra wording).
+        want = value.strip().lower()
+        el = self._page.query_selector(selector)
+        options = el.query_selector_all("option") if el is not None else []
+        for opt in options:
+            try:
+                txt = (opt.inner_text() or "").strip()
+            except Exception:
+                continue
+            low = txt.lower()
+            if low and (low == want or want in low or low in want):
+                self._page.select_option(selector, label=txt)
+                return
+        raise ValueError(f"no <option> matching {value!r}")
 
     def screenshot(self) -> str:  # pragma: no cover - integration-gated
         # Slugify the URL tail: a raw ``url[-12:]`` can contain ``/ ? :`` which are

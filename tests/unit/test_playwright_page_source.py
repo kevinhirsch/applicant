@@ -52,12 +52,29 @@ class _StubLocator:
         self.pressed.append((ch, delay))
 
 
+class _StubOption:
+    def __init__(self, text):
+        self._text = text
+
+    def inner_text(self):
+        return self._text
+
+
 class _StubElement:
-    def __init__(self, visible=True):
+    def __init__(self, visible=True, tag="div", options=None):
         self._visible = visible
+        self._tag = tag
+        self._options = [_StubOption(o) for o in (options or [])]
 
     def is_visible(self):
         return self._visible
+
+    def evaluate(self, _script):
+        # Mimics page.evaluate("e => e.tagName") → uppercase tag name.
+        return self._tag.upper()
+
+    def query_selector_all(self, sel):
+        return self._options if sel == "option" else []
 
 
 class _StubPage:
@@ -72,6 +89,8 @@ class _StubPage:
         self.filled: list[str] = []
         self.typed: list[tuple[str, str, int]] = []
         self.screenshots: list[str] = []
+        # select_option calls: (selector, kwargs) — and which option (label) won.
+        self.selected: list[tuple[str, dict]] = []
 
     # query / read
     def query_selector_all(self, sel):
@@ -79,6 +98,16 @@ class _StubPage:
 
     def query_selector(self, sel):
         return self._elements_by_sel.get(sel)
+
+    def select_option(self, selector, **kwargs):
+        # Mimic Playwright: succeed only when the requested label/value matches one of
+        # the element's options; otherwise raise (so the tolerant fallback is exercised).
+        el = self._elements_by_sel.get(selector)
+        opts = [o.inner_text() for o in (el._options if el is not None else [])]
+        want = kwargs.get("label") or kwargs.get("value")
+        if want not in opts:
+            raise ValueError(f"no option {want!r}")
+        self.selected.append((selector, kwargs))
 
     def content(self):
         return self._content
@@ -164,6 +193,41 @@ def test_invisible_challenge_widget_element_is_not_a_signal():
     page._elements_by_sel["iframe[src*='recaptcha'][src*='bframe']"] = _StubElement(visible=False)
     src = _bare_source(page)
     assert src.current().detection_signals == ()
+
+
+# --- <select> dropdowns are CHOSEN, not typed (FR-PREFILL-2/3) -------------
+def test_type_value_uses_select_option_for_dropdowns():
+    # REGRESSION (local fixture playtest): a <select> field (EEO / work-auth /
+    # country) must be filled via select_option — typing into it throws, so every
+    # dropdown silently failed before. Here the resolved value matches an option.
+    page = _StubPage()
+    page._elements_by_sel["[name='gender']"] = _StubElement(
+        tag="select", options=["Male", "Female", "prefer not to say"]
+    )
+    src = _bare_source(page)
+    src.type_value("[name='gender']", "prefer not to say")
+    assert page.selected == [("[name='gender']", {"label": "prefer not to say"})]
+    assert page.filled == []  # never routed through the text-fill path
+
+
+def test_select_option_tolerant_contains_match():
+    # The resolved value overlaps an option's longer label → still selected.
+    page = _StubPage()
+    page._elements_by_sel["[name='race']"] = _StubElement(
+        tag="select", options=["Asian", "Decline to self-identify (USA)"]
+    )
+    src = _bare_source(page)
+    src.type_value("[name='race']", "decline to self-identify")
+    assert page.selected == [("[name='race']", {"label": "Decline to self-identify (USA)"})]
+
+
+def test_text_input_still_typed_not_selected():
+    page = _StubPage()
+    page._elements_by_sel["[name='email']"] = _StubElement(tag="input")
+    src = _bare_source(page)
+    src.type_value("[name='email']", "a@b.com")
+    assert page.selected == []
+    assert page.typed and page.typed[0][0] == "[name='email']"
 
 
 # --- detect_fields returns REAL selectors ----------------------------------
