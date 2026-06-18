@@ -261,6 +261,63 @@ def test_revision_turn_uses_llm_at_tier_two_and_replaces_content(storage):
     assert all("Applied free-text guidance" not in t.ai_response for t in session.turns)
 
 
+class _GenThenFabricateLLM:
+    """Clean text on the first (generation) call; injects an entity-shaped
+    fabrication on the second (revision) call."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMResult
+
+        self.calls += 1
+        text = (
+            "Shipped a data platform and reduced deploy time."
+            if self.calls == 1
+            else "I led the platform team at Microsoft starting in 2015."
+        )
+        return LLMResult(text=text, tier=2, model="fake")
+
+
+@pytest.mark.unit
+def test_revision_runs_fabrication_guard_without_caller_true_source(storage):
+    """A redline turn carries NO true_source from the front-door, so the guard was
+    silently skipped — a revision could inject a fabricated claim. The guard now
+    derives the ground truth from the campaign + approved content and rejects a NEW
+    entity-shaped fabrication ("Microsoft"/"2015") even with no caller true_source."""
+    llm = _GenThenFabricateLLM()
+    svc = MaterialService(
+        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, ApplicationId(new_id()), "Shipped a data platform; reduced deploy time.", ["Python"],
+    )
+    # No true_source passed (mirrors the front-door turn) — guard must still run.
+    with pytest.raises(TruthfulnessViolation):
+        svc.apply_turn(doc.id, "free_text", "Add my leadership experience.")
+
+
+@pytest.mark.unit
+def test_revision_allows_benign_rephrase_without_true_source(storage):
+    """The derived guard must NOT false-flag a benign rephrase of approved content
+    (no new entity-shaped claims) — low false-positive is required."""
+    llm = _RevisingLLM()
+    svc = MaterialService(
+        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, ApplicationId(new_id()), "Shipped a data platform; reduced deploy time.", ["Python"],
+    )
+    session = svc.apply_turn(doc.id, "free_text", "Make it more concise.")  # must NOT raise
+    assert (session.redline_state or {}).get("content") == llm.revised
+
+
 @pytest.mark.unit
 def test_heavy_writing_escalates_to_tier_two(storage):
     """Résumé/cover-letter/essay writing is heavy, so it starts at L2 immediately
