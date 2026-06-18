@@ -203,6 +203,24 @@ class _StartTierRecordingLLM:
         return LLMResult(text="Python and SQL work.", tier=2, model="fake")
 
 
+@pytest.mark.unit
+def test_strip_llm_preamble_removes_meta_only():
+    from applicant.application.services.material_service import _strip_llm_preamble
+
+    # Strips the model's "Here's a draft…:" / "Sure, here is the revised version:" lead.
+    pre = (
+        "Here's a cover letter draft in your voice, emphasizing Python and leadership "
+        "while staying true to your real experience., I'm a software engineer who ships "
+        "reliable systems and leads teams to do the same every single day."
+    )
+    out = _strip_llm_preamble(pre)
+    assert out.startswith("I'm a software engineer")
+    assert "draft in your voice" not in out
+    # Never eats a legitimate opening (no meta-preamble present).
+    real = "Dear Hiring Manager, I have spent ten years building distributed systems at scale."
+    assert _strip_llm_preamble(real) == real
+
+
 class _RevisingLLM:
     """Returns a fixed revised body and records the start_tier of each call."""
 
