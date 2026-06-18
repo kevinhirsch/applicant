@@ -19,7 +19,9 @@ from applicant.core.ids import CampaignId
 
 
 class FeedbackService:
-    def __init__(self, storage, learning, *, criteria=None, advanced_learning=None) -> None:
+    def __init__(
+        self, storage, learning, *, criteria=None, advanced_learning=None, pending_actions=None
+    ) -> None:
         self._storage = storage
         self._learning = learning
         self._criteria = criteria
@@ -28,6 +30,30 @@ class FeedbackService:
         # non-integral, hold integral for confirmation, surface conflicts, skip
         # sensitive (EEO). Onboarding keeps its own reconciliation as-is.
         self._advanced_learning = advanced_learning
+        # Optional PendingActionsService: when a PASSIVE input (survey / résumé-parse)
+        # produces a held integral change, materialize it into the portal so the user
+        # can confirm or reject it — otherwise the held change is never confirmable
+        # (FR-FB-3, FR-LEARN-4).
+        self._pending_actions = pending_actions
+
+    def _materialize_pending(self, campaign_id: CampaignId, pending: list[dict]) -> None:
+        """Surface held integral changes as confirm-or-reject portal items (FR-FB-3)."""
+        if not self._pending_actions or not pending:
+            return
+        for change in pending:
+            name = change.get("name")
+            if not name:
+                continue
+            try:
+                self._pending_actions.integral_change_confirmation(
+                    campaign_id,
+                    attribute_name=name,
+                    proposed_value=str(change.get("proposed_value", "")),
+                    current_value=change.get("current_value"),
+                    reason=str(change.get("reason", "")),
+                )
+            except Exception:  # pragma: no cover - never break the feedback fold
+                continue
 
     def submit_freetext(
         self, campaign_id: CampaignId, text: str, *, criteria_delta: dict | None = None
@@ -55,6 +81,8 @@ class FeedbackService:
         model = self._learning.record_decision(model, approved=True, features=features)
         self._learning.persist_model(model)
         xref = self._learning.cross_reference_attributes(campaign_id, answers)
+        # Held integral changes surface in the portal for confirm-or-reject (FR-FB-3).
+        self._materialize_pending(campaign_id, xref.pending)
         return {
             "applied": [a.name for a in xref.applied],
             "pending": xref.pending,  # integral changes awaiting confirmation (FR-FB-3)
@@ -75,6 +103,7 @@ class FeedbackService:
         if isinstance(parsed, list) and self._advanced_learning is not None:
             return self._reconcile_observations(campaign_id, parsed)
         xref = self._learning.cross_reference_attributes(campaign_id, parsed)
+        self._materialize_pending(campaign_id, xref.pending)
         return {
             "applied": [a.name for a in xref.applied],
             "pending": xref.pending,
@@ -97,17 +126,20 @@ class FeedbackService:
                 if attr.name in applied_names:
                     self._storage.attributes.add(attr)
             self._storage.commit()
+        pending = [
+            {
+                "name": p.name,
+                "current_value": p.current_value,
+                "proposed_value": p.value,
+                "is_integral": p.is_integral,
+            }
+            for p in result.pending
+        ]
+        # Held integral changes surface in the portal for confirm-or-reject (FR-FB-3).
+        self._materialize_pending(campaign_id, pending)
         return {
             "applied": [p.name for p in result.applied],
-            "pending": [
-                {
-                    "name": p.name,
-                    "current_value": p.current_value,
-                    "proposed_value": p.value,
-                    "is_integral": p.is_integral,
-                }
-                for p in result.pending
-            ],
+            "pending": pending,
             "conflicts": [
                 {
                     "name": p.name,

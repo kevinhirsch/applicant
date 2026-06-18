@@ -1824,6 +1824,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Seeded from the deep-link (opts.appId) so the Portal "Review" affordance
     // opens the materials directly — no typing an application id (D1).
     let _applicantLastAppId = (opts && opts.appId) ? String(opts.appId) : '';
+    // Last job-search (campaign) id whose resume-variant library was viewed, so the
+    // variants lookup can be deep-linked + re-run on refresh (FR-RESUME-6 / FR-UI-6).
+    let _variantLastCampaign = (opts && opts.campaignId) ? String(opts.campaignId) : '';
 
     // Friendly label for an engine document/variant "type" value.
     function _applicantTypeLabel(type) {
@@ -1866,7 +1869,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             'title="Show the tailored materials generated for this application.">' +
             '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show materials</button>' +
         '</div>' +
-        '<div id="doclib-applicant-results"></div>';
+        '<div id="doclib-applicant-results"></div>' +
+        // Resume-variant library: the lineage of tailored resumes tried for a job
+        // search, with fit scores + approval state (FR-RESUME-6 / FR-UI-6).
+        '<div class="memory-desc doclib-desc" style="margin-top:6px;border-top:1px solid var(--color-border,rgba(128,128,128,0.2));padding-top:8px;">' +
+          'Resume variants — the different tailored resumes tried for a job search and how they relate.</div>' +
+        '<div class="memory-toolbar" style="gap:6px;">' +
+          '<input type="text" id="doclib-variant-campaign" class="memory-search-input" ' +
+            'placeholder="Job-search ID…" ' +
+            'title="Paste the ID of the job search whose resume variants you want to see." ' +
+            'style="flex:1;min-width:160px;" />' +
+          '<button class="memory-toolbar-btn" id="doclib-variant-lookup-btn" ' +
+            'title="Show the resume variants tried for this job search.">' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show variants</button>' +
+        '</div>' +
+        '<div id="doclib-variant-results"></div>';
       grid.appendChild(wrap);
 
       const input = wrap.querySelector('#doclib-applicant-appid');
@@ -1882,6 +1899,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       };
       btn.addEventListener('click', _go);
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _go(); } });
+
+      // Variant-library lookup (mirrors the application lookup above).
+      const vInput = wrap.querySelector('#doclib-variant-campaign');
+      const vBtn = wrap.querySelector('#doclib-variant-lookup-btn');
+      const vResults = wrap.querySelector('#doclib-variant-results');
+      if (_variantLastCampaign) vInput.value = _variantLastCampaign;
+      const _goVariants = () => {
+        const id = (vInput.value || '').trim();
+        if (!id) { if (uiModule) uiModule.showError('Enter a job-search ID to see its resume variants.'); return; }
+        _variantLastCampaign = id;
+        _loadVariantLibrary(id, vResults);
+      };
+      vBtn.addEventListener('click', _goVariants);
+      vInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _goVariants(); } });
+      if (_variantLastCampaign) _loadVariantLibrary(_variantLastCampaign, vResults);
 
       // Confirm the engine is reachable up front, and give a clear status line.
       results.innerHTML = '';
@@ -1900,6 +1932,47 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (_applicantLastAppId) _loadApplicantMaterials(_applicantLastAppId, results);
         })
         .catch(() => { note.textContent = 'Could not reach the application engine. Try again shortly.'; });
+    }
+
+    // Fetch + render the resume-variant library (lineage / fit / approval) for a
+    // job search. Lifted from the admin Variants view so users see the same shape,
+    // owner-scoped, in the white-labeled library (FR-RESUME-6 / FR-UI-6).
+    async function _loadVariantLibrary(campaignId, container) {
+      if (!container) return;
+      const esc = (s) => (uiModule ? uiModule.esc(String(s ?? '')) : String(s ?? ''));
+      container.innerHTML = '<div class="doclib-empty" style="padding:12px;">Loading resume variants…</div>';
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(campaignId)}`,
+          { credentials: 'same-origin' });
+        if (!res.ok) {
+          container.innerHTML = `<div class="doclib-empty" style="padding:12px;">${esc(await _applicantErrText(res))}</div>`;
+          return;
+        }
+        data = await res.json();
+      } catch {
+        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">Could not reach the application engine. Try again shortly.</div>';
+        return;
+      }
+      const variants = (data && data.variants) || [];
+      if (!variants.length) {
+        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">No resume variants have been built for this job search yet.</div>';
+        return;
+      }
+      container.innerHTML = variants.map((v) => {
+        const id = v.variant_id || v.id || 'Variant';
+        const scores = v.fit_scores || {};
+        const vals = Object.values(scores).map(Number).filter((n) => !Number.isNaN(n));
+        const scoreText = vals.length ? `best fit ${esc(Math.max(...vals).toFixed(2))}` : 'not scored';
+        const approved = v.approved === true ? 'approved' : 'awaiting review';
+        const depth = v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : '';
+        const from = v.parent_id ? ` · from ${esc(v.parent_id)}` : '';
+        return `<div class="admin-card" style="margin-top:6px;">` +
+          `<div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>` +
+          `<div class="memory-desc" style="opacity:0.7;margin-top:2px;">` +
+            `${scoreText} · ${esc(approved)}${depth}${from}</div>` +
+        `</div>`;
+      }).join('');
     }
 
     // Fetch + render the materials for one application id.

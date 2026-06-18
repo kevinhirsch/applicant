@@ -48,6 +48,9 @@ class _FakeEngine:
     async def documents_for_application(self, application_id):
         return await self._dispatch("documents_for_application", application_id)
 
+    async def list_variants(self, campaign_id):
+        return await self._dispatch("list_variants", campaign_id)
+
     async def review_document(self, document_id):
         return await self._dispatch("review_document", document_id)
 
@@ -118,6 +121,21 @@ def test_application_documents_forwards_path_param(monkeypatch):
     resp = _make_client().get("/api/applicant/documents/applications/app-7")
     assert resp.status_code == 200
     assert _FakeEngine.last_call == ("documents_for_application", ("app-7",))
+
+
+def test_variant_library_forwards_campaign_and_passes_through(monkeypatch):
+    payload = {"campaign_id": "camp-3", "variants": [{"variant_id": "v1", "is_root": True}]}
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/variants/camp-3")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert _FakeEngine.last_call == ("list_variants", ("camp-3",))
+
+
+def test_variant_library_requires_auth(monkeypatch):
+    _patch_engine(monkeypatch, result={"variants": []})
+    resp = _make_client(authed=False).get("/api/applicant/documents/variants/camp-3")
+    assert resp.status_code in (401, 403)
 
 
 def test_open_review(monkeypatch):

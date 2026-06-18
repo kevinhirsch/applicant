@@ -110,6 +110,8 @@ class LadderIn(BaseModel):
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""
+    #: UI-configurable email-escalation delay in minutes (FR-NOTIF-2).
+    email_timeout_minutes: int | None = None
 
 
 class QuietHoursIn(BaseModel):

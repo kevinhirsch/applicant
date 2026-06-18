@@ -27,6 +27,7 @@ from applicant.adapters.llm.openai_compatible import OpenAICompatibleLLM
 from applicant.adapters.notification.apprise_notifier import AppriseNotifier
 from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
 from applicant.adapters.resume_parser.resume_parser import ResumeParser
+from applicant.adapters.resume_tailoring.base_resume_provider import BaseResumeProvider
 from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
 from applicant.adapters.storage.app_config_store import (
@@ -378,6 +379,9 @@ def build_container(settings: Settings | None = None) -> Container:
         quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
         quiet_tz=quiet["tz"],
         always_on=not quiet["enabled"],
+        # The UI-configurable email-escalation delay (FR-NOTIF-2) persists across
+        # restarts via the channels config (default 15 min).
+        email_timeout_seconds=setup_service.get_email_timeout_minutes() * 60,
         send_real=settings.notifications_live,
     )
     orchestrator = _build_orchestrator(settings)
@@ -443,6 +447,7 @@ def build_container(settings: Settings | None = None) -> Container:
         learning_service,
         criteria=criteria_service,
         advanced_learning=advanced_learning_service,
+        pending_actions=pending_actions_service,
     )
     # Chatbot (FR-CHAT-1): LLM-backed assistant over the attribute/criteria services,
     # routing integral changes through the shared confirmation gate (FR-FB-3).
@@ -484,6 +489,7 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
         notification=notification,
         llm=llm,
+        resume_provider=BaseResumeProvider(storage),
         allow_automated_accounts=settings.allow_automated_accounts,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
@@ -586,6 +592,7 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             notification=notification,
             llm=llm,
+            resume_provider=BaseResumeProvider(tick_storage),
         )
         mat = MaterialService(
             tick_storage,
@@ -660,7 +667,8 @@ def build_container(settings: Settings | None = None) -> Container:
             req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
         )
         rs_feedback = FeedbackService(
-            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv
+            req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
+            pending_actions=rs_pas,
         )
         rs_chat = ChatService(
             attribute_service=rs_attr,
@@ -682,6 +690,7 @@ def build_container(settings: Settings | None = None) -> Container:
             credentials=credentials,
             notification=notification,
             llm=llm,
+            resume_provider=BaseResumeProvider(req_storage),
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(

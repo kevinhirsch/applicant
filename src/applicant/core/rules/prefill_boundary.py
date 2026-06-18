@@ -25,6 +25,10 @@ class StepKind(str, Enum):
     """Kinds of step the engine may attempt during pre-fill."""
 
     FILL_FIELD = "fill_field"
+    #: Attaching the rendered base résumé to a file ``<input type=file>`` (FR-RESUME-4).
+    #: Always allowed — it is a deterministic, idempotent pre-fill step (no submit), so
+    #: it sits alongside FILL_FIELD and never trips the hand-off boundary.
+    UPLOAD_DOCUMENT = "upload_document"
     NAVIGATE = "navigate"
     SCREENSHOT = "screenshot"
     ACCOUNT_CREATE_SUBMIT = "account_create_submit"

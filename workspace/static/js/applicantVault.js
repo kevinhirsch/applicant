@@ -309,13 +309,26 @@ async function _resolveDefaultCampaign() {
 
 /** Open the vault UI. Account sign-ins (Google / default new-account) are global;
  *  per-site sign-ins are scoped to a job search (campaign). */
-export async function openApplicantVault(campaignId) {
+export async function openApplicantVault(campaignId, opts) {
   if (campaignId) _campaignId = String(campaignId);
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   await _loadAccountStatus().catch(() => {});
   if (!_campaignId) await _resolveDefaultCampaign();
   await _loadTenants().catch(() => {});
+  // Pre-fill the "add a sign-in" form for a known site — e.g. opened right after
+  // the user created an account during a live takeover (FR-VAULT-2), so they only
+  // have to type the username + password they just chose.
+  const prefillTenant = opts && opts.prefillTenant;
+  if (prefillTenant && _modalEl) {
+    const tenant = _modalEl.querySelector('#applicant-vault-tenant');
+    if (tenant) {
+      tenant.value = String(prefillTenant);
+      try { tenant.scrollIntoView({ block: 'center' }); } catch { /* no-op */ }
+      const username = _modalEl.querySelector('#applicant-vault-username');
+      if (username) { try { username.focus(); } catch { /* no-op */ } }
+    }
+  }
 }
 
 export function closeApplicantVault() {

@@ -88,6 +88,14 @@ class PageSource(Protocol):
         """
         ...
 
+    def set_input_files(self, selector: str, file_path: str) -> None:
+        """Attach ``file_path`` to a file ``<input type=file>`` (FR-RESUME-4).
+
+        A deterministic, idempotent pre-fill step — uploading the rendered base
+        résumé, not a submit — so it never crosses the pre-fill-stop boundary.
+        """
+        ...
+
     def screenshot(self) -> str:
         """Capture a per-page screenshot; return its ref (FR-LOG-2)."""
         ...
@@ -178,6 +186,11 @@ class FakePageSource:
         # (the real driver applies it) and ignored here.
         self._page.filled[selector] = value
 
+    def set_input_files(self, selector: str, file_path: str) -> None:
+        # The fake model records the uploaded path (the real driver attaches it via
+        # Playwright's set_input_files); kept separate from typed ``filled`` values.
+        self._page.uploaded[selector] = file_path
+
     def screenshot(self) -> str:
         self._screenshot_seq += 1
         return f"screenshot://fake/{self._index}/{self._screenshot_seq}"
@@ -235,6 +248,10 @@ class FakePageSource:
     # --- test/seam helpers (used by the adapter + tests) -----------------
     def filled(self) -> dict[str, str]:
         return dict(self._page.filled)
+
+    def uploaded(self) -> dict[str, str]:
+        """Selector -> uploaded file path on the current page (FR-RESUME-4)."""
+        return dict(self._page.uploaded)
 
     def inject_detection_signal(self, signal: str) -> None:
         from dataclasses import replace
@@ -1031,6 +1048,11 @@ class PlaywrightPageSource:
                 locator.press_sequentially(ch, delay=max(0.0, float(delay)))
         else:
             self._page.type(selector, value, delay=80)
+
+    def set_input_files(self, selector: str, file_path: str) -> None:  # pragma: no cover
+        # Attach the rendered base résumé to the file input (FR-RESUME-4). Playwright's
+        # set_input_files drives the native file chooser without opening an OS dialog.
+        self._page.set_input_files(selector, file_path)
 
     #: Phrasings that all mean "decline / prefer not to answer" — so the user's stored
     #: decline value (e.g. "prefer not to say" / "decline to self-identify") maps to a

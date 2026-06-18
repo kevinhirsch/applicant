@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from applicant.app.container import Container
 from applicant.app.deps import (
+    get_admin_query_service,
     get_container,  # CRIT-profile: container singleton for the banned-phrase list
     get_material_service,
     get_pending_actions_service,
@@ -283,6 +284,19 @@ def set_banned_phrases(
 # CRIT-profile: end
 
 
+@router.get("/variants/{campaign_id}")
+def list_variants(campaign_id: str, admin_query=Depends(get_admin_query_service)) -> dict:
+    """Owner-scoped résumé-variant library: lineage / fit scores / approval state
+    (FR-RESUME-6, FR-UI-6).
+
+    Reuses the same read-model as the debug surface, but reachable from the
+    user-facing document library (not admin-gated) so the variant library is a real
+    user surface, not an operator-only view.
+    """
+    variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "variants": variants}
+
+
 @router.post("/{document_id}/review", status_code=201)
 def open_review(document_id: str, material=Depends(get_material_service)) -> dict:
     """Open the interactive review session for a document (FR-RESUME-8)."""
@@ -307,8 +321,17 @@ def submit_turn(document_id: str, body: TurnIn, material=Depends(get_material_se
 
 @router.post("/{document_id}/approve", status_code=201)
 def approve(document_id: str, material=Depends(get_material_service)) -> dict:
-    """Approve the material, passing the review gate (FR-RESUME-8)."""
-    doc = material.approve(GeneratedDocumentId(document_id))
+    """Approve the material, passing the review gate (FR-RESUME-8, FR-NOTIF-4).
+
+    409 when the redline review was never opened ("approve only after viewing");
+    404 when the document does not exist.
+    """
+    try:
+        doc = material.approve(GeneratedDocumentId(document_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ReviewRequired as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved}
 
 

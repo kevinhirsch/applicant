@@ -140,6 +140,50 @@ def test_resume_account_step_wrong_state_409(client):
     assert "not awaiting the account step" in res.json()["detail"]
 
 
+def test_resume_account_step_returns_capture_metadata(client):
+    """FR-VAULT-2: a successful account-step resume surfaces the campaign + the
+    per-site tenant key (derived the same way the engine keys credentials), so the
+    front-door can offer to SAVE the sign-in the user just created."""
+    from applicant.adapters.browser.ats import resolve_ats
+
+    container = client.app.state.container
+    storage = container.storage
+    cid = CampaignId(new_id())
+    aid = ApplicationId(new_id())
+    root_url = "https://acme.myworkdayjobs.com/job/1"
+    storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=cid,
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.APPROVED,
+            root_url=root_url,
+        )
+    )
+    storage.commit()
+    # Drive pre-fill to the account-creation hand-off so the live session is open,
+    # exactly as the user reaches the resume step (mirrors the integration flow).
+    attrs = [
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name=n, value=v)
+        for n, v in (
+            ("Email Address", "kevin@kevinhirsch.com"),
+            ("Password", "S3cretP@ss"),
+            ("Verify Password", "S3cretP@ss"),
+            ("First Name", "Kevin"),
+            ("Last Name", "Hirsch"),
+            ("Phone", "555-0100"),
+        )
+    ]
+    container.prefill_service.prefill_application(storage.applications.get(aid), root_url, attrs)
+    assert storage.applications.get(aid).status is ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
+    res = client.post(f"/api/remote/applications/{aid}/resume-account-step")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["campaign_id"] == str(cid)
+    assert body["tenant_key"] == resolve_ats(root_url).tenant_key(root_url)
+
+
 def test_continue_two_factor_unknown_application_404(client):
     res = client.post("/api/remote/applications/no-such-app/continue-two-factor")
     assert res.status_code == 404

@@ -45,6 +45,11 @@ log = get_logger(__name__)
 # Escalation ladder defaults (FR-NOTIF-2).
 _DISCORD_HOLD_SECONDS = 30
 _EMAIL_TIMEOUT_SECONDS = 15 * 60  # 15 min, UI-configurable
+#: A web-presence signal is only fresh for this long (FR-NOTIF-2). The client
+#: re-signals on a heartbeat while the tab stays focused + active; once the
+#: heartbeats stop (tab blurred / closed / asleep) presence decays on its own, so a
+#: single stale signal can never suppress the Discord escalation indefinitely.
+_PRESENCE_TTL_SECONDS = 90
 
 # CONC-3: rotation caps for the in-app inbox + offline capture lists so 24/7
 # operation does not grow them unbounded. The most-recent entries are retained.
@@ -181,7 +186,10 @@ class AppriseNotifier:
         self._clock = clock or _default_clock
         # Presence signal (FR-NOTIF-2): True when the user is verifiably present in
         # the web UI (focused tab + recent input + open socket). Default: absent.
+        # An optional injected provider can report presence directly; the front-door
+        # instead heartbeats ``set_presence`` which opens a short freshness window.
         self._presence = presence
+        self._present_until: datetime | None = None
         # Quiet hours (FR-NOTIF-5): a [start, end) span of minutes-since-midnight in
         # the configured timezone; NORMAL notifications (approvals/digests) defer into
         # this window unless the user is in 24/7 mode (``always_on``). Errors always
@@ -246,6 +254,7 @@ class AppriseNotifier:
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str | None = None,
         always_on: bool | None = None,
+        email_timeout_seconds: int | None = None,
     ) -> None:
         """Update channel + quiet-hours config on the live adapter (FR-OOBE-2, FR-NOTIF-5).
 
@@ -265,6 +274,10 @@ class AppriseNotifier:
             self._quiet_tz = quiet_tz or ""
         if always_on is not None:
             self._always_on = always_on
+        if email_timeout_seconds is not None:
+            # The email escalation delay is UI-configurable (FR-NOTIF-2); clamp to a
+            # sane floor so it can never become a 0s instant-email.
+            self._email_timeout = max(60, int(email_timeout_seconds))
 
     # --- ladder construction (FR-NOTIF-2) ---------------------------------
     def _now_secs(self) -> float:
@@ -566,8 +579,7 @@ class AppriseNotifier:
             if (
                 rung.channel == NotificationChannel.DISCORD.value
                 and delivery.notification.web_preemptable
-                and self._presence is not None
-                and self._presence()
+                and self._is_present(when)
             ):
                 rung.fired = True
                 continue
@@ -634,9 +646,29 @@ class AppriseNotifier:
                 return True
         return False
 
+    def _is_present(self, when: datetime) -> bool:
+        """True when the user is verifiably present in the web UI (FR-NOTIF-2).
+
+        Either an injected presence provider reports presence, or a recent
+        ``set_presence(True)`` heartbeat is still within its freshness window — so a
+        stale, one-shot signal can never keep suppressing Discord (the window decays).
+        """
+        if self._presence is not None and self._presence():
+            return True
+        return self._present_until is not None and when <= self._present_until
+
     def set_presence(self, present: bool) -> None:
-        """Override the presence signal (used when no provider is injected)."""
-        self._presence = (lambda: present) if present else (lambda: False)
+        """Record a web-presence heartbeat from the front-door (FR-NOTIF-2).
+
+        ``True`` opens a short freshness window (``_PRESENCE_TTL_SECONDS``); the
+        client re-signals while the tab stays focused + active, so presence persists
+        only as long as the user is really there. ``False`` (tab blurred / hidden)
+        clears it immediately so the Discord escalation resumes at once.
+        """
+        if present:
+            self._present_until = self._clock() + timedelta(seconds=_PRESENCE_TTL_SECONDS)
+        else:
+            self._present_until = None
 
     # --- test/contract helpers -------------------------------------------
     def is_active(self, dedup_key: str) -> bool:

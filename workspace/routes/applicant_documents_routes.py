@@ -142,6 +142,20 @@ def setup_applicant_documents_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.get("/variants/{campaign_id}")
+    async def variant_library(campaign_id: str, request: Request) -> JSONResponse:
+        """The résumé-variant library for a job search — each variant's lineage,
+        fit scores and approval state (engine ``GET /api/documents/variants/{id}``).
+        Owner-scoped read; the user-facing equivalent of the admin Variants view."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.list_variants(campaign_id)
+        except EngineError as exc:
+            logger.info("applicant variant library unavailable: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
     # ── review / change loop ────────────────────────────────────────────
 
     @router.post("/{document_id}/review")

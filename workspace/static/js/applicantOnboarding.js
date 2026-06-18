@@ -40,6 +40,7 @@
 import fileHandlerModule from './fileHandler.js';
 
 const SETUP = '/api/applicant/setup';
+const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
 
 let _overlay = null;
 let _campaignId = null;
@@ -534,6 +535,21 @@ async function _renderChannels() {
         <button class="admin-btn-add" id="ao-qh-save" style="margin-left:auto;">Save quiet hours</button>
       </div>
     </div>
+    <div class="admin-card">
+      <h2>Email reminder timing ${_tip('How long Applicant waits before also emailing you about an approval it has not heard back on. The in-app and Discord nudges come first; email is the slower backstop.')}</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">If an approval still needs you after this long, Applicant also emails you as a backstop. Lower = emailed sooner; higher = fewer emails.</div>
+      <div class="settings-col">
+        <div class="settings-row">
+          <label class="settings-label">Email me after</label>
+          <input id="ao-ch-email-timeout" class="settings-select" type="number" min="1" max="1440" step="1" style="max-width:120px;" value="${esc(cur.email_timeout_minutes || 15)}" />
+          <span style="font-size:11px;opacity:0.7;margin-left:6px;">minutes</span>
+        </div>
+      </div>
+      <div class="settings-row" style="margin-top:8px;">
+        <span id="ao-et-save-msg" style="font-size:11px;"></span>
+        <button class="admin-btn-add" id="ao-et-save" style="margin-left:auto;">Save reminder timing</button>
+      </div>
+    </div>
     <div id="ao-ch-msg"></div>
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-ch-save">Save &amp; continue</button>`);
@@ -594,6 +610,27 @@ async function _renderChannels() {
       qhSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); qhSaveMsg.className = 'admin-error';
     } finally {
       qhSave.disabled = false;
+    }
+  };
+
+  // Email reminder timing (FR-NOTIF-2): the escalation delay before email backstops
+  // an unanswered approval. Saved on its own (no URL needed) so it works the same in
+  // the wizard and in Settings.
+  const etSave = document.getElementById('ao-et-save');
+  const etSaveMsg = document.getElementById('ao-et-save-msg');
+  if (etSave) etSave.onclick = async () => {
+    const raw = parseInt(document.getElementById('ao-ch-email-timeout').value, 10);
+    const minutes = Number.isFinite(raw) ? Math.max(1, Math.min(1440, raw)) : 15;
+    etSave.disabled = true;
+    etSaveMsg.textContent = 'Saving…'; etSaveMsg.className = '';
+    try {
+      await _post(`${SETUP}/channels`, { email_timeout_minutes: minutes });
+      etSaveMsg.textContent = `Email backstop after ${minutes} min.`;
+      etSaveMsg.className = 'admin-success';
+    } catch (e) {
+      etSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); etSaveMsg.className = 'admin-error';
+    } finally {
+      etSave.disabled = false;
     }
   };
 
@@ -1389,10 +1426,51 @@ try { if (typeof window !== 'undefined') window.applicantNeverDoesList = neverDo
 // `.ao-settings-foot` children inside it so the renderer's body+foot land there.
 // (The renderers detect "Settings, not wizard" at save time via the absent
 // _overlay, so they save through the engine proxies without driving navigation.)
+// In-settings Update button (FR-OOBE-4 / FR-UI-6 / FR-INSTALL-2). The same
+// one-click update the Debug tool exposes, lifted here so it's reachable where an
+// operator looks for it — Settings — without SSH/CLI. Talks to the engine ops
+// proxy (GET status + POST trigger); degrades cleanly when updates aren't enabled.
+async function _renderUpdate() {
+  let status = { engine_available: true };
+  try { status = await _fetchJSON(`${OPS}/update`); } catch { status = { engine_available: false }; }
+  if (status && status.engine_available === false) {
+    _setBody('<div class="admin-card"><div class="admin-toggle-sub">The update service is offline right now. Try again shortly.</div></div>');
+    _setFoot('');
+    return;
+  }
+  _setBody(`
+    <h2 class="ao-step-title">Update Applicant ${_tip('Runs the safe one-click update — it backs up your data, applies the latest version, and restarts. No command line needed.')}</h2>
+    <p class="ao-step-desc">Get the latest version without the command line. Applicant backs up your data first, applies the update, then restarts. If updates aren’t enabled on this install, it will tell you what it would do.</p>
+    <div class="admin-card">
+      <div style="font-weight:600;">One-click update</div>
+      <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">Back up &rarr; apply the latest version &rarr; restart. Safe to run any time.</div>
+      <button class="cal-btn cal-btn-primary" id="ao-update-go" style="margin-top:12px;">Check for &amp; install update</button>
+      <div id="ao-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
+    </div>
+  `);
+  _setFoot('');
+  const btn = document.getElementById('ao-update-go');
+  const out = document.getElementById('ao-update-result');
+  if (btn) btn.onclick = async () => {
+    if (!window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.')) return;
+    btn.disabled = true;
+    out.textContent = 'Working…';
+    try {
+      const res = await _post(`${OPS}/update/trigger`, {});
+      out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
+    } catch (e) {
+      out.textContent = e.message || 'Could not start the update right now.';
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
 const _SETTINGS_RENDERERS = {
   channels: _renderChannels,
   sandbox: _renderSandbox,
   fonts: _renderFonts,
+  update: _renderUpdate,
 };
 
 export async function mountSettingsStep(stepKey, container) {

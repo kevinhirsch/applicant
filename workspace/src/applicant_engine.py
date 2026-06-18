@@ -302,6 +302,10 @@ class ApplicantEngineClient:
     async def documents_for_application(self, application_id: str) -> Any:
         return await self._request("GET", f"/api/documents/applications/{application_id}")
 
+    async def list_variants(self, campaign_id: str) -> Any:
+        """Owner-scoped résumé-variant library (lineage / scores / approval state)."""
+        return await self._request("GET", f"/api/documents/variants/{campaign_id}")
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 
@@ -410,8 +414,12 @@ class ApplicantEngineClient:
     async def list_pending_actions(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/pending-actions/{campaign_id}")
 
-    async def resolve_pending_action(self, action_id: str) -> Any:
-        return await self._request("POST", f"/api/pending-actions/{action_id}/resolve")
+    async def resolve_pending_action(self, action_id: str, body: Any | None = None) -> Any:
+        # ``body`` (e.g. {"apply": true}) confirms/applies a held integral change
+        # before the item is cleared (FR-FB-3); omitted for a plain resolve.
+        return await self._request(
+            "POST", f"/api/pending-actions/{action_id}/resolve", json=body or None
+        )
 
     # -- notification center (in-app inbox) ------------------------------
 

@@ -193,7 +193,24 @@ def resume_account_step(
         container.notification_service.acted(f"prefill:{application_id}:account_human_step")
     except Exception:  # pragma: no cover - defensive
         pass
-    return {"application_id": application_id, "state": result.state.value}
+    # Surface the campaign + per-site key so the front-door can offer to SAVE the
+    # sign-in the user just created during the account step (FR-VAULT-2). The
+    # tenant_key is derived the SAME way the engine keys credentials for auto-login,
+    # so a captured credential is found again next time.
+    tenant_key = ""
+    try:
+        if app.root_url:
+            from applicant.adapters.browser.ats import resolve_ats
+
+            tenant_key = resolve_ats(app.root_url).tenant_key(app.root_url)
+    except Exception:  # pragma: no cover - defensive; capture is best-effort
+        tenant_key = ""
+    return {
+        "application_id": application_id,
+        "state": result.state.value,
+        "campaign_id": str(app.campaign_id),
+        "tenant_key": tenant_key,
+    }
 
 
 @router.post("/applications/{application_id}/continue-two-factor", status_code=200)

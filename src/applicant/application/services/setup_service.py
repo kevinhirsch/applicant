@@ -241,13 +241,34 @@ class SetupService:
         chan = self.get_channels()
         return bool(chan.get("discord_webhook_url") or chan.get("apprise_urls"))
 
+    #: Bounds for the UI-configurable email-escalation delay (FR-NOTIF-2), in minutes.
+    EMAIL_TIMEOUT_MIN_MINUTES = 1
+    EMAIL_TIMEOUT_MAX_MINUTES = 24 * 60
+    EMAIL_TIMEOUT_DEFAULT_MINUTES = 15
+
+    def get_email_timeout_minutes(self) -> int:
+        """The configured email-escalation delay in minutes (FR-NOTIF-2), default 15."""
+        raw = self.get_channels().get("email_timeout_minutes")
+        try:
+            minutes = int(raw)
+        except (TypeError, ValueError):
+            return self.EMAIL_TIMEOUT_DEFAULT_MINUTES
+        return max(
+            self.EMAIL_TIMEOUT_MIN_MINUTES, min(self.EMAIL_TIMEOUT_MAX_MINUTES, minutes)
+        )
+
     def configure_channels(
-        self, *, discord_webhook_url: str = "", apprise_urls: str = ""
+        self,
+        *,
+        discord_webhook_url: str = "",
+        apprise_urls: str = "",
+        email_timeout_minutes: int | None = None,
     ) -> None:
         """Persist notification-channel config from the wizard (FR-OOBE-2).
 
         Configuring Discord + email marks the channels step able to complete and
-        ungates automated work (FR-OOBE-3). Secrets are not logged.
+        ungates automated work (FR-OOBE-3). ``email_timeout_minutes`` sets the
+        UI-configurable email-escalation delay (FR-NOTIF-2). Secrets are not logged.
         """
         # Item 12 (SSRF): both are operator-supplied. The Discord webhook is an https
         # URL; Apprise URLs are a comma-separated list (http(s) entries are guarded,
@@ -259,6 +280,11 @@ class SetupService:
             rec["discord_webhook_url"] = discord_webhook_url
         if apprise_urls:
             rec["apprise_urls"] = apprise_urls
+        if email_timeout_minutes is not None:
+            rec["email_timeout_minutes"] = max(
+                self.EMAIL_TIMEOUT_MIN_MINUTES,
+                min(self.EMAIL_TIMEOUT_MAX_MINUTES, int(email_timeout_minutes)),
+            )
         self._store.set(_CHANNELS_KEY, rec)
         if self.channels_configured():
             steps_rec = self._store.get(_STEPS_KEY) or {"steps": []}

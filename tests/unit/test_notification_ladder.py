@@ -66,6 +66,78 @@ def test_presence_preempts_discord():
     assert "in_app" in n.sent_channels("k2")
 
 
+def test_fresh_presence_heartbeat_suppresses_discord():
+    # FR-NOTIF-2: a recent set_presence(True) heartbeat suppresses the Discord push.
+    clock = _Clock()
+    n = _notifier(clock)
+    n.notify(
+        Notification(title="Approve?", body="role", dedup_key="kp1", web_preemptable=True)
+    )
+    n.set_presence(True)  # the client heartbeat just before the Discord hop is due
+    clock.tick(30)
+    n.advance()
+    assert "discord" not in n.sent_channels("kp1")
+    assert "in_app" in n.sent_channels("kp1")
+
+
+def test_stale_presence_decays_so_discord_resumes():
+    # FR-NOTIF-2: a one-shot presence signal must NOT suppress Discord forever — once
+    # the heartbeats stop (user walked away) the freshness window lapses and the
+    # Discord escalation resumes for a notification that arrives later.
+    clock = _Clock()
+    n = _notifier(clock)
+    n.set_presence(True)  # user glanced at the UI once...
+    clock.tick(5 * 60)    # ...then left for five minutes (no further heartbeat)
+    n.notify(
+        Notification(title="Approve?", body="role", dedup_key="kp2", web_preemptable=True)
+    )
+    clock.tick(30)
+    n.advance()
+    assert "discord" in n.sent_channels("kp2")
+
+
+def test_presence_false_clears_the_window_immediately():
+    # FR-NOTIF-2: present:false (tab blurred / hidden) resumes Discord at once.
+    clock = _Clock()
+    n = _notifier(clock)
+    n.set_presence(True)
+    n.set_presence(False)
+    n.notify(
+        Notification(title="Approve?", body="role", dedup_key="kp3", web_preemptable=True)
+    )
+    clock.tick(30)
+    n.advance()
+    assert "discord" in n.sent_channels("kp3")
+
+
+def test_email_timeout_is_reconfigurable_at_runtime():
+    # FR-NOTIF-2: the email-escalation delay is UI-configurable; reconfiguring the
+    # live notifier shortens (or lengthens) the email hop without a restart.
+    clock = _Clock()
+    n = _notifier(clock)
+    n.configure(email_timeout_seconds=5 * 60)  # was 15 min; now 5
+    n.notify(
+        Notification(title="Approve?", body="role", dedup_key="kt", web_preemptable=True)
+    )
+    clock.tick(30)
+    n.advance()  # Discord hop
+    clock.tick(5 * 60)
+    n.advance()
+    assert "email" in n.sent_channels("kt")
+
+
+def test_email_timeout_reconfigure_clamps_to_a_floor():
+    clock = _Clock()
+    n = _notifier(clock)
+    n.configure(email_timeout_seconds=0)  # must not become an instant email
+    n.notify(
+        Notification(title="Approve?", body="role", dedup_key="ktc", web_preemptable=True)
+    )
+    clock.tick(30)
+    n.advance()
+    assert "email" not in n.sent_channels("ktc")
+
+
 def test_acting_on_one_channel_expires_others():
     # FR-NOTIF-3: acting on one channel no-ops the others.
     clock = _Clock()

@@ -68,6 +68,14 @@ class BrowserAutomationPort(Protocol):
         """Fill a single field (a deterministic, idempotent step)."""
         ...
 
+    def upload_file(self, application_id: ApplicationId, selector: str, file_path: str) -> None:
+        """Attach ``file_path`` to a file ``<input type=file>`` (FR-RESUME-4).
+
+        Uploads the rendered base résumé; a deterministic pre-fill step (no submit),
+        so it stays inside the pre-fill-stop boundary.
+        """
+        ...
+
     def screenshot(self, application_id: ApplicationId) -> str:
         """Capture and store a per-page screenshot; return its ref (FR-LOG-2)."""
         ...

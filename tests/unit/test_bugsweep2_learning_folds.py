@@ -181,3 +181,51 @@ def test_parsed_input_reconciles_into_cloud(storage, learning, campaign):
     # The auto-applied value is now in the cloud.
     names = {a.name for a in storage.attributes.list_for_campaign(campaign.id)}
     assert "github" in names
+
+
+@pytest.mark.unit
+def test_survey_materializes_held_integral_change_in_portal(storage, learning, campaign):
+    """FR-FB-3 / FR-LEARN-4: a survey answer implying an integral change must surface a
+    confirm-or-reject pending action (not be silently dropped)."""
+    storage.attributes.add(
+        Attribute(
+            id=AttributeId(new_id()),
+            campaign_id=campaign.id,
+            name="location",
+            value="San Francisco",
+            is_integral=True,
+        )
+    )
+    storage.commit()
+    pending = PendingActionsService(storage)
+    feedback = FeedbackService(storage, learning, pending_actions=pending)
+
+    result = feedback.submit_survey(campaign.id, {"location": "New York"})
+
+    assert any(p["name"] == "location" for p in result["pending"])
+    actions = pending.list_pending(campaign.id)
+    integral = [a for a in actions if a.kind == "integral_change"]
+    assert len(integral) == 1
+    assert integral[0].payload["attribute_name"] == "location"
+    assert integral[0].payload["proposed_value"] == "New York"
+    # The integral change is HELD — not applied to the cloud yet.
+    loc = next(a for a in storage.attributes.list_for_campaign(campaign.id) if a.name == "location")
+    assert loc.value == "San Francisco"
+
+
+@pytest.mark.unit
+def test_survey_pending_dedups_per_attribute(storage, learning, campaign):
+    """Re-submitting a survey for the same held attribute must not pile up duplicates."""
+    storage.attributes.add(
+        Attribute(
+            id=AttributeId(new_id()), campaign_id=campaign.id,
+            name="location", value="SF", is_integral=True,
+        )
+    )
+    storage.commit()
+    pending = PendingActionsService(storage)
+    feedback = FeedbackService(storage, learning, pending_actions=pending)
+    feedback.submit_survey(campaign.id, {"location": "NYC"})
+    feedback.submit_survey(campaign.id, {"location": "NYC"})
+    integral = [a for a in pending.list_pending(campaign.id) if a.kind == "integral_change"]
+    assert len(integral) == 1
