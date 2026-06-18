@@ -42,6 +42,18 @@ uv run pytest -q workspace/tests/test_applicant_*.py    # front-door proxy/lane 
 python -m compileall -q workspace/app.py workspace/routes workspace/src   # workspace syntax
 node --check workspace/static/js/<file>.js              # front-end has no bundler — node --check only
 ```
+To **boot the front-door locally** for UI / playtest work, install the vendored deps into the root
+env once (`uv pip install -r workspace/requirements.txt`), then run it pointed at the engine:
+```bash
+cd workspace && DATABASE_URL="sqlite:///$(pwd)/data/app.db" ENGINE_URL=http://127.0.0.1:8000 \
+  APPLICANT_ADMIN_USER=admin APPLICANT_ADMIN_PASSWORD=<pw> python setup.py   # SQLite + admin (re-runnable)
+cd workspace && DATABASE_URL=... ENGINE_URL=http://127.0.0.1:8000 uv run uvicorn app:app --port 7000
+```
+The engine needs Postgres (default DSN `postgresql+psycopg://applicant:applicant@localhost:5432/applicant`
++ `alembic upgrade head`), not SQLite. `workspace/app.py` re-reads `.js/.css/.html` per request, so
+**front-end edits need no restart** — only engine/Python changes do. `docs/playtest-protocol.md` is the
+full stand-up + UI-regression playbook, incl. §6a's **automated Playwright UI monkey/crawl** (open every
+surface, click every control, classify findings, run-until-green) for full-product front-door testing.
 
 Deploy / stack:
 ```bash
@@ -153,7 +165,13 @@ exercised by the real `compose up --build` at deploy time.
 
 5. **Green increments.** Before merge: `uv run pytest -q`, the front-door `test_applicant_*` tests,
    `uv run ruff check .`, the boot smoke, a single Alembic head, and `docker compose ... config`
-   must pass — i.e. everything CI gates. Keep PRs focused; develop on a branch and open a PR.
+   must pass — i.e. everything CI gates. Keep PRs focused; develop on a branch and open a PR. PRs are
+   **squash-merged**, so after each merge the working branch diverges from `main` (its commits are not
+   `main`'s squashed one) and `git push` is rejected non-fast-forward — the merged work is already in
+   `main`, so realign with `git fetch origin main && git reset --hard origin/main` before continuing
+   (force-push to rewrite shared history is blocked).
 
-See `workspace/CLAUDE.md` for the vendored app's internals and `docs/spec/master-spec.md` for the
-requirement set.
+See `workspace/CLAUDE.md` for the vendored app's internals, `docs/spec/master-spec.md` for the
+requirement set, and `docs/playtest-protocol.md` for the repeatable front-door audit + UI-regression
+playbook (stand up the live stack, the five HCI lenses, the contract sweep, and the automated
+monkey/crawl).
