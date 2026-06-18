@@ -52,6 +52,16 @@ _STATEMENT = re.compile(
     re.IGNORECASE,
 )
 
+#: A message starting with one of these leads (or ending in "?") is a QUESTION, not an
+#: attribute statement. Without this guard "What is my salary range?" parsed as setting
+#: an attribute named "what" and was silently auto-applied, polluting the attribute
+#: cloud with garbage derived from the user's own questions.
+_QUESTION_LEAD = re.compile(
+    r"^(?:what|whats|who|whom|whose|which|when|where|why|how|is|are|am|was|were|"
+    r"do|does|did|can|could|will|would|should|shall|may|might)\b",
+    re.IGNORECASE,
+)
+
 #: Attribute names treated as integral (a change needs confirmation, FR-FB-3).
 _INTEGRAL_NAMES = frozenset(
     {"first name", "last name", "legal name", "email address", "phone"}
@@ -132,6 +142,11 @@ class ChatService:
 
     # --- proposal parsing (FR-FB-2/3) -------------------------------------
     def _parse_proposal(self, message: str) -> ProposedChange | None:
+        # A question is never an attribute statement — guard before the loose "X is Y"
+        # match so "What is my salary range?" is not committed as an attribute "what".
+        text = message.strip()
+        if text.endswith("?") or _QUESTION_LEAD.match(text):
+            return None
         m = _STATEMENT.match(message)
         if m is None:
             return None

@@ -62,6 +62,44 @@ def test_saved_profile_is_injected_into_the_prompt():
     assert "Jordan Mercer" in prompt
 
 
+def test_questions_are_not_parsed_as_attribute_statements():
+    """Regression: asking a question must NOT create a junk attribute. "What is my
+    salary range?" used to parse as setting an attribute named "what" and was silently
+    auto-applied, polluting the attribute cloud."""
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    storage.commit()
+    attrs = AttributeCloudService(storage)
+    svc = ChatService(attribute_service=attrs, criteria_service=CriteriaService(storage), llm=None)
+
+    for question in (
+        "What roles am I targeting and what's my salary floor?",
+        "What is my target salary range in dollars?",
+        "How does this work",  # no '?' but interrogative lead
+        "Is my profile complete?",
+    ):
+        result = svc.converse(cid, question)
+        assert result.proposed_changes == [], f"{question!r} created a proposal"
+    assert attrs.list_attributes(cid) == [], "a question polluted the attribute cloud"
+
+
+def test_real_statement_still_proposes():
+    """The guard must not block a genuine 'my X is Y' statement."""
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    storage.commit()
+    svc = ChatService(
+        attribute_service=AttributeCloudService(storage),
+        criteria_service=CriteriaService(storage),
+        llm=None,
+    )
+    result = svc.converse(cid, "my years of experience is 9")
+    assert result.proposed_changes, "a real statement should still be proposed"
+    assert result.proposed_changes[0].name == "years of experience"
+
+
 def test_empty_profile_injects_no_block():
     storage = InMemoryStorage()
     cid = CampaignId(new_id())
