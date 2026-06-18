@@ -111,6 +111,7 @@ function _ensureModalEl() {
           <select id="applicant-debug-campaign" class="settings-select" style="min-width:180px;"></select>
         </label>
         <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
+        <button class="cal-btn" id="applicant-debug-chat" title="Open the assistant beside this so you can ask about what the agent is doing" style="margin-left:auto;">Ask the assistant</button>
       </div>
       <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
         ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
@@ -133,6 +134,17 @@ function _ensureModalEl() {
   modal.querySelector('#applicant-debug-campaign').addEventListener('change', (e) => {
     _campaignId = e.target.value || null;
     _renderTab();
+  });
+  // Dual view: open the Job Assistant beside this window (both are scrim-less,
+  // draggable tool windows, so they sit side by side) — watch the agent on one
+  // side, ask it questions on the other.
+  const chatBtn = modal.querySelector('#applicant-debug-chat');
+  if (chatBtn) chatBtn.addEventListener('click', () => {
+    try {
+      if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
+        window.applicantChatModule.openApplicantChat();
+      } else { _toast('The assistant is not available right now.'); }
+    } catch { _toast('Could not open the assistant.'); }
   });
   _modalEl = modal;
   return modal;
