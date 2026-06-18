@@ -227,6 +227,26 @@ def setup_applicant_admin_routes() -> APIRouter:
                 {"campaign_id": campaign_id, "variants": []},
             )
 
+    @router.get("/learning/{campaign_id}")
+    async def learning_insights(campaign_id: str, request: Request) -> dict:
+        """What the engine has learned for a campaign, in plain language.
+
+        Conversion totals, the source funnel ranked by how well it converts, the
+        roles that actually convert, and the exploration budget — read-only.
+        Soft-degrades to an empty/offline payload when the engine is unreachable.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.admin_learning(campaign_id),
+                {
+                    "campaign_id": campaign_id,
+                    "summary": {},
+                    "sources": [],
+                    "converting_roles": [],
+                },
+            )
+
     @router.get("/stealth")
     async def stealth(request: Request) -> dict:
         """Honest best-effort stealth caveat + the live egress posture."""

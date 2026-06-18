@@ -475,6 +475,14 @@ class ApplicantEngineClient:
     async def admin_variants(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/admin/variants/{campaign_id}")
 
+    async def admin_learning(self, campaign_id: str) -> Any:
+        """Plain-language summary of what the engine has learned for a campaign.
+
+        Conversion totals, the source funnel ranked by conversion, the roles that
+        actually convert, and the exploration budget — read-only operator visibility.
+        """
+        return await self._request("GET", f"/api/admin/learning/{campaign_id}")
+
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 

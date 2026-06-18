@@ -11,6 +11,9 @@
 //                  that application's screenshots, workflow state and outcomes,
 //                  plus a one-click "I submitted this myself" (mark-submitted)
 //                  so manual/hand-off applications still teach the system.
+//   • Insights   — what the system has learned: overall conversion, each
+//                  source's funnel ranked by conversion, the roles that convert,
+//                  and the exploration budget (read-only).
 //   • Logs       — recent redacted run logs.
 //   • Variants   — the resume-variant library (lineage / score / approval).
 //   • Run        — run mode + daily target controls and the latest plain-language
@@ -79,6 +82,7 @@ function _put(url, body) {
 
 const TABS = [
   ['activity', 'Activity'],
+  ['insights', 'Insights'],
   ['logs', 'Logs'],
   ['variants', 'Variants'],
   ['run', 'Run controls'],
@@ -176,6 +180,7 @@ async function _loadCampaigns() {
 async function _renderTab() {
   const map = {
     activity: _renderActivity,
+    insights: _renderInsights,
     logs: _renderLogs,
     variants: _renderVariants,
     run: _renderRun,
@@ -273,6 +278,68 @@ async function _markSubmitted(appId) {
   } catch (e) {
     _toast(e.message || 'Could not record that right now.');
   }
+}
+
+// Insights — a read-only window onto what the system has learned for this job
+// search: overall conversion, each source's funnel ranked by how well it
+// converts, the roles that actually convert, and the exploration knob. Plain
+// language only; mirrors the Sources/Run card style.
+async function _renderInsights() {
+  if (!_needCampaign()) return;
+  const data = await _fetchJSON(`${ADMIN}/learning/${encodeURIComponent(_campaignId)}`);
+  if (data.engine_available === false) { _renderOffline(); return; }
+  const s = data.summary || {};
+  const sources = data.sources || [];
+  const roles = data.converting_roles || [];
+  const num = (v) => (v != null ? v : 0);
+
+  const summaryCard = `<div class="admin-card">
+    <div style="font-weight:600;">Conversion so far</div>
+    <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
+      ${esc(num(s.total_matched))} matched · ${esc(num(s.total_approved))} approved · ${esc(num(s.total_submitted))} submitted
+      across ${esc(num(s.sources_seen))} source${num(s.sources_seen) === 1 ? '' : 's'}.
+    </div>
+    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">This is what the system uses to decide which sources and roles to favour next.</span>
+  </div>`;
+
+  const rolesCard = `<div class="admin-card">
+    <div style="font-weight:600;">Roles that convert</div>
+    ${roles.length
+      ? `<div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${roles.map((r) => esc(r)).join(' · ')}</div>`
+      : _empty('Not enough approved/submitted roles yet to spot a pattern.')}
+    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Discovery and scoring lean toward roles that look like these.</span>
+  </div>`;
+
+  const budgetCard = data.exploration_budget != null
+    ? `<div class="admin-card">
+        <div style="font-weight:600;">Exploration budget</div>
+        <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
+          ${esc(Number(data.exploration_budget))} — share of effort spent trying new or under-used sources instead of the proven ones.
+        </div>
+        <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this on the Sources tab.</span>
+      </div>`
+    : '';
+
+  let sourcesCard;
+  if (!sources.length) {
+    sourcesCard = `<div class="admin-card"><div style="font-weight:600;">Best sources</div>${_empty('No source results recorded for this job search yet.')}</div>`;
+  } else {
+    const rows = sources.map((src) => {
+      const rate = src.conversion_rate != null ? `${esc(src.conversion_rate)}% convert` : 'no rate yet';
+      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-weight:600;">${esc(src.source)}</div>
+          <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
+            ${esc(num(src.matched))} matched · ${esc(num(src.approved))} approved · ${esc(num(src.submitted))} submitted
+          </div>
+        </div>
+        <div class="admin-toggle-sub" style="opacity:0.75;flex-shrink:0;">${esc(rate)}</div>
+      </div>`;
+    }).join('');
+    sourcesCard = `<div class="admin-toggle-sub" style="opacity:0.7;margin:10px 0 6px;">Best sources (ranked by how well they convert)</div>${rows}`;
+  }
+
+  _body().innerHTML = summaryCard + rolesCard + budgetCard + sourcesCard;
 }
 
 async function _renderLogs() {

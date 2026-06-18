@@ -205,6 +205,13 @@ def get_prefill_service(
     return _resolved(services, container, "prefill_service")
 
 
+def get_learning_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    return _resolved(services, container, "learning_service")
+
+
 def require_tool_enabled(tool_key: str):
     """Build a dependency that 403s if ``tool_key`` is toggled off (FR-UI-4).
 
