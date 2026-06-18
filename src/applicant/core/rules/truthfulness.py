@@ -245,20 +245,121 @@ def voice_alignment(profile: VoiceProfile, text: str) -> float:
 
 # === fabrication detection (FR-RESUME-2, NFR-TRUTH-1) =====================
 #: Tokens that are not skill/qualification claims (keeps the check conservative).
+#
+# The fabrication guard flags any whole token in generated material that is NOT in
+# the candidate's true source. To catch a fabricated *skill / technology / proper
+# noun / qualification* (e.g. "Kubernetes", "PhD", "Stanford") it must NOT also flag
+# the ordinary English prose a cover letter is made of ("Dear", "spent", "would",
+# "challenges"). Capitalization gating can't separate them — a lowercase fabricated
+# skill ("kubernetes") must still be caught (NFR-TRUTH-1) — so the discriminator is a
+# stopword list: common English / connective / scaffolding words are not claims;
+# named technologies, organizations, degrees and the like are not stopwords and stay
+# flagged. This is intentionally broad (free-prose cover letters, FR-RESUME-10).
 _NON_CLAIM = frozenset(
     {
-        "the", "and", "for", "with", "from", "that", "this", "have", "has", "was",
-        "were", "are", "our", "their", "your", "you", "led", "built", "drove",
-        "managed", "worked", "experience", "team", "teams", "role", "roles",
-        "year", "years", "company", "i", "we", "my", "me", "a", "an", "of", "to",
-        "in", "on", "at", "as", "by", "is", "it", "be", "or", "but",
-        # Generic verbs/adjectives/nouns that are framing, not skill claims. Without
-        # capitalization gating these must be excluded so ordinary prose ("SQL
-        # work", "skilled dev") is not flagged as fabrication (NFR-TRUTH-1).
-        "work", "works", "working", "expert", "experienced", "skilled", "proficient",
-        "dev", "developer", "engineer", "professional", "using", "used", "use",
-        "wrote", "write", "writing", "and/or", "also", "well", "strong", "solid",
-        "deep", "wide", "broad", "various", "across", "including", "such", "etc",
+        # articles / determiners / quantifiers
+        "the", "a", "an", "this", "that", "these", "those", "such", "some", "any",
+        "all", "both", "each", "every", "few", "many", "most", "more", "much",
+        "several", "no", "nor", "not", "other", "another", "same", "own", "only",
+        "enough", "less", "least",
+        # pronouns
+        "i", "me", "my", "mine", "myself", "we", "us", "our", "ours", "ourselves",
+        "you", "your", "yours", "yourself", "he", "him", "his", "she", "her", "hers",
+        "it", "its", "they", "them", "their", "theirs", "who", "whom", "whose",
+        "which", "what", "whatever", "whoever", "whichever", "someone", "anyone",
+        "everyone", "something", "anything", "everything", "nothing",
+        # interrogative / relative adverbs
+        "how", "why", "when", "where", "here", "there", "whenever", "wherever",
+        "whence", "hence", "thus",
+        # prepositions / conjunctions / connectives
+        "of", "to", "in", "on", "at", "as", "by", "for", "with", "from", "and", "or",
+        "but", "yet", "so", "if", "then", "else", "than", "because", "since", "until",
+        "till", "while", "whilst", "though", "although", "however", "whereas",
+        "whether", "unless", "despite", "into", "onto", "upon", "over", "under",
+        "above", "below", "between", "among", "amongst", "through", "throughout",
+        "during", "before", "after", "about", "around", "along", "against", "toward",
+        "towards", "within", "without", "off", "out", "up", "down", "again",
+        "further", "once", "beyond", "across", "via", "per", "plus", "etc", "eg",
+        "ie", "vs", "and/or",
+        # be / have / do / modal + common auxiliary forms
+        "is", "am", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "having", "do", "does", "did", "doing", "done", "will", "would", "shall",
+        "should", "can", "could", "may", "might", "must", "ought",
+        # common verbs (and their frequent inflections) — framing, not skill claims
+        "get", "gets", "got", "getting", "gotten", "make", "makes", "made", "making",
+        "take", "takes", "took", "taken", "taking", "go", "goes", "went", "gone",
+        "going", "come", "comes", "came", "coming", "see", "sees", "saw", "seen",
+        "seeing", "know", "knows", "knew", "known", "knowing", "think", "thinks",
+        "thought", "thinking", "want", "wants", "wanted", "need", "needs", "needed",
+        "help", "helps", "helped", "helping", "work", "works", "worked", "working",
+        "build",
+        "builds", "built", "building", "lead", "leads", "led", "leading", "ship",
+        "ships", "shipped", "shipping", "run", "runs", "ran", "running", "give",
+        "gives", "gave", "given", "giving", "find", "finds", "found", "finding",
+        "spend", "spends", "spent", "spending", "bring", "brings", "brought", "hold",
+        "holds", "held", "holding", "move", "moves", "moved", "moving", "draw",
+        "draws", "drew", "drawn", "drawing", "drive", "drove", "drives", "driven",
+        "driving", "keep", "keeps", "kept", "keeping", "put", "puts", "set", "sets",
+        "show", "shows", "showed", "shown", "try", "tries", "tried", "trying", "ask",
+        "asks", "asked", "turn", "turns", "turned", "start", "starts", "started",
+        "starting", "begin", "begins", "began", "begun", "become", "becomes",
+        "became", "becoming", "continue", "continues", "continued", "continuing",
+        "grow", "grows", "grew", "grown", "growing", "teach", "teaches", "taught",
+        "learn", "learns", "learned", "learning", "serve", "serves", "served",
+        "serving", "reduce", "reduces", "reduced", "reducing", "design", "designs",
+        "designed", "designing", "scale", "scales", "scaled", "scaling", "explore",
+        "explores", "explored", "exploring", "mentor", "mentors", "mentored",
+        "mentoring", "clear", "clears", "cleared", "clearing", "break", "breaks",
+        "broke", "broken", "breaking", "align", "aligns", "aligned", "aligning",
+        "welcome", "welcomes", "welcomed", "talk", "talks", "talked", "tend", "tends",
+        "tended", "require", "requires", "required", "allow", "allows", "allowed",
+        "enable", "enables", "enabled", "deliver", "delivers", "delivered",
+        "managed", "manage", "manages", "use", "used", "using", "uses",
+        "wrote", "write", "writes", "writing", "written", "apply", "applies",
+        "applied", "applying", "improve", "improves", "improved", "improving",
+        # adjectives / adverbs — framing, not skill claims
+        "good", "great", "best", "better", "strong", "solid", "deep", "deeper",
+        "wide", "broad", "recent", "recently", "last", "first", "second", "third",
+        "new", "old", "real", "very", "well", "just", "also", "even", "quite",
+        "really", "genuinely", "mostly", "roughly", "clearly", "simply", "especially",
+        "particularly", "highly", "truly", "fully", "currently", "lately", "now",
+        "soon", "ago", "today", "complex", "simple", "practical", "reliable",
+        "rewarding", "right", "wrong", "able", "key", "core", "major", "minor",
+        "significant", "important", "large", "small", "big", "high", "low", "fast",
+        "slow", "quick", "quickly", "careful", "carefully", "effective", "efficient",
+        "successful", "proven", "various", "including", "include", "includes",
+        "expert", "experienced", "skilled", "proficient", "professional", "hands-on",
+        # generic professional / prose nouns — not specific fabricable claims
+        "experience", "team", "teams", "role", "roles", "year", "years", "company",
+        "companies", "time", "times", "way", "ways", "thing", "things", "people",
+        "person", "project", "projects", "challenge", "challenges", "path", "paths",
+        "effort", "efforts", "load", "loads", "intersection", "product", "products",
+        "user", "users", "trust", "confidence", "care", "lot", "lots", "system",
+        "systems", "platform", "platforms", "service", "services", "application",
+        "applications", "deployment", "deployments", "migration", "migrations",
+        "infrastructure", "architecture", "pipeline", "pipelines", "solution",
+        "solutions", "process", "processes", "approach", "approaches", "result",
+        "results", "impact", "value", "goal", "goals", "focus", "opportunity",
+        "opportunities", "position", "positions", "candidate", "requirement",
+        "requirements", "skill", "skills", "qualification", "qualifications",
+        "background", "history", "summary", "objective", "responsibility",
+        "responsibilities", "environment", "environments", "growth", "leadership",
+        "collaboration", "communication", "ownership", "delivery", "quality",
+        "reliability", "performance", "engineer", "engineers", "engineering",
+        "developer", "developers", "dev", "manager", "management", "member",
+        "members", "contributor", "contribution", "contributions", "chance",
+        # salutation / cover-letter scaffolding
+        "dear", "hi", "hello", "hey", "hiring", "sincerely", "regards", "warmly",
+        "thanks", "thank", "name", "signature", "letter", "cover", "applicant",
+        "resume", "résumé", "attached", "enclosed", "organization", "organisation",
+        "firm",
+        # number words (spelled-out quantities are too noisy to treat as claims)
+        "zero", "one", "ones", "two", "three", "four", "five", "six", "seven",
+        "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+        "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+        "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+        "hundred", "thousand", "million", "millions", "billion", "percent", "dozen",
+        "dozens", "half", "quarter",
     }
 )
 

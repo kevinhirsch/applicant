@@ -130,6 +130,44 @@ def test_fabrication_detection_flags_unsupported_claims():
 
 
 @pytest.mark.unit
+def test_fabrication_guard_passes_natural_cover_letter_prose():
+    # FR-RESUME-10/NFR-TRUTH-1: a free-prose cover letter whose only substantive
+    # claims are grounded in the true source must NOT be flagged. Ordinary English /
+    # connective / scaffolding words ("Dear", "spent", "would", "challenges") are not
+    # fabrications — only named skills/tech/orgs/qualifications absent from the source
+    # are. Regression: a narrow filler list flagged every prose word and blocked all
+    # LLM-generated cover letters.
+    true = (
+        "Kevin Hirsch, staff software engineer. Skills: Python, Go, Kubernetes, "
+        "distributed systems, leadership. Led a team of engineers. Shipped a data "
+        "platform. Migrated to Kubernetes and reduced deployment time."
+    )
+    letter = (
+        "Dear Hiring Manager, I have spent the last several years building "
+        "distributed systems in Python and Go. I led a team of engineers and "
+        "shipped a data platform. I migrated our infrastructure to Kubernetes and "
+        "reduced deployment time. I would genuinely welcome the chance to talk about "
+        "how my background aligns with this role. Warmly, Kevin Hirsch"
+    )
+    assert truthfulness.unsupported_claims(true, letter) == []
+
+
+@pytest.mark.unit
+def test_fabrication_guard_still_catches_fabricated_skill_in_prose():
+    # The prose-friendly stopword list must NOT weaken real detection: a named skill
+    # the candidate never had is still flagged even amid natural cover-letter prose.
+    true = "Kevin Hirsch, Python and Go engineer. Shipped a data platform."
+    letter = (
+        "Dear Hiring Manager, I would love this role. I am also a certified Rust "
+        "expert with a PhD from Stanford. Warmly, Kevin Hirsch"
+    )
+    flagged = truthfulness.unsupported_claims(true, letter)
+    assert "Rust" in flagged
+    assert "PhD" in flagged
+    assert "Stanford" in flagged
+
+
+@pytest.mark.unit
 def test_fabrication_detection_catches_lowercase_and_uses_whole_token():
     # FR-RESUME-2/NFR-TRUTH-1: (a) lowercase claims are not exempt from detection;
     # (b) whole-token membership, not substring, so "Java" never "supports"
