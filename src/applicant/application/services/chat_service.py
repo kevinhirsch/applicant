@@ -258,6 +258,12 @@ class ChatService:
             value = getattr(a, "value", "")
             if not name or value in (None, ""):
                 continue
+            # NEVER send EEO/sensitive attributes (race, gender, veteran/disability,
+            # date of birth, …) to the external LLM (FR-ATTR-6, NFR-PRIV-1). Mirror the
+            # material path's guard and check BOTH the stored flag and the field-name
+            # classifier (defense in depth, in case the flag was never set on the row).
+            if getattr(a, "is_sensitive", False) or is_sensitive_field(name):
+                continue
             val = str(value)
             if len(val) > 160:
                 val = val[:157] + "…"

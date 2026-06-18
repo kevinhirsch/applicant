@@ -62,6 +62,32 @@ def test_saved_profile_is_injected_into_the_prompt():
     assert "Jordan Mercer" in prompt
 
 
+def test_sensitive_eeo_attributes_are_never_sent_to_the_llm():
+    """Privacy (FR-ATTR-6 / NFR-PRIV-1): EEO/demographic attributes must NOT be injected
+    into the LLM chat prompt. The profile block carries non-sensitive data only."""
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="C"))
+    storage.commit()
+    attrs = AttributeCloudService(storage)
+    attrs.ai_add_attribute(cid, "full_name", "Jordan Mercer")  # non-sensitive (allowed)
+    for sens_name, sens_val in (
+        ("race", "Two or more races"),
+        ("gender", "Nonbinary"),
+        ("veteran status", "Protected veteran"),
+        ("disability status", "Yes"),
+    ):
+        attrs.upsert(cid, sens_name, sens_val, is_sensitive=True)
+    llm = _FakeLLM()
+    svc = ChatService(attribute_service=attrs, criteria_service=CriteriaService(storage), llm=llm)
+
+    svc.converse(cid, "help me prep for applications")
+    prompt = _user_prompt(llm)
+    assert "Jordan Mercer" in prompt  # non-sensitive data still included
+    for leaked in ("Two or more races", "Nonbinary", "Protected veteran"):
+        assert leaked not in prompt, f"sensitive value {leaked!r} leaked into the LLM prompt"
+
+
 def test_questions_are_not_parsed_as_attribute_statements():
     """Regression: asking a question must NOT create a junk attribute. "What is my
     salary range?" used to parse as setting an attribute named "what" and was silently
