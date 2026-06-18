@@ -691,8 +691,14 @@ class MaterialService:
             # Every revision pass re-applies the post-filter (FR-RESUME-5).
             new_content = self.apply_post_filter(new_content).text
             # Fabrication guardrail on revision too (FR-RESUME-2) when truth is known.
+            # Cover letters / screening answers are free prose, so use the prose check
+            # (entity-shaped claims) rather than the strict per-token résumé check.
             if true_source is not None:
-                self.assert_no_fabrication(true_source, new_content)
+                prose = bool(doc) and doc.type in (
+                    DocumentType.COVER_LETTER,
+                    DocumentType.SCREENING_ANSWER,
+                )
+                self.assert_no_fabrication(true_source, new_content, prose=prose)
             if doc is not None:
                 self._persist_content(doc, new_content)
             # FR-LEARN-3 / FR-RESUME-8: fold this revision turn into learning so the
@@ -1012,12 +1018,64 @@ class MaterialService:
         return self.reframe_truthfully(true_source, terms)
 
     def _revise(self, content: str, kind: str, instruction: str) -> tuple[str, str]:
-        """Deterministic stub revision (real impl routes through the LLM)."""
+        """Apply one revision turn to ``content`` per ``instruction``.
+
+        Routes through the LLM when one is configured — escalated to L2 because
+        editing application material (résumé / cover letter / answer) is heavy,
+        quality-sensitive writing (FR-LLM-3/4, FR-RESUME-8). Falls back to a
+        deterministic edit so the loop still works with no model wired. Returns
+        ``(revised_content, short_ack)``; the caller re-applies the post-filter and
+        the fabrication guard.
+        """
+        revised = self._llm_revise(content, kind, instruction)
+        if revised is not None:
+            ack = {
+                "add": "Added what you asked for.",
+                "subtract": "Removed that for you.",
+            }.get(kind, "Applied your change.")
+            return revised, ack
+        # Deterministic fallback (no LLM): keep the loop usable.
         if kind == "add":
             return (content + "\n" + instruction, f"Added: {instruction}")
         if kind == "subtract":
             return (content.replace(instruction, "").strip(), f"Removed: {instruction}")
         return (content, f"Applied free-text guidance: {instruction}")
+
+    def _llm_revise(self, content: str, kind: str, instruction: str) -> str | None:
+        """LLM-backed in-place revision; returns the revised text or None.
+
+        None (no model, empty output, or any error) lets ``_revise`` fall back to
+        the deterministic edit — a revision turn must never crash the loop.
+        """
+        if self._llm is None or not getattr(self._llm, "is_configured", lambda: False)():
+            return None
+        try:
+            from applicant.ports.driven.llm import ChatMessage
+
+            how = {
+                "add": "Weave the following addition into the document naturally",
+                "subtract": "Remove (or rephrase to drop) the following from the document",
+                "free_text": "Apply the following edit to the document",
+            }.get(kind, "Apply the following edit to the document")
+            system = (
+                "You revise the candidate's EXISTING application document in place. "
+                "Reframe, reorder, and tighten, but stay strictly truthful: never add "
+                "a skill, title, date, employer, or qualification not already present. "
+                "No em-dashes. Keep the candidate's voice. Return ONLY the revised "
+                "document text, with no preamble, commentary, or code fences."
+            ) + "\n" + self._voice.as_directive()
+            user = f"{how}:\n{instruction}\n\nCURRENT DOCUMENT:\n{content}"
+            result = self._llm.complete(
+                [
+                    ChatMessage(role="system", content=system),
+                    ChatMessage(role="user", content=user),
+                ],
+                start_tier=_HEAVY_WRITING_START_TIER,
+            )
+            text = (result.text or "").strip()
+            return text or None
+        except Exception:
+            return None
 
     def _store_document(
         self, campaign_id: CampaignId, application_id: ApplicationId, dtype: DocumentType, content: str

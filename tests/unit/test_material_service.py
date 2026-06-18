@@ -203,6 +203,46 @@ class _StartTierRecordingLLM:
         return LLMResult(text="Python and SQL work.", tier=2, model="fake")
 
 
+class _RevisingLLM:
+    """Returns a fixed revised body and records the start_tier of each call."""
+
+    def __init__(self) -> None:
+        self.start_tiers: list[int] = []
+        self.revised = "Shipped a platform serving five million requests a day; cut deploy time."
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMResult
+
+        self.start_tiers.append(kwargs.get("start_tier", 1))
+        return LLMResult(text=self.revised, tier=2, model="fake")
+
+
+@pytest.mark.unit
+def test_revision_turn_uses_llm_at_tier_two_and_replaces_content(storage):
+    """The redline 'request change' turn must actually revise via the LLM (not the
+    old deterministic stub), escalated to L2 since editing material is heavy writing."""
+    llm = _RevisingLLM()
+    svc = MaterialService(
+        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, ApplicationId(new_id()), "Shipped a data platform; reduced deploy time.", ["Python"],
+    )
+    llm.start_tiers.clear()
+    session = svc.apply_turn(doc.id, "free_text", "Make it more concise.")
+    # The turn ran the LLM at L2 and the document content is the revised text,
+    # not the old "Applied free-text guidance: ..." stub echo.
+    assert llm.start_tiers == [2]
+    assert (session.redline_state or {}).get("content") == llm.revised
+    stored = storage.documents.get(doc.id)
+    assert stored.content == llm.revised
+    assert all("Applied free-text guidance" not in t.ai_response for t in session.turns)
+
+
 @pytest.mark.unit
 def test_heavy_writing_escalates_to_tier_two(storage):
     """Résumé/cover-letter/essay writing is heavy, so it starts at L2 immediately

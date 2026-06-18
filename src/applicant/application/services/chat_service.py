@@ -27,14 +27,24 @@ from applicant.core.rules.confirmation_gate import requires_confirmation
 from applicant.core.rules.sensitive_fields import is_sensitive_field
 from applicant.ports.driven.llm import ChatMessage
 
-#: Core attributes a campaign needs before it can apply confidently (FR-CHAT-1 gaps).
-CORE_ATTRIBUTES: tuple[str, ...] = (
-    "first name",
-    "last name",
-    "email address",
-    "phone",
-    "current job title",
+#: Core needs a campaign must cover before it can apply confidently (FR-CHAT-1 gaps).
+#: Each is (display label, accepted attribute keys). Onboarding stores CANONICAL keys
+#: (``full_name`` / ``email`` / ``title`` / ``phone``) while the chat historically
+#: used spaced display labels; a need is a gap only when NONE of its synonyms is
+#: present, so a fully-onboarded profile is never falsely reported as "still missing".
+_CORE_NEEDS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("first name", frozenset(
+        {"first name", "name", "full name", "full_name", "legal name",
+         "full_legal_name", "preferred_name", "preferred name"})),
+    ("last name", frozenset(
+        {"last name", "name", "full name", "full_name", "legal name", "full_legal_name"})),
+    ("email address", frozenset({"email address", "email"})),
+    ("phone", frozenset({"phone", "phone number", "phone_number"})),
+    ("current job title", frozenset(
+        {"current job title", "title", "titles", "job title", "job_title", "current_title"})),
 )
+#: Back-compat: the bare display labels (used for the user-facing gap list + parsing).
+CORE_ATTRIBUTES: tuple[str, ...] = tuple(label for label, _ in _CORE_NEEDS)
 
 #: "my <attr> is <value>" / "<attr>: <value>" statement parser (FR-FB-2 input).
 _STATEMENT = re.compile(
@@ -111,7 +121,9 @@ class ChatService:
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
         """Which core attributes / criteria are still missing for the campaign."""
         have = {a.name.lower() for a in self._attrs.list_attributes(campaign_id)}
-        gaps = [c for c in CORE_ATTRIBUTES if c not in have]
+        # A core need is satisfied by ANY of its synonyms (canonical key or label),
+        # so a profile stored as full_name/email/title isn't falsely flagged.
+        gaps = [label for label, synonyms in _CORE_NEEDS if not (synonyms & have)]
         if self._criteria is not None:
             crit = self._criteria.get_criteria(campaign_id)
             if not crit.titles and not crit.human_readable:
