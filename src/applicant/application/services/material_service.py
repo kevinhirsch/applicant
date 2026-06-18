@@ -63,6 +63,7 @@ from applicant.core.rules.truthfulness import (
     normalize_emdashes,
     strip_banned_phrases,
     unsupported_claims,
+    unsupported_prose_claims,
     voice_alignment,
 )
 
@@ -268,23 +269,34 @@ class MaterialService:
         lead = ", ".join(emphasized) + "."
         return normalize_emdashes(lead + "\n" + source)
 
-    def detect_fabrication(self, true_source: str, generated: str) -> list[str]:
+    def detect_fabrication(
+        self, true_source: str, generated: str, *, prose: bool = False
+    ) -> list[str]:
         """Return generated claims not supported by the candidate's TRUE history.
 
-        Pure detection (no raise) so the engine can flag/route. Compares every
-        skill/qualification claim token in ``generated`` against the candidate's
-        real attribute set / work history / base source (FR-RESUME-2).
+        Pure detection (no raise) so the engine can flag/route. ``prose=False``
+        (default) runs the strict per-token check used for résumé bullets / factual
+        answers, where every skill/qualification token must trace to the source. For
+        FREE PROSE (cover letters, essays) pass ``prose=True``: an open-ended
+        narrative vocabulary will never all appear in the terse source, so only
+        *entity-shaped* fabrications (named skills / orgs / acronyms / numbers) are
+        flagged while ordinary prose passes (FR-RESUME-2, FR-RESUME-10).
         """
+        if prose:
+            return unsupported_prose_claims(true_source, generated)
         return unsupported_claims(true_source, generated)
 
-    def assert_no_fabrication(self, true_source: str, generated: str) -> None:
+    def assert_no_fabrication(
+        self, true_source: str, generated: str, *, prose: bool = False
+    ) -> None:
         """Raise ``TruthfulnessViolation`` if ``generated`` adds an unsupported claim.
 
         A generated bullet that names a skill/term absent from the candidate's true
         history is a fabrication (FR-RESUME-2, NFR-TRUTH-1). Wired into every
-        generation + revision pass.
+        generation + revision pass. ``prose=True`` selects the cover-letter/essay
+        check (entity-shaped claims only); see :meth:`detect_fabrication`.
         """
-        flagged = self.detect_fabrication(true_source, generated)
+        flagged = self.detect_fabrication(true_source, generated, prose=prose)
         if flagged:
             raise TruthfulnessViolation(
                 f"Generated material claims {flagged!r} which is absent from the "
@@ -530,7 +542,9 @@ class MaterialService:
             return None
         body = self._generate_text(true_source, jd_terms, kind="cover_letter")
         report = self.apply_post_filter(body)
-        self.assert_no_fabrication(true_source, report.text)
+        # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
+        # narrative wording passes while invented skills/orgs/credentials are caught.
+        self.assert_no_fabrication(true_source, report.text, prose=True)
         doc = self._store_document(
             campaign_id, application_id, DocumentType.COVER_LETTER, report.text
         )
@@ -583,7 +597,11 @@ class MaterialService:
         # decline), not generated from true_source, so the fabrication guard (which
         # compares against true_source) does not apply to them (FR-ATTR-6).
         if kind is not ScreeningKind.SENSITIVE:
-            self.assert_no_fabrication(true_source, report.text)
+            # Essay answers are free prose (entity-shaped check); factual answers are
+            # terse and stay on the strict per-token check.
+            self.assert_no_fabrication(
+                true_source, report.text, prose=(kind is ScreeningKind.ESSAY)
+            )
         doc = self._store_document(
             campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text
         )

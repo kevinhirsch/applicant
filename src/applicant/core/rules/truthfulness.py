@@ -413,3 +413,89 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
             if token.lower() not in source_tokens and token not in flagged:
                 flagged.append(token)
     return flagged
+
+
+#: Quote/apostrophe code points stripped from token edges (straight + curly).
+_QUOTE_CHARS = "'\"’‘“”"
+
+
+def _prose_source_tokens(true_text: str) -> frozenset[str]:
+    """Lenient source-token set for free-prose checking.
+
+    Like :func:`_source_token_set` but also splits on hyphens (so "LLM-powered"
+    contributes "llm") and adds a crude singular for plural tokens (so a "LLMs"
+    mention is supported by an "LLM" in the source). This looseness is acceptable
+    for the prose check, which only ever inspects entity-shaped tokens.
+    """
+    toks: set[str] = set()
+    for raw in re.split(r"[\s,.;:()\[\]{}/\-]+", true_text):
+        t = raw.strip(_QUOTE_CHARS).lower()
+        if not t:
+            continue
+        toks.add(t)
+        if len(t) > 3 and t.endswith("s"):
+            toks.add(t[:-1])
+    return frozenset(toks)
+
+
+def _is_entity_shaped(word: str, *, sentence_initial: bool) -> bool:
+    """True if ``word`` looks like a named claim (skill / org / acronym / number).
+
+    Free prose is full of ordinary lowercase words that are not claims; the things
+    a cover letter could *fabricate* are named entities — proper nouns (Stanford,
+    Kubernetes), acronyms (AWS, SQL, MBA), mixed-case tech (FastAPI, PostgreSQL),
+    and numbers/dates (2015, 70%). A leading-capital word is only treated as a
+    proper noun when it is NOT sentence-initial, since sentence-initial capitals are
+    just grammar ("Lately, …", "Based on …").
+    """
+    if any(c.isdigit() for c in word):
+        return True
+    letters = [c for c in word if c.isalpha()]
+    if len(letters) >= 2 and all(c.isupper() for c in letters):
+        return True  # ALL-CAPS acronym
+    if any(c.isupper() for c in word[1:]):
+        return True  # internal/camel caps (FastAPI, PostgreSQL)
+    if not sentence_initial and word[:1].isupper() and any(c.islower() for c in word):
+        return True  # mid-sentence proper noun
+    return False
+
+
+def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
+    """Fabrication check tuned for FREE PROSE (cover letters, essays; FR-RESUME-10).
+
+    A cover letter legitimately uses an open-ended vocabulary of ordinary words
+    that will never all appear in the terse résumé source, so the strict per-token
+    :func:`unsupported_claims` (right for résumé bullets) rejects every natural
+    letter. Here we only flag *entity-shaped* tokens (named skills / orgs /
+    acronyms / numbers, see :func:`_is_entity_shaped`) that are absent from the
+    source — so an invented "Stanford" / "AWS" / "PhD" / "2015" is still caught,
+    while narrative prose passes. Contractions are split on the apostrophe so
+    "I've"/"it's" never read as proper nouns. Deterministic.
+    """
+    if not generated:
+        return []
+    source = _prose_source_tokens(true_text)
+    flagged: list[str] = []
+    # Split into sentences so we can tell a sentence-initial capital (grammar) from
+    # a mid-sentence proper noun (a real entity claim).
+    for sentence in re.split(r"(?<=[.!?])\s+", generated):
+        first = True
+        # Split on whitespace/punctuation AND hyphens + markdown markers (*`~_|<>#),
+        # so "LLM-powered" matches the hyphen-split source and "**Subject**" sheds its
+        # bold markers instead of reading as a fabricated proper noun.
+        for raw in re.split(r"[\s,.;:()\[\]{}/*`~_|<>#\-]+", sentence):
+            for piece in re.split(r"['’‘]", raw):  # split contractions
+                word = piece.strip(_QUOTE_CHARS)
+                if not word:
+                    continue
+                sentence_initial = first
+                first = False
+                if len(word) < 2 or word.lower() in _NON_CLAIM:
+                    continue
+                low = word.lower()
+                if low in source or (low.endswith("s") and low[:-1] in source):
+                    continue
+                if _is_entity_shaped(word, sentence_initial=sentence_initial):
+                    if word not in flagged:
+                        flagged.append(word)
+    return flagged

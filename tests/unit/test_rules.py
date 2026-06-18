@@ -168,6 +168,39 @@ def test_fabrication_guard_still_catches_fabricated_skill_in_prose():
 
 
 @pytest.mark.unit
+def test_prose_claims_pass_open_vocabulary_cover_letter():
+    # FR-RESUME-10: the prose check tolerates an open-ended narrative vocabulary
+    # (content words absent from the terse source) and contractions, flagging only
+    # entity-shaped fabrications. A grounded cover letter must produce no flags.
+    true = (
+        "Kevin Hirsch, staff software engineer. Python, Go, Kubernetes, distributed "
+        "systems. Shipped an LLM-powered platform serving 5M requests."
+    )
+    letter = (
+        "Dear Hiring Manager, I've spent years building distributed systems and I'm "
+        "drawn to the low-latency, high-traffic problems your team is solving. I "
+        "enjoy designing for reliability and tightening the feedback loop so teams "
+        "ship with confidence. Lately I've explored practical applications of LLMs. "
+        "I'd welcome the chance to talk. Warmly, Kevin"
+    )
+    assert truthfulness.unsupported_prose_claims(true, letter) == []
+
+
+@pytest.mark.unit
+def test_prose_claims_still_flag_entity_fabrications():
+    # The prose check must still catch invented named entities: a degree, school,
+    # and technology the candidate never had, even amid natural prose.
+    true = "Kevin Hirsch, Python and Go engineer. Shipped a data platform."
+    letter = (
+        "I'd love this role. I hold a PhD from Stanford and I'm a certified Rust and "
+        "Kubernetes expert who shipped on AWS in 2015."
+    )
+    flagged = truthfulness.unsupported_prose_claims(true, letter)
+    for entity in ("PhD", "Stanford", "Rust", "Kubernetes", "AWS", "2015"):
+        assert entity in flagged, f"{entity} should be flagged: {flagged}"
+
+
+@pytest.mark.unit
 def test_fabrication_detection_catches_lowercase_and_uses_whole_token():
     # FR-RESUME-2/NFR-TRUTH-1: (a) lowercase claims are not exempt from detection;
     # (b) whole-token membership, not substring, so "Java" never "supports"
