@@ -113,27 +113,45 @@ What exists in the front-door right now:
 - **Job Assistant chat** (FR-CHAT-1) — `openApplicantChat()`; helps, identifies
   profile gaps, updates attributes/criteria (confirmation-gated). ✅
 
-So you *can* see history + intent + pending items (one set of surfaces) and chat
-(another), but they're **separate tool windows**, and there's no **live "the agent
-is running right now"** signal — see the gaps next.
+The Activity → **Run controls** tab now also shows a **live status chip** (Working
+now / Idle / Paused, with last-run, next-run and today's count) plus **Run now** and
+**Pause/Resume**, and the **Insights** tab shows what it has learned. So you *can*
+see live status + intent + activity + learning (one set of surfaces) and chat
+(another) — the only remaining nicety is putting them **side by side** in one
+window (§7).
 
 ---
 
-## 6. GAPS — what's missing to make this a usable, observable tool
+## 6. GAPS — what an end-to-end audit + remediation found (most now CLOSED)
 
-| # | Gap | Status | Where it'd live |
+A focused audit (engine + workspace proxy + JS, cited to `file:line`) re-checked
+each suspected gap. **Several were already fully built** — the original gap list
+above overstated them — and the genuine operate/observe gaps were then **shipped**.
+Current state:
+
+| # | Item | Status | Notes |
 |---|---|---|---|
-| G1 | **No "run discovery / tick now" control.** Discovery only fires on the ~60s scheduler; no on-demand refresh. | ❌ | new `POST /api/.../ops/runs/{cid}/run` → `agent_loop.run_once`/`tick` (the method exists at `agent_loop.py`, just unwired) |
-| G2 | **No UI start/stop for the scheduler / agent.** It's `SCHEDULER_ENABLED` at boot only; you can't pause/resume from the UI (violates the spirit of NFR-ZEROCLI-1). | ❌ | a control + endpoint to enable/disable the loop per deployment/campaign |
-| G3 | **No live "is the agent running / when did it last run / next run" status.** Only the intent *sentence* is exposed; no heartbeat/last-tick/next-tick. | 🟡 | extend `/ops/runs/{cid}` with last_tick/next_tick/running flags; the scheduler already ticks |
-| G4 | **Discovery-source toggles have an API but a thin/absent UI surface.** FR-DISC-2 wants in-UI on/off per source. | 🟡 | wire a Sources panel (the Activity "Sources" tab) to `GET/PUT /ops/discovery/{cid}` |
-| G5 | **First-run latency / empty-state.** After onboarding you wait for a tick; no "discovering now…" feedback and (FR-DIG-6) the "nothing today, here's what I searched" note is a SHOULD. | 🟡 | first-tick-on-gate-open + a discovering indicator |
-| G6 | **Source-yield learning (FR-DISC-5) reweighting** — schema (`discovery_sources.yield_stats`) exists; the reweight/exploration-budget logic isn't clearly wired. | 🟡/❌ | learning service hook |
-| G7 | **The dual-pane you want** (activity feed + live status on one side, chat on the other, concurrently) doesn't exist as a single surface. | ❌ | see §7 |
+| G1 | **"Run now"** — run one tick on demand instead of waiting ~60s | ✅ shipped | `POST /api/.../ops/runs/{cid}/run` → `Scheduler.run_now` (single-flight per campaign); button in Activity → Run controls |
+| G2 | **Pause / resume** automated work at runtime (no restart) | ✅ shipped | `POST /ops/runs/{cid}/pause`·`/resume` → `AgentRunService.set_active` (persisted `active` flag); button in Run controls (NFR-ZEROCLI-1) |
+| G3 | **Live "is it running / last-tick / next-tick / today's count"** | ✅ shipped | `GET /ops/runs/{cid}/status` (`Scheduler.state()` heartbeat); status chip (Working now / Idle / Paused) in Run controls |
+| G4 | **Discovery-source on/off + yield** in the UI (FR-DISC-2) | ✅ already built | Activity → **Sources** tab: per-source toggles, funnel stats, exploration-budget slider |
+| G5 | **Empty-day note** "nothing today, here's what I searched" (FR-DIG-6) | ✅ already built | `digest_service.EMPTY_DAY_NOTE` + `_searched_summary`, rendered in email/web |
+| G6 | **Source-yield learning reweighting** (FR-DISC-5) | ✅ already built + wired | `LearningService` decayed conversion weights → `source_ranking`/`exploration_split` reorder discovery; **now also visible** in the Insights tab |
+| G7 | **Dual-pane** (live status + activity on one side, chat on the other) | 🟡 partial | All constituents are reachable — live status + intent + activity + **Insights** (learned conversion) in the Activity surface; the Job Assistant chat is a separate window. A single side-by-side surface is the remaining polish (§7) |
 
-**Bottom line:** the *scraping + applying* integrations are built and proven; the
-missing layer is **operate + observe** — start/stop, a live running indicator, the
-source toggles surfaced, and the unified watch-and-chat view.
+Adjacent spec gaps closed in the same pass:
+- **FR-LLM-3 tier-ladder editor** — Settings → "Set up Applicant" now has a full
+  ordered/reorderable/add-remove model-ladder editor (was API-only); keys are
+  preserved across edit/reorder.
+- **FR-LEARN visibility** — new **Insights** tab surfaces real per-source conversion,
+  converting roles, and the exploration budget (was engine-internal only).
+- **FR-NOTIF-5 quiet hours** — engine had dead quiet-hours math; now persisted,
+  gated (errors always immediate), and configurable in Settings → Notifications.
+
+**Bottom line:** the *scraping + applying* integrations were built and proven; the
+**operate + observe** layer (run-now, pause/resume, a live running indicator) and
+the **learning/model-ladder/quiet-hours reachability** gaps are now closed. The one
+remaining nicety is the unified side-by-side watch-and-chat surface (§7).
 
 ---
 
@@ -159,16 +177,15 @@ no new framework):
   "what are you doing / why did you skip X / add this criterion" while watching the
   left pane react.
 
-**Build order (smallest → most valuable):**
-1. **G3 status endpoint** — add last_tick / next_tick / running / today's-count to
-   `GET /ops/runs/{cid}` (cheap; scheduler already has the data). Unblocks the left
-   pane's status chip.
-2. **G1 "Run now"** — wire `POST /ops/runs/{cid}/run` to `agent_loop.tick` (method
-   exists). Immediate operator value (no 60s wait).
-3. **G4 Sources panel** — surface the discovery toggles (API already there).
-4. **Split Agent surface** — compose the left feed (G3 + existing history) beside
-   the chat; reuse `.admin-card`/`.cal-btn`/modal classes.
-5. **G2 start/stop**, then **G5/G6** polish.
+**Build order (smallest → most valuable) — most now done:**
+1. ~~**G3 status endpoint**~~ ✅ shipped — `GET /ops/runs/{cid}/status` returns
+   last_tick / next_tick / running / today's-count; the status chip renders it.
+2. ~~**G1 "Run now"**~~ ✅ shipped — `POST /ops/runs/{cid}/run` → `Scheduler.run_now`.
+3. ~~**G4 Sources panel**~~ ✅ already built (Activity → Sources).
+4. **Split Agent surface** (remaining) — compose the left feed (status + intent +
+   activity + Insights, all already built) beside the chat in one window; reuse
+   `.admin-card`/`.cal-btn`/modal classes. This is the only outstanding piece.
+5. ~~**G2 start/stop**~~ ✅ shipped (pause/resume); **G5/G6** ✅ already built.
 
 Each step is a normal green-increment PR (ruff + engine pytest + front-door
 `test_applicant_*` + `node --check` + single Alembic head + compose config +
