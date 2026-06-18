@@ -79,6 +79,42 @@ def _service(storage, llm=None):
     )
 
 
+class _GoogleBrowser(PatchrightBrowser):
+    """A PatchrightBrowser (fake source) whose 'Sign in with Google' returns a fixed
+    status, so the Google/2FA routing is exercised hermetically. 'ok' advances the
+    fake source past the gate (as a real successful OAuth would)."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__()
+        self._status = status
+
+    def offers_google_signin(self, application_id) -> bool:  # noqa: ARG002
+        return True
+
+    def log_in_with_google(self, application_id, username, password) -> str:  # noqa: ARG002
+        if self._status == "ok":
+            self._source(application_id).advance()
+        return self._status
+
+
+def _google_service(storage, status, tmp_path):
+    from applicant.adapters.credentials.pg_credential_store import (
+        Credential,
+        InMemoryCredentialStore,
+    )
+    from applicant.application.services.prefill_service import GOOGLE_CREDENTIAL_KEY
+
+    creds = InMemoryCredentialStore(str(tmp_path / "master.key"))
+    return creds, GOOGLE_CREDENTIAL_KEY, PrefillService(
+        storage=storage,
+        browser=_GoogleBrowser(status),
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=creds,
+        llm=None,
+    ), Credential
+
+
 def _resume_full(service, app, attrs):
     """Reach + hand off at the account page, then resume the rest of the flow."""
     service.prefill_application(app, WORKDAY_URL, attrs)
@@ -231,6 +267,30 @@ class TestMissingAttribute:
         service._credentials = InMemoryCredentialStore(str(tmp_path / "master.key"))  # empty
         result = service.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
         assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
+    def test_google_login_hits_2fa_and_hands_off_with_continue_action(self, tmp_path):
+        # "Sign in with Google" that demands 2FA: the engine can't produce the second
+        # factor, so it holds the sandbox and emits a `two_factor` pending action (with
+        # a continue link) + notification, then pivots. The user approves on-device.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        creds, gkey, svc, Credential = _google_service(storage, "two_factor", tmp_path)
+        creds.store(cid, Credential(tenant_key=gkey, username="me@gmail.com", secret="g"))
+        result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+        assert any(
+            p.kind == "two_factor" for p in storage.pending_actions.list_open(cid)
+        )
+
+    def test_google_login_ok_continues_into_the_form(self, tmp_path):
+        # A live Google session (or accepted creds) carries through → the engine
+        # proceeds into the application form, no hand-off.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        creds, gkey, svc, Credential = _google_service(storage, "ok", tmp_path)
+        creds.store(cid, Credential(tenant_key=gkey, username="me@gmail.com", secret="g"))
+        result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
 
     def test_value_reused_after_resolve(self):
         # FR-ATTR-5: once supplied, the value is reused and the loop proceeds.

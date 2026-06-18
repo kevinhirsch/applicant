@@ -105,6 +105,14 @@ class PageSource(Protocol):
         """Attempt an email/password sign-in at the account gate; return success."""
         ...
 
+    def offers_google_signin(self) -> bool:
+        """True when the account gate offers OAuth 'Sign in with Google'."""
+        ...
+
+    def log_in_with_google(self, username: str, password: str) -> str:
+        """Drive 'Sign in with Google'; return 'ok' | 'two_factor' | 'failed'."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
@@ -186,6 +194,13 @@ class FakePageSource:
         # dedicated stubs.)
         self.advance()
         return True
+
+    def offers_google_signin(self) -> bool:
+        # The fake models an email/password account-create gate, not OAuth.
+        return False
+
+    def log_in_with_google(self, username: str, password: str) -> str:
+        return "failed"
 
     def is_account_create_page(self) -> bool:
         return self._page.is_account_create
@@ -641,6 +656,90 @@ class PlaywrightPageSource:
         self.type_value(email_sel, username)
         self.type_value(pwd_sel, password)
         return True
+
+    #: "Sign in with Google" entry controls (OAuth).
+    _GOOGLE_SIGNIN_SELECTORS = (
+        "button:has-text('Sign in with Google')",
+        "a:has-text('Sign in with Google')",
+        "[data-automation-id='googleSignInButton']",
+        "[aria-label*='Google' i]",
+    )
+    #: Markers that a Google login is now demanding a second factor (the engine cannot
+    #: produce it → 2FA hand-off). Broad on purpose: Google phrases this many ways.
+    _TWO_FACTOR_MARKERS = (
+        "2-step verification",
+        "2-step",
+        "two-factor",
+        "two factor",
+        "verify it's you",
+        "verify it’s you",
+        "tap yes",
+        "check your phone",
+        "approve this sign-in",
+        "enter the code",
+        "authenticator",
+        "passkey",
+    )
+
+    def offers_google_signin(self) -> bool:  # pragma: no cover - integration-gated
+        """True when the account gate offers an OAuth "Sign in with Google" entry."""
+        for sel in self._GOOGLE_SIGNIN_SELECTORS:
+            try:
+                if self._page.locator(sel).first.count() > 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def log_in_with_google(self, username: str, password: str) -> str:  # pragma: no cover
+        """Drive an OAuth "Sign in with Google" sign-in. Returns a status:
+
+        * ``"ok"``       — authenticated (a live persistent Google session carried us
+                           through, or the email/password were accepted) and we are past
+                           the gate;
+        * ``"two_factor"`` — Google is demanding a second factor the engine cannot
+                           produce → the caller runs the 2FA notify/continue/retry flow;
+        * ``"failed"``   — could not complete (caller hands off).
+
+        Best-effort against Google's live DOM/popups; never raises. Live tuning is
+        expected (Google cannot be exercised from CI)."""
+        if not self._click_first(self._GOOGLE_SIGNIN_SELECTORS):
+            return "failed"
+        self._settle()
+        # A live persistent Google session clicks straight through OAuth consent.
+        try:
+            if not self.is_account_gate():
+                return "ok"
+        except Exception:
+            pass
+        # Otherwise Google asks for the account: type the stored email then password
+        # across Google's two-step identifier/password screens.
+        for value in (username, password):
+            self._fill_first_text(value)
+            self._click_first(("button:has-text('Next')", "#identifierNext", "#passwordNext", "button[type='submit']"))
+            self._settle()
+        if self._has_two_factor_challenge():
+            return "two_factor"
+        try:
+            return "ok" if not self.is_account_gate() else "failed"
+        except Exception:
+            return "failed"
+
+    def _fill_first_text(self, value: str) -> bool:  # pragma: no cover - integration-gated
+        """Type ``value`` into the first visible text/email/password input."""
+        for fld in self.detect_fields():
+            if (fld.field_type or "").lower() in ("text", "email", "password", "tel"):
+                self.type_value(fld.selector, value)
+                return True
+        return False
+
+    def _has_two_factor_challenge(self) -> bool:  # pragma: no cover - integration-gated
+        text = self._heading_and_buttons().lower()
+        try:
+            text += " " + (self._page.inner_text("body") or "").lower()
+        except Exception:
+            pass
+        return any(m in text for m in self._TWO_FACTOR_MARKERS)
 
     def current(self) -> PageState:  # pragma: no cover - integration-gated
         # Populate status/body/detection markers so cautious mode (FR-PREFILL-6) is

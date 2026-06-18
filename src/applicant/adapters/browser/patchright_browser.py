@@ -206,6 +206,16 @@ class PatchrightBrowser:
         ensure_action_allowed(StepKind.NAVIGATE)
         return self._source(application_id).log_in(username, password)
 
+    def offers_google_signin(self, application_id: ApplicationId) -> bool:
+        """True when the account gate offers OAuth 'Sign in with Google'."""
+        return self._source(application_id).offers_google_signin()
+
+    def log_in_with_google(self, application_id: ApplicationId, username: str, password: str) -> str:
+        """Drive 'Sign in with Google' from a stored Google credential; return
+        'ok' | 'two_factor' | 'failed' (a benign NAVIGATE/fill)."""
+        ensure_action_allowed(StepKind.NAVIGATE)
+        return self._source(application_id).log_in_with_google(username, password)
+
     def tenant_key(self, application_id: ApplicationId) -> str:
         """The credential-store key for the application's ATS host (e.g.
         ``workday:acme.wd5.myworkdayjobs.com``)."""

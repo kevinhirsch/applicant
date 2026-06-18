@@ -46,6 +46,10 @@ from applicant.ports.driven.browser_automation import DetectedField
 #: Topic the durable orchestrator uses for the final-approval gate (FR-NOTIF-2).
 FINAL_APPROVAL_TOPIC = "final_approval"
 
+#: Credential-vault key for the user's Google account (one account reused across all
+#: tenants' "Sign in with Google", vs. per-ATS-tenant direct credentials).
+GOOGLE_CREDENTIAL_KEY = "google"
+
 
 def ping_ref(application_id, kind: str) -> str:
     """Stable ref for a prefill blocked-state ping (#7).
@@ -226,6 +230,18 @@ class PrefillService:
             if credential is not None and self._try_log_in(aid, credential):
                 self._capture_screenshot(aid, result)
                 return self._prefill_pages(app, attributes, result, cautious=cautious)
+            # "Sign in with Google" (OAuth): a persistent Google session usually clicks
+            # straight through; if Google demands 2FA, the engine cannot produce the
+            # second factor → run the 2FA notify/continue/retry hand-off.
+            google = self._lookup_credential(app, tenant_key=GOOGLE_CREDENTIAL_KEY)
+            if google is not None and self._offers_google(aid):
+                status = self._try_google_login(aid, google)
+                if status == "ok":
+                    self._capture_screenshot(aid, result)
+                    return self._prefill_pages(app, attributes, result, cautious=cautious)
+                if status == "two_factor":
+                    return self._two_factor_handoff(app, result)
+                # "failed" → fall through to the human hand-off below.
             blocked = self._fill_current_page(
                 app, attributes, result, block_on_missing=False
             )
@@ -398,21 +414,23 @@ class PrefillService:
                 return self._reach_final_approval(app, result)
 
     # --- credential auto-login (automate-by-default) ----------------------
-    def _lookup_credential(self, app):
-        """Retrieve a stored ATS credential for this application's tenant, or ``None``.
+    def _lookup_credential(self, app, *, tenant_key: str | None = None):
+        """Retrieve a stored credential, or ``None``. Defaults to the application's ATS
+        tenant; pass ``tenant_key`` (e.g. ``GOOGLE_CREDENTIAL_KEY``) for a shared one.
 
         Defensive: no vault wired / no tenant key resolvable / nothing stored → None,
         so the caller cleanly falls back to the human hand-off."""
         store = self._credentials
         if store is None:
             return None
-        tenant_of = getattr(self._browser, "tenant_key", None)
-        if not callable(tenant_of):
-            return None
-        try:
-            tenant_key = tenant_of(app.id)
-        except Exception:
-            return None
+        if tenant_key is None:
+            tenant_of = getattr(self._browser, "tenant_key", None)
+            if not callable(tenant_of):
+                return None
+            try:
+                tenant_key = tenant_of(app.id)
+            except Exception:
+                return None
         if not tenant_key:
             return None
         try:
@@ -432,6 +450,44 @@ class PrefillService:
             return bool(log_in(aid, credential.username, credential.secret))
         except Exception:  # pragma: no cover - defensive: login failure -> hand off
             return False
+
+    def _offers_google(self, aid) -> bool:
+        """Whether the gate offers OAuth 'Sign in with Google' (defensive)."""
+        offers = getattr(self._browser, "offers_google_signin", None)
+        if not callable(offers):
+            return False
+        try:
+            return bool(offers(aid))
+        except Exception:  # pragma: no cover - defensive
+            return False
+
+    def _try_google_login(self, aid, credential) -> str:
+        """Drive 'Sign in with Google' from a stored Google credential. Returns
+        'ok' | 'two_factor' | 'failed' (defensive: a stub browser → 'failed')."""
+        login = getattr(self._browser, "log_in_with_google", None)
+        if not callable(login):
+            return "failed"
+        try:
+            return str(login(aid, credential.username, credential.secret))
+        except Exception:  # pragma: no cover - defensive
+            return "failed"
+
+    def _two_factor_handoff(self, app, result) -> PrefillResult:
+        """Google sign-in needs a second factor the engine cannot produce. Hold the
+        sandbox, notify the user with a 'continue' link to trigger the 2FA push, and
+        pivot to other work. (The continue→60s-wait→retry resume is the next
+        increment; this lands the descriptive first notification.)"""
+        app = app.with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+        result.state = app.status
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="two_factor",
+            title="Google needs two-factor sign-in to continue",
+            session_url=result.sandbox_session_url,
+            payload={"provider": "google", "action": "continue_two_factor"},
+        )
+        self._persist(app)
+        return result
 
     def _blocked_detection(self, app, result, event) -> PrefillResult:
         """Pause + hand off on a detection signal (cautious mode, FR-PREFILL-6)."""
