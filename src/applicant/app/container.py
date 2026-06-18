@@ -344,6 +344,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # ADR-0004: gate for automated account creation (default OFF). Threaded into the
         # boundary so the create-account submit is permitted only when opted in.
         automated_accounts=settings.allow_automated_accounts,
+        # FR-STEALTH-3: persist per-tenant signed-in sessions on a configured (deploy:
+        # volume-backed) dir so the user signs in once and the session is reused.
+        profiles_dir=settings.browser_profiles_dir,
         channel=settings.browser_channel,
         egress_timezone=settings.egress_timezone,
         egress_locale=settings.egress_locale,

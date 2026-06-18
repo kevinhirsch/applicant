@@ -88,6 +88,7 @@ class PatchrightBrowser:
         egress_locale: str = "",
         persona: str = "linux",
         automated_accounts: bool = False,
+        profiles_dir: str = "profiles",
     ) -> None:
         # FR-STEALTH-1: a single coherent REAL Linux + Google Chrome identity for
         # every session. The Chrome major is version-pinned to the installed Chrome
@@ -115,8 +116,12 @@ class PatchrightBrowser:
         self._automated_accounts = bool(automated_accounts)
         self._rng = rng or random.Random()
         # FR-STEALTH-3: per-tenant profiles inherit the tz/locale-pinned coherent
-        # identity so a returning user is consistent with the residential egress.
-        self._profiles = profiles or ProfileStore(fingerprint=self.fingerprint)
+        # identity so a returning user is consistent with the residential egress. The
+        # root dir is configurable so the deploy persists sessions on a named volume
+        # (a signed-in session is reused across applications + restarts).
+        self._profiles = profiles or ProfileStore(
+            root_dir=profiles_dir, fingerprint=self.fingerprint
+        )
         # Optional page-source factory seam (tests): called as
         # ``factory(ats, fingerprint, user_data_dir=...)`` so the resolved per-tenant
         # ``user_data_dir`` (FR-STEALTH-3) can be asserted without a real browser.
