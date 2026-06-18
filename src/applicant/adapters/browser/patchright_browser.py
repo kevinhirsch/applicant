@@ -178,6 +178,13 @@ class PatchrightBrowser:
         return self._source(application_id).current()
 
     # --- pre-fill loop helpers (used by PrefillService) -------------------
+    def enter_application(self, application_id: ApplicationId) -> PageState | None:
+        """Move from the job posting/landing page INTO the application flow by clicking
+        the ATS "Apply" entry (FR-PREFILL-1). A benign navigation; ``None`` when no
+        entry is needed (the URL already lands inside the flow)."""
+        ensure_action_allowed(StepKind.NAVIGATE)
+        return self._source(application_id).enter_application()
+
     def advance(self, application_id: ApplicationId) -> PageState | None:
         """Move to the next page in the ATS flow; ``None`` past the last page."""
         ensure_action_allowed(StepKind.NAVIGATE)

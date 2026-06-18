@@ -70,6 +70,15 @@ class TestPatchrightBrowserContract:
         with pytest.raises(KeyError):
             adapter.detect_fields(aid)
 
+    def test_enter_application_is_a_benign_navigation(self, adapter, aid):
+        # FR-PREFILL-1: clicking the "Apply" entry to move into the application flow is
+        # a benign navigation (NAVIGATE), not an irreducible human step — it must NOT
+        # raise the boundary. For the in-memory fake (already at the first page) it is a
+        # no-op that returns None and leaves the flow on the account-create page.
+        adapter.open(aid, WORKDAY_URL)
+        assert adapter.enter_application(aid) is None
+        assert adapter.is_account_create_page(aid) is True
+
     # --- pre-fill-stop boundary (FR-PREFILL-4) ---------------------------
     def test_account_create_submit_always_blocked(self, adapter, aid):
         adapter.open(aid, WORKDAY_URL)
