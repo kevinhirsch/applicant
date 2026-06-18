@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -44,6 +45,12 @@ from src.applicant_engine import ApplicantEngineClient, EngineError
 from src.auth_helpers import require_privilege, require_user
 
 logger = logging.getLogger(__name__)
+
+#: A redline revision turn is HEAVY writing — the engine runs the escalation (L2/pro)
+#: tier, whose per-call budget is ~60s and which may escalate, so the default 30s read
+#: timeout 502'd legitimate revisions before they returned. Give the turn a generous
+#: read window so the model's revision lands instead of the proxy giving up.
+_TURN_TIMEOUT = httpx.Timeout(connect=3.0, read=120.0, write=10.0, pool=3.0)
 
 
 class TurnIn(BaseModel):
@@ -156,7 +163,7 @@ def setup_applicant_documents_routes() -> APIRouter:
         (engine ``POST /api/documents/{id}/turn``)."""
         require_privilege(request, "can_use_documents")
         try:
-            async with ApplicantEngineClient() as engine:
+            async with ApplicantEngineClient(timeout=_TURN_TIMEOUT) as engine:
                 data = await engine.turn_document(document_id, body.model_dump())
         except EngineError as exc:
             logger.info("applicant document turn failed: %s", exc)

@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import html
 
+from applicant.core.entities.application import Application
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.search_criteria import SearchCriteria
-from applicant.core.errors import InvalidInput
-from applicant.core.ids import ApplicationId, CampaignId, DecisionId, new_id
+from applicant.core.errors import InvalidInput, NotFound
+from applicant.core.ids import ApplicationId, CampaignId, DecisionId, JobPostingId, new_id
+from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -302,15 +304,49 @@ class DigestService:
         }
 
     # --- decisions (FR-DIG-3/5, FR-FB-1) ----------------------------------
+    def _application_for(self, target_id, *, status: ApplicationState) -> ApplicationId:
+        """Resolve a digest target to a real application row (FR-DIG-3).
+
+        Digest rows are POSTINGS until pursued, so the front-door approve/decline
+        sends a *posting* id. A ``Decision`` needs an existing ``applications`` row
+        (its FK), so a not-yet-pursued posting must be promoted to an application
+        first — otherwise the decision insert hits a foreign-key violation (-> 500).
+        If ``target_id`` is already an application, it is returned unchanged (status
+        untouched). If it is a posting, find-or-create its application at ``status``
+        (APPROVED so the loop pursues it, or DECLINED for a terminal decline),
+        mirroring AgentLoop._ensure_application. Unknown id -> NotFound (404).
+        """
+        if self._storage.applications.get(target_id) is not None:
+            return target_id  # already an application
+        posting = self._storage.postings.get(JobPostingId(str(target_id)))
+        if posting is None:
+            raise NotFound(f"No posting or application for id '{target_id}'.")
+        existing = self._storage.applications.get_by_posting(posting.campaign_id, posting.id)
+        if existing is not None:
+            return existing.id
+        app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=posting.campaign_id,
+            posting_id=posting.id,
+            status=status,
+            job_title=posting.title,
+            work_mode=posting.work_mode,
+            root_url=posting.source_url,
+        )
+        self._storage.applications.add(app)
+        self._storage.commit()
+        return app.id
+
     def approve(self, application_id: ApplicationId) -> Decision:
+        app_id = self._application_for(application_id, status=ApplicationState.APPROVED)
         decision = Decision(
             id=DecisionId(new_id()),
-            application_id=application_id,
+            application_id=app_id,
             type=DecisionType.APPROVE,
         )
         self._storage.decisions.add(decision)
         self._storage.commit()
-        self._close_loop(decision)
+        self._close_loop(decision, target_id=application_id)
         return decision
 
     def decline(
@@ -331,20 +367,21 @@ class DigestService:
                 "Decline feedback is required (FR-FB-1): say briefly why this role "
                 "is not a fit so the next run learns."
             )
+        app_id = self._application_for(application_id, status=ApplicationState.DECLINED)
         decision = Decision(
             id=DecisionId(new_id()),
-            application_id=application_id,
+            application_id=app_id,
             type=DecisionType.DECLINE,
             feedback_text=feedback_text,
             criteria_delta=criteria_delta or {},
         )
         self._storage.decisions.add(decision)
         self._storage.commit()
-        self._close_loop(decision)
+        self._close_loop(decision, target_id=application_id)
         return decision
 
     # --- close the learning + criteria + idempotency loop -----------------
-    def _close_loop(self, decision: Decision) -> None:
+    def _close_loop(self, decision: Decision, *, target_id: ApplicationId | None = None) -> None:
         """Run the post-commit side effects guarded so none can 500 the request.
 
         The ``Decision`` is already committed by the caller. Notifier idempotency,
@@ -352,12 +389,19 @@ class DigestService:
         downstream failure must NOT leave the loop half-closed or surface a 500
         (mirrors SubmissionService's "learning must never break the action"). Each
         independent side effect is isolated so one failure can't skip the others.
+
+        ``target_id`` is the id the user actually acted on — the digest POSTING id, on
+        which ``deliver`` keyed the pending action + notification. It is distinct from
+        ``decision.application_id`` (the promoted application row that satisfies the
+        Decision FK), so pending/notification/campaign are resolved by ``target_id``
+        to still match; learning reads ``decision`` (which resolves either id).
         """
-        campaign_id = self._campaign_for_decision(decision.application_id)
+        resolve_id = target_id if target_id is not None else decision.application_id
+        campaign_id = self._campaign_for_decision(resolve_id)
         # Idempotency: acting expires the other channels (FR-NOTIF-3).
         if self._notification_service is not None:
             try:
-                self._notification_service.acted(str(decision.application_id))
+                self._notification_service.acted(str(resolve_id))
                 # Acting on any digest item also expires the campaign's digest-ready
                 # ping, whose dedup key is per-campaign (FR-NOTIF-3/FR-DIG-2).
                 if campaign_id is not None:
@@ -366,12 +410,11 @@ class DigestService:
                 log.warning("digest_close_loop_notify_failed", exc_info=True)
         # Resolve the digest-approval pending item (FR-UI-3). The digest row id the
         # user acts on is the POSTING id (the same id ``deliver`` keys the pending
-        # action on), not an application row — so resolve by the decision id end-to-end
-        # and find the campaign via the posting (it has no applications row yet).
+        # action on), not the promoted application row — so resolve by ``target_id``.
         if self._pending is not None and campaign_id is not None:
             try:
                 self._pending.resolve_by_dedup(
-                    campaign_id, f"digest_approval:{decision.application_id}"
+                    campaign_id, f"digest_approval:{resolve_id}"
                 )
             except Exception:  # pragma: no cover - defensive
                 log.warning("digest_close_loop_pending_failed", exc_info=True)

@@ -2029,8 +2029,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     async function _openApplicantReview(item, appId, card, results) {
       const panel = card.querySelector('.doclib-applicant-review');
       if (!panel) return;
-      if (panel.style.display !== 'none') { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+      if (panel.style.display !== 'none') {
+        panel.style.display = 'none'; panel.innerHTML = '';
+        // Restore the collapsed list-card height cap.
+        card.style.maxHeight = ''; card.style.flexShrink = '';
+        return;
+      }
       panel.style.display = 'block';
+      // List cards are capped at max-height:200px with overflow:visible for a uniform
+      // list; the taller open review panel spilled out of that cap and overlapped the
+      // neighbouring card. Lift the cap (and don't let flex squeeze it) so the open
+      // card grows to fit the panel and the grid scrolls instead of overlapping.
+      card.style.maxHeight = 'none'; card.style.flexShrink = '0';
       panel.innerHTML = '<div style="opacity:0.5;font-size:12px;padding:8px 2px;">Opening review…</div>';
 
       let session;

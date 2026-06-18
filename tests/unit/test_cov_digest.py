@@ -96,7 +96,21 @@ def test_set_presence_signal(llm_client):
     assert llm_client.post("/api/digest/presence", json={}).status_code == 204
 
 
+def _seed_digest_app(client, aid):
+    """Seed a real application row so approve/decline have a valid FK target (the
+    digest acts on real postings/applications; a Decision needs an applications row)."""
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
+
+    storage = client.app.state.container.storage
+    storage.applications.add(
+        Application(id=ApplicationId(aid), campaign_id=CampaignId("camp-dig-1"), posting_id=JobPostingId(""))
+    )
+    storage.commit()
+
+
 def test_approve_records_decision(llm_client):
+    _seed_digest_app(llm_client, "app-dig-1")
     res = llm_client.post("/api/digest/applications/app-dig-1/approve")
     assert res.status_code == 201
     body = res.json()
@@ -105,6 +119,7 @@ def test_approve_records_decision(llm_client):
 
 
 def test_decline_with_feedback_records_delta(llm_client):
+    _seed_digest_app(llm_client, "app-dig-2")
     res = llm_client.post(
         "/api/digest/applications/app-dig-2/decline",
         json={"feedback_text": "Too senior for me right now.", "criteria_delta": {"seniority": "mid"}},
