@@ -100,8 +100,14 @@ def test_real_browser_identity_is_coherent_real_linux_chrome():
         assert platform == "Linux x86_64"
         assert vendor == "Google Inc."
         assert "en-US" in languages
-        assert "mesa" in (renderer or "").lower() or "linux" in (renderer or "").lower()
-        assert "direct3d" not in (renderer or "").lower()
+        # Coherent with Linux + Chrome whether or not the host has a GPU: a GPU-less
+        # deploy (the api container renders the browser in-container) legitimately
+        # falls back to Chrome's own ANGLE/SwiftShader software path — the same
+        # renderer real headless/VM Chrome reports — so that is coherent, not a tell.
+        rl = (renderer or "").lower()
+        assert any(k in rl for k in ("mesa", "linux", "swiftshader", "angle", "llvmpipe"))
+        # A Windows (Direct3D) or macOS (Metal) backend WOULD contradict the Linux UA.
+        assert "direct3d" not in rl and "metal" not in rl
         # Not automated / not headless tells.
         assert not webdriver
     finally:

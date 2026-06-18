@@ -193,6 +193,24 @@ class TestEgressThreadedIntoLaunch:
         kwargs = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT, proxy=None)
         assert "proxy" not in kwargs
 
+    def test_launch_kwargs_keeps_webgl_on_gpuless_host(self):
+        """FR-STEALTH-1: a WebGL context must exist even on a GPU-less host.
+
+        The default deploy launches the browser inside the api container (no GPU).
+        Recent Chrome/Chromium return a NULL WebGL context there unless software
+        rendering is allowed, and a missing context is itself a coherence tell (a
+        real Chrome-on-Linux always exposes WebGL). The launch must force the
+        SwiftShader fallback so the fingerprint init script has a context to mask.
+        """
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        args = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT, proxy=None)["args"]
+        assert "--enable-unsafe-swiftshader" in args
+        # The automation tell stays removed.
+        assert "--disable-blink-features=AutomationControlled" in args
+        # We still reveal NO automation flags.
+        assert not any("--headless" in a or "--enable-automation" in a for a in args)
+
     def test_browser_passes_egress_proxy_to_source(self, monkeypatch):
         # The adapter must hand the EgressPolicy's launch_proxy() to the page source.
         from applicant.adapters.browser import patchright_browser as pb

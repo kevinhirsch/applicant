@@ -412,7 +412,19 @@ class PlaywrightPageSource:
     #: drops the ``navigator.webdriver`` tell; we add NO automation-revealing flags
     #: (no ``--headless``, no ``--enable-automation``). Patchright layers its own
     #: stealth patches on top of these.
-    _STEALTH_ARGS = ("--disable-blink-features=AutomationControlled",)
+    #:
+    #: ``--enable-unsafe-swiftshader`` keeps a working WebGL context on GPU-less hosts
+    #: (the default deploy launches the browser inside the api container, which has no
+    #: GPU). Recent Chrome/Chromium dropped the automatic SwiftShader fallback, so
+    #: without this flag ``canvas.getContext('webgl')`` returns ``null`` — and a real
+    #: Chrome-on-Linux ALWAYS exposes WebGL, so a missing context is itself an
+    #: incoherence (FR-STEALTH-1). With a context present, the fingerprint init script
+    #: above masks the SwiftShader vendor/renderer to the coherent values. On a host
+    #: that does have a usable GPU the flag is a no-op (SwiftShader stays a fallback).
+    _STEALTH_ARGS = (
+        "--disable-blink-features=AutomationControlled",
+        "--enable-unsafe-swiftshader",
+    )
 
     @staticmethod
     def launch_kwargs(
