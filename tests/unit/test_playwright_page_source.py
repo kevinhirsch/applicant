@@ -60,9 +60,13 @@ class _StubKeyboard:
     def __init__(self):
         self.typed: list[str] = []
         self.pressed: list[str] = []
+        # Options revealed only after typing (simulates react-select filtering).
+        self.reveal_on_type: list = []
 
     def type(self, text, delay=0):
         self.typed.append(text)
+        for opt in self.reveal_on_type:
+            opt._visible = True
 
     def press(self, key):
         self.pressed.append(key)
@@ -302,17 +306,47 @@ def test_type_value_chooses_listbox_option():
 
 def test_type_value_typeable_combobox_filters_then_picks():
     # REGRESSION (live Greenhouse): a react-select combobox is an <input
-    # role="combobox" aria-autocomplete="list"> — you must TYPE to filter the options
-    # before clicking. The engine types the value, then clicks the matching option.
+    # role="combobox" aria-autocomplete="list">. When the wanted option is not shown
+    # until the list is filtered, the engine TYPES to filter, then clicks the match.
     page = _StubPage()
     cb = _StubElement(tag="input", attrs={"role": "combobox", "aria-autocomplete": "list"})
     page._elements_by_sel["#country"] = cb
-    page._role_options = [_StubOption("Canada"), _StubOption("United States")]
+    hidden_match = _StubOption("United States", visible=False)  # appears only after typing
+    page._role_options = [_StubOption("Canada", visible=False), hidden_match]
+    page.keyboard.reveal_on_type = page._role_options
     src = _bare_source(page)
     src.type_value("#country", "United States")
-    assert "United States" in page.keyboard.typed  # typed to filter
-    assert page._role_options[1].clicked is True     # matching option picked
-    assert page._role_options[0].clicked is False
+    assert "United States" in page.keyboard.typed  # typed to filter the long list
+    assert hidden_match.clicked is True
+
+
+def test_listbox_decline_synonym_maps_to_form_wording():
+    # REGRESSION (live Greenhouse EEO): the stored decline value ("prefer not to say")
+    # must map to a form option worded differently for the SAME intent ("Decline To
+    # Self Identify") — picked from the OPEN options without typing (typing would
+    # wrongly filter the 3-option list to nothing).
+    page = _StubPage()
+    page._elements_by_sel["#gender"] = _StubElement(
+        tag="input", attrs={"role": "combobox", "aria-autocomplete": "list"}
+    )
+    male = _StubOption("Male")
+    decline = _StubOption("Decline To Self Identify")
+    page._role_options = [male, _StubOption("Female"), decline]
+    src = _bare_source(page)
+    src.type_value("#gender", "prefer not to say")
+    assert decline.clicked is True
+    assert male.clicked is False
+    assert page.typed == []  # matched the open options; never filtered them away
+
+
+def test_option_match_exact_loose_and_decline():
+    from applicant.adapters.browser.page_source import PlaywrightPageSource as P
+
+    assert P._option_match("Mobile", "Mobile") == "exact"
+    assert P._option_match("decline to self-identify", "Decline To Self Identify") in ("exact", "loose")
+    assert P._option_match("prefer not to say", "I don't wish to answer") == "loose"
+    assert P._option_match("prefer not to say", "I do not want to answer") == "loose"
+    assert P._option_match("Male", "Female") is None  # not a false decline match
 
 
 def test_listbox_skips_hidden_options_from_other_dropdowns():
