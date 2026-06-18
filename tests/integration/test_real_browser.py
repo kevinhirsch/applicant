@@ -155,6 +155,52 @@ def test_real_browser_recognizes_sign_in_gate():
 @pytest.mark.skipif(
     not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
 )
+def test_real_browser_detects_and_fills_workday_listbox_dropdown():
+    """FR-PREFILL-2/3: Workday renders Country / Phone-type / EEO fields as custom
+    ``<button aria-haspopup="listbox">`` widgets (NOT ``<select>``). The engine must
+    DETECT them (the input/select/textarea query misses them) and FILL them by opening
+    the dropdown and clicking the matching option — typing does nothing. A live
+    Workday run otherwise leaves every such field blank."""
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+    from applicant.adapters.browser.stealth import coherent_fingerprint
+
+    channel = _working_channel()
+    # A faithful Workday dropdown: a button with real data-automation-id +
+    # aria-haspopup="listbox" that opens a role=listbox of role=option items.
+    html = (
+        "<html><body><h2>Voluntary Disclosures</h2>"
+        "<button data-automation-id='gender' aria-haspopup='listbox' aria-label='gender' "
+        "id='g'>Select One</button>"
+        "<ul role='listbox' id='lb' style='display:none'>"
+        "<li role='option' data-automation-label='Male'>Male</li>"
+        "<li role='option' data-automation-label='Prefer not to say'>Prefer not to say</li>"
+        "</ul>"
+        "<script>var b=document.getElementById('g'),l=document.getElementById('lb');"
+        "b.addEventListener('click',function(){l.style.display='block';});"
+        "l.querySelectorAll('li').forEach(function(o){o.addEventListener('click',"
+        "function(){b.textContent=o.getAttribute('data-automation-label');"
+        "l.style.display='none';});});</script></body></html>"
+    )
+    src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
+    try:
+        src.open("data:text/html," + html)
+        # 1. The <button> dropdown is detected as a 'listbox' field (NOT missed).
+        fields = src.detect_fields()
+        gender = [f for f in fields if f.label == "gender" and f.field_type == "listbox"]
+        assert gender, f"listbox not detected: {[(f.selector, f.field_type) for f in fields]}"
+        # 2. Filling it opens the dropdown and picks the matching option (typing a
+        #    custom dropdown does nothing — it must be opened + clicked).
+        src.type_value(gender[0].selector, "Prefer not to say")
+        assert src._page.inner_text(gender[0].selector) == "Prefer not to say"  # noqa: SLF001
+    finally:
+        src.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _HAS_DRIVER, reason="No browser driver (patchright/playwright) installed.")
+@pytest.mark.skipif(
+    not _browser_binary_available(), reason="No browser binary; run `patchright install chromium`."
+)
 def test_real_browser_identity_is_coherent_real_linux_chrome():
     """Live coherence check (FR-STEALTH-1): the identity holds together in a real
     browser — UA, platform, CH-UA platform, languages and WebGL all consistent
