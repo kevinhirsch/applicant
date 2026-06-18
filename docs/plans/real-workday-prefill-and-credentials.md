@@ -2,6 +2,22 @@
 
 Status: **proposed** (for review). Author: playtest hardening. Scope owner: Applicant engine.
 
+## 0. Guiding principle — automate by default, intelligence-first (REQUIREMENT)
+
+**If a step can be driven automatically, the engine MUST attempt it.** The product is an
+agentic "Claude-in-the-browser with a targeted purpose" — it should use **intelligence (the LLM)
+to navigate, map fields, and decide what to do** when hardcoded heuristics/selectors fall short,
+not only a brittle selector table. Lean on the LLM the way an agentic browser would: read the page,
+reason about the step, act.
+
+**Escalate to the human ONLY for genuinely high-stakes or non-automatable steps** — human
+escalation is the exception, not the default. Those exceptions are: **2FA approval** (the second
+factor can't be auto-produced → the notify→continue→60s→retry flow), **CAPTCHA / bot-challenges**
+(infeasible + against ToS), and **final-submit** (the deliberate review-before-submit trust gate,
+FR-RESUME-8/FR-PREFILL-5). Everything else — login (incl. Google), account creation, navigation,
+form-fill — the engine drives itself. Every new "we can't do X automatically" must be justified as
+high-stakes/non-automatable, not merely "not implemented yet".
+
 ## 1. Goal
 
 Make the autonomous loop actually **pre-fill a real Workday application end-to-end**, and add a
