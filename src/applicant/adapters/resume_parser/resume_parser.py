@@ -45,9 +45,17 @@ _DEGREE_RE = re.compile(
 )
 _SECTION_RE = re.compile(
     r"^\s*(experience|work experience|employment|professional experience|"
-    r"education|skills|technical skills|core competencies)\s*:?\s*$",
+    r"education|skills|technical skills|core competencies|"
+    r"certifications?|licenses?|certifications? (?:&|and) licenses?|"
+    r"summary|professional summary|objective|projects|"
+    r"awards|honors|publications|languages|interests|references|"
+    r"volunteer(?:ing)?|activities)\s*:?\s*$",
     re.IGNORECASE,
 )
+#: Inline separators on a skills line. Includes the middle dot ``·`` (U+00B7) and a
+#: couple of dot/bullet variants commonly used between skills, which were previously
+#: missing — so "SQL · Postgres" used to parse as a single bogus "SQL · Postgres" token.
+_SKILL_SEPARATORS = frozenset(",;•·‧・|")
 
 
 class ResumeParser:
@@ -264,8 +272,34 @@ class ResumeParser:
             body += sections.get(key, [])
         skills: list[str] = []
         for line in body:
-            for tok in re.split(r"[,;•|]", line):
+            for tok in self._split_skills(line):
                 s = tok.strip()
                 if s and len(s) <= 40 and s not in skills:
                     skills.append(s)
         return skills
+
+    @staticmethod
+    def _split_skills(line: str) -> list[str]:
+        """Split a skills line on common separators, but NOT inside parentheses.
+
+        A naive ``re.split`` on commas shreds a parenthetical sub-list like
+        ``AWS (EKS, RDS, Lambda)`` into the junk tokens ``AWS (EKS`` / ``RDS`` /
+        ``Lambda)``. Tracking bracket depth keeps such a group as one clean token.
+        """
+        out: list[str] = []
+        buf: list[str] = []
+        depth = 0
+        for ch in line:
+            if ch in "([{":
+                depth += 1
+                buf.append(ch)
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+                buf.append(ch)
+            elif depth == 0 and ch in _SKILL_SEPARATORS:
+                out.append("".join(buf))
+                buf = []
+            else:
+                buf.append(ch)
+        out.append("".join(buf))
+        return out

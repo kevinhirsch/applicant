@@ -32,6 +32,35 @@ def parser() -> ResumeParser:
     return ResumeParser()
 
 
+def test_skills_split_on_middledot_and_keep_parenthetical_groups(parser, tmp_path):
+    """Regression: a '·'-delimited skills line with a parenthetical sub-list and a
+    following Certifications heading must NOT produce junk skills like 'SQL · Postgres',
+    'AWS (EKS', 'Lambda)' or capture the 'Certifications' heading as a skill."""
+    resume = (
+        "Jane Q Candidate\n"
+        "jane@example.com\n\n"
+        "Skills:\n"
+        "Python, Go, SQL · Postgres, Redis · Kubernetes, Docker, AWS (EKS, RDS, Lambda)\n\n"
+        "Certifications:\n"
+        "AWS Certified Solutions Architect\n"
+    )
+    p = tmp_path / "resume.txt"
+    p.write_text(resume, encoding="utf-8")
+    skills = parser.parse(str(p)).skills
+
+    # Clean atomic skills are recovered across both comma and middle-dot separators.
+    for want in ("Python", "Go", "SQL", "Postgres", "Redis", "Kubernetes", "Docker"):
+        assert want in skills, f"{want!r} missing from {skills}"
+    # The parenthetical sub-list stays one token, not shredded.
+    assert "AWS (EKS, RDS, Lambda)" in skills
+    # No junk from the old comma/middle-dot shredding.
+    for junk in ("SQL · Postgres", "AWS (EKS", "Lambda)", "RDS"):
+        assert junk not in skills, f"junk {junk!r} leaked into {skills}"
+    # The Certifications heading is a section boundary, not a skill.
+    assert "Certifications" not in skills
+    assert not any("Certified Solutions Architect" in s for s in skills)
+
+
 def test_parse_txt_extracts_identity(parser, tmp_path):
     p = tmp_path / "resume.txt"
     p.write_text(_TXT_RESUME, encoding="utf-8")
