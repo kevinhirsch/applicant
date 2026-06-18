@@ -87,6 +87,7 @@ class PatchrightBrowser:
         egress_timezone: str = "",
         egress_locale: str = "",
         persona: str = "linux",
+        automated_accounts: bool = False,
     ) -> None:
         # FR-STEALTH-1: a single coherent REAL Linux + Google Chrome identity for
         # every session. The Chrome major is version-pinned to the installed Chrome
@@ -110,6 +111,8 @@ class PatchrightBrowser:
         self.egress = egress or EgressPolicy()
         self.egress.validate()
         self._use_real_browser = use_real_browser
+        # ADR-0004: server-derived gate for automated account creation (default OFF).
+        self._automated_accounts = bool(automated_accounts)
         self._rng = rng or random.Random()
         # FR-STEALTH-3: per-tenant profiles inherit the tz/locale-pinned coherent
         # identity so a returning user is consistent with the residential egress.
@@ -229,12 +232,30 @@ class PatchrightBrowser:
         return self._source(application_id).is_confirmation_page()
 
     def submit_account(self, application_id: ApplicationId) -> None:
-        """The engine must NEVER call this without violating the boundary.
+        """Click the account-creating submit — gated by ADR-0004.
 
-        It exists so the boundary is provable: any attempt raises
-        ``PrefillBoundaryViolation`` (FR-PREFILL-4). The human does this in VNC.
+        With ``ALLOW_AUTOMATED_ACCOUNTS`` OFF (the default) this raises
+        ``PrefillBoundaryViolation`` (the boundary holds; the human creates the account
+        in the live session). With it ON, the engine is permitted to create the account.
         """
-        ensure_action_allowed(StepKind.ACCOUNT_CREATE_SUBMIT)
+        ensure_action_allowed(
+            StepKind.ACCOUNT_CREATE_SUBMIT,
+            automated_accounts_enabled=self._automated_accounts,
+        )
+        create = getattr(self._source(application_id), "submit_account", None)
+        if callable(create):
+            create()
+
+    def create_account(self, application_id: ApplicationId, username: str, password: str) -> str:
+        """Create an account from a predefined credential (ADR-0004, gated). Fills the
+        create-account form, submits (boundary-checked), and reports the outcome:
+        'ok' | 'email_verify' | 'failed'. With the gate OFF this raises before any
+        action (the caller then hands off)."""
+        ensure_action_allowed(
+            StepKind.ACCOUNT_CREATE_SUBMIT,
+            automated_accounts_enabled=self._automated_accounts,
+        )
+        return self._source(application_id).create_account(username, password)
 
     def click_final_submit(
         self, application_id: ApplicationId, *, engine_submit_authorized: bool = False

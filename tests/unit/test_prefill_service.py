@@ -268,6 +268,62 @@ class TestMissingAttribute:
         result = service.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
         assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
 
+    def test_account_creation_when_enabled_creates_and_banks_credential(self, tmp_path):
+        # ADR-0004: with ALLOW_AUTOMATED_ACCOUNTS on + a predefined set, the engine
+        # creates an account, banks the credential under the tenant key, and continues.
+        from applicant.adapters.credentials.pg_credential_store import (
+            Credential,
+            InMemoryCredentialStore,
+        )
+        from applicant.application.services.prefill_service import PREDEFINED_CREDENTIAL_KEY
+
+        cid = CampaignId(new_id())
+        creds = InMemoryCredentialStore(str(tmp_path / "master.key"))
+        creds.store(
+            cid, Credential(tenant_key=PREDEFINED_CREDENTIAL_KEY, username="kevin@kevinhirsch.com", secret="")
+        )
+        storage = InMemoryStorage()
+        svc = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(automated_accounts=True),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=creds,
+            llm=None,
+            allow_automated_accounts=True,
+        )
+        result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL
+        banked = creds.retrieve(cid, "workday:acme.myworkdayjobs.com")
+        assert banked is not None and banked.username == "kevin@kevinhirsch.com"
+
+    def test_account_creation_disabled_hands_off(self, tmp_path):
+        # Default (gate OFF): even with a predefined set, the engine does NOT create an
+        # account — it hands off at the gate.
+        from applicant.adapters.credentials.pg_credential_store import (
+            Credential,
+            InMemoryCredentialStore,
+        )
+        from applicant.application.services.prefill_service import PREDEFINED_CREDENTIAL_KEY
+
+        cid = CampaignId(new_id())
+        creds = InMemoryCredentialStore(str(tmp_path / "master.key"))
+        creds.store(
+            cid, Credential(tenant_key=PREDEFINED_CREDENTIAL_KEY, username="kevin@kevinhirsch.com", secret="")
+        )
+        storage = InMemoryStorage()
+        svc = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(automated_accounts=False),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=creds,
+            llm=None,
+            allow_automated_accounts=False,
+        )
+        result = svc.prefill_application(_app(cid), WORKDAY_URL, _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP
+
     def test_google_login_hits_2fa_and_hands_off_with_continue_action(self, tmp_path):
         # "Sign in with Google" that demands 2FA: the engine can't produce the second
         # factor, so it holds the sandbox and emits a `two_factor` pending action (with

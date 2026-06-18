@@ -282,12 +282,25 @@ def test_non_sensitive_empty_answer_not_from_explicit():
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "step",
-    [StepKind.ACCOUNT_CREATE_SUBMIT, StepKind.CAPTCHA, StepKind.EMAIL_VERIFY, StepKind.SMS_VERIFY],
+    [StepKind.CAPTCHA, StepKind.EMAIL_VERIFY, StepKind.SMS_VERIFY],
 )
 def test_irreducible_human_steps_blocked(step):
+    # CAPTCHA / email / SMS verification are UNCONDITIONALLY irreducible (ADR-0004).
     assert prefill_boundary.is_irreducible_human_step(step)
     with pytest.raises(PrefillBoundaryViolation):
         prefill_boundary.ensure_action_allowed(step)
+
+
+@pytest.mark.unit
+def test_account_create_submit_gated_by_automated_accounts():
+    # ADR-0004: account creation is no longer unconditionally irreducible — it is
+    # permitted ONLY when the operator enabled automated accounts (default OFF).
+    assert not prefill_boundary.is_irreducible_human_step(StepKind.ACCOUNT_CREATE_SUBMIT)
+    with pytest.raises(PrefillBoundaryViolation):
+        prefill_boundary.ensure_action_allowed(StepKind.ACCOUNT_CREATE_SUBMIT)
+    prefill_boundary.ensure_action_allowed(
+        StepKind.ACCOUNT_CREATE_SUBMIT, automated_accounts_enabled=True
+    )  # no raise when opted in
 
 
 @pytest.mark.unit

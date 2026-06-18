@@ -113,6 +113,11 @@ class PageSource(Protocol):
         """Drive 'Sign in with Google'; return 'ok' | 'two_factor' | 'failed'."""
         ...
 
+    def create_account(self, username: str, password: str) -> str:
+        """Create an account from a predefined credential; return
+        'ok' | 'email_verify' | 'failed' (gated by the adapter)."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
@@ -201,6 +206,15 @@ class FakePageSource:
 
     def log_in_with_google(self, username: str, password: str) -> str:
         return "failed"
+
+    def submit_account(self) -> None:
+        # Simulate the create-account submit by advancing past the gate.
+        self.advance()
+
+    def create_account(self, username: str, password: str) -> str:
+        # Simulate a successful account creation: advance past the gate.
+        self.advance()
+        return "ok"
 
     def is_account_create_page(self) -> bool:
         return self._page.is_account_create
@@ -740,6 +754,59 @@ class PlaywrightPageSource:
         except Exception:
             pass
         return any(m in text for m in self._TWO_FACTOR_MARKERS)
+
+    #: Controls that reveal / submit the create-account form.
+    _CREATE_ACCOUNT_REVEAL_SELECTORS = (
+        "button:has-text('Create Account')",
+        "a:has-text('Create Account')",
+        "[data-automation-id='createAccountLink']",
+    )
+    _CREATE_SUBMIT_SELECTORS = (
+        "button[data-automation-id='createAccountSubmitButton']",
+        "button[data-automation-id='click_filter']",
+        "button:has-text('Create Account')",
+        "button[type='submit']",
+    )
+    _EMAIL_VERIFY_MARKERS = (
+        "verify your email",
+        "check your email",
+        "verification email",
+        "confirm your email",
+        "we sent you an email",
+    )
+
+    def submit_account(self) -> None:  # pragma: no cover - integration-gated
+        """Click the account-creating submit (the boundary check is in the adapter)."""
+        self._click_first(self._CREATE_SUBMIT_SELECTORS)
+
+    def create_account(self, username: str, password: str) -> str:  # pragma: no cover
+        """Fill + submit a create-account form from a predefined credential, then report
+        'ok' | 'email_verify' | 'failed'. Best-effort against the live DOM."""
+        self._click_first(self._CREATE_ACCOUNT_REVEAL_SELECTORS)
+        self._settle()
+        if not self._fill_login_fields(username, password):
+            return "failed"
+        # Many create-account forms also have a verify/confirm-password field.
+        for fld in self.detect_fields():
+            label = (fld.label or "").lower()
+            if "verify" in label or "confirm" in label:
+                self.type_value(fld.selector, password)
+        self.submit_account()
+        self._settle()
+        if self._needs_email_verify():
+            return "email_verify"
+        try:
+            return "ok" if not self.is_account_gate() else "failed"
+        except Exception:
+            return "failed"
+
+    def _needs_email_verify(self) -> bool:  # pragma: no cover - integration-gated
+        text = self._heading_and_buttons().lower()
+        try:
+            text += " " + (self._page.inner_text("body") or "").lower()
+        except Exception:
+            pass
+        return any(m in text for m in self._EMAIL_VERIFY_MARKERS)
 
     def current(self) -> PageState:  # pragma: no cover - integration-gated
         # Populate status/body/detection markers so cautious mode (FR-PREFILL-6) is
