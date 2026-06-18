@@ -32,6 +32,7 @@ tested; swapping in the real Playwright page-source is the only change to go liv
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
@@ -201,11 +202,7 @@ class PrefillService:
         # cannot drive) before any field, so the loop must hand off here rather than
         # mistake a field-less gate for 'done'. Signature-stable: a minimal stub browser
         # without is_account_gate falls back to the create-only check.
-        _gate = getattr(self._browser, "is_account_gate", None)
-        on_account_gate = (
-            _gate(aid) if callable(_gate) else self._browser.is_account_create_page(aid)
-        )
-        if on_account_gate:
+        if self._on_account_gate(aid):
             app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
             # FR-PREFILL-6: run a cautious detection check BEFORE filling the account
             # page — a CAPTCHA/Cloudflare/etc. there must pause + hand off, never fill.
@@ -278,6 +275,54 @@ class PrefillService:
         # Advance past the account page to the next application page.
         self._browser.advance(application.id)
         return self._continue_pages(app, attributes, result, cautious=cautious)
+
+    def resume_two_factor(
+        self,
+        application: Application,
+        attributes: list[Attribute] | None = None,
+        *,
+        timeout_s: float = 60.0,
+        poll_s: float = 2.0,
+        cautious: bool = True,
+    ) -> PrefillResult:
+        """Resume a Google 2FA hand-off after the user taps "continue".
+
+        Triggers the 2FA push (re-drives the Google sign-in so Google sends the prompt
+        to the user's device), then waits up to ``timeout_s`` for approval — detected by
+        the page leaving the account gate. On approval → continue into the form; on
+        timeout → emit a retry notification and stay held so the user can tap again.
+        Assumes the held browser session is still open."""
+        attributes = attributes or []
+        aid = application.id
+        result = PrefillResult(
+            application_id=aid,
+            state=application.status,
+            sandbox_session_url=application.sandbox_session_url,
+        )
+        # Trigger the push: re-drive the Google sign-in (sends the 2FA prompt).
+        google = self._lookup_credential(application, tenant_key=GOOGLE_CREDENTIAL_KEY)
+        if google is not None:
+            self._try_google_login(aid, google)
+        # Poll for the user's on-device approval (the gate clears once approved).
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while True:
+            if not self._on_account_gate(aid):
+                app = application.with_status(ApplicationState.PREFILLING)
+                result.state = app.status
+                return self._continue_pages(app, attributes, result, cautious=cautious)
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(max(0.0, poll_s))
+        # Timed out waiting for 2FA → re-notify for a retry; the app stays held.
+        result.state = application.status
+        result.pending_action_id = self._emit_waiting(
+            application=application,
+            kind="two_factor",
+            title="Two-factor sign-in timed out — tap to try Google again",
+            session_url=result.sandbox_session_url,
+            payload={"provider": "google", "action": "continue_two_factor", "retry": True},
+        )
+        return result
 
     def resume_after_detection(
         self,
@@ -449,6 +494,17 @@ class PrefillService:
         try:
             return bool(log_in(aid, credential.username, credential.secret))
         except Exception:  # pragma: no cover - defensive: login failure -> hand off
+            return False
+
+    def _on_account_gate(self, aid) -> bool:
+        """Whether the current page is the account gate (sign-in OR create-account).
+        Signature-stable: falls back to the create-only check for minimal stubs."""
+        gate = getattr(self._browser, "is_account_gate", None)
+        try:
+            if callable(gate):
+                return bool(gate(aid))
+            return bool(self._browser.is_account_create_page(aid))
+        except Exception:  # pragma: no cover - defensive
             return False
 
     def _offers_google(self, aid) -> bool:
