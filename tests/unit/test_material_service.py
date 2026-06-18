@@ -18,7 +18,7 @@ from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.material_service import VARIANT_CAP, MaterialService
 from applicant.core.entities.resume_variant import ResumeVariant
-from applicant.core.errors import TruthfulnessViolation
+from applicant.core.errors import ReviewRequired, TruthfulnessViolation
 from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, ResumeVariantId, new_id
 
 BASE = (
@@ -491,6 +491,26 @@ def test_review_deep_link_targets_served_review_surface():
 
 
 @pytest.mark.unit
+def test_approve_is_refused_until_the_review_is_opened():
+    """FR-NOTIF-4: "approve only after viewing" — approving a document before its
+    redline review was opened is refused (server-side, non-bypassable); approval
+    succeeds once the review session exists."""
+    svc = MaterialService(InMemoryStorage(), resume_tailoring=LatexTailor())
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, new_id(), "Built Python pipelines.", ["Python"], role_requires=True
+    )
+    # Straight from notification → approve, with no view: refused.
+    with pytest.raises(ReviewRequired):
+        svc.approve(doc.id)
+    assert svc._storage.documents.get(doc.id).approved is False
+    # Opening the redline review (what the front-door "Review" button does) unblocks it.
+    svc.open_revision(doc.id)
+    approved = svc.approve(doc.id)
+    assert approved.approved is True
+
+
+@pytest.mark.unit
 def test_approve_resolves_review_action_and_expires_ladder():
     """#5: approving a generated doc clears its material_review pending action AND
     expires the escalation ladder (the deep-link ref)."""
@@ -519,6 +539,7 @@ def test_approve_resolves_review_action_and_expires_ladder():
     # Before approval: the material_review pending action is open.
     assert any(p.kind == "material_review" for p in pas.list_pending(cid))
 
+    svc.open_revision(doc.id)  # FR-NOTIF-4: approve only after viewing the review.
     svc.approve(doc.id)
 
     # After approval: the pending action is resolved and the ladder ref expired.

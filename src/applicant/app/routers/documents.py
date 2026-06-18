@@ -307,8 +307,17 @@ def submit_turn(document_id: str, body: TurnIn, material=Depends(get_material_se
 
 @router.post("/{document_id}/approve", status_code=201)
 def approve(document_id: str, material=Depends(get_material_service)) -> dict:
-    """Approve the material, passing the review gate (FR-RESUME-8)."""
-    doc = material.approve(GeneratedDocumentId(document_id))
+    """Approve the material, passing the review gate (FR-RESUME-8, FR-NOTIF-4).
+
+    409 when the redline review was never opened ("approve only after viewing");
+    404 when the document does not exist.
+    """
+    try:
+        doc = material.approve(GeneratedDocumentId(document_id))
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ReviewRequired as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved}
 
 

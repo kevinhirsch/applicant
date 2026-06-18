@@ -33,7 +33,12 @@ from applicant.core.entities.revision_session import (
     RevisionStatus,
     RevisionTurn,
 )
-from applicant.core.errors import InvalidInput, NotFound, TruthfulnessViolation
+from applicant.core.errors import (
+    InvalidInput,
+    NotFound,
+    ReviewRequired,
+    TruthfulnessViolation,
+)
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -812,10 +817,21 @@ class MaterialService:
             pass
 
     def approve(self, document_id: GeneratedDocumentId) -> GeneratedDocument:
-        """Approve the material through the review gate (FR-RESUME-8)."""
+        """Approve the material through the review gate (FR-RESUME-8, FR-NOTIF-4).
+
+        "One-click approve only AFTER viewing": approval is refused until the redline
+        review surface has been opened for this document (which durably creates its
+        revision session via ``open_revision`` / ``apply_turn``). Enforced server-side
+        so it can't be bypassed by a caller jumping straight from a notification to
+        approve.
+        """
         doc = self._storage.documents.get(document_id)
         if doc is None:
             raise NotFound(f"no such document {document_id}")
+        if self._storage.revisions.get_for_material(document_id) is None:
+            raise ReviewRequired(
+                "Open the review for this document before approving it."
+            )
         # Final post-filter before approval (defence in depth).
         content = self.apply_post_filter(doc.content or "").text
         approved = GeneratedDocument(

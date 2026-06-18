@@ -6,7 +6,8 @@ Feature: Screening answers go through review
     When the engine generates an essay screening answer
     Then the answer is stored unapproved
     And submission is blocked while the screening answer is unapproved
-    When the user approves the screening answer
+    When the user opens the redline review
+    And the user approves the screening answer
     Then submission is no longer blocked by the review gate
 
   Scenario: A factual screening answer is taken directly from the true source

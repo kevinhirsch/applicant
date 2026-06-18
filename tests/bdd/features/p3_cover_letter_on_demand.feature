@@ -14,5 +14,6 @@ Feature: Cover letter on demand reviewed
     And the cover letter contains no em-dash
     And a review-ready notification linked to the review surface is emitted
     And submission is blocked while the cover letter is unapproved
-    When the user approves the cover letter
+    When the user opens the redline review
+    And the user approves the cover letter
     Then submission is no longer blocked by the review gate
