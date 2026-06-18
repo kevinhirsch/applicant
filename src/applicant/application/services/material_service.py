@@ -353,7 +353,7 @@ class MaterialService:
         if flagged:
             raise TruthfulnessViolation(
                 f"Generated material claims {flagged!r} which is absent from the "
-                "candidate's real history (FR-RESUME-2): adaptation reframes, it "
+                "candidate's real history: adaptation reframes, it "
                 "never fabricates a skill, title, date, or qualification."
             )
 

@@ -101,7 +101,7 @@ class ToolRegistry:
         """
         if not self.is_enabled(tool_key):
             label = TOOL_LABELS.get(tool_key, tool_key)
-            raise ToolDisabledError(f"Tool '{label}' is disabled by the operator (FR-UI-4).")
+            raise ToolDisabledError(f"Tool '{label}' is disabled by the operator.")
 
     def registry_view(self) -> list[dict]:
         """Registry rows for the FR-UI-4 toggle panel (key, label, enabled)."""

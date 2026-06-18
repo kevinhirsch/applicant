@@ -49,6 +49,6 @@ def ensure_submittable(materials: Iterable[ReviewableMaterial]) -> None:
     blocking = [m.identifier for m in materials if material_blocks_submission(m)]
     if blocking:
         raise ReviewRequired(
-            "Generated material must be approved via the review gate before submission "
-            f"(FR-RESUME-8); unapproved: {', '.join(blocking)}."
+            "Generated material must be approved via the review gate before submission; "
+            f"unapproved: {', '.join(blocking)}."
         )

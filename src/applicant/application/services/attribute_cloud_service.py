@@ -181,7 +181,7 @@ class AttributeCloudService:
         """
         if sensitive_fields.is_sensitive_field(name):
             raise ConfirmationRequired(
-                f"Cannot AI-add sensitive attribute {name!r}; needs an explicit answer (FR-ATTR-6)."
+                f"Cannot AI-add sensitive attribute {name!r}; needs an explicit answer."
             )
         return self.upsert(campaign_id, name, value, confirm=confirm)
 

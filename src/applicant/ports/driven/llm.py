@@ -65,7 +65,7 @@ class TierLadder:
 
     def __post_init__(self) -> None:
         if not self.tiers:
-            raise ValueError("A tier ladder needs at least one tier (FR-LLM-3).")
+            raise ValueError("A tier ladder needs at least one tier.")
 
     def __len__(self) -> int:
         return len(self.tiers)

@@ -292,7 +292,7 @@ class OpenAICompatibleLLM:
         max_tokens: int | None = None,
     ) -> LLMResult:
         if self._ladder is None:
-            raise LLMNotConfigured("No LLM tier ladder is configured (FR-UI-5).")
+            raise LLMNotConfigured("No LLM tier ladder is configured.")
 
         required = _estimate_tokens(messages) + (max_tokens or 0)
         # Clamp the 1-based starting rung into the ladder. A heavy task may request a
@@ -305,8 +305,7 @@ class OpenAICompatibleLLM:
             fit = self._ladder.first_fitting(required, from_index=idx)
             if fit is None:
                 raise LLMLadderExhausted(
-                    f"Prompt needs ~{required} tokens; no tier's context window fits "
-                    "(FR-LLM-4a)."
+                    f"Prompt needs ~{required} tokens; no tier's context window fits."
                 )
             idx = fit
 
@@ -320,7 +319,7 @@ class OpenAICompatibleLLM:
                 nxt = self._ladder.first_fitting(required, from_index=idx + 1)
                 if nxt is None:
                     raise LLMLadderExhausted(
-                        "Context overflow and no larger tier available (FR-LLM-4).",
+                        "Context overflow and no larger tier available.",
                     ) from None
                 idx = nxt
                 continue
@@ -341,7 +340,7 @@ class OpenAICompatibleLLM:
             return result
 
         raise LLMLadderExhausted(
-            "Tier ladder exhausted; top tier is the ceiling (FR-LLM-4).",
+            "Tier ladder exhausted; top tier is the ceiling.",
             last_error=last_error,
         )
 
