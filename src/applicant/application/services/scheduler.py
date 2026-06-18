@@ -199,7 +199,13 @@ class Scheduler:
         self._tick_running = True
         self._last_tick_at = now
         try:
-            result = loop.tick(campaign_id, now)
+            # force=True: a manual Run-now runs one pass even if the schedule is
+            # paused / the run-mode auto-stop is met (the operator explicitly asked).
+            try:
+                result = loop.tick(campaign_id, now, force=True)
+            except TypeError:
+                # Tolerate loop stubs/older signatures without a ``force`` kwarg.
+                result = loop.tick(campaign_id, now)
             if dataclasses.is_dataclass(result):
                 payload = dataclasses.asdict(result)
             elif isinstance(result, dict):
