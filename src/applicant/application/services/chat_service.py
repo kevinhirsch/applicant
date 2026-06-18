@@ -176,11 +176,16 @@ class ChatService:
             return deterministic
         try:
             system = (
-                "You are the Applicant assistant. Help the user fill in their job-"
-                "application profile. Be concise. Never claim to have changed any "
-                "integral detail without confirmation."
+                "You are the Applicant assistant. You help the user with their job "
+                "search and their application profile. Answer using the candidate's "
+                "saved profile and search criteria provided below — do NOT ask the user "
+                "for details that are already present there. Be concise. Never claim to "
+                "have changed any integral detail without confirmation."
             )
             prompt = message
+            profile_ctx = self._profile_context(campaign_id)
+            if profile_ctx:
+                prompt += f"\n\n{profile_ctx}"
             if gaps:
                 prompt += f"\n\n(Known missing details: {', '.join(gaps)}.)"
             interview_ctx = self._interview_context()
@@ -195,6 +200,63 @@ class ChatService:
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
             return deterministic
+
+    # --- saved-profile context (FR-CHAT-1) --------------------------------
+    def _profile_context(self, campaign_id: CampaignId) -> str:
+        """A compact block of the candidate's SAVED profile (criteria + attributes).
+
+        Injected into the LLM prompt so the assistant answers from what is already on
+        file instead of asking the user for details they already provided — the
+        front-door chat otherwise saw only the *missing* gaps and re-requested stored
+        data like target titles and salary floor. Bounded to keep the prompt lean;
+        degrades to "" when nothing is on file (offline-safe, like interview context).
+        """
+        lines: list[str] = []
+        if self._criteria is not None:
+            try:
+                crit = self._criteria.get_criteria(campaign_id)
+            except Exception:
+                crit = None
+            if crit is not None:
+                cbits: list[str] = []
+                if crit.titles:
+                    cbits.append("target titles: " + ", ".join(crit.titles))
+                if getattr(crit, "work_modes", ()):
+                    cbits.append("work modes: " + ", ".join(crit.work_modes))
+                if getattr(crit, "locations", ()):
+                    cbits.append("locations: " + ", ".join(crit.locations))
+                if getattr(crit, "salary_floor", None):
+                    cbits.append(f"salary floor: {crit.salary_floor}")
+                if crit.keywords:
+                    cbits.append("skills/keywords: " + ", ".join(crit.keywords))
+                if crit.human_readable:
+                    cbits.append("in their words: " + crit.human_readable)
+                if cbits:
+                    lines.append("Search criteria — " + "; ".join(cbits))
+        try:
+            attrs = self._attrs.list_attributes(campaign_id)
+        except Exception:
+            attrs = []
+        shown = 0
+        for a in attrs:
+            name = getattr(a, "name", "")
+            value = getattr(a, "value", "")
+            if not name or value in (None, ""):
+                continue
+            val = str(value)
+            if len(val) > 160:
+                val = val[:157] + "…"
+            lines.append(f"- {name}: {val}")
+            shown += 1
+            if shown >= 50:
+                lines.append("- … (more attributes on file)")
+                break
+        if not lines:
+            return ""
+        return (
+            "The candidate's saved profile (answer from this; do NOT ask for details "
+            "already present here):\n" + "\n".join(lines)
+        )
 
     # --- upcoming-interview context (Stage 2.5; degrade silently) ---------
     def _interview_context(self, owner: str | None = None) -> str:
