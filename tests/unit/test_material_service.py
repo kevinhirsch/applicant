@@ -19,7 +19,7 @@ from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.material_service import VARIANT_CAP, MaterialService
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.errors import TruthfulnessViolation
-from applicant.core.ids import CampaignId, JobPostingId, ResumeVariantId, new_id
+from applicant.core.ids import ApplicationId, CampaignId, JobPostingId, ResumeVariantId, new_id
 
 BASE = (
     "\\section{Skills}\n"
@@ -184,6 +184,37 @@ class _FabricatingLLM:
         return LLMResult(
             text="Seasoned expert in Kubernetes and Rust.", tier=1, model="fake"
         )
+
+
+class _StartTierRecordingLLM:
+    """Records the start_tier each generation pass requested."""
+
+    def __init__(self) -> None:
+        self.start_tiers: list[int] = []
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMResult
+
+        self.start_tiers.append(kwargs.get("start_tier", 1))
+        # Echo a grounded body so the truthfulness gate passes.
+        return LLMResult(text="Python and SQL work.", tier=2, model="fake")
+
+
+@pytest.mark.unit
+def test_heavy_writing_escalates_to_tier_two(storage):
+    """Résumé/cover-letter/essay writing is heavy, so it starts at L2 immediately
+    instead of the cheap L1 default (an escalation before even trying L1)."""
+    llm = _StartTierRecordingLLM()
+    svc = MaterialService(
+        storage, llm=llm, resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    svc.generate_cover_letter(
+        CampaignId(new_id()), ApplicationId(new_id()), "Python and SQL.", ["Python"],
+    )
+    assert llm.start_tiers and all(t == 2 for t in llm.start_tiers)
 
 
 @pytest.mark.unit

@@ -230,6 +230,23 @@ def test_start_tier_respected():
     assert res.tier == 2 and res.text == "t2"
 
 
+def test_start_tier_beyond_ladder_clamps_to_top():
+    # A heavy task may request start_tier=2 (escalate immediately); on a single-tier
+    # ladder that must clamp to the top tier, not index past the end (FR-LLM-3/4).
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": body["model"]}}]})
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="only", context_window=100_000),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    res = llm.complete([ChatMessage(role="user", content="q")], start_tier=2)
+    assert res.tier == 1 and res.text == "only"
+
+
 # --- FR-LLM-4: ceiling exhaustion -----------------------------------------
 def test_ceiling_exhaustion_raises():
     def handler(request: httpx.Request) -> httpx.Response:

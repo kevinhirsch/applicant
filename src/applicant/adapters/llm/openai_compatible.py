@@ -295,7 +295,11 @@ class OpenAICompatibleLLM:
             raise LLMNotConfigured("No LLM tier ladder is configured (FR-UI-5).")
 
         required = _estimate_tokens(messages) + (max_tokens or 0)
-        idx = max(0, start_tier - 1)
+        # Clamp the 1-based starting rung into the ladder. A heavy task may request a
+        # higher start tier (e.g. start_tier=2 to skip the cheap L1 for résumé/cover
+        # writing); if the configured ladder has fewer rungs, fall back to its top
+        # tier rather than indexing past the end (FR-LLM-3/4).
+        idx = min(max(0, start_tier - 1), len(self._ladder) - 1)
         # If the starting tier can't hold the prompt, jump to the first that can.
         if self._ladder.at(idx).context_window < required:
             fit = self._ladder.first_fitting(required, from_index=idx)

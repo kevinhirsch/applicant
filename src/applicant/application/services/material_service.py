@@ -1001,7 +1001,10 @@ class MaterialService:
                             role="user",
                             content=f"[{kind}] Source:\n{true_source}\nEmphasize: {', '.join(terms)}",
                         ),
-                    ]
+                    ],
+                    # Heavy writing escalates straight to L2 (FR-LLM-3/4); it still
+                    # climbs further on low confidence / context overflow.
+                    start_tier=_HEAVY_WRITING_START_TIER,
                 )
                 return result.text
             except Exception:
@@ -1057,3 +1060,9 @@ _SYSTEM_PROMPT = (
     "re-term true history. You NEVER fabricate skills, titles, dates, or claims. "
     "No em-dashes. Write in the candidate's own warm, direct, first-person voice."
 )
+
+#: Writing application material (résumé variants, cover letters, essay answers) is a
+#: heavy, quality-sensitive task, so it starts at the escalation tier (L2) instead of
+#: the cheap L1 default — an immediate escalation before even trying L1 (FR-LLM-3/4).
+#: The adapter clamps this to the ladder, so a single-tier setup still works.
+_HEAVY_WRITING_START_TIER = 2

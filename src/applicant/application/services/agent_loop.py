@@ -51,6 +51,10 @@ from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+#: Below this many characters the candidate's known history is too thin to tailor
+#: from, so deep research is worth a call before writing (see _context_is_lacking).
+_THIN_SOURCE_CHARS = 400
+
 
 @dataclass
 class TickResult:
@@ -657,11 +661,15 @@ class AgentLoop:
         jd_terms = self._jd_terms(posting)
         true_source = self._true_source(campaign, app, posting)
         summary: dict[str, Any] = {}
-        # AUTO-ESCALATE (Lane B): on a genuine company/role knowledge gap, escalate
-        # to the capped deep-research tool to better tailor the materials. The tool
+        # AUTO-ESCALATE (Lane B): before writing important material (résumé / cover
+        # letter / free-text answers), escalate to the capped deep-research tool ONLY
+        # when context is lacking — a genuine company/role knowledge gap — so a
+        # well-covered application doesn't spend the research budget. The tool also
         # dedupes + caches per campaign and self-gates on budget / channel
         # availability, so this is free on re-use and a no-op when research is off.
-        research_ctx = self._maybe_research_company(campaign, posting)
+        research_ctx = ""
+        if self._context_is_lacking(true_source, jd_terms):
+            research_ctx = self._maybe_research_company(campaign, posting)
         if research_ctx:
             true_source = f"{true_source}\n\n{research_ctx}" if true_source else research_ctx
             summary["research_used"] = True
@@ -702,6 +710,23 @@ class AgentLoop:
         # pipeline's re-check-on-re-drive means an approval actually advances the flow.
         summary["review_approved"] = self._review_approved(app)
         return summary
+
+    def _context_is_lacking(self, true_source: str, jd_terms: list[str]) -> bool:
+        """True when we lack enough context to write well, so deep research is worth
+        a call before generating material (résumé / cover letter / free-text answers).
+
+        Signals a genuine company/role knowledge gap (the trigger the user wants —
+        research "whenever there is lacking context"): the candidate's known history
+        is too thin to tailor from, or it does NOT already cover the role's required
+        terms (an uncovered JD requirement). When the source already covers the role,
+        research is skipped to preserve the per-campaign budget. Substring coverage
+        mirrors the fit-scoring check (``score_fit``).
+        """
+        src = (true_source or "").strip()
+        if len(src) < _THIN_SOURCE_CHARS:
+            return True
+        low = src.lower()
+        return any(t and t.strip().lower() not in low for t in jd_terms)
 
     def _maybe_research_company(self, campaign, posting) -> str:
         """Escalate to the capped deep-research tool for a company/role gap (Lane B).
