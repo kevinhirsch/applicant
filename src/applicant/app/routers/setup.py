@@ -48,6 +48,20 @@ class ChannelsIn(BaseModel):
     apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
 
 
+class QuietHoursIn(BaseModel):
+    """Quiet-hours window for approvals/digests (FR-NOTIF-5).
+
+    ``enabled=False`` is 24/7 mode (always notify). When enabled, approval/digest
+    push channels (Discord/email) are held until the window ends; in-app always
+    surfaces and ERRORS are never deferred. Times are HH:MM in ``tz`` (UTC when blank).
+    """
+
+    enabled: bool = False
+    start: str = "22:00"
+    end: str = "07:00"
+    tz: str = ""
+
+
 class SandboxConnectionIn(BaseModel):
     """Native Proxmox Windows VM connection + login data (FR-OOBE, zero-CLI).
 
@@ -166,12 +180,17 @@ def set_tiers(body: LadderIn, svc=Depends(get_setup_service)) -> None:
 
 @router.get("/channels")
 def get_channels(svc=Depends(get_setup_service)) -> dict:
-    """Return channel config status (no secrets) for the wizard (FR-OOBE-2)."""
+    """Return channel config status (no secrets) for the wizard (FR-OOBE-2).
+
+    Also returns the current quiet-hours window (FR-NOTIF-5) so the Notifications
+    panel can render the same control in both the wizard and Settings.
+    """
     chan = svc.get_channels()
     return {
         "discord_configured": bool(chan.get("discord_webhook_url")),
         "email_configured": bool(chan.get("apprise_urls")),
         "channels_configured": svc.channels_configured(),
+        "quiet_hours": svc.get_quiet_hours(),
     }
 
 
@@ -195,6 +214,36 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
         container.notification.configure(
             discord_webhook_url=body.discord_webhook_url or None,
             apprise_urls=body.apprise_urls or None,
+        )
+
+
+@router.get("/channels/quiet-hours")
+def get_quiet_hours(svc=Depends(get_setup_service)) -> dict:
+    """Return the persisted quiet-hours window for the UI (FR-NOTIF-5)."""
+    return svc.get_quiet_hours()
+
+
+@router.post("/channels/quiet-hours", status_code=status.HTTP_204_NO_CONTENT)
+def configure_quiet_hours(body: QuietHoursIn, container=Depends(get_container)) -> None:
+    """Set the quiet-hours window for approvals/digests (FR-NOTIF-5).
+
+    Errors always surface immediately, any hour — quiet hours only defer NORMAL
+    approval/digest push channels (in-app always surfaces). ``enabled=False`` is
+    24/7 mode. Persists the window and reconfigures the live notifier in place so no
+    restart is needed (zero-CLI).
+    """
+    try:
+        container.setup_service.set_quiet_hours(
+            enabled=body.enabled, start=body.start, end=body.end, tz=body.tz
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if hasattr(container.notification, "configure"):
+        qh = container.setup_service.get_quiet_hours()
+        container.notification.configure(
+            quiet_hours=(qh["start"], qh["end"]) if qh["enabled"] else None,
+            quiet_tz=qh["tz"],
+            always_on=not qh["enabled"],
         )
 
 

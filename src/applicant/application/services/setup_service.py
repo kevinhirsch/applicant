@@ -109,6 +109,31 @@ def validate_operator_urls(value: str, *, field: str = "url") -> str:
     return value
 
 
+def validate_hhmm(value: str, *, field: str = "time") -> str:
+    """Validate + normalize an ``HH:MM`` 24-hour clock time (FR-NOTIF-5).
+
+    Returns the zero-padded ``HH:MM`` form (e.g. ``"9:5"`` -> ``"09:05"``). An empty
+    string passes through unchanged (the field is simply unset). Anything that is not
+    a valid 00:00-23:59 time raises ``ValueError`` so the setup router maps it to a
+    clean 400 (matching ``configure_llm``) and a malformed window is never persisted.
+    """
+    text = (value or "").strip()
+    if not text:
+        return text
+    parts = text.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"{field} must be in HH:MM 24-hour format (e.g. 22:00).")
+    try:
+        hh, mm = int(parts[0]), int(parts[1])
+    except ValueError as exc:
+        raise ValueError(
+            f"{field} must be in HH:MM 24-hour format (e.g. 22:00)."
+        ) from exc
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError(f"{field} must be a time between 00:00 and 23:59.")
+    return f"{hh:02d}:{mm:02d}"
+
+
 _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
 _CHANNELS_KEY = "notify.channels"
@@ -244,6 +269,55 @@ class SetupService:
             "channels_configured",
             discord=bool(discord_webhook_url),
             email=bool(apprise_urls),
+        )
+
+    # --- quiet hours (FR-NOTIF-5) -----------------------------------------
+    def get_quiet_hours(self) -> dict[str, Any]:
+        """Return the persisted quiet-hours window for the UI (no secrets).
+
+        Shape: ``{"enabled": bool, "start": "HH:MM", "end": "HH:MM", "tz": str}``.
+        ``enabled=False`` is 24/7 mode (always notify). Defaults are a sensible
+        overnight window so enabling it once is one click.
+        """
+        chan = self.get_channels()
+        return {
+            "enabled": bool(chan.get("quiet_hours_enabled", False)),
+            "start": chan.get("quiet_hours_start", "22:00"),
+            "end": chan.get("quiet_hours_end", "07:00"),
+            "tz": chan.get("quiet_hours_tz", ""),
+        }
+
+    def set_quiet_hours(
+        self,
+        *,
+        enabled: bool,
+        start: str = "22:00",
+        end: str = "07:00",
+        tz: str = "",
+    ) -> None:
+        """Persist the quiet-hours window (FR-NOTIF-5).
+
+        ``enabled=False`` selects 24/7 mode (approvals/digests notify any hour);
+        ``enabled=True`` defers approval/digest push channels to the next allowed
+        hour inside the ``[start, end)`` window. Errors are NEVER deferred — that gate
+        lives in the notifier and is independent of this setting. Times are validated
+        to HH:MM; the window is stored alongside the channel config so it travels with
+        it. Secrets are not involved.
+        """
+        start = validate_hhmm(start, field="Quiet-hours start")
+        end = validate_hhmm(end, field="Quiet-hours end")
+        rec = self.get_channels()
+        rec["quiet_hours_enabled"] = bool(enabled)
+        rec["quiet_hours_start"] = start or "22:00"
+        rec["quiet_hours_end"] = end or "07:00"
+        rec["quiet_hours_tz"] = (tz or "").strip()
+        self._store.set(_CHANNELS_KEY, rec)
+        log.info(
+            "quiet_hours_configured",
+            enabled=bool(enabled),
+            start=rec["quiet_hours_start"],
+            end=rec["quiet_hours_end"],
+            tz=bool(rec["quiet_hours_tz"]),
         )
 
     # --- sandbox connection (native Proxmox Windows VM, FR-OOBE, FR-VAULT-3) --

@@ -72,6 +72,12 @@ class _FakeEngine:
     async def setup_test_channels(self):
         return await self._dispatch("setup_test_channels")
 
+    async def setup_get_quiet_hours(self):
+        return await self._dispatch("setup_get_quiet_hours")
+
+    async def setup_configure_quiet_hours(self, body):
+        return await self._dispatch("setup_configure_quiet_hours", body)
+
     async def setup_get_sandbox_connection(self):
         return await self._dispatch("setup_get_sandbox_connection")
 
@@ -232,6 +238,43 @@ def test_channels_test(monkeypatch):
     resp = _make_client().post("/api/applicant/setup/channels/test")
     assert resp.status_code == 200
     assert resp.json()["channels"] == ["discord"]
+
+
+# ── quiet hours (FR-NOTIF-5) ────────────────────────────────────────────────
+
+
+def test_quiet_hours_get_and_save(monkeypatch):
+    _patch_engine(
+        monkeypatch,
+        result={"enabled": True, "start": "22:00", "end": "07:00", "tz": ""},
+    )
+    r = _make_client().get("/api/applicant/setup/channels/quiet-hours")
+    assert r.status_code == 200
+    assert r.json()["enabled"] is True
+    assert _FakeEngine.last_call == ("setup_get_quiet_hours", ())
+
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "22:30", "end": "07:15", "tz": "America/Phoenix"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_quiet_hours"
+    assert args[0]["enabled"] is True
+    assert args[0]["start"] == "22:30"
+    assert args[0]["tz"] == "America/Phoenix"
+
+
+def test_quiet_hours_engine_400_passed_through(monkeypatch):
+    err = EngineError("bad", status=400, detail="Quiet-hours start must be a time")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={"enabled": True, "start": "25:00", "end": "07:00"},
+    )
+    assert resp.status_code == 400
 
 
 # ── automation sandbox backend (FR-SANDBOX-1) ───────────────────────────────
