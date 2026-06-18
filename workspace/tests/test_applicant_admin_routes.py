@@ -93,6 +93,13 @@ class FakeEngine:
     async def admin_variants(self, cid):
         return await self._maybe("variants", cid, default={"campaign_id": cid, "variants": []})
 
+    async def admin_learning(self, cid):
+        return await self._maybe(
+            "learning",
+            cid,
+            default={"campaign_id": cid, "summary": {}, "sources": [], "converting_roles": []},
+        )
+
     async def admin_stealth(self):
         return await self._maybe("stealth", default={})
 
@@ -181,6 +188,42 @@ def test_variants_passthrough(client):
     assert r.json()["variants"][0]["id"] == "v1"
 
 
+def test_learning_passthrough(client):
+    FakeEngine.responses["learning"] = {
+        "campaign_id": "c1",
+        "summary": {"total_matched": 24, "total_approved": 4, "total_submitted": 2, "sources_seen": 2},
+        "sources": [
+            {"source": "high", "matched": 4, "approved": 2, "submitted": 2, "conversion_rate": 50.0},
+            {"source": "low", "matched": 20, "approved": 0, "submitted": 0, "conversion_rate": None},
+        ],
+        "converting_roles": ["Senior Backend Engineer"],
+        "exploration_budget": 0.25,
+    }
+    r = client.get("/api/applicant/admin/learning/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["summary"]["total_matched"] == 24
+    assert body["sources"][0]["source"] == "high"
+    assert body["converting_roles"] == ["Senior Backend Engineer"]
+
+
+def test_learning_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["learning"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/learning/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["sources"] == []
+    assert body["converting_roles"] == []
+
+
+def test_learning_requires_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/learning/c1").status_code == 403
+
+
 def test_workflow_and_screenshots_and_outcomes(client):
     assert client.get("/api/applicant/admin/workflow/a1").status_code == 200
     assert client.get("/api/applicant/admin/screenshots/a1").status_code == 200
@@ -252,6 +295,21 @@ def test_history_hits_exact_engine_path(monkeypatch):
     assert r.status_code == 200
     assert seen["path"] == "/api/admin/history/c1"
     assert seen["query"]["limit"] == "50"
+
+
+def test_learning_hits_exact_engine_path(monkeypatch):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"campaign_id": "c1", "summary": {}, "sources": []})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+    r = c.get("/api/applicant/admin/learning/c1")
+    assert r.status_code == 200
+    assert seen["path"] == "/api/admin/learning/c1"
 
 
 def test_mark_submitted_hits_exact_engine_path(monkeypatch):

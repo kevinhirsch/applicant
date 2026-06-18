@@ -247,6 +247,56 @@ class LearningService:
             return converted or model.source_weights.get(key, 0.0)
         return (approvals * _W_APPROVAL + submissions * _W_SUBMISSION) / matches
 
+    def build_summary(self, campaign_id: CampaignId) -> dict:
+        """Plain-language, white-labeled read-model of what the system has learned.
+
+        Built purely from the persisted ``LearningModel`` (no LLM, no secrets): the
+        source ranking with each source's real funnel (matched -> approved ->
+        submitted), the overall conversion totals across all sources, the roles that
+        actually convert (titles only — never the raw embedding vector), and the
+        exploration budget. Backs the operator-visibility (Insights) surface so the
+        user can see and trust the bias the engine is applying.
+        """
+        model = self.load_model(campaign_id)
+        ranked = self.source_ranking(model)
+        sources: list[dict] = []
+        total_matches = total_approvals = total_submissions = 0
+        for key in ranked:
+            ys = model.source_yield_stats.get(key, {})
+            matches = int(ys.get("matches", 0))
+            approvals = int(ys.get("approvals", 0))
+            submissions = int(ys.get("submissions", 0))
+            total_matches += matches
+            total_approvals += approvals
+            total_submissions += submissions
+            sources.append(
+                {
+                    "source": key,
+                    "matched": matches,
+                    "approved": approvals,
+                    "submitted": submissions,
+                    # Conversion rate as a percentage (submissions per match) for a
+                    # readable bar; ``None`` when there is no volume to normalize.
+                    "conversion_rate": (
+                        round(100.0 * submissions / matches, 1) if matches > 0 else None
+                    ),
+                }
+            )
+        return {
+            "campaign_id": str(campaign_id),
+            "summary": {
+                "total_matched": total_matches,
+                "total_approved": total_approvals,
+                "total_submitted": total_submissions,
+                "sources_seen": len(sources),
+            },
+            "sources": sources,
+            "converting_roles": self.converting_titles(model),
+            "converting_samples": int(model.converting_samples),
+            # 0-1 explore/exploit knob (read-only here; editable on the Sources tab).
+            "exploration_budget": float(model.exploration_budget),
+        }
+
     def source_ranking(self, model: LearningModel) -> list[str]:
         """Sources ordered by learned conversion-weighted yield, highest first.
 
