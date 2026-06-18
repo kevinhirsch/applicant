@@ -77,29 +77,48 @@ capability, never a silent default:
   engine derives the decision; a caller flag can never opt the safety in (per CLAUDE.md).
 - This warrants a dedicated **security review** (its own ADR under `docs/adr/`).
 
-## 5. Credential-store login / account-creation flow (the requested behavior)
+## 5. Credential-store login / account-creation flow (RESOLVED — automate the login)
 
-On reaching a Workday **account/login gate** for `tenant_key = workday:<host>`:
+**Hard requirement (non-negotiable):** the vault stores the user's logins like a password
+manager and the engine **drives the login automatically** — the user must NOT sign in per
+application. This holds for direct email/password ATS logins **and** for "Sign in with Google".
 
-1. **Try to log in** with `credentials.retrieve(campaign_id, tenant_key)`.
-   - If a credential exists → fill the login form (username/secret), submit login, detect success.
-2. **No matching credential** → if `ALLOW_AUTOMATED_ACCOUNTS` and a predefined credential set is
-   configured: **create an account** using the predefined set (derive a per-tenant username/password
-   per the user's policy), submit the create-account form, then `credentials.capture(...)` to bank it
-   (MODE_CAPTURED). Continue into the application.
-3. **Account exists but login fails** (wrong password, lockout, "verify", any impediment) → **hold
-   the sandbox as-is**, emit a descriptive pending action + notification with a **one-click resume**
-   link to that live session, and **pivot to the next application** (do not block the campaign).
-4. **User intervenes in the held sandbox** (logs in / resets password / clears a challenge): the
-   engine **captures the now-working credential into the store** and **resumes that application
-   thread** from where it paused.
-5. **Any impediment at all** (can't log in, can't create, detection, etc.) → same pattern: hold the
-   sandbox, notify with quick-resume, move on. Use time wisely; never idle-wait on a human.
+On reaching an **account gate** (`is_account_gate`) for `tenant_key = workday:<host>`:
 
-Notes / decisions this raises (see §9): how the predefined set maps to a per-tenant username
-(email alias? fixed email + per-tenant password?), what counts as "login success", and how a *held*
-sandbox interacts with the concurrency cap (hold the slot for fast resume vs. yield it and re-provision
-on resume).
+1. **Already authenticated?** A persistent per-tenant/Google browser profile (FR-STEALTH-3,
+   `ProfileStore` → `launch_persistent_context(user_data_dir=…)`) may already carry a live session
+   cookie → the gate is skipped and the engine proceeds straight into the form. This is what makes
+   "sign in once every few days" real: the session is reused across applications.
+2. **Direct email/password gate** → retrieve `credentials.retrieve(campaign_id, tenant_key)`; if
+   present, click "Sign in with email", fill username/secret, submit, detect success. Fully
+   automated.
+3. **"Sign in with Google" gate** (chosen approach = *all of the above*): the engine maintains a
+   persistent Google session and **also** stores the Google credential. It clicks "Sign in with
+   Google"; if the Google session is live → OAuth consent clicks through (no password). If Google
+   demands re-auth, the engine types the stored Google email/password.
+   - **2FA flow (as specified):** when the persisted Google session has expired AND 2FA is required,
+     the engine (a) sends a notification via `NotificationService` that Google needs a 2FA re-login,
+     **including a link that continues the workflow** (the user clicks it to have the engine trigger
+     the 2FA push); (b) the user approves the 2FA on their device; (c) the engine waits up to **60s**
+     for a successful 2FA (login-success signal); (d) if not successful within 60s, it sends **another
+     notification prompting a retry**. The successful session is then cached in the profile for days.
+4. **No credential + account creation allowed** (`ALLOW_AUTOMATED_ACCOUNTS` on + predefined set) →
+   create an account from the predefined credential set, then `credentials.capture(...)`.
+5. **Any impediment** (login fails, lockout, CAPTCHA, account-create blocked, Google bot-check) →
+   **hold the sandbox as-is**, emit a descriptive pending action + notification with a **one-tap
+   resume** link, and **pivot to the next application** (multi-task; never idle-wait). When the user
+   fixes it in the held session, capture the working credential/session and **resume that thread**.
+
+**Caveats (engineering reality, acknowledged):** 2FA itself cannot be auto-completed — it is the
+60s notify→approve→retry hand-off above. Auto-typing a primary Google password with an automation
+browser carries a real **account-flag/lockout risk**; the persistent-session reuse minimizes how
+often a password is typed. The Google credential is a high-value secret (vault is libsodium-sealed).
+Live Google-login automation can only be exercised in a real deploy (the sandbox MITMs TLS and Google
+blocks datacenter automation), so this layer is built + unit/fixture-tested for logic; live
+validation is the operator's, done carefully.
+
+Open sub-decisions remaining: held-sandbox vs. concurrency-cap interaction (hold the slot for instant
+resume vs. yield + re-provision), and the exact per-ATS "login success" signal.
 
 ## 6. Real-Workday navigation increments
 
@@ -117,16 +136,17 @@ on resume).
 
 ## 7. Phased delivery (each phase ships green + reviewed)
 
-- **Phase 0 — local ATS fidelity fixtures.** A locally-served HTML app approximating real Workday
-  (and stubs for iCIMS/Greenhouse) using real-shaped `[data-automation-id]` markup, a multi-step
-  flow, and login/register pages. Deterministic target → no live SPA/TLS variance. (Also satisfies
-  the separately-requested "local test copies".) Integration tests drive the real browser against it.
-- **Phase 1 — live-DOM walking.** Hydration wait + Apply entry + real field detection + step walk,
-  verified against the Phase-0 fixtures (and a read-only live smoke). Loop reaches the account gate
-  with real fields detected.
-- **Phase 2 — credential login.** Settings UI for the predefined credential set + per-campaign
-  ATS-credential management; `PrefillService` retrieves and fills a login page; success/failure
-  detection; failure → hold+notify+pivot.
+- **Phase 0 — local ATS fidelity fixtures.** DEFERRED (low priority, for later testing): a locally
+  served HTML app approximating Workday/iCIMS for deterministic real-browser tests. Until then,
+  hermetic `data:`-URL integration tests cover the real-DOM behaviors.
+- **Phase 1 — live-DOM walking. DONE (PR #95, #96).** Hydration wait + "Apply" entry
+  (`enter_application`) + account-gate recognition (`is_account_gate`, incl. sign-in/Google). Verified
+  live: the engine drives the real NVIDIA Workday from posting → Apply → the Create-Account/Sign-In
+  gate. Remaining: per-step field detection + step-walk refinement on the post-login form.
+- **Phase 2 — credential auto-login (in progress).** Settings for the credential set (per-tenant ATS
+  + Google) + `PrefillService` auto-login: direct email/password (fill+submit+detect), "Sign in with
+  Google" via persistent session + stored creds, and the **2FA notify→continue→60s-wait→retry** flow
+  (§5). Failure/any-impediment → hold+notify+pivot.
 - **Phase 3 — account creation (gated).** The `ALLOW_AUTOMATED_ACCOUNTS` guard + `submit_account()`
   implementation + `capture()` into the vault + the `ACCOUNT_PREFILL → PREFILLING` conditional
   transition. Security-review ADR. CAPTCHA/verify still hand off.
