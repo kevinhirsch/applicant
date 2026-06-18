@@ -107,11 +107,25 @@ def test_submit_self_delivers_decision_through_gate(client):
     to the workflow's ``recv`` gate so the parked pipeline runs submit/teardown. We
     prove the decision landed in the workflow mailbox and the ladder was expired.
     """
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
+    from applicant.core.state_machine import ApplicationState
     from tests.conftest import open_automated_work_gate
 
     open_automated_work_gate(client)
     container = client.app.state.container
-    aid = new_id()
+    # Persist a real application parked at the final-approval gate (submit-self now
+    # requires the app to exist — a bogus id is a clean 404, not a FK 500).
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    container.storage.commit()
     r = client.post(f"/api/remote/applications/{aid}/submit-self")
     assert r.status_code == 201 and r.json()["result"] == "submitted_by_user"
     assert r.json()["gate"] == "delivered"

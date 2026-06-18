@@ -133,6 +133,16 @@ def test_fr_resume_8_remote_engine_finish_409_when_unapproved(client):
 
 
 @pytest.mark.integration
+def test_remote_terminal_handoffs_404_on_unknown_application(client):
+    """A bogus/stale application id must be a clean 404 on the terminal submit handoffs,
+    not a 5xx — recording an outcome for a non-existent app FK-crashed on a real DB."""
+    open_automated_work_gate(client)
+    for path in ("submit-self", "authorize-engine-finish"):
+        r = client.post(f"/api/remote/applications/no-such-application/{path}")
+        assert r.status_code == 404, (path, r.status_code, r.text)
+
+
+@pytest.mark.integration
 def test_fr_resume_8_outcomes_mark_submitted_ok_when_approved(client):
     open_automated_work_gate(client)
     storage = client.app.state.container.storage
