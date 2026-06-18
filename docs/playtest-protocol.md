@@ -196,6 +196,77 @@ Enumerate routes from `workspace/routes/applicant_*_routes.py` (prefix + paths).
 
 ---
 
+## 6a. AUTOMATED UI MONKEY / CRAWL (full-regression, run-until-green)
+
+The contract sweep (§6) exercises endpoints; this exercises the **rendered UI the
+way a user's clicks do** — it opens every surface and clicks every (non-destructive)
+interactive control, catching handler exceptions, console errors, and bad HTTP that
+a passive capture misses. It's the automated backbone of a "test the whole product,
+re-run until 100% green" pass. Author it as an ephemeral Node+Playwright script in
+git-ignored `.audit-telemetry/monkey.js`; it is a *test harness*, not shipped code.
+
+**What it does (deterministic crawl, not random):**
+1. **Auth once** via `ctx.request.post('/api/auth/login', …)` so every page shares the cookie.
+2. **Enumerate surfaces** and open each via the JS seam (most reliable) — fresh page per
+   surface, `goto('/')`, remove the auto-opened onboarding overlay (except when auditing
+   onboarding), then:
+   | Surface | Opener | Root to await |
+   |---|---|---|
+   | home | (none) | — |
+   | portal | `window.applicantPortalModule.openApplicantPortal()` | `#applicant-portal-modal` |
+   | chat | `window.applicantChatModule.openApplicantChat()` | `#applicant-chat-modal` |
+   | vault | `window.openApplicantVault()` | `#applicant-vault-modal` |
+   | remote | `window.openApplicantRemoteSession()` | `#applicant-remote-modal` |
+   | onboarding | `window.launchApplicantSetup()` | `#applicant-onboarding-overlay` |
+   | **settings** | click **`#user-bar-settings`** (NOT `#rail-settings` — it's hidden when the sidebar is expanded, so clicking it silently no-ops) | `#settings-modal` |
+   | debug | click `#tool-debug-btn` | — |
+   …plus the URL-routed pages `/memory /library /calendar /notes /tasks /gallery /email`.
+3. **Click every control** within the surface root: `button:not([disabled]), .cal-btn,
+   .admin-tab, [role="button"], a[href^="#"], a:not([href]), [data-settings-panel]` —
+   tag each with `data-monkey-idx`, **skip destructive labels** (a denylist regex:
+   `log\s?out|sign\s?out|delete|remove|trash|danger|reset|disconnect|revoke|deactivate|
+   wipe|destroy|decline|^pass$|unsubscribe|clear all|drop`), click, press `Escape` to
+   dismiss any popover, capture errors. Cap at `MAX_CLICKS` (40) per surface.
+4. **Mobile pass** (375×812) over the modal surfaces (they become full-screen sheets).
+
+**Classify findings precisely (so "green" means green):**
+- `pageerror` — uncaught JS exception. **Always a defect.**
+- `http5xx` — any 5xx response. **Always a defect.**
+- `http4xx` — a 4xx response **whose URL is not in the NOISE allowlist** (a genuinely
+  wrong/missing endpoint). Known-benign gated/auth/empty 4xx are filtered by URL.
+- `console` — a real `console.error`/uncaught message. **Drop URL-less "Failed to load
+  resource" lines** — they carry no URL, are unactionable, and are redundant with the
+  URL-aware response handler; judging HTTP by URL+code (not by that string) is what lets
+  the run go truthfully green.
+- `open-failed` — the surface root never appeared (a real reachability bug, OR a wrong
+  opener in the harness — verify which before filing).
+- **NOISE allowlist** (URL/text regexes, per §8): `ERR_CERT_AUTHORITY_INVALID`;
+  `/api/research/status/…` + `/api/chat/stream_status/…` (vendored stale-session stream
+  poller, 404 by design); `/api/applicant/email/digest/…` (require_automated_work-gated
+  → 409 pre-setup, handled in the Portal UI); favicon 404; highlight.js "Could not find
+  the language"; `net::ERR_ABORTED` (fetches aborted on teardown).
+
+Exit `0` = green (empty report), `1` = issues (writes `monkey-report.json`).
+
+**The run-until-green loop.** Run it; for every issue decide **product bug vs. harness
+bug vs. known-benign noise**:
+- *Product bug* → fix at the right altitude (§7) and re-run.
+- *Harness bug* (e.g. clicking the hidden `#rail-settings`, so settings was never
+  actually exercised; or filtering by an URL-less console string) → fix the harness so
+  coverage is real, then re-run. A hollow green (a surface that silently failed to open)
+  is **not** green.
+- *Known-benign* → add the precise URL/text to the NOISE allowlist with a comment.
+Re-run until **0 issues across every surface + route + the mobile pass**, then confirm
+stability with one extra identical run (the click-through has timing variance).
+
+**The full-product green bar** = this crawl green **AND** every CI gate: `uv run ruff
+check .`; `DATABASE_URL=…@127.0.0.1:1/none uv run pytest -q -m "not integration"`;
+`pytest -q workspace/tests/test_applicant_*.py`; `node --check` on every edited JS;
+single `alembic heads`; `docker compose -f docker/docker-compose.prod.yml config`
+(`APP_PORT=8000 POSTGRES_PASSWORD=ci-validate`); the white-label denylist.
+
+---
+
 ## 7. NOTE → DEBUG → FIX → RE-RUN (the loop)
 
 For each finding:
@@ -299,11 +370,15 @@ caller's inputs. Real bugs found this way (each shipped as a focused PR):
 3. Stand up Postgres + engine + two front-doors; provision Playwright/Chromium.
 4. Connect the model; verify `automated_work_allowed: true`.
 5. Run the **contract sweep** (§6) — triage any 5xx first.
-6. Walk the **role-play journey** (§5) at 1440 + 375, capturing + scanning each
+6. Run the **automated UI monkey/crawl** (§6a) across every surface + route +
+   the mobile pass; triage each finding (product / harness / noise) and **re-run
+   until 0 issues**, then one extra run to confirm stability.
+7. Walk the **role-play journey** (§5) at 1440 + 375, capturing + scanning each
    surface (§2), through every settings panel and dialog (§3).
-7. For each finding, run the **note→debug→fix→re-run loop** (§7), judging LLM
+8. For each finding, run the **note→debug→fix→re-run loop** (§7), judging LLM
    quality (§5a) along the way.
-8. Run the **code-level safety audit** (§8a): for each safety promise, trace it to
+9. Run the **code-level safety audit** (§8a): for each safety promise, trace it to
    the reachable caller and confirm it is actually enforced (not inert).
-8. Maintain a single PR; keep CI green; deliver before/after screenshots.
-9. Remind the user to **revoke the API key** when done.
+10. Confirm the **full-product green bar** (§6a): the crawl green AND every CI gate.
+11. Maintain a single PR; keep CI green; deliver before/after screenshots.
+12. Remind the user to **revoke the API key** when done.
