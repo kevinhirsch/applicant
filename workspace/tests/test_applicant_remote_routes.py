@@ -61,6 +61,9 @@ class _FakeEngine:
     async def resume_detection_step(self, application_id):
         return await self._dispatch("resume_detection_step", application_id)
 
+    async def continue_two_factor(self, application_id):
+        return await self._dispatch("continue_two_factor", application_id)
+
     async def stealth_caveat(self):
         return await self._dispatch("stealth_caveat")
 
@@ -132,6 +135,16 @@ def test_resume_account_and_detection(monkeypatch):
         "/api/applicant/remote/applications/app-1/resume-detection-step"
     ).status_code == 200
     assert _FakeEngine.last_call == ("resume_detection_step", ("app-1",))
+
+
+def test_continue_two_factor_forwards_application_id(monkeypatch):
+    _patch_engine(monkeypatch, result={"state": "prefilling"})
+    resp = _make_client().post(
+        "/api/applicant/remote/applications/app-1/continue-two-factor"
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"state": "prefilling"}
+    assert _FakeEngine.last_call == ("continue_two_factor", ("app-1",))
 
 
 def test_caveat_passes_through(monkeypatch):
@@ -257,6 +270,7 @@ def test_mutations_require_privilege(monkeypatch):
         ("POST", "/api/applicant/remote/applications/a/authorize-engine-finish", None),
         ("POST", "/api/applicant/remote/applications/a/resume-account-step", None),
         ("POST", "/api/applicant/remote/applications/a/resume-detection-step", None),
+        ("POST", "/api/applicant/remote/applications/a/continue-two-factor", None),
     ]
     for method, path, body in writes:
         resp = client.request(method, path, json=body)

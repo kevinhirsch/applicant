@@ -606,6 +606,13 @@ class ApplicantEngineClient:
             "POST", f"/api/remote/applications/{application_id}/resume-detection-step"
         )
 
+    async def continue_two_factor(self, application_id: str) -> Any:
+        """Continue a Google 2FA hand-off: trigger the push, wait up to 60s for the
+        user's on-device approval, then continue pre-fill (or re-notify for a retry)."""
+        return await self._request(
+            "POST", f"/api/remote/applications/{application_id}/continue-two-factor"
+        )
+
     async def stealth_caveat(self) -> Any:
         """The honest best-effort anti-detection + egress caveat copy + posture."""
         return await self._request("GET", "/api/admin/stealth")

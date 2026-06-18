@@ -193,6 +193,11 @@ const KINDS = {
     label: 'Needs you to create an account, then it can continue',
     affordance: 'session',
   },
+  two_factor: {
+    label: 'Google needs a two-factor sign-in to continue',
+    hint: 'Tap continue, then approve the prompt on your phone within 60 seconds.',
+    affordance: 'two_factor',
+  },
   detection_blocker: {
     label: 'Paused on a verification check',
     affordance: 'session',
@@ -422,6 +427,24 @@ function _renderDigest(item) {
     <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review applications</button>`;
 }
 
+// Google 2FA hand-off: a held application needs the user to approve a Google
+// two-factor prompt. "Continue" triggers the push and waits up to 60s for the
+// on-device approval; on approval the application picks up where it stopped, on
+// timeout the engine re-notifies and the row stays so the user can tap again.
+function _renderTwoFactor(item) {
+  const meta = _meta(item.kind);
+  const appId = _appId(item);
+  const retry = !!(item.payload && item.payload.retry);
+  const hint = retry
+    ? 'The last attempt timed out. Tap continue and approve the prompt on your phone within 60 seconds.'
+    : (meta.hint || 'Tap continue, then approve the prompt on your phone within 60 seconds.');
+  return `
+    <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
+    <button type="button" class="cal-btn cal-btn-primary applicant-portal-two-factor"
+            data-app-id="${esc(appId)}" data-action-id="${esc(item.id)}"
+            title="Send the two-factor prompt to your phone and continue">${retry ? 'Try Google again' : 'Continue Google sign-in'}</button>`;
+}
+
 // Final-submit approval (D2). Inline in the Portal: confirm the role/company and
 // that materials are approved, then offer the two explicit choices that call the
 // SAME engine endpoints the live-session modal uses — submit-self (open the live
@@ -454,6 +477,7 @@ function _renderRowInner(item) {
     case 'review': return _renderReview(item);
     case 'missing': return _renderMissing(item);
     case 'session': return _renderSession(item);
+    case 'two_factor': return _renderTwoFactor(item);
     case 'digest': return _renderDigest(item);
     case 'final': return _renderFinal(item);
     case 'answer':
@@ -618,6 +642,39 @@ function _wireRows(host) {
   // Live session → global seam or link.
   host.querySelectorAll('.applicant-portal-session').forEach((btn) => {
     btn.addEventListener('click', () => _openSession(btn.dataset.appId, btn.dataset.sessionUrl));
+  });
+
+  // Google 2FA → trigger the push + wait up to 60s for on-device approval. On
+  // approval the engine continues pre-fill (state leaves the account step) and
+  // we drop the row; on timeout the engine re-notifies for a retry and the row
+  // refreshes back in, so we leave the queue to the next reload.
+  host.querySelectorAll('.applicant-portal-two-factor').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const appId = btn.dataset.appId;
+      const actionId = btn.dataset.actionId;
+      if (!appId) { _toast('No application is linked to this item yet'); return; }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Waiting for your phone…';
+      try {
+        const data = await remoteModule.continueTwoFactor(appId);
+        const state = String((data && data.state) || '').toUpperCase();
+        if (state && state !== 'AWAITING_ACCOUNT_HUMAN_STEP') {
+          if (actionId) _removeRow(host, actionId);
+          _toast('Signed in — the application is continuing');
+        } else {
+          // Timed out; the engine emitted a fresh retry notification.
+          btn.disabled = false;
+          btn.textContent = 'Try Google again';
+          _toast('That timed out — approve the prompt on your phone, then try again');
+          _load(true);
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not continue the sign-in');
+      }
+    });
   });
 
   // Final submit (D2): submit-self opens the live session; authorize calls the

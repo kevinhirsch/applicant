@@ -212,6 +212,21 @@ def setup_applicant_remote_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.post("/applications/{application_id}/continue-two-factor")
+    async def continue_two_factor(application_id: str, request: Request) -> JSONResponse:
+        """Continue a Google 2FA hand-off — the link the notification carries. Triggers
+        the push and waits up to 60s for on-device approval; on approval pre-fill
+        continues, on timeout the engine re-notifies for a retry
+        (engine ``POST /api/remote/applications/{id}/continue-two-factor``)."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.continue_two_factor(application_id)
+        except EngineError as exc:
+            logger.info("applicant remote continue-two-factor failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
     # ── honesty caveat (best-effort / egress) ───────────────────────────
 
     @router.get("/caveat")
