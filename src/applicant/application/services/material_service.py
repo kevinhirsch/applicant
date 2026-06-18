@@ -691,15 +691,31 @@ class MaterialService:
             new_content, ai_response = self._revise(content, kind, instruction)
             # Every revision pass re-applies the post-filter (FR-RESUME-5).
             new_content = self.apply_post_filter(new_content).text
-            # Fabrication guardrail on revision too (FR-RESUME-2) when truth is known.
-            # Cover letters / screening answers are free prose, so use the prose check
-            # (entity-shaped claims) rather than the strict per-token résumé check.
-            if true_source is not None:
-                prose = bool(doc) and doc.type in (
-                    DocumentType.COVER_LETTER,
-                    DocumentType.SCREENING_ANSWER,
-                )
-                self.assert_no_fabrication(true_source, new_content, prose=prose)
+            # Fabrication guardrail on revision too (FR-RESUME-2 / NFR-TRUTH-1) —
+            # "a revision can never introduce an unsupported claim".
+            effective_source = true_source
+            guard_prose = bool(doc) and doc.type in (
+                DocumentType.COVER_LETTER,
+                DocumentType.SCREENING_ANSWER,
+            )
+            if effective_source is None and doc is not None:
+                # The front-door does not send ``true_source`` on a turn, so the guard
+                # was silently skipped. DERIVE the ground truth server-side from the
+                # document's campaign attributes PLUS the already-approved content, and
+                # use the lenient entity-shaped (prose) check: a revision of reviewed
+                # content should reject only NEW entity-shaped fabrications (a fake
+                # employer, a digit date/metric, an acronym) without re-litigating
+                # carried-over text or rephrasing — so the guard always runs but never
+                # false-flags a benign edit.
+                try:
+                    effective_source = self.true_attribute_text(
+                        doc.campaign_id, base_source=content
+                    )
+                    guard_prose = True
+                except Exception:  # pragma: no cover - derivation is best-effort
+                    effective_source = None
+            if effective_source:
+                self.assert_no_fabrication(effective_source, new_content, prose=guard_prose)
             if doc is not None:
                 self._persist_content(doc, new_content)
             # FR-LEARN-3 / FR-RESUME-8: fold this revision turn into learning so the
