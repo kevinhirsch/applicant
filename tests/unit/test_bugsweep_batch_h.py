@@ -275,8 +275,17 @@ def test_decline_persists_decision_even_if_notifier_and_learning_fail():
         notification_service=_BoomNotifier(),
         learning=_BoomLearning(),
     )
-    # Must not raise even though notifier + learning blow up post-commit.
-    decision = svc.decline(CampaignId(new_id()), feedback_text="not remote")
+    # Must not raise even though notifier + learning blow up post-commit. Seed a real
+    # application so the decline's Decision has a valid FK target.
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import ApplicationId, JobPostingId
+
+    aid = ApplicationId(new_id())
+    storage.applications.add(
+        Application(id=aid, campaign_id=CampaignId(new_id()), posting_id=JobPostingId(""))
+    )
+    storage.commit()
+    decision = svc.decline(aid, feedback_text="not remote")
     # The Decision is still persisted.
     persisted = storage.decisions.list_for_application(decision.application_id)
     assert any(d.id == decision.id for d in persisted)

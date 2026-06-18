@@ -155,8 +155,16 @@ def score_reported(p1ctx):
 
 @given("an application surfaced in the digest")
 def app_in_digest(p1ctx, storage):
+    from applicant.core.entities.application import Application
+    from applicant.core.ids import JobPostingId
+
     p1ctx["storage"] = storage
-    p1ctx["application_id"] = ApplicationId(new_id())
+    aid = ApplicationId(new_id())
+    storage.applications.add(
+        Application(id=aid, campaign_id=CampaignId(new_id()), posting_id=JobPostingId(""))
+    )
+    storage.commit()
+    p1ctx["application_id"] = aid
 
 
 @when("the user declines it with feedback")

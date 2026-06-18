@@ -251,6 +251,42 @@ def test_acting_on_digest_item_expires_digest_ready_ping():
     assert not notifier.is_active(ready_key)
 
 
+def test_approve_decline_promote_a_posting_to_an_application():
+    """FR-DIG-3 regression: the digest surfaces POSTINGS, so the front-door
+    approve/decline sends a posting id. The decision needs a real application row
+    (its FK) — a not-yet-pursued posting must be promoted, not FK-crash (500)."""
+    storage, digest, *_rest = _wire()
+    cid = _seed_campaign(storage, with_posting=True)
+    posting = storage.postings.list_for_campaign(cid)[0]
+
+    # Approve a raw posting id: promotes it to an APPROVED application + records the
+    # decision (no FK violation).
+    dec = digest.approve(posting.id)
+    apps = storage.applications.list_for_campaign(cid)
+    assert any(a.id == dec.application_id and a.posting_id == posting.id for a in apps)
+    approved = next(a for a in apps if a.id == dec.application_id)
+    assert approved.status.value == "APPROVED"
+
+    # A second posting declined: promotes to a DECLINED application terminal.
+    pid2 = JobPostingId(new_id())
+    storage.postings.add(
+        JobPosting(id=pid2, campaign_id=cid, title="Staff Eng", company="Cobalt",
+                   source_url="https://cobalt.test/job")
+    )
+    storage.commit()
+    dec2 = digest.decline(pid2, feedback_text="not remote enough")
+    declined = next(a for a in storage.applications.list_for_campaign(cid) if a.posting_id == pid2)
+    assert declined.status.value == "DECLINED"
+    assert dec2.application_id == declined.id
+
+    # An unknown id (neither posting nor application) is a clean 404, not a 500.
+    import pytest as _pytest
+
+    from applicant.core.errors import NotFound
+    with _pytest.raises(NotFound):
+        digest.approve("no-such-id")
+
+
 # === #13: deliver builds + scores the digest ONCE per delivery =============
 import pytest  # noqa: E402
 
