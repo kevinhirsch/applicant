@@ -22,6 +22,7 @@ This is the clearly-marked boundary the work package asks for: swapping
 from __future__ import annotations
 
 import re
+import time
 from typing import Protocol, runtime_checkable
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
@@ -898,6 +899,26 @@ class PlaywrightPageSource:
             ftype = handle.get_attribute("type") or handle.evaluate("e => e.tagName.toLowerCase()")
             if selector:
                 fields.append(DetectedField(selector=selector, label=label, field_type=ftype))
+        # Workday-style custom dropdowns are <button aria-haspopup="listbox"> (or an
+        # ARIA combobox) — NOT <select>, so the query above misses them entirely.
+        # Real Workday uses these for Country, Phone Device Type, and every EEO field;
+        # without this the engine silently skips them (FR-PREFILL-2/3).
+        for handle in self._page.query_selector_all(
+            "button[aria-haspopup='listbox'], [role='combobox']"
+        ):
+            name = handle.get_attribute("name") or ""
+            elem_id = handle.get_attribute("id") or ""
+            selector = self._build_selector(name, elem_id, handle)
+            label = (
+                handle.get_attribute("aria-label")
+                or handle.get_attribute("data-automation-id")
+                or name
+                or elem_id
+            )
+            if selector:
+                fields.append(
+                    DetectedField(selector=selector, label=label, field_type="listbox")
+                )
         return fields
 
     @staticmethod
@@ -930,6 +951,12 @@ class PlaywrightPageSource:
         # fill (FR-PREFILL-2/3). Detect the element kind and route accordingly.
         if self._is_select(selector):
             self._select_option(selector, value)
+            return
+        # A Workday custom dropdown (button[aria-haspopup=listbox] / role=combobox) is
+        # operated by clicking it open and choosing the matching option — typing into
+        # it does nothing.
+        if self._is_listbox_button(selector):
+            self._choose_listbox_option(selector, value)
             return
         # Apply the per-keystroke cadence (FR-STEALTH-2): the adapter computes a
         # dwell-per-character plan; feed it to Playwright press-by-press instead of
@@ -978,6 +1005,60 @@ class PlaywrightPageSource:
                 self._page.select_option(selector, label=txt)
                 return
         raise ValueError(f"no <option> matching {value!r}")
+
+    def _is_listbox_button(self, selector: str) -> bool:  # pragma: no cover
+        """True if ``selector`` is a Workday-style custom dropdown (a button that
+        opens a listbox, or an ARIA combobox) rather than a typeable input."""
+        try:
+            el = self._page.query_selector(selector)
+            if el is None:
+                return False
+            haspopup = (el.get_attribute("aria-haspopup") or "").lower()
+            role = (el.get_attribute("role") or "").lower()
+            return haspopup == "listbox" or role == "combobox"
+        except Exception:
+            return False
+
+    def _choose_listbox_option(self, selector: str, value: str) -> None:  # pragma: no cover
+        """Open a custom dropdown and click the option matching ``value``.
+
+        Clicks the trigger, waits for the listbox to render, then clicks the VISIBLE
+        ``[role=option]`` whose label/text matches (exact, then contains). Visibility
+        scoping avoids matching options from other (closed) dropdowns on the page.
+        Raises if nothing matches so the caller records a genuinely unmappable field.
+        """
+        trigger = self._page.query_selector(selector)
+        if trigger is None:
+            raise ValueError(f"dropdown not found: {selector!r}")
+        trigger.click()
+        want = value.strip().lower()
+        deadline = time.monotonic() + 4.0
+        contains: object | None = None
+        while time.monotonic() < deadline:
+            for opt in self._page.query_selector_all("[role='option']"):
+                try:
+                    if not opt.is_visible():
+                        continue
+                    txt = (
+                        opt.get_attribute("data-automation-label")
+                        or opt.inner_text()
+                        or ""
+                    ).strip()
+                except Exception:
+                    continue
+                low = txt.lower()
+                if not low:
+                    continue
+                if low == want:
+                    opt.click()
+                    return
+                if contains is None and (want in low or low in want):
+                    contains = opt
+            if contains is not None:
+                contains.click()  # type: ignore[attr-defined]
+                return
+            time.sleep(0.1)
+        raise ValueError(f"no listbox option matching {value!r}")
 
     def screenshot(self) -> str:  # pragma: no cover - integration-gated
         # Slugify the URL tail: a raw ``url[-12:]`` can contain ``/ ? :`` which are
