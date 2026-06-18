@@ -1032,6 +1032,42 @@ class PlaywrightPageSource:
         else:
             self._page.type(selector, value, delay=80)
 
+    #: Phrasings that all mean "decline / prefer not to answer" — so the user's stored
+    #: decline value (e.g. "prefer not to say" / "decline to self-identify") maps to a
+    #: form's own wording for the same intent ("Decline To Self Identify", "I don't
+    #: wish to answer", "I do not want to answer"), common on EEO dropdowns.
+    _DECLINE_MARKERS: tuple[str, ...] = (
+        "decline", "prefer not", "do not wish", "don't wish", "dont wish",
+        "do not want", "don't want", "dont want", "not to answer", "not to say",
+        "not to disclose", "not to identify", "rather not", "wish not", "choose not",
+    )
+
+    @staticmethod
+    def _norm_text(s: str) -> str:  # pragma: no cover
+        return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+    @classmethod
+    def _is_decline(cls, text: str) -> bool:  # pragma: no cover
+        low = (text or "").lower()
+        return any(m in low for m in cls._DECLINE_MARKERS)
+
+    @classmethod
+    def _option_match(cls, want: str, opt: str) -> str | None:  # pragma: no cover
+        """Match a wanted value to an option text: 'exact', 'loose' (one's WORD set is
+        a subset of the other's, OR same decline-intent), or None. Token-based so a
+        substring like 'male' does NOT match 'female'. Punctuation/case-insensitive."""
+        w, o = cls._norm_text(want), cls._norm_text(opt)
+        if not w or not o:
+            return None
+        if w == o:
+            return "exact"
+        wt, ot = set(w.split()), set(o.split())
+        if wt and ot and (wt <= ot or ot <= wt):
+            return "loose"
+        if cls._is_decline(want) and cls._is_decline(opt):
+            return "loose"
+        return None
+
     def _is_select(self, selector: str) -> bool:  # pragma: no cover
         """True if ``selector`` resolves to a <select> element."""
         try:
@@ -1043,29 +1079,32 @@ class PlaywrightPageSource:
             return False
 
     def _select_option(self, selector: str, value: str) -> None:  # pragma: no cover
-        """Choose a dropdown option matching ``value`` (label, then value, then a
-        case-insensitive contains-match against option texts). Raises if nothing
-        matches so the caller's soft-error path records an unmappable field."""
+        """Choose a <select> option matching ``value`` (label, then value, then a
+        tolerant text match — substring overlap or same decline-intent). Raises if
+        nothing matches so the caller's soft-error path records an unmappable field."""
         for kwargs in ({"label": value}, {"value": value}):
             try:
                 self._page.select_option(selector, **kwargs)
                 return
             except Exception:
                 continue
-        # Tolerant fallback: match an option whose visible text overlaps the value
-        # (e.g. resolved "decline to self-identify" vs an option with extra wording).
-        want = value.strip().lower()
         el = self._page.query_selector(selector)
         options = el.query_selector_all("option") if el is not None else []
+        fallback: str | None = None
         for opt in options:
             try:
                 txt = (opt.inner_text() or "").strip()
             except Exception:
                 continue
-            low = txt.lower()
-            if low and (low == want or want in low or low in want):
+            m = self._option_match(value, txt)
+            if m == "exact":
                 self._page.select_option(selector, label=txt)
                 return
+            if m == "loose" and fallback is None:
+                fallback = txt
+        if fallback is not None:
+            self._page.select_option(selector, label=fallback)
+            return
         raise ValueError(f"no <option> matching {value!r}")
 
     @staticmethod
@@ -1089,61 +1128,70 @@ class PlaywrightPageSource:
     def _choose_listbox_option(self, selector: str, value: str) -> None:  # pragma: no cover
         """Open a custom dropdown and click the option matching ``value``.
 
-        Handles BOTH kinds of ARIA dropdown: a <button> listbox (Workday — click
-        opens, options are already there) and a TYPEABLE combobox input (react-select,
-        common on Greenhouse/Lever — you must type to FILTER before the option appears).
-        Clicks/opens, types into a combobox input, then clicks the VISIBLE
-        ``[role=option]`` matching (exact, then contains). Visibility scoping avoids
-        matching options from other closed dropdowns. Raises if nothing matches.
+        Handles BOTH kinds of ARIA dropdown: a <button> listbox (Workday — click opens,
+        options are already there) and a TYPEABLE combobox input (react-select, common
+        on Greenhouse/Lever). Strategy: open, then match the already-visible options
+        FIRST (short lists show all on open, and the match is synonym-aware so a stored
+        "prefer not to say" maps to an option labelled "Decline To Self Identify");
+        only if that misses AND the trigger is typeable do we type to FILTER a long
+        list, then match again. Matching is exact-first, then a loose/decline match.
         """
         trigger = self._page.query_selector(selector)
         if trigger is None:
             raise ValueError(f"dropdown not found: {selector!r}")
         trigger.click()
+        # 1. Match the options shown on open (no typing) — catches short lists + the
+        #    synonym/decline case, which typing would WRONGLY filter to nothing.
+        if self._pick_visible_option(value, 1.5):
+            return
+        # 2. Typeable combobox with a long/filtered list (e.g. country): type to narrow
+        #    it down, then match the filtered options.
         is_input = str(trigger.evaluate("e => e.tagName")).lower() in ("input", "textarea")
         if is_input:
-            # react-select: type the value so the option list filters down to it.
             try:
                 trigger.fill("")
             except Exception:
                 pass
             self._page.keyboard.type(value, delay=15)
-        want = value.strip().lower()
-        deadline = time.monotonic() + 4.0
-        contains: object | None = None
-        while time.monotonic() < deadline:
-            for opt in self._page.query_selector_all("[role='option']"):
-                try:
-                    if not opt.is_visible():
-                        continue
-                    txt = (
-                        opt.get_attribute("data-automation-label")
-                        or opt.inner_text()
-                        or ""
-                    ).strip()
-                except Exception:
-                    continue
-                low = txt.lower()
-                if not low:
-                    continue
-                if low == want:
-                    opt.click()
-                    return
-                if contains is None and (want in low or low in want):
-                    contains = opt
-            if contains is not None:
-                contains.click()  # type: ignore[attr-defined]
+            if self._pick_visible_option(value, 4.0):
                 return
-            time.sleep(0.1)
-        # A typeable combobox left a filter string in the box — clear it so we don't
-        # leave a half-typed value behind, then report the field as unmappable.
-        if is_input:
+            # Leave no half-typed filter string behind.
             try:
                 self._page.keyboard.press("Escape")
                 trigger.fill("")
             except Exception:
                 pass
         raise ValueError(f"no listbox option matching {value!r}")
+
+    def _pick_visible_option(self, value: str, timeout_s: float) -> bool:  # pragma: no cover
+        """Poll up to ``timeout_s`` for a VISIBLE ``[role=option]`` matching ``value``
+        and click it (exact preferred, else a loose/decline match). Returns True iff
+        one was clicked. Visibility scoping skips options of other closed dropdowns."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            fallback = None
+            for opt in self._page.query_selector_all("[role='option']"):
+                try:
+                    if not opt.is_visible():
+                        continue
+                    txt = (
+                        opt.get_attribute("data-automation-label") or opt.inner_text() or ""
+                    ).strip()
+                except Exception:
+                    continue
+                if not txt:
+                    continue
+                m = self._option_match(value, txt)
+                if m == "exact":
+                    opt.click()
+                    return True
+                if m == "loose" and fallback is None:
+                    fallback = opt
+            if fallback is not None:
+                fallback.click()
+                return True
+            time.sleep(0.1)
+        return False
 
     def screenshot(self) -> str:  # pragma: no cover - integration-gated
         # Slugify the URL tail: a raw ``url[-12:]`` can contain ``/ ? :`` which are
