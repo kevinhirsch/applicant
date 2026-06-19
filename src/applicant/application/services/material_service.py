@@ -147,6 +147,9 @@ class MaterialService:
         self._extra_banned: tuple[str, ...] = ()
         # Voice profile extracted from the user's corpus (FR-RESUME-5).
         self._voice: VoiceProfile = VoiceProfile()
+        # The campaign whose résumé corpus ``_voice`` was extracted from (lazy, per
+        # service instance — instances are rebuilt per tick/request).
+        self._voice_campaign: CampaignId | None = None
         # Truthful-framing dial (FR-RESUME-9); present-but-grayed in the UI (FR-UI-2)
         # but wired so a backend-only flip makes it live.
         self._aggressiveness: int = AGGRESSIVENESS_DEFAULT
@@ -197,6 +200,30 @@ class MaterialService:
         """Extract + cache the voice profile from the user's resume corpus."""
         self._voice = extract_voice_profile(corpus)
         return self._voice
+
+    def _ensure_voice_for(self, campaign_id: CampaignId) -> None:
+        """Lazily extract the voice profile from the campaign's OWN résumé corpus so
+        every generation + revision is constrained to sound like the candidate, not
+        generic AI prose (FR-RESUME-5).
+
+        Without this the corpus was never loaded in the live flow, so ``as_directive``
+        fell back to a generic voice. Extracted once per campaign per instance (they
+        are rebuilt per tick/request); a missing/thin corpus keeps the neutral
+        directive. Best-effort — never blocks generation.
+        """
+        if self._voice_campaign == campaign_id:
+            return
+        try:
+            corpus = [
+                line.strip()
+                for line in (self._base_resume_text(campaign_id) or "").splitlines()
+                if line.strip()
+            ]
+        except Exception:  # pragma: no cover - defensive; never block generation
+            corpus = []
+        if corpus:
+            self.load_voice_corpus(corpus)
+        self._voice_campaign = campaign_id
 
     @property
     def voice(self) -> VoiceProfile:
@@ -438,6 +465,7 @@ class MaterialService:
             return best
 
         # No good reuse -> intelligently fork from the best parent (best coverage).
+        self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
         parent = best.variant if best else None
         parent_source = variant_sources.get(str(parent.id), base_source) if parent else base_source
         # Generate the forked body through the same LLM-capable path the cover-letter /
@@ -576,6 +604,22 @@ class MaterialService:
             campaign_default=campaign_default, role_requires=role_requires
         )
 
+    def _resolve_true_source(self, campaign_id: CampaignId, true_source: str) -> str:
+        """The ground-truth text for generation: the caller's, or derived server-side
+        when omitted (on-demand generation, FR-RESUME-10 / FR-ANSWER-1).
+
+        On-demand requests from the front-door supply only the application — the
+        truthfulness ground truth is built HERE from the base résumé + the flattened
+        attribute cloud + work history (the same source the agent loop uses), never
+        from a caller-supplied blob. The fabrication guard always checks against this.
+        """
+        if (true_source or "").strip():
+            return true_source
+        try:
+            return self.true_attribute_text(campaign_id, self._base_resume_text(campaign_id))
+        except Exception:  # pragma: no cover - defensive
+            return true_source or ""
+
     def generate_cover_letter(
         self,
         campaign_id: CampaignId,
@@ -598,6 +642,8 @@ class MaterialService:
             campaign_default=campaign_default, role_requires=role_requires
         ):
             return None
+        self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
+        true_source = self._resolve_true_source(campaign_id, true_source)
         body = self._generate_text(true_source, jd_terms, kind="cover_letter")
         report = self.apply_post_filter(body)
         # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
@@ -634,6 +680,8 @@ class MaterialService:
         history, voice + em-dash filtered, and routed through review. All go through
         the post-filter + truthfulness check and the review gate.
         """
+        self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
+        true_source = self._resolve_true_source(campaign_id, true_source)
         kind = (
             (ScreeningKind.ESSAY if essay else ScreeningKind.FACTUAL)
             if essay is not None
@@ -746,6 +794,10 @@ class MaterialService:
             return session
         doc = self._storage.documents.get(document_id)
         content = doc.content if doc and doc.content else ""
+        # Constrain the revision to the candidate's own voice (FR-RESUME-5: on every
+        # revision pass), extracting it from their résumé corpus the first time.
+        if doc is not None:
+            self._ensure_voice_for(doc.campaign_id)
 
         if len(session.turns) >= REFINEMENT_BUDGET:
             ai_response = "Refinement budget reached; please approve or decline."

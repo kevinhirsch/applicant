@@ -491,6 +491,39 @@ def test_review_deep_link_targets_served_review_surface():
 
 
 @pytest.mark.unit
+def test_generation_extracts_voice_from_the_users_resume(storage, svc):
+    """FR-RESUME-5: generation must be constrained to the candidate's OWN voice — the
+    corpus is extracted from their uploaded résumé in the live flow (previously the
+    corpus was never loaded, so the voice directive fell back to generic)."""
+    from applicant.core.entities.onboarding_profile import OnboardingProfile
+    from applicant.core.ids import OnboardingProfileId
+
+    cid = CampaignId(new_id())
+    storage.onboarding_profiles.add(
+        OnboardingProfile(
+            id=OnboardingProfileId(new_id()),
+            campaign_id=cid,
+            completion_flag=True,
+            intake={
+                "base_resume": {
+                    "raw_text": (
+                        "Architected resilient distributed pipelines. "
+                        "Spearheaded analytics dashboards for stakeholders."
+                    ),
+                    "document_path": "x",
+                }
+            },
+        )
+    )
+    storage.commit()
+    assert svc.voice.is_empty  # nothing loaded until generation runs
+    svc.generate_cover_letter(cid, new_id(), "", ["Python"], role_requires=True)
+    # The voice profile is now the user's own résumé corpus (not the generic default).
+    assert not svc.voice.is_empty
+    assert {"pipelines", "dashboards", "analytics"} & svc.voice.vocabulary
+
+
+@pytest.mark.unit
 def test_approve_is_refused_until_the_review_is_opened():
     """FR-NOTIF-4: "approve only after viewing" — approving a document before its
     redline review was opened is refused (server-side, non-bypassable); approval

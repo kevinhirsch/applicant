@@ -306,6 +306,14 @@ class ApplicantEngineClient:
         """Owner-scoped résumé-variant library (lineage / scores / approval state)."""
         return await self._request("GET", f"/api/documents/variants/{campaign_id}")
 
+    async def generate_cover_letter(self, body: Any) -> Any:
+        """Generate a cover letter on demand; routed to review (FR-RESUME-10)."""
+        return await self._request("POST", "/api/documents/cover-letter", json=body)
+
+    async def generate_screening_answer(self, body: Any) -> Any:
+        """Generate a screening answer on demand; routed to review (FR-ANSWER-1)."""
+        return await self._request("POST", "/api/documents/screening-answer", json=body)
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 

@@ -1915,6 +1915,75 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       vInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _goVariants(); } });
       if (_variantLastCampaign) _loadVariantLibrary(_variantLastCampaign, vResults);
 
+      // On-demand generation (FR-RESUME-10 / FR-ANSWER-1): draft a cover letter or a
+      // screening answer for an application; the draft lands in the review list above
+      // and goes through the same review-before-use gate. Reuses the job-search +
+      // application IDs already entered on this panel; the truthful ground-truth text
+      // is built server-side from the profile (the UI never handles the résumé blob).
+      const genWrap = document.createElement('div');
+      genWrap.style.cssText = 'border-top:1px solid var(--color-border,rgba(128,128,128,0.2));padding-top:8px;';
+      genWrap.innerHTML =
+        '<div class="memory-desc doclib-desc">Draft a document for an application — it goes to your review before it is ever used.</div>' +
+        '<div class="memory-toolbar" style="gap:6px;flex-wrap:wrap;">' +
+          '<button class="memory-toolbar-btn" id="doclib-gen-cover-btn" title="Write a cover letter for the application ID above.">Draft cover letter</button>' +
+          '<button class="memory-toolbar-btn" id="doclib-gen-answer-btn" title="Answer a screening question for the application ID above.">Draft screening answer</button>' +
+        '</div>' +
+        '<div id="doclib-gen-status" class="doclib-empty" style="display:none;padding:8px;"></div>';
+      wrap.appendChild(genWrap);
+
+      const genStatus = genWrap.querySelector('#doclib-gen-status');
+      const _setGen = (msg) => { genStatus.style.display = 'block'; genStatus.textContent = msg; };
+      const _genIds = () => ({
+        campaign_id: (vInput.value || '').trim(),
+        application_id: (input.value || '').trim(),
+      });
+      const _needIds = (ids) => {
+        if (!ids.campaign_id || !ids.application_id) {
+          if (uiModule) uiModule.showError('Enter a job-search ID and an application ID above first.');
+          return false;
+        }
+        return true;
+      };
+      genWrap.querySelector('#doclib-gen-cover-btn').addEventListener('click', async () => {
+        const ids = _genIds();
+        if (!_needIds(ids)) return;
+        _setGen('Writing a cover letter…');
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/cover-letter`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...ids, role_requires: true }),
+          });
+          if (!res.ok) { _setGen(await _applicantErrText(res)); return; }
+          const data = await res.json();
+          if (data && data.generated === false) {
+            _setGen('No cover letter was needed for this role.');
+          } else {
+            _setGen('Cover letter drafted — see the review list above.');
+            _applicantLastAppId = ids.application_id;
+            _loadApplicantMaterials(ids.application_id, results);
+          }
+        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+      });
+      genWrap.querySelector('#doclib-gen-answer-btn').addEventListener('click', async () => {
+        const ids = _genIds();
+        if (!_needIds(ids)) return;
+        const question = (window.prompt('What screening question should the assistant answer?') || '').trim();
+        if (!question) return;
+        _setGen('Drafting an answer…');
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/screening-answer`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...ids, question }),
+          });
+          if (!res.ok) { _setGen(await _applicantErrText(res)); return; }
+          _setGen('Answer drafted — see the review list above.');
+          _applicantLastAppId = ids.application_id;
+          _loadApplicantMaterials(ids.application_id, results);
+        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+      });
+
       // Confirm the engine is reachable up front, and give a clear status line.
       results.innerHTML = '';
       const note = document.createElement('div');
