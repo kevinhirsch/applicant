@@ -20,6 +20,23 @@ _HAS_DRIVER = (
     or importlib.util.find_spec("playwright") is not None
 )
 
+_HAS_CAMOUFOX = importlib.util.find_spec("camoufox") is not None
+
+
+def _camoufox_launchable() -> bool:
+    """True when Camoufox is installed AND its browser binary has been fetched."""
+    if not _HAS_CAMOUFOX:
+        return False
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+    from applicant.adapters.browser.stealth import NORMALIZED_FINGERPRINT
+
+    try:
+        src = PlaywrightPageSource(dict(NORMALIZED_FINGERPRINT), engine="camoufox")
+        src.close()
+        return True
+    except Exception:
+        return False
+
 
 def _working_channel() -> str | None:
     """Return the first launchable channel (real chrome preferred), else ``None``."""
@@ -192,6 +209,31 @@ def test_real_browser_detects_and_fills_workday_listbox_dropdown():
         #    custom dropdown does nothing — it must be opened + clicked).
         src.type_value(gender[0].selector, "Prefer not to say")
         assert src._page.inner_text(gender[0].selector) == "Prefer not to say"  # noqa: SLF001
+    finally:
+        src.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not _camoufox_launchable(),
+    reason="Camoufox not installed/fetched; run `uv sync --extra browser && camoufox fetch`.",
+)
+def test_camoufox_engine_navigates_and_detects_fields():
+    """FR-PREFILL-1/FR-STEALTH-1: the DEFAULT Camoufox engine drives the SAME page
+    logic as the chromium path — navigate + detect + type + screenshot — proving the
+    engine swap reuses the existing Playwright-API machinery unchanged."""
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+    from applicant.adapters.browser.stealth import NORMALIZED_FINGERPRINT
+
+    src = PlaywrightPageSource(dict(NORMALIZED_FINGERPRINT), engine="camoufox")
+    try:
+        html = "<html><body><input name='email' aria-label='Email'></body></html>"
+        src.open("data:text/html," + html)
+        fields = src.detect_fields()
+        assert any(f.selector == '[name="email"]' for f in fields)
+        src.type_value('[name="email"]', "kevin@kevinhirsch.com")
+        ref = src.screenshot()
+        assert ref.startswith("file://")
     finally:
         src.close()
 

@@ -27,12 +27,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lmodern \
     && rm -rf /var/lib/apt/lists/*
 
-# Real Google Chrome for the pre-fill / Workday automation (FR-PREFILL-1, FR-STEALTH-1).
-# The engine drives it via patchright (the 'browser' extra) with channel=chrome
-# (config default BROWSER_CHANNEL=chrome). Real Chrome — not bundled Chromium —
-# minimizes automation tells for stealth; the .deb pulls its own runtime libs.
-# The default local sandbox launches this headful-via-patchright inside THIS
-# container (no CDP endpoint), so the binary must live in the engine image.
+# Camoufox runtime libraries (FR-PREFILL-1, FR-STEALTH-1). Camoufox is the DEFAULT
+# browser engine (BROWSER_ENGINE=camoufox) — a Firefox-based anti-detect browser the
+# engine drives for ALL outbound automation traffic. The browser binary itself is
+# fetched below (`camoufox fetch`); these are the Firefox runtime libs it needs, plus
+# Xvfb so it renders HEADFUL on a virtual display inside this display-less container
+# (headful = no headless fingerprint tell).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        libgtk-3-0 \
+        libx11-xcb1 \
+        libxcb1 \
+        libdbus-glib-1-2 \
+        libxtst6 \
+        libxt6 \
+        libpci3 \
+        libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Real Google Chrome for the FALLBACK chromium engine (BROWSER_ENGINE=chromium) and
+# the Proxmox Windows CDP backend (FR-PREFILL-1, FR-STEALTH-1). The engine drives it
+# via patchright (the 'browser' extra) with channel=chrome. Real Chrome — not bundled
+# Chromium — minimizes automation tells for stealth; the .deb pulls its own runtime
+# libs. The local chromium-engine sandbox launches this inside THIS container (no CDP
+# endpoint), so the binary must live in the engine image.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends wget gnupg ca-certificates \
     && wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
@@ -43,13 +61,21 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install dependencies first (better layer caching). Include the 'browser' extra
-# (patchright) so the real PatchrightBrowser the engine wires unconditionally
-# (container.py) can actually drive Chrome — without it, the first pre-fill fails
-# with "No browser driver installed". channel=chrome uses the system Chrome above,
-# so no separate `patchright install chromium` download is needed.
+# (camoufox + patchright) so the real PatchrightBrowser the engine wires
+# unconditionally (container.py) can actually launch a browser — without it, the
+# first pre-fill fails with "No browser driver installed". For the chromium fallback
+# engine, channel=chrome uses the system Chrome above, so no separate
+# `patchright install chromium` download is needed.
 COPY pyproject.toml uv.lock* README.md ./
 COPY src ./src
 RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
+
+# Fetch the Camoufox browser binary + the GeoIP dataset (the `geoip` extra) into the
+# image so the DEFAULT engine launches offline at runtime — the engine detects tools
+# via shutil.which()/lazy import and silently degrades when absent, so the binary
+# must be baked in here (CI does not build images; this layer is first exercised at
+# deploy `compose up --build`).
+RUN uv run camoufox fetch
 
 # App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).

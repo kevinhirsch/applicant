@@ -49,9 +49,21 @@ REMOTE_VIEW_BACKENDS = (REMOTE_VIEW_WEBTOP, REMOTE_VIEW_NEKO)
 #: default, the foundation of the coherent identity — genuine TLS/JA3 + client
 #: hints); ``chromium`` = the bundled Chromium fallback (less coherent; only when
 #: Google Chrome is unavailable). Headless is NEVER used (it is a detection tell).
+#: Only consulted by the ``chromium`` browser engine (Camoufox manages its own).
 BROWSER_CHANNEL_CHROME = "chrome"
 BROWSER_CHANNEL_CHROMIUM = "chromium"
 BROWSER_CHANNELS = (BROWSER_CHANNEL_CHROME, BROWSER_CHANNEL_CHROMIUM)
+
+#: Browser ENGINE the agent drives for all pre-fill / ATS automation — the only
+#: surface through which Applicant makes outbound browser traffic (FR-STEALTH-1,
+#: FR-PREFILL-1). ``camoufox`` (the default) is a Firefox-based anti-detect browser
+#: that injects its own coherent, real-world-distribution fingerprint (so no Chrome
+#: init-script override is applied); ``chromium`` is the patchright + real
+#: Chrome/Chromium path (the honest real-Chrome identity, and the engine used for
+#: the Proxmox Windows CDP backend, which connects to a remote real Chrome).
+BROWSER_ENGINE_CAMOUFOX = "camoufox"
+BROWSER_ENGINE_CHROMIUM = "chromium"
+BROWSER_ENGINES = (BROWSER_ENGINE_CAMOUFOX, BROWSER_ENGINE_CHROMIUM)
 
 #: Sandbox backend (FR-SANDBOX-1, FR-STEALTH-1). ``local`` (default) is the existing
 #: webtop/Neko container path where the browser the engine drives + the human takes
@@ -220,10 +232,19 @@ class Settings(BaseSettings):
     # config). Set True only when the operator vouches the proxy is residential.
     egress_residential: bool = Field(default=False, alias="EGRESS_RESIDENTIAL")
 
+    # Browser engine the agent drives for all pre-fill / ATS automation — every
+    # outbound browser request routes through it (FR-STEALTH-1, FR-PREFILL-1).
+    # ``camoufox`` (default) is the Firefox-based anti-detect browser; ``chromium``
+    # is the patchright + real Chrome/Chromium path (also used for the Proxmox
+    # Windows CDP backend). Camoufox injects its own coherent fingerprint, so the
+    # Chrome-specific channel/init-script below is consulted only by ``chromium``.
+    browser_engine: str = Field(default=BROWSER_ENGINE_CAMOUFOX, alias="BROWSER_ENGINE")
+
     # Driving browser channel (FR-STEALTH-1, FR-PREFILL-1). Default real Google
     # Chrome (the coherent-identity foundation: genuine Chrome TLS/JA3 + correct
     # Sec-CH-UA client hints). ``chromium`` is a less-coherent fallback. Threaded
     # into launch_persistent_context(channel=...). Headful only (no headless tell).
+    # Only used by the ``chromium`` browser engine (Camoufox manages its own binary).
     browser_channel: str = Field(default=BROWSER_CHANNEL_CHROME, alias="BROWSER_CHANNEL")
 
     # Drive a REAL browser (patchright + a real Chrome/Chromium binary) for pre-fill
@@ -337,6 +358,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"BROWSER_CHANNEL={v!r} is invalid; choose one of {BROWSER_CHANNELS} "
                 "(default 'chrome' — real Google Chrome)."
+            )
+        return norm
+
+    @field_validator("browser_engine")
+    @classmethod
+    def _validate_browser_engine(cls, v: str) -> str:
+        # Reject a typo at load instead of silently falling back to a different
+        # engine (which would route automation traffic through the wrong browser).
+        norm = (v or "").strip().lower()
+        if norm not in BROWSER_ENGINES:
+            raise ValueError(
+                f"BROWSER_ENGINE={v!r} is invalid; choose one of {BROWSER_ENGINES} "
+                "(default 'camoufox' — the anti-detect browser)."
             )
         return norm
 

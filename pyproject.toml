@@ -42,11 +42,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real browser automation (FR-PREFILL-1, FR-STEALTH-1). patchright is a Playwright
-# fork that strips automation/headless tells. Kept OPTIONAL so the DEFAULT test lane
-# (FakePageSource) needs NO browser binary; install with `uv sync --extra browser`
-# and `patchright install chromium` to drive the real adapter (integration-only).
+# Real browser automation (FR-PREFILL-1, FR-STEALTH-1). The DEFAULT engine is
+# camoufox — a Firefox-based anti-detect browser that injects its own coherent
+# fingerprint; the `geoip` extra ships the dataset that pins geolocation/timezone/
+# locale to the exit IP (FR-STEALTH-4). patchright (a Playwright fork that strips
+# automation/headless tells) is the `chromium` fallback engine and drives the
+# Proxmox Windows CDP backend (remote real Chrome). Kept OPTIONAL so the DEFAULT
+# test lane (FakePageSource) needs NO browser binary; install with
+# `uv sync --extra browser`, then `camoufox fetch` (and, for the chromium engine,
+# `patchright install chromium`) to drive the real adapter (integration-only).
 browser = [
+    "camoufox[geoip]",
     "patchright",
 ]
 # Durable orchestration backbone (FR-DUR-3). The DEFAULT runtime backend is the
