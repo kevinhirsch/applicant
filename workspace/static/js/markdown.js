@@ -674,6 +674,113 @@ export function renderMermaid(container) {
   }
 }
 
+// ── Streaming caret (FR-HARVEST-CARET) ────────────────────────────────────────
+// A blinking block-cursor glyph is appended to the last rendered block while a
+// token stream is active. The span is aria-hidden so screen readers skip it, and
+// its content is rendered via CSS ::after — never part of the DOM text — so it
+// does not appear in text selected or copied by the user.
+(function _injectCaretStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('streaming-caret-styles')) return;
+  var style = document.createElement('style');
+  style.id = 'streaming-caret-styles';
+  style.textContent = [
+    '.streaming-caret {',
+    '  display: inline-block;',
+    '  line-height: 1;',
+    '  vertical-align: baseline;',
+    '  user-select: none;',
+    '  -webkit-user-select: none;',
+    '  pointer-events: none;',
+    '}',
+    '.streaming-caret::after {',
+    '  content: "▌";',
+    '  display: inline;',
+    '  color: currentColor;',
+    '  opacity: 0.7;',
+    '  animation: streaming-caret-blink 1s step-start infinite;',
+    '}',
+    '@keyframes streaming-caret-blink {',
+    '  0%, 100% { opacity: 0.7; }',
+    '  50%       { opacity: 0; }',
+    '}',
+    '@media (prefers-reduced-motion: reduce) {',
+    '  .streaming-caret::after { animation: none; opacity: 0.7; }',
+    '}',
+  ].join('\n');
+  var _inject = function() {
+    if (!document.getElementById('streaming-caret-styles')) {
+      document.head.appendChild(style);
+    }
+  };
+  if (document.head) {
+    _inject();
+  } else {
+    document.addEventListener('DOMContentLoaded', _inject, { once: true });
+  }
+})();
+
+/**
+ * Append a streaming caret to the last block-level child of a container.
+ * Safe to call on every render tick — moves the existing caret rather than
+ * creating duplicates. The caret span is aria-hidden and its glyph is provided
+ * by CSS ::after, so it is invisible to screen readers and excluded from
+ * clipboard copies.
+ * @param {Element} container
+ */
+export function addStreamingCaret(container) {
+  if (!container) return;
+  // Remove any existing caret before re-inserting (position may have changed)
+  var existing = container.querySelector('.streaming-caret');
+  if (existing) existing.remove();
+
+  // Block-level tags where a trailing inline span makes sense
+  var BLOCK_TAGS = new Set([
+    'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'LI', 'BLOCKQUOTE', 'TD', 'TH', 'PRE', 'DIV',
+  ]);
+
+  // Walk children from the end to find the last visible block
+  var children = container.children;
+  var target = null;
+  for (var i = children.length - 1; i >= 0; i--) {
+    var child = children[i];
+    if (child.tagName === 'STYLE' || child.tagName === 'SCRIPT') continue;
+    if (child.classList && (
+      child.classList.contains('sources-section') ||
+      child.classList.contains('thinking-section') ||
+      child.classList.contains('rag-sources')
+    )) continue;
+    if (BLOCK_TAGS.has(child.tagName)) { target = child; break; }
+    // Non-block element at root — attach directly to container
+    target = container;
+    break;
+  }
+  if (!target) target = container;
+
+  // For list items and headings, try to attach inside the last inline child
+  // so the caret sits right after the last word rather than on a new line.
+  if (target.tagName === 'LI' || /^H[1-6]$/.test(target.tagName)) {
+    var deeper = target.lastElementChild;
+    if (deeper && !BLOCK_TAGS.has(deeper.tagName)) target = deeper;
+  }
+
+  var caret = document.createElement('span');
+  caret.setAttribute('aria-hidden', 'true');
+  caret.className = 'streaming-caret';
+  target.appendChild(caret);
+}
+
+/**
+ * Remove the streaming caret from a container (call on stream completion).
+ * @param {Element} container
+ */
+export function removeStreamingCaret(container) {
+  if (!container) return;
+  var caret = container.querySelector('.streaming-caret');
+  if (caret) caret.remove();
+}
+
 const markdownModule = {
   escapeHtml,
   mdToHtml,
@@ -684,7 +791,9 @@ const markdownModule = {
   hasUnclosedThinkTag,
   extractThinkingBlocks,
   startsWithReasoningPrefix,
-  renderMermaid
+  renderMermaid,
+  addStreamingCaret,
+  removeStreamingCaret,
 };
 
 export default markdownModule;
