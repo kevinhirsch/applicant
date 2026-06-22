@@ -72,6 +72,7 @@ dev = [
     "pytest-cov",
     "httpx",
     "ruff",
+    "import-linter",
 ]
 
 # uv's native dev group so `uv sync --dev` installs the test toolchain.
@@ -83,6 +84,7 @@ dev = [
     "pytest-cov",
     "httpx",
     "ruff",
+    "import-linter",
 ]
 
 [build-system]
@@ -103,6 +105,7 @@ markers = [
     "contract: adapter contract tests against a port",
     "integration: app-boot / cross-component integration tests",
     "bdd: pytest-bdd acceptance scenarios (master spec §10 anchors)",
+    "architecture: import-linter structural boundary tests (NFR-ARCH-1)",
 ]
 addopts = "-ra --strict-markers"
 asyncio_mode = "auto"
@@ -114,6 +117,37 @@ src = ["src", "tests"]
 # ``workspace/`` is a vendored self-hosted UI app (its own repo/toolchain). It is
 # an opaque build context for Applicant's image, not part of our lint/test surface.
 extend-exclude = ["workspace"]
+
+# NFR-ARCH-1: CI-enforced hexagonal layer boundary (import-linter Option A).
+# Verified read-only against the real import graph; passes green today.
+# One sanctioned exception: Alembic migration env reads app.config.
+[tool.importlinter]
+root_packages = ["applicant"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Hexagonal layering (app > application > adapters > ports > core)"
+type = "layers"
+layers = [
+    "applicant.app",
+    "applicant.application",
+    "applicant.adapters",
+    "applicant.ports",
+    "applicant.core",
+]
+# Note: adapters/storage/alembic/env.py has a conditional (lazy) import of
+# app.config.get_settings — import-linter's static graph does not see lazy
+# imports, so no ignore_imports entry is needed here.
+
+[[tool.importlinter.contracts]]
+name = "Core domain is pure (no outward imports)"
+type = "forbidden"
+source_modules = ["applicant.core"]
+forbidden_modules = [
+    "applicant.adapters",
+    "applicant.application",
+    "applicant.app",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

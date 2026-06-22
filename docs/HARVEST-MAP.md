@@ -169,10 +169,9 @@ idea; no source file copied, so no notice travels).
 2. **Attribution that must travel:** hermes → `MIT © 2025 Nous Research`; orwell → `MIT © 2026 kevinhirsch`.
    Hermes is a **new** third-party holder for this repo (Nous Research appears nowhere yet); orwell's
    holder (`kevinhirsch`) already appears in `THIRD_PARTY_LICENSES.md`.
-3. **⚠️ Mixed-license escalation (legal, not engineering):** applicant is Unlicense (public domain); harvested
-   portions stay MIT. Applicant's blanket Unlicense header must NOT over-claim public domain over harvested
-   files. Add a top-level "portions are MIT — see `THIRD_PARTY_LICENSES.md`/`licenses/`" statement.
-   **Flag for human/legal sign-off; do not self-resolve.**
+3. **Attribution (carry with every harvest):** applicant is MIT © 2026 kevinhirsch; harvested portions
+   stay under their upstream MIT notices (Nous Research / kevinhirsch). MIT ⊕ MIT — clean, no legal
+   escalation. Add `workspace/licenses/<src>-MIT-LICENSE.txt` + `ACKNOWLEDGMENTS.md` row per harvest.
 4. **Brand-rename pass per harvest:** module/file names → env vars (`HERMES_*`/`ORWELL_*`/`NOUS_*` →
    `APPLICANT_*`) → config dirs/paths → URLs/outbound headers (`X-OpenRouter-Title`, User-Agent) →
    user-facing copy → assets. **Data keys (`orwell_memories` Chroma collection, `HERMES_HOME`-pathed state)

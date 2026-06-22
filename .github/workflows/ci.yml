@@ -48,6 +48,9 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check .
 
+      - name: Architecture — import-linter layering contract (NFR-ARCH-1)
+        run: uv run lint-imports
+
       - name: Engine boots (import smoke)
         run: uv run python -c "from applicant.app.main import app"
 
