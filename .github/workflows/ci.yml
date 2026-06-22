@@ -27,12 +27,33 @@ jobs:
       # is to analyze the upstream sources (e.g. orwell) BY NAME, so the codename is
       # required there and is not a shipped/user-facing string. These docs ship no
       # product copy and are reachable through no UI surface.
+      #
+      # Wave 3 addition — hermes-agent project reference:
+      # "hermes" alone is NOT denylist'd because it is a legitimate model-family name
+      # used throughout model catalogs, pricing tables, and llama.cpp API parameters
+      # (--tool-call-parser hermes) — blocking it would require excluding nearly every
+      # model-related file. The denylist targets "hermes-agent", the compound project
+      # name, which has no legitimate use in shipped product code. Three sanctioned
+      # exceptions carry explicit attribution:
+      #   • workspace/services/memory/skill_format.py  — module docstring credits the
+      #     skills-file format pattern to hermes-agent (attribution comment, not UI text)
+      #   • docs/spec/master-spec.md                   — FR-HARVEST-PROVIDER attribution
+      #   • docs/traceability.md                       — harvest hardening matrix row
       - name: White-label codename denylist
         run: |
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
                -- ':!.github' ':!*.lock' ':!uv.lock' \
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
+            exit 1
+          fi
+          if git grep -I -i -F 'hermes-agent' \
+               -- ':!.github' ':!*.lock' ':!uv.lock' \
+               ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
+               ':!workspace/services/memory/skill_format.py' \
+               ':!docs/spec/master-spec.md' \
+               ':!docs/traceability.md'; then
+            echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi
           echo "white-label clean"
