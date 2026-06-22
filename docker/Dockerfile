@@ -19,13 +19,33 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-writer \
         fonts-liberation \
+        fontconfig \
         texlive-xetex \
         texlive-luatex \
         texlive-latex-extra \
+        texlive-latex-recommended \
         texlive-fonts-recommended \
         texlive-fonts-extra \
         lmodern \
     && rm -rf /var/lib/apt/lists/*
+
+# Warm the xelatex/lualatex font + format cache at BUILD time. The first compile
+# otherwise has to build this cache, which aborts (producing NO PDF, so the render
+# silently degrades to an approximate preview) when the runtime user has no writable
+# HOME/TEXMFVAR. Building it now — into a world-readable cache + a writable fallback —
+# means the first real onboarding compile produces a true PDF. Best-effort: a failure
+# here must not fail the image build (the adapter also points the cache at a writable
+# scratch dir per compile).
+RUN mkdir -p /tmp/texwarm \
+    && printf '%s\n' \
+        '\documentclass[11pt,a4paper,sans]{moderncv}' \
+        '\moderncvstyle{banking}\moderncvcolor{blue}' \
+        '\name{Test}{User}' \
+        '\begin{document}\makecvtitle\section{Skills}\cvitem{}{Python}\end{document}' \
+        > /tmp/texwarm/warm.tex \
+    && (cd /tmp/texwarm && lualatex -interaction=nonstopmode -halt-on-error warm.tex || true) \
+    && (cd /tmp/texwarm && xelatex  -interaction=nonstopmode -halt-on-error warm.tex || true) \
+    && rm -rf /tmp/texwarm
 
 # Camoufox runtime libraries (FR-PREFILL-1, FR-STEALTH-1). Camoufox is the DEFAULT
 # browser engine (BROWSER_ENGINE=camoufox) — a Firefox-based anti-detect browser the

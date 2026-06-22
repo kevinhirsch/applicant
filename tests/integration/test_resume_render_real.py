@@ -72,7 +72,7 @@ def test_docx_real_convert_to_pdf(tmp_path):
 
     adapter = DocxTailor(allow_convert=True, output_dir=tmp_path)
     result = adapter.render_artifact(ResumeVariantId(new_id()), str(out_docx))
-    if "no LibreOffice/Word available" in result.notes:
+    if "approximate preview" in result.notes:
         pytest.skip("LibreOffice present but cannot convert docx in this environment")
     assert result.page_count >= 1
-    assert "fonts not embedded" not in result.notes
+    assert "fonts in the rendered PDF are not embedded" not in result.notes

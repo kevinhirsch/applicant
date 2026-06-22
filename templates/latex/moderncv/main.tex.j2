@@ -28,7 +28,16 @@
 \renewcommand*{\lastnamestyle}[1]{{\fontsize{34}{36}\bfseries\upshape\color{color1}#1}}
 \renewcommand*{\sectionstyle}[1]{{\sectionfont\color{color1}#1}}
 
-\usepackage[utf8]{inputenc}
+%% inputenc is a pdflatex-era package; under the Unicode engines this renderer uses
+%% (xelatex/lualatex) input is already UTF-8 and loading inputenc is at best a no-op
+%% and can clash. Load it ONLY on a legacy 8-bit engine so the source compiles on any
+%% engine the host happens to provide. ``iftex`` (the modern, non-deprecated probe;
+%% ships in texlive-latex-base) exposes \ifPDFTeX without loading the obsolete
+%% ifxetex/ifluatex shims.
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+\fi
 %% NB: do not \usepackage{hyperref} here — moderncv loads it itself as
 %% \RequirePackage[unicode]{hyperref} at the end of the preamble, so an explicit
 %% optionless load raises "Option clash for package hyperref" and aborts the
