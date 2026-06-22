@@ -78,8 +78,39 @@ browser app).
 **Attribution:** any verbatim copy (even the caret) carries MIT © 2025 Nous Research; white-label
 brand strings ("Hermes Teal", "Nous Blue", `__HERMES_*__`) only, never the copyright.
 
-### 2. Hermes platform & agent core
-_pending sub-auditor 2_
+### 2. Hermes platform & agent core — VERDICT: **harvest only the `ProviderProfile` pattern; reject the rest as scope creep** (Confidence H)
+
+**Decisive framing:** hermes ≈ **557k LOC** general LLM-tool-calling agent platform (63 direct deps +
+~35 optional extras); applicant ≈ **31k LOC** single-purpose hexagonal engine. Applicant has **no
+function-calling agent loop, no MCP, no subagents, no general terminal** (auditor greps → 0 hits) — its
+"agent" is a deterministic per-campaign pipeline (`application/services/agent_loop.py`) on a durable
+workflow + 24/7 scheduler. **Most hermes platform assets have no socket to plug into**; adopting them
+imports the agent paradigm wholesale = the reskin.
+
+**TIER 1 — the one defensible harvest:**
+| Asset | Source | Mechanism / evidence | Target | Type | Conf |
+|-------|--------|----------------------|--------|------|------|
+| **A1 Multi-provider `ProviderProfile`** | `providers/base.py:38-218` + 16 plugins + non-OpenAI adapters (`agent/anthropic_adapter.py` etc.) | one declarative profile (auth/endpoints/vision/temp quirks/max-tokens/live model fetch) replaces "20+ boolean flags"; reaches Anthropic/Bedrock/Gemini **native** APIs applicant can't speak; tested per-provider | behind existing `LLMPort` at `app/container.py:317`; add provider adapters as new **tier backends** (`TierConfig.provider` already namespaces) | **pattern-only** (+ at most ONE concrete adapter, e.g. anthropic) | H abstraction broader / M applicant *wants* it |
+
+**Critical nuance:** applicant's `adapters/llm/openai_compatible.py` has something hermes' transport
+**lacks** — a capability-ranked **tier ladder w/ escalation** (climb on low-confidence/context overflow)
++ defensive structured-output parsing. So this is **missing-capability (more reach), NOT worse-arch** —
+applicant's port is arguably *cleaner* for its purpose. Harvest the profile *pattern*, **preserve the
+ladder**, do NOT lift the plugin/entry-point machinery or 4 heavy adapters wholesale. A1 is a *want*,
+not a spec gap (FR-LLM-1 deliberately chose OpenAI-compat + Ollama, can run fully local).
+
+**TIER 2 — REJECT, with differential diagnosis (each has a right-sized applicant equivalent):**
+| Asset | Why reject — applicant already has the in-scope slice |
+|-------|------|
+| **Memory+skills learning loop** (hermes headline: `agent/curator.py`, `background_review.py`, trajectory_compressor) | **Different problem, not better.** Hermes distills reusable *procedures* from varied agent trajectories (needs a tool-calling agent doing varied tasks). Applicant does ONE task; its `learning_service.py` (527 ln) is statistical *yield/taste* learning (conversion-weighted source ranking, role centroid, explore budget) — cheap, no-LLM-hot-path. Not comparable on better/worse. |
+| **Multi-platform gateway** (Telegram/Discord/Slack/…; `gateway/run.py` 17.7k ln) | Applicant's outbound need is **notifications**, already better-fit: `ports/driven/notification.py` + Apprise notifier w/ escalation ladder + idempotency. Inbound 18-platform chat = chat-ops product applicant doesn't want (only public surface = `workspace/`). |
+| **Cron** (`cron/scheduler.py` 2.5k ln, gateway-coupled) | Applicant has the in-scope slice done durably: `Scheduler.tick()` (injected clock, per-campaign locks, tick isolation) + `DurableOrchestrationPort.schedule(name,cron,fn)` w/ crash recovery. Hermes uses JSON+flock. |
+| **MCP (server+client)** | No tool-injection registry to inject into; applicant's `ToolRegistryPort` is a feature on/off toggle, not a dynamic tool catalog. Its one external capability (deep research) is a bounded budget-capped callback. |
+| **Subagent spawning** (`tools/delegate_tool.py` 3.2k ln) | No `AIAgent` to fork. Applicant's parallelism is durable queues + per-campaign sandbox slots w/ yield/pivot (`CapacityService`) — multiple *applications*, not multiple *agents*. |
+| **6 terminal backends** (local/Docker/SSH/Singularity/Modal/Daytona) | Applicant's only sandbox need is a browser for form-fill, covered by `ports/driven/sandbox.py` (+ Proxmox/local adapters, RemoteViewPort). 5/6 backends = HPC/cloud scope creep (~7.5k LOC + ~12 SDK deps). |
+
+**License hygiene:** every candidate embeds hermes/nous codenames (`~/.hermes`, `HERMES_*` env,
+`get_hermes_home`); MIT © Nous Research must travel with any lift, white-label the codenames.
 
 ### 3. Orwell architecture & implementation — VERDICT: **harvest 1 strong pattern + 3 minor; not a replacement** (Confidence H)
 
