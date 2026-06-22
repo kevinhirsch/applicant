@@ -74,6 +74,11 @@ APPLY=0
 # Append-only, line-based build output (no redraw frames) so the cloud-init log
 # and any `tail`/`tail -f` of it stays readable instead of dumping progress frames.
 export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
+# Skip the default provenance/SBOM attestations on local builds: they add an
+# "exporting attestation manifest" + "manifest list" round to every image export
+# (slower, and wraps the image in a manifest list) with no value for a self-hosted
+# build that is never published to a registry.
+export BUILDX_NO_DEFAULT_ATTESTATIONS="${BUILDX_NO_DEFAULT_ATTESTATIONS:-1}"
 
 # --- Persisted settings: load any saved .env FIRST so re-runs and updates reuse
 # the SAME database password. Postgres bakes its password into the data volume on
