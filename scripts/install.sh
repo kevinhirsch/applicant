@@ -196,28 +196,37 @@ EOF
   )
 fi
 
-# --- 3. Bring up the stack --------------------------------------------------
+# --- 3. Build the images ----------------------------------------------------
 # Build BOTH locally-built images (neither is published to a registry): the
 # front-door UI (built from ../workspace) and the engine api.
 log "Building the local images (front-door UI + engine api)…"
 run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
 
-log "Bringing up the Applicant stack (UI + api + postgres + searxng + chromadb + ntfy, detached)…"
-run docker compose -f "${COMPOSE_FILE}" up -d --build
-
-# --- 4. Run database migrations (after Postgres is healthy) -----------------
-# Postgres has a healthcheck + the api depends_on service_healthy, so by the time
-# we run this the DB is reachable. `alembic upgrade head` is idempotent.
-log "Running database migrations (alembic upgrade head)…"
+# --- 4. Migrate the schema BEFORE the api serves ----------------------------
+# The engine queries the app_config table AS IT BOOTS (container.py build_container
+# → setup_service.build_ladder), so the schema must exist first. Bring up only
+# Postgres, then run alembic in a throwaway api container — alembic's env.py imports
+# only the model metadata (never the app factory), so it runs cleanly against an
+# empty DB. Doing a full `up -d` here instead would crash-loop the api on the missing
+# table and, because applicant-ui depends_on api: service_healthy, `up` would ABORT
+# ("dependency failed to start") before this migration ever ran. `run --rm api` starts
+# Postgres as a dependency and waits for its healthcheck; `alembic upgrade head` is
+# idempotent.
+log "Starting Postgres and migrating the schema (alembic upgrade head) BEFORE the api serves…"
+run docker compose -f "${COMPOSE_FILE}" up -d postgres
 run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
-# --- 5. Heartbeat: don't claim success until the stack is actually green -----
+# --- 5. Bring up the full stack (api now boots against the migrated schema) --
+log "Bringing up the Applicant stack (UI + api + postgres + searxng + chromadb + ntfy, detached)…"
+run docker compose -f "${COMPOSE_FILE}" up -d
+
+# --- 6. Heartbeat: don't claim success until the stack is actually green -----
 if [[ "${APPLY}" -eq 1 ]]; then
   # APP_PORT was derived from APP_URL and exported above (same value compose published).
   heartbeat "${APP_PORT}" || { echo "Install did not come up healthy — see logs above." >&2; exit 1; }
 fi
 
-# --- 6. Done ----------------------------------------------------------------
+# --- 7. Done ----------------------------------------------------------------
 if [[ "${APPLY}" -eq 1 ]]; then
   log "Install complete. Open the Applicant UI at ${APP_URL} and finish setup in-browser (no CLI, NFR-ZEROCLI-1)."
 else
