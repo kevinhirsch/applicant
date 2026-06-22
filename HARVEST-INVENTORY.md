@@ -7,10 +7,10 @@
 
 ## Status
 - Phase 0 — Ingest & setup: **DONE** (all three repos cloned read-only; licenses confirmed).
-- Phase 1 — Parallel deep-dive (5 sub-auditors): **IN PROGRESS**.
-- Phase 2 — Comparative fit / keep-vs-replace: pending.
-- Phase 3 — `docs/HARVEST-MAP.md`: pending.
-- Phase 4 — `docs/APPLICANT-SURVIVAL-PLAN.md` + verdict (GATE): pending.
+- Phase 1 — Parallel deep-dive (5 sub-auditors): **DONE** (all five consolidated below).
+- Phase 2 — Comparative fit / keep-vs-replace: **DONE** (verdict synthesis at end of this file).
+- Phase 3 — `docs/HARVEST-MAP.md`: **DONE**.
+- Phase 4 — `docs/APPLICANT-SURVIVAL-PLAN.md` + verdict (GATE): **DONE — awaiting authorization**.
 
 ## Repos & licenses (confirmed on disk)
 | Repo | Location | License | Attribution to retain |
@@ -187,5 +187,82 @@ the port; becomes a hermes reskin **only if** hermes' agent loop/tool model/gate
 `application/services/agent_loop.py` as the core — **that line must not be crossed** (the tell to watch).
 **Confidence:** moat real H; replacement loses H; FE-harvest is right remedy M-H.
 
-### 5. Integration, white-label & licensing
-_pending sub-auditor 5_
+### 5. Integration, white-label & licensing — VERDICT: **harvest is mechanically legal but the brand burden is large & asymmetric; prefer pattern-only lifts** (Confidence H)
+
+**License facts (confirmed on disk):** hermes `LICENSE:1-3` = MIT © 2025 Nous Research; orwell
+`LICENSE:1-3` = MIT © 2026 kevinhirsch; applicant `LICENSE` = **The Unlicense (public domain)**.
+
+**⚠️ License-asymmetry — ESCALATE TO LEGAL, do not self-resolve:** combining MIT into an Unlicense
+repo is a one-way relicensing of the harvested portions. You **cannot** re-dedicate MIT third-party
+code to public domain; applicant's blanket Unlicense header does NOT cover harvested files — saying it
+does is a false notice. Result is a **mixed-license repo**: harvested portions stay MIT (copyright with
+Nous/kevinhirsch), only applicant's original code is Unlicense. **Precedent already exists** —
+`THIRD_PARTY_LICENSES.md` + `frontend/static/LICENSE` already record vendored MIT frontend (and
+`kevinhirsch` already appears there). Hermes introduces a **genuinely new** third-party holder (Nous
+Research) not yet anywhere in applicant.
+
+**Attribution ledger (model both, before importing code):** add BOTH (a) verbatim
+`workspace/licenses/<src>-MIT-LICENSE.txt` (model: `workspace/licenses/opencode-MIT-LICENSE.txt` —
+"Adapted for:" header + full MIT text incl. upstream copyright) AND (b) an `ACKNOWLEDGMENTS.md` row.
+
+**White-label burden (large, asymmetric — scales super-linearly with lift size for hermes):**
+- hermes: ~2,797 brand mentions, **~280 `HERMES_*` env vars**, `~/.hermes` config dir baked into a
+  30+-caller import constant (`hermes_constants.py:51,54`), `hermes`/`hermes-agent`/`hermes-acp` CLI
+  (`pyproject.toml:296-299`), **Nous first-party provider lock-in** (`NOUS_API_KEY`, Nous Portal OAuth,
+  `cli-config.yaml.example:16-18`), `nousresearch.com` domains, caduceus banner, sub-brands
+  (Chronos/Hindsight/Caduceus), 7 i18n catalogs.
+- orwell: ~5,466 mentions, `ORWELL_*` env prefix (incl. `ORWELL_ADMIN_*`/`ORWELL_ENGINE_*`/
+  `ORWELL_CONFIG_DIR` — **conceptually collide with applicant's own `APPLICANT_*`/`ENGINE_URL`**),
+  `orwell_*.py`/`orwell*.js` module prefixes, `/etc/orwell/ca/` path, `orwell_memories` Chroma
+  collection (**live data key — a rename is a migration, not a sed**), **outbound brand leak**
+  `X-OpenRouter-Title: "Orwell"` (`endpoint_resolver.py:190-191`), and "Big Brother"/"Vault Wall"
+  themed vocab (load-bearing domain, not chrome → realistic harvest is pattern-only, carries no strings).
+
+**🚨 CI denylist finding (actionable, H):** the white-label denylist is inline at
+`.github/workflows/ci.yml:28` (`git grep -iE 'firehouse|orwell|odysseus|smokey'`). **`orwell` is ALREADY
+blocked** (an orwell harvest is guarded today). **`hermes`/`nous` are NOT** — and **cannot be naively
+added** because applicant legitimately references the **Hermes/Nous model families** (not white-label
+violations): `workspace/services/hwfit/data/hf_models.json` (`NousResearch/Hermes-3…`), vLLM
+`--tool-call-parser hermes` (`cookbook_routes.py:129`), model context/pricing tables
+(`agent_loop.py:1369`, `providers.js`), and an attribution comment crediting "Hermes' skills format"
+(`skill_format.py:4-5`). A blanket add red-walls CI → needs **scoped path-excludes** (`':!**/hf_models.json'`,
+narrower `nousresearch.com`/`hermes-agent` patterns). Real design task, not a one-liner.
+
+**Sequencing skeleton:** scope-lock lift → license files FIRST → token-rename pass → data-key renames as
+migrations → reachability check (front-door) → green-increment gate (incl. denylist). **Top risks:**
+env-var rename fan-out (~280 hermes tokens); outbound brand leak; mixed-license over-claim;
+themed-vocab bleed; data-key migration corruption.
+
+---
+
+## PHASE 2 — Comparative fit & the honest keep-vs-replace verdict (synthesis)
+
+**VERDICT: KEEP `applicant`. The "replace with hermes-agent" premise does not survive contact with the
+evidence.** Confidence **H**. The four substantive auditors converge independently:
+
+1. **The headline asset evaporates on inspection.** Hermes' "frontend that just works" is React 19 +
+   Vite + Tailwind + a private npm design system, with the chat being an xterm.js terminal embed — a
+   *management dashboard*, inseparable from its build stack. Adopting it forces a bundler/React/TS onto
+   applicant's deliberate no-build front-door and is all-or-nothing ⇒ **a hermes reskin**. Applicant's
+   front-door already **equals/exceeds** it on theming, markdown, and feature-state. (SA1)
+2. **Hermes' platform is general scope-creep with no socket.** Applicant has no agent loop / MCP /
+   subagents / general terminal to attach them to; it has *right-sized domain equivalents* for every
+   in-scope sliver (learning, scheduling, notifications, sandbox). Only the `ProviderProfile` *pattern*
+   is worth taking — and that's a want, behind a port that's arguably cleaner than hermes'. (SA2)
+3. **Orwell is not a replacement and confirms applicant's architecture is sound** (its frontend is a
+   sibling fork of applicant's OWN upstream). Net harvest: one strong pattern (structural boundary
+   enforcement applicant lacks) + minor refinements. (SA3)
+4. **Applicant's moat is real and load-bearing; hermes has ZERO of it.** The ATS state machine,
+   fabrication guard, render-fidelity gate, server-side safety boundaries, vault, and conversion
+   learning are ~31k LOC pinned by 1,214 tests. **Replace = throw away the moat to gain a FE = strictly
+   worse.** (SA4)
+
+**The honest line (the reskin question, answered):** keeping applicant + harvesting *surgically* (FE
+patterns, the provider-profile pattern, the import-linter boundary, a couple of safety refinements)
+**stays applicant** — the identity is the engine, not the pixels. It becomes a reskin **only if** hermes'
+agent-loop/gateway/tool-model replaces `application/services/agent_loop.py` as the core. **That line must
+not be crossed; it is the explicit guardrail on the whole plan.**
+
+**What the replace case got right (steelmanned, retained as the real work):** applicant's FE/UX is a
+genuine, legitimate weakness (W1) and its multi-provider reach is narrow (W2), and the live-Workday path
+is wired-but-CI-unproven (W4). The survival plan's job is to fix those **without** crossing the line.
