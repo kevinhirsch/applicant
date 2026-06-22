@@ -162,14 +162,13 @@ def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
 #: never a guarantee; the user performing the irreducible human steps (account
 #: submit, CAPTCHA, verification, final submit) is the strongest legitimacy lever.
 STEALTH_CAVEAT = (
-    "Anti-detection is best-effort, never a guarantee. Rather than spoof a fake "
-    "persona, the engine presents a REAL, internally-consistent identity — genuine "
-    "Google Chrome on Linux, on your residential connection — because an incoherent "
-    "spoof scores worse than an honest, coherent fingerprint. The strongest "
-    "legitimacy signal is still you performing the irreducible human steps yourself: "
-    "completing account creation, any CAPTCHA or verification, and the final submit "
-    "in the live session. The engine pre-fills; you stay in control of the moments "
-    "that matter."
+    "Anti-detection is best-effort, never a guarantee. The engine drives a real, "
+    "anti-detect browser presenting an internally-consistent identity on your "
+    "residential connection — because a coherent fingerprint blends in where an "
+    "incoherent spoof stands out. The strongest legitimacy signal is still you "
+    "performing the irreducible human steps yourself: completing account creation, "
+    "any CAPTCHA or verification, and the final submit in the live session. The "
+    "engine pre-fills; you stay in control of the moments that matter."
 )
 
 

@@ -301,37 +301,98 @@ class FakePageSource:
         self._pages[self._index] = replace(page, is_confirmation=True, text=text)
 
 
-# --- real patchright/Playwright driver (REAL, integration-gated) -------------
+# --- real browser driver (REAL, integration-gated) --------------------------
 class PlaywrightPageSource:
-    """REAL :class:`PageSource` backed by patchright (Playwright fork) (FR-PREFILL-1).
+    """REAL :class:`PageSource` driven over the Playwright API (FR-PREFILL-1).
 
-    Imports the browser driver LAZILY so importing this module costs nothing and
-    needs no browser binary; the default test lane never constructs this class.
-    Only an integration-gated smoke test (which skips if no browser is installed)
-    drives it. The human-like input cadence (FR-STEALTH-2) and the coherent
-    fingerprint (FR-STEALTH-1) are applied via the launch args here.
+    Two launch engines, selected by ``engine``, share ALL of the navigate / read /
+    detect / type / screenshot logic below (Camoufox is "fully compatible with
+    existing Playwright code", so only the launch differs):
+
+    * ``camoufox`` (the default) — a Firefox-based anti-detect browser that injects
+      its own coherent, real-world-distribution fingerprint (FR-STEALTH-1). Because
+      Camoufox owns the fingerprint, the Chrome WebGL/platform init-script override
+      is NOT applied on this path.
+    * ``chromium`` — patchright (a Playwright fork that strips automation tells) +
+      real Google Chrome/Chromium, presenting the coherent honest real-Chrome
+      identity, with the WebGL/platform init script applied. This is also the engine
+      used for the Proxmox Windows CDP backend (connect to a remote real Chrome).
+
+    The browser driver is imported LAZILY so importing this module costs nothing and
+    needs no browser binary; the default test lane never constructs this class. Only
+    integration-gated smoke tests (which skip if the browser is not installed) drive
+    it. The human-like input cadence (FR-STEALTH-2) is applied via the type API.
 
     NOTE: clicks/submits are NOT performed here — the adapter routes the boundary
     decisions; this driver only navigates + reads + types + screenshots, never
     clicking an account-create or final submit (FR-PREFILL-4/5).
     """
 
-    #: The default driving browser channel: real Google Chrome (FR-STEALTH-1).
-    #: Real Chrome (not Chromium, not headless) yields the genuine Chrome TLS/JA3 +
-    #: HTTP/2 fingerprint and the correct Sec-CH-UA client hints automatically.
+    #: The default driving browser channel for the ``chromium`` engine: real Google
+    #: Chrome (FR-STEALTH-1). Real Chrome (not Chromium, not headless) yields the
+    #: genuine Chrome TLS/JA3 + HTTP/2 fingerprint and correct Sec-CH-UA hints.
     DEFAULT_CHANNEL = "chrome"
+
+    #: The default launch engine. ``camoufox`` is the product default (every outbound
+    #: browser request routes through it); ``chromium`` is the patchright/Chrome path.
+    DEFAULT_ENGINE = "chromium"
 
     def __init__(
         self,
         fingerprint: dict[str, str],
         *,
-        headless: bool = False,
+        headless: bool | str = False,
         proxy: dict[str, str] | None = None,
         user_data_dir: str = "",
         channel: str = DEFAULT_CHANNEL,
         cdp_endpoint: str = "",
         persona: str = "linux",
+        engine: str = DEFAULT_ENGINE,
+        browser_os: str = "linux",
+        geoip: bool = True,
+        humanize: bool = True,
     ) -> None:
+        self._fingerprint = dict(fingerprint)
+        self._channel = channel
+        # FR-STEALTH-4: the residential-egress proxy (or None for direct egress),
+        # threaded into the launch options below (both engines accept Playwright's
+        # ``{"server": ...}`` proxy dict).
+        self._proxy = dict(proxy) if proxy else None
+        #: CDP-connect mode (FR-SANDBOX-1, FR-STEALTH-1): when an endpoint is set, the
+        #: engine CONNECTS to a remote Chrome (the Windows VM) over CDP instead of
+        #: launching a local browser. Persona is then ``native`` — NO fingerprint
+        #: override, because it IS real Windows + real Chrome (genuine fingerprint).
+        #: CDP always uses the chromium engine (Camoufox is Firefox, no Chrome CDP).
+        self._cdp_endpoint = cdp_endpoint
+        self._persona = persona
+        self._engine = (engine or self.DEFAULT_ENGINE).strip().lower()
+        # Playwright handle (chromium engine) vs Camoufox context-manager handle
+        # (camoufox engine) — exactly one is set; teardown closes whichever launched.
+        self._pw = None
+        self._cam = None
+        self._context = None
+        self._page = None
+        self._browser = None
+        # Captured per-navigation main-frame HTTP status + the expected host so
+        # current() can populate cautious-mode signals (FR-PREFILL-6).
+        self._status: int | None = None
+        self._expected_host: str | None = None
+        # Camoufox engine (the default product path): a local launch only. A CDP
+        # endpoint forces the chromium path (remote real Chrome over CDP).
+        if self._engine == "camoufox" and not self._cdp_endpoint:
+            self._launch_camoufox(
+                headless=headless,
+                proxy=self._proxy,
+                user_data_dir=user_data_dir,
+                browser_os=browser_os,
+                geoip=geoip,
+                humanize=humanize,
+            )
+            return
+        self._launch_chromium(headless=headless, user_data_dir=user_data_dir)
+
+    def _launch_chromium(self, *, headless: bool | str, user_data_dir: str) -> None:
+        """Launch the patchright/Chrome engine (or connect to a remote Chrome via CDP)."""
         try:
             # patchright is a drop-in Playwright fork that removes automation tells
             # (FR-STEALTH-1); fall back to vanilla playwright if only that is present.
@@ -345,28 +406,7 @@ class PlaywrightPageSource:
                 "and run `patchright install chromium` (integration-only)."
             ) from exc
 
-        self._fingerprint = dict(fingerprint)
-        self._channel = channel
-        # FR-STEALTH-4: the residential-egress proxy (or None for direct egress),
-        # threaded into the launch kwargs below.
-        self._proxy = dict(proxy) if proxy else None
-        #: CDP-connect mode (FR-SANDBOX-1, FR-STEALTH-1): when an endpoint is set, the
-        #: engine CONNECTS to a remote Chrome (the Windows VM) over CDP instead of
-        #: launching a local browser. Persona is then ``native`` — NO fingerprint
-        #: override, because it IS real Windows + real Chrome (genuine fingerprint).
-        self._cdp_endpoint = cdp_endpoint
-        self._persona = persona
         self._pw = sync_playwright().start()
-        # If context/page construction fails, stop the started Playwright process
-        # so the driver does not leak (the old __init__ left the node process running
-        # on any error after start()).
-        self._context = None
-        self._page = None
-        self._browser = None
-        # Captured per-navigation main-frame HTTP status + the expected host so
-        # current() can populate cautious-mode signals (FR-PREFILL-6).
-        self._status: int | None = None
-        self._expected_host: str | None = None
         try:  # pragma: no cover - integration-gated
             if self._cdp_endpoint:
                 # Connect to the REMOTE Windows VM's Chrome over CDP. The browser is
@@ -380,7 +420,7 @@ class PlaywrightPageSource:
             else:
                 kwargs = self.launch_kwargs(
                     self._fingerprint,
-                    headless=headless,
+                    headless=bool(headless),
                     proxy=self._proxy,
                     user_data_dir=user_data_dir,
                     channel=self._channel,
@@ -394,19 +434,76 @@ class PlaywrightPageSource:
                 if self._persona != "native":
                     self._apply_fingerprint_overrides(self._context)
                 self._page = self._context.new_page()
-            # Fail fast on a stuck control: a single unfillable field must not hang the
-            # whole walk on Playwright's 30s default (a real Lever form otherwise took
-            # 100s+). Navigation keeps a longer budget; per-action (fill/click/type) is
-            # short so the soft-error path triggers quickly (universal-ATS robustness).
-            try:
-                self._context.set_default_timeout(8_000)
-                self._context.set_default_navigation_timeout(30_000)
-            except Exception:
-                pass
-            self._page.on("response", self._on_response)
+            self._finalize_page()
         except Exception:
             self._safe_teardown()
             raise
+
+    def _launch_camoufox(
+        self,
+        *,
+        headless: bool | str,
+        proxy: dict[str, str] | None,
+        user_data_dir: str,
+        browser_os: str,
+        geoip: bool,
+        humanize: bool,
+    ) -> None:
+        """Launch the Camoufox anti-detect browser as the page driver (FR-STEALTH-1).
+
+        Camoufox is a context manager around the Playwright API; we drive it without
+        the ``with`` block (entering/exiting manually) so the context/page live for
+        the driver's lifetime, exactly like the chromium path. Camoufox injects its
+        own coherent fingerprint, so NO Chrome init-script override is applied here.
+        """
+        try:
+            from camoufox.sync_api import Camoufox  # type: ignore
+        except ImportError as exc:  # pragma: no cover - integration-gated
+            raise RuntimeError(
+                "Camoufox is not installed. Install the browser extra "
+                "(`uv sync --extra browser`) and run `camoufox fetch` (integration-only)."
+            ) from exc
+
+        options = self.camoufox_options(
+            self._fingerprint,
+            headless=headless,
+            proxy=proxy,
+            user_data_dir=user_data_dir,
+            browser_os=browser_os,
+            geoip=geoip,
+            humanize=humanize,
+        )
+        persistent = bool(options.get("persistent_context"))
+        self._cam = Camoufox(**options)
+        try:  # pragma: no cover - integration-gated
+            # __enter__ launches the browser; with persistent_context it returns a
+            # BrowserContext directly, otherwise a Browser we open a context from.
+            handle = self._cam.__enter__()
+            if persistent:
+                self._context = handle
+            else:
+                self._browser = handle
+                self._context = handle.new_context()
+            self._page = self._context.new_page()
+            self._finalize_page()
+        except Exception:
+            self._safe_teardown()
+            raise
+
+    def _finalize_page(self) -> None:  # pragma: no cover - integration-gated
+        """Apply the shared per-context timeouts + response capture (both engines).
+
+        Fail fast on a stuck control: a single unfillable field must not hang the
+        whole walk on Playwright's 30s default (a real Lever form otherwise took
+        100s+). Navigation keeps a longer budget; per-action (fill/click/type) is
+        short so the soft-error path triggers quickly (universal-ATS robustness).
+        """
+        try:
+            self._context.set_default_timeout(8_000)
+            self._context.set_default_navigation_timeout(30_000)
+        except Exception:
+            pass
+        self._page.on("response", self._on_response)
 
     def _on_response(self, response) -> None:  # pragma: no cover - integration-gated
         """Capture the main-frame document response status for cautious mode."""
@@ -419,22 +516,32 @@ class PlaywrightPageSource:
     def _safe_teardown(self) -> None:  # pragma: no cover - integration-gated
         """Best-effort cleanup of a partially-constructed driver.
 
-        In CDP-connect mode the remote browser is the Windows VM's Chrome — we only
-        DISCONNECT (close our local handle); the VM lifecycle is owned by the sandbox
-        adapter (it tears the VM down). We never destroy a remote context we attached
-        to that we did not create.
+        Camoufox owns its own browser + Playwright lifecycle, so we exit its context
+        manager (which closes the browser and stops Playwright). In CDP-connect mode
+        the remote browser is the Windows VM's Chrome — we only DISCONNECT (close our
+        local handle); the VM lifecycle is owned by the sandbox adapter (it tears the
+        VM down). We never destroy a remote context we attached to that we did not
+        create. ``getattr`` defaults keep this safe on a partially-built instance.
         """
+        cam = getattr(self, "_cam", None)
+        cdp_endpoint = getattr(self, "_cdp_endpoint", "")
+        browser = getattr(self, "_browser", None)
+        context = getattr(self, "_context", None)
+        pw = getattr(self, "_pw", None)
         try:
-            if self._cdp_endpoint and self._browser is not None:
+            if cam is not None:
+                # Camoufox.__exit__ closes the browser AND stops its Playwright.
+                cam.__exit__(None, None, None)
+            elif cdp_endpoint and browser is not None:
                 # Disconnect from the remote Chrome without closing its context.
-                self._browser.close()
-            elif self._context is not None:
-                self._context.close()
+                browser.close()
+            elif context is not None:
+                context.close()
         except Exception:
             pass
         try:
-            if self._pw is not None:
-                self._pw.stop()
+            if pw is not None:
+                pw.stop()
         except Exception:
             pass
 
@@ -555,6 +662,53 @@ class PlaywrightPageSource:
             # FR-STEALTH-4: residential proxy actually used for automation egress.
             kwargs["proxy"] = dict(proxy)
         return kwargs
+
+    @staticmethod
+    def camoufox_options(
+        fingerprint: dict[str, str],
+        *,
+        headless: bool | str = False,
+        proxy: dict[str, str] | None = None,
+        user_data_dir: str = "",
+        browser_os: str = "linux",
+        geoip: bool = True,
+        humanize: bool = True,
+    ) -> dict:
+        """Build the ``Camoufox(...)`` launch options (pure + unit-testable).
+
+        Kept pure (no browser) so the default lane can assert the residential proxy
+        (FR-STEALTH-4), the persistent per-tenant profile (FR-STEALTH-3), the spoofed
+        OS, IP-coherent geolocation and human-like cursor are all threaded into the
+        real launch without constructing a browser. Camoufox generates its OWN
+        coherent fingerprint (BrowserForge), so — unlike the chromium path — no
+        Chrome user-agent / WebGL / Sec-CH-UA values are injected here.
+        """
+        # A headful request becomes a real, RENDERED browser on a virtual X server
+        # inside the display-less container — that is headful (no headless detection
+        # tell), just on Xvfb. An explicit ``True``/``"virtual"`` is honored as given.
+        resolved_headless: bool | str = "virtual" if headless is False else headless
+        persistent = bool((user_data_dir or "").strip())
+        options: dict = {
+            # Spoof a coherent OS fingerprint (default Linux, matching the deploy).
+            "os": browser_os or "linux",
+            "headless": resolved_headless,
+            # FR-STEALTH-2: human-like cursor movement (the typing cadence is applied
+            # separately via the HumanInteraction plan fed to the type API).
+            "humanize": bool(humanize),
+            # FR-STEALTH-1 <-> FR-STEALTH-4: derive geolocation/timezone/locale from
+            # the EXIT IP (the residential proxy, or the host's own IP for direct
+            # egress) so the fingerprint never contradicts where the traffic exits.
+            "geoip": bool(geoip),
+            "locale": fingerprint.get("locale", "en-US"),
+            # FR-STEALTH-3: a persistent per-tenant profile (same identity on return).
+            "persistent_context": persistent,
+        }
+        if persistent:
+            options["user_data_dir"] = user_data_dir
+        if proxy:
+            # FR-STEALTH-4: residential proxy actually used for automation egress.
+            options["proxy"] = dict(proxy)
+        return options
 
     #: Next/Continue control candidates tried in order when advancing (FR-PREFILL-1).
     _NEXT_SELECTORS = (

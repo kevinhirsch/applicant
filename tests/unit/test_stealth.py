@@ -229,12 +229,14 @@ class TestEgressThreadedIntoLaunch:
                 channel="chrome",
                 cdp_endpoint="",
                 persona="linux",
+                engine="camoufox",
             ):
                 captured["proxy"] = proxy
                 captured["user_data_dir"] = user_data_dir
                 captured["channel"] = channel
                 captured["cdp_endpoint"] = cdp_endpoint
                 captured["persona"] = persona
+                captured["engine"] = engine
 
             def open(self, url):  # noqa: D401
                 captured["opened"] = url
@@ -254,6 +256,8 @@ class TestEgressThreadedIntoLaunch:
         browser = pb.PatchrightBrowser(use_real_browser=True, egress=egress)
         browser.open(ApplicationId(new_id()), "https://acme.wd1.myworkdayjobs.com/x")
         assert captured["proxy"] == {"server": "http://home:8080"}
+        # The default engine all outbound automation traffic routes through.
+        assert captured["engine"] == "camoufox"
 
 
 @pytest.mark.unit

@@ -86,7 +86,17 @@ def test_idem3_record_submission_is_idempotent():
 # --- IDEM-1: digest email send is deduped per campaign+day ------------------
 def test_idem1_send_email_dedups_by_key():
     """IDEM-1: a second send_email with the same dedup key is a no-op (one email)."""
-    notifier = AppriseNotifier(apprise_urls="mailto://user:pw@smtp.test")
+    # Pin the clock to the key's own day so the rolling-window dedup prune
+    # (LEAK-NOTIF-1, _SENT_EMAIL_RETENTION_DAYS) never ages the just-added key out:
+    # real digest keys embed the CURRENT day, so the two same-day sends always fall
+    # inside the window. (Without a pinned clock this test silently rots once the
+    # wall clock drifts more than the retention window past the hard-coded date.)
+    from datetime import UTC, datetime
+
+    day = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
+    notifier = AppriseNotifier(
+        apprise_urls="mailto://user:pw@smtp.test", clock=lambda: day
+    )
     key = "digest_email:camp-1:2026-06-16"
     assert notifier.send_email(subject="Digest", html="<p>1</p>", dedup_key=key) is True
     assert notifier.send_email(subject="Digest", html="<p>2</p>", dedup_key=key) is True

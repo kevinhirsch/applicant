@@ -124,10 +124,16 @@ just the host:
   the LaTeX path and **LibreOffice** headless (`soffice --convert-to pdf`) for the docx fallback. Both
   paths are reachable depending on the onboarding accept/reject choice.
 - **Pre-fill / Workday automation** (FR-PREFILL, FR-STEALTH): the `browser` optional extra
-  (`uv sync --extra browser`, patchright) **plus a real Google Chrome** (`BROWSER_CHANNEL=chrome`). The
-  engine wires the real `PatchrightBrowser` unconditionally (`container.py`); the default local sandbox
-  launches it **inside the `api` container** (no CDP endpoint), so the binary must live in that image.
-  The takeover/Proxmox sandbox instead connects to a remote Chrome over CDP.
+  (`uv sync --extra browser`). `BROWSER_ENGINE` selects the browser ALL outbound automation traffic
+  routes through: the default **`camoufox`** (a Firefox-based anti-detect browser; `camoufox fetch`
+  downloads its binary + the GeoIP dataset into the image, and it renders headful on Xvfb inside the
+  display-less container), or the fallback **`chromium`** (patchright **plus a real Google Chrome**,
+  `BROWSER_CHANNEL=chrome`). The engine wires the real `PatchrightBrowser` unconditionally
+  (`container.py`); the default local sandbox launches the browser **inside the `api` container** (no
+  CDP endpoint), so the binary must live in that image. Camoufox injects its OWN coherent fingerprint,
+  so the Chrome WebGL/`Sec-CH-UA` init-script override is applied only on the `chromium` path. The
+  takeover/Proxmox sandbox is Chrome-specific — it forces `chromium` and connects to a remote Chrome
+  over CDP.
 - **Durable orchestration**: `dbos` is an **optional** extra (`durable-orchestration`); the default
   `ORCHESTRATOR_BACKEND=shim` (in-process checkpoints) needs nothing extra. Select `dbos` only to
   co-reside workflow state in Postgres.

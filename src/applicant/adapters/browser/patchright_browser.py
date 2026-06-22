@@ -84,6 +84,7 @@ class PatchrightBrowser:
         profiles: ProfileStore | None = None,
         source_factory=None,
         channel: str = "chrome",
+        engine: str = "camoufox",
         egress_timezone: str = "",
         egress_locale: str = "",
         persona: str = "linux",
@@ -95,6 +96,11 @@ class PatchrightBrowser:
         # for the selected channel (so UA <-> CH-UA <-> engine all agree); a caller
         # may still inject an explicit fingerprint (tests).
         self._channel = channel or "chrome"
+        # The browser engine every outbound request routes through (FR-STEALTH-1,
+        # FR-PREFILL-1): ``camoufox`` (default) is the Firefox anti-detect browser;
+        # ``chromium`` is the patchright/Chrome path. The CDP/native backend always
+        # uses chromium (a remote real Chrome), regardless of this value.
+        self._engine = (engine or "camoufox").strip().lower()
         # FR-STEALTH-1: ``linux`` = apply the coherent honest spoof (the default for
         # the local backend). ``native`` = use the browser's REAL identity with NO
         # fingerprint override (the Proxmox Windows backend: real Windows + real
@@ -357,13 +363,15 @@ class PatchrightBrowser:
             # FR-STEALTH-3: thread the persistent per-tenant profile dir into the real
             # browser launch so per-tenant persistence (same identity on return) works.
             # FR-STEALTH-4: thread the (validated) residential-egress proxy in too, so
-            # a configured proxy is ACTUALLY used for egress.
+            # a configured proxy is ACTUALLY used for egress. ``engine`` selects the
+            # launch path (camoufox by default); both honor the proxy + profile dir.
             return PlaywrightPageSource(
                 fingerprint,
                 proxy=self.egress.launch_proxy(),
                 user_data_dir=user_data_dir,
                 channel=self._channel,
                 persona=self._persona,
+                engine=self._engine,
             )
         return FakePageSource(ats)
 
