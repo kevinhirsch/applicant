@@ -100,6 +100,77 @@ def _campaign_label(campaign: dict) -> str:
     return str(campaign.get("name") or campaign.get("id") or "")
 
 
+# Plain-language labels for the engine's required intake sections, so the
+# "finish your profile" gap row names the SPECIFIC steps still to do instead of
+# raw codes. White-label: no FR-/NFR- jargon, no codenames.
+_SECTION_LABELS: dict[str, str] = {
+    "identity": "Identity",
+    "work_authorization": "Work authorization",
+    "location": "Location",
+    "target_roles": "Target roles",
+    "compensation": "Compensation",
+    "work_history": "Work history",
+    "education": "Education",
+    "references": "References",
+    "key_attributes": "Key attributes",
+    "eeo": "EEO (optional)",
+    "base_resume": "Base résumé",
+    "campaign_criteria": "Campaign criteria",
+}
+
+
+def _section_label(code: str) -> str:
+    """Friendly label for a section code; falls back to a title-cased code."""
+    code = str(code or "")
+    return _SECTION_LABELS.get(code, code.replace("_", " ").strip().capitalize() or code)
+
+
+async def _onboarding_gap_item(
+    engine: ApplicantEngineClient, campaign_list: list[dict]
+) -> Optional[dict]:
+    """Build the single persistent "finish your profile" row, or ``None``.
+
+    Reuses the engine's existing onboarding state (no new detection): for the
+    owner's campaigns, the first one whose intake still has missing sections
+    yields one synthetic pending item naming those specific steps. Returns
+    ``None`` when every campaign is complete (so the row clears on its own) or
+    when there is no campaign / the engine can't answer.
+    """
+    for campaign in campaign_list:
+        if not isinstance(campaign, dict):
+            continue
+        cid = campaign.get("id")
+        if not cid:
+            continue
+        cid = str(cid)
+        try:
+            state = await engine.onboarding_state(cid)
+        except EngineError as exc:
+            # Onboarding state is best-effort context for the gap row; a single
+            # failure must not sink the feed. Skip this campaign and try the next.
+            logger.debug("portal: onboarding state failed for %s: %s", cid, exc)
+            continue
+        if not isinstance(state, dict):
+            continue
+        if state.get("complete"):
+            continue
+        missing = state.get("missing_sections") or []
+        missing = [str(s) for s in missing if isinstance(s, (str,))]
+        if not missing:
+            continue
+        return {
+            "id": "onboarding-incomplete",
+            "kind": "onboarding_incomplete",
+            "title": "Finish your profile",
+            "campaign_id": cid,
+            "campaign_name": _campaign_label(campaign),
+            "missing": [_section_label(code) for code in missing],
+            "missing_codes": missing,
+            "affordance": "complete",
+        }
+    return None
+
+
 def _shape_item(raw: dict, *, campaign_id: str, campaign_name: str) -> dict:
     """Normalise one engine pending-action into the portal's row shape.
 
@@ -182,6 +253,14 @@ def setup_applicant_portal_routes() -> APIRouter:
                 for raw in raw_items:
                     if isinstance(raw, dict):
                         items.append(_shape_item(raw, campaign_id=cid, campaign_name=cname))
+
+            # One persistent "finish your profile" row when the owner's intake is
+            # incomplete, naming the SPECIFIC missing steps. It clears on its own
+            # once every required section is filled (missing_sections empty), so it
+            # needs no emit/clear lifecycle. Prepend it so it sits atop the feed.
+            gap = await _onboarding_gap_item(engine, campaign_list)
+            if gap is not None:
+                items.insert(0, gap)
 
         return {"engine_available": True, "count": len(items), "items": items}
 
