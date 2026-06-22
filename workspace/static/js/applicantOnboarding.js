@@ -1468,7 +1468,17 @@ async function _renderUpdate() {
   const btn = document.getElementById('ao-update-go');
   const out = document.getElementById('ao-update-result');
   if (btn) btn.onclick = async () => {
-    if (!window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.')) return;
+    let ok = false;
+    try {
+      if (window.uiModule && typeof window.uiModule.styledConfirm === 'function') {
+        ok = await window.uiModule.styledConfirm(
+          'Update now? Your data is backed up first, then the latest version is applied and the app restarts.',
+          { confirmText: 'Update now', cancelText: 'Cancel' });
+      } else {
+        ok = window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.');
+      }
+    } catch { ok = false; }
+    if (!ok) return;
     btn.disabled = true;
     out.textContent = 'Working…';
     try {

@@ -257,9 +257,14 @@ async function _showAppDetail(appId) {
   if (!host || !appId) return;
   host.innerHTML = '<div class="hwfit-loading">Loading details…</div>';
   let shots = { screenshots: [] }, wf = { steps: [] }, outcomes = { outcomes: [] };
-  try { shots = await _fetchJSON(`${ADMIN}/screenshots/${encodeURIComponent(appId)}`); } catch { /* soft */ }
-  try { wf = await _fetchJSON(`${ADMIN}/workflow/${encodeURIComponent(appId)}`); } catch { /* soft */ }
-  try { outcomes = await _fetchJSON(`${ADMIN}/outcomes/${encodeURIComponent(appId)}`); } catch { /* soft */ }
+  let anyErr = null;
+  try { shots = await _fetchJSON(`${ADMIN}/screenshots/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
+  try { wf = await _fetchJSON(`${ADMIN}/workflow/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
+  try { outcomes = await _fetchJSON(`${ADMIN}/outcomes/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
+  if (anyErr && !shots.screenshots.length && !(wf.completed_steps || wf.steps || []).length && !outcomes.outcomes.length) {
+    host.innerHTML = `<div class="admin-card">${_empty(anyErr.message || 'Could not load application details.')}</div>`;
+    return;
+  }
   const shotList = (shots.screenshots || []);
   const steps = (wf.completed_steps || wf.steps || []);
   const evs = (outcomes.outcomes || []);
@@ -280,9 +285,19 @@ async function _showAppDetail(appId) {
   host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
 }
 
+async function _confirm(message, opts) {
+  try {
+    if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
+  } catch { /* fall through */ }
+  try { return window.confirm(message); } catch { return false; }
+}
+
 async function _markSubmitted(appId) {
   if (!appId) return;
-  if (!window.confirm('Record that you submitted this application yourself? This helps the system learn which details convert.')) return;
+  const ok = await _confirm(
+    'Record that you submitted this application yourself? This helps the system learn which details convert.',
+    { confirmText: 'Record it', cancelText: 'Cancel' });
+  if (!ok) return;
   try {
     await _post(`${ADMIN}/applications/${encodeURIComponent(appId)}/mark-submitted`, {});
     _toast('Recorded — thanks, this helps the system learn.');
@@ -664,15 +679,22 @@ async function _renderUpdate() {
       <button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
       <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
     </div>`;
-  _body().querySelector('#applicant-update-go').addEventListener('click', async () => {
-    if (!window.confirm('Update now? Your data is backed up first, then the latest version is applied and the app restarts.')) return;
+  const updateBtn = _body().querySelector('#applicant-update-go');
+  if (updateBtn) updateBtn.addEventListener('click', async () => {
+    const ok = await _confirm(
+      'Update now? Your data is backed up first, then the latest version is applied and the app restarts.',
+      { confirmText: 'Update now', cancelText: 'Cancel' });
+    if (!ok) return;
     const out = _body().querySelector('#applicant-update-result');
-    out.textContent = 'Working…';
+    updateBtn.disabled = true;
+    if (out) out.textContent = 'Working…';
     try {
       const res = await _post(`${OPS}/update/trigger`, {});
-      out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
+      if (out) out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
     } catch (e) {
-      out.textContent = e.message || 'Could not start the update right now.';
+      if (out) out.textContent = e.message || 'Could not start the update right now.';
+    } finally {
+      updateBtn.disabled = false;
     }
   });
 }
