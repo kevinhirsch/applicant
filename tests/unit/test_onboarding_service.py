@@ -144,6 +144,83 @@ def test_ingest_resume_integral_conflict_requires_confirmation(svc_and_storage, 
     assert state.intake[IntakeSection.IDENTITY.value]["full_name"] == "Janet Different"
 
 
+def test_phone_format_difference_is_not_a_conflict(svc_and_storage, tmp_path):
+    """A phone written in a different format is the SAME number — not a conflict.
+
+    Regression for the false-conflict bug: the user states ``3146695386`` and the
+    resume has ``(314) 669-5386``; format-only differences must not be flagged.
+    """
+    svc, storage, _ = svc_and_storage
+    # User typed the phone digits-only; resume has it formatted (note the area
+    # code matches the resume below so this is a true format-only difference).
+    resume = (
+        "Jane Q Candidate\n"
+        "jane@example.com | (415) 555-0199\n"
+    )
+    svc.save_section(CID, IntakeSection.IDENTITY, {"phone": "4155550199"})
+    p = tmp_path / "resume.txt"
+    p.write_text(resume, encoding="utf-8")
+    result = svc.ingest_base_resume(CID, str(p))
+    # No phone conflict surfaced — same number, different format.
+    assert not any(c.attribute == "phone" for c in result.conflicts)
+
+
+def test_phone_genuinely_different_is_still_a_conflict(svc_and_storage, tmp_path):
+    """A genuinely different phone number IS still surfaced for confirmation."""
+    svc, *_ = svc_and_storage
+    resume = "Jane Q Candidate\njane@example.com | (415) 555-0199\n"
+    svc.save_section(CID, IntakeSection.IDENTITY, {"phone": "(212) 000-0000"})
+    p = tmp_path / "resume.txt"
+    p.write_text(resume, encoding="utf-8")
+    result = svc.ingest_base_resume(CID, str(p))
+    assert any(c.attribute == "phone" for c in result.conflicts)
+
+
+def test_resume_first_prefills_editable_intake_fields(svc_and_storage, tmp_path):
+    """Resume-first: uploading the resume FIRST prefills the editable intake forms.
+
+    The user should NOT have to type everything by hand — the parse populates the
+    identity / work-history / education / skills intake under the wizard's own
+    field names, ready to review and correct.
+    """
+    svc, *_ = svc_and_storage
+    p = tmp_path / "resume.txt"
+    p.write_text(_RESUME, encoding="utf-8")
+    # No interview answers entered yet — resume is the starting point.
+    svc.ingest_base_resume(CID, str(p))
+    intake = svc.get_state(CID).intake
+
+    # Identity prefilled under the WIZARD's field names (so the form renders filled).
+    identity = intake[IntakeSection.IDENTITY.value]
+    assert identity.get("full_legal_name") == "Jane Q Candidate"
+    assert identity.get("email") == "jane@example.com"
+    assert identity.get("phone")  # parsed from the resume
+
+    # Structured sections prefilled too (flat single-entry forms in the wizard).
+    wh = intake[IntakeSection.WORK_HISTORY.value]
+    assert wh.get("title") == "Senior Engineer"
+    assert wh.get("company") == "Acme Corp"
+
+    edu = intake[IntakeSection.EDUCATION.value]
+    assert "Computer Science" in edu.get("degree", "") or edu.get("degree")
+
+    skills = intake[IntakeSection.KEY_ATTRIBUTES.value]
+    assert "Python" in skills.get("technical_skills", "")
+
+
+def test_resume_first_prefill_does_not_clobber_typed_values(svc_and_storage, tmp_path):
+    """Re-uploading never overwrites a value the user already typed."""
+    svc, *_ = svc_and_storage
+    svc.save_section(
+        CID, IntakeSection.WORK_HISTORY, {"title": "My Real Title", "company": "My Co"}
+    )
+    p = tmp_path / "resume.txt"
+    p.write_text(_RESUME, encoding="utf-8")
+    svc.ingest_base_resume(CID, str(p))
+    wh = svc.get_state(CID).intake[IntakeSection.WORK_HISTORY.value]
+    assert wh.get("title") == "My Real Title"  # user's value preserved
+
+
 def test_confirm_conflict_applies_integral_change(svc_and_storage, tmp_path):
     svc, storage, _ = svc_and_storage
     svc.save_section(CID, IntakeSection.IDENTITY, {"full_name": "Janet Different"})

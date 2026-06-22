@@ -23,6 +23,7 @@ from typing import Any
 
 from applicant.core.entities.attribute import Attribute
 from applicant.core.ids import AttributeId, CampaignId, new_id
+from applicant.core.rules.field_normalization import values_match
 from applicant.core.rules.sensitive_fields import (
     DECLINE_TO_SELF_IDENTIFY,
     is_sensitive_field,
@@ -49,6 +50,17 @@ _EEO_FIELDS = ("race_ethnicity", "gender", "veteran_status", "disability_status"
 _INTEGRAL_ATTRS = frozenset(
     {"full_name", "email", "phone"}
 )
+
+#: The resume parse extracts canonical identity scalars; the "About you" intake
+#: form (the wizard) renders them under these field names. Prefilling the intake
+#: under the FORM names is what lets the resume-first flow populate the editable
+#: fields the user then corrects (FR-ONBOARD-3). ``email``/``phone`` share the same
+#: name on both sides; the legal name maps to the form's ``full_legal_name`` input.
+_IDENTITY_FORM_FIELD = {
+    "full_name": "full_legal_name",
+    "email": "email",
+    "phone": "phone",
+}
 
 
 class OnboardingService:
@@ -247,7 +259,12 @@ class OnboardingService:
         auto_applied: list[str] = []
         conflicts: list[ReconciliationConflict] = []
 
-        # Reconcile identity scalars.
+        # Reconcile identity scalars. Uploading the resume FIRST is the intended
+        # entry point: when the user has not yet typed a value we PREFILL the
+        # editable intake field from the parse (resume-first); when they already
+        # typed one we only surface an integral *conflict* if the values genuinely
+        # differ — format-only differences (a reformatted phone, a case change) are
+        # NOT flagged (FR-ONBOARD-3, FR-FB-3).
         scalar_map = {
             "full_name": parsed.full_name,
             "email": parsed.email,
@@ -256,9 +273,17 @@ class OnboardingService:
         for name, parsed_val in scalar_map.items():
             if not parsed_val:
                 continue
-            interview_val = str(identity.get(name, "") or "")
+            # The intake form renders identity scalars under its own field names;
+            # read/write under that name so prefill populates the form, but also
+            # honour a value stored under the canonical name (e.g. an attribute-cloud
+            # bridge or an older record) so an existing answer is still reconciled.
+            form_field = _IDENTITY_FORM_FIELD.get(name, name)
+            interview_val = str(
+                identity.get(form_field, "") or identity.get(name, "") or ""
+            )
             integral = name in _INTEGRAL_ATTRS
-            if interview_val and interview_val != parsed_val:
+            same = bool(interview_val) and values_match(name, interview_val, parsed_val)
+            if interview_val and not same:
                 if integral:
                     # FR-FB-3: integral conflict requires explicit confirmation.
                     conflicts.append(
@@ -270,14 +295,21 @@ class OnboardingService:
                     )
                     continue
                 # non-integral: auto-apply
-                identity[name] = parsed_val
+                identity[form_field] = parsed_val
                 auto_applied.append(name)
             elif not interview_val:
-                identity[name] = parsed_val
+                # Resume-first prefill: populate the editable field + seed the cloud.
+                identity[form_field] = parsed_val
                 auto_applied.append(name)
                 self._upsert_attribute(campaign_id, name, parsed_val, is_integral=integral)
 
         intake[IntakeSection.IDENTITY.value] = identity
+
+        # Resume-first prefill of the structured intake sections (FR-ONBOARD-3): the
+        # parse seeds the editable work-history / education / skills forms so the user
+        # corrects parsing mistakes instead of typing everything by hand. Only fill a
+        # section the user hasn't already entered, so re-uploading never clobbers edits.
+        self._prefill_sections_from_parse(intake, parsed)
 
         # Bootstrap the attribute cloud from non-integral parsed data (FR-ATTR-1).
         for skill in parsed.skills:
@@ -329,7 +361,12 @@ class OnboardingService:
         rec = self._load(campaign_id)
         intake = dict(rec.get("intake", {}))
         identity = dict(intake.get(IntakeSection.IDENTITY.value, {}))
+        # Write under BOTH the intake form's field name (so the editable field
+        # reflects the confirmed choice) and the canonical attribute name (so any
+        # reader keyed on the canonical name sees it too); the conflict carries the
+        # canonical name. Keeping both in sync avoids a stale value lingering.
         identity[attribute] = value
+        identity[_IDENTITY_FORM_FIELD.get(attribute, attribute)] = value
         intake[IntakeSection.IDENTITY.value] = identity
         rec["intake"] = intake
         self._store(campaign_id, rec)
@@ -337,6 +374,49 @@ class OnboardingService:
             campaign_id, attribute, value, is_integral=attribute in _INTEGRAL_ATTRS
         )
         log.info("onboarding_conflict_confirmed", campaign_id=campaign_id, attribute=attribute)
+
+    # --- resume-first prefill (FR-ONBOARD-3) -------------------------------
+    @staticmethod
+    def _prefill_sections_from_parse(intake: dict[str, Any], parsed) -> None:
+        """Seed the editable intake forms from the parsed resume (resume-first).
+
+        Only sections the user hasn't already filled are prefilled, so re-uploading
+        never clobbers a hand-typed value. The work-history / education forms in the
+        wizard render a single flat entry, so the most-recent parsed entry is used to
+        prefill them; the user then corrects any parsing mistakes in-place and every
+        field stays editable.
+        """
+
+        def _empty(section_key: str) -> bool:
+            cur = intake.get(section_key) or {}
+            return not any(v not in (None, "", [], {}) for v in cur.values())
+
+        # Skills & strengths: the parsed skills prefill the "Technical skills" box.
+        if parsed.skills and _empty(IntakeSection.KEY_ATTRIBUTES.value):
+            existing = dict(intake.get(IntakeSection.KEY_ATTRIBUTES.value, {}))
+            existing.setdefault("technical_skills", ", ".join(parsed.skills))
+            intake[IntakeSection.KEY_ATTRIBUTES.value] = existing
+
+        # Most-recent role -> the (flat) work-history form.
+        if parsed.work_history and _empty(IntakeSection.WORK_HISTORY.value):
+            w = parsed.work_history[0]
+            intake[IntakeSection.WORK_HISTORY.value] = {
+                "title": w.title,
+                "company": w.company,
+                "location": w.location,
+                "start_date": w.start_date,
+                "end_date": w.end_date,
+            }
+
+        # Most-recent degree -> the (flat) education form.
+        if parsed.education and _empty(IntakeSection.EDUCATION.value):
+            e = parsed.education[0]
+            intake[IntakeSection.EDUCATION.value] = {
+                "degree": e.degree,
+                "institution": e.institution,
+                "start_year": e.start_year,
+                "end_year": e.end_year,
+            }
 
     # --- helpers -----------------------------------------------------------
     @staticmethod
