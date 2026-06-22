@@ -1136,6 +1136,7 @@ import createResearchSynapse from './researchSynapse.js';
             _fadeNewTokens(liveReply, prevLen);
             liveReply._prevTextLen = liveReply.textContent.length;
             if (window.hljs) liveReply.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+            markdownModule.addStreamingCaret(liveReply);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
@@ -1184,6 +1185,7 @@ import createResearchSynapse from './researchSynapse.js';
         _fadeNewTokens(contentEl, prevLen);
         contentEl._prevTextLen = contentEl.textContent.length;
         if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+        markdownModule.addStreamingCaret(contentEl);
         uiModule.scrollHistory();
       };
 
@@ -2228,6 +2230,8 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       _renderStream();
+      // Remove streaming caret — stream is complete, no more tokens arriving
+      markdownModule.removeStreamingCaret(roundHolder);
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
@@ -2494,6 +2498,8 @@ import createResearchSynapse from './researchSynapse.js';
 
     } catch (err) {
       _renderStream();
+      // Remove streaming caret on error/abort
+      markdownModule.removeStreamingCaret(roundHolder);
       // Clean up any active spinner (e.g. "Generating response" during tool calls)
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();

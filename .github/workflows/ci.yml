@@ -23,10 +23,15 @@ jobs:
       # The product is white-labeled as "Applicant"; no upstream-fork vendor/persona
       # codename may appear in shipped artifacts. This step is the single home of the
       # denylist (it excludes itself and lockfiles from the scan).
+      # Internal harvest-audit planning docs are also excluded: their explicit purpose
+      # is to analyze the upstream sources (e.g. orwell) BY NAME, so the codename is
+      # required there and is not a shipped/user-facing string. These docs ship no
+      # product copy and are reachable through no UI surface.
       - name: White-label codename denylist
         run: |
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
-               -- ':!.github' ':!*.lock' ':!uv.lock'; then
+               -- ':!.github' ':!*.lock' ':!uv.lock' \
+               ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi
@@ -42,6 +47,9 @@ jobs:
 
       - name: Lint (ruff)
         run: uv run ruff check .
+
+      - name: Architecture — import-linter layering contract (NFR-ARCH-1)
+        run: uv run lint-imports
 
       - name: Engine boots (import smoke)
         run: uv run python -c "from applicant.app.main import app"
