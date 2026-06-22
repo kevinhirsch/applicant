@@ -12,6 +12,12 @@ local/network Ollama install over real HTTP via ``httpx``. Implements:
   a prompt that exceeds the active tier's context window;
 * token frugality (FR-LLM-5/NFR-TOKEN-1) — cheapest tier (L1) is the default.
 
+Provider-specific quirks (auth headers, URL shapes, request/response formats) are
+declared in :mod:`applicant.adapters.llm.provider_profiles` via
+:class:`~applicant.adapters.llm.provider_profiles.ProviderProfile`.  Adding a new
+provider requires only a new profile entry — no transport-branch edits here
+(FR-HARVEST-PROVIDER).
+
 The adapter NEVER logs secrets (api keys). It is fully hermetic in tests via an
 injected ``httpx`` transport.
 """
@@ -24,6 +30,10 @@ from typing import Any
 
 import httpx
 
+from applicant.adapters.llm.provider_profiles import (
+    get_profile,
+    tool_call_arguments,
+)
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import (
     ChatMessage,
@@ -51,23 +61,9 @@ _LOW_CONFIDENCE_MARKERS = (
     "unable to answer",
 )
 
-
-def _ollama_provider(provider: str, base_url: str) -> bool:
-    """Detect an Ollama endpoint by provider name or URL shape (FR-LLM-2).
-
-    An explicitly-named non-Ollama provider (openai, openrouter, …) is NEVER
-    Ollama and must short-circuit: the URL-shape heuristic below false-positives
-    on OpenRouter's ``https://openrouter.ai/api/v1`` base (it contains ``/api/``),
-    which would route cloud completions to Ollama's ``/api/chat`` — i.e.
-    ``https://openrouter.ai/api/api/chat`` → 404 → silent fallback to the stub.
-    The heuristic only applies when the provider is unspecified.
-    """
-    p = provider.strip().lower()
-    if p == "ollama":
-        return True
-    if p:
-        return False
-    return "11434" in base_url or "/api/" in base_url
+# Re-export for backward compatibility with code that imports _tool_call_arguments
+# from this module (e.g. tests).
+_tool_call_arguments = tool_call_arguments
 
 
 def _normalize_base(base_url: str) -> str:
@@ -163,27 +159,6 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _tool_call_arguments(message: dict[str, Any]) -> str | None:
-    """Extract the first tool/function call's ``arguments`` JSON string.
-
-    Supports the OpenAI ``tool_calls[].function.arguments`` shape and the legacy
-    ``function_call.arguments`` shape. Returns the raw arguments string (which is
-    itself a JSON object) or ``None`` when there is no tool call.
-    """
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for call in tool_calls:
-            if not isinstance(call, dict):
-                continue
-            fn = call.get("function")
-            if isinstance(fn, dict) and isinstance(fn.get("arguments"), str):
-                return fn["arguments"]
-    legacy = message.get("function_call")
-    if isinstance(legacy, dict) and isinstance(legacy.get("arguments"), str):
-        return legacy["arguments"]
-    return None
-
-
 def _validate_against_schema(obj: dict[str, Any], schema: dict[str, Any]) -> bool:
     """Shallow required-keys check (defensive, no jsonschema dependency)."""
     required = schema.get("required") or list((schema.get("properties") or {}).keys())
@@ -200,6 +175,10 @@ class OpenAICompatibleLLM:
     Construct either from a :class:`TierLadder` (preferred, FR-LLM-3) or from the
     legacy single-tier kwargs (``provider``/``base_url``/``api_key``/``model``),
     which are promoted into a one-tier ladder for backward compatibility.
+
+    Provider-specific transport quirks are resolved at call time via
+    :func:`~applicant.adapters.llm.provider_profiles.get_profile`; no if/else
+    branching on provider strings lives in this class (FR-HARVEST-PROVIDER).
     """
 
     def __init__(
@@ -235,9 +214,9 @@ class OpenAICompatibleLLM:
         return httpx.Client(transport=self._transport, timeout=self._timeout)
 
     def _headers(self, tier: TierConfig) -> dict[str, str]:
+        profile = get_profile(tier.provider, tier.base_url)
         headers = {"Content-Type": "application/json"}
-        if tier.api_key and not _ollama_provider(tier.provider, tier.base_url):
-            headers["Authorization"] = f"Bearer {tier.api_key}"
+        headers.update(profile.headers(tier.api_key))
         return headers
 
     # --- FR-LLM-2: model auto-pull ----------------------------------------
@@ -247,15 +226,8 @@ class OpenAICompatibleLLM:
             return []
         tier = self._ladder.at(tier_index)
         base = _normalize_base(tier.base_url)
-        if _ollama_provider(tier.provider, tier.base_url):
-            # Ollama base may include a trailing /v1 (OpenAI-compat shim) — strip it,
-            # exactly as _call_ollama does, so /api/tags is hit (FR-LLM-2).
-            if base.endswith("/v1"):
-                base = base[: -len("/v1")]
-            url = f"{base}/api/tags"
-        else:
-            # OpenAI-compatible: tolerate base_url with or without /v1.
-            url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
+        profile = get_profile(tier.provider, tier.base_url)
+        url = profile.models_url(base)
         try:
             with self._client() as client:
                 resp = client.get(url, headers=self._headers(tier))
@@ -264,23 +236,7 @@ class OpenAICompatibleLLM:
         except (httpx.HTTPError, json.JSONDecodeError) as exc:
             log.warning("llm_list_models_failed", provider=tier.provider, error=str(exc))
             return []
-        return self._parse_models(data)
-
-    @staticmethod
-    def _parse_models(data: dict[str, Any]) -> list[str]:
-        if not isinstance(data, dict):
-            return []
-        # Ollama: {"models": [{"name": "llama3.1:8b", ...}, ...]}
-        if isinstance(data.get("models"), list):
-            return [
-                m.get("name", m.get("model", ""))
-                for m in data["models"]
-                if isinstance(m, dict)
-            ]
-        # OpenAI/OpenRouter: {"data": [{"id": "gpt-4o", ...}, ...]}
-        if isinstance(data.get("data"), list):
-            return [m.get("id", "") for m in data["data"] if isinstance(m, dict)]
-        return []
+        return profile.models_extractor(data)
 
     # --- FR-LLM-3/4: tier ladder + escalation -----------------------------
     def complete(
@@ -356,9 +312,12 @@ class OpenAICompatibleLLM:
         if _estimate_tokens(messages) > tier.context_window:
             raise _Overflow()
 
-        if _ollama_provider(tier.provider, tier.base_url):
-            return self._call_ollama(tier, tier_no, messages, json_schema, max_tokens)
-        return self._call_openai(tier, tier_no, messages, json_schema, max_tokens)
+        profile = get_profile(tier.provider, tier.base_url)
+        base = _normalize_base(tier.base_url)
+
+        if profile.name == "ollama":
+            return self._call_ollama(tier, tier_no, messages, json_schema, max_tokens, profile, base)
+        return self._call_openai(tier, tier_no, messages, json_schema, max_tokens, profile, base)
 
     # --- provider calls ---------------------------------------------------
     def _call_openai(
@@ -368,24 +327,17 @@ class OpenAICompatibleLLM:
         messages: list[ChatMessage],
         json_schema: dict[str, Any] | None,
         max_tokens: int | None,
+        profile: Any | None = None,
+        base: str | None = None,
     ) -> LLMResult:
-        base = _normalize_base(tier.base_url)
-        url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
-        payload: dict[str, Any] = {
-            "model": tier.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
-        }
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        if base is None:
+            base = _normalize_base(tier.base_url)
+        if profile is None:
+            profile = get_profile(tier.provider, tier.base_url)
 
-        native_json = False
-        if json_schema is not None:
-            # Try native structured output (FR-LLM-4a).
-            payload["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "structured", "schema": json_schema},
-            }
-            native_json = True
+        url = profile.chat_url(base)
+        raw_messages = [{"role": m.role, "content": m.content} for m in messages]
+        payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
 
         text, raw = self._post_openai(tier, url, payload)
         structured = None
@@ -393,15 +345,13 @@ class OpenAICompatibleLLM:
             structured = _extract_json(text)
             if structured is None or not _validate_against_schema(structured, json_schema):
                 # Native mode failed → prompt-based fallback (FR-LLM-4a).
-                if native_json:
-                    payload.pop("response_format", None)
                 fb_messages = self._with_schema_prompt(messages, json_schema)
                 if _estimate_tokens(fb_messages) > tier.context_window:
                     raise _Overflow()
-                payload["messages"] = [
-                    {"role": m.role, "content": m.content} for m in fb_messages
-                ]
-                text, raw = self._post_openai(tier, url, payload)
+                # Rebuild request without native response_format, with schema prompt.
+                fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
+                fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
+                text, raw = self._post_openai(tier, url, fb_payload)
                 # Re-validate the fallback against the schema (FR-LLM-4a): a
                 # malformed-but-parseable object must not be returned as structured.
                 structured = _extract_json(text)
@@ -422,24 +372,16 @@ class OpenAICompatibleLLM:
     def _post_openai(
         self, tier: TierConfig, url: str, payload: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
+        profile = get_profile(tier.provider, tier.base_url)
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
             if resp.status_code in (400, 413, 422) and self._is_context_error(resp):
                 raise _Overflow()
             resp.raise_for_status()
             raw = resp.json()
-        choices = raw.get("choices") if isinstance(raw, dict) else None
-        text = ""
-        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-            message = choices[0].get("message")
-            if isinstance(message, dict):
-                text = message.get("content") or ""
-                # Native tool/function call (FR-LLM-4a): the structured payload may
-                # arrive as ``content: null`` + ``tool_calls[].function.arguments``
-                # (a JSON string). Surface those arguments as the text so the
-                # downstream ``_extract_json`` parses the structured object.
-                if not text:
-                    text = _tool_call_arguments(message) or ""
+        if not isinstance(raw, dict):
+            raw = {}
+        text = profile.extract_text(raw)
         return text, raw
 
     def _call_ollama(
@@ -449,26 +391,24 @@ class OpenAICompatibleLLM:
         messages: list[ChatMessage],
         json_schema: dict[str, Any] | None,
         max_tokens: int | None,
+        profile: Any | None = None,
+        base: str | None = None,
     ) -> LLMResult:
-        base = _normalize_base(tier.base_url)
-        # Ollama base may include a trailing /v1 (OpenAI-compat shim) — strip it.
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        url = f"{base}/api/chat"
+        if base is None:
+            base = _normalize_base(tier.base_url)
+        if profile is None:
+            profile = get_profile(tier.provider, tier.base_url)
+
+        url = profile.chat_url(base)
         msgs = messages
-        payload: dict[str, Any] = {
-            "model": tier.model,
-            "stream": False,
-        }
         if json_schema is not None:
-            # Ollama supports a JSON "format" hint; also reinforce via prompt.
-            payload["format"] = "json"
+            # Reinforce JSON output via a schema prompt (Ollama hint is in build_request).
             msgs = self._with_schema_prompt(messages, json_schema)
             if _estimate_tokens(msgs) > tier.context_window:
                 raise _Overflow()
-        payload["messages"] = [{"role": m.role, "content": m.content} for m in msgs]
-        if max_tokens:
-            payload["options"] = {"num_predict": max_tokens}
+
+        raw_messages = [{"role": m.role, "content": m.content} for m in msgs]
+        payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
 
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
@@ -476,12 +416,7 @@ class OpenAICompatibleLLM:
             raw = resp.json()
         if not isinstance(raw, dict):
             raw = {}
-        message = raw.get("message")
-        text = (
-            (message.get("content") if isinstance(message, dict) else None)
-            or raw.get("response")
-            or ""
-        )
+        text = profile.extract_text(raw)
         structured = _extract_json(text) if json_schema is not None else None
         return LLMResult(
             text=text,
