@@ -2,6 +2,7 @@
 import logging
 import math
 import re
+import threading
 import time
 from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
@@ -9,15 +10,148 @@ from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+# The one canonical identity (see src/applicant_identity.py). Reused — never
+# re-described — so plain chat, the agent loop, and scheduled tasks all present
+# as the SAME single agent.
+from src.applicant_identity import APPLICANT_IDENTITY
 
 logger = logging.getLogger(__name__)
 
 # Default identity for plain chat mode (no custom character/preset). A user's
 # preset/character prompt takes precedence over this when one is set.
-APPLICANT_IDENTITY = (
-    "You are Applicant, Applicant, a self-hosted AI workspace assistant. "
-    "When asked who or what you are, identify yourself as Applicant."
-)
+# (APPLICANT_IDENTITY is imported above; kept as the plain-chat default.)
+
+# ── Onboarding-gap awareness (mention-when-relevant) ──
+#
+# In plain chat, Applicant should KNOW which onboarding sections the user still
+# hasn't filled in — but raise them only when the conversation actually touches
+# them, never as a per-turn nag. Mapping engine section codes → plain labels:
+_SECTION_LABELS = {
+    "identity": "identity",
+    "work_authorization": "work authorization",
+    "location": "location",
+    "target_roles": "target roles",
+    "compensation": "compensation",
+    "work_history": "work history",
+    "education": "education",
+    "references": "references",
+    "key_attributes": "key attributes",
+    "eeo": "optional EEO disclosures",
+    "base_resume": "base résumé",
+    "campaign_criteria": "campaign criteria",
+}
+
+# Per-session TTL cache of the onboarding-gap note. build_context_preface runs on
+# EVERY chat turn, so we must NOT hit the engine each time. Key = owner; value =
+# (expires_at, note_or_None). ``note is None`` is a real, cached answer ("nothing
+# to mention" — onboarding complete / no campaign / engine down) so a degraded or
+# finished engine is hit at most once per TTL, not per message.
+_GAP_NOTE_TTL_SECONDS = 300.0
+_gap_note_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+_gap_note_lock = threading.Lock()
+
+
+def _run_engine_coro(coro):
+    """Run an async ApplicantEngineClient coroutine to completion from sync code.
+
+    build_context_preface is synchronous but is called from inside the async
+    chat route (a running event loop), so ``asyncio.run`` here would raise. Run
+    the coroutine on its own loop in a worker thread instead — short-lived and
+    only reached on a cache miss (≤ once per TTL per user).
+    """
+    import asyncio
+
+    result: list = []
+    error: list = []
+
+    def _worker():
+        try:
+            result.append(asyncio.run(coro))
+        except BaseException as exc:  # noqa: BLE001 - degrade silently, see caller
+            error.append(exc)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    if error:
+        raise error[0]
+    return result[0] if result else None
+
+
+def _fetch_onboarding_gap_note(owner: Optional[str]) -> Optional[str]:
+    """Build the gap-awareness system note for ``owner``, or ``None`` if there is
+    nothing to say (onboarding complete, no campaign, or the engine is unreachable).
+
+    Uses only EXISTING ApplicantEngineClient methods (``setup_status``,
+    ``list_campaigns``, ``onboarding_state``). Never raises — any failure degrades
+    to ``None`` (inject nothing).
+    """
+    try:
+        from src.applicant_engine import ApplicantEngineClient
+
+        async def _gather():
+            async with ApplicantEngineClient() as engine:
+                # Fast exit when the whole intake is already done.
+                try:
+                    status = await engine.setup_status()
+                    if isinstance(status, dict) and status.get("onboarding_complete"):
+                        return None
+                except Exception:
+                    # setup_status is a best-effort fast-path; fall through to the
+                    # per-campaign check rather than failing the whole note.
+                    pass
+
+                campaigns = await engine.list_campaigns()
+                if not (isinstance(campaigns, list) and campaigns):
+                    return None
+                first = campaigns[0]
+                cid = first.get("id") if isinstance(first, dict) else None
+                if not cid:
+                    return None
+
+                state = await engine.onboarding_state(str(cid))
+                if not isinstance(state, dict):
+                    return None
+                if state.get("complete"):
+                    return None
+                missing = state.get("missing_sections") or []
+                labels = [
+                    _SECTION_LABELS.get(code, code.replace("_", " "))
+                    for code in missing
+                    if isinstance(code, str)
+                ]
+                if not labels:
+                    return None
+                return (
+                    "Onboarding note (for your awareness — do NOT bring this up "
+                    "unprompted every turn): the user has not yet finished setting "
+                    "up these parts of their profile: "
+                    + ", ".join(labels)
+                    + ". Mention a missing item ONLY when it is directly relevant to "
+                    "what the user is asking about right now (for example, they ask "
+                    "about something that depends on it), and offer to help finish it. "
+                    "Otherwise just answer their question normally and stay silent "
+                    "about setup."
+                )
+
+        return _run_engine_coro(_gather())
+    except Exception as exc:  # noqa: BLE001 - degrade silently
+        logger.debug("Onboarding-gap note unavailable: %s", exc)
+        return None
+
+
+def _onboarding_gap_note(owner: Optional[str]) -> Optional[str]:
+    """TTL-cached wrapper around :func:`_fetch_onboarding_gap_note` (per owner)."""
+    key = owner or ""
+    now = time.time()
+    with _gap_note_lock:
+        cached = _gap_note_cache.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+    note = _fetch_onboarding_gap_note(owner)
+    with _gap_note_lock:
+        _gap_note_cache[key] = (now + _GAP_NOTE_TTL_SECONDS, note)
+    return note
 
 # ── Stopwords & tokenizer ──
 
@@ -199,6 +333,22 @@ class ChatProcessor:
                 "role": "system",
                 "content": APPLICANT_IDENTITY,
             })
+            # Onboarding-gap awareness — ONLY in plain chat where Applicant is
+            # speaking as itself (no preset/character has overridden identity).
+            # The note tells the agent which setup steps are still open and to
+            # raise them only when relevant — never as a per-turn nag. Cached
+            # per owner (TTL) so the engine is not hit every message; absent /
+            # complete / unreachable → no note (degrade silently).
+            try:
+                gap_note = _onboarding_gap_note(owner)
+            except Exception as _e:  # noqa: BLE001 - never block chat on this
+                logger.debug("Skipping onboarding-gap note: %s", _e)
+                gap_note = None
+            if gap_note:
+                preface.append({
+                    "role": "system",
+                    "content": gap_note,
+                })
         preface.append({
             "role": "system",
             "content": UNTRUSTED_CONTEXT_POLICY,
