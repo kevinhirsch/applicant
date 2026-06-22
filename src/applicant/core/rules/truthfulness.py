@@ -15,12 +15,16 @@ Deterministic, always-on guards the core enforces on every generated/revised pas
 * **Fabrication detection** — compares generated skill/term claims against the
   candidate's TRUE attribute set / work history; anything unsupported is flagged
   (FR-RESUME-2, NFR-TRUTH-1). Pure helpers; the service raises on a violation.
+* **Graded fabrication** — :func:`grade_unsupported_claims` maps flagged-token
+  count to CLEAN / REVIEW / VIOLATION so a single ambiguous token queues for
+  human review rather than hard-failing (FR-HARVEST-TRUTHTIER).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 
 # Unicode dash characters that read as "em-dash-like" and must not survive.
 _EM_DASH = "—"  # — U+2014
@@ -476,7 +480,7 @@ def unsupported_claims(true_text: str, generated: str) -> list[str]:
 
 
 #: Quote/apostrophe code points stripped from token edges (straight + curly).
-_QUOTE_CHARS = "'\"’‘“”"
+_QUOTE_CHARS = "'\"\u2018\u2019\u201c\u201d"
 
 
 def _prose_source_tokens(true_text: str) -> frozenset[str]:
@@ -563,3 +567,52 @@ def unsupported_prose_claims(true_text: str, generated: str) -> list[str]:
                     if word not in flagged:
                         flagged.append(word)
     return flagged
+
+
+# === graded fabrication outcome (FR-HARVEST-TRUTHTIER) ===================
+
+
+class FabricationGrade(str, Enum):
+    """Graded severity of an unsupported-claims check (FR-HARVEST-TRUTHTIER).
+
+    CLEAN     — zero unsupported tokens; output can proceed as-is.
+    REVIEW    — one ambiguous token; surface to human reviewer before publishing.
+    VIOLATION — two or more clear fabrications; caller must raise / block.
+    """
+
+    CLEAN = "clean"
+    REVIEW = "review"
+    VIOLATION = "violation"
+
+
+def grade_unsupported_claims(
+    true_text: str,
+    generated: str,
+    *,
+    prose: bool = False,
+    violation_threshold: int = 2,
+) -> tuple[FabricationGrade, list[str]]:
+    """Graded wrapper around the fabrication checkers (FR-HARVEST-TRUTHTIER).
+
+    Runs :func:`unsupported_prose_claims` (``prose=True``) or
+    :func:`unsupported_claims` (default) and maps flagged-token count to a tier:
+
+    * ``CLEAN``     — 0 unsupported tokens.
+    * ``REVIEW``    — 1 … ``violation_threshold``-1 tokens; ambiguous single-entity
+                      case: queue for human review rather than hard-failing.
+    * ``VIOLATION`` — ≥ ``violation_threshold`` tokens (default 2); caller should
+                      raise / block, matching the existing hard-fail behaviour.
+
+    Returns ``(grade, flagged)`` so callers can both branch on severity and
+    log the specific tokens. Deterministic; no I/O.
+    """
+    checker = unsupported_prose_claims if prose else unsupported_claims
+    flagged = checker(true_text, generated)
+    n = len(flagged)
+    if n == 0:
+        grade = FabricationGrade.CLEAN
+    elif n < violation_threshold:
+        grade = FabricationGrade.REVIEW
+    else:
+        grade = FabricationGrade.VIOLATION
+    return grade, flagged
