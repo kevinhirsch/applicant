@@ -42,6 +42,23 @@ def test_integral_change_requires_confirmation():
     assert attr.value == "Someone Else"
 
 
+def test_phone_reformat_is_not_an_integral_change():
+    """A phone reformat must NOT trip the confirmation gate (FR-FB-3).
+
+    ``3146695386`` and ``(314) 669-5386`` are the same number; storing the second
+    over the first is a format-only update, not a value change requiring confirm.
+    """
+    storage, svc, _ = _svc()
+    cid = CampaignId(new_id())
+    svc.upsert(cid, "phone", "3146695386", is_integral=True, confirm=True)
+    # No confirm=True here: a format-only difference must be accepted, not blocked.
+    attr = svc.upsert(cid, "phone", "(314) 669-5386", is_integral=True, confirm=False)
+    assert attr is not None
+    # A genuinely different number still needs confirmation.
+    with pytest.raises(ConfirmationRequired):
+        svc.upsert(cid, "phone", "(212) 000-0000", is_integral=True, confirm=False)
+
+
 def test_ai_add_rejects_sensitive():
     storage, svc, _ = _svc()
     cid = CampaignId(new_id())

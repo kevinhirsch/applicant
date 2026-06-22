@@ -69,10 +69,17 @@ const STEPS = [
 
 // Intake sub-sections (the comprehensive Workday-ready interview). Each renders a
 // small form; data is saved per-section so the interview is fully resumable.
+//
+// Resume-FIRST: the base-resume upload leads the profile so the engine can read
+// the resume and PREFILL the editable fields below (identity, work history,
+// education, skills). The user then steps through and corrects any parsing
+// mistakes instead of typing everything by hand — uploading is the starting
+// point of profile setup, not a post-hoc reconciliation.
 const INTAKE_SECTIONS = [
+  'base_resume',
   'identity', 'work_authorization', 'location', 'target_roles', 'compensation',
   'work_history', 'education', 'references', 'key_attributes', 'eeo',
-  'base_resume', 'campaign_criteria',
+  'campaign_criteria',
 ];
 
 // The honest "what Applicant never does" list (B1). Exported via the module so
@@ -1134,8 +1141,8 @@ function _renderBaseResume(saved) {
   const total = INTAKE_SECTIONS.length;
   _setBody(`
     <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
-    <h2 class="ao-step-title">Upload your resume ${_tip('Applicant reads your resume to fill in your profile and to match its style. After upload we build a high-fidelity version and show you a preview to accept or reject.')}</h2>
-    <p class="ao-step-desc">Upload your current resume. We’ll read it to fill in your profile, then show you a polished version to approve.</p>
+    <h2 class="ao-step-title">Start with your resume ${_tip('Applicant reads your resume and fills in the rest of your profile for you — you just review and fix anything it got wrong. After upload we also build a high-fidelity version and show you a preview to accept or reject.')}</h2>
+    <p class="ao-step-desc">Upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. You can edit every field afterward.</p>
     <div class="admin-card">
       <div class="settings-row">
         <button type="button" class="cal-btn" id="ao-resume-pick">Choose your resume…</button>
@@ -1179,7 +1186,13 @@ function _renderBaseResume(saved) {
     try {
       await picker.uploadPending();      // chip + progress whirlpool, posts to /base-resume
       const res = picker.getLastResponse() || {};
-      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Read ${res.attribute_count || 0} details from your resume.</p>`;
+      // Resume-first: re-fetch the intake so the upcoming steps render PREFILLED
+      // with what we read (identity, work history, education, skills) — the user
+      // reviews + corrects rather than typing from scratch.
+      try {
+        _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
+      } catch { /* keep last-known intake; prefill is best-effort */ }
+      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Read ${res.attribute_count || 0} details from your resume — we’ve filled in the next steps for you to review.</p>`;
       if (res.requires_confirmation && (res.conflicts || []).length) {
         _renderConflicts(res.conflicts);
       } else {
@@ -1197,10 +1210,13 @@ function _renderBaseResume(saved) {
     _busy = true;
     document.getElementById('ao-resume-next').disabled = true;
     try {
-      // Persist the base_resume section so it counts as complete + reconcile is done.
-      _onboarding = await _post(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}/section`, {
-        section: 'base_resume', data: { uploaded: true },
-      });
+      // The upload already parsed + reconciled the resume and marked this section
+      // complete (with the stored document + raw text the rest of the engine reads).
+      // Just refresh state and move on — DON'T re-save a stub that would clobber the
+      // parsed base_resume record. Refresh is best-effort: keep last-known on failure.
+      try {
+        _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
+      } catch { /* keep last-known intake */ }
       await _nextIntakeOrComplete();
     } catch (e) {
       document.getElementById('ao-resume-msg').innerHTML = _err(esc(e.message || 'Could not continue.'));

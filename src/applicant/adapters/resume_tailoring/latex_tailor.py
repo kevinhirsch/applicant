@@ -51,6 +51,10 @@ class _CompileResult:
     page_count: int  # 0 means "compile stubbed; estimate from source"
     fonts_embedded: bool
     compiled: bool  # True if a real PDF was produced
+    # True when the real compile was attempted (engine present + enabled) but no PDF
+    # came out — distinguishes "no engine installed" from "engine ran but failed", so
+    # the user-facing note can be honest and actionable instead of misleading.
+    compile_failed: bool = False
 
 
 class LatexTailor:
@@ -94,7 +98,7 @@ class LatexTailor:
             or shutil.which("xelatex")
         )
 
-    def _compile_env(self, engine_bin: str) -> dict[str, str]:
+    def _compile_env(self, engine_bin: str, work: Path) -> dict[str, str]:
         """Build the subprocess env for the TeX compile.
 
         Starts from a copy of ``os.environ`` so HOME/TEXMFVAR/etc. survive — the
@@ -103,6 +107,13 @@ class LatexTailor:
         font cache). The vendored asset dirs are PREPENDED to any existing
         TEXINPUTS, keeping the trailing ``:`` so the engine still searches the
         default tree. PATH keeps the engine's own bin dir plus the inherited PATH.
+
+        Crucially, xelatex/lualatex build a font/format cache on first run and abort
+        (producing NO PDF) when they cannot write it. In the engine container the
+        service user often has no writable HOME and TEXMFVAR/TEXMFCACHE are unset, so
+        we point HOME + the TeX cache vars at a writable scratch dir under the compile
+        work tree. That makes the real compile reliable on the deploy image instead of
+        silently degrading to the source-estimate stub.
         """
         import os
 
@@ -117,6 +128,14 @@ class LatexTailor:
         env["PATH"] = (
             f"{engine_dir}:{inherited_path}" if inherited_path else f"{engine_dir}:/usr/bin:/bin"
         )
+        # Guarantee a writable cache so the first-run font/format cache build does not
+        # abort the compile when the container HOME is unset/read-only.
+        cache = work / ".texcache"
+        cache.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = str(cache)
+        env["TEXMFVAR"] = str(cache)
+        env["TEXMFCACHE"] = str(cache)
+        env["FONTCONFIG_PATH"] = env.get("FONTCONFIG_PATH", "/etc/fonts")
         return env
 
     def _link_vendored_fonts(self, work: Path) -> None:
@@ -271,26 +290,42 @@ class LatexTailor:
         if contains_emdash(clean_source):  # defensive: post-filter must have run
             fidelity_ok = False
             notes.append("em-dash survived the post-filter")
-        if not compiled.fonts_embedded:
+        # Only judge font embedding against a PDF we actually produced. When the
+        # compile was stubbed or failed there is no PDF to inspect, so reporting
+        # "fonts not embedded" would be misleading — the real story is told below.
+        if compiled.compiled and not compiled.fonts_embedded:
             fidelity_ok = False
-            notes.append("fonts not embedded")
+            notes.append("Some fonts in the rendered PDF are not embedded.")
         expected = self._expected_pages(clean_source)
         if page_count != expected:
             fidelity_ok = False
-            notes.append(f"page-fit: rendered {page_count} pages, expected {expected}")
+            notes.append(f"Layout check: rendered {page_count} page(s), expected {expected}.")
         orphans = self._orphaned_titles(clean_source)
         if orphans:
             fidelity_ok = False
-            notes.append(f"orphaned section/entry title(s): {', '.join(orphans)}")
-        if not compiled.compiled and self._allow_compile:
-            # We were asked to really compile but couldn't (no engine) -> soft error.
-            notes.append("compile requested but no TeX engine available")
+            notes.append(f"A section heading may be stranded at a page break: {', '.join(orphans)}.")
+        if compiled.compile_failed:
+            # The render tools ARE installed but the compile produced no PDF (template
+            # or environment problem). This is a real fidelity miss — flag it honestly
+            # and point at the fix (white-labeled, no TeX/FR jargon).
+            fidelity_ok = False
+            notes.append(
+                "We couldn't produce the polished PDF, so this is an approximate preview. "
+                "If this keeps happening, rebuild the engine so the document tools are up to date."
+            )
+        elif not compiled.compiled and self._allow_compile:
+            # Engine was requested but no render tools were found at runtime.
+            fidelity_ok = False
+            notes.append(
+                "The document tools needed to build the polished PDF aren't available, so this is "
+                "an approximate preview. Rebuild the engine to enable high-fidelity rendering."
+            )
 
         return RenderResult(
             storage_path=compiled.storage_path,
             fidelity_ok=fidelity_ok,
             page_count=page_count,
-            notes="; ".join(notes) if notes else "fidelity check passed",
+            notes="; ".join(notes) if notes else "Looks like a faithful match.",
         )
 
     # --- COMPILE BOUNDARY -------------------------------------------------
@@ -306,7 +341,8 @@ class LatexTailor:
         storage_path = f"artifacts/{variant_id}.pdf"
         engine_bin = self._tex_engine()
         if not (self._allow_compile and engine_bin):
-            # Stub: deterministic synthetic path; let the fidelity check estimate.
+            # No engine on PATH (or render disabled): deterministic synthetic path;
+            # let the fidelity check estimate. NOT a failure — nothing was attempted.
             return _CompileResult(
                 storage_path=storage_path, page_count=0, fonts_embedded=True, compiled=False
             )
@@ -326,31 +362,80 @@ class LatexTailor:
         self._link_vendored_fonts(work)
         tex_path = work / "resume.tex"
         tex_path.write_text(source, encoding="utf-8")
-        try:
-            subprocess.run(
-                [engine_bin, "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
-                cwd=str(work),
-                env=self._compile_env(engine_bin),
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return _CompileResult(
-                storage_path=storage_path, page_count=0, fonts_embedded=True, compiled=False
-            )
+
+        # Try the preferred engine, then the other one — moderncv/fontspec quirks make
+        # one of xelatex/lualatex succeed where the other aborts, and falling back is
+        # far better than degrading to the no-real-PDF estimate.
         pdf_path = work / "resume.pdf"
-        if not pdf_path.exists():
-            return _CompileResult(
-                storage_path=storage_path, page_count=0, fonts_embedded=False, compiled=False
-            )
-        page_count, fonts_embedded = self._inspect_pdf(pdf_path)
+        for engine_bin in self._engine_candidates():
+            try:
+                subprocess.run(
+                    [engine_bin, "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
+                    cwd=str(work),
+                    env=self._compile_env(engine_bin, work),
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if pdf_path.exists():
+                page_count, fonts_embedded = self._inspect_pdf(pdf_path)
+                return _CompileResult(
+                    storage_path=str(pdf_path),
+                    page_count=page_count,
+                    fonts_embedded=fonts_embedded,
+                    compiled=True,
+                )
+
+        # Engine(s) ran but produced no PDF — a real compile FAILURE (template/asset
+        # issue or unwritable cache), not "no engine installed". Surface the captured
+        # log so the deploy operator can diagnose it from the engine output.
+        self._log_compile_failure(work, source)
         return _CompileResult(
-            storage_path=str(pdf_path),
-            page_count=page_count,
-            fonts_embedded=fonts_embedded,
-            compiled=True,
+            storage_path=storage_path,
+            page_count=0,
+            fonts_embedded=False,
+            compiled=False,
+            compile_failed=True,
         )
+
+    def _engine_candidates(self) -> list[str]:
+        """Resolved engine binaries to try, preferred first, de-duplicated."""
+        import shutil as _shutil
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for name in (self._engine, "lualatex", "xelatex"):
+            resolved = _shutil.which(name)
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                ordered.append(resolved)
+        return ordered
+
+    def _log_compile_failure(self, work: Path, source: str) -> None:
+        """Emit the tail of the TeX log when a real compile produced no PDF.
+
+        Silent degradation hides WHY the deploy image fell back to the estimate; the
+        log tail (or its absence) is the single most useful diagnostic for an operator
+        triaging a missing-PDF report.
+        """
+        try:
+            from applicant.observability.logging import get_logger
+
+            log = get_logger(__name__)
+            tex_log = work / "resume.log"
+            tail = ""
+            if tex_log.exists():
+                tail = "\n".join(tex_log.read_text(errors="replace").splitlines()[-25:])
+            log.warning(
+                "resume_compile_failed",
+                work_dir=str(work),
+                log_tail=tail or "(no resume.log produced — engine never started)",
+                source_head=source[:200],
+            )
+        except Exception:  # pragma: no cover - diagnostics must never break render
+            pass
 
     @staticmethod
     def _inspect_pdf(pdf_path: Path) -> tuple[int, bool]:

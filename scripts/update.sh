@@ -26,6 +26,11 @@ BACKUP_DIR="${APPLICANT_BACKUP_DIR:-${REPO_ROOT}/.backups}"
 
 # Append-only, line-based build output (no redraw frames) so update logs stay readable.
 export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
+# Skip the default provenance/SBOM attestations on local builds: they add an
+# "exporting attestation manifest" + "manifest list" round to every image export
+# (slower, and wraps the image in a manifest list) with no value for a self-hosted
+# build that is never published to a registry.
+export BUILDX_NO_DEFAULT_ATTESTATIONS="${BUILDX_NO_DEFAULT_ATTESTATIONS:-1}"
 
 # Load persisted DB credentials so backup/migrate/restart authenticate with the
 # SAME password Postgres baked into its data volume at first install. Without this
@@ -202,8 +207,11 @@ else
   echo "    (on failure, would auto-restore ${DUMP_FILE} and abort before serving)"
 fi
 
-log "4/5 Restarting the stack on the freshly built image"
-run docker compose -f "${COMPOSE_FILE}" up -d --build
+log "4/5 Restarting the stack on the freshly built images (built once in 2/5 — no rebuild)"
+# Plain `up -d` (no --build): step 2/5 already built applicant-ui + api from the
+# synced source, so re-passing --build here would rebuild AND re-export/unpack the
+# same images a second time — the slowest, disk-bound stage — for nothing.
+run docker compose -f "${COMPOSE_FILE}" up -d
 
 log "5/5 Update applied."
 

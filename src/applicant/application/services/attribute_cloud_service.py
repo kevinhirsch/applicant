@@ -27,6 +27,7 @@ from applicant.core.errors import ConfirmationRequired
 from applicant.core.ids import AttributeId, CampaignId, FieldMappingId, new_id
 from applicant.core.rules import sensitive_fields
 from applicant.core.rules.confirmation_gate import ensure_change_allowed
+from applicant.core.rules.field_normalization import values_match
 from applicant.core.state_machine import ApplicationState
 
 
@@ -89,7 +90,10 @@ class AttributeCloudService:
         """
         prior = self.get_by_name(campaign_id, name)
         is_integral_change = is_integral or (prior is not None and prior.is_integral)
-        is_value_change = prior is None or prior.value != value
+        # Compare format-insensitively: a phone reformat or a case/whitespace-only
+        # edit is NOT a value change, so it never needs the confirmation gate
+        # (FR-FB-3) — only a genuinely different value does.
+        is_value_change = prior is None or not values_match(name, prior.value, value)
         if is_value_change:
             ensure_change_allowed(
                 is_integral=is_integral_change, user_confirmed=confirm

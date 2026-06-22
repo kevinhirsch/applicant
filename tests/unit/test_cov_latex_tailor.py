@@ -155,7 +155,7 @@ def test_orphaned_title_flagged_when_section_near_page_bottom_unguarded():
     # page-fit itself passes, isolating the orphan signal).
     result = tailor.render_artifact(ResumeVariantId(new_id()), source)
     assert result.fidelity_ok is False
-    assert "orphaned section/entry title" in result.notes
+    assert "section heading may be stranded" in result.notes
 
 
 def test_orphaned_title_not_flagged_when_needspace_guarded():
@@ -310,27 +310,36 @@ def test_real_compile_subprocess_error_degrades_to_stub(monkeypatch, tmp_path):
     assert result.page_count >= 1
 
 
-def test_real_compile_missing_pdf_marks_fonts_not_embedded(monkeypatch, tmp_path):
+def test_real_compile_missing_pdf_reports_render_failure(monkeypatch, tmp_path):
     _fake_engine(monkeypatch)
 
     def no_pdf(cmd, cwd, env, capture_output, timeout, check):
-        # Engine "ran" but produced no PDF (e.g. fatal TeX error).
+        # Engine "ran" but produced no PDF (e.g. fatal TeX error). This is the user's
+        # actual symptom on the deploy image.
         return subprocess.CompletedProcess(cmd, 1, b"", b"! LaTeX Error")
 
     monkeypatch.setattr(latex_mod.subprocess, "run", no_pdf)
     tailor = LatexTailor(render_mode="on", output_dir=tmp_path)
     result = tailor.render_artifact(ResumeVariantId(new_id()), "\\section{Skills}\nPython\n")
-    # No PDF -> fonts_embedded=False -> fidelity fails with the fonts note.
+    # No PDF -> honest "render failed" note, NOT a misleading "fonts not embedded" or
+    # "no engine" claim, and white-labeled + actionable (rebuild).
     assert result.fidelity_ok is False
-    assert "fonts not embedded" in result.notes
+    assert "approximate preview" in result.notes
+    assert "rebuild the engine" in result.notes.lower()
+    assert "fonts in the rendered PDF are not embedded" not in result.notes
+    assert "no TeX engine available" not in result.notes
 
 
-def test_compile_requested_but_no_engine_soft_errors(monkeypatch):
-    # render_mode="on" forces compile but no engine on PATH -> soft error note.
+def test_compile_requested_but_no_engine_degrades_cleanly(monkeypatch):
+    # render_mode="on" forces compile but no engine on PATH -> white-labeled degrade.
     monkeypatch.setattr(latex_mod.shutil, "which", lambda _name: None)
     tailor = LatexTailor(render_mode="on")
     result = tailor.render_artifact(ResumeVariantId(new_id()), "\\section{S}\nbody\n")
-    assert "compile requested but no TeX engine available" in result.notes
+    assert "approximate preview" in result.notes
+    assert "rebuild the engine" in result.notes.lower()
+    # The old misleading/jargon strings are gone.
+    assert "no TeX engine available" not in result.notes
+    assert "TeX" not in result.notes
 
 
 def test_real_compile_page_mismatch_fails_page_fit(monkeypatch, tmp_path):
@@ -348,7 +357,7 @@ def test_real_compile_page_mismatch_fails_page_fit(monkeypatch, tmp_path):
     result = tailor.render_artifact(ResumeVariantId(new_id()), source)
     assert result.page_count == 2  # honest compiled count
     assert result.fidelity_ok is False
-    assert "page-fit: rendered 2 pages, expected 1" in result.notes
+    assert "rendered 2 page(s), expected 1" in result.notes
 
 
 def test_inspect_pdf_ignores_pages_without_resources():

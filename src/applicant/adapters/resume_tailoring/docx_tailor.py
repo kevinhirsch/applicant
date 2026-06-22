@@ -69,6 +69,9 @@ class _ConvertResult:
     page_count: int
     fonts_embedded: bool
     converted: bool
+    # True when LibreOffice/Word IS installed and was asked to convert but produced no
+    # PDF — distinguishes "no converter installed" from "converter ran but failed".
+    convert_failed: bool = False
 
 
 class DocxTailor:
@@ -207,18 +210,26 @@ class DocxTailor:
         if contains_emdash(clean_source):
             fidelity_ok = False
             notes.append("em-dash survived the post-filter")
-        if not converted.fonts_embedded:
+        # Only judge font embedding against a PDF we actually produced.
+        if converted.converted and not converted.fonts_embedded:
             fidelity_ok = False
-            notes.append("fonts not embedded")
+            notes.append("Some fonts in the rendered PDF are not embedded.")
         page_count = converted.page_count if converted.page_count else 1
-        if not converted.converted and self._allow_convert:
-            notes.append("convert requested but no LibreOffice/Word available")
+        if converted.convert_failed:
+            # The converter IS installed and was handed a real .docx but produced no
+            # PDF (environment/template problem). Honest, white-labeled, actionable —
+            # NOT the benign inline-text stub path, which converts nothing on purpose.
+            fidelity_ok = False
+            notes.append(
+                "We couldn't produce the polished PDF, so this is an approximate preview. "
+                "If this keeps happening, rebuild the engine so the document tools are up to date."
+            )
 
         return RenderResult(
             storage_path=converted.storage_path,
             fidelity_ok=fidelity_ok,
             page_count=page_count,
-            notes="; ".join(notes) if notes else "fidelity check passed",
+            notes="; ".join(notes) if notes else "Looks like a faithful match.",
         )
 
     # --- CONVERT BOUNDARY -------------------------------------------------
@@ -246,6 +257,13 @@ class DocxTailor:
         # UserInstallation the first invocation can silently produce no output.
         profile_dir = out_root / ".lo_profile"
         profile_dir.mkdir(parents=True, exist_ok=True)
+        # Headless LibreOffice writes its own first-run config under HOME; point it at
+        # the writable profile dir so a missing/read-only container HOME doesn't make
+        # the convert silently produce no output.
+        import os
+
+        env = os.environ.copy()
+        env.setdefault("HOME", str(profile_dir))
         try:
             subprocess.run(
                 [
@@ -259,17 +277,26 @@ class DocxTailor:
                     source,
                 ],
                 capture_output=True,
+                env=env,
                 timeout=120,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return _ConvertResult(
-                storage_path=storage_path, page_count=1, fonts_embedded=True, converted=False
+                storage_path=storage_path,
+                page_count=1,
+                fonts_embedded=True,
+                converted=False,
+                convert_failed=True,
             )
         pdf_path = out_root / (Path(source).stem + ".pdf")
         if not pdf_path.exists():
             return _ConvertResult(
-                storage_path=storage_path, page_count=1, fonts_embedded=False, converted=False
+                storage_path=storage_path,
+                page_count=1,
+                fonts_embedded=False,
+                converted=False,
+                convert_failed=True,
             )
         page_count, fonts_embedded = _inspect_pdf(pdf_path)
         return _ConvertResult(
