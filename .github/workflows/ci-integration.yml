@@ -1,0 +1,132 @@
+name: Integration Lane (NFR-OPS-1)
+
+# Staged integration lane: runs the @pytest.mark.integration suite with real
+# dependencies (Postgres, TeX, browser) and optionally a live ATS dry-run.
+# Never performs a real final submit — the engine's review-before-submit gate
+# stops all pre-fill runs at the review boundary.
+#
+# Triggers:
+#   - Manually (workflow_dispatch) with an optional ATS dry-run URL.
+#   - Weekly on Sunday at 02:00 UTC to keep the integration proofs green.
+on:
+  workflow_dispatch:
+    inputs:
+      ats_dry_run_url:
+        description: "Live ATS URL to dry-run pre-fill against (stops at review boundary; leave blank to skip)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 2 * * 0"   # weekly Sunday 02:00 UTC
+
+concurrency:
+  group: ci-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: applicant
+          POSTGRES_PASSWORD: applicant
+          POSTGRES_DB: applicant
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: "postgresql+psycopg://applicant:applicant@localhost:5432/applicant"
+      APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Python / engine --------------------------------------------------
+      - name: Install uv (Python 3.11 toolchain)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies (incl. browser extra for patchright)
+        run: uv sync --extra browser
+
+      # --- TeX (FR-RESUME-3/4 real-render path) ----------------------------
+      - name: Install TeX Live (lualatex + moderncv + fontspec + fontawesome5)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-extra \
+            texlive-fonts-recommended \
+            texlive-fonts-extra \
+            texlive-luatex \
+            texlive-xetex \
+            fonts-open-sans \
+            fonts-font-awesome
+          # Verify at least one engine is present.
+          lualatex --version || xelatex --version
+
+      # --- Browser binary (FR-PREFILL / FR-STEALTH) -------------------------
+      - name: Install Chromium via patchright
+        run: |
+          uv run patchright install chromium
+          # Virtual display for headless-incompatible browser runs.
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      # --- Database schema --------------------------------------------------
+      - name: Apply Alembic migrations
+        run: uv run alembic upgrade head
+
+      # --- Integration suite ------------------------------------------------
+      - name: Engine boot smoke (with real Postgres)
+        run: uv run python -c "from applicant.app.main import app"
+
+      - name: Integration test suite
+        run: |
+          # Wrap in Xvfb so browser tests can open a display.
+          xvfb-run --auto-servernum uv run pytest -v -m integration \
+            --tb=short \
+            --junitxml=reports/integration-results.xml \
+            2>&1 | tee reports/integration.log
+        env:
+          APPLICANT_ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url || '' }}
+          DISPLAY: ":99"
+
+      # --- Artifact collection (rendered-PDF + state trace) -----------------
+      - name: Collect rendered PDFs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          # LatexTailor writes to a tmp dir; integration tests that parameterize
+          # output_dir=tmp_path produce PDFs under pytest's tmp root.
+          find /tmp -name '*.pdf' -newer pyproject.toml 2>/dev/null \
+            | head -20 | xargs -I{} cp {} artifacts/ 2>/dev/null || true
+          echo "PDFs collected: $(ls artifacts/*.pdf 2>/dev/null | wc -l)"
+
+      - name: Upload integration artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-artifacts-${{ github.run_number }}
+          path: |
+            artifacts/
+            reports/
+          retention-days: 30
+
+      # --- ATS dry-run summary ---------------------------------------------
+      - name: ATS dry-run result summary
+        if: always()
+        run: |
+          if [ -n "${{ github.event.inputs.ats_dry_run_url }}" ]; then
+            echo "ATS dry-run URL: ${{ github.event.inputs.ats_dry_run_url }}"
+            grep -E "test_ats_prefill_dryrun|PASSED|FAILED|SKIPPED" reports/integration.log \
+              | head -20 || true
+          else
+            echo "No ATS dry-run URL provided — live ATS test skipped."
+          fi
