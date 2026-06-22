@@ -180,6 +180,9 @@ async function _loadTenants() {
     if (emptyEl) { emptyEl.textContent = 'Choose a job search first.'; emptyEl.style.display = ''; }
     return;
   }
+  // Show a loading state while fetching so the list is never ambiguously blank.
+  listEl.innerHTML = '<span style="opacity:0.6;font-size:12px;">Loading…</span>';
+  if (emptyEl) emptyEl.style.display = 'none';
   let data;
   try {
     data = await _fetchJSON(`${API}/${encodeURIComponent(_campaignId)}/tenants`);
