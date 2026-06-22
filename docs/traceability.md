@@ -278,7 +278,7 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | NFR-247-1 | 0 | "Mid-step crash resumption" | Delivered — Phase 0; durable orchestration; durability/resumption test |
 | NFR-CAUTION-1 | 2 | "Maximal pre-fill, stop at irreducible human steps" | Delivered — Phase 2; cautious-mode in core; unit+BDD |
 | NFR-EXT-1 | 0/4 | "Master aggregator in wave one" (adapter extensibility) | Delivered — Phase 0 rule / Phase 4 verify; adapter-extensibility (sources, ATS, tools, models, channels); contract tests |
-| NFR-ARCH-1 | 0 | (cross-cutting; every feature maps to an ID) | Delivered — Phase 0; hexagonal + BDD + TDD; architecture fitness test (no core→adapter deps) |
+| NFR-ARCH-1 | 0 / Wave 1 | CI `lint-imports` step + `tests/architecture/test_layering` (marker) | Delivered — Phase 0 (hexagonal + BDD + TDD) + Wave 1 (CI-enforced import-linter contract: `app > application > adapters > ports > core`, core-purity `forbidden` contract; `pyproject.toml` `[tool.importlinter]`; 2 contracts, 234 files, 0 violations) |
 | NFR-ZEROCLI-1 | 0/4 | "Zero-CLI out-of-box setup" | Delivered — Phase 0 rule / Phase 4 update; zero-CLI setup + in-UI update; assertion test |
 | NFR-PRIV-1 | 2 | "Encrypted PII at rest, minimal cloud PII" (SHOULD) | Delivered — Phase 2; encryption-at-rest (`pynacl`) + minimal-cloud-PII policy; encryption test |
 | NFR-TRUTH-1 | 0/3 | "Adaptation never fabricates" | Delivered — Phase 0 rule / Phase 3 impl; truthfulness guardrail in core; unit+BDD |
@@ -380,3 +380,18 @@ These are **environment dependencies, not requirement gaps** — the production 
 and are wired (egress threaded into the real launch, fc-cache shell-out, DBOS decorators,
 email send, Postgres-persisted credentials/screenshots); only their live execution is gated
 on the corresponding toolchain/service being present.
+
+## Harvest hardening (Waves 1–4)
+
+Traceability for requirements introduced during the Harvest & White-Label Migration Audit
+(`docs/APPLICANT-SURVIVAL-PLAN.md`). Each row follows the same ID → WP → test anchor →
+engine surface → front-door reachability schema.
+
+| Requirement | WP | BDD / Test anchor | Engine surface | Front-door reachability |
+|-------------|-----|-------------------|----------------|------------------------|
+| NFR-ARCH-1 (import-linter) | Wave 1 | CI `lint-imports` step + `tests/architecture/test_layering` (`@pytest.mark.architecture`) | `pyproject.toml` `[tool.importlinter]` (2 contracts: `layers` + `forbidden`) | N/A — build-time guarantee; protects the safety property that is reachable via every front-door route |
+| FR-HARVEST-CAPREG | Wave 2 | `tests/unit/test_capability_registry_drift.py` (16 drift tests; mutation→review invariant) | `src/applicant/application/capability_registry.py` (`CAPABILITY_REGISTRY` frozenset, 19 op groups, `REVIEW_EXEMPTIONS` with rationale) | the `/api/applicant/*` proxy boundary (declarative; runtime gates unchanged) |
+| FR-HARVEST-CARET | Wave 2 | `node --check workspace/static/js/markdown.js`; visual playtest §6a | N/A (front-door only) | chat surface — `workspace/static/js/markdown.js` `addStreamingCaret`/`removeStreamingCaret`, integrated in `chat.js` |
+| FR-HARVEST-PROVIDER | Wave 3 | `LLMPort` contract tests + profile-table units (to be authored) | `adapters/llm/` behind `ports/driven/llm.py` | model-endpoint manager / `applicantOnboarding.js` |
+| FR-HARVEST-TRUTHTIER | Wave 3 | extend `truthfulness` unit tests (graded cases; to be authored) | `core/rules/truthfulness.py` | review/redline — `applicantDocuments.js` / `documentLibrary.js` |
+| NFR-OPS-1 | Wave 4 | `@pytest.mark.integration` suite run with real deps (browser + TeX + live ATS) | `container.py` real wiring (browser/TeX) | front-door → engine → real-world chain (strongest reachability proof; stops at review boundary) |
