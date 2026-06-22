@@ -34422,6 +34422,60 @@ body.theme-frosted .modal {
 #rail-portal .rail-notes-badge { background: var(--red); }
 /* CRIT-portal end */
 
+/* Agent status strip (static/js/applicantActivity.js). A compact, always-visible
+   "Applicant is: <current action>" pill in the chat top bar with a live/paused
+   dot. Hidden until there's activity; clicking opens the Activity page. Reuses the
+   workspace theme variables so it tracks light/dark. */
+.applicant-status-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46vw;
+  margin-right: 10px;
+  padding: 3px 10px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.15s, border-color 0.15s;
+}
+.applicant-status-strip:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.applicant-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.applicant-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+/* Live (running): a steady green-accent dot with a soft pulse. */
+.applicant-status-strip.is-live .applicant-status-dot {
+  background: color-mix(in srgb, #2ecc71 80%, var(--accent));
+  animation: applicant-status-pulse 1.8s ease-in-out infinite;
+}
+/* Paused: a muted amber dot, no pulse. */
+.applicant-status-strip.is-paused .applicant-status-dot {
+  background: color-mix(in srgb, #e0a020 75%, var(--fg));
+}
+@keyframes applicant-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #2ecc71 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, #2ecc71 12%, transparent); }
+}
+
 /* ===== First-run setup wizard (static/js/applicantOnboarding.js) =====
    The wizard is re-skinned onto the SHARED workspace components — `.modal` /
    `.modal-content` / `.modal-header` / `.modal-body` for the overlay, `.admin-tab`

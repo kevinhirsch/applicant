@@ -49,6 +49,7 @@ class FakeEngine:
     calls: list = []
     campaigns: list = []
     pending: dict = {}            # campaign_id -> engine pending payload
+    onboarding: dict = {}         # campaign_id -> engine onboarding state
     raises: dict = {}             # key -> EngineError
     acquire_response: dict = {"saved": True}
 
@@ -85,6 +86,12 @@ class FakeEngine:
             raise FakeEngine.raises["acquire_missing_attribute"]
         return FakeEngine.acquire_response
 
+    async def onboarding_state(self, cid):
+        FakeEngine.calls.append(("onboarding_state", cid))
+        if ("onboarding_state", cid) in FakeEngine.raises:
+            raise FakeEngine.raises[("onboarding_state", cid)]
+        return FakeEngine.onboarding.get(cid, {"complete": True, "missing_sections": []})
+
     async def list_notifications(self):
         FakeEngine.calls.append("list_notifications")
         if "list_notifications" in FakeEngine.raises:
@@ -103,6 +110,9 @@ def _reset_fake():
     FakeEngine.calls = []
     FakeEngine.campaigns = []
     FakeEngine.pending = {}
+    # Default to a fully-complete intake so the aggregation/resolve tests don't
+    # see the synthetic "finish your profile" gap row injected.
+    FakeEngine.onboarding = {}
     FakeEngine.raises = {}
     FakeEngine.acquire_response = {"saved": True}
     FakeEngine.notifications = {"count": 0, "items": []}
@@ -181,6 +191,110 @@ def test_pending_empty_when_no_campaigns(client):
     r = client.get("/api/applicant/portal/pending")
     assert r.status_code == 200
     assert r.json() == {"engine_available": True, "count": 0, "items": []}
+
+
+# --- onboarding gap row -----------------------------------------------------
+
+
+def _gap_item(body):
+    for it in body["items"]:
+        if it.get("kind") == "onboarding_incomplete":
+            return it
+    return None
+
+
+def test_pending_includes_onboarding_gap_when_incomplete(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.onboarding = {
+        "c1": {
+            "complete": False,
+            "missing_sections": ["identity", "base_resume", "campaign_criteria"],
+        }
+    }
+    r = client.get("/api/applicant/portal/pending")
+    assert r.status_code == 200
+    body = r.json()
+    gap = _gap_item(body)
+    assert gap is not None
+    # One synthetic row, named, linkable, with the friendly labels of the
+    # SPECIFIC missing sections (not raw codes).
+    assert gap["id"] == "onboarding-incomplete"
+    assert gap["title"] == "Finish your profile"
+    assert gap["affordance"] == "complete"
+    assert gap["campaign_id"] == "c1"
+    assert gap["missing"] == ["Identity", "Base résumé", "Campaign criteria"]
+    assert gap["missing_codes"] == ["identity", "base_resume", "campaign_criteria"]
+    # It sits at the top of the feed.
+    assert body["items"][0]["id"] == "onboarding-incomplete"
+    assert body["count"] == 1
+
+
+def test_onboarding_gap_prepended_above_other_actions(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.pending = {
+        "c1": {"items": [{"id": "a1", "kind": "agent_question", "title": "Which city?"}]}
+    }
+    FakeEngine.onboarding = {"c1": {"complete": False, "missing_sections": ["location"]}}
+    r = client.get("/api/applicant/portal/pending")
+    body = r.json()
+    assert body["count"] == 2
+    assert body["items"][0]["id"] == "onboarding-incomplete"
+    assert body["items"][1]["id"] == "a1"
+    assert _gap_item(body)["missing"] == ["Location"]
+
+
+def test_pending_omits_onboarding_gap_when_complete(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.onboarding = {"c1": {"complete": True, "missing_sections": []}}
+    r = client.get("/api/applicant/portal/pending")
+    body = r.json()
+    assert _gap_item(body) is None
+    assert body["count"] == 0
+
+
+def test_pending_omits_onboarding_gap_when_missing_empty(client):
+    # complete flag absent but nothing missing → no gap row (clears itself).
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.onboarding = {"c1": {"missing_sections": []}}
+    r = client.get("/api/applicant/portal/pending")
+    assert _gap_item(r.json()) is None
+
+
+def test_onboarding_gap_uses_first_incomplete_campaign(client):
+    # The first complete campaign is skipped; the gap row reflects the first one
+    # that still has missing sections.
+    FakeEngine.campaigns = [{"id": "c1", "name": "Done"}, {"id": "c2", "name": "Todo"}]
+    FakeEngine.onboarding = {
+        "c1": {"complete": True, "missing_sections": []},
+        "c2": {"complete": False, "missing_sections": ["education", "references"]},
+    }
+    r = client.get("/api/applicant/portal/pending")
+    gap = _gap_item(r.json())
+    assert gap is not None
+    assert gap["campaign_id"] == "c2"
+    assert gap["campaign_name"] == "Todo"
+    assert gap["missing"] == ["Education", "References"]
+
+
+def test_onboarding_gap_skipped_when_state_lookup_errors(client):
+    # An onboarding-state error must not sink the feed — the gap row is simply
+    # omitted and the normal items still come through.
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.pending = {"c1": {"items": [{"id": "a1", "kind": "agent_question"}]}}
+    FakeEngine.raises[("onboarding_state", "c1")] = EngineError("boom", status=500)
+    r = client.get("/api/applicant/portal/pending")
+    body = r.json()
+    assert r.status_code == 200
+    assert _gap_item(body) is None
+    assert body["count"] == 1
+    assert body["items"][0]["id"] == "a1"
+
+
+def test_pending_no_gap_when_engine_down(client):
+    # A fully-down engine returns the soft-degrade payload with no gap row.
+    FakeEngine.raises["list_campaigns"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/portal/pending")
+    assert r.json() == {"engine_available": False, "count": 0, "items": []}
 
 
 # --- resolve ----------------------------------------------------------------

@@ -234,6 +234,11 @@ const KINDS = {
     hint: 'Confirm the change to apply it, or keep your current value.',
     affordance: 'confirm_change',
   },
+  onboarding_incomplete: {
+    label: 'A few profile steps are still to do before your search can run',
+    hint: 'Finish these to switch on your automated job search.',
+    affordance: 'complete',
+  },
 };
 
 function _meta(kind) {
@@ -347,6 +352,13 @@ function _rowShell(item, inner) {
   const meta = _meta(item.kind);
   const title = item.title || meta.label;
   const where = item.campaign_name ? `<span style="opacity:0.55;">· ${esc(item.campaign_name)}</span>` : '';
+  // The onboarding-gap row is synthetic (no engine action to resolve) and clears
+  // itself when the profile is complete, so it carries no "Done" affordance — its
+  // only control is "Finish your profile".
+  const resolvable = meta.affordance !== 'complete';
+  const doneBtn = resolvable
+    ? `<button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>`
+    : '';
   return `
     <div class="admin-card applicant-portal-row" data-action-id="${esc(item.id)}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
@@ -354,7 +366,7 @@ function _rowShell(item, inner) {
           <div style="font-weight:600;word-break:break-word;">${esc(title)}</div>
           <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${where}</div>
         </div>
-        <button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>
+        ${doneBtn}
       </div>
       <div class="applicant-portal-row-body" style="margin-top:8px;">${inner}</div>
     </div>`;
@@ -498,8 +510,34 @@ function _renderFinal(item) {
     </div>`;
 }
 
+// Onboarding gap (the single persistent "finish your profile" row). The engine's
+// own onboarding state drives it: it lists the SPECIFIC missing intake steps by
+// their friendly labels and offers one button that re-launches the setup wizard.
+// It clears on its own once every required section is filled (the proxy stops
+// emitting it when missing_sections is empty) — no resolve needed, so we hide the
+// generic "Done" on this row and the button is the only affordance.
+function _renderComplete(item) {
+  const hint = _meta(item.kind).hint || 'Finish these to switch on your automated job search.';
+  const missing = Array.isArray(item.missing) ? item.missing.filter(Boolean) : [];
+  const list = missing.length
+    ? `<ul style="margin:0 0 8px;padding-left:16px;font-size:12px;opacity:0.85;line-height:1.6;">
+         ${missing.map((m) => `<li>${esc(m)}</li>`).join('')}
+       </ul>`
+    : '';
+  const stillText = missing.length
+    ? `Still to do: ${missing.length} step${missing.length === 1 ? '' : 's'}.`
+    : '';
+  return `
+    <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
+    ${list}
+    ${stillText ? `<div style="font-size:11px;opacity:0.6;margin-bottom:8px;">${esc(stillText)}</div>` : ''}
+    <button type="button" class="cal-btn cal-btn-primary applicant-portal-finish-profile"
+            title="Open setup and complete the remaining profile steps">Finish your profile</button>`;
+}
+
 function _renderRowInner(item) {
   switch (_meta(item.kind).affordance) {
+    case 'complete': return _renderComplete(item);
     case 'review': return _renderReview(item);
     case 'missing': return _renderMissing(item);
     case 'session': return _renderSession(item);
@@ -682,6 +720,23 @@ function _wireRows(host) {
   };
   _resolveChange('.applicant-portal-confirm-change', true, 'Change applied');
   _resolveChange('.applicant-portal-reject-change', false, 'Kept your current value');
+
+  // Finish your profile → re-launch the setup wizard (re-launchable from
+  // anywhere via the global seam Settings also uses). Closes the portal so the
+  // wizard takes the surface; the gap row disappears on the next load once the
+  // remaining sections are filled.
+  host.querySelectorAll('.applicant-portal-finish-profile').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') {
+          window.launchApplicantSetup();
+          _close();
+          return;
+        }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up your profile');
+    });
+  });
 
   // Review → deep-link to the redline surface.
   host.querySelectorAll('.applicant-portal-review').forEach((btn) => {

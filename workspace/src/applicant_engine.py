@@ -539,6 +539,12 @@ class ApplicantEngineClient:
     async def agent_runs_list(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/agent-runs/{campaign_id}")
 
+    #: Readable alias for the run-history read used by the agent-activity surface
+    #: (status strip + Activity page). Same endpoint as :meth:`agent_runs_list` —
+    #: a name-only convenience so the activity proxy reads as status/intent/runs.
+    async def agent_runs(self, campaign_id: str) -> Any:
+        return await self.agent_runs_list(campaign_id)
+
     async def agent_run_intent(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/agent-runs/{campaign_id}/intent")
 

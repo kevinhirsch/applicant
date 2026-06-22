@@ -9,7 +9,18 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
+from src.applicant_identity import APPLICANT_IDENTITY
+
 logger = logging.getLogger(__name__)
+
+# The fallback persona for a scheduled task (when no crew-member personality
+# overrides it). Leads with the one canonical identity (src/applicant_identity.py)
+# so a background task presents as the SAME single Applicant agent as chat.
+_SCHEDULED_TASK_PERSONA = (
+    APPLICANT_IDENTITY
+    + "\n\nRight now you are executing a scheduled task. Use available tools to "
+    "complete the task thoroughly."
+)
 
 
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
@@ -1231,7 +1242,7 @@ class TaskScheduler:
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
-            else "You are Applicant, the Applicant assistant, executing a scheduled task. Use available tools to complete the task thoroughly."
+            else _SCHEDULED_TASK_PERSONA
         )
         # Inject current time so the model knows what's past vs upcoming
         tz_name = _resolve_task_timezone(db, task)
@@ -1456,7 +1467,7 @@ class TaskScheduler:
         """Run the full agent loop with tool access, collecting the final text."""
         from src.agent_loop import stream_agent_loop
 
-        system_content = system_prompt or "You are Applicant, the Applicant assistant, executing a scheduled task. Use available tools to complete the task thoroughly."
+        system_content = system_prompt or _SCHEDULED_TASK_PERSONA
         user_content = override_user_message or task.prompt
         messages = [
             {"role": "system", "content": system_content},

@@ -14,6 +14,7 @@ import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 
+from src.applicant_identity import APPLICANT_IDENTITY
 from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
 from src.settings import get_setting
@@ -56,13 +57,19 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
     return disabled_map
 
 # System prompt that tells the LLM about available tools.
-# Always injected — the LLM decides whether to use them.
-_AGENT_PREAMBLE = """\
-You are Applicant, the Applicant assistant (a self-hosted AI workspace), with tool access. \
+# Always injected — the LLM decides whether to use them. Leads with the one
+# canonical identity (src/applicant_identity.py) so the agent loop presents as
+# the SAME single Applicant agent as plain chat, then layers on tool access.
+_AGENT_PREAMBLE = (
+    APPLICANT_IDENTITY
+    + "\n\n"
+    + """\
+Right now you have tool access. \
 You can run shell commands, execute Python, search the web, \
 read/write files, create and edit documents, generate images, manage memories, and more. \
 To use a tool, write a fenced code block with the tool name as the language tag. \
 The block executes automatically and you see the output."""
+)
 
 _AGENT_RULES = """\
 ## Rules
@@ -393,7 +400,9 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     if compact:
         tool_list = ", ".join(sorted(included)) if included else "none"
         parts = [
-            "You are Applicant, the Applicant assistant, with tool access.",
+            "You are Applicant, the autonomous job-application agent — one agent "
+            "whether working on its own or chatting — with tool access right now. "
+            "You never submit an application without the user's review and approval.",
             f"Available tools: {tool_list}.",
             _API_AGENT_RULES,
         ]
