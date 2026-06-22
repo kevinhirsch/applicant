@@ -101,6 +101,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **FR-LEARN-5 (MUST):** Learn the **signature of converting roles** and bias future discovery + scoring + resume-variant selection toward it.
 - **FR-LEARN-6 (MUST):** Include the **exploration budget** (`FR-DISC-5`).
 - **FR-LEARN-7 (SHOULD):** Keep learning cheap — statistical/local-embedding based; reserve the LLM for human-readable criteria summaries.
+- **FR-LEARN-8 (MUST — general self-improving substrate, `FR-MIND`):** Beneath this **quantitative** conversion learning sits a **general** self-improving substrate ported from Hermes Agent (MIT): **curated memory** (environment facts/lessons + user style), **procedural skills** the agent writes from experience and improves on reuse, and **cross-session recall** of its own past runs — a closed learning loop driven on a schedule (`FR-DUR`), behind review-before-write. It **complements, does not replace** `FR-LEARN`/`FR-CRIT`/`FR-ATTR`. Specced in [`docs/spec/agent-intelligence.md`](../spec/agent-intelligence.md); decision in [ADR-0006](../adr/0006-agent-intelligence-port.md). Memory/skills/recall are **advisory context, never authorization** — they cannot opt the agent past any safety boundary.
 
 ### 3.5 Daily digest — `FR-DIG`
 - **FR-DIG-1 (MUST):** Produce a daily digest per campaign when matches are aggregated.
@@ -174,6 +175,7 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **FR-SANDBOX-2 (MUST):** A **one-click live remote session** (Neko/WebRTC default) shows the browser the engine is working in; **the remote-view provider is its own swappable sub-port** (Neko ↔ noVNC ↔ future).
 - **FR-SANDBOX-3 (MUST):** From the live session the user can submit themselves or authorize the engine to finish (`FR-PREFILL-5`).
 - **FR-SANDBOX-4 (MUST):** Multi-session and independently controllable; ephemeral per application.
+- **FR-SANDBOX-5 (MUST — desktop computer-use, `FR-CUA`):** A swappable **desktop-control sub-port** (sibling of the browser and remote-view sub-ports) lets the agent operate the sandbox **desktop** — native file-upload dialogs, OS dialogs, and human↔agent **co-working** in takeover — for steps the browser path cannot reach. Lifted from Hermes Agent (MIT) over the TryCUA `cua-driver`; confined to the sandbox, inherits the pre-fill stop-boundary, and **cannot** create accounts, clear CAPTCHAs, or final-submit. The **browser remains the primary automation path**; desktop control is a complement. Specced in [`docs/spec/computer-use.md`](../spec/computer-use.md); decision in [ADR-0005](../adr/0005-computer-use-cua-driver.md).
 
 ### 3.14 Cautious mode, fingerprint normalization & egress — `FR-STEALTH`
 - **FR-STEALTH-1 (MUST):** Present a **coherent, honest browser identity** (consistent UA + locale `en-US` + timezone America/Phoenix + realistic resolution + a non-obviously-software WebGL/Canvas renderer; internally consistent — never spoof an OS the WebGL contradicts). Use patchright to remove automation/headless tells.

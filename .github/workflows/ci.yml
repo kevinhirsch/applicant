@@ -33,12 +33,17 @@ jobs:
       # used throughout model catalogs, pricing tables, and llama.cpp API parameters
       # (--tool-call-parser hermes) — blocking it would require excluding nearly every
       # model-related file. The denylist targets "hermes-agent", the compound project
-      # name, which has no legitimate use in shipped product code. Three sanctioned
-      # exceptions carry explicit attribution:
+      # name, which has no legitimate use in shipped product code. The sanctioned
+      # exceptions carry explicit attribution (spec/ADR/NOTICE, not UI text):
       #   • workspace/services/memory/skill_format.py  — module docstring credits the
       #     skills-file format pattern to hermes-agent (attribution comment, not UI text)
       #   • docs/spec/master-spec.md                   — FR-HARVEST-PROVIDER attribution
       #   • docs/traceability.md                       — harvest hardening matrix row
+      #   • NOTICE                                     — MIT third-party attribution
+      #   • docs/spec/computer-use.md                  — FR-CUA attribution (cua/Hermes)
+      #   • docs/spec/agent-intelligence.md            — FR-MIND attribution (Hermes guts)
+      #   • docs/adr/0005-computer-use-cua-driver.md   — ADR attribution
+      #   • docs/adr/0006-agent-intelligence-port.md   — ADR attribution
       - name: White-label codename denylist
         run: |
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
@@ -52,7 +57,12 @@ jobs:
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
                ':!workspace/services/memory/skill_format.py' \
                ':!docs/spec/master-spec.md' \
-               ':!docs/traceability.md'; then
+               ':!docs/traceability.md' \
+               ':!NOTICE' \
+               ':!docs/spec/computer-use.md' \
+               ':!docs/spec/agent-intelligence.md' \
+               ':!docs/adr/0005-computer-use-cua-driver.md' \
+               ':!docs/adr/0006-agent-intelligence-port.md'; then
             echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi
