@@ -24,7 +24,9 @@ _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "update.sh"
 def test_migration_step_has_autorollback_and_gates_serving():
     text = _SCRIPT.read_text(encoding="utf-8")
     # The migration runs as a blocking one-off BEFORE `up -d` serves the new stack.
-    assert text.index("alembic upgrade head") < text.index("up -d --build")
+    # (The serving step is a plain `up -d` — step 2/5 already built the images, so it
+    # no longer re-passes --build; what matters is migrate-before-serve ordering.)
+    assert text.index("alembic upgrade head") < text.index("up -d")
     # On migration failure the script auto-restores the dump it just took and exits 1.
     mig = text.split("Running database migrations")[1].split("4/5")[0]
     assert "restore_dump" in mig, "migration failure must auto-restore the backup"
