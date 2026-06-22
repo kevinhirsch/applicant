@@ -239,6 +239,13 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **FR-INSTALL-2 (MUST):** A matching **one-liner update script** that backs up the DB, runs migrations, and supports rollback — also invokable via the in-settings **Update button** (`FR-OOBE-4`).
 - **FR-INSTALL-3 (MUST):** Ships the whole stack (FastAPI app + vendored frontend, Postgres + DBOS, SearXNG, Apprise, on-demand Neko sandboxes, font-install support) inside the VM via Docker Compose.
 
+### 3.24 Harvest hardening — `FR-HARVEST`
+
+- **FR-HARVEST-CAPREG (MUST — typed capability allowlist):** Each engine operation exposed through the proxy boundary (`/api/applicant/*`) MUST be registered in a frozen, typed registry carrying explicit `mutates_application`, `needs_human_review`, and `exposes_sensitive` flags. A drift test MUST fail when a registered entry violates the declared invariants (specifically: `mutates_application=True` implies `needs_human_review=True` unless the operation appears in an explicit exemption table with documented rationale). Declarative only — the existing runtime gates (`review_gate.py`, `prefill_boundary.py`) remain the enforcers. Delivered: `src/applicant/application/capability_registry.py` + `tests/unit/test_capability_registry_drift.py`.
+- **FR-HARVEST-PROVIDER (SHOULD — declarative multi-provider profiles):** Provider-specific quirks (auth, endpoints, vision, temperature handling, kwarg splits, per-model max-tokens, live model fetch) SHOULD be expressible as a declarative profile behind the existing `LLMPort`, **without** removing the capability-ranked tier ladder (`FR-LLM-3/4`) or defensive structured-output parsing. Adding a provider MUST NOT require transport-branch edits. Gated on the Wave 3 CI denylist (`hermes`/`nous` scoped path-excludes) and attribution stubs landing first (MIT ⊕ MIT — no legal gate; pattern harvested from hermes-agent, MIT © 2025 Nous Research).
+- **FR-HARVEST-TRUTHTIER (SHOULD — graded fabrication downgrade):** The fabrication guard (`NFR-TRUTH-1` / `truthfulness.py`) SHOULD support a graded outcome: a claim not derivable from the candidate's true attributes MAY be downgraded to a capped-confidence review flag (surfaced for human review) rather than only hard-failing. The hard-raise path for clear fabrications remains. Wave 3, attribution stub lands with first harvested code (MIT ⊕ MIT).
+- **FR-HARVEST-CARET (MAY — streaming caret affordance):** During token streaming the chat renderer MAY render an `aria-hidden` caret hugging the last character of the last block, removed on completion, not included in copied text. Front-door only (`markdown.js`), vanilla JS, no framework. Delivered: `workspace/static/js/markdown.js` `addStreamingCaret`/`removeStreamingCaret`, integrated in `chat.js`.
+
 ---
 
 ## 4. Non-functional requirements
@@ -247,10 +254,11 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **NFR-247-1 (MUST):** 24/7, accessible at any time, durable mid-step resumption.
 - **NFR-CAUTION-1 (MUST):** Pre-fill maximally; stop at irreducible human steps; pause-and-notify on detection; data-handoff emergency-only.
 - **NFR-EXT-1 (MUST):** Extensible across sources, ATS adapters, tools, models, channels, UI surfaces, and to multi-campaign.
-- **NFR-ARCH-1 (MUST):** Hexagonal + BDD + TDD.
+- **NFR-ARCH-1 (MUST — structurally enforced layer boundary):** Hexagonal + BDD + TDD. The layering MUST additionally be enforced at build time by an import-linter contract gated in CI: `app > application > adapters > ports > core`, plus a `forbidden` contract keeping `core` pure (no outward imports). The single sanctioned exception is the Alembic migration environment's conditional import of `app.config` (invisible to the static import graph). This converts the "engine cannot self-authorize a final submit" guarantee from convention into a CI-enforced invariant; runtime enforcement remains via tests + `FR-HARVEST-CAPREG`.
 - **NFR-ZEROCLI-1 (MUST):** No logical setup/config/update step requires the command line after install.
 - **NFR-PRIV-1 (SHOULD):** Banked credentials and PII encrypted at rest; PII sent to the cloud LLM only when a step requires it (opt-in tailoring), default minimal.
 - **NFR-TRUTH-1 (MUST):** No fabricated content in any generated application material.
+- **NFR-OPS-1 (SHOULD — integration lane proof):** At least once, in a CI or staging lane, the system SHOULD exercise the real browser + real TeX render + a live ATS dry-run end-to-end, stopping at the review/pre-fill boundary (never a real final submit), producing a rendered-PDF + state-trace artifact — converting the `@pytest.mark.integration` skips from "wired" to "demonstrated." Wave 4.
 
 ---
 
