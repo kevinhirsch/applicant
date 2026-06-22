@@ -746,6 +746,16 @@ from routes.applicant_ops_routes import setup_applicant_ops_routes
 app.include_router(setup_applicant_ops_routes())
 # end CRIT-ops
 
+# Agent-activity feed — owner-scoped, read-only proxy over the engine's existing
+# run status / intent / history (/api/applicant/activity/*). Surfaces the engine's
+# plain-language "verb-noun" account in two front-door surfaces: the always-visible
+# status strip in the app chrome and the dedicated Activity page in the left nav.
+# Like the Portal, it is NOT gated behind one active campaign — it resolves the
+# owner's campaign(s) and degrades soft when the engine is unreachable / there is
+# no campaign / there is no activity yet.
+from routes.applicant_activity_routes import setup_applicant_activity_routes
+app.include_router(setup_applicant_activity_routes())
+
 # Manual deep-research trigger — owner-scoped proxy over the engine's manual
 # research run + budget (/api/applicant/research/*). The agent auto-escalates to
 # research already; this gives the user a front-door "Research this" affordance

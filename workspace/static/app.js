@@ -1362,6 +1362,14 @@ function initializeEventListeners() {
   const _portalReady = import('./js/applicantPortal.js').catch(() => null);
   // CRIT-portal end
 
+  // Agent-activity feed: the always-visible status strip in the app chrome and the
+  // dedicated Activity rail entry/page. Like the Portal, it self-boots (wires the
+  // #rail-activity + #applicant-status-strip launchers, seeds + polls the strip,
+  // and opens its own modal), aggregates across the owner's campaigns, and is NOT
+  // gated by the Applicant feature layer — the strip + nav entry reveal themselves
+  // only when the engine reports there's activity. Imported unconditionally.
+  import('./js/applicantActivity.js').catch(() => null);
+
   // First-run setup wizard + home-base landing. The wizard self-skips if
   // setup/onboarding is already complete or the engine is unreachable; it returns
   // true only when it actually presented its blocking overlay. ORDERING: the
