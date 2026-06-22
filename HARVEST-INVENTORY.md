@@ -81,11 +81,80 @@ brand strings ("Hermes Teal", "Nous Blue", `__HERMES_*__`) only, never the copyr
 ### 2. Hermes platform & agent core
 _pending sub-auditor 2_
 
-### 3. Orwell architecture & implementation
-_pending sub-auditor 3_
+### 3. Orwell architecture & implementation — VERDICT: **harvest 1 strong pattern + 3 minor; not a replacement** (Confidence H)
 
-### 4. Applicant fit & survival
-_pending sub-auditor 4_
+**Verified RUNS (auditor executed the suites):** `test:arch` (dependency-cruiser) clean — 127
+modules / 452 deps, 0 violations; `typecheck` + `build` clean; `test:unit:fast` 1277 pass/1 skip
+(incl. fast-check property tests); `test:bdd` 366 scenarios / 1594 steps 100% pass over 63
+`.feature` specs. README's "pre-implementation" note is **stale** — mature, test-gated. TS/Node 22
+engine + **Python/FastAPI frontend that is a sibling fork of applicant's OWN upstream workspace**.
+
+**Harvest value collapses to essentially ONE asset** (the rest of the engine is ~80% Big-Brother
+sim logic that does not transfer):
+
+| # | Asset | Type | Effort/Risk | Conf |
+|---|-------|------|-------------|------|
+| 1 ★ | **Structural hexagonal-boundary enforcement** — `orwell/.dependency-cruiser.cjs:1-108` + `package.json:29` (`test:arch`), `tsPreCompilationDeps:true` so outward code **cannot even type-only-import** a hidden port; default-deny (`no-engine-layer-on-outward`). | pattern→adapt | Low/Low | H |
+| 2 | Type-forbidden capability allowlist — `src/surfaces/tools/registry.ts:8-13,71-73` (`readsVault: false` literal = compile error to register a leaker) + `adapters/mcp/McpServer.ts:171-181` channel gate. | adapt | Med/Low | H pattern / M encoding |
+| 3 | Deterministic-core/LLM-narrates as a **structural port type** — `ports/NarrativePort.ts:15-31` (context carries no Vault data by construction) + `adapters/narrative/LlmNarrativePort.ts:145-179` (LLM returns text, never state). | pattern-only | Low | H |
+| 4 | Anti-fabrication content-lineage **graded downgrade** — `adapters/inmemory/InMemoryKnowledgeService.ts:23-38,99-120` (claim accepted only if normalized-substring of what happened; else downgraded to capped-0.5 suspicion, not hard-fail). | adapt | Med/Low | M |
+
+**Asset #1 is the standout & directly serves applicant's safety thesis:** applicant IS hexagonal
+but enforces layering by **convention + contract tests only** — auditor grep found NO import-linter/
+layer contract in `pyproject.toml` or CI. So nothing structurally stops a future `app/router` from
+importing a `core/rules` gate and bypassing it. **Diagnosis: worse architecture (missing structural
+guarantee), not a missing feature.** Fix: add `[tool.importlinter]` layered contract to applicant
+`pyproject.toml`, gate in CI alongside ruff/pytest.
+
+**REJECTED (with reason):** `src/engine/*` (blocs/jury/gossip/evictions… = sim-specific, zero
+transfer); the `frontend/` Python app (sibling fork of applicant's own upstream → net-negative,
+re-introduces a codename to scrub); LXC+systemd deploy (different-not-better vs applicant's Compose +
+`scripts/update.sh`); SQLite persistence (applicant is Postgres+Alembic+chromadb).
+**Net:** orwell is NOT a replacement and does not strengthen the kill case — it *confirms* applicant's
+architecture is sound but **under-enforced**. **Attribution:** MIT © 2026 kevinhirsch; pattern-only
+adoptions copy no file (no notice travels); any verbatim lift (e.g. #4 `contentDerivedFrom`) keeps the
+MIT notice in-file; scrub codenames (Orwell/Big Brother/Vault/houseguest/Producer).
+
+### 4. Applicant fit & survival — VERDICT: **KEEP applicant as the spine; harvest FE + provider profiles behind existing seams** (Confidence H)
+
+**The moat is REAL and load-bearing (hermes has literally zero of it):** confirmed by direct read,
+six pillars —
+- **ATS pre-fill orchestration state machine (deepest moat):** `application/services/prefill_service.py`
+  (1218 ln) — sandbox→account gate (login/OAuth/**2FA push-poll** `:315-361`)→page walk→fill→**stop at
+  final submit**; 19-state domain machine `core/state_machine.py`; ATS shapes abstracted
+  `adapters/browser/ats.py:272` (`Workday/Greenhouse/Lever` registry).
+- **Resume tailoring w/ render fidelity:** `adapters/resume_tailoring/latex_tailor.py` — source-diff
+  redline `:168`, LaTeX-escape anti-injection `:146`, real xelatex compile + **pypdf font-embedding/
+  page-fit inspection** `:356,:418`; docx OOXML fallback.
+- **Fabrication guard (densest IP):** `core/rules/truthfulness.py` (566 ln) — whole-token membership
+  `:456`, entity-shaped free-prose mode `:501,:523`, numeric value-matching `:443`; scar-tissued.
+- **Server-side safety gates a caller can't opt out of:** `core/rules/review_gate.py` (`ensure_submittable`),
+  `prefill_boundary.py:73` (CAPTCHA/verify unconditional, opt-in flags server-derived not per-request),
+  `sensitive_fields.py` (EEO fills only from stored answers, never AI-guessed).
+- **Discovery + source-yield learning:** `adapters/discovery/jobspy_searxng.py` (zero-LLM), conversion-
+  weighted source ranking `application/services/learning_service.py:173,:340` (thinner, more re-derivable).
+- **Credential vault:** `adapters/credentials/pg_credential_store.py` — libsodium XSalsa20-Poly1305,
+  `0600` keyfile. Maturity: **1214 test functions ~1:1 to code.**
+
+**Weaknesses are all at the EDGES, never the moat core (differential diagnosis):**
+| | Weakness | Diagnosis | 
+|--|----------|-----------|
+| W1 | FE polish/cohesion (7 vanilla-JS files ~4.9k LOC vs hermes React/Vite/TS) | **worse UX + missing capability** — *the legitimate reason leadership wants to switch* |
+| W2 | Multi-provider breadth (OpenAI-compat+Ollama vs hermes `ProviderProfile`) | **narrower** — but applicant's tier-ladder escalation is *better at its one job*; merge, don't replace |
+| W3 | General memory ecosystem | **missing but out of scope** (applicant needs job-conversion learning, which it has) |
+| W4 | Live-boundary proof: 1214 tests vs fakes, only 28 integration (skip on absent deps); real-Workday path **wired but never CI-demonstrated** | **unfinished/unproven at edge, not wrong** — residual risk to the "operable" claim |
+
+**Integration seams (the load-bearing fact): `workspace/src/applicant_engine.py` (~130-method bridge)
+is the stable API contract.** A React FE harvest plugs into the same `/api/applicant/*` proxy routes +
+`applicant_features.py` feature-state — **engine, moat, and safety gates untouched.** Provider profiles
+fold behind `ports/driven/llm.py` (`TierLadder`), preserving the ladder.
+
+**Keep-vs-replace, head-on:** REPLACE throws away ~31k LOC of moat (pinned by 1214 tests) to gain a FE
+— strictly worse. KEEP-and-harvest cures W1/W2 at the cost of a bounded FE rewrite against a stable API.
+**"Still applicant or a reskin?"** Stays applicant **iff** harvest is FE-only + provider profiles behind
+the port; becomes a hermes reskin **only if** hermes' agent loop/tool model/gateway replaces
+`application/services/agent_loop.py` as the core — **that line must not be crossed** (the tell to watch).
+**Confidence:** moat real H; replacement loses H; FE-harvest is right remedy M-H.
 
 ### 5. Integration, white-label & licensing
 _pending sub-auditor 5_
