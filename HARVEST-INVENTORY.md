@@ -15,7 +15,7 @@
 ## Repos & licenses (confirmed on disk)
 | Repo | Location | License | Attribution to retain |
 |------|----------|---------|-----------------------|
-| applicant | `/home/user/applicant` | **Unlicense (public domain)** | n/a (target). NB asymmetry: ingesting MIT into a public-domain repo — flag for legal. |
+| applicant | `/home/user/applicant` | **MIT** © 2026 kevinhirsch | n/a (target). MIT ⊕ MIT — clean, standard attribution obligations only. |
 | hermes-agent | `/tmp/harvest-scratch/hermes-agent` | **MIT** | `Copyright (c) 2025 Nous Research` — upstream `NousResearch/Hermes-Agent`. |
 | orwell | `/tmp/harvest-scratch/orwell` | **MIT** | `Copyright (c) 2026 kevinhirsch`. |
 
@@ -190,16 +190,13 @@ the port; becomes a hermes reskin **only if** hermes' agent loop/tool model/gate
 ### 5. Integration, white-label & licensing — VERDICT: **harvest is mechanically legal but the brand burden is large & asymmetric; prefer pattern-only lifts** (Confidence H)
 
 **License facts (confirmed on disk):** hermes `LICENSE:1-3` = MIT © 2025 Nous Research; orwell
-`LICENSE:1-3` = MIT © 2026 kevinhirsch; applicant `LICENSE` = **The Unlicense (public domain)**.
+`LICENSE:1-3` = MIT © 2026 kevinhirsch; applicant `LICENSE` = **MIT** © 2026 kevinhirsch.
 
-**⚠️ License-asymmetry — ESCALATE TO LEGAL, do not self-resolve:** combining MIT into an Unlicense
-repo is a one-way relicensing of the harvested portions. You **cannot** re-dedicate MIT third-party
-code to public domain; applicant's blanket Unlicense header does NOT cover harvested files — saying it
-does is a false notice. Result is a **mixed-license repo**: harvested portions stay MIT (copyright with
-Nous/kevinhirsch), only applicant's original code is Unlicense. **Precedent already exists** —
-`THIRD_PARTY_LICENSES.md` + `frontend/static/LICENSE` already record vendored MIT frontend (and
-`kevinhirsch` already appears there). Hermes introduces a **genuinely new** third-party holder (Nous
-Research) not yet anywhere in applicant.
+**License compatibility:** MIT ⊕ MIT — clean, no legal escalation required. Harvested portions
+stay under their upstream MIT notices; applicant's own code is MIT. Both in-tree precedents
+(`THIRD_PARTY_LICENSES.md`, `frontend/static/LICENSE`, `workspace/licenses/`) already follow this
+pattern. Hermes introduces a **genuinely new** third-party holder (Nous Research) not yet anywhere
+in applicant; attribution obligations apply (see ledger below).
 
 **Attribution ledger (model both, before importing code):** add BOTH (a) verbatim
 `workspace/licenses/<src>-MIT-LICENSE.txt` (model: `workspace/licenses/opencode-MIT-LICENSE.txt` —
@@ -230,7 +227,7 @@ narrower `nousresearch.com`/`hermes-agent` patterns). Real design task, not a on
 
 **Sequencing skeleton:** scope-lock lift → license files FIRST → token-rename pass → data-key renames as
 migrations → reachability check (front-door) → green-increment gate (incl. denylist). **Top risks:**
-env-var rename fan-out (~280 hermes tokens); outbound brand leak; mixed-license over-claim;
+env-var rename fan-out (~280 hermes tokens); outbound brand leak; attribution obligations (MIT);
 themed-vocab bleed; data-key migration corruption.
 
 ---

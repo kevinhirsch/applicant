@@ -136,7 +136,7 @@ provisional pending owner confirmation.
   capability-ranked tier ladder (`FR-LLM-3/4`) or defensive structured-output parsing (`FR-LLM-4a`). Adding
   a provider MUST NOT require transport-branch edits. Harvested pattern from `hermes-agent`
   (MIT © 2025 Nous Research). Gated on the white-label denylist (`hermes`/`nous` scoped excludes) + legal
-  sign-off on mixed-license.
+  denylist (`hermes`/`nous` scoped excludes) — license gate dissolved (MIT ⊕ MIT).
 - **FR-HARVEST-TRUTHTIER (SHOULD — graded fabrication downgrade):** The fabrication guard
   (`NFR-TRUTH`/`truthfulness.py`) SHOULD support a graded outcome: a claim not derivable from the
   candidate's true attributes MAY be downgraded to a capped-confidence **review flag** (surfaced for human
@@ -181,4 +181,5 @@ authored when the wave is implemented).
 - **Attribution stub files** (`workspace/licenses/*-MIT-LICENSE.txt`, `ACKNOWLEDGMENTS.md` rows) — land in
   the same commit as the first real harvested code, not before (templates in `HARVEST-MAP.md` §C).
 - **The Option-B refactor** (routing 4 application→adapters imports behind ports) — a follow-up, not Wave 1.
-- **Legal sign-off** on Unlicense ⊕ MIT — gates the FR-HARVEST-PROVIDER/TRUTHTIER code.
+- **Attribution** for FR-HARVEST-PROVIDER/TRUTHTIER — add `workspace/licenses/` + `ACKNOWLEDGMENTS.md`
+  row in the same commit as the first harvested code (MIT ⊕ MIT is clean; no legal gate remains).

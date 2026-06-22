@@ -192,7 +192,7 @@ owner folding accepted ones into `docs/spec/master-spec.md` and `docs/work-packa
   first-party provider** (`nous`/`nous-api`, `NOUS_API_KEY`, Nous Portal OAuth); remove `nousresearch.com`
   endpoints.
 - **Dependencies / sequencing:** **BLOCKED until FR-HARVEST-DENYLIST (Wave 3 impl) lands** (introduces
-  hermes/nous tokens) **and** legal sign-off on the mixed-license question.
+  hermes/nous tokens) — license gate dissolved (MIT ⊕ MIT); attribution stubs land with first harvest.
 - **Effort / risk:** profile pattern Med / Low; Anthropic adapter Med-High / Med.
 
 ## FR-HARVEST-TRUTHTIER — Graded "downgrade to review" tier in the fabrication guard
@@ -249,7 +249,8 @@ owner folding accepted ones into `docs/spec/master-spec.md` and `docs/work-packa
 ## Open decisions for the owner (before implementing any wave)
 1. Confirm the `FR-HARVEST-*` / `NFR-ARCH-1` IDs and fold accepted ones into `docs/spec/master-spec.md` +
    `docs/work-packages.md`.
-2. Legal sign-off on the mixed-license (Unlicense ⊕ MIT) question — gates Wave 3 code (FR-HARVEST-PROVIDER,
-   FR-HARVEST-TRUTHTIER if verbatim).
+2. ~~Legal sign-off on mixed-license~~ — **resolved: applicant is MIT © 2026 kevinhirsch; MIT ⊕ MIT is
+   clean.** Wave 3 code (FR-HARVEST-PROVIDER, FR-HARVEST-TRUTHTIER) only requires the standard
+   attribution step (add `workspace/licenses/` + `ACKNOWLEDGMENTS.md` row).
 3. Whether FR-HARVEST-PROVIDER's concrete Anthropic adapter is in scope now or deferred until user-demand.
 4. Whether NFR-OPS-1 runs in CI or as a documented staging procedure first.

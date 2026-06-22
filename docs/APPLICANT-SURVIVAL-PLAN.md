@@ -124,10 +124,10 @@ frontend, LXC deploy, SQLite persistence, and cucumber harness. Each rejected wi
 - **Before any code copy:** `workspace/licenses/<src>-MIT-LICENSE.txt` (verbatim) + `ACKNOWLEDGMENTS.md`
   row. hermes → MIT © 2025 Nous Research (**new** holder for this repo); orwell → MIT © 2026 kevinhirsch
   (already present in `THIRD_PARTY_LICENSES.md`).
-- **⚠️ Mixed-license question for human/legal review (NOT resolved here):** applicant is Unlicense (public
-  domain); harvested portions remain MIT. The repo's licensing story must explicitly state "portions are
-  MIT — see `THIRD_PARTY_LICENSES.md`/`licenses/`" and must not over-claim public domain over harvested
-  files. **Sign-off required before merge of any string/code harvest.**
+- **Attribution obligations (carry into every wave):** applicant is MIT © 2026 kevinhirsch; harvested
+  portions remain under their upstream MIT notices (Nous Research / kevinhirsch). MIT ⊕ MIT — clean,
+  standard attribution. Add `workspace/licenses/<src>-MIT-LICENSE.txt` + `ACKNOWLEDGMENTS.md` row in
+  the same commit as the first real harvested code.
 - Most of Wave 1–2 is **pattern-only** (A1, A3) — nothing copied, so no notice travels; the legal item
   binds mainly on Wave 3 (A2 concrete adapter, A5 verbatim helper).
 
@@ -139,7 +139,7 @@ frontend, LXC deploy, SQLite persistence, and cucumber harness. Each rejected wi
 |----|------|------------|
 | R1 | Hermes env-var rename fan-out (~280 `HERMES_*`) misses a token | Scope to pattern-only/single-module lifts; A6 denylist catches leaks |
 | R2 | Outbound brand leak (`X-OpenRouter-Title`, User-Agent) escapes post-harvest | Rename pass step 4; grep outbound headers in review |
-| R3 | Mixed-license over-claim (Unlicense vs MIT) | §3 legal sign-off gate before merge |
+| R3 | Attribution omission (MIT upstream notices) | Add `workspace/licenses/` + `ACKNOWLEDGMENTS.md` row per harvest before merge |
 | R4 | "Reskin creep" — a harvest grows toward replacing the agent loop | §1 guardrail; A1 import-linter makes core displacement visible in CI |
 | R5 | Scoped denylist still red-walls legitimate Hermes/Nous model references | A6 is a real design task with path-excludes, tested before A2 |
 | R6 | Wave 4 integration lane flakiness in CI | Run as a separate non-blocking lane first; stabilize before gating |
@@ -155,4 +155,4 @@ unproven CI lane**, both fixable in place in weeks without a re-platform. The ha
 micro-polish, two safety refinements) and lands entirely behind existing seams. Adopting hermes wholesale
 would throw away the moat to buy a frontend we can more cheaply finish ourselves — and would make
 applicant a hermes reskin. **Recommendation: approve Wave 1 now; sequence Waves 2–4 as scoped above;
-obtain legal sign-off on the mixed-license question before any Wave 3 code harvest.**
+add attribution stubs (`workspace/licenses/` + `ACKNOWLEDGMENTS.md`) before any Wave 3 code harvest (MIT ⊕ MIT — no legal gate).**
