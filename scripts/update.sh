@@ -42,6 +42,20 @@ if [[ -f "${ENV_FILE}" ]]; then
   done <"${ENV_FILE}"
 fi
 
+# Persist the ABSOLUTE host repo path for the updater sidecar's bind mount
+# (FR-OOBE-4): the compose `updater` service mounts ${APPLICANT_REPO_DIR}:/repo so
+# the in-UI Update button can run this script against the host Docker. install.sh
+# writes it on fresh installs; back-fill it here for older deployments. Set ONLY
+# when absent so the updater container (which runs this with REPO_ROOT=/repo) can
+# never clobber the real host path already saved in .env.
+if [[ -z "${APPLICANT_REPO_DIR:-}" ]]; then
+  APPLICANT_REPO_DIR="${REPO_ROOT}"
+  if [[ -f "${ENV_FILE}" ]] && ! grep -q '^APPLICANT_REPO_DIR=' "${ENV_FILE}"; then
+    printf 'APPLICANT_REPO_DIR=%s\n' "${REPO_ROOT}" >>"${ENV_FILE}"
+  fi
+fi
+export APPLICANT_REPO_DIR
+
 DB_SERVICE="postgres"
 DB_NAME="${POSTGRES_DB:-applicant}"
 DB_USER="${POSTGRES_USER:-applicant}"

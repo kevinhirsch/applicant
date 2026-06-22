@@ -158,6 +158,10 @@ services:
       # Signed-in browser sessions (FR-STEALTH-3): persisted so a one-time sign-in is
       # reused across applications and survives recreation.
       - browser-profiles:/data/profiles
+      # In-UI Update button control plane (FR-OOBE-4): the api drops a request flag
+      # here and reads the updater sidecar's status/log. Shared with the `updater`
+      # service below. UPDATE_CONTROL_DIR (default /control) points the engine at it.
+      - update-control:/control
     depends_on:
       postgres:
         condition: service_healthy
@@ -270,6 +274,38 @@ services:
       - ntfy-cache:/var/cache/ntfy
     restart: always
 
+  # ---------------------------------------------------------------------------
+  # Updater sidecar (FR-OOBE-4, NFR-ZEROCLI-1) — powers the in-UI "Update" button.
+  # It has the Docker socket + the host repo bind-mounted, so when the api drops a
+  # request flag in the shared `update-control` volume it runs the normal
+  # scripts/update.sh --apply against the HOST Docker (rebuild → migrate → restart).
+  # It survives the rebuild because the update only recreates api + applicant-ui.
+  #
+  # SECURITY: mounting /var/run/docker.sock grants this container root-equivalent
+  # control of the host Docker. That is the whole point (it rebuilds the stack),
+  # which is why the image is intentionally minimal and runs only the watcher loop.
+  # To opt out of one-click in-UI updates, comment this service out — the button
+  # then degrades to "updater not deployed" and you update from the CLI as before.
+  # ---------------------------------------------------------------------------
+  updater:
+    build:
+      context: ..
+      dockerfile: docker/updater.Dockerfile
+    image: applicant/updater:latest
+    pull_policy: build
+    environment:
+      UPDATE_CONTROL_DIR: /control
+      APPLICANT_REPO_DIR_IN_CONTAINER: /repo
+    volumes:
+      # Drive the HOST Docker (rebuild/restart the stack) via the socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The host checkout (git + compose file + scripts + .env) update.sh runs from.
+      # ABSOLUTE host path of this repo — install.sh/update.sh persist it to .env.
+      - ${APPLICANT_REPO_DIR:-/opt/applicant}:/repo
+      # Shared control plane with the api container (request flag + status + log).
+      - update-control:/control
+    restart: unless-stopped
+
   # Optional local LLM (uncomment to run fully local, NFR-LOCAL-1):
   # ollama:
   #   image: ollama/ollama:latest
@@ -290,4 +326,5 @@ volumes:
   ui-logs:       # front-door UI app logs
   chromadb-data: # UI vector store
   ntfy-cache:    # ntfy message cache
+  update-control:  # in-UI Update control plane (FR-OOBE-4) — shared api <-> updater
   # ollama:
