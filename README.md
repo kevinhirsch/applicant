@@ -188,15 +188,22 @@ browser sandbox clean isolation, and supports the residential-egress posture
 
 ### Any Docker host
 
-If you already have a Docker host (or a fresh VM), install directly:
+If you already have a Docker host (or a fresh VM), install directly. The installer
+builds both images from local source, so it needs the repo on disk — the one-liner
+**self-bootstraps**: it clones the repo into `./applicant` (override with
+`APPLICANT_DIR=...`) and re-execs itself from inside that checkout. Requires `git`,
+`docker`, and `docker compose` v2:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/install.sh)" -- --apply
 ```
 
-From a checkout (dry-run by default — prints the steps; add `--apply` to run them):
+Or clone first and run from the checkout (dry-run by default — prints the steps;
+add `--apply` to run them):
 
 ```bash
+git clone https://github.com/kevinhirsch/applicant.git
+cd applicant
 bash scripts/install.sh            # dry-run preview
 bash scripts/install.sh --apply    # provision: compose up (prod stack) + alembic upgrade head
 ```

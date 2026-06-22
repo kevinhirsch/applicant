@@ -10,6 +10,12 @@
 #
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/kevinhirsch/applicant/main/scripts/install.sh)" -- --apply
 #
+# The installer builds BOTH images from local source and reads the prod compose
+# file relative to its own location, so it needs the repo checked out. When you
+# run the one-liner above the script is piped over stdin with no file on disk, so
+# it SELF-BOOTSTRAPS: it clones the repo into ./applicant (override APPLICANT_DIR)
+# and re-execs itself from inside that checkout. From a checkout it runs in place.
+#
 # What --apply does (idempotent — safe to re-run; data volumes are never deleted):
 #   1. Preflight: require docker + docker compose v2.
 #   2. Validate the production compose file.
@@ -27,7 +33,40 @@
 #
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# --- 0. Self-bootstrap when piped (curl | bash) -----------------------------
+# install.sh builds both images from local source and references the prod compose
+# file relative to its own location, so it needs the whole repo on disk. When you
+# run the advertised one-liner —
+#   bash -c "$(curl -fsSL .../scripts/install.sh)" -- --apply
+# — the script is fed to bash over stdin with NO file on disk: BASH_SOURCE is unset
+# (so the old `dirname "${BASH_SOURCE[0]}"` tripped `set -u` with "unbound variable"
+# and pointed COMPOSE_FILE at a nonexistent /docker/...). Detect that and bootstrap:
+# clone the repo (or reuse/update an existing checkout) and re-exec from inside it.
+SELF="${BASH_SOURCE[0]:-}"
+if [[ -z "${SELF}" || ! -f "${SELF}" ]]; then
+  REPO_URL="${APPLICANT_REPO_URL:-https://github.com/kevinhirsch/applicant.git}"
+  REPO_BRANCH="${APPLICANT_REPO_BRANCH:-main}"
+  CLONE_DIR="${APPLICANT_DIR:-$(pwd)/applicant}"
+  printf '\033[1;36m[install]\033[0m %s\n' "Detached run (curl | bash) — bootstrapping a checkout…"
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is required to bootstrap the checkout but was not found. Install git first." >&2
+    exit 1
+  fi
+  if [[ -d "${CLONE_DIR}/.git" ]]; then
+    printf '\033[1;36m[install]\033[0m %s\n' "Reusing existing checkout at ${CLONE_DIR} (git pull --ff-only)…"
+    git -C "${CLONE_DIR}" pull --ff-only --quiet || true
+  elif [[ -e "${CLONE_DIR}" ]]; then
+    echo "${CLONE_DIR} exists but is not an Applicant git checkout. Set APPLICANT_DIR=<free path> and re-run." >&2
+    exit 1
+  else
+    printf '\033[1;36m[install]\033[0m %s\n' "Cloning ${REPO_URL} (${REPO_BRANCH}) into ${CLONE_DIR}…"
+    git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${CLONE_DIR}"
+  fi
+  printf '\033[1;36m[install]\033[0m %s\n' "Re-executing the installer from ${CLONE_DIR}…"
+  exec bash "${CLONE_DIR}/scripts/install.sh" "$@"
+fi
+
+REPO_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
 ENV_FILE="${REPO_ROOT}/.env"
 APPLY=0
