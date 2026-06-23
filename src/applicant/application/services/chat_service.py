@@ -113,6 +113,7 @@ class ChatService:
         learning=None,
         storage=None,
         workspace=None,
+        agent_memory=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -126,6 +127,14 @@ class ChatService:
         # owner-scoped "upcoming interviews" context block so its answers/material
         # guidance are interview-aware. Degrades silently when off/empty.
         self._workspace = workspace
+        # FR-MIND-5: optional agent-memory trio (``.memory`` / ``.skills`` / ``.recall``).
+        # When wired, the reasoning prompt gains a BOUNDED "what the assistant remembers"
+        # block (curated-memory snapshot, read fresh per call — FR-MIND-10) plus a few
+        # relevant saved-playbook hints. ``None`` (the default) is byte-identical to the
+        # prior behavior, so every existing call site keeps working unchanged. The
+        # injected content is ADVISORY context only — it never authorizes anything
+        # (FR-MIND-11); the confirmation/safety gates derive their own ground truth.
+        self._agent_memory = agent_memory
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -206,6 +215,11 @@ class ChatService:
             interview_ctx = self._interview_context()
             if interview_ctx:
                 prompt += f"\n\n{interview_ctx}"
+            # FR-MIND-5: a bounded curated-memory + relevant-skills block, read fresh
+            # per call (never cached — FR-MIND-10), advisory only (FR-MIND-11).
+            memory_ctx = self._memory_context(campaign_id, message)
+            if memory_ctx:
+                prompt += f"\n\n{memory_ctx}"
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
                 max_tokens=256,
@@ -319,6 +333,68 @@ class ChatService:
             "answers/materials interview-aware; do not invent details):\n"
             + "\n".join(lines)
         )
+
+    # --- curated-memory + skills context (FR-MIND-5; advisory only) -------
+    def _memory_context(self, campaign_id: CampaignId, message: str) -> str:
+        """A BOUNDED "what the assistant remembers" + saved-playbook block (FR-MIND-5).
+
+        Read fresh from the agent-memory trio on every call (never cached on the
+        instance — FR-MIND-10): a curated-memory snapshot (already clipped to the
+        store's char budget) plus a few relevant saved-playbook hints (L0 metadata,
+        cheap — FR-MIND-2/-13). Degrades silently to "" when no ``agent_memory`` is
+        wired (byte-identical to the prior behavior) or nothing is on file.
+
+        Advisory only (FR-MIND-11): this is context the model MAY use; it confers no
+        authority. A playbook that *claims* submit/account/CAPTCHA authority is flagged
+        and dropped here so it can never read as an instruction the assistant must obey.
+        """
+        am = self._agent_memory
+        if am is None:
+            return ""
+        from applicant.core.rules.agent_memory import claims_authority
+
+        lines: list[str] = []
+        # (a) curated memory snapshot — bounded by the store, read per call.
+        try:
+            snap = am.memory.snapshot(campaign_id=str(campaign_id))
+        except Exception:
+            snap = None
+        if snap is not None:
+            mem_lines: list[str] = []
+            for e in (tuple(snap.environment) + tuple(snap.user))[:12]:
+                txt = getattr(e, "text", "")
+                if not txt or claims_authority(txt):
+                    continue  # advisory-only: never surface an authority claim as fact
+                mem_lines.append(f"- {txt}")
+            if mem_lines:
+                lines.append("What you remember (background only):")
+                lines.extend(mem_lines)
+        # (b) a few relevant saved playbooks (L0 metadata — cheap, no bodies).
+        try:
+            metas = am.skills.list_skills(campaign_id=str(campaign_id))
+        except Exception:
+            metas = ()
+        if metas:
+            q = {w for w in (message or "").lower().split() if len(w) > 3}
+            scored = []
+            for m in metas:
+                hay = f"{getattr(m, 'description', '')} {getattr(m, 'when_to_use', '')}".lower()
+                if claims_authority(hay):
+                    continue  # advisory-only: drop a playbook that claims authority
+                overlap = len(q & set(hay.split())) if q else 0
+                scored.append((overlap, m))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            skill_lines = [
+                f"- {getattr(m, 'name', '')}: {getattr(m, 'when_to_use', '') or getattr(m, 'description', '')}"
+                for _, m in scored[:3]
+            ]
+            skill_lines = [s for s in skill_lines if s.strip(" -:")]
+            if skill_lines:
+                lines.append("Saved playbooks you may consult (advice only):")
+                lines.extend(skill_lines)
+        if not lines:
+            return ""
+        return "\n".join(lines)
 
     @staticmethod
     def _deterministic_reply(gaps: list[str]) -> str:
