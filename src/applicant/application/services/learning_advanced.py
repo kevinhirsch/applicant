@@ -152,9 +152,14 @@ class AdvancedLearningService:
     stay authoritative and this module only adds conversion + cross-reference depth.
     """
 
-    def __init__(self, base, storage=None) -> None:
+    def __init__(self, base, storage=None, *, recall=None) -> None:
         self._base = base
         self._storage = storage
+        # Optional RecallIndex (FR-MIND-3): a cheap, on-demand "roles like the ones
+        # that converted" probe used as an ADVISORY nudge for the discovery/scoring/
+        # variant-selection bias (FR-LEARN-5). ``None`` (the default) => no recall
+        # term, so behavior is byte-identical to before.
+        self._recall = recall
 
     # === real-conversion detection (FR-LEARN-2 / §10) =====================
     def is_conversion(self, application: Application, outcomes: list[OutcomeEvent]) -> bool:
@@ -254,6 +259,134 @@ class AdvancedLearningService:
             facet: [v for v, _ in sorted(vals, key=lambda x: -x[1])]
             for facet, vals in grouped.items()
         }
+
+    def load_model(self, campaign_id) -> LearningModel:
+        """Load the per-campaign learning model (passthrough to the Phase-1 base).
+
+        Lets bias readers (discovery/scoring/variant-selection) fetch the model
+        through the advanced service without reaching into ``_base``.
+        """
+        return self._base.load_model(campaign_id)
+
+    # === discrete-signature bias readers (FR-LEARN-5) =====================
+    # The LIVE conversion loop (submission_service -> record_and_persist_conversion)
+    # folds ONLY the discrete role-feature signature here (``role:``/``skill:``/
+    # ``comp:``/``variant:``/...), bumping ``converting_samples``. The Phase-1
+    # centroid ``vector`` is a SEPARATE facet that the live loop does not currently
+    # populate. These readers let discovery/scoring/variant-selection bias off the
+    # discrete signature that conversions ACTUALLY write, complementing the cheap
+    # statistical base WITHOUT re-folding any signal (read-only; no double-count).
+
+    def converting_titles(self, model: LearningModel) -> list[str]:
+        """Titles of roles that actually converted, for discovery title bias.
+
+        Derived from the ``role:`` features of the discrete converting signature this
+        module folds on a real conversion (FR-LEARN-2/5). Ordered by learned weight
+        (most-converting first). Empty at cold start (no bias). Complements — does not
+        duplicate — the Phase-1 ``LearningService.converting_titles`` (which reads the
+        centroid's ``titles`` list); the agent loop merges both, de-duped.
+        """
+        roles = [
+            (feat.split(":", 1)[1], float(weight))
+            for feat, weight in model.converting_role_signature.items()
+            if feat != "vector" and feat.split(":", 1)[0] == "role" and ":" in feat
+        ]
+        return [v for v, _ in sorted(roles, key=lambda x: -x[1]) if v]
+
+    def text_alignment(self, model: LearningModel, text: str) -> float:
+        """Cheap lexical alignment in [0,1] of free ``text`` (a JD / variant sig) to
+        the discrete converting signature (FR-LEARN-5, no LLM).
+
+        Counts the share of the signature's learned weight whose feature VALUE token
+        appears in ``text`` — so a posting that reads like the roles/skills/seniority
+        that actually converted scores higher. 0.0 at cold start (nothing converted)
+        or empty text, so the caller applies no bias. This reads the SAME signature
+        the conversion fold wrote; it never re-folds, so it cannot double-count.
+        """
+        if not text or not text.strip():
+            return 0.0
+        haystack = text.lower()
+        hit = 0.0
+        total = 0.0
+        for feat, weight in model.converting_role_signature.items():
+            if feat == "vector" or ":" not in feat:
+                continue
+            w = float(weight)
+            total += w
+            value = feat.split(":", 1)[1].strip().lower()
+            if value and value in haystack:
+                hit += w
+        if total <= 0.0:
+            return 0.0
+        return max(0.0, min(1.0, hit / total))
+
+    def variant_alignment(self, model: LearningModel, variant_id) -> float:
+        """Share of the discrete signature's weight carried by ``variant:{id}`` —
+        i.e. how strongly THIS résumé variant is the one that past conversions used
+        (FR-LEARN-5). 0.0 when no conversion used it (cold start / different variant),
+        so variant selection falls back to coverage unchanged.
+        """
+        if variant_id is None:
+            return 0.0
+        target = f"variant:{variant_id}"
+        sig = {k: float(v) for k, v in model.converting_role_signature.items() if k != "vector"}
+        total = sum(sig.values())
+        if total <= 0.0:
+            return 0.0
+        return max(0.0, min(1.0, sig.get(target, 0.0) / total))
+
+    def recall_titles(self, campaign_id, *, limit: int = 3) -> list[str]:
+        """ADVISORY: a few role titles recalled from "roles like the ones that
+        converted" via the recall index (FR-MIND-3), for discovery title bias.
+
+        On-demand + bounded (FR-MIND-13); returns ``[]`` when no recall index is
+        wired or nothing is on file, so it never floods criteria and is byte-identical
+        to before when recall is absent. Heuristic title extraction (no LLM): the
+        leading short line of a recalled excerpt.
+        """
+        if self._recall is None:
+            return []
+        try:
+            hits = self._recall.search(
+                "roles like the ones that converted",
+                limit=limit,
+                campaign_id=str(campaign_id) if campaign_id is not None else None,
+            )
+        except Exception:  # pragma: no cover - recall must never break discovery
+            return []
+        titles: list[str] = []
+        for h in hits:
+            txt = (getattr(h, "text", "") or "").strip()
+            if not txt:
+                continue
+            first = txt.splitlines()[0].strip()
+            # Keep it title-shaped (short); drop long prose lines.
+            if 0 < len(first) <= 80 and first not in titles:
+                titles.append(first)
+        return titles
+
+    def recall_alignment(self, campaign_id, text: str) -> float:
+        """ADVISORY recall nudge in [0,1]: relevance of ``text`` to "roles like the
+        ones that converted" (FR-MIND-3 recall) for scoring/variant bias (FR-LEARN-5).
+
+        Returns the top recall hit's relevance score, bounded. 0.0 when no recall is
+        wired or nothing relevant is recalled, so it adds no bias by default. Used as a
+        SMALL secondary term blended via ``max`` with the signature alignment (never
+        additively stacked) so the same conversion evidence is not double-counted.
+        """
+        if self._recall is None or not (text or "").strip():
+            return 0.0
+        try:
+            hits = self._recall.search(
+                text,
+                limit=1,
+                campaign_id=str(campaign_id) if campaign_id is not None else None,
+            )
+        except Exception:  # pragma: no cover - recall must never break scoring
+            return 0.0
+        if not hits:
+            return 0.0
+        return max(0.0, min(1.0, float(getattr(hits[0], "score", 0.0) or 0.0)))
 
     @staticmethod
     def _role_features(
