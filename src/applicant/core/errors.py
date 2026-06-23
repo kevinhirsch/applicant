@@ -59,6 +59,15 @@ class ComputerUseBlocked(DomainError):
     """
 
 
+class MemoryPolicyViolation(DomainError):
+    """A curated-memory / skill operation broke a learning-substrate rule (FR-MIND).
+
+    Raised by the pure ``core/rules/agent_memory`` policy — e.g. an attempt to treat
+    a memory/skill entry as *authorization* rather than advisory context (FR-MIND-11),
+    which would be a path around the stop-boundary.
+    """
+
+
 class OnboardingIncomplete(DomainError):
     """Automated work was attempted before onboarding completed (FR-ONBOARD-2)."""
 

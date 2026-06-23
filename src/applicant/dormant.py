@@ -144,6 +144,47 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         live_phase=6,
         status=STATUS_DORMANT,
     ),
+    DormantSurface(
+        key="assistant_memory",
+        surface_name="What the assistant remembers",
+        requirement_ids=("FR-MIND-1", "FR-MIND-12"),
+        wiring_notes=(
+            "Engine-side vertical slice landed: MemoryStore port + in-memory/bridge "
+            "adapters + curated-memory policy (bounds + save-worthiness). The store is "
+            "in_memory by default; the bridge to the front-door memory substrate "
+            "(workspace/services/memory/) and the memory/profile panel are not yet "
+            "wired, so the surface ships grayed. Stays dormant."
+        ),
+        live_phase=6,
+        status=STATUS_DORMANT,
+    ),
+    DormantSurface(
+        key="saved_playbooks",
+        surface_name="Saved playbooks",
+        requirement_ids=("FR-MIND-2", "FR-MIND-3", "FR-MIND-12"),
+        wiring_notes=(
+            "Engine-side vertical slice landed: SkillStore + RecallIndex ports + "
+            "in-memory/bridge adapters (progressive-disclosure L0/L1, recall search). "
+            "Front-door 'saved playbooks' panel + the workspace SKILL.md bridge are "
+            "not yet wired, so the surface ships grayed. Stays dormant."
+        ),
+        live_phase=6,
+        status=STATUS_DORMANT,
+    ),
+    DormantSurface(
+        key="curation_approvals",
+        surface_name="Learning curation approvals",
+        requirement_ids=("FR-MIND-7", "FR-MIND-9", "FR-MIND-12"),
+        wiring_notes=(
+            "Engine-side vertical slice landed: CurationService stages proposed "
+            "memory/skill writes to a process-lived CurationLedger (review-before-"
+            "write default on). The scheduled nudge and the pending-actions Portal "
+            "approve/deny hand-off are not yet wired, so the surface ships grayed. "
+            "Stays dormant."
+        ),
+        live_phase=6,
+        status=STATUS_DORMANT,
+    ),
 )
 
 
