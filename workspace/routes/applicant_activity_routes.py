@@ -194,4 +194,38 @@ def setup_applicant_activity_routes() -> APIRouter:
             "items": items,
         }
 
+    # -- consolidated now / next / recent snapshot (Agent activity panel) --
+
+    @router.get("/snapshot")
+    async def activity_snapshot(request: Request) -> dict:
+        """The engine's consolidated 'what the agent is doing' snapshot.
+
+        Proxies the engine's single read-only ``now`` / ``next`` / ``recent``
+        summary (first-person, plain-language) for the front-door agent-activity
+        panel. Degrades soft exactly like the sibling reads: an unreachable engine
+        returns ``engine_available: false``; no campaign yet (or a status fetch
+        error) returns ``has_activity: false`` with an empty, well-formed body so
+        the panel renders its offline/empty state instead of throwing.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            campaigns = await _owner_campaigns(engine)
+            if campaigns is None:
+                return {"engine_available": False, "has_activity": False}
+            first = _first_campaign(campaigns)
+            if first is None:
+                return {"engine_available": True, "has_activity": False}
+            cid, cname = first
+            try:
+                data = await engine.agent_status(cid)
+            except EngineError as exc:
+                logger.debug("activity: snapshot fetch failed for %s: %s", cid, exc)
+                return {"engine_available": True, "has_activity": False}
+        out = data if isinstance(data, dict) else {}
+        out.setdefault("campaign_id", cid)
+        out["campaign_name"] = cname
+        out["engine_available"] = True
+        out["has_activity"] = True
+        return out
+
     return router

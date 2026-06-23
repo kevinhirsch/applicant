@@ -50,6 +50,7 @@ class FakeEngine:
     status: dict = {}          # campaign_id -> engine status payload
     intent: dict = {}          # campaign_id -> engine intent payload
     runs: dict = {}            # campaign_id -> engine runs payload
+    snapshot: dict = {}        # campaign_id -> engine now/next/recent snapshot
     raises: dict = {}          # key -> EngineError
 
     def __init__(self, *a, **k):
@@ -85,6 +86,12 @@ class FakeEngine:
             raise FakeEngine.raises[("agent_runs_list", cid)]
         return FakeEngine.runs.get(cid, {"count": 0, "items": []})
 
+    async def agent_status(self, cid):
+        FakeEngine.calls.append(("agent_status", cid))
+        if ("agent_status", cid) in FakeEngine.raises:
+            raise FakeEngine.raises[("agent_status", cid)]
+        return FakeEngine.snapshot.get(cid, {})
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -93,6 +100,7 @@ def _reset_fake():
     FakeEngine.status = {}
     FakeEngine.intent = {}
     FakeEngine.runs = {}
+    FakeEngine.snapshot = {}
     FakeEngine.raises = {}
     yield
 
@@ -109,7 +117,7 @@ def client(monkeypatch):
 def test_unauthenticated_is_rejected(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(authed=False))
-    for path in ("/status", "/intent", "/runs"):
+    for path in ("/status", "/intent", "/runs", "/snapshot"):
         r = c.get(f"/api/applicant/activity{path}")
         assert r.status_code == 401, path
 
@@ -287,6 +295,64 @@ def test_runs_no_activity_when_no_campaigns(client):
     }
 
 
+# --- snapshot (consolidated now / next / recent) ----------------------------
+
+
+def test_snapshot_proxies_first_campaign(client):
+    FakeEngine.campaigns = [
+        {"id": "c1", "name": "Backend"},
+        {"id": "c2", "name": "Platform"},
+    ]
+    FakeEngine.snapshot = {
+        "c1": {
+            "campaign_id": "c1",
+            "now": {"running": True, "sentence": "Right now I'm working on your job search."},
+            "next": {
+                "sentence": "Next I'll deliver a digest of 12 viable roles for your review",
+                "pending_actions": 2,
+            },
+            "recent": [{"role_name": "Backend Engineer", "status": "applied"}],
+        }
+    }
+    r = client.get("/api/applicant/activity/snapshot")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["has_activity"] is True
+    # First campaign wins; its label is attached.
+    assert body["campaign_id"] == "c1"
+    assert body["campaign_name"] == "Backend"
+    # Engine blocks pass straight through.
+    assert body["now"]["running"] is True
+    assert body["next"]["pending_actions"] == 2
+    assert body["recent"][0]["role_name"] == "Backend Engineer"
+    # Only the first campaign's snapshot is fetched.
+    assert ("agent_status", "c1") in FakeEngine.calls
+    assert ("agent_status", "c2") not in FakeEngine.calls
+
+
+def test_snapshot_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/activity/snapshot")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": False, "has_activity": False}
+
+
+def test_snapshot_no_activity_when_no_campaigns(client):
+    FakeEngine.campaigns = []
+    r = client.get("/api/applicant/activity/snapshot")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": True, "has_activity": False}
+
+
+def test_snapshot_no_activity_when_fetch_errors(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.raises[("agent_status", "c1")] = EngineError("boom", status=500)
+    r = client.get("/api/applicant/activity/snapshot")
+    assert r.status_code == 200
+    assert r.json() == {"engine_available": True, "has_activity": False}
+
+
 # --- exact engine paths via a real client over MockTransport ----------------
 
 
@@ -347,3 +413,24 @@ def test_runs_hits_exact_engine_path(monkeypatch):
     assert r.status_code == 200
     assert ("GET", "/api/agent-runs/c9") in paths
     assert r.json()["count"] == 1
+
+
+def test_snapshot_hits_exact_engine_path(monkeypatch):
+    paths = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append((request.method, request.url.path))
+        if request.url.path == "/api/campaigns":
+            return httpx.Response(200, json=[{"id": "c9", "name": "Search"}])
+        if request.url.path == "/api/agent/status/c9":
+            return httpx.Response(200, json={"now": {"sentence": "x"}, "next": {}, "recent": []})
+        return httpx.Response(404, json={"detail": "unexpected"})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+
+    r = c.get("/api/applicant/activity/snapshot")
+    assert r.status_code == 200
+    assert ("GET", "/api/agent/status/c9") in paths
+    assert r.json()["campaign_name"] == "Search"

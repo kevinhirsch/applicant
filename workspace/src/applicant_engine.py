@@ -554,6 +554,12 @@ class ApplicantEngineClient:
     async def agent_run_status(self, campaign_id: str) -> Any:
         return await self._request("GET", f"/api/agent-runs/{campaign_id}/status")
 
+    #: Consolidated, plain-language live snapshot (now / next / recent) the engine
+    #: assembles fresh from the scheduler + run service + history + pending actions
+    #: (engine routers/agent_status.py). Backs the front-door agent-activity panel.
+    async def agent_status(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/agent/status/{campaign_id}")
+
     async def agent_run_now(self, campaign_id: str) -> Any:
         return await self._request("POST", f"/api/agent-runs/{campaign_id}/run")
 
