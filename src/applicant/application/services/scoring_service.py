@@ -45,6 +45,7 @@ class ScoringService:
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
         learning=None,
         tool_registry=None,
+        agent_memory=None,
     ) -> None:
         self._storage = storage
         self._llm = llm
@@ -52,6 +53,12 @@ class ScoringService:
         self._threshold = threshold
         self._learning = learning
         self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
+        # Optional agent-memory trio (``.memory`` / ``.skills`` / ``.recall``,
+        # FR-MIND-1). When wired, the LLM scorer gets the curated memory/preferences as
+        # ADVISORY context so scoring reflects what the agent has learned about the
+        # user's taste — complementing, never replacing, the criteria/conversion
+        # learning. When ``None`` (the default), scoring is byte-identical to before.
+        self._agent_memory = agent_memory
 
     @property
     def threshold(self) -> int:
@@ -245,20 +252,25 @@ class ScoringService:
             ]
             if line
         )
-        system = ChatMessage(
-            role="system",
-            content=(
-                "You score how well a job posting matches a job-seeker's stated search "
-                "criteria — whether this is a role they would plausibly want AND could "
-                "realistically get. Weigh role/title and seniority fit, required-skills "
-                "overlap, work mode, location, and compensation against the criteria. "
-                "Score a junior/entry role low for a senior candidate; an off-domain "
-                "role (e.g. front-end when they want back-end) low; an onsite/relocation "
-                "role low when they want remote; a pay-floor miss low. Respond ONLY with "
-                "JSON: an integer 'score' 0-100 (100 = ideal) and a one-sentence "
-                "'rationale' in plain language a non-technical user can read."
-            ),
+        system_text = (
+            "You score how well a job posting matches a job-seeker's stated search "
+            "criteria — whether this is a role they would plausibly want AND could "
+            "realistically get. Weigh role/title and seniority fit, required-skills "
+            "overlap, work mode, location, and compensation against the criteria. "
+            "Score a junior/entry role low for a senior candidate; an off-domain "
+            "role (e.g. front-end when they want back-end) low; an onsite/relocation "
+            "role low when they want remote; a pay-floor miss low. Respond ONLY with "
+            "JSON: an integer 'score' 0-100 (100 = ideal) and a one-sentence "
+            "'rationale' in plain language a non-technical user can read."
         )
+        # FR-MIND-1/5: advisory curated memory about the user's taste/preferences, read
+        # fresh per call (FR-MIND-10). It NUDGES scoring toward what the agent has
+        # learned the user likes/avoids; it never overrides the criteria/conversion
+        # learning and confers no authority (FR-MIND-11).
+        learned = self._learned_context(posting.campaign_id)
+        if learned:
+            system_text += "\n\n" + learned
+        system = ChatMessage(role="system", content=system_text)
         user = ChatMessage(
             role="user",
             content=(
@@ -308,6 +320,46 @@ class ScoringService:
                 except Exception:
                     return {}
         return {}
+
+    def _learned_context(self, campaign_id) -> str:
+        """A BOUNDED, advisory curated-memory block about the user's taste (FR-MIND-1/5).
+
+        Read fresh from the agent-memory trio on every call (never cached on the
+        instance — FR-MIND-10). Surfaces a few curated memory lines (the user's
+        preferences/style) so the scorer reflects what the agent has learned the user
+        likes or avoids in a role. ADVISORY ONLY (FR-MIND-11): any line that *claims* a
+        safety-gated authority is dropped via the core ``claims_authority`` rule; the
+        block can only nudge the score, never override the criteria or grant authority.
+
+        Degrades silently to ``""`` when no ``agent_memory`` is wired (byte-identical to
+        the prior behavior) or nothing is on file.
+        """
+        am = self._agent_memory
+        if am is None:
+            return ""
+        from applicant.core.rules.agent_memory import claims_authority
+
+        try:
+            snap = am.memory.snapshot(campaign_id=str(campaign_id))
+        except Exception:
+            return ""
+        if snap is None:
+            return ""
+        mem_lines: list[str] = []
+        for e in (tuple(snap.user) + tuple(snap.environment))[:8]:
+            txt = getattr(e, "text", "")
+            if not txt or claims_authority(txt):
+                continue  # advisory-only: never surface an authority claim
+            mem_lines.append(f"- {txt}")
+        if not mem_lines:
+            return ""
+        block = (
+            "What you have learned about this user's taste and preferences "
+            "(advisory — let it nudge, not override, the criteria above):\n"
+            + "\n".join(mem_lines)
+        )
+        # Hard-bound so learned context never bloats the scoring prompt (FR-MIND-13).
+        return block[:1200]
 
     def _signature_alignment(self, campaign_id, jd_text: str) -> float:
         if self._learning is None:
