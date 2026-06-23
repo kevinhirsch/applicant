@@ -639,6 +639,39 @@ class ApplicantEngineClient:
         """The honest best-effort anti-detection + egress caveat copy + posture."""
         return await self._request("GET", "/api/admin/stealth")
 
+    # -- desktop assist (FR-CUA): opt-in, per-session, ships DORMANT ----------
+    # Lets the assistant help on the desktop (file pickers / OS dialogs the browser
+    # can't reach) DURING an open live session — present-but-grayed until the desktop
+    # helper is baked into the sandbox image and the health preflight passes. The
+    # destructive-action passthrough is guarded by the engine's core safety machinery
+    # (the engine still cannot self-authorize a final submit).
+
+    async def desktop_assist_health(self) -> Any:
+        """Desktop-assist preflight: is the helper present + the surface live?"""
+        return await self._request("GET", "/api/remote/desktop/health")
+
+    async def desktop_assist_state(self, session_id: str) -> Any:
+        """Whether desktop assist is opted-in for this live session (+ health)."""
+        return await self._request("GET", f"/api/remote/sessions/{session_id}/desktop")
+
+    async def desktop_assist_enable(self, session_id: str) -> Any:
+        """Opt this live session in to desktop assist (refused while dormant)."""
+        return await self._request(
+            "POST", f"/api/remote/sessions/{session_id}/desktop/enable"
+        )
+
+    async def desktop_assist_disable(self, session_id: str) -> Any:
+        """Revoke desktop assist for this live session."""
+        return await self._request(
+            "POST", f"/api/remote/sessions/{session_id}/desktop/disable"
+        )
+
+    async def desktop_assist_action(self, session_id: str, body: dict) -> Any:
+        """Perform a single guarded desktop action behind the engine's safety gates."""
+        return await self._request(
+            "POST", f"/api/remote/sessions/{session_id}/desktop/action", json=body
+        )
+
     # -- credential vault (CRIT-auto: applicant vault, FR-VAULT-2) ---------
     # The engine seals secrets at rest; list NEVER returns plaintext.
 

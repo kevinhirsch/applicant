@@ -120,6 +120,23 @@ function _ensureModalEl() {
           </div>
         </div>
 
+        <div id="applicant-remote-desktop" class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <h3 style="margin:0;font-size:0.95em;flex:1 1 auto;">Let the assistant help on the desktop</h3>
+            <button id="applicant-remote-desktop-toggle" class="cal-btn" disabled
+                    title="Let the assistant handle desktop steps the browser can't reach, like a file-upload dialog. You stay in control and approve each action.">
+              Turn on</button>
+          </div>
+          <p style="margin:0;opacity:0.7;font-size:12px;">
+            For the parts that live outside the web page — a file-upload dialog or
+            another desktop window. You stay in control: it never creates accounts,
+            clears verifications, or submits, and it asks before each step.
+          </p>
+          <p id="applicant-remote-desktop-note" style="margin:0;opacity:0.6;font-size:11px;">
+            Coming in a future update — desktop help isn't set up on this sandbox yet.
+          </p>
+        </div>
+
         <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;border-color:var(--accent-color,#5b8def);">
           <h3 style="margin:0;font-size:0.95em;">Finish the application</h3>
           <p style="margin:0;opacity:0.75;font-size:12px;">
@@ -161,6 +178,7 @@ function _wire(modal) {
   on('applicant-remote-resume-detection', 'click', () => _resume('resume-detection-step'));
   on('applicant-remote-submit-self', 'click', _onSubmitSelf);
   on('applicant-remote-authorize', 'click', _onAuthorizeFinish);
+  on('applicant-remote-desktop-toggle', 'click', _onToggleDesktopAssist);
 
   const picker = modal.querySelector('#applicant-remote-picker');
   if (picker) {
@@ -196,6 +214,83 @@ function _setActiveSession(session) {
   // Reflect the selection in the picker if present.
   const picker = _modalEl && _modalEl.querySelector('#applicant-remote-picker');
   if (picker && session) picker.value = session.session_id;
+  // Desktop-assist opt-in is per-session — refresh it whenever the session changes.
+  _loadDesktopAssist().catch(() => {});
+}
+
+// ── desktop assist (opt-in, per-session; ships dormant/grayed) ───────────────
+//
+// "Let the assistant help on the desktop" — an opt-in, revocable toggle for the
+// CURRENT live session that lets the assistant handle native desktop steps the
+// browser can't reach (a file-upload dialog, an OS window). It reuses the engine's
+// safety machinery (the assistant never creates accounts, clears verifications, or
+// submits — and it asks before each step), so this control adds no bypass. While
+// the desktop helper isn't baked into the sandbox image yet the engine reports it
+// dormant and the toggle renders locked with honest "future update" copy. No dead UI.
+
+let _desktopState = null; // { enabled, available, dormant }
+
+function _renderDesktopAssist() {
+  const card = _modalEl && _modalEl.querySelector('#applicant-remote-desktop');
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-toggle');
+  const note = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-note');
+  if (!card || !btn || !note) return;
+  const st = _desktopState || {};
+  const available = !!st.available;
+  const enabled = !!st.enabled;
+  btn.disabled = !available || !_activeSession || !_activeSession.session_id;
+  if (!available) {
+    // Locked / grayed: honest "available in a future update" copy (no codenames).
+    btn.textContent = 'Turn on';
+    btn.classList.remove('cal-btn-primary');
+    note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
+    note.style.display = '';
+    return;
+  }
+  btn.textContent = enabled ? 'Turn off' : 'Turn on';
+  btn.classList.toggle('cal-btn-primary', !enabled);
+  note.textContent = enabled
+    ? 'On for this session. The assistant asks before each desktop step and never submits on its own.'
+    : 'Off. Turn it on to let the assistant help with desktop steps for this session only.';
+  note.style.display = '';
+}
+
+async function _loadDesktopAssist() {
+  // Default to the locked state so the card is never accidentally interactive.
+  _desktopState = { enabled: false, available: false, dormant: true };
+  const sid = _activeSession && _activeSession.session_id;
+  try {
+    const data = sid
+      ? await _fetchJSON(`${API}/sessions/${encodeURIComponent(sid)}/desktop`)
+      : await _fetchJSON(`${API}/desktop/health`);
+    if (data) _desktopState = data;
+  } catch { /* best-effort; stays locked */ }
+  _renderDesktopAssist();
+}
+
+async function _onToggleDesktopAssist() {
+  if (_busy) return;
+  if (!_activeSession || !_activeSession.session_id) {
+    _toast('Open a live session first');
+    return;
+  }
+  const sid = _activeSession.session_id;
+  const turningOn = !(_desktopState && _desktopState.enabled);
+  _busy = true;
+  try {
+    const data = await _post(
+      `${API}/sessions/${encodeURIComponent(sid)}/desktop/${turningOn ? 'enable' : 'disable'}`,
+    );
+    if (data) _desktopState = { ..._desktopState, ...data };
+    _toast(turningOn
+      ? 'Desktop help is on for this session'
+      : 'Desktop help is off for this session');
+  } catch (e) {
+    _toast(e.message || 'Could not change desktop help');
+  } finally {
+    _busy = false;
+    _renderDesktopAssist();
+  }
 }
 
 function _renderPicker() {
