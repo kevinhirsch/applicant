@@ -135,6 +135,9 @@ class Container:
     # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update service (PUSH
     # sibling of the chatbot self-report). Dormant by default (STATUS_UPDATE_SCHEDULE=off).
     status_update_service: Any = None
+    # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" onboarding
+    # nudge. Dormant by default (ESSENTIALS_NUDGE_SCHEDULE=off).
+    essentials_nudge_service: Any = None
     # FR-MIND: the agent-learning substrate. ``agent_memory`` is the curated-memory /
     # skills / recall adapter trio (default ``in_memory``, hermetic). ``curation_service``
     # runs the scheduled closed loop; its cross-tick dedupe state lives in the
@@ -507,10 +510,20 @@ def build_container(settings: Settings | None = None) -> Container:
     # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
     advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
     discovery_service = DiscoveryService(
-        storage, discovery, embedding, learning_service, tool_registry=tool_registry
+        storage,
+        discovery,
+        embedding,
+        learning_service,
+        tool_registry=tool_registry,
+        advanced_learning=advanced_learning_service,
     )
     scoring_service = ScoringService(
-        storage, llm, embedding, learning=learning_service, tool_registry=tool_registry
+        storage,
+        llm,
+        embedding,
+        learning=learning_service,
+        advanced_learning=advanced_learning_service,
+        tool_registry=tool_registry,
     )
     criteria_service = CriteriaService(storage, llm)
     agent_run_service = AgentRunService(storage)
@@ -559,6 +572,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # (pause/resume + daily throughput, clamped to the hard cap) by routing intents
         # to the SAME gated operations the ops surface uses (the run service does both).
         run_control=agent_run_service,
+        # The apply-readiness gate's single source of "what's still missing": so the
+        # assistant proactively gathers the apply essentials in chat and is truthful that
+        # it can't begin applying until they're present (FR-CHAT-1 / FR-ONBOARD).
+        onboarding=onboarding_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -668,6 +685,12 @@ def build_container(settings: Settings | None = None) -> Container:
     # per-request copies receive it directly in their factories below.
     scoring_service._agent_memory = agent_memory
     material_service._agent_memory = agent_memory
+    # FR-LEARN-5 + FR-MIND-3: give the conversion-learning service the recall index so
+    # its discovery/scoring/variant-selection bias can also run the advisory "roles like
+    # the ones that converted" probe. Additive (the singleton advanced service is built
+    # above, before the substrate); the per-tick/per-request copies receive recall at
+    # construction in their factories below. No-op when recall is absent.
+    advanced_learning_service._recall = agent_memory.recall
     # FR-MIND-1/3: let onboarding completion SEED the agent from the user's own profile/
     # résumé — a bounded set of curated memory entries + recall index of their history —
     # so the agent is not cold-start on day one. Optional/additive: with the in-memory
@@ -752,15 +775,23 @@ def build_container(settings: Settings | None = None) -> Container:
     # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
     def _build_tick_services(tick_storage):
         ls = LearningService(tick_storage, embedding)
-        adv = AdvancedLearningService(base=ls, storage=tick_storage)
+        adv = AdvancedLearningService(
+            base=ls, storage=tick_storage, recall=agent_memory.recall
+        )
         ds = DiscoveryService(
-            tick_storage, discovery, embedding, ls, tool_registry=tool_registry
+            tick_storage,
+            discovery,
+            embedding,
+            ls,
+            tool_registry=tool_registry,
+            advanced_learning=adv,
         )
         ss = ScoringService(
             tick_storage,
             llm,
             embedding,
             learning=ls,
+            advanced_learning=adv,
             tool_registry=tool_registry,
             agent_memory=agent_memory,
         )
@@ -853,7 +884,9 @@ def build_container(settings: Settings | None = None) -> Container:
             else InMemoryAppConfigStore()
         )
         rs_ls = LearningService(req_storage, embedding)
-        rs_adv = AdvancedLearningService(base=rs_ls, storage=req_storage)
+        rs_adv = AdvancedLearningService(
+            base=rs_ls, storage=req_storage, recall=agent_memory.recall
+        )
         rs_criteria = CriteriaService(req_storage, llm)
         rs_pas = PendingActionsService(req_storage)
         rs_scoring = ScoringService(
@@ -861,6 +894,7 @@ def build_container(settings: Settings | None = None) -> Container:
             llm,
             embedding,
             learning=rs_ls,
+            advanced_learning=rs_adv,
             tool_registry=tool_registry,
             agent_memory=agent_memory,
         )
@@ -889,6 +923,17 @@ def build_container(settings: Settings | None = None) -> Container:
         # service is the run-control seam (FR-AGENT-1/2) for steering from chat — a
         # pause/resume/throughput change persists on THIS request's session (CONC-REQ-1).
         rs_agent_runs = AgentRunService(req_storage)
+        # Request-scoped onboarding so the chat's apply-readiness gate ("what's still
+        # missing before I can apply") reads THIS request's criteria + résumé state on its
+        # own isolated Session (CONC-REQ-1). Bound to rs_criteria so a free-text criteria
+        # statement the user gives in chat counts toward the gate immediately.
+        rs_onboarding = OnboardingService(
+            storage=req_storage,
+            config_store=rs_config_store,
+            resume_parser=resume_parser,
+        )
+        rs_onboarding.set_criteria_service(rs_criteria)
+        rs_onboarding.set_attribute_cloud_service(rs_attr)
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
@@ -919,6 +964,8 @@ def build_container(settings: Settings | None = None) -> Container:
             computer_use=computer_use,
             desktop_operable=_desktop_operable,
             chat_tools=(settings.chat_tools or "off").strip().lower(),
+            # Apply-readiness gate source for the proactive essentials-gathering in chat.
+            onboarding=rs_onboarding,
         )
         rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
@@ -1008,6 +1055,19 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
 
+    # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" nudge. When
+    # automated work is BLOCKED specifically because apply-essentials are missing (read
+    # from ``onboarding_service.apply_readiness().missing`` — never fabricated) and the
+    # user has gone idle, it pushes ONE friendly first-person notification naming exactly
+    # what's still needed, through the EXISTING notification path (in-app inbox + opt-in
+    # fan-out). Default schedule ``off`` => dormant (byte-identical hermetic behavior).
+    from applicant.application.services.essentials_nudge import EssentialsNudgeService
+
+    essentials_nudge_service = EssentialsNudgeService(
+        notification_service=notification_service,
+        onboarding_service=onboarding_service,
+    )
+
     scheduler = Scheduler(
         storage=storage,
         agent_loop=agent_loop,
@@ -1029,6 +1089,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # (default ``off`` => dormant, byte-identical hermetic behavior).
         status_update_service=status_update_service,
         status_update_schedule=status_update_schedule,
+        # FR-NOTIF / FR-ONBOARD: the proactive "still blocked on essentials" nudge on the
+        # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
+        essentials_nudge_service=essentials_nudge_service,
+        essentials_nudge_schedule=settings.essentials_nudge_schedule,
     )
     # FR-OBS-2: give the chatbot the live scheduler heartbeat so "what are you doing now /
     # when do you run next" answer from the real tick state (wired additively — the
@@ -1086,6 +1150,7 @@ def build_container(settings: Settings | None = None) -> Container:
         agent_loop=agent_loop,
         scheduler=scheduler,
         status_update_service=status_update_service,
+        essentials_nudge_service=essentials_nudge_service,
         agent_memory=agent_memory,
         curation_service=curation_service,
         curation_ledger=curation_ledger,

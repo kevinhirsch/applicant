@@ -24,11 +24,25 @@ _DEDUP_THRESHOLD = 0.97
 
 
 class DiscoveryService:
-    def __init__(self, storage, discovery, embedding, learning=None, tool_registry=None) -> None:
+    def __init__(
+        self,
+        storage,
+        discovery,
+        embedding,
+        learning=None,
+        tool_registry=None,
+        *,
+        advanced_learning=None,
+    ) -> None:
         self._storage = storage
         self._discovery = discovery
         self._embedding = embedding
         self._learning = learning  # optional LearningService for yield persistence
+        # Optional AdvancedLearningService so discovery can also lean toward titles
+        # mined from the DISCRETE converting signature the live loop writes, plus an
+        # advisory recall probe for "roles like the ones that converted" (FR-LEARN-5 /
+        # FR-MIND-3). ``None`` (default) => no extra title bias, byte-identical.
+        self._advanced_learning = advanced_learning
         self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
 
     # --- source registry (FR-DISC-2) --------------------------------------
@@ -115,21 +129,40 @@ class DiscoveryService:
         titles/sources. New titles are appended (never replacing the user's), so the
         user's stated criteria are still honored.
         """
-        if self._learning is None:
-            return criteria
-        try:
-            model = self._learning.load_model(campaign_id)
-            converting = self._learning.converting_titles(model)
-        except Exception:  # pragma: no cover - defensive
-            return criteria
+        converting: list[str] = []
+        # Phase-1 centroid titles (populated by record_converting_role).
+        if self._learning is not None:
+            try:
+                model = self._learning.load_model(campaign_id)
+                converting.extend(self._learning.converting_titles(model))
+            except Exception:  # pragma: no cover - defensive
+                pass
+        # DISCRETE-signature titles the LIVE conversion loop actually writes, plus a
+        # bounded advisory recall probe (FR-LEARN-5 / FR-MIND-3). Distinct sources from
+        # the centroid, merged + de-duped below — never re-folded, so no double-count.
+        if self._advanced_learning is not None:
+            try:
+                adv_model = self._advanced_learning.load_model(campaign_id)
+                converting.extend(self._advanced_learning.converting_titles(adv_model))
+            except Exception:  # pragma: no cover - defensive
+                pass
+            try:
+                converting.extend(self._advanced_learning.recall_titles(campaign_id))
+            except Exception:  # pragma: no cover - defensive
+                pass
         if not converting:
             return criteria
         import dataclasses
 
+        # Preserve the user's titles verbatim; APPEND learned titles (case-insensitive
+        # de-dup) so the user's stated criteria are never replaced, only widened.
         merged = list(criteria.titles)
+        seen = {t.strip().lower() for t in merged}
         for t in converting:
-            if t not in merged:
+            key = (t or "").strip().lower()
+            if key and key not in seen:
                 merged.append(t)
+                seen.add(key)
         if len(merged) == len(criteria.titles):
             return criteria
         return dataclasses.replace(criteria, titles=tuple(merged))
