@@ -193,6 +193,11 @@ class ChatService:
         admin_query=None,
         identity_text=None,
         run_control=None,
+        curation_service=None,
+        tool_registry=None,
+        computer_use=None,
+        desktop_operable=False,
+        chat_tools="off",
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -244,6 +249,20 @@ class ChatService:
         #   - ``set_active(campaign_id, active: bool)`` -> pause/resume
         #   - ``configure_run(campaign_id, throughput_target=int)`` -> daily target
         self._run_control = run_control
+        # FR-MIND-6: the tool-call surface. When ``chat_tools`` is "auto" AND the
+        # configured model advertises tool calling, ``_reply_text`` runs a bounded
+        # tool-dispatch loop so the assistant can CHOOSE to remember/recall/save a
+        # playbook (or take a bounded desktop action). All writes route through the
+        # curation staging gate (FR-MIND-9) and the FR-UI-4 registry; nothing here can
+        # bypass review-before-write or the stop-boundary. Default "off" + a non-tool
+        # model is byte-identical to the prior single-shot path. ``curation_service``
+        # stages memory/skill writes; ``computer_use``/``desktop_operable`` gate the
+        # bounded desktop tool (offered only when a driver is operable).
+        self._curation_service = curation_service
+        self._tool_registry = tool_registry
+        self._computer_use = computer_use
+        self._desktop_operable = bool(desktop_operable)
+        self._chat_tools = (chat_tools or "off").strip().lower()
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -330,6 +349,15 @@ class ChatService:
             memory_ctx = self._memory_context(campaign_id, message)
             if memory_ctx:
                 prompt += f"\n\n{memory_ctx}"
+            # FR-MIND-6: when the feature is on AND the model advertises tool calling,
+            # run the bounded tool-dispatch loop so the assistant can CHOOSE to use its
+            # memory/recall/playbook tools. Otherwise (the default), the single-shot
+            # path below runs exactly as before — byte-identical.
+            toolbox = self._maybe_toolbox(campaign_id)
+            if toolbox is not None:
+                tooled = self._reply_with_tools(system, prompt, toolbox)
+                if tooled is not None:
+                    return tooled.strip() or deterministic
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
                 max_tokens=256,
@@ -339,6 +367,81 @@ class ChatService:
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
             return deterministic
+
+    # --- tool-call loop (FR-MIND-6; capability-gated, additive) -----------
+    def _maybe_toolbox(self, campaign_id: CampaignId):
+        """Build a :class:`ChatToolbox` only when tool-calling is ON and SUPPORTED.
+
+        Returns ``None`` (so ``_reply_text`` stays on the single-shot path, unchanged)
+        unless: ``CHAT_TOOLS`` is "auto", the configured model advertises tool calling
+        (``supports_tools()``), and at least one tool is actually offerable. Any of
+        these false ⇒ today's behavior, byte-for-byte.
+        """
+        if self._chat_tools != "auto":
+            return None
+        supports = getattr(self._llm, "supports_tools", None)
+        if not callable(supports):
+            return None
+        try:
+            if not supports():
+                return None
+        except Exception:
+            return None
+        if not callable(getattr(self._llm, "complete_with_tools", None)):
+            return None
+        from applicant.application.services.chat_tools import ChatToolbox
+
+        toolbox = ChatToolbox(
+            campaign_id=campaign_id,
+            agent_memory=self._agent_memory,
+            curation_service=self._curation_service,
+            tool_registry=self._tool_registry,
+            computer_use=self._computer_use,
+            desktop_operable=self._desktop_operable,
+        )
+        return toolbox if toolbox.has_tools() else None
+
+    def _reply_with_tools(self, system: str, prompt: str, toolbox) -> str | None:
+        """Run the bounded tool-dispatch loop; return the final text, or None to fall back.
+
+        Caps the rounds (defense in depth alongside the toolbox cap). Each round: ask
+        the model with the tool schemas, dispatch any tool calls it requested through
+        the guarded toolbox, feed the results back, and repeat until it returns plain
+        text or the cap is hit. Returns ``None`` on the first round if the model never
+        used a tool, so the caller's single-shot completion is used unchanged.
+        """
+        from applicant.application.services.chat_tools import MAX_TOOL_ROUNDS
+
+        schemas = toolbox.tool_schemas()
+        messages = [
+            ChatMessage(role="system", content=system),
+            ChatMessage(role="user", content=prompt),
+        ]
+        used_a_tool = False
+        for _ in range(MAX_TOOL_ROUNDS):
+            result = self._llm.complete_with_tools(messages, schemas, max_tokens=256)
+            calls = tuple(getattr(result, "tool_calls", ()) or ())
+            if not calls:
+                text = (getattr(result, "text", "") or "").strip()
+                # If the model never used a tool at all, fall back to the single-shot
+                # path (None) for byte-identical behavior; otherwise return its text.
+                return text if used_a_tool else (text or None)
+            used_a_tool = True
+            # Echo the assistant's tool-call message back, then append each result.
+            messages.append(
+                ChatMessage(role="assistant", content="", tool_calls=calls)
+            )
+            for call in calls:
+                tool_result = toolbox.dispatch(call.name, call.arguments)
+                messages.append(
+                    ChatMessage(role="tool", content=tool_result, tool_call_id=call.id)
+                )
+        # Round cap hit: ask once more for a plain-text wrap-up (no tools).
+        try:
+            final = self._llm.complete(messages, max_tokens=256)
+            return (getattr(final, "text", "") or "").strip() or None
+        except Exception:
+            return None
 
     # --- identity tier (FR-MIND-4) ----------------------------------------
     #: The built-in, white-labeled voice (FR-MIND-4 identity tier, slot #1), sourced

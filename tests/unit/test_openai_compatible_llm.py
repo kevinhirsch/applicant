@@ -449,3 +449,92 @@ def test_complete_parses_native_tool_calls():
     llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
     res = llm.complete([ChatMessage(role="user", content="q")], json_schema=schema)
     assert res.structured == {"company": "Acme", "role": "SWE"}
+
+
+# --- FR-MIND-6: tool / function calling seam ------------------------------
+def test_supports_tools_openai_yes_ollama_no():
+    openai_llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="gpt-4o-mini",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+    )
+    ollama_llm = OpenAICompatibleLLM(
+        provider="ollama", base_url="http://localhost:11434", model="llama3.1:8b",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+    )
+    assert openai_llm.supports_tools() is True
+    assert ollama_llm.supports_tools() is False
+
+
+def test_complete_with_tools_parses_tool_calls():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{
+                "message": {
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_42",
+                        "type": "function",
+                        "function": {"name": "recall", "arguments": "{\"query\": \"x\"}"},
+                    }],
+                }
+            }]
+        })
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="gpt-4o-mini",
+        transport=httpx.MockTransport(handler),
+    )
+    tools = [{"type": "function", "function": {"name": "recall", "parameters": {}}}]
+    res = llm.complete_with_tools([ChatMessage(role="user", content="q")], tools)
+    # The request carried the tools + tool_choice.
+    assert captured["payload"]["tools"] == tools
+    assert captured["payload"]["tool_choice"] == "auto"
+    # The response's tool call was parsed.
+    assert len(res.tool_calls) == 1
+    assert res.tool_calls[0].id == "call_42"
+    assert res.tool_calls[0].name == "recall"
+    assert res.text == ""
+
+
+def test_complete_with_tools_plain_text_when_no_calls():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "final answer"}}]
+        })
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="gpt-4o-mini",
+        transport=httpx.MockTransport(handler),
+    )
+    res = llm.complete_with_tools([ChatMessage(role="user", content="q")], [])
+    assert res.tool_calls == ()
+    assert res.text == "final answer"
+
+
+def test_tool_result_messages_serialize_to_wire_shape():
+    from applicant.ports.driven.llm import ToolCall
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="gpt-4o-mini",
+        transport=httpx.MockTransport(handler),
+    )
+    messages = [
+        ChatMessage(role="user", content="do it"),
+        ChatMessage(role="assistant", content="",
+                    tool_calls=(ToolCall(id="c1", name="recall", arguments="{}"),)),
+        ChatMessage(role="tool", content="found nothing", tool_call_id="c1"),
+    ]
+    llm.complete_with_tools(messages, [])
+    wire = captured["payload"]["messages"]
+    # The assistant message round-trips its tool_calls; the tool result carries its id.
+    assert wire[1]["tool_calls"][0]["function"]["name"] == "recall"
+    assert wire[2]["role"] == "tool" and wire[2]["tool_call_id"] == "c1"
