@@ -168,13 +168,14 @@ function _ensureModalEl() {
           <button class="close-btn" id="applicant-activity-close" title="Close">✖</button>
         </div>
       </div>
+      <div id="applicant-activity-snapshot" style="flex:0 0 auto;"></div>
       <div class="modal-body" id="applicant-activity-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
       </div>
     </div>`;
   document.body.appendChild(modal);
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => _loadRuns(true));
+  modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
   return modal;
@@ -187,6 +188,64 @@ function _close() {
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-activity-body'); }
+function _snapshotHost() { return _modalEl && _modalEl.querySelector('#applicant-activity-snapshot'); }
+
+// ── "Now / Next" snapshot panel (the live status header) ─────────────────────
+//
+// Renders the engine's consolidated, first-person snapshot ("Right now I'm…",
+// "Next I'll…") at the top of the Activity modal. Every field is optional — the
+// engine omits anything it can't truthfully report, so each line renders only
+// when present (no fabricated activity).
+
+function _snapshotLine(label, sentence, extra) {
+  const tail = extra ? `<span style="opacity:0.6;font-weight:400;"> ${esc(extra)}</span>` : '';
+  return `
+    <div style="margin:2px 0;font-size:12px;line-height:1.4;">
+      <span style="opacity:0.55;text-transform:uppercase;font-size:9.5px;letter-spacing:0.04em;">${esc(label)}</span>
+      <div style="font-weight:500;">${esc(sentence)}${tail}</div>
+    </div>`;
+}
+
+function _renderSnapshot(host, data) {
+  if (!host) return;
+  if (!data || data.engine_available === false || data.has_activity === false) {
+    host.innerHTML = '';
+    return;
+  }
+  const now = (data && data.now) || {};
+  const next = (data && data.next) || {};
+  const live = Boolean(now.running);
+  const dot = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px;background:${live ? 'var(--accent, #3a8)' : '#999'};"></span>`;
+  const parts = [];
+  if (now.sentence) {
+    parts.push(_snapshotLine('Now', now.sentence));
+  }
+  if (next.sentence) {
+    let extra = '';
+    const pending = Number(next.pending_actions);
+    if (Number.isFinite(pending) && pending > 0) {
+      extra = `${pending} item${pending === 1 ? '' : 's'} waiting on you`;
+    }
+    parts.push(_snapshotLine('Up next', next.sentence, extra));
+  }
+  if (!parts.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `
+    <div class="admin-card" style="margin:0 0 8px;padding:10px 12px;">
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">${dot}Agent status</div>
+      ${parts.join('')}
+    </div>`;
+}
+
+async function _loadSnapshot() {
+  const host = _snapshotHost();
+  if (!host) return;
+  try {
+    const data = await _fetchJSON(`${API}/snapshot`);
+    _renderSnapshot(host, data);
+  } catch {
+    host.innerHTML = ''; // hide silently rather than show a broken panel
+  }
+}
 
 function _renderOffline(host) {
   host.innerHTML = `
@@ -243,7 +302,11 @@ function _renderRuns(host, items) {
         ${meta ? `<div class="memory-item-meta" style="font-size:10.5px;opacity:0.6;margin-top:3px;">${esc(meta)}</div>` : ''}
       </div>`;
   });
-  host.innerHTML = `<div>${rows.join('')}</div>`;
+  const heading = `
+    <div style="padding:4px 10px 6px;font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;">
+      Recently I…
+    </div>`;
+  host.innerHTML = `<div>${heading}${rows.join('')}</div>`;
 }
 
 async function _loadRuns(showSpinner) {
@@ -268,6 +331,8 @@ export async function openApplicantActivity() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  // The live "now / next" header and the "recently" history load together.
+  _loadSnapshot();
   await _loadRuns(true);
   // Opening the page is a natural moment to refresh the strip too.
   refreshStatus();
