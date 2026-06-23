@@ -507,10 +507,20 @@ def build_container(settings: Settings | None = None) -> Container:
     # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
     advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
     discovery_service = DiscoveryService(
-        storage, discovery, embedding, learning_service, tool_registry=tool_registry
+        storage,
+        discovery,
+        embedding,
+        learning_service,
+        tool_registry=tool_registry,
+        advanced_learning=advanced_learning_service,
     )
     scoring_service = ScoringService(
-        storage, llm, embedding, learning=learning_service, tool_registry=tool_registry
+        storage,
+        llm,
+        embedding,
+        learning=learning_service,
+        advanced_learning=advanced_learning_service,
+        tool_registry=tool_registry,
     )
     criteria_service = CriteriaService(storage, llm)
     agent_run_service = AgentRunService(storage)
@@ -668,6 +678,12 @@ def build_container(settings: Settings | None = None) -> Container:
     # per-request copies receive it directly in their factories below.
     scoring_service._agent_memory = agent_memory
     material_service._agent_memory = agent_memory
+    # FR-LEARN-5 + FR-MIND-3: give the conversion-learning service the recall index so
+    # its discovery/scoring/variant-selection bias can also run the advisory "roles like
+    # the ones that converted" probe. Additive (the singleton advanced service is built
+    # above, before the substrate); the per-tick/per-request copies receive recall at
+    # construction in their factories below. No-op when recall is absent.
+    advanced_learning_service._recall = agent_memory.recall
     # FR-MIND-1/3: let onboarding completion SEED the agent from the user's own profile/
     # résumé — a bounded set of curated memory entries + recall index of their history —
     # so the agent is not cold-start on day one. Optional/additive: with the in-memory
@@ -752,15 +768,23 @@ def build_container(settings: Settings | None = None) -> Container:
     # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
     def _build_tick_services(tick_storage):
         ls = LearningService(tick_storage, embedding)
-        adv = AdvancedLearningService(base=ls, storage=tick_storage)
+        adv = AdvancedLearningService(
+            base=ls, storage=tick_storage, recall=agent_memory.recall
+        )
         ds = DiscoveryService(
-            tick_storage, discovery, embedding, ls, tool_registry=tool_registry
+            tick_storage,
+            discovery,
+            embedding,
+            ls,
+            tool_registry=tool_registry,
+            advanced_learning=adv,
         )
         ss = ScoringService(
             tick_storage,
             llm,
             embedding,
             learning=ls,
+            advanced_learning=adv,
             tool_registry=tool_registry,
             agent_memory=agent_memory,
         )
@@ -853,7 +877,9 @@ def build_container(settings: Settings | None = None) -> Container:
             else InMemoryAppConfigStore()
         )
         rs_ls = LearningService(req_storage, embedding)
-        rs_adv = AdvancedLearningService(base=rs_ls, storage=req_storage)
+        rs_adv = AdvancedLearningService(
+            base=rs_ls, storage=req_storage, recall=agent_memory.recall
+        )
         rs_criteria = CriteriaService(req_storage, llm)
         rs_pas = PendingActionsService(req_storage)
         rs_scoring = ScoringService(
@@ -861,6 +887,7 @@ def build_container(settings: Settings | None = None) -> Container:
             llm,
             embedding,
             learning=rs_ls,
+            advanced_learning=rs_adv,
             tool_registry=tool_registry,
             agent_memory=agent_memory,
         )

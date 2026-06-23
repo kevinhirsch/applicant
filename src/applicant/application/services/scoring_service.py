@@ -44,6 +44,7 @@ class ScoringService:
         *,
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
         learning=None,
+        advanced_learning=None,
         tool_registry=None,
         agent_memory=None,
     ) -> None:
@@ -52,6 +53,11 @@ class ScoringService:
         self._embedding = embedding
         self._threshold = threshold
         self._learning = learning
+        # Optional AdvancedLearningService so scoring can bias toward the DISCRETE
+        # converting signature that the live conversion loop actually writes (+ an
+        # advisory recall nudge), not just the Phase-1 centroid (FR-LEARN-5). ``None``
+        # (default) => discrete/recall bias is skipped, byte-identical to before.
+        self._advanced_learning = advanced_learning
         self._tools = tool_registry  # optional ToolRegistry for FR-UI-4 dispatch gate
         # Optional agent-memory trio (``.memory`` / ``.skills`` / ``.recall``,
         # FR-MIND-1). When wired, the LLM scorer gets the curated memory/preferences as
@@ -362,12 +368,41 @@ class ScoringService:
         return block[:1200]
 
     def _signature_alignment(self, campaign_id, jd_text: str) -> float:
-        if self._learning is None:
-            return 0.0
-        try:
-            model = self._learning.load_model(campaign_id)
-            # Keep the alignment call inside the guard: a flaky embedding must not
-            # 500 GET /api/digest/{id} or scoring — fall back to no bias instead.
-            return self._learning.converting_alignment(model, jd_text)
-        except Exception:
-            return 0.0
+        """Advisory converting-signature alignment in [0,1] for a JD (FR-LEARN-5).
+
+        Combines, via ``max`` (NOT a sum — so the same conversion evidence is never
+        double-counted), three complementary, read-only views of what converts:
+
+          * the Phase-1 embedding CENTROID (``LearningService.converting_alignment``),
+          * the DISCRETE role-feature signature the live conversion loop actually
+            writes (``AdvancedLearningService.text_alignment``), and
+          * a small ADVISORY recall nudge ("roles like the ones that converted",
+            ``AdvancedLearningService.recall_alignment``, FR-MIND-3).
+
+        These are different facets each folded ONCE per conversion (centroid vs
+        discrete features vs durable run history); reading all three biases ranking
+        without re-folding any signal. 0.0 at cold start (no conversions, no recall)
+        so a brand-new campaign scores byte-identically to before.
+        """
+        signals: list[float] = []
+        if self._learning is not None:
+            try:
+                model = self._learning.load_model(campaign_id)
+                # Keep the alignment call inside the guard: a flaky embedding must not
+                # 500 GET /api/digest/{id} or scoring — fall back to no bias instead.
+                signals.append(self._learning.converting_alignment(model, jd_text))
+            except Exception:
+                pass
+        if self._advanced_learning is not None:
+            try:
+                model = self._advanced_learning.load_model(campaign_id)
+                signals.append(self._advanced_learning.text_alignment(model, jd_text))
+            except Exception:
+                pass
+            try:
+                signals.append(
+                    self._advanced_learning.recall_alignment(campaign_id, jd_text)
+                )
+            except Exception:
+                pass
+        return max(signals) if signals else 0.0

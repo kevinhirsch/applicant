@@ -516,27 +516,84 @@ class MaterialService:
     def _converting_alignment_for(self, campaign_id: CampaignId):
         """Return ``variant -> alignment[0,1]`` vs the converting-role signature.
 
-        Variants whose traits (their ``targeted_jd_signature``) look like the roles
-        that actually convert score higher (FR-LEARN-5). When no learning/signature
-        is available the bias is uniformly 0.0 so selection falls back to coverage.
+        Variants whose traits look like the roles that actually convert score higher
+        (FR-LEARN-5), as a small tiebreak so JD coverage still dominates. Three
+        complementary, read-only views are combined via ``max`` (never summed, so the
+        same conversion evidence is not double-counted):
+
+          * the Phase-1 embedding CENTROID over the variant's targeted-JD signature
+            (``LearningService.converting_alignment``), and
+          * the DISCRETE converting signature the LIVE conversion loop actually writes
+            — which records the exact ``variant:{id}`` that converted, so a variant
+            tied to a past conversion is preferred directly, plus a lexical match of
+            the variant's targeted-JD signature against the converted role's features
+            (``AdvancedLearningService.variant_alignment`` / ``text_alignment``), and
+          * an advisory recall nudge (``AdvancedLearningService.recall_alignment``).
+
+        When neither learning source has any signature/recall the bias is uniformly
+        0.0 so selection falls back to coverage (byte-identical default).
         """
-        if self._learning is None:
-            return lambda _v: 0.0
-        try:
-            model = self._learning.load_model(campaign_id)
-        except Exception:  # pragma: no cover - defensive
-            return lambda _v: 0.0
-        if not model.converting_role_signature.get("vector"):
+        base_model = None
+        if self._learning is not None:
+            try:
+                base_model = self._learning.load_model(campaign_id)
+            except Exception:  # pragma: no cover - defensive
+                base_model = None
+        adv = self._advanced_learning
+        adv_model = None
+        if adv is not None:
+            try:
+                adv_model = adv.load_model(campaign_id)
+            except Exception:  # pragma: no cover - defensive
+                adv_model = None
+
+        has_vector = bool(
+            base_model is not None
+            and base_model.converting_role_signature.get("vector")
+        )
+        has_discrete = bool(
+            adv_model is not None
+            and any(
+                k != "vector" for k in adv_model.converting_role_signature
+            )
+        )
+        if not has_vector and not has_discrete and adv is None:
             return lambda _v: 0.0
 
         def _align(variant: ResumeVariant) -> float:
             sig = (variant.targeted_jd_signature or "").replace(",", " ").strip()
-            if not sig:
-                return 0.0
-            try:
-                return self._learning.converting_alignment(model, sig)
-            except Exception:  # pragma: no cover - defensive
-                return 0.0
+            # Role-likeness signals (how much this variant LOOKS like the converting
+            # role): combined via ``max`` so the same conversion evidence is never
+            # double-counted across the centroid / discrete / recall facets.
+            likeness: list[float] = []
+            if has_vector and sig:
+                try:
+                    likeness.append(self._learning.converting_alignment(base_model, sig))
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            if adv_model is not None and has_discrete and sig:
+                try:
+                    likeness.append(adv.text_alignment(adv_model, sig))
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            if adv is not None and sig:
+                try:
+                    likeness.append(adv.recall_alignment(campaign_id, sig))
+                except Exception:  # pragma: no cover - defensive
+                    pass
+            score = max(likeness) if likeness else 0.0
+            # EXACT-variant identity is a DISTINCT question ("which variant did past
+            # conversions actually use?") from role-likeness, so it adds a bounded
+            # bonus ON TOP — that's how, among two equally-likeness variants, the one
+            # tied to a past conversion is strictly preferred. Capped to [0,1].
+            if adv_model is not None and has_discrete:
+                try:
+                    vexact = adv.variant_alignment(adv_model, variant.id)
+                except Exception:  # pragma: no cover - defensive
+                    vexact = 0.0
+                if vexact > 0.0:
+                    score = min(1.0, score + 0.5 * vexact + 0.05)
+            return score
 
         return _align
 
