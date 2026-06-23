@@ -64,7 +64,12 @@ const STEPS = [
   // always lands here first.
   { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.onboarding_complete || (Array.isArray(s.steps_complete) && s.steps_complete.length))) },
   { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
-  { key: 'onboarding', title: 'Your profile',     done: (s) => !!(s && s.onboarding_complete) },
+  // "Your profile" is OPTIONAL — the only thing that strictly gates BEGINNING is a
+  // connected model. Applicant gathers what it needs to apply over time (a résumé,
+  // or just telling it in chat). The step is "done enough" once the agent has the
+  // required-to-apply essentials (apply_ready), so the rail stops nagging once the
+  // hard apply-gate would open; a brand-new user can also just Skip it.
+  { key: 'onboarding', title: 'Your profile',     done: (s) => !!(s && (s.apply_ready || s.onboarding_complete)) },
 ];
 
 // Intake sub-sections (the comprehensive Workday-ready interview). Each renders a
@@ -309,17 +314,17 @@ function _renderWelcome() {
   _setBody(`
     <h2 class="ao-step-title">Welcome to Applicant</h2>
     <p class="ao-step-desc">
-      A few quick steps, about 10–15 minutes. The profile part is longer on
-      purpose — the more you tell Applicant now, the fewer interruptions your
-      applications need later.
+      Just one thing to start: connect a model. Everything about your job search,
+      Applicant can learn as you go — drop in a résumé to jump-start it, or simply
+      tell it what you're looking for in chat.
     </p>
     <div class="admin-card">
       <h2 style="margin:0 0 6px;font-size:0.95em;">What you'll set up</h2>
       <ol style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
-        <li>Connect a model — a local model or a cloud provider.</li>
-        <li>Your profile — the comprehensive part, so applications need far fewer interruptions later.</li>
+        <li>Connect a model — a local model or a cloud provider. <em>(the only required step)</em></li>
+        <li>Your profile — optional. Add a résumé to speed things up, or skip it and tell Applicant in chat.</li>
       </ol>
-      <p style="margin:8px 0 0;font-size:0.82rem;opacity:0.7;">Notifications, fonts and the automation sandbox are optional — set them up any time in Settings.</p>
+      <p style="margin:8px 0 0;font-size:0.82rem;opacity:0.7;">Applicant won't start applying until it knows the essentials (target roles, work mode, locations, salary floor, key skills, and a résumé) — it'll ask for whatever's still missing. Notifications, fonts and the automation sandbox are optional too — set them up any time in Settings.</p>
     </div>
     <div class="admin-card">
       <h2 style="margin:0 0 6px;font-size:0.95em;">How Applicant works — and what it never does</h2>
@@ -1142,6 +1147,25 @@ async function _renderOnboarding() {
   await _renderIntakeSection();
 }
 
+// A plain banner showing what Applicant still needs before it can start applying,
+// straight from the engine's setup status (apply_missing / apply_blocked_reason).
+// It is honest progress, never fabricated. Returns '' when nothing is missing or
+// the engine didn't report readiness (older engine) so the wizard degrades cleanly.
+function _applyReadinessBanner() {
+  const s = _status || {};
+  if (s.apply_ready) {
+    return `<div class="admin-card" style="border-left:3px solid var(--accent-ok, #4a9);">
+      <p style="margin:0;font-size:0.86rem;">Applicant has what it needs to start applying. Anything else here just makes your applications smoother — it's all optional.</p>
+    </div>`;
+  }
+  const missing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
+  if (!missing.length) return '';
+  return `<div class="admin-card" style="border-left:3px solid var(--accent-warm, #d8a23a);">
+    <p style="margin:0 0 4px;font-size:0.86rem;"><strong>This part is optional.</strong> Add a résumé to fill it in fast, or just tell Applicant in chat — it'll keep learning as you go.</p>
+    <p style="margin:0;font-size:0.84rem;opacity:0.85;">Before it can start applying, Applicant still needs: ${esc(missing.join(', '))}.</p>
+  </div>`;
+}
+
 async function _renderIntakeSection() {
   const key = INTAKE_SECTIONS[_intakeIndex];
   const total = INTAKE_SECTIONS.length;
@@ -1191,8 +1215,9 @@ function _renderBaseResume(saved) {
   const total = INTAKE_SECTIONS.length;
   _setBody(`
     <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
+    ${_applyReadinessBanner()}
     <h2 class="ao-step-title">Start with your resume ${_tip('Applicant reads your resume and fills in the rest of your profile for you — you just review and fix anything it got wrong. After upload we also build a high-fidelity version and show you a preview to accept or reject.')}</h2>
-    <p class="ao-step-desc">Upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. You can edit every field afterward.</p>
+    <p class="ao-step-desc">Optional but recommended: upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell Applicant what you want in chat. You can edit every field afterward.</p>
     <div class="admin-card">
       <div class="settings-row">
         <button type="button" class="cal-btn" id="ao-resume-pick">Choose your resume…</button>
@@ -1376,12 +1401,20 @@ async function _finish() {
   // steps are actually complete; otherwise tell the truth and offer jump-backs.
   try { await _refreshStatus(); } catch { /* use last-known status */ }
   const s = _status || {};
+  // Only "connect a model" strictly gates BEGINNING. Applying is hard-gated on the
+  // required-to-apply essentials (apply_ready); when those aren't in yet we tell the
+  // truth and point back to the profile step, but the user can still get started —
+  // Applicant will gather the rest in chat.
   const missing = [];
   if (!s.llm_configured) missing.push({ key: 'llm', label: 'connect a model' });
-  if (!s.onboarding_complete) missing.push({ key: 'onboarding', label: 'finish your profile' });
 
   if (!missing.length) {
-    _setBody('<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p>Applicant is ready to start working for you.</p></div>');
+    const applyMissing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
+    const ready = !!s.apply_ready || applyMissing.length === 0;
+    const readyLine = ready
+      ? 'Applicant is ready to start applying for you.'
+      : `Applicant is set up. Before it starts applying it still needs: ${esc(applyMissing.join(', '))} — just tell it in chat or add a résumé any time, and it'll begin automatically.`;
+    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p></div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
     document.getElementById('ao-finish').onclick = _dismiss;
     const nav = document.getElementById('ao-nav');

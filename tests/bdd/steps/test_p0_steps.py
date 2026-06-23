@@ -84,6 +84,29 @@ def complete_onboarding(ctx):
             json={"section": section.value, "data": {"answer": "v"}},
         )
     assert client.post(f"/api/onboarding/{cid}/complete").json()["complete"] is True
+    # The hard apply-gate also needs the required-to-apply ESSENTIALS present, not
+    # just a completed comprehensive intake: the agent literally cannot apply
+    # without target roles, work mode, locations, a salary floor, key skills, and a
+    # résumé. Provide them through the same UI endpoints the wizard uses so the gate
+    # genuinely opens (and so applying is never half-started without them).
+    r = client.put(
+        f"/api/criteria/{cid}",
+        json={
+            "titles": ["Software Engineer"],
+            "locations": ["Remote"],
+            "work_modes": ["remote"],
+            "keywords": ["python", "fastapi"],
+            "salary_floor": 120000,
+            "confirm": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    resume = b"Jane Q Candidate\njane@example.com\n\nExperience:\nEngineer at Acme 2020 - Present\n"
+    up = client.post(
+        f"/api/onboarding/{cid}/base-resume",
+        files={"file": ("resume.txt", resume, "text/plain")},
+    )
+    assert up.status_code == 200, up.text
 
 
 @then("automated work may begin")

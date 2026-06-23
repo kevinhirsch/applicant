@@ -23,6 +23,10 @@ from typing import Any
 
 from applicant.core.entities.attribute import Attribute
 from applicant.core.ids import AttributeId, CampaignId, new_id
+from applicant.core.rules.apply_readiness import (
+    ApplyReadiness,
+    evaluate_apply_readiness,
+)
 from applicant.core.rules.field_normalization import values_match
 from applicant.core.rules.sensitive_fields import (
     DECLINE_TO_SELF_IDENTIFY,
@@ -248,6 +252,61 @@ class OnboardingService:
 
     def is_complete(self, campaign_id: str) -> bool:
         return bool(self._load(campaign_id).get("complete", False))
+
+    # --- required-to-apply readiness (the hard gate on autonomous applying) ---
+    def has_base_resume(self, campaign_id: str) -> bool:
+        """True once a base résumé has actually been ingested for the campaign.
+
+        Derived from REAL state — the parsed ``BASE_RESUME`` intake section (set only
+        by ``ingest_base_resume``) — never fabricated. The résumé is one of the
+        required-to-apply essentials: it is attached to every application and seeds
+        the attribute cloud.
+        """
+        rec = self._load(campaign_id)
+        section = (rec.get("intake", {}) or {}).get(IntakeSection.BASE_RESUME.value) or {}
+        return bool(section.get("document_path") or section.get("parsed"))
+
+    def apply_readiness(self, campaign_id: str) -> ApplyReadiness:
+        """Compute the required-to-apply readiness for the campaign (single source).
+
+        This is THE check the automated-work gate and the setup-status surface both
+        use, so "blocked / what's missing" is computed once from real campaign data:
+        the per-campaign search criteria (titles, work mode, locations, salary floor,
+        key skills/keywords) plus whether a base résumé is present. A criteria set
+        expressed only as a free-text statement still counts toward target-roles /
+        key-skills, so a chat-only setup can satisfy the gate without the typed forms.
+
+        Nothing here is invented: every signal is read back from persisted state.
+        """
+        titles = locations = work_modes = keywords = ()
+        salary_floor = None
+        human_readable = ""
+        if self._criteria_service is not None:
+            try:
+                crit = self._criteria_service.get_criteria(CampaignId(campaign_id))
+                titles = tuple(crit.titles or ())
+                locations = tuple(crit.locations or ())
+                work_modes = tuple(crit.work_modes or ())
+                keywords = tuple(crit.keywords or ())
+                salary_floor = crit.salary_floor
+                human_readable = crit.human_readable or ""
+            except Exception:  # pragma: no cover - never let a read break the gate
+                log.warning("apply_readiness_criteria_read_failed", campaign_id=campaign_id)
+        has_statement = bool(human_readable.strip())
+        return evaluate_apply_readiness(
+            # A free-text criteria statement stands in for typed titles/skills: the
+            # user described the search in their own words.
+            has_titles=bool(titles) or has_statement,
+            has_work_modes=bool(work_modes),
+            has_locations=bool(locations),
+            has_salary_floor=salary_floor is not None,
+            has_keywords=bool(keywords) or has_statement,
+            has_resume=self.has_base_resume(campaign_id),
+        )
+
+    def is_ready_to_apply(self, campaign_id: str) -> bool:
+        """True only when the required-to-apply essentials are all present."""
+        return self.apply_readiness(campaign_id).ready
 
     # --- base resume parse + reconciliation (FR-ONBOARD-3) -----------------
     def ingest_base_resume(self, campaign_id: str, document_path: str) -> ReconciliationResult:
