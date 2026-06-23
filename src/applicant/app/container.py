@@ -562,6 +562,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # (pause/resume + daily throughput, clamped to the hard cap) by routing intents
         # to the SAME gated operations the ops surface uses (the run service does both).
         run_control=agent_run_service,
+        # The apply-readiness gate's single source of "what's still missing": so the
+        # assistant proactively gathers the apply essentials in chat and is truthful that
+        # it can't begin applying until they're present (FR-CHAT-1 / FR-ONBOARD).
+        onboarding=onboarding_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -892,6 +896,17 @@ def build_container(settings: Settings | None = None) -> Container:
         # service is the run-control seam (FR-AGENT-1/2) for steering from chat — a
         # pause/resume/throughput change persists on THIS request's session (CONC-REQ-1).
         rs_agent_runs = AgentRunService(req_storage)
+        # Request-scoped onboarding so the chat's apply-readiness gate ("what's still
+        # missing before I can apply") reads THIS request's criteria + résumé state on its
+        # own isolated Session (CONC-REQ-1). Bound to rs_criteria so a free-text criteria
+        # statement the user gives in chat counts toward the gate immediately.
+        rs_onboarding = OnboardingService(
+            storage=req_storage,
+            config_store=rs_config_store,
+            resume_parser=resume_parser,
+        )
+        rs_onboarding.set_criteria_service(rs_criteria)
+        rs_onboarding.set_attribute_cloud_service(rs_attr)
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
@@ -922,6 +937,8 @@ def build_container(settings: Settings | None = None) -> Container:
             computer_use=computer_use,
             desktop_operable=_desktop_operable,
             chat_tools=(settings.chat_tools or "off").strip().lower(),
+            # Apply-readiness gate source for the proactive essentials-gathering in chat.
+            onboarding=rs_onboarding,
         )
         rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
