@@ -80,6 +80,10 @@ class Container:
     browser: Any
     detection: Any
     sandbox: Any
+    # Desktop control (FR-CUA): swappable computer-use sub-port of the sandbox, default
+    # ``noop`` (no side effects). Sibling of ``sandbox``; ships dormant until the driver
+    # is baked into the sandbox image (FR-CUA-9).
+    computer_use: Any
     latex_tailor: Any
     docx_tailor: Any
     font_installer: Any
@@ -128,6 +132,14 @@ class Container:
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
+    # FR-MIND: the agent-learning substrate. ``agent_memory`` is the curated-memory /
+    # skills / recall adapter trio (default ``in_memory``, hermetic). ``curation_service``
+    # runs the scheduled closed loop; its cross-tick dedupe state lives in the
+    # process-lived ``curation_ledger`` injected into every per-tick loop (FR-MIND-10),
+    # exactly like ``resume_ledger``.
+    agent_memory: Any = None
+    curation_service: Any = None
+    curation_ledger: Any = None
     # CONC-REQ-1: builds a PER-REQUEST SqlAlchemyStorage(session_factory()) + the
     # storage-bound services for it, so concurrent sync requests (run in FastAPI's
     # threadpool) never interleave on one non-thread-safe Session. ``None`` when no DB
@@ -365,6 +377,14 @@ def build_container(settings: Settings | None = None) -> Container:
     # stays selectable via REMOTE_VIEW_BACKEND=neko. Image selection + URL/token are
     # real here; the container/room control plane is integration-gated in the adapter.
     sandbox = _build_sandbox(settings, setup_service)
+    # Desktop control (FR-CUA): the swappable computer-use sub-port of the sandbox.
+    # Default ``noop`` (records calls, NO side effects) so the hermetic lane needs no
+    # cua-driver/display stack; ``COMPUTER_USE_BACKEND=cua`` selects the real adapter,
+    # which itself degrades to noop semantics until the driver is baked into the sandbox
+    # image (FR-CUA-12). Import-safe — the factory pulls in no heavy deps at boot.
+    from applicant.adapters.sandbox.computer_use import build_computer_use
+
+    computer_use = build_computer_use(settings)
     # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the
     # engine binary is present at runtime (RESUME_RENDER=auto|on|off, default auto).
     latex_tailor = LatexTailor(render_mode=settings.resume_render)
@@ -538,6 +558,28 @@ def build_container(settings: Settings | None = None) -> Container:
     # never take effect. Injected into both the shared loop and each per-tick loop.
     resume_ledger = ResumeLedger()
 
+    # FR-MIND: the agent-learning substrate. Build the curated-memory / skills / recall
+    # adapter trio (default ``in_memory`` — hermetic, no deps; ``bridge`` reaches the
+    # front-door substrate over the WorkspacePort per agent-intelligence.md §10), and
+    # ONE process-lived CurationLedger for the whole process. Like resume_ledger, the
+    # scheduler rebuilds the per-tick services every tick, so the curation dedupe state
+    # must live OUTSIDE the loop/service instance or it resets every tick (FR-MIND-10).
+    from applicant.adapters.memory import build_agent_memory
+    from applicant.application.services.curation_service import (
+        CurationLedger,
+        CurationService,
+    )
+
+    agent_memory = build_agent_memory(settings, workspace)
+    curation_ledger = CurationLedger()
+    curation_service = CurationService(
+        memory_store=agent_memory.memory,
+        skill_store=agent_memory.skills,
+        ledger=curation_ledger,
+        memory_write_approval=settings.memory_write_approval,
+        skills_write_approval=settings.skills_write_approval,
+    )
+
     agent_loop = AgentLoop(
         storage=storage,
         agent_run_service=agent_run_service,
@@ -630,12 +672,23 @@ def build_container(settings: Settings | None = None) -> Container:
             research_service=research_service,
             resume_ledger=resume_ledger,
         )
+        # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
+        # process-lived CurationLedger + agent-memory adapters as the main service, so
+        # the curation dedupe state survives the per-tick rebuild instead of resetting.
+        tick_curation = CurationService(
+            memory_store=agent_memory.memory,
+            skill_store=agent_memory.skills,
+            ledger=curation_ledger,
+            memory_write_approval=settings.memory_write_approval,
+            skills_write_approval=settings.skills_write_approval,
+        )
         return {
             "storage": tick_storage,
             "agent_loop": loop,
             "digest_service": dg,
             "notification_service": notification_service,
             "final_approval_service": final_approval_service,
+            "curation_service": tick_curation,
         }
 
     # CONC-REQ-1: build the storage-bound services for ONE request from a per-request
@@ -768,6 +821,7 @@ def build_container(settings: Settings | None = None) -> Container:
         browser=browser,
         detection=detection,
         sandbox=sandbox,
+        computer_use=computer_use,
         latex_tailor=latex_tailor,
         docx_tailor=docx_tailor,
         font_installer=font_installer,
@@ -804,5 +858,8 @@ def build_container(settings: Settings | None = None) -> Container:
         research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
+        agent_memory=agent_memory,
+        curation_service=curation_service,
+        curation_ledger=curation_ledger,
         request_services_factory=request_services_factory,
     )
