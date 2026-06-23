@@ -142,11 +142,33 @@ def list_for_application(
     return {
         "application_id": application_id,
         "items": [
-            {"id": d.id, "type": d.type.value, "approved": d.approved, "content": d.content}
+            {
+                "id": d.id,
+                "type": d.type.value,
+                "approved": d.approved,
+                "content": d.content,
+                # Advisory "What I drew on" transparency (FR-MIND-5/-11, FR-OBS-2):
+                # which learned items shaped this draft. Empty list when none.
+                "provenance": _provenance_payload(d.provenance),
+            }
             for d in docs
         ],
         "all_approved": all(d.approved for d in docs) if docs else True,
     }
+
+
+def _provenance_payload(provenance) -> list[dict]:
+    """Serialize a material's advisory learned-item provenance for the review UI.
+
+    Each entry is a plain ``{kind, label, ref}`` dict (FR-MIND-5/-11): ``kind`` is
+    ``memory`` | ``playbook`` | ``recall``, ``label`` is the plain-language phrase the
+    UI shows, ``ref`` is the underlying item id (memory line / playbook name / recall
+    run-id). Descriptive only — never authorization.
+    """
+    return [
+        {"kind": p.kind, "label": p.label, "ref": p.ref}
+        for p in (provenance or ())
+    ]
 
 
 @router.post(

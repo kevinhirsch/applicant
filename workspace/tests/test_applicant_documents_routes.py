@@ -129,6 +129,33 @@ def test_application_documents_forwards_path_param(monkeypatch):
     assert _FakeEngine.last_call == ("documents_for_application", ("app-7",))
 
 
+def test_application_documents_passes_provenance_through(monkeypatch):
+    """The advisory "What I drew on" provenance (FR-MIND-5/-11, FR-OBS-2) rides
+    on each material and reaches the review UI unchanged through the proxy."""
+    payload = {
+        "application_id": "app-7",
+        "items": [
+            {
+                "id": "doc-1",
+                "type": "cover_letter",
+                "approved": False,
+                "content": "Dear hiring team,",
+                "provenance": [
+                    {"kind": "memory", "label": "your preference for concise bullets", "ref": "..."},
+                    {"kind": "playbook", "label": "the 'acme-tone' playbook", "ref": "acme-tone"},
+                ],
+            }
+        ],
+        "all_approved": False,
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/applications/app-7")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    prov = resp.json()["items"][0]["provenance"]
+    assert {p["kind"] for p in prov} == {"memory", "playbook"}
+
+
 def test_variant_library_forwards_campaign_and_passes_through(monkeypatch):
     payload = {"campaign_id": "camp-3", "variants": [{"variant_id": "v1", "is_root": True}]}
     _patch_engine(monkeypatch, result=payload)
