@@ -649,6 +649,11 @@ def build_container(settings: Settings | None = None) -> Container:
     # per-request copies receive it directly in their factories below.
     scoring_service._agent_memory = agent_memory
     material_service._agent_memory = agent_memory
+    # FR-MIND-1/3: let onboarding completion SEED the agent from the user's own profile/
+    # résumé — a bounded set of curated memory entries + recall index of their history —
+    # so the agent is not cold-start on day one. Optional/additive: with the in-memory
+    # default substrate it seeds into that store; absent a substrate it is a no-op.
+    onboarding_service.set_agent_memory(agent_memory)
     curation_ledger = CurationLedger()
     # FR-MIND-7/-13: a CHEAP, OPTIONAL LLM-backed summarizer from CURATION_MODEL. It
     # falls back to the trivial heuristic when no LLM is configured, so the hermetic

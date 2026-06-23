@@ -75,6 +75,10 @@ class OnboardingService:
         # CriteriaService and typed intake sections upsert into the attribute cloud.
         self._criteria_service = None
         self._attribute_cloud_service = None
+        # FR-MIND-1/3: the agent-memory substrate (curated memory + recall). Wired
+        # additively (set_* below) and OPTIONAL — when absent, completion seeds nothing
+        # and behavior is byte-identical (the hermetic lane / no-substrate boot).
+        self._agent_memory = None
 
     def set_criteria_service(self, criteria_service) -> None:
         """Wire the CriteriaService so CAMPAIGN_CRITERIA intake reaches the engine (#6)."""
@@ -83,6 +87,14 @@ class OnboardingService:
     def set_attribute_cloud_service(self, attribute_cloud_service) -> None:
         """Wire the AttributeCloudService so typed intake upserts attributes (#6)."""
         self._attribute_cloud_service = attribute_cloud_service
+
+    def set_agent_memory(self, agent_memory) -> None:
+        """Wire the agent-memory substrate so completion can seed memory/recall (FR-MIND-1/3).
+
+        ``agent_memory`` is the container's ``AgentMemory`` bundle (``.memory`` /
+        ``.recall``). Optional + additive: when unset, ``complete`` seeds nothing.
+        """
+        self._agent_memory = agent_memory
 
     # --- persistence -------------------------------------------------------
     def _key(self, campaign_id: str) -> str:
@@ -220,8 +232,60 @@ class OnboardingService:
         # ``onboarding_profiles`` row (not only the app-config blob) so onboarding
         # state lives in its own first-class table and survives as a queryable record.
         self._persist_profile(campaign_id, rec, complete=True)
+        # FR-MIND-1/3: remember the user from day one. Seed a bounded set of curated
+        # memory entries + index their history into recall, ONCE per campaign, from the
+        # user's OWN intake/résumé. Idempotent (guarded by ``memory_seeded`` in rec);
+        # no-op when no substrate is wired; never breaks the completion gate.
+        self._seed_agent_memory(campaign_id, rec)
         log.info("onboarding_complete", campaign_id=campaign_id)
         return self._to_state(campaign_id, rec)
+
+    def _seed_agent_memory(self, campaign_id: str, rec: dict[str, Any]) -> None:
+        """One-time, idempotent day-one seed of curated memory + recall (FR-MIND-1/3).
+
+        Derives a bounded, advisory-only seed from the user's REAL intake/résumé and
+        applies it through the existing memory store + recall index. Treated like the
+        rest of onboarding — the user's own first-party data — so non-integral entries
+        apply directly (matching the ``confirm=True`` bridge posture, FR-FB-3); the
+        derivation already drops any authority-claiming line (FR-MIND-11). Guarded so a
+        re-run of ``complete`` never duplicates. Best-effort: a hiccup never breaks the
+        completion gate, and an absent substrate is a clean no-op.
+        """
+        if self._agent_memory is None:
+            return
+        if rec.get("memory_seeded"):
+            return
+        try:
+            from applicant.application.services.onboarding_seed import build_seed_plan
+
+            plan = build_seed_plan(campaign_id, dict(rec.get("intake", {})))
+            memory = getattr(self._agent_memory, "memory", None)
+            recall = getattr(self._agent_memory, "recall", None)
+            seeded_mem = 0
+            if memory is not None:
+                for entry in plan.memory_entries:
+                    memory.add(entry)
+                    seeded_mem += 1
+            seeded_recall = 0
+            if recall is not None:
+                for run_id, text in plan.recall_items:
+                    try:
+                        recall.index(run_id, text, campaign_id)
+                        seeded_recall += 1
+                    except Exception:  # recall is advisory — degrade, never break
+                        log.debug("onboarding_seed_recall_failed", campaign_id=campaign_id)
+            # Mark seeded only after a successful pass so a transient failure can retry
+            # on a later ``complete`` rather than silently leaving the agent cold-start.
+            rec["memory_seeded"] = True
+            self._store(campaign_id, rec)
+            log.info(
+                "onboarding_memory_seeded",
+                campaign_id=campaign_id,
+                memory_entries=seeded_mem,
+                recall_items=seeded_recall,
+            )
+        except Exception:  # pragma: no cover - never let seeding break the gate
+            log.warning("onboarding_memory_seed_failed", campaign_id=campaign_id)
 
     def _persist_profile(self, campaign_id: str, rec: dict[str, Any], *, complete: bool) -> None:
         """Write the onboarding completion record to ``onboarding_profiles``."""
