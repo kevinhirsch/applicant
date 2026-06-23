@@ -182,3 +182,89 @@ class HttpWorkspaceClient:
     def local_models(self, *, owner: str | None = None) -> dict:
         """LANE C — list Cookbook-served local models."""
         return self._request("GET", "/local-models", owner=owner)
+
+    # --- FR-MIND agent-memory bridge (memory / skills / recall) ---------------
+    # These reach the front-door memory/skills substrate (workspace/services/memory/)
+    # over the same token-gated channel; the bridge adapters in
+    # ``adapters/memory/bridge.py`` call these and translate WorkspaceError -> empty.
+    def memory_snapshot(
+        self,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        campaign_id: str | None = None,
+    ) -> dict:
+        """FR-MIND-1 — curated-memory snapshot for ``owner`` (env + user split)."""
+        params = _drop_none({"scope": scope, "campaign_id": campaign_id})
+        return self._request("GET", _q("/memory/snapshot", params), owner=owner)
+
+    def memory_add(self, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-1 — append one curated memory line."""
+        return self._request("POST", "/memory/add", owner=owner, json=body)
+
+    def memory_replace(self, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-1 — replace the first entry matching ``find``."""
+        return self._request("POST", "/memory/replace", owner=owner, json=body)
+
+    def memory_remove(self, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-1 — remove entries matching ``find``."""
+        return self._request("POST", "/memory/remove", owner=owner, json=body)
+
+    def skills_list(
+        self,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        campaign_id: str | None = None,
+    ) -> dict:
+        """FR-MIND-2 — L0 skill metadata list (cheap; no bodies)."""
+        params = _drop_none({"scope": scope, "campaign_id": campaign_id})
+        return self._request("GET", _q("/skills", params), owner=owner)
+
+    def skill_load(self, name: str, *, owner: str | None = None) -> dict:
+        """FR-MIND-2 — L1 full skill body for ``name``."""
+        return self._request("GET", f"/skills/{name}", owner=owner)
+
+    def skill_create(self, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-2 — author a new skill."""
+        return self._request("POST", "/skills", owner=owner, json=body)
+
+    def skill_patch(self, name: str, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-2 — targeted update of named fields on a skill."""
+        return self._request("PATCH", f"/skills/{name}", owner=owner, json=body)
+
+    def skill_edit(self, name: str, *, owner: str | None = None, body: dict) -> dict:
+        """FR-MIND-2 — full rewrite of a skill."""
+        return self._request("PUT", f"/skills/{name}", owner=owner, json=body)
+
+    def skill_delete(self, name: str, *, owner: str | None = None) -> dict:
+        """FR-MIND-2 — delete a skill."""
+        return self._request("DELETE", f"/skills/{name}", owner=owner)
+
+    def recall(
+        self,
+        *,
+        query: str,
+        owner: str | None = None,
+        limit: int = 5,
+        scope: str | None = None,
+        campaign_id: str | None = None,
+    ) -> dict:
+        """FR-MIND-3 — full-text/semantic recall over past runs."""
+        params = _drop_none(
+            {"q": query, "limit": limit, "scope": scope, "campaign_id": campaign_id}
+        )
+        return self._request("GET", _q("/recall", params), owner=owner)
+
+
+def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _q(path: str, params: dict[str, Any]) -> str:
+    """Append a query string to ``path`` (values stringified; no new deps)."""
+    if not params:
+        return path
+    from urllib.parse import urlencode
+
+    return f"{path}?{urlencode(params)}"
