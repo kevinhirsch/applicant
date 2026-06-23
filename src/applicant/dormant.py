@@ -131,6 +131,19 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         live_phase=2,
         status=STATUS_LIVE,
     ),
+    DormantSurface(
+        key="desktop_assist",
+        surface_name="Desktop assist (live session)",
+        requirement_ids=("FR-CUA-9", "FR-CUA-12"),
+        wiring_notes=(
+            "ComputerUsePort + core guards (stop-boundary/hard-blocks/no-secrets) are "
+            "wired and the default no-op backend boots; the surface STAYS dormant until "
+            "the desktop driver + its display stack are baked into the sandbox image and "
+            "the health preflight passes (FR-CUA-9/12). Present-but-grayed until then."
+        ),
+        live_phase=6,
+        status=STATUS_DORMANT,
+    ),
 )
 
 
