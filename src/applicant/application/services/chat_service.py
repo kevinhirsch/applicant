@@ -95,6 +95,10 @@ _THROUGHPUT = re.compile(
 _INT = re.compile(r"(?<![\w.])(\d{1,4})(?![\w.])")
 #: "focus on remote roles" / "remote only" — refocus to remote work (criteria, FR-CRIT).
 _REMOTE = re.compile(r"\bremote(?:\s+(?:only|roles|jobs|work|positions))?\b", re.IGNORECASE)
+#: "hybrid" — partly-remote work mode (criteria, FR-CRIT).
+_HYBRID = re.compile(r"\bhybrid\b", re.IGNORECASE)
+#: "on-site" / "onsite" / "in office" / "in-person" — on-site work mode (criteria).
+_ONSITE = re.compile(r"\b(?:on[-\s]?site|in[-\s]?office|in[-\s]?person)\b", re.IGNORECASE)
 #: "raise the salary floor to N" / "minimum salary N" — set the salary floor (integral).
 _SALARY = re.compile(
     r"(?:salary|pay|comp(?:ensation)?|base)\b.*?(?:floor|min(?:imum)?|at least|above|over|to)?"
@@ -103,11 +107,30 @@ _SALARY = re.compile(
 )
 #: A trailing "k" on the salary number multiplies by 1000 ("120k" -> 120000).
 _SALARY_K = re.compile(r"(\d[\d,]*)\s*k\b", re.IGNORECASE)
+#: A bare dollar amount ("$150k", "$150,000", "150k+") — recognized as a salary floor
+#: even without the word "salary", because the user answering "what's your salary floor?"
+#: often replies with just a number. Requires a "$" or a trailing "k"/"+" so a plain
+#: integer (e.g. a throughput "5") is never mistaken for a salary.
+_BARE_SALARY = re.compile(
+    r"\$\s*(\d[\d,]*)\s*(k)?\b|\b(\d[\d,]*)\s*k\s*\+?", re.IGNORECASE
+)
 #: Verbs that mark a refocus/steer directive (so plain mention of "remote" in a
 #: question is not treated as a criteria edit).
 _REFOCUS_LEAD = re.compile(
     r"\b(?:focus|prioriti[sz]e|refocus|narrow|only|restrict|limit|target|search for|"
-    r"look for|switch to|raise|lower|set|bump|increase|decrease|require)\b",
+    r"look for|switch to|raise|lower|set|bump|increase|decrease|require|"
+    r"want|looking for|interested in|apply (?:to|for)|find me|i'?d like|i want)\b",
+    re.IGNORECASE,
+)
+#: "I want <X> roles/positions/jobs" — a free-text role/criteria statement the user
+#: describes in their own words. Captured as the criteria ``human_readable`` statement
+#: (which the apply-readiness gate accepts for BOTH target roles and key skills), so a
+#: chat-only setup can satisfy the gate without the typed forms. Non-integral on its own.
+_ROLE_STATEMENT = re.compile(
+    r"\b(?:want|looking for|interested in|find me|i'?d like|apply (?:to|for)|"
+    r"search for|look for|target)\b.{0,120}?\b(?:role|roles|position|positions|job|"
+    r"jobs|work|opening|openings|engineer|developer|manager|designer|analyst|"
+    r"scientist|lead|director|architect)\b",
     re.IGNORECASE,
 )
 
@@ -198,6 +221,7 @@ class ChatService:
         computer_use=None,
         desktop_operable=False,
         chat_tools="off",
+        onboarding=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -263,6 +287,15 @@ class ChatService:
         self._computer_use = computer_use
         self._desktop_operable = bool(desktop_operable)
         self._chat_tools = (chat_tools or "off").strip().lower()
+        # The single source of "what's still missing before I can apply": the onboarding
+        # service's ``apply_readiness(campaign_id)`` (the apply-readiness gate). OPTIONAL /
+        # defaulted — when wired, the assistant PROACTIVELY asks for the missing essentials
+        # (target roles, work mode, locations, salary floor, key skills, a résumé) and is
+        # explicit that it can't begin applying until they're all present. The "missing"
+        # set is read from here per turn (FR-MIND-10); it is never fabricated. Duck-typed
+        # to ``apply_readiness(campaign_id) -> ApplyReadiness``; absent ⇒ the chat behaves
+        # exactly as before (no essentials prompting, no gate copy).
+        self._onboarding = onboarding
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -276,6 +309,92 @@ class ChatService:
             if not crit.titles and not crit.human_readable:
                 gaps.append("target roles / search criteria")
         return gaps
+
+    # --- apply-readiness essentials (the hard gate on autonomous applying) ---
+    def _apply_readiness(self, campaign_id: CampaignId):
+        """The campaign's apply-readiness snapshot, or ``None`` when not wired.
+
+        Reads from the onboarding service's single source of truth (the apply-readiness
+        gate). Best-effort: any failure degrades to ``None`` so a turn is never broken
+        by the readiness read; an absent service is a clean no-op (behaves as before).
+        """
+        if self._onboarding is None:
+            return None
+        reader = getattr(self._onboarding, "apply_readiness", None)
+        if not callable(reader):
+            return None
+        try:
+            return reader(str(campaign_id))
+        except Exception:  # pragma: no cover - never let the gate read break a turn
+            return None
+
+    def _essentials_context(self, campaign_id: CampaignId) -> str:
+        """A bounded "apply-readiness" block so the assistant proactively gathers gaps.
+
+        Built fresh per turn from :meth:`_apply_readiness` (the real gate). When
+        essentials are still missing, instructs the assistant to ASK for the next one
+        or two (a focused, friendly nudge — never a wall of fields) and to be explicit
+        that it can't start applying yet. When everything is in place, tells it that it
+        can now begin. Truthful: the missing list is the gate's own, never invented;
+        returns "" (block omitted) when no readiness source is wired.
+        """
+        readiness = self._apply_readiness(campaign_id)
+        if readiness is None:
+            return ""
+        if readiness.ready:
+            return (
+                "Apply-readiness: every essential I need to start applying is now in "
+                "place. You may tell the user you can begin applying (discovery and "
+                "pre-fill); every final submit still waits for their approval. Do not "
+                "claim you have already submitted anything."
+            )
+        missing = list(readiness.missing)
+        # Ask for the next one or two only, so the prompt is a friendly nudge, not a form.
+        ask_for = ", ".join(missing[:2])
+        resume_note = ""
+        if any("résumé" in m or "resume" in m for m in missing):
+            resume_note = (
+                " A résumé can't be sent through chat — if that's still missing, point "
+                "the user to the profile/upload step to add it."
+            )
+        return (
+            "Apply-readiness: I can't start applying yet. The essentials still missing "
+            "are: " + ", ".join(missing) + ". Proactively and warmly ask the user for "
+            f"the next one or two ({ask_for}) in your reply — one focused question, not "
+            "a wall of fields. Be explicit that I can't begin applying until these are "
+            "in place, and never claim I have started." + resume_note
+        )
+
+    def _essentials_missing(self, campaign_id: CampaignId) -> list[str]:
+        """The still-missing apply essentials (plain labels), or [] when ready/unwired."""
+        readiness = self._apply_readiness(campaign_id)
+        if readiness is None or readiness.ready:
+            return []
+        return list(readiness.missing)
+
+    def _essentials_followup(self, campaign_id: CampaignId) -> str:
+        """A truthful one-liner after a capture: what's still missing, or "I can begin".
+
+        Recomputed from the apply-readiness gate AFTER an essential was applied, so it
+        reflects real state. Returns "" when no readiness source is wired (so a chat
+        without onboarding behaves exactly as before — just the bare confirmation).
+        """
+        readiness = self._apply_readiness(campaign_id)
+        if readiness is None:
+            return ""
+        if readiness.ready:
+            return (
+                "That's everything I need — I can start applying now. I'll hold every "
+                "final submit for your approval."
+            )
+        missing = list(readiness.missing)
+        resume_note = ""
+        if any("résumé" in m or "resume" in m for m in missing):
+            resume_note = " You can add your résumé from your profile."
+        return (
+            "Before I can start applying I still need: " + ", ".join(missing) + "."
+            + resume_note
+        )
 
     # --- proposal parsing (FR-FB-2/3) -------------------------------------
     def _parse_proposal(self, message: str) -> ProposedChange | None:
@@ -323,7 +442,8 @@ class ChatService:
     def _reply_text(
         self, campaign_id: CampaignId, message: str, gaps: list[str]
     ) -> str:
-        deterministic = self._deterministic_reply(gaps)
+        essentials = self._essentials_missing(campaign_id)
+        deterministic = self._deterministic_reply(gaps, essentials_missing=essentials)
         if self._llm is None or not getattr(self._llm, "is_configured", lambda: False)():
             return deterministic
         try:
@@ -334,6 +454,12 @@ class ChatService:
                 prompt += f"\n\n{profile_ctx}"
             if gaps:
                 prompt += f"\n\n(Known missing details: {', '.join(gaps)}.)"
+            # The apply-readiness gate: when essentials are missing, the assistant
+            # proactively gathers them; when complete, it may say it can begin. Read
+            # fresh per turn from the gate's own "what's missing" (never fabricated).
+            essentials_ctx = self._essentials_context(campaign_id)
+            if essentials_ctx:
+                prompt += f"\n\n{essentials_ctx}"
             # FR-AGENT-7 / FR-OBS-2: a bounded, freshly-assembled "current status" block
             # so "what have you been doing / are you doing / will you do next" answer from
             # real state. Read per reply (FR-MIND-10); omitted entirely when no sources
@@ -782,7 +908,27 @@ class ChatService:
         return "\n".join(lines)
 
     @staticmethod
-    def _deterministic_reply(gaps: list[str]) -> str:
+    def _deterministic_reply(
+        gaps: list[str], *, essentials_missing: list[str] | None = None
+    ) -> str:
+        # The apply-readiness essentials take precedence: while any is missing the agent
+        # cannot start applying, so it proactively names them and asks for the next one
+        # or two (truthful — these come straight from the gate). When all are present it
+        # says it can begin.
+        essentials_missing = essentials_missing or []
+        if essentials_missing:
+            ask_for = ", ".join(essentials_missing[:2])
+            line = (
+                "Before I can start applying, I still need: "
+                + ", ".join(essentials_missing)
+                + ". Could you tell me your " + ask_for + "?"
+            )
+            if any("résumé" in m or "resume" in m for m in essentials_missing):
+                line += (
+                    " You can add your résumé from your profile — I can't take a file "
+                    "through chat."
+                )
+            return line
         if gaps:
             return (
                 "Thanks. I still need a few details to apply confidently: "
@@ -808,6 +954,16 @@ class ChatService:
             parsed = self._parse_proposal(message)
             if parsed is not None:
                 proposals.append(self._maybe_autoapply(campaign_id, parsed))
+        # When a control turn actually APPLIED a criteria essential, append a truthful,
+        # gate-derived "here's what's still missing / I can begin" line (recomputed AFTER
+        # the apply, so it reflects the new state) — so the agent confirms what it
+        # captured and what remains. Read from the apply-readiness gate; never fabricated.
+        if control_reply and any(
+            c.kind == "criteria" and c.applied for c in controls
+        ):
+            follow_up = self._essentials_followup(campaign_id)
+            if follow_up:
+                control_reply = (control_reply + " " + follow_up).strip()
         reply = control_reply or self._reply_text(campaign_id, message, gaps)
         # FR-LEARN-3: fold a cheap chat taste signal so every input feeds learning.
         self._fold_chat_taste(campaign_id, message)
@@ -973,23 +1129,57 @@ class ChatService:
         if self._criteria is None:
             return out
 
-        # work mode: remote (non-integral -> applies directly)
+        # work mode (non-integral -> applies directly). Detect any combination the user
+        # named — remote / hybrid / on-site — so an answer like "remote or hybrid" is
+        # captured in one go and counts toward the apply-readiness work-mode essential.
+        modes: list[str] = []
         if _REMOTE.search(text):
+            modes.append("remote")
+        if _HYBRID.search(text):
+            modes.append("hybrid")
+        if _ONSITE.search(text):
+            modes.append("on-site")
+        if modes:
+            label = ", ".join(modes)
             try:
                 self._criteria.edit_criteria(
-                    campaign_id, changes={"work_modes": ["remote"]}
+                    campaign_id, changes={"work_modes": modes}
                 )
                 out.append((
                     ControlAction(
                         kind="criteria", applied=True,
-                        detail={"work_modes": ["remote"]},
+                        detail={"work_modes": modes},
                     ),
-                    "I've refocused the search on remote roles.",
+                    f"I've set your work mode to {label}.",
                 ))
             except Exception:
                 out.append((
                     ControlAction(kind="criteria", ok=False, applied=False),
-                    "I couldn't refocus the search on remote roles just now.",
+                    f"I couldn't set your work mode to {label} just now.",
+                ))
+
+        # target roles / search criteria described in the user's own words. Captured as
+        # the criteria ``human_readable`` statement, which the apply-readiness gate accepts
+        # for both target-roles AND key-skills — so a chat-only setup satisfies the gate
+        # without the typed forms. ``human_readable`` is NOT an integral criteria field, so
+        # this applies directly (no confirmation needed) — the user is stating their intent.
+        if _ROLE_STATEMENT.search(text):
+            statement = text.rstrip(".")
+            try:
+                self._criteria.edit_criteria(
+                    campaign_id, changes={"human_readable": statement}
+                )
+                out.append((
+                    ControlAction(
+                        kind="criteria", applied=True,
+                        detail={"human_readable": statement},
+                    ),
+                    "Got it. I've captured what you're looking for in roles.",
+                ))
+            except Exception:
+                out.append((
+                    ControlAction(kind="criteria", ok=False, applied=False),
+                    "I couldn't capture your target roles just now.",
                 ))
 
         # salary floor (integral -> needs confirmation, FR-FB-3)
@@ -1018,12 +1208,26 @@ class ChatService:
             except (TypeError, ValueError):  # pragma: no cover
                 return None
         m = _SALARY.search(text)
-        if m is None:
+        if m is not None:
+            try:
+                return int(m.group(1).replace(",", ""))
+            except (TypeError, ValueError):  # pragma: no cover
+                return None
+        # Bare amount answering "what's your floor?" — "$150k", "150k+", "$150,000".
+        bm = _BARE_SALARY.search(text)
+        if bm is None:
             return None
+        # group(1)+group(2) is the "$NNN[k]" branch; group(3) is the "NNNk[+]" branch.
+        dollars, dollar_k, kform = bm.group(1), bm.group(2), bm.group(3)
         try:
-            return int(m.group(1).replace(",", ""))
+            if dollars is not None:
+                val = int(dollars.replace(",", ""))
+                return val * 1000 if dollar_k else val
+            if kform is not None:
+                return int(kform.replace(",", "")) * 1000
         except (TypeError, ValueError):  # pragma: no cover
             return None
+        return None
 
     def confirm_criteria_refocus(
         self, campaign_id: CampaignId, *, changes: dict
