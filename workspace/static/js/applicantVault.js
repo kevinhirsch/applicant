@@ -70,7 +70,7 @@ function _ensureModalEl() {
   modal.id = 'applicant-vault-modal';
   modal.className = 'modal hidden';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:560px;width:96%;display:flex;flex-direction:column;max-height:90vh;">
+    <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:90vh;">
       <div class="modal-header">
         <h4>Saved sign-ins</h4>
         <button id="applicant-vault-close" class="modal-close" title="Close">×</button>

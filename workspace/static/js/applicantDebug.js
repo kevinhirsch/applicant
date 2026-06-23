@@ -97,7 +97,7 @@ function _ensureModalEl() {
   modal.id = 'applicant-debug-modal';
   modal.className = 'modal hidden';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:860px;width:97%;display:flex;flex-direction:column;max-height:88vh;">
+    <div class="modal-content" style="--window-w:860px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
         <h4>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>

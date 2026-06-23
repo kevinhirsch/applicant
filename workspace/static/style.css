@@ -4462,15 +4462,34 @@ body.bg-pattern-sparkles {
         transform: scale(1);
       }
     }
-    /* Modal styling */
+    /* Modal styling — MOBILE-FIRST. The base rules describe the bottom-sheet
+       overlay (anchored to the bottom, scrim on, sheet captures input); the
+       desktop floating-window overlay is layered on in @media (min-width:769px)
+       below. */
     .modal {
       position:fixed;
-      top:0; left:0; width:100%; height:100%;
-      background:none;
-      display:flex; align-items:center; justify-content:center;
+      top:0; left:0; width:100%;
+      display:flex; align-items:flex-end; justify-content:center;
       z-index:250;
+      /* Mobile bottom sheet: dim the app behind it and capture input. Anchor to
+         the DYNAMIC viewport — the base position:fixed; height:100% layout
+         viewport sits UNDER Firefox Android's bottom URL bar, so flex-end parked
+         the sheet (and its footer / Start button) beneath the bar. dvh excludes
+         the bar so the footer lands above it; extra safe-area pad for iOS. */
+      background:rgba(0,0,0,0.4);
       backdrop-filter:none;
-      pointer-events:none;
+      pointer-events:auto;
+      height:100dvh;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    /* The styled confirm dialog stays vertically centered (not a bottom sheet)
+       on mobile too, so re-center its overlay even though the base is flex-end.
+       (It sets its own scrim further down; this only fixes the anchor. The
+       styled-prompt and the onboarding wizard keep the base bottom anchor on
+       mobile, matching their prior behavior; the desktop .modal rule below
+       re-centers every overlay.) */
+    #styled-confirm-overlay {
+      align-items:center;
     }
     /* Cookbook always sits above Gallery so the "Serve a model in
        Cookbook…" flow (and any other "open Cookbook from inside another
@@ -4487,6 +4506,17 @@ body.bg-pattern-sparkles {
        window (e.g. Cookbook) hides the sidebar this naturally re-centers.
        Desktop only — on mobile these are full-screen sheets. */
     @media (min-width: 769px) {
+      /* Desktop floating-window overlay: vertically centered, no scrim, and
+         non-blocking (tool windows don't dim the app — only the scrim-ful
+         dialogs/wizard re-enable pointer-events on themselves). Overrides the
+         mobile-first bottom-sheet base above. */
+      .modal {
+        align-items:center;
+        background:none;
+        pointer-events:none;
+        height:100%;
+        padding-bottom:0;
+      }
       #calendar-modal,
       #gallery-modal,
       #tasks-modal,
@@ -4514,20 +4544,123 @@ body.bg-pattern-sparkles {
         transition: left 0.25s ease, width 0.25s ease;
       }
     }
+    /* MOBILE-FIRST base = the bottom sheet. Full-width, anchored to the bottom
+       by the overlay's flex-end, top corners rounded, sized to the sheet
+       tokens, grab-handle + swipe-to-dismiss (the close X is hidden, see the
+       ::before / .close-btn rules below). The desktop floating window is layered
+       on in @media (min-width:769px) right after this; existing per-window id
+       rules (tasks / onboarding / email / group-picker) still override the
+       desktop dims because they're more specific and nothing here is
+       !important. The mobile @media block just below re-asserts the core sheet
+       sizing with !important so stray inline desktop dimensions some windows
+       still set on .modal-content (e.g. style="max-width:640px" / inline height)
+       CANNOT leak onto mobile — mobile correctness holds standalone. */
     .modal-content {
       background:var(--panel);
-      border:1px solid var(--border);
-      width:min(var(--window-max-w), 92vw); max-height:var(--window-max-h); padding:var(--window-pad);
+      /* Sheet width/height: full-width, 85dvh with an 85vh fallback for
+         browsers without dvh. (Desktop overrides these via the kit tokens /
+         --window-w / --window-h below.) */
+      width:100%;
+      max-height:var(--window-sheet-max-h);
+      max-height:85vh;
+      height:auto;
+      padding:var(--window-pad);
+      padding-top:var(--window-sheet-pad-top);
       box-sizing:border-box; font-size:14px;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      letter-spacing: -0.015em;
       display:flex; flex-direction:column;
       position:relative;
-      overflow-y:auto;
-      border-radius:var(--window-radius);
-      box-shadow:var(--window-shadow);
+      /* Clip children to the rounded top corners — otherwise the sticky
+         modal-header's background paints a square rectangle past the radius. */
+      overflow:hidden;
+      border:none;
+      border-top:1px solid var(--border);
+      border-radius:var(--window-sheet-radius) var(--window-sheet-radius) 0 0;
       pointer-events:auto;
-      animation: modal-enter 0.25s ease-out both;
+      /* Lock to vertical touch only — no horizontal drag. */
+      touch-action:pan-y;
+      overscroll-behavior:contain;
+      animation: sheet-enter 0.2s ease-out forwards;
+    }
+    /* Grab-handle pill at the top of the sheet (large invisible touch target). */
+    .modal-content::before {
+      content:'';
+      display:block;
+      width:36px; height:4px;
+      background:var(--fg); opacity:0.25;
+      border-radius:2px;
+      margin:0 auto 4px;
+      flex-shrink:0;
+      padding:0;
+      /* Expand touch target without changing visual size. */
+      border-top:10px solid transparent;
+      border-bottom:6px solid transparent;
+      background-clip:padding-box;
+    }
+    /* Sheet dismiss is swipe-down, so hide the desktop close X on mobile. */
+    .modal-content .close-btn,
+    .modal-content .modal-close { display:none; }
+    /* Once the enter animation finishes, JS adds .sheet-ready so the inline
+       drag transform can take over; .modal-closing plays the slide-out. */
+    .modal-content.sheet-ready { animation:none; }
+    .modal-content.modal-closing { animation: sheet-exit 0.15s ease-in both; }
+    @keyframes sheet-enter {
+      from { transform: translateY(100%); }
+      to   { transform: translateY(0); }
+    }
+    @keyframes sheet-exit {
+      from { transform: translateY(0); }
+      to   { transform: translateY(100%); }
+    }
+    /* Mobile authority: pin the sheet's core sizing with !important so an inline
+       desktop width/height some windows set on .modal-content can't override it
+       and break the sheet. Scoped to the mobile query so it never reaches the
+       desktop floating window (and so desktop id rules keep working without
+       fighting an !important). The full-bleed per-window exceptions further down
+       (cookbook / tasks / memory / settings / library / gallery) override these
+       to 100dvh — they're equally !important but more specific, so they win. */
+    @media (max-width: 768px) {
+      .modal-content {
+        width:100% !important;
+        max-height:var(--window-sheet-max-h) !important;
+        max-height:85vh !important;
+        height:auto !important;
+        padding-top:var(--window-sheet-pad-top) !important;
+      }
+      /* Sheet dismiss is swipe-down — hide the close X on mobile. Authoritative
+         (!important) so a window's own #id/utility close rule can't out-rank it;
+         desktop re-shows the X at min-width:769px. Restores pre-refactor mobile
+         behavior (the inverted base rule lost its !important). */
+      .modal-content .close-btn,
+      .modal-content .modal-close { display:none !important; }
+    }
+    /* DESKTOP floating window — centered in the chat area (overlay offsets
+       above), a bounded card with shadow and all-corner radius. Per-window
+       desktop width/height come from --window-w / --window-h (a parallel agent
+       sets these on specific windows); they fall back to the kit defaults so
+       nothing regresses when absent. The mobile sheet ignores these vars (it is
+       always full-width). Nothing here is !important, so the existing
+       per-window id rules (e.g. #applicant-onboarding-overlay .modal-content,
+       .tasks-modal-content, the email docked/fullscreen states) still win on
+       desktop exactly as before. */
+    @media (min-width: 769px) {
+      .modal-content {
+        width: min(var(--window-w, var(--window-max-w)), 92vw);
+        max-height: var(--window-h, var(--window-max-h));
+        height: auto;
+        padding: var(--window-pad);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        letter-spacing: -0.015em;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--window-radius);
+        box-shadow: var(--window-shadow);
+        touch-action: auto;
+        animation: modal-enter 0.25s ease-out both;
+      }
+      /* No grab handle on desktop; the close X is the dismiss control. */
+      .modal-content::before { display: none; }
+      .modal-content .close-btn,
+      .modal-content .modal-close { display: inline-flex; }
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--window-header-gap);
@@ -5979,24 +6112,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-adv-clear-btn:hover { opacity: 1; }
 
 
-    /* Mobile: bottom sheet modals — slide up from bottom */
+    /* Mobile: bottom sheet modals — slide up from bottom.
+       (The mobile-first .modal overlay + .modal-content sheet base now live in
+       the un-queried base rules above; this block holds only the per-window
+       mobile exceptions and the centered-dialog / theme-popup overrides.) */
     @media (max-width: 768px) {
-      .modal {
-        align-items: flex-end;
-        background: rgba(0,0,0,0.4);
-        pointer-events: auto;
-        /* Anchor the bottom sheet to the DYNAMIC viewport. The base overlay is
-           position:fixed; height:100% = the layout viewport, whose bottom sits
-           UNDER Firefox Android's bottom URL bar — so flex-end parked the sheet
-           (and its footer / Start button) beneath the bar. dvh excludes the bar
-           so the footer lands above it. Extra safe-area pad for iOS home bar. */
-        height: 100dvh;
-        padding-bottom: env(safe-area-inset-bottom, 0px);
-      }
-      /* Confirm dialog stays centered, not a bottom sheet */
-      #styled-confirm-overlay {
-        align-items: center;
-      }
+      /* Confirm dialog stays centered, not a bottom sheet (the overlay is
+         re-centered in the base; this restyles the box itself). */
       .styled-confirm-box {
         border-radius: 12px !important;
         border: 1px solid var(--border) !important;
@@ -6036,7 +6158,11 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #theme-popup.modal-closing {
         animation: sheet-exit 0.15s ease-in both !important;
       }
-      .modal-content,
+      /* The bare .modal-content sheet now comes from the base + the mobile
+         authority guard above; these non-standard content classes (Brain /
+         Settings use .memory-modal-content / .settings-modal-content, not
+         .modal-content) and the compare overlay still need the same sheet
+         shape applied here. */
       .memory-modal-content,
       .settings-modal-content,
       #compare-model-overlay .modal-content {
@@ -6194,16 +6320,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #memory-modal .doclib-card.doclib-card-expanded .doclib-card-preview {
         min-height: 0 !important;
       }
-      /* Once enter animation finishes, clear it so inline transform works for dragging */
-      .modal-content.sheet-ready {
-        animation: none;
-      }
-      .modal-content.modal-closing {
-        animation: sheet-exit 0.15s ease-in both !important;
-      }
-      /* Grab handle — large touch target, visible pill */
-      #theme-popup::before,
-      .modal-content::before {
+      /* Grab handle on the theme popup (the .modal-content handle is now in the
+         base sheet rules above; the popup is its own element). */
+      #theme-popup::before {
         content: '';
         display: block;
         width: 36px; height: 4px;
@@ -6217,9 +6336,8 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         border-bottom: 6px solid transparent;
         background-clip: padding-box;
       }
-      /* Hide close X on mobile — swipe down to dismiss */
-      .modal-content .close-btn,
-      .modal-content .modal-close,
+      /* Hide close X on mobile — swipe down to dismiss. (.modal-content's close
+         X is hidden in the base sheet rules; this covers the theme popup.) */
       #theme-popup .close-btn {
         display: none !important;
       }
@@ -6231,27 +6349,17 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       [data-minimize] {
         display: none !important;
       }
-      /* Lock modals to vertical touch only, prevent horizontal dragging */
-      .modal-content {
-        touch-action: pan-y;
-        overscroll-behavior: contain;
-      }
+      /* Lock the scrollable inner regions to vertical touch only (the
+         .modal-content element itself gets this in the base sheet rules). */
       .modal-content .cookbook-body,
       .modal-content .modal-body {
         touch-action: pan-y;
         overscroll-behavior: contain;
       }
+      /* On touch the header is not a drag handle (swipe the sheet body). */
       .modal-header {
         cursor: default;
         touch-action: none;
-      }
-      @keyframes sheet-enter {
-        from { transform: translateY(100%); }
-        to   { transform: translateY(0); }
-      }
-      @keyframes sheet-exit {
-        from { transform: translateY(0); }
-        to   { transform: translateY(100%); }
       }
     }
 

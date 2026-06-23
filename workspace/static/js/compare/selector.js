@@ -68,7 +68,7 @@ async function showModelSelector() {
 
     const content = document.createElement('div');
     content.className = 'modal-content';
-    content.style.width = 'min(520px, 92vw)';
+    content.style.setProperty('--window-w', '520px');
 
     // ── Header (draggable) ──
     const header = document.createElement('div');

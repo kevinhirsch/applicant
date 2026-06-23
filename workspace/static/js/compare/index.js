@@ -1376,7 +1376,7 @@ async function showShufflePoolEditor() {
 
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.width = '420px';
+  content.style.setProperty('--window-w', '420px');
 
   const header = document.createElement('div');
   header.className = 'modal-header';
