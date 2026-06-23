@@ -170,6 +170,32 @@ class SetupService:
         # Which sandbox backend is selected — the sandbox-connection step only GATES
         # when the native proxmox-windows backend is selected (FR-OOBE, FR-SANDBOX-1).
         self._sandbox_backend = sandbox_backend
+        # Optional reporter for the required-to-apply readiness (the hard apply-gate):
+        # returns an ApplyReadiness snapshot (or None) computed from real campaign data
+        # so status() can surface the remaining essentials + a plain reason. Wired
+        # additively by the composition root; when unset, the readiness payload is
+        # omitted and behavior is unchanged.
+        self._apply_readiness_reporter: Callable[[], Any] | None = None
+
+    def set_apply_readiness_reporter(self, reporter: Callable[[], Any]) -> None:
+        """Inject the required-to-apply readiness reporter (composition root).
+
+        Additive + optional: when unset, ``apply_readiness()`` returns ``None`` and the
+        status payload omits the readiness block — behavior is unchanged. The reporter
+        returns an ``ApplyReadiness`` (``ready``/``missing``/``reason``) from real
+        campaign data; this service never fabricates the missing set.
+        """
+        self._apply_readiness_reporter = reporter
+
+    def apply_readiness(self) -> Any | None:
+        """Return the current required-to-apply readiness snapshot (or ``None``)."""
+        if self._apply_readiness_reporter is None:
+            return None
+        try:
+            return self._apply_readiness_reporter()
+        except Exception:  # pragma: no cover - a reporter hiccup never breaks status
+            log.warning("apply_readiness_report_failed")
+            return None
 
     @property
     def sandbox_backend(self) -> str:
@@ -623,14 +649,16 @@ class SetupService:
         return bool(self._load_tiers()) or self._llm_preconfigured
 
     def is_automated_work_allowed(self) -> bool:
-        """True only when automated work may begin (FR-UI-5, FR-ONBOARD-2).
+        """True only when automated applying may begin (FR-UI-5, FR-ONBOARD-2).
 
-        Requires ONLY: LLM configured (FR-UI-5) AND onboarding complete
-        (FR-ONBOARD-2). Notification channels and the automation sandbox are now
-        OPTIONAL — they moved into Settings, in-app notifications always work, and
-        the default local sandbox is always ready — so neither gates automated work.
-        ``channels_configured()`` and the sandbox-connection state remain available
-        and settable from Settings; they just no longer block work here.
+        Requires ONLY: LLM configured (FR-UI-5) AND the required-to-apply essentials
+        present (the apply-gate, wired through ``onboarding_gate``: target roles, work
+        mode, locations, salary floor, key skills, and a résumé). The onboarding FORM
+        requires virtually nothing — the agent gathers these over time — but applying
+        is HARD-GATED until the essentials exist, so the loop BLOCKS rather than
+        half-applies. Notification channels and the automation sandbox are OPTIONAL
+        (they moved into Settings; in-app notifications always work and the default
+        local sandbox is always ready), so neither gates work here.
         """
         return self.is_setup_gate_open() and self._onboarding_complete_now()
 

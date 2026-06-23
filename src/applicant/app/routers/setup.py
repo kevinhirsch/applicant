@@ -96,7 +96,7 @@ class EndpointModelIn(BaseModel):
 
 def _status_dict(svc) -> dict:
     s: WizardStatus = svc.status()
-    return {
+    out = {
         "llm_configured": s.llm_configured,
         "channels_configured": s.channels_configured,
         "fonts_ready": s.fonts_ready,
@@ -106,6 +106,15 @@ def _status_dict(svc) -> dict:
         "gate_open": svc.is_setup_gate_open(),
         "automated_work_allowed": svc.is_automated_work_allowed(),
     }
+    # Surface WHY applying is still blocked: the required-to-apply essentials that are
+    # still missing + a plain reason, computed from real campaign data. Lets the front
+    # door + chat show "I can't start applying until I know: ..." with progress.
+    readiness = svc.apply_readiness()
+    if readiness is not None:
+        out["apply_ready"] = readiness.ready
+        out["apply_missing"] = list(readiness.missing)
+        out["apply_blocked_reason"] = "" if readiness.ready else readiness.reason
+    return out
 
 
 @router.get("/status")

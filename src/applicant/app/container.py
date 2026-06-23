@@ -312,16 +312,34 @@ def build_container(settings: Settings | None = None) -> Container:
         resume_parser=resume_parser,
     )
 
-    # The onboarding gate (FR-ONBOARD-2) reports True once ANY campaign has a
-    # completed intake. Channels are modeled until Phase 1 wires real backends.
+    # The hard apply-gate: autonomous applying (discovery -> apply) is BLOCKED until
+    # the required-to-apply essentials exist for SOME campaign (target roles, work
+    # mode, locations, salary floor, key skills, and a résumé). The onboarding form
+    # itself requires virtually nothing — the agent gathers these over time (chat,
+    # résumé parse, learning) — so the gate keys on the readiness of the essentials,
+    # not on a fully-completed comprehensive intake. It BLOCKS, never half-applies.
     def _onboarding_gate() -> bool:
         for c in storage.campaigns.list():
-            if onboarding_service.is_complete(str(c.id)):
+            if onboarding_service.is_ready_to_apply(str(c.id)):
                 return True
         return False
 
+    # The matching "what's still missing" reporter for the gate: the FIRST campaign's
+    # readiness drives the setup-status payload + chat copy so the front door can say
+    # "I can't start applying until I know: ..." with the real remaining items. Reads
+    # real campaign data only; never fabricated.
+    def _apply_readiness():
+        campaigns = list(storage.campaigns.list())
+        for c in campaigns:
+            r = onboarding_service.apply_readiness(str(c.id))
+            if r.ready:
+                return r
+        if campaigns:
+            return onboarding_service.apply_readiness(str(campaigns[0].id))
+        return None
+
     # Setup service so the persisted ladder can configure the LLM adapter; its
-    # automated-work gate now requires ONLY the LLM + onboarding gates (channels
+    # automated-work gate now requires ONLY the LLM + apply-readiness gates (channels
     # and the sandbox moved into Settings and are optional). The channels gate is
     # still wired so the status payload reports channel state for the Settings UI;
     # it reads the wizard-persisted channel config OR env defaults.
@@ -332,6 +350,7 @@ def build_container(settings: Settings | None = None) -> Container:
         onboarding_gate=_onboarding_gate,
         sandbox_backend=settings.sandbox_backend,
     )
+    setup_service.set_apply_readiness_reporter(_apply_readiness)
 
     def _channels_gate() -> bool:
         return setup_service.channels_configured() or bool(
