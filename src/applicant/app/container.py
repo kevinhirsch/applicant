@@ -577,6 +577,11 @@ def build_container(settings: Settings | None = None) -> Container:
     )
 
     agent_memory = build_agent_memory(settings, workspace)
+    # FR-MIND-5: give the already-built chatbot the advisory curated-memory + saved-
+    # playbook context (the main ChatService is constructed above, before the substrate;
+    # wire it additively so reasoning can consult memory without a construction cycle).
+    # The per-request ChatService gets it directly in the request factory below.
+    chat_service._agent_memory = agent_memory
     curation_ledger = CurationLedger()
     curation_service = CurationService(
         memory_store=agent_memory.memory,
@@ -740,6 +745,9 @@ def build_container(settings: Settings | None = None) -> Container:
             learning=rs_ls,
             storage=req_storage,
             workspace=workspace,  # Stage 2.5 lane A (see main ChatService build)
+            # FR-MIND-5: advisory curated-memory + saved-playbook context. Shares the
+            # process-lived adapter trio; read fresh per call (FR-MIND-10).
+            agent_memory=agent_memory,
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         rs_submission = SubmissionService(
@@ -814,6 +822,11 @@ def build_container(settings: Settings | None = None) -> Container:
         tick_services_factory=tick_services_factory,
         setup_service=setup_service,
         interval_seconds=settings.scheduler_interval_seconds,
+        # FR-MIND-7: drive the closed-loop curation nudge on the configured cadence
+        # (default ``off`` => dormant). The shared curation_service is the fallback; the
+        # per-tick factory supplies the isolated-session one sharing the SAME ledger.
+        curation_service=curation_service,
+        curation_schedule=settings.curation_schedule,
     )
 
     return Container(

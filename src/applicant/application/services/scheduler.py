@@ -43,12 +43,32 @@ class Scheduler:
         tick_services_factory=None,
         setup_service=None,
         interval_seconds: float | None = None,
+        curation_service=None,
+        curation_schedule: str = "off",
+        run_summaries_provider=None,
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
         self._digest = digest_service
         self._notifications = notification_service
         self._final_approval = final_approval_service
+        # FR-MIND-7: the closed-loop curation nudge. ``curation_service`` is the
+        # process-lived curator whose cross-tick dedupe lives in the injected ledger,
+        # NOT on the instance (FR-MIND-10); the per-tick service from the factory is
+        # preferred when present. ``curation_schedule`` gates the cadence: ``off``/
+        # empty (default) disables it entirely, anything else opts in to a
+        # once-per-UTC-day nudge keyed like the daily digest, so the substrate ships
+        # dormant (FR-MIND-12) until configured. ``run_summaries_provider(storage,
+        # now)`` supplies the recent run summaries to review; ``None`` => no summaries
+        # (a fast no-op that still marks the day so re-ticks stay idempotent). The
+        # nudge is gated on the automated-work gate exactly like new work.
+        self._curation = curation_service
+        self._curation_schedule = (curation_schedule or "off").strip().lower()
+        self._run_summaries_provider = run_summaries_provider
+        # (UTC date) -> True. A once-per-day guard so re-running a tick the same day
+        # never re-runs the nudge. The proposal ledger is content-hashed too, so even
+        # a double-run could not duplicate proposals (defense in depth, FR-MIND-7).
+        self._curation_days: dict[date, bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -103,6 +123,12 @@ class Scheduler:
         loop = services["agent_loop"] if services else self._loop
         storage = services["storage"] if services else self._storage
         session = services.get("_session") if services else None
+        # Prefer the per-tick curation service (shares the SAME process-lived ledger +
+        # memory adapters as the main one, FR-MIND-10) so the nudge runs against the
+        # isolated per-tick session/storage; fall back to the shared service otherwise.
+        curation = (
+            services.get("curation_service") if services else None
+        ) or self._curation
 
         ticked: list[str] = []
         try:
@@ -126,6 +152,11 @@ class Scheduler:
                     )
                 finally:
                     lock.release()
+            # (b) run the closed-loop curation nudge once per UTC day (FR-MIND-7),
+            #     gated + idempotent, while the per-tick storage/session is still open
+            #     (its summaries provider may read recent runs from it). Runs inside the
+            #     same try so the session is always closed in the finally below.
+            curated = self._run_curation(curation, storage, now)
         finally:
             self._tick_running = False
             if session is not None:
@@ -142,6 +173,7 @@ class Scheduler:
             "scheduler_tick",
             campaigns=len(ticked),
             ladder_fired=len(fired),
+            curation_reviewed=curated.get("reviewed", 0),
         )
         return {
             "ticked": ticked,
@@ -149,6 +181,9 @@ class Scheduler:
             # tick (IDEM-1), so the scheduler reports none of its own.
             "daily_digests": [],
             "ladder_fired": fired,
+            # FR-MIND-7 / FR-OBS-2: a small introspectable result for the curation
+            # nudge — ``ran`` False (with a reason) when disabled / gated / already-run.
+            "curation": curated,
         }
 
     def state(self, now: datetime | None = None) -> dict:
@@ -271,6 +306,56 @@ class Scheduler:
         ):
             fired.extend(self._final_approval.escalate(now))
         return fired
+
+    # --- closed-loop curation nudge (FR-MIND-7) ---------------------------
+    def _run_curation(self, curation, storage, now: datetime) -> dict:
+        """Run the curation nudge at most once per UTC day, gated + idempotent.
+
+        Fast no-op when (a) disabled (``CURATION_SCHEDULE`` off / no service), (b) the
+        automated-work gate is closed, or (c) the nudge already ran today. Otherwise it
+        asks the (optional) summaries provider for recent runs and proposes
+        memory/skill updates; the curator stages them for review (FR-MIND-9) and dedupes
+        via its process-lived ledger (FR-MIND-10), so this is safe to re-enter and never
+        duplicates proposals (FR-MIND-7). Memory/skills proposed are advisory only and
+        confer no authority (FR-MIND-11).
+        """
+        if curation is None or self._curation_schedule in ("", "off"):
+            return {"ran": False, "reason": "disabled"}
+        if not self._automated_work_allowed():
+            return {"ran": False, "reason": "gated"}
+        today = now.date()
+        self._prune_curation_days(today)
+        if self._curation_days.get(today):
+            return {"ran": False, "reason": "already_ran_today"}
+        # Mark BEFORE running so a crash mid-nudge doesn't loop it the same day; the
+        # content-hashed ledger keeps the actual proposals idempotent regardless.
+        self._curation_days[today] = True
+        summaries: tuple = ()
+        if self._run_summaries_provider is not None:
+            try:
+                summaries = tuple(self._run_summaries_provider(storage, now) or ())
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("curation_summaries_failed", error=str(exc))
+                summaries = ()
+        try:
+            result = curation.run_curation_tick(summaries)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("curation_nudge_failed", error=str(exc))
+            return {"ran": False, "reason": "error"}
+        return {
+            "ran": True,
+            "reviewed": int(getattr(result, "reviewed", 0)),
+            "staged": int(getattr(result, "staged", 0)),
+            "auto_applied": int(getattr(result, "auto_applied", 0)),
+        }
+
+    def _prune_curation_days(self, today: date) -> None:
+        """Keep the once-per-day curation guard from growing over 24/7 operation."""
+        if today in self._curation_days and len(self._curation_days) == 1:
+            return
+        self._curation_days = {
+            d: v for d, v in self._curation_days.items() if d == today
+        }
 
     def _active_campaigns(self, storage=None):
         store = storage or self._storage
