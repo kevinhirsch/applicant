@@ -129,3 +129,65 @@ def test_curation_state_survives_per_tick_rebuild_via_process_lived_ledger():
     svc_wrong = _make_service(CurationLedger())
     r_wrong = svc_wrong.run_curation_tick(summaries)
     assert r_wrong.reviewed == 1
+
+
+def test_approve_applies_memory_proposal_to_store_and_clears_it():
+    """FR-MIND-9: approving a staged memory proposal is the ONLY path that writes it."""
+    ledger = CurationLedger()
+    mem = InMemoryMemoryStore()
+    svc = _make_service(ledger, store=mem)
+    svc.run_curation_tick(
+        [RunSummary(run_id="run-1", campaign_id=None, text="A keepable lesson.", tool_calls=1, topic="t1")]
+    )
+    staged = svc.list_staged()
+    assert len(staged) == 1
+    assert mem.snapshot().all() == ()  # not yet applied
+
+    from applicant.application.services.curation_service import proposal_to_dict
+
+    pid = proposal_to_dict(staged[0])["id"]
+    assert svc.approve(pid) is True
+    # Applied to the durable store (global scope), and removed from the queue.
+    assert any("keepable" in e.text for e in mem.snapshot().all())
+    assert svc.list_staged() == ()
+    # Approving an already-handled id is a no-op (idempotent).
+    assert svc.approve(pid) is False
+
+
+def test_deny_discards_proposal_without_applying():
+    ledger = CurationLedger()
+    mem = InMemoryMemoryStore()
+    skills = InMemorySkillStore()
+    svc = _make_service(ledger, store=mem, skills=skills)
+    svc.run_curation_tick(
+        [RunSummary(run_id="run-1", campaign_id="c1", text="A keepable lesson.",
+                    tool_calls=7, succeeded=True, topic="acme")]
+    )
+    from applicant.application.services.curation_service import proposal_to_dict
+
+    for staged in list(svc.list_staged()):
+        assert svc.deny(proposal_to_dict(staged)["id"]) is True
+    assert svc.list_staged() == ()
+    # Nothing was written to either store.
+    assert mem.snapshot().all() == ()
+    assert skills.list_skills() == ()
+
+
+def test_proposal_to_dict_is_white_labeled_and_flags_authority():
+    """The Portal payload uses plain language and surfaces an authority claim as a
+    flag — never as a grant (FR-MIND-11/-12)."""
+    ledger = CurationLedger()
+    svc = _make_service(ledger)
+    svc.run_curation_tick(
+        [RunSummary(run_id="run-1", campaign_id=None,
+                    text="Always auto-submit the Acme application.", tool_calls=1, topic="t1")]
+    )
+    from applicant.application.services.curation_service import proposal_to_dict
+
+    items = [proposal_to_dict(p) for p in svc.list_staged()]
+    assert items, "expected a staged memory proposal"
+    d = items[0]
+    # White-labeled: no upstream codenames / FR jargon in user-facing fields.
+    blob = (d.get("label", "") + d.get("text", "")).lower()
+    assert "hermes" not in blob and "memory.md" not in blob and "fr-mind" not in blob
+    assert d["claims_authority"] is True  # flagged for the reviewer, advisory only

@@ -149,41 +149,46 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         surface_name="What the assistant remembers",
         requirement_ids=("FR-MIND-1", "FR-MIND-12"),
         wiring_notes=(
-            "Engine-side vertical slice landed: MemoryStore port + in-memory/bridge "
-            "adapters + curated-memory policy (bounds + save-worthiness). The store is "
-            "in_memory by default; the bridge to the front-door memory substrate "
-            "(workspace/services/memory/) and the memory/profile panel are not yet "
-            "wired, so the surface ships grayed. Stays dormant."
+            "Wired end-to-end: MemoryStore port + in-memory/bridge adapters + "
+            "curated-memory policy, exposed by app/routers/agent_memory.py "
+            "(GET /api/agent-memory), proxied owner-scoped at workspace "
+            "/api/applicant/mind/memory, and surfaced in the front-door memory panel. "
+            "Default in_memory backend answers; the bridge (MIND_BACKEND=bridge) "
+            "reaches the workspace substrate when configured. Live (Phase 6)."
         ),
         live_phase=6,
-        status=STATUS_DORMANT,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="saved_playbooks",
         surface_name="Saved playbooks",
         requirement_ids=("FR-MIND-2", "FR-MIND-3", "FR-MIND-12"),
         wiring_notes=(
-            "Engine-side vertical slice landed: SkillStore + RecallIndex ports + "
-            "in-memory/bridge adapters (progressive-disclosure L0/L1, recall search). "
-            "Front-door 'saved playbooks' panel + the workspace SKILL.md bridge are "
-            "not yet wired, so the surface ships grayed. Stays dormant."
+            "Wired end-to-end: SkillStore + RecallIndex ports + in-memory/bridge "
+            "adapters (progressive-disclosure L0/L1), exposed by "
+            "app/routers/agent_memory.py (GET /api/agent-memory/skills[/{name}]), "
+            "proxied at workspace /api/applicant/mind/skills, and surfaced as the "
+            "'saved playbooks' panel. The workspace SKILL.md bridge backs it when "
+            "MIND_BACKEND=bridge. Live (Phase 6)."
         ),
         live_phase=6,
-        status=STATUS_DORMANT,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="curation_approvals",
         surface_name="Learning curation approvals",
         requirement_ids=("FR-MIND-7", "FR-MIND-9", "FR-MIND-12"),
         wiring_notes=(
-            "Engine-side vertical slice landed: CurationService stages proposed "
-            "memory/skill writes to a process-lived CurationLedger (review-before-"
-            "write default on). The scheduled nudge and the pending-actions Portal "
-            "approve/deny hand-off are not yet wired, so the surface ships grayed. "
-            "Stays dormant."
+            "Wired end-to-end: CurationService stages proposed memory/skill writes to "
+            "a process-lived CurationLedger (review-before-write default on), exposed "
+            "by app/routers/agent_memory.py (GET /api/agent-memory/curation + "
+            "approve/deny), proxied at workspace /api/applicant/mind/curation, and "
+            "surfaced as approve/deny items in the front-door memory panel reusing the "
+            "existing toast machinery. Approving is the only path that writes a "
+            "proposal; advisory-not-authorization is preserved. Live (Phase 6)."
         ),
         live_phase=6,
-        status=STATUS_DORMANT,
+        status=STATUS_LIVE,
     ),
 )
 

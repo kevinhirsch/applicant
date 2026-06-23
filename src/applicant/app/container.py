@@ -12,7 +12,7 @@ needed) and switches to DBOS when ``ORCHESTRATOR_BACKEND=dbos``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from applicant.adapters.credentials.pg_credential_store import (
@@ -140,6 +140,12 @@ class Container:
     agent_memory: Any = None
     curation_service: Any = None
     curation_ledger: Any = None
+    # FR-CUA-4: per-session, opt-in, revocable desktop-assist authorizations. A
+    # PROCESS-LIVED set of live-session ids the user has opted in for the duration of
+    # the open takeover. Lives on the container (built once at startup), NOT on the
+    # per-tick AgentLoop, so an opt-in survives the scheduler rebuilding the loop each
+    # tick — and is dropped when the session ends, never leaking across applications.
+    desktop_assist_sessions: set = field(default_factory=set)
     # CONC-REQ-1: builds a PER-REQUEST SqlAlchemyStorage(session_factory()) + the
     # storage-bound services for it, so concurrent sync requests (run in FastAPI's
     # threadpool) never interleave on one non-thread-safe Session. ``None`` when no DB

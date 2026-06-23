@@ -194,6 +194,51 @@ class CurationService:
 
             return self._dispatch(reviewed, mem_props, skill_props)
 
+    # --- staged-proposal review (FR-MIND-9) -------------------------------
+    def list_staged(self) -> tuple[object, ...]:
+        """Return the proposals awaiting human approval (a frozen tuple snapshot).
+
+        Read-only: callers must not mutate the ledger directly; use
+        :meth:`approve` / :meth:`deny` so the apply happens through the policy.
+        """
+        with self._ledger.lock:
+            return tuple(self._ledger.staged)
+
+    def _pop_staged(self, proposal_id: str) -> object | None:
+        with self._ledger.lock:
+            for i, p in enumerate(self._ledger.staged):
+                if _proposal_id(p) == proposal_id:
+                    return self._ledger.staged.pop(i)
+        return None
+
+    def approve(self, proposal_id: str) -> bool:
+        """Approve a staged proposal — apply it to the durable store (FR-MIND-9).
+
+        This is the **only** path that writes an agent-proposed memory/skill: it
+        runs after a human approves it in the front door. Advisory-not-authorization
+        (FR-MIND-11) is untouched — the applied content is context only; the safety
+        boundary keeps deriving its own ground truth regardless of what it says.
+        """
+        p = self._pop_staged(proposal_id)
+        if p is None:
+            return False
+        if isinstance(p, MemoryProposal):
+            self._memory.add(p.entry)
+            return True
+        if isinstance(p, SkillProposal):
+            if p.is_improvement:
+                # Re-author/rewrite the existing skill; create if it is gone.
+                if self._skills.edit(p.skill.name, p.skill) is None:
+                    self._skills.create(p.skill)
+            else:
+                self._skills.create(p.skill)
+            return True
+        return False
+
+    def deny(self, proposal_id: str) -> bool:
+        """Deny a staged proposal — discard it without applying (FR-MIND-9)."""
+        return self._pop_staged(proposal_id) is not None
+
     # --- internals --------------------------------------------------------
     def _is_skill_worthy(self, s: RunSummary) -> bool:
         """FR-MIND-2 heuristic: a successful, non-trivial run is skill-worthy."""
@@ -245,6 +290,61 @@ class CurationService:
             auto_applied=auto_applied,
             staged=staged,
         )
+
+
+def _proposal_id(p: object) -> str:
+    """A stable id for a staged proposal (content-hash; no DB row).
+
+    The Portal/UI references a proposal by this id to approve/deny it. It is derived
+    from the proposal content so the same proposal maps to the same id across reads
+    (the ledger dedupes by run id, so a proposal does not recur).
+    """
+    import hashlib
+
+    if isinstance(p, MemoryProposal):
+        basis = f"memory|{p.source_run_id}|{p.entry.kind}|{p.entry.text}"
+    elif isinstance(p, SkillProposal):
+        basis = f"skill|{p.source_run_id}|{p.skill.name}|{p.skill.version}"
+    else:  # pragma: no cover - defensive
+        basis = repr(p)
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def proposal_to_dict(p: object) -> dict:
+    """Render a staged proposal for the front door (white-labeled, plain language).
+
+    No upstream codenames or requirement jargon leak here — just "remembered note"
+    and "saved playbook" framing. ``claims_authority`` is surfaced so a reviewer
+    sees a flagged claim, but it is advisory only (FR-MIND-11).
+    """
+    if isinstance(p, MemoryProposal):
+        return {
+            "id": _proposal_id(p),
+            "type": "memory",
+            "label": "Something to remember",
+            "text": p.entry.text,
+            "kind": p.entry.kind,
+            "scope": p.entry.scope,
+            "campaign_id": p.entry.campaign_id,
+            "source_run_id": p.source_run_id,
+            "claims_authority": bool(p.claims_authority),
+        }
+    if isinstance(p, SkillProposal):
+        return {
+            "id": _proposal_id(p),
+            "type": "skill",
+            "label": "Improve a saved playbook" if p.is_improvement else "Save a new playbook",
+            "name": p.skill.name,
+            "description": p.skill.description,
+            "when_to_use": p.skill.when_to_use,
+            "procedure": list(p.skill.procedure),
+            "scope": p.skill.scope,
+            "campaign_id": p.skill.campaign_id,
+            "is_improvement": bool(p.is_improvement),
+            "source_run_id": p.source_run_id,
+            "claims_authority": bool(p.claims_authority),
+        }
+    return {"id": _proposal_id(p), "type": "unknown"}  # pragma: no cover - defensive
 
 
 def _slug(text: str) -> str:

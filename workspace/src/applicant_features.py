@@ -90,6 +90,21 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    # FR-MIND — the agent-learning substrate surfaced in the front door: "what the
+    # assistant remembers", "saved playbooks", and the learning-curation approvals.
+    # Reachable via the workspace /api/applicant/mind/* proxy over the engine's
+    # /api/agent-memory router (gated behind the engine LLM gate), so it activates
+    # once a model is connected. Shares the memory rail with the attribute/learning
+    # section — both light up under the same nav.
+    {
+        "key": "mind",
+        "lane": "B",
+        "title": "What the assistant remembers / saved playbooks",
+        "nav_ids": ["rail-memory", "tool-memory-btn"],
+        "dormant_keys": ["assistant_memory", "saved_playbooks", "curation_approvals"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
     {
         "key": "email",
         "lane": "D",
@@ -114,6 +129,22 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "present_but_disabled": False,
     },
     # end CRIT-ops
+    # Desktop help (FR-CUA) — the opt-in "let the assistant help on the desktop"
+    # control lives inside the live-session surface + the Automation settings card.
+    # It STAYS locked until the desktop helper is baked into the sandbox image and
+    # the engine flips the ``desktop_assist`` dormant surface to live, so the feature
+    # layer greys it off that key exactly like the other dormant surfaces. The
+    # controls have no standalone nav entry (they're embedded), so nav_ids is empty;
+    # the gate predicate is the live-session gate (a model configured).
+    {
+        "key": "desktop_assist",
+        "lane": None,
+        "title": "Desktop help (live session)",
+        "nav_ids": [],
+        "dormant_keys": ["desktop_assist"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
     # Compare has NO Applicant engine backing. Per the brief it ships
     # present-but-DISABLED: visible in the nav, greyed, never wired.
     {

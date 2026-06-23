@@ -67,6 +67,21 @@ class _FakeEngine:
     async def stealth_caveat(self):
         return await self._dispatch("stealth_caveat")
 
+    async def desktop_assist_health(self):
+        return await self._dispatch("desktop_assist_health")
+
+    async def desktop_assist_state(self, session_id):
+        return await self._dispatch("desktop_assist_state", session_id)
+
+    async def desktop_assist_enable(self, session_id):
+        return await self._dispatch("desktop_assist_enable", session_id)
+
+    async def desktop_assist_disable(self, session_id):
+        return await self._dispatch("desktop_assist_disable", session_id)
+
+    async def desktop_assist_action(self, session_id, body):
+        return await self._dispatch("desktop_assist_action", session_id, body)
+
 
 def _make_client(*, authed: bool = True):
     app = FastAPI()
@@ -282,3 +297,120 @@ def test_reads_allowed_without_write_privilege(monkeypatch):
     client = _make_priv_client({"can_use_documents": False})
     assert client.get("/api/applicant/remote/sessions").status_code == 200
     assert client.get("/api/applicant/remote/sessions/s1/view-url").status_code == 200
+
+
+# ── desktop assist (FR-CUA): opt-in, per-session, ships DORMANT ──────────────
+
+
+def test_desktop_health_passes_through(monkeypatch):
+    _patch_engine(monkeypatch, result={"available": False, "dormant": True, "ok": True})
+    resp = _make_client().get("/api/applicant/remote/desktop/health")
+    assert resp.status_code == 200
+    assert resp.json()["available"] is False
+    assert resp.json()["dormant"] is True
+    assert _FakeEngine.last_call == ("desktop_assist_health", ())
+
+
+def test_desktop_health_degrades_to_disabled_when_engine_down(monkeypatch):
+    # Engine unreachable -> the surface must degrade to an HONEST disabled state
+    # (200 with available=False), not a 502 that would break the live-session UI.
+    _patch_engine(monkeypatch, error=EngineError("down", is_timeout=True))
+    resp = _make_client().get("/api/applicant/remote/desktop/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert body["dormant"] is True
+
+
+def test_desktop_state_passes_through(monkeypatch):
+    _patch_engine(
+        monkeypatch,
+        result={"session_id": "sbx-1", "enabled": False, "available": False, "dormant": True},
+    )
+    resp = _make_client().get("/api/applicant/remote/sessions/sbx-1/desktop")
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+    assert _FakeEngine.last_call == ("desktop_assist_state", ("sbx-1",))
+
+
+def test_desktop_state_degrades_when_engine_down(monkeypatch):
+    _patch_engine(monkeypatch, error=EngineError("down", is_timeout=True))
+    resp = _make_client().get("/api/applicant/remote/sessions/sbx-1/desktop")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "session_id": "sbx-1",
+        "enabled": False,
+        "available": False,
+        "dormant": True,
+    }
+
+
+def test_desktop_enable_maps_to_engine_enable(monkeypatch):
+    _patch_engine(monkeypatch, result={"session_id": "sbx-1", "enabled": True})
+    resp = _make_client().post("/api/applicant/remote/sessions/sbx-1/desktop/enable")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("desktop_assist_enable", ("sbx-1",))
+
+
+def test_desktop_enable_dormant_409_passes_through(monkeypatch):
+    # While dormant the engine refuses to enable (409); the UI must see the 409.
+    err = EngineError("dormant", status=409, detail="not available yet")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post("/api/applicant/remote/sessions/sbx-1/desktop/enable")
+    assert resp.status_code == 409
+    assert resp.json()["engine_status"] == 409
+
+
+def test_desktop_disable_maps_to_engine_disable(monkeypatch):
+    _patch_engine(monkeypatch, result={"session_id": "sbx-1", "enabled": False})
+    resp = _make_client().post("/api/applicant/remote/sessions/sbx-1/desktop/disable")
+    assert resp.status_code == 200
+    assert _FakeEngine.last_call == ("desktop_assist_disable", ("sbx-1",))
+
+
+def test_desktop_action_forwards_body(monkeypatch):
+    _patch_engine(monkeypatch, result={"action": "capture", "mode": "som"})
+    resp = _make_client().post(
+        "/api/applicant/remote/sessions/sbx-1/desktop/action",
+        json={"action": "capture", "mode": "som"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "desktop_assist_action"
+    assert args[0] == "sbx-1"
+    assert args[1]["action"] == "capture"
+
+
+def test_desktop_action_boundary_403_passes_through(monkeypatch):
+    # A desktop action mapped to the stop-boundary (e.g. a final-submit click) is
+    # refused by the engine core (403); the proxy must NEVER bypass it.
+    err = EngineError("boundary", status=403, detail="final submit not authorized")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post(
+        "/api/applicant/remote/sessions/sbx-1/desktop/action",
+        json={"action": "click", "element_token": "e1", "intent": "final_submit"},
+    )
+    assert resp.status_code == 403
+
+
+def test_desktop_mutations_require_privilege(monkeypatch):
+    def _boom(*a, **k):  # pragma: no cover - must not run when forbidden
+        raise AssertionError("engine must not be called when privilege denied")
+
+    monkeypatch.setattr(remote_routes, "ApplicantEngineClient", _boom)
+    client = _make_priv_client({"can_use_documents": False})
+    writes = [
+        ("POST", "/api/applicant/remote/sessions/s1/desktop/enable", None),
+        ("POST", "/api/applicant/remote/sessions/s1/desktop/disable", None),
+        ("POST", "/api/applicant/remote/sessions/s1/desktop/action", {"action": "capture"}),
+    ]
+    for method, path, body in writes:
+        resp = client.request(method, path, json=body)
+        assert resp.status_code == 403, f"{method} {path} -> {resp.status_code}"
+
+
+def test_desktop_reads_allowed_without_write_privilege(monkeypatch):
+    _patch_engine(monkeypatch, result={"available": False, "dormant": True})
+    client = _make_priv_client({"can_use_documents": False})
+    assert client.get("/api/applicant/remote/desktop/health").status_code == 200
+    assert client.get("/api/applicant/remote/sessions/s1/desktop").status_code == 200

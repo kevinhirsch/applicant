@@ -218,6 +218,25 @@ def get_learning_service(
     return _resolved(services, container, "learning_service")
 
 
+def get_agent_memory(container: Container = Depends(get_container)):
+    """The curated-memory / skills / recall adapter trio (FR-MIND-1/2/3).
+
+    Process-lived (the stores hold the durable substrate or the bridge client), so
+    it is the container singleton — not a per-request rebuild.
+    """
+    return container.agent_memory
+
+
+def get_curation_service(container: Container = Depends(get_container)):
+    """The closed-loop curation service (FR-MIND-7). Container singleton."""
+    return container.curation_service
+
+
+def get_curation_ledger(container: Container = Depends(get_container)):
+    """The process-lived curation ledger holding staged proposals (FR-MIND-9/-10)."""
+    return container.curation_ledger
+
+
 def require_tool_enabled(tool_key: str):
     """Build a dependency that 403s if ``tool_key`` is toggled off (FR-UI-4).
 
