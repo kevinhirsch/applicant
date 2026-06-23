@@ -713,6 +713,10 @@ app.include_router(setup_applicant_memory_routes())
 # Lane C — Chat/Agent ↔ engine assistant + job actions (additive; auth-protected).
 from routes.applicant_chat_routes import setup_applicant_chat_routes
 app.include_router(setup_applicant_chat_routes())
+# FR-MIND — "What the assistant remembers" + "Saved playbooks" + learning curation
+# approvals: thin owner-scoped proxy over the engine's /api/agent-memory/* surface.
+from routes.applicant_mind_routes import setup_applicant_mind_routes
+app.include_router(setup_applicant_mind_routes())
 # Lane D — Applicant Email: digest/notifications + feedback proxy (/api/applicant/email).
 from routes.applicant_email_routes import setup_applicant_email_routes
 app.include_router(setup_applicant_email_routes())
@@ -729,6 +733,11 @@ from routes.applicant_internal_routes import setup_applicant_internal_routes
 # Lane B (research): expose the native deep-research handler to the internal
 # /research callback so the engine can run owner-scoped research synchronously.
 app.state.research_handler = research_handler
+# FR-MIND agent-memory bridge: expose the front-door memory/skills substrate to the
+# internal /memory + /skills + /recall callbacks so the engine reaches "what the
+# assistant remembers" + "saved playbooks" over the same token-gated channel (§10).
+app.state.memory_manager = memory_manager
+app.state.skills_manager = skills_manager
 app.include_router(setup_applicant_internal_routes())
 # CRIT-auto: live remote view/takeover + final-submit controls (/api/applicant/remote/*)
 # and the engine credential vault (/api/applicant/vault/*). Auth + owner-scoped.

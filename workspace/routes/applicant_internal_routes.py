@@ -483,6 +483,209 @@ def _cookbook_served_models(state: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+# ======================================================================== #
+# FR-MIND agent-memory bridge helpers (owner-scoped; back the endpoints     #
+# below). They lift the existing services/memory substrate — MemoryManager  #
+# (memory.json, owner-scoped) + SkillsManager (SKILL.md) — and present it    #
+# on the engine's curated-memory / skills / recall shape. The managers are   #
+# resolved from app.state (wired in app.py, mirroring research_handler) so   #
+# the bridge stays decoupled and tests can inject fakes. Owner "" means       #
+# single-user/no-scope; never trust an owner from the body.                  #
+# ======================================================================== #
+
+#: Cap returned snapshot/recall payloads so the engine never gets an unbounded body.
+_MEMORY_SNAPSHOT_MAX = 200
+_RECALL_MAX = 25
+
+
+async def _json(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+def _memory_manager(request: Request):
+    return getattr(getattr(request.app, "state", None), "memory_manager", None)
+
+
+def _skills_manager(request: Request):
+    return getattr(getattr(request.app, "state", None), "skills_manager", None)
+
+
+def _mem_kind(entry: dict) -> str:
+    """Map a front-door memory category onto the engine's two-kind split."""
+    cat = (entry.get("category") or "").strip().lower()
+    return "user" if cat in ("user", "preference", "preferences", "communication") else "environment"
+
+
+def _memory_snapshot(request: Request, owner: str) -> tuple[list, list]:
+    mgr = _memory_manager(request)
+    if mgr is None:
+        return [], []
+    rows = mgr.load(owner=owner or None)[:_MEMORY_SNAPSHOT_MAX]
+    env, usr = [], []
+    for e in rows:
+        item = {
+            "text": e.get("text") or "",
+            "kind": _mem_kind(e),
+            "scope": "global",
+            "campaign_id": None,
+        }
+        (usr if item["kind"] == "user" else env).append(item)
+    return env, usr
+
+
+def _memory_add(request: Request, owner: str, text: str, category: str) -> None:
+    mgr = _memory_manager(request)
+    if mgr is None:
+        return
+    entries = mgr.load_all()
+    entries.append(mgr.add_entry(text, source="learned", category=category, owner=owner or None))
+    mgr.save(entries)
+
+
+def _memory_replace(request: Request, owner: str, find: str, new_text: str, category: str) -> bool:
+    mgr = _memory_manager(request)
+    if mgr is None:
+        return False
+    entries = mgr.load_all()
+    for e in entries:
+        if (owner and e.get("owner") != owner):
+            continue
+        if find in (e.get("text") or ""):
+            e["text"] = new_text
+            e["category"] = category
+            mgr.save(entries)
+            return True
+    return False
+
+
+def _memory_remove(request: Request, owner: str, find: str) -> int:
+    mgr = _memory_manager(request)
+    if mgr is None:
+        return 0
+    entries = mgr.load_all()
+    kept, removed = [], 0
+    for e in entries:
+        owned = (not owner) or e.get("owner") == owner
+        if owned and find in (e.get("text") or ""):
+            removed += 1
+            continue
+        kept.append(e)
+    if removed:
+        mgr.save(kept)
+    return removed
+
+
+def _skills_index(request: Request, owner: str) -> list:
+    mgr = _skills_manager(request)
+    if mgr is None:
+        return []
+    out = []
+    for s in mgr.load(owner=owner or None):
+        out.append(
+            {
+                "name": s.get("name") or "",
+                "description": s.get("description") or "",
+                "when_to_use": s.get("when_to_use") or "",
+                "version": s.get("version") or "1.0.0",
+                "scope": "global",
+                "campaign_id": None,
+                "source": s.get("source") or "learned",
+            }
+        )
+    return out
+
+
+def _skill_to_engine(s: dict) -> dict:
+    return {
+        "name": s.get("name") or "",
+        "description": s.get("description") or "",
+        "version": s.get("version") or "1.0.0",
+        "when_to_use": s.get("when_to_use") or "",
+        "procedure": list(s.get("procedure") or []),
+        "pitfalls": list(s.get("pitfalls") or []),
+        "verification": list(s.get("verification") or []),
+        "scope": "global",
+        "campaign_id": None,
+        "source": s.get("source") or "learned",
+        "tags": list(s.get("tags") or []),
+    }
+
+
+def _skill_get(request: Request, owner: str, name: str) -> dict | None:
+    mgr = _skills_manager(request)
+    if mgr is None:
+        return None
+    for s in mgr.load(owner=owner or None):
+        if s.get("name") == name:
+            return _skill_to_engine(s)
+    return None
+
+
+def _skill_create(request: Request, owner: str, body: dict) -> dict:
+    mgr = _skills_manager(request)
+    if mgr is None:
+        raise RuntimeError("skills manager unavailable")
+    created = mgr.add_skill(
+        name=body.get("name") or "",
+        description=body.get("description") or "",
+        when_to_use=body.get("when_to_use") or "",
+        procedure=list(body.get("procedure") or []),
+        pitfalls=list(body.get("pitfalls") or []),
+        verification=list(body.get("verification") or []),
+        tags=list(body.get("tags") or []),
+        version=body.get("version") or "1.0.0",
+        source=body.get("source") or "learned",
+        owner=owner or None,
+    )
+    return _skill_to_engine(created if isinstance(created, dict) else {})
+
+
+def _skill_update(request: Request, owner: str, name: str, body: dict) -> dict | None:
+    mgr = _skills_manager(request)
+    if mgr is None:
+        return None
+    updates = {
+        k: body[k]
+        for k in ("description", "when_to_use", "procedure", "pitfalls", "verification", "version", "tags")
+        if k in body
+    }
+    ok = mgr.update_skill(name, updates, owner=owner or None)
+    if not ok:
+        return None
+    return _skill_get(request, owner, body.get("name") or name)
+
+
+def _skill_delete(request: Request, owner: str, name: str) -> bool:
+    mgr = _skills_manager(request)
+    if mgr is None:
+        return False
+    return bool(mgr.delete_skill(name, owner=owner or None))
+
+
+def _recall_search(request: Request, owner: str, query: str, limit: int) -> list:
+    mgr = _memory_manager(request)
+    if mgr is None:
+        return []
+    limit = max(1, min(limit, _RECALL_MAX))
+    memories = mgr.load(owner=owner or None)
+    relevant = mgr.get_relevant_memories(query, memories, threshold=0.05, max_items=limit)
+    hits = []
+    for m in relevant:
+        hits.append(
+            {
+                "run_id": m.get("id") or "",
+                "text": m.get("text") or "",
+                "score": 1.0,
+                "campaign_id": None,
+            }
+        )
+    return hits
+
+
 def setup_applicant_internal_routes() -> APIRouter:
     router = APIRouter(prefix=INTERNAL_PREFIX, tags=["applicant-internal"])
 
@@ -651,5 +854,186 @@ def setup_applicant_internal_routes() -> APIRouter:
         owner = internal_owner(request)
         models = _cookbook_served_models(_load_cookbook_state())
         return {"owner": owner or None, "models": models}
+
+    # ==================================================================== #
+    # FR-MIND agent-memory bridge — the engine reaches the front-door       #
+    # memory/skills substrate (services/memory/) over this channel (§10).   #
+    # Owner-scoped + token-gated, exactly like the lanes above. Backed by    #
+    # app.state.memory_manager / app.state.skills_manager (wired in app.py). #
+    # ==================================================================== #
+
+    @router.get("/memory/snapshot")
+    async def memory_snapshot(request: Request):
+        """Curated-memory snapshot for the owner (env + user split).
+
+        Reads the owner's memories from the front-door ``MemoryManager`` and maps
+        them onto the engine's two-kind shape. A ``user`` category maps to the user
+        tier; everything else to the environment tier. Degrades to empty on any
+        error rather than 500ing the engine.
+        """
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            env, usr = _memory_snapshot(request, owner)
+        except Exception as exc:  # never 500 the engine's callback
+            logger.warning("memory snapshot read failed: %s", exc)
+            return {"environment": [], "user": [], "truncated": False}
+        return {"environment": env, "user": usr, "truncated": False}
+
+    @router.post("/memory/add")
+    async def memory_add(request: Request):
+        """Append one curated memory line for the owner."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="memory add requires 'text'")
+        category = "user" if (body.get("kind") == "user") else "fact"
+        try:
+            _memory_add(request, owner, text, category)
+        except Exception as exc:
+            logger.warning("memory add failed: %s", exc)
+            raise HTTPException(status_code=502, detail="memory add failed") from exc
+        return {"ok": True}
+
+    @router.post("/memory/replace")
+    async def memory_replace(request: Request):
+        """Replace the first memory whose text contains ``find`` (substring)."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        find = (body.get("find") or "").strip()
+        entry = body.get("entry") if isinstance(body.get("entry"), dict) else {}
+        new_text = (entry.get("text") or "").strip()
+        if not find or not new_text:
+            raise HTTPException(status_code=400, detail="replace requires 'find' and entry text")
+        category = "user" if (entry.get("kind") == "user") else "fact"
+        try:
+            replaced = _memory_replace(request, owner, find, new_text, category)
+        except Exception as exc:
+            logger.warning("memory replace failed: %s", exc)
+            raise HTTPException(status_code=502, detail="memory replace failed") from exc
+        return {"replaced": bool(replaced)}
+
+    @router.post("/memory/remove")
+    async def memory_remove(request: Request):
+        """Remove every memory whose text contains ``find`` (substring)."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        find = (body.get("find") or "").strip()
+        if not find:
+            raise HTTPException(status_code=400, detail="remove requires 'find'")
+        try:
+            removed = _memory_remove(request, owner, find)
+        except Exception as exc:
+            logger.warning("memory remove failed: %s", exc)
+            raise HTTPException(status_code=502, detail="memory remove failed") from exc
+        return {"removed": int(removed)}
+
+    @router.get("/skills")
+    async def skills_list(request: Request):
+        """L0 saved-playbook metadata for the owner (no bodies)."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            items = _skills_index(request, owner)
+        except Exception as exc:
+            logger.warning("skills list failed: %s", exc)
+            return {"skills": []}
+        return {"skills": items}
+
+    @router.get("/skills/{name}")
+    async def skill_load(request: Request, name: str):
+        """L1 full body for one saved playbook."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            skill = _skill_get(request, owner, name)
+        except Exception as exc:
+            logger.warning("skill load failed: %s", exc)
+            raise HTTPException(status_code=502, detail="skill load failed") from exc
+        if skill is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        return skill
+
+    @router.post("/skills")
+    async def skill_create(request: Request):
+        """Author a new saved playbook for the owner."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        try:
+            created = _skill_create(request, owner, body)
+        except Exception as exc:
+            logger.warning("skill create failed: %s", exc)
+            raise HTTPException(status_code=502, detail="skill create failed") from exc
+        return created
+
+    @router.patch("/skills/{name}")
+    async def skill_patch(request: Request, name: str):
+        """Targeted update of named fields on a saved playbook."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        try:
+            updated = _skill_update(request, owner, name, body)
+        except Exception as exc:
+            logger.warning("skill patch failed: %s", exc)
+            raise HTTPException(status_code=502, detail="skill patch failed") from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        return updated
+
+    @router.put("/skills/{name}")
+    async def skill_edit(request: Request, name: str):
+        """Full rewrite of a saved playbook."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        body = await _json(request)
+        try:
+            updated = _skill_update(request, owner, name, body)
+        except Exception as exc:
+            logger.warning("skill edit failed: %s", exc)
+            raise HTTPException(status_code=502, detail="skill edit failed") from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        return updated
+
+    @router.delete("/skills/{name}")
+    async def skill_delete(request: Request, name: str):
+        """Delete a saved playbook."""
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            deleted = _skill_delete(request, owner, name)
+        except Exception as exc:
+            logger.warning("skill delete failed: %s", exc)
+            raise HTTPException(status_code=502, detail="skill delete failed") from exc
+        return {"deleted": bool(deleted)}
+
+    @router.get("/recall")
+    async def recall(request: Request):
+        """Full-text/semantic recall over the owner's stored memories.
+
+        The front-door memory store is the engine's recall surface here (no SQLite
+        is introduced). Returns ``{"hits": [{run_id,text,score,campaign_id}]}``.
+        """
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        q = (request.query_params.get("q") or "").strip()
+        try:
+            limit = int(request.query_params.get("limit") or 5)
+        except (TypeError, ValueError):
+            limit = 5
+        if not q:
+            return {"hits": []}
+        try:
+            hits = _recall_search(request, owner, q, limit)
+        except Exception as exc:
+            logger.warning("recall failed: %s", exc)
+            return {"hits": []}
+        return {"hits": hits}
 
     return router

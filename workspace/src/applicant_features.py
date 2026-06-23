@@ -90,6 +90,21 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    # FR-MIND — the agent-learning substrate surfaced in the front door: "what the
+    # assistant remembers", "saved playbooks", and the learning-curation approvals.
+    # Reachable via the workspace /api/applicant/mind/* proxy over the engine's
+    # /api/agent-memory router (gated behind the engine LLM gate), so it activates
+    # once a model is connected. Shares the memory rail with the attribute/learning
+    # section — both light up under the same nav.
+    {
+        "key": "mind",
+        "lane": "B",
+        "title": "What the assistant remembers / saved playbooks",
+        "nav_ids": ["rail-memory", "tool-memory-btn"],
+        "dormant_keys": ["assistant_memory", "saved_playbooks", "curation_approvals"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
     {
         "key": "email",
         "lane": "D",
