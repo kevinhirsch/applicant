@@ -24,36 +24,22 @@ browser pre-fill adapter calls ``prefill_boundary.ensure_action_allowed``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Protocol, runtime_checkable
 
+# The action vocabulary is DOMAIN vocabulary and lives in the pure core so the core
+# guards (``core.rules.computer_use``) depend on nothing outward (hexagonal layering,
+# NFR-ARCH-1: core may not import ports). The port re-exports it so adapters/callers
+# can keep importing ``DesktopAction`` / ``CaptureMode`` from here.
+from applicant.core.rules.computer_use import CaptureMode, DesktopAction
 
-class DesktopAction(str, Enum):
-    """The bounded desktop-action vocabulary (FR-CUA, spec §4)."""
-
-    #: Read-only screenshot/AX capture — always allowed (no boundary).
-    CAPTURE = "capture"
-    #: Activate a control (element/coord) — approval-gated (FR-CUA-4).
-    CLICK = "click"
-    #: Enter text — approval-gated + pattern-blocked (FR-CUA-5) + no-secrets (FR-CUA-6).
-    TYPE_TEXT = "type_text"
-    #: Press a key/chord — approval-gated + combo-blocked (FR-CUA-5).
-    KEY = "key"
-    #: Scroll the view — approval-gated.
-    SCROLL = "scroll"
-    #: Drag/move — approval-gated.
-    DRAG = "drag"
-    #: Target a window in the BACKGROUND (no foreground steal) — approval-gated (FR-CUA-7).
-    FOCUS_APP = "focus_app"
-
-
-class CaptureMode(str, Enum):
-    """Capture rendering mode (FR-CUA-11)."""
-
-    #: Screenshot with numbered elements (Set-of-Marks). The default.
-    SOM = "som"
-    #: Accessibility-tree only (text), the degraded path when the model lacks vision.
-    AX = "ax"
+__all__ = [
+    "CaptureMode",
+    "DesktopAction",
+    "CaptureResult",
+    "DesktopActionResult",
+    "HealthReport",
+    "ComputerUsePort",
+]
 
 
 @dataclass(frozen=True)

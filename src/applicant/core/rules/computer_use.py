@@ -26,10 +26,42 @@ tests too).
 from __future__ import annotations
 
 import re
+from enum import Enum
 
 from applicant.core.errors import ComputerUseBlocked
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
-from applicant.ports.driven.computer_use import DesktopAction
+
+
+class DesktopAction(str, Enum):
+    """The bounded desktop-action vocabulary (FR-CUA, spec §4).
+
+    Domain vocabulary — defined in the pure core so the guards below depend on
+    nothing outward; the ``ComputerUsePort`` re-exports it for adapters/callers.
+    """
+
+    #: Read-only screenshot/AX capture — always allowed (no boundary).
+    CAPTURE = "capture"
+    #: Activate a control (element/coord) — approval-gated (FR-CUA-4).
+    CLICK = "click"
+    #: Enter text — approval-gated + pattern-blocked (FR-CUA-5) + no-secrets (FR-CUA-6).
+    TYPE_TEXT = "type_text"
+    #: Press a key/chord — approval-gated + combo-blocked (FR-CUA-5).
+    KEY = "key"
+    #: Scroll the view — approval-gated.
+    SCROLL = "scroll"
+    #: Drag/move — approval-gated.
+    DRAG = "drag"
+    #: Target a window in the BACKGROUND (no foreground steal) — approval-gated (FR-CUA-7).
+    FOCUS_APP = "focus_app"
+
+
+class CaptureMode(str, Enum):
+    """Capture rendering mode (FR-CUA-11)."""
+
+    #: Screenshot with numbered elements (Set-of-Marks). The default.
+    SOM = "som"
+    #: Accessibility-tree only (text), the degraded path when the model lacks vision.
+    AX = "ax"
 
 #: Destructive desktop actions — every one is approval-gated (FR-CUA-4) and subject to
 #: the hard-block / no-secret / stop-boundary guards below. ``capture`` is read-only and

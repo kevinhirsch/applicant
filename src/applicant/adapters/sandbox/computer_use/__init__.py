@@ -15,12 +15,13 @@ Swappable driven sub-port of the sandbox (FR-CUA-2). Two adapters:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from applicant.adapters.sandbox.computer_use.noop import NoopComputerUse
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from applicant.app.config import Settings
+    # ``Settings`` is NOT imported (adapters may not import ``applicant.app`` —
+    # hexagonal layering, NFR-ARCH-1); the factory duck-types the settings object.
     from applicant.ports.driven.computer_use import ComputerUsePort
 
 #: Backend identifiers for ``COMPUTER_USE_BACKEND`` (mirrors the config constants).
@@ -28,7 +29,7 @@ COMPUTER_USE_BACKEND_NOOP = "noop"
 COMPUTER_USE_BACKEND_CUA = "cua"
 
 
-def build_computer_use(settings: Settings) -> ComputerUsePort:
+def build_computer_use(settings: Any) -> ComputerUsePort:
     """Select the computer-use adapter by ``COMPUTER_USE_BACKEND`` (FR-CUA-2).
 
     ``noop`` (default) → :class:`NoopComputerUse` (no side effects; CI/test default).
