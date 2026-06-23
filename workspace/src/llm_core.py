@@ -476,16 +476,58 @@ def _parse_anthropic_response(data: dict) -> str:
     return ""
 
 
+def _content_is_blank(content) -> bool:
+    """True when a message body carries no usable text or data.
+
+    Covers the shapes `content` takes in this codebase: a plain string, a
+    multimodal list of blocks (vision turns), or None. A whitespace-only
+    string and an empty / all-blank list both count as blank; any text block
+    with text, or any non-text block (image, audio), does not.
+    """
+    if content is None:
+        return True
+    if isinstance(content, str):
+        return not content.strip()
+    if isinstance(content, (list, tuple)):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    if (block.get("text") or "").strip():
+                        return False
+                else:
+                    return False  # image_url / input_audio / other payload
+            elif block:
+                return False
+        return True
+    return False  # unknown structured content — assume present
+
+
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
-    """Strip Applicant-only metadata before sending messages to providers."""
+    """Strip Applicant-only metadata before sending messages to providers.
+
+    Also drops turns whose body is blank — an empty or whitespace-only
+    message would otherwise be forwarded verbatim, and several providers
+    (DeepSeek, Anthropic, …) reject a turn whose content is blank while
+    others silently waste it. Such blanks accrue in a session's history from
+    multiple paths (attachment-only sends, a model that returns nothing,
+    webhook / scheduled-task replies) and then replay on every later call. A
+    message that carries tool calls or a tool result is kept even when its
+    text is blank, since the tool payload is its content.
+    """
     allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
             continue
         item = {k: v for k, v in msg.items() if k in allowed and v is not None}
-        if "role" in item and "content" in item:
-            cleaned.append(item)
+        if "role" not in item or "content" not in item:
+            continue
+        has_tool_payload = bool(
+            item.get("tool_calls") or item.get("function_call") or item.get("tool_call_id")
+        )
+        if not has_tool_payload and _content_is_blank(item["content"]):
+            continue
+        cleaned.append(item)
     return cleaned
 
 def _normalize_anthropic_url(url: str) -> str:
