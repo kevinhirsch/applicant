@@ -188,6 +188,32 @@ Two lift-and-shift capabilities to verify (specs: `docs/spec/agent-intelligence.
   appears as an approve/deny item in the portal (`/api/applicant/mind/curation`). Confirm
   **only approving** applies it (a proposal alone changes nothing) — that is the
   advisory-not-authorization rule, not a bug.
+
+### 5c. The agent learns, reports itself, and is steerable
+The loop now learns from its own runs + the user's feedback, uses that learning, and reports
+it in first person (specs: `docs/spec/agent-intelligence.md` FR-MIND, master-spec FR-AGENT-7 /
+FR-OBS-2). Verify all three, end-to-end, with a populated campaign:
+- **The chatbot reports its activity truthfully.** Open the Job Assistant chat
+  (`applicantChatModule.openApplicantChat()`) and ask what it's doing / what it did / what's
+  next. It should answer in **first person as the agent** (one identity, not a generic
+  assistant) and the answer should match REAL state — cross-check against the run status,
+  scheduler "next run" estimate, and recent application history (the same state the activity
+  panel shows). **Flag fabrication**: if it claims activity that didn't happen, or says it
+  can't see its own state, that's a bug (it should say "nothing yet" rather than invent).
+- **The activity panel shows now / next / recent.** Open the "what the agent is doing" panel
+  (`applicantActivity.js`; proxy `/api/applicant/activity/snapshot`) and confirm the now-line,
+  the next-action line, and the recent-runs list render and agree with the chat answer and the
+  Activity/Debug history. Offline-degrade check: stop the engine and confirm it returns a
+  graceful `{engine_available:false}` empty state, not a 500/white screen. A daily status
+  update should also arrive via the notification ladder (in-app inbox + opt-in fan-out).
+- **A curation proposal appears for review after runs/feedback.** After at least one run AND a
+  piece of user feedback (decline a digest role with a reason, or send a redline-revision
+  instruction), the scheduled curation nudge should mine that signal and produce an approve/deny
+  proposal in the portal (`/api/applicant/mind/curation`). Confirm the proposal text reflects
+  the real run/feedback (not a placeholder), and that **only approving** writes it — declining
+  leaves memory unchanged. (If `CURATION_SCHEDULE` is off for the playtest, trigger the nudge
+  directly per the engine's curation route; absence of a proposal with the schedule off is not
+  a bug.)
 - **Desktop assist degrades (dormant).** In the live-session modal (`applicantRemote.js`)
   the "let the assistant help on the desktop" toggle ships **present-but-grayed**:
   `GET .../desktop/health` reports unavailable and `enable`/`action` are refused with

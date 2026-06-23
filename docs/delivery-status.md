@@ -135,20 +135,55 @@ documented** so the stack is shippable:
   `applicantMind.js` memory panel + portal curation approvals. The three surfaces are `live`
   in `src/applicant/dormant.py` (`assistant_memory`, `saved_playbooks`, `curation_approvals`).
 
+  **The loop now actually learns, uses, and reports itself — end-to-end.** What changed in this
+  wave:
+  - **Curation learns from real signal.** The scheduled review nudge no longer proposes from a
+    placeholder: it reviews REAL run history (`application/services/run_history.py`
+    `RunHistoryProvider`) AND the user's own feedback (`application/services/feedback_history.py`
+    `FeedbackSummaryProvider`, mined from digest declines + résumé/answer revision instructions),
+    summarizes each run with a cheap optional LLM (`CURATION_MODEL`; degrades to a trivial
+    summarizer so the hermetic lane stays green), and **populates cross-session recall** through
+    the `RecallIndex.index()` write path. Every proposal still stages for review (FR-MIND-9),
+    is advisory-only (FR-MIND-11), and is idempotent across the per-tick `AgentLoop` rebuild via
+    the process-lived ledger (FR-MIND-10).
+  - **Learned memory/skills feed back into work.** `material_service` (résumé/cover/answers) and
+    `scoring_service` (viability) append a bounded, advisory "what the assistant has learned"
+    block read fresh per call — it nudges output toward the user's taste without conferring
+    authority and never relaxes the no-fabrication guard (FR-RESUME-2).
+  - **The chatbot IS the autonomous agent.** One first-person identity (FR-MIND-4) that reports
+    its own past/present/future from real read-only state (run status, scheduler estimate,
+    application history — FR-AGENT-7 / FR-OBS-2; `chat_service.py`). Chat-driven steering is in
+    progress.
+  - **"What the agent is doing" is now operator-visible.** A read-only now/next/recent snapshot
+    (`app/routers/agent_status.py` → `/api/applicant/activity/snapshot` → `applicantActivity.js`)
+    plus a proactive **daily status update** (`status_update.py` `StatusUpdateService`) pushed
+    through the existing notification ladder.
+  - **LLM context management (FR-MIND-8).** Middle-turn compression past
+    `CONTEXT_COMPRESS_THRESHOLD` + a provider-gated prefix cache (`PREFIX_CACHE`) at the LLM
+    adapter (`adapters/llm/context_window.py`).
+
+  **Proven green end-to-end** by the hermetic loop smoke `tests/unit/test_loop_end_to_end.py`,
+  which runs discovery → scoring → digest → approval → pre-fill → stop-boundary WITH the learning
+  hooks firing.
+
 - **Desktop assist / computer use (`FR-CUA`)** — optional background desktop control,
-  confined to the sandbox/takeover surface, complementing the browser path. The port, the
-  core safety guards (stop-boundary, hard-blocks, no-secrets), the live-session toggle, and
-  the proxy routes are wired, but the surface ships **present-but-grayed** (`desktop_assist`,
-  `dormant` in `src/applicant/dormant.py`): the safe no-side-effects backend boots, and the
-  toggle stays locked with honest copy until the desktop driver + display stack are baked into
-  the **sandbox** image and the health preflight passes.
+  confined to the sandbox/takeover surface, complementing the browser path; it now also backs
+  **native OS upload dialogs** the browser cannot reach during pre-fill (desktop self-use,
+  #141). The port, the core safety guards (stop-boundary, hard-blocks, no-secrets), the
+  live-session toggle, and the proxy routes are wired, but the surface ships
+  **present-but-grayed** (`desktop_assist`, `dormant` in `src/applicant/dormant.py`): the safe
+  no-side-effects backend boots, and the toggle stays locked with honest copy until the desktop
+  driver + display stack are baked into the **sandbox** image and the health preflight passes.
 
 The new deploy knobs are exposed in `.env.example` and passed through to the `api` service in
 `docker/docker-compose.prod.yml` (`MIND_BACKEND`, `MEMORY_WRITE_APPROVAL`,
 `SKILLS_WRITE_APPROVAL`, `MEMORY_MAX_CHARS`, `USER_MAX_CHARS`, `CURATION_SCHEDULE`,
 `CURATION_MODEL`; `COMPUTER_USE_BACKEND`, `CUA_DRIVER_CMD`, `COMPUTER_USE_MODE`,
 `COMPUTER_USE_APPROVALS`, `CUA_TELEMETRY`), all defaulting to the cautious config.py values
-(in-process memory store, review-on, curation off, no-op desktop backend, telemetry off). See
+(in-process memory store, review-on, curation off, no-op desktop backend, telemetry off). The
+context-management knobs (`CONTEXT_COMPRESS_THRESHOLD`, `PREFIX_CACHE`) read from `config.py`
+defaults (compression off / prefix-cache auto) and are set via the environment when tuning is
+needed. See
 [traceability.md](traceability.md) (FR-MIND / FR-CUA groups) and
 [dormant-surfaces.md](dormant-surfaces.md) for the reachability map.
 
