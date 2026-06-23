@@ -671,6 +671,31 @@ async function _renderChannels() {
 // sandbox — choosing the native Windows VM reveals the Proxmox connection form so
 // the agent (and your one-click takeover) drive real Chrome inside a real Windows
 // VM. The connection's secrets are sealed in the engine vault, never returned.
+// Desktop help (FR-CUA) honest-state renderer for the Automation settings card.
+// Reads the engine's desktop-assist preflight through the live-session proxy and
+// renders the toggle locked-with-caveat while the capability is dormant. The
+// toggle is informational here (the real per-session opt-in lives in the live
+// session); it stays disabled until the helper is actually available.
+async function _renderDesktopAssistSetting() {
+  const btn = document.getElementById('ao-desktop-toggle');
+  const note = document.getElementById('ao-desktop-note');
+  if (!btn || !note) return;
+  let health = { available: false, dormant: true };
+  try {
+    const data = await _fetchJSON('/api/applicant/remote/desktop/health');
+    if (data) health = data;
+  } catch { /* best-effort; stays locked */ }
+  if (health.available) {
+    btn.disabled = false;
+    btn.textContent = 'Available';
+    note.textContent = 'Ready. Turn it on for a session from the live-session window when you need it.';
+  } else {
+    btn.disabled = true;
+    btn.textContent = 'Turn on';
+    note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
+  }
+}
+
 async function _renderSandbox() {
   let cur = {};
   try { cur = await _fetchJSON(`${SETUP}/sandbox-connection`); } catch { cur = {}; }
@@ -749,9 +774,34 @@ async function _renderSandbox() {
         </div>
       </details>
     </div>
+    <div class="admin-card" id="ao-desktop-card">
+      <div class="settings-col">
+        <div class="settings-row" style="align-items:flex-start;">
+          <label class="settings-label">Desktop help ${_tip('Lets the assistant handle steps that live outside the web page — like a file-upload dialog or another desktop window — during a live session. You stay in control: it never creates accounts, clears verifications, or submits, and it asks before each step. You turn it on per live session.')}</label>
+          <div style="display:flex;flex-direction:column;gap:6px;flex:1;">
+            <button class="cal-btn" id="ao-desktop-toggle" type="button" disabled
+                    title="Let the assistant help with desktop steps the browser can't reach">Turn on</button>
+            <p id="ao-desktop-note" style="margin:0;opacity:0.65;font-size:0.8rem;">
+              Coming in a future update — desktop help isn’t set up on this sandbox yet.
+            </p>
+            <p style="margin:0;opacity:0.55;font-size:0.78rem;">
+              Best-effort and optional. The assistant only helps with desktop steps you
+              approve, one at a time — the parts only you should do (accounts, verifications,
+              the final submit) always stay with you.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="ao-sb-msg"></div>
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-sb-save">Save &amp; continue</button>`);
+
+  // Desktop help (FR-CUA) — present-but-grayed until the desktop helper is baked
+  // into the sandbox image and the engine's health preflight passes. The actual
+  // opt-in is per live session (in the live-session surface); here we surface the
+  // capability + the honest best-effort caveat, and reflect the locked state.
+  _renderDesktopAssistSetting().catch(() => {});
 
   const backendSel = document.getElementById('ao-sb-backend');
   const winBox = document.getElementById('ao-sb-win');

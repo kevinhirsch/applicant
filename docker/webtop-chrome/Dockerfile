@@ -65,4 +65,37 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
+# --- Desktop assist (FR-CUA, docs/spec/computer-use.md) ----------------------
+# Background desktop control (file-upload dialogs / OS windows the browser can't
+# reach) needs (a) the Linux DISPLAY STACK the driver reads — the AT-SPI
+# accessibility bus on the X11 desktop this image already runs — and (b) the
+# desktop-control DRIVER binary itself. Same rule as Chrome/TeX/LibreOffice: the
+# engine detects the driver via PATH and silently degrades to the no-op backend
+# (rendering the front-door control locked, FR-CUA-9/12) unless the binary is
+# BAKED INTO THIS SANDBOX IMAGE — not just present on a dev box.
+#
+# The AT-SPI bus + xdotool/wmctrl helpers below are the display-stack dependency
+# and are safe to bake now (small, no behavior change). The driver binary is NOT
+# yet vendored (license review pending, spec §9/§10), so it is installed only when
+# CUA_DRIVER_URL is provided at build time; absent that, the surface stays dormant
+# and the engine's health preflight reports the driver missing (a deploy signal).
+ARG CUA_DRIVER_URL=""
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        at-spi2-core \
+        libatk-adaptor \
+        xdotool \
+        wmctrl && \
+    if [ -n "${CUA_DRIVER_URL}" ]; then \
+        curl -fsSL "${CUA_DRIVER_URL}" -o /usr/local/bin/cua-driver && \
+        chmod 0755 /usr/local/bin/cua-driver ; \
+    else \
+        echo "desktop-assist driver not baked (CUA_DRIVER_URL unset) — surface stays dormant (FR-CUA-9)" ; \
+    fi && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Driver anonymous telemetry OFF by default (engine config CUA_TELEMETRY=false).
+ENV CUA_DRIVER_RS_TELEMETRY_ENABLED=0
+
 EXPOSE 3000

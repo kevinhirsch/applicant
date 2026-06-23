@@ -32,9 +32,28 @@ from applicant.application.services.final_approval_service import (
     DECISION_SUBMIT_SELF,
 )
 from applicant.core.entities.outcome_event import OutcomeSource
-from applicant.core.errors import PrefillBoundaryViolation, ReviewRequired
+from applicant.core.errors import ComputerUseBlocked, PrefillBoundaryViolation, ReviewRequired
+from applicant.core.rules.computer_use import CaptureMode, DesktopAction
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
 from applicant.core.state_machine import ApplicationState
+from applicant.dormant import DORMANT_SURFACES, STATUS_LIVE
+
+#: The dormant-surface key backing the desktop-assist control (FR-CUA-9). The front
+#: door greys the toggle until this surface is ``live`` AND the health preflight passes.
+_DESKTOP_ASSIST_KEY = "desktop_assist"
+
+
+def _desktop_assist_dormant() -> bool:
+    """True while the desktop-assist surface ships dormant (driver not yet baked).
+
+    Read from the in-process dormant registry (the single source of truth the
+    front-door feature layer also reads), so the gate cannot drift from the backlog.
+    """
+    for surface in DORMANT_SURFACES:
+        if surface.key == _DESKTOP_ASSIST_KEY:
+            return surface.status != STATUS_LIVE
+    return True
+
 
 router = APIRouter(
     prefix="/api/remote",
@@ -396,3 +415,178 @@ def _deliver_decision(
         return submission.record_submission(app, source=source)
     except ReviewRequired as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+# ── Desktop assist (FR-CUA) ──────────────────────────────────────────────────
+#
+# An OPT-IN, per-session, revocable layer that lets the assistant help on the
+# desktop (native file pickers / OS dialogs the browser can't reach) DURING an
+# open live session, complementing — never replacing — browser pre-fill. It ships
+# DORMANT (FR-CUA-9): wired present-but-grayed until the desktop driver + its
+# display stack are baked into the sandbox image and the health preflight passes.
+#
+# Safety (no new bypass):
+#   * Every destructive action goes through the ComputerUsePort adapter, which
+#     calls the pure core guards (hard-blocks FR-CUA-5, no-secrets FR-CUA-6,
+#     stop-boundary FR-CUA-3) before any side effect — this router adds no path
+#     around them. ``capture`` is the only read-only action.
+#   * The engine still cannot self-authorize a final submit (FR-CUA-3): a desktop
+#     action whose intent maps to a boundary step is denied exactly as the browser
+#     path is. There is no caller flag that opts past the boundary.
+#   * Desktop assist must be enabled for the live session first (opt-in, FR-CUA-4),
+#     and the backend must be healthy — otherwise actions are refused.
+
+
+class DesktopActionIn(BaseModel):
+    """A guarded desktop-assist action request (FR-CUA, spec §4).
+
+    ``intent`` is a control LABEL the caller derived from the targeted element; the
+    core maps it to a boundary step server-side (it is NOT a bypass — there is no
+    flag that opts past the stop-boundary, FR-CUA-3).
+    """
+
+    action: str
+    element_token: str = ""
+    text: str = ""
+    keys: str = ""
+    app: str = ""
+    intent: str | None = None
+    mode: str = "som"
+
+
+def _desktop_health(container: Container) -> dict:
+    """The desktop-assist preflight + dormancy state, as a plain dict (FR-CUA-12)."""
+    report = container.computer_use.health()
+    dormant = _desktop_assist_dormant()
+    # The control is only operable when the surface is live AND the driver is healthy.
+    available = bool(report.ok) and not dormant
+    return {
+        "available": available,
+        "dormant": dormant,
+        "ok": bool(report.ok),
+        "backend": report.backend,
+        "detail": report.detail,
+        "missing": list(report.missing),
+    }
+
+
+@router.get("/desktop/health")
+def desktop_health(container: Container = Depends(get_container)) -> dict:
+    """Desktop-assist preflight: is the driver present + the surface live? (FR-CUA-12).
+
+    A failure here is a DEPLOY/IMAGE signal (the desktop driver or its display stack
+    is not baked into the sandbox image) — not a per-request error. The front door
+    greys the control honestly off this.
+    """
+    return _desktop_health(container)
+
+
+@router.get("/sessions/{session_id}/desktop")
+def desktop_state(session_id: str, container: Container = Depends(get_container)) -> dict:
+    """Whether desktop assist is opted-in for this live session (FR-CUA-4)."""
+    _require_session(container, session_id)
+    enabled = session_id in container.desktop_assist_sessions
+    return {"session_id": session_id, "enabled": enabled, **_desktop_health(container)}
+
+
+@router.post("/sessions/{session_id}/desktop/enable", status_code=200)
+def desktop_enable(session_id: str, container: Container = Depends(get_container)) -> dict:
+    """Opt this live session in to desktop assist (FR-CUA-4 — opt-in, revocable).
+
+    Refused (409) while the surface is dormant / the driver is missing, so the user
+    never enables a capability that would silently do nothing.
+    """
+    _require_session(container, session_id)
+    health = _desktop_health(container)
+    if not health["available"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Desktop assist isn't available yet on this sandbox. It will be "
+                "offered in a future update once the desktop helper is set up."
+            ),
+        )
+    container.desktop_assist_sessions.add(session_id)
+    return {"session_id": session_id, "enabled": True, **health}
+
+
+@router.post("/sessions/{session_id}/desktop/disable", status_code=200)
+def desktop_disable(session_id: str, container: Container = Depends(get_container)) -> dict:
+    """Revoke desktop assist for this live session (FR-CUA-4 — always allowed)."""
+    _require_session(container, session_id)
+    container.desktop_assist_sessions.discard(session_id)
+    return {"session_id": session_id, "enabled": False}
+
+
+@router.post("/sessions/{session_id}/desktop/action", status_code=200)
+def desktop_action(
+    session_id: str,
+    body: DesktopActionIn,
+    container: Container = Depends(get_container),
+) -> dict:
+    """Perform a single bounded desktop action behind approval (FR-CUA-4/3/5/6).
+
+    Guarded passthrough to the ``ComputerUsePort`` adapter, which enforces the core
+    guards (hard-blocks, no-secrets, stop-boundary) BEFORE any side effect — this
+    route adds no bypass. Refused (409) unless desktop assist is opted-in for the
+    session and the backend is healthy.
+    """
+    _require_session(container, session_id)
+    if session_id not in container.desktop_assist_sessions:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Turn on desktop assist for this session first.",
+        )
+    if not _desktop_health(container)["available"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Desktop assist isn't available on this sandbox.",
+        )
+
+    try:
+        action = DesktopAction(body.action.strip().lower())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown desktop action: {body.action!r}",
+        ) from exc
+
+    cu = container.computer_use
+    # Each branch calls the adapter, which calls the pure core guards first. A
+    # blocked/boundary action raises ``ComputerUseBlocked``/``PrefillBoundaryViolation``
+    # — surfaced as a clean 4xx, never bypassed.
+    try:
+        if action is DesktopAction.CAPTURE:
+            mode = CaptureMode.AX if body.mode.strip().lower() == "ax" else CaptureMode.SOM
+            cap = cu.capture(mode)
+            return {
+                "session_id": session_id,
+                "action": action.value,
+                "mode": cap.mode.value,
+                "element_count": cap.element_count,
+                # Never echo the raw screenshot payload back through the proxy.
+                "has_image": bool(cap.image_b64),
+                "has_ax_tree": bool(cap.ax_tree),
+            }
+        if action is DesktopAction.CLICK:
+            res = cu.click(body.element_token, intent=body.intent)
+        elif action is DesktopAction.TYPE_TEXT:
+            res = cu.type_text(body.text, intent=body.intent)
+        elif action is DesktopAction.KEY:
+            res = cu.key(body.keys, intent=body.intent)
+        elif action is DesktopAction.SCROLL:
+            res = cu.scroll(body.element_token)
+        elif action is DesktopAction.DRAG:
+            res = cu.drag(body.element_token, body.app)
+        else:  # FOCUS_APP
+            res = cu.focus_app(body.app)
+    except ComputerUseBlocked:
+        raise  # -> 400 via the global domain-error handler (honest refusal)
+    except PrefillBoundaryViolation as exc:  # stop-boundary: cannot submit/create acct
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return {
+        "session_id": session_id,
+        "action": res.action.value,
+        "performed": res.performed,
+        "detail": res.detail,
+    }

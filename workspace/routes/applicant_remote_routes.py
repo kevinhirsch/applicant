@@ -51,6 +51,23 @@ class OpenSessionIn(BaseModel):
     application_id: str
 
 
+class DesktopActionIn(BaseModel):
+    """A guarded desktop-assist action (FR-CUA). Mirrors the engine's request shape.
+
+    ``intent`` is a control LABEL the caller derived from the targeted element; the
+    engine core maps it to a boundary step server-side — it is NOT a bypass (no flag
+    can opt a desktop action past the stop-boundary, FR-CUA-3).
+    """
+
+    action: str
+    element_token: str = ""
+    text: str = ""
+    keys: str = ""
+    app: str = ""
+    intent: str | None = None
+    mode: str = "som"
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
@@ -224,6 +241,89 @@ def setup_applicant_remote_routes() -> APIRouter:
                 data = await engine.continue_two_factor(application_id)
         except EngineError as exc:
             logger.info("applicant remote continue-two-factor failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    # ── desktop assist (FR-CUA): opt-in, per-session, ships DORMANT ──────
+    #
+    # Thin owner-scoped proxies over the engine's desktop-assist endpoints. The
+    # capability ships present-but-grayed until the desktop helper is baked into
+    # the sandbox image and the health preflight passes; the read proxies degrade
+    # cleanly (honest disabled state) rather than 500ing. Reads are auth-only; the
+    # mutating controls require ``can_use_documents`` like the other live-session
+    # controls. The destructive-action passthrough adds NO bypass — the engine
+    # enforces its core safety gates (the engine cannot self-authorize a final
+    # submit), and a typed boundary refusal (403) passes straight through.
+
+    @router.get("/desktop/health")
+    async def desktop_health(request: Request) -> JSONResponse:
+        """Is desktop assist available on this sandbox yet? (honest disabled state)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.desktop_assist_health()
+        except EngineError as exc:
+            logger.info("applicant desktop-assist health unavailable: %s", exc)
+            # Degrade to an honest disabled state — never block the surface.
+            return JSONResponse(content={"available": False, "dormant": True, "ok": False})
+        return JSONResponse(content=data or {"available": False, "dormant": True})
+
+    @router.get("/sessions/{session_id}/desktop")
+    async def desktop_state(session_id: str, request: Request) -> JSONResponse:
+        """Whether desktop assist is opted-in for this live session (+ health)."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.desktop_assist_state(session_id)
+        except EngineError as exc:
+            logger.info("applicant desktop-assist state unavailable: %s", exc)
+            return JSONResponse(
+                content={
+                    "session_id": session_id,
+                    "enabled": False,
+                    "available": False,
+                    "dormant": True,
+                }
+            )
+        return JSONResponse(content=data)
+
+    @router.post("/sessions/{session_id}/desktop/enable")
+    async def desktop_enable(session_id: str, request: Request) -> JSONResponse:
+        """Opt this live session in to desktop assist (engine refuses while dormant)."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.desktop_assist_enable(session_id)
+        except EngineError as exc:
+            logger.info("applicant desktop-assist enable failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/sessions/{session_id}/desktop/disable")
+    async def desktop_disable(session_id: str, request: Request) -> JSONResponse:
+        """Revoke desktop assist for this live session."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.desktop_assist_disable(session_id)
+        except EngineError as exc:
+            logger.info("applicant desktop-assist disable failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.post("/sessions/{session_id}/desktop/action")
+    async def desktop_action(
+        session_id: str, body: DesktopActionIn, request: Request
+    ) -> JSONResponse:
+        """Perform a single guarded desktop action (engine enforces the safety gates)."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.desktop_assist_action(
+                    session_id, body.model_dump(exclude_none=True)
+                )
+        except EngineError as exc:
+            logger.info("applicant desktop-assist action failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
