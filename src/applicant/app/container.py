@@ -251,6 +251,31 @@ def _build_orchestrator(settings: Settings) -> Any:
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
+def _compose_summary_providers(*providers: Any) -> Any:
+    """Combine run-summary providers into one ``provider(storage, now)`` callable.
+
+    Each provider maps the per-tick storage to a list of ``RunSummary`` records; the
+    composed callable concatenates them so a single curation nudge reviews every
+    source at once (FR-MIND-7). A provider that raises or returns nothing contributes
+    no summaries and never breaks the others, so an empty/absent source is a no-op and
+    behavior is byte-identical when there is no feedback to learn from.
+    """
+    real = tuple(p for p in providers if p is not None)
+    if not real:
+        return None
+
+    def _provider(storage, now=None) -> list:
+        out: list = []
+        for p in real:
+            try:
+                out.extend(p(storage, now) or [])
+            except Exception:  # pragma: no cover - defensive: one source never breaks others
+                continue
+        return out
+
+    return _provider
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
@@ -590,6 +615,15 @@ def build_container(settings: Settings | None = None) -> Container:
         memory_write_approval=settings.memory_write_approval,
         skills_write_approval=settings.skills_write_approval,
     )
+    # FR-LEARN-3 / FR-MIND-1: feed the scheduled nudge the user's OWN feedback —
+    # digest decline reasons (FR-DIG-5) + résumé/answer revision instructions
+    # (FR-RESUME-8) — read from the (per-tick) storage and mapped to preference-tagged
+    # RunSummaries (bounded, cheap), so "learn from every input" reaches the curated
+    # user-memory substrate. Composed with any other summary source (run history) so
+    # both feed one nudge; behavior is byte-identical when there is no feedback.
+    from applicant.application.services.feedback_history import FeedbackSummaryProvider
+
+    run_summaries_provider = _compose_summary_providers(FeedbackSummaryProvider())
 
     agent_loop = AgentLoop(
         storage=storage,
@@ -827,6 +861,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # per-tick factory supplies the isolated-session one sharing the SAME ledger.
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
+        # FR-LEARN-3: the nudge reviews the user's own feedback (decline reasons +
+        # revision instructions), mapped to preference summaries, bounded + cheap.
+        run_summaries_provider=run_summaries_provider,
     )
 
     return Container(
