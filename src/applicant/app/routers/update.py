@@ -1,19 +1,33 @@
-"""Update router — in-UI Update button (FR-OOBE-4, FR-INSTALL-2, NFR-ZEROCLI-1).
+"""Update router — in-UI Update button via the `updater` sidecar (FR-OOBE-4, FR-INSTALL-2, NFR-ZEROCLI-1).
 
-# STAGE B — owned by Phase 4. Implements the ``UpdateTriggerPort``: the in-settings
-# Update button invokes the one-liner update script (DB backup, migrations, rollback)
-# without SSH/CLI (NFR-ZEROCLI-1).
-#
-# SAFETY: the script call is **stubbed and guarded**. It NEVER runs by default;
-# the operator must set APPLICANT_UPDATE_ENABLED=1 *and* the script must exist for
-# a real invocation to be dispatched. Otherwise we return a non-destructive "would
-# run" result so the surface is testable without touching a real deployment.
-Gated behind the LLM-settings gate (FR-UI-5).
+The `api` container CANNOT rebuild the stack itself: it has no Docker access, no
+git checkout, and the update would restart the `api` container mid-run. So a
+dedicated **`updater` sidecar** (Docker-socket access, the host repo bind-mounted)
+watches a shared control volume and runs ``scripts/update.sh --apply`` against the
+host Docker. This router is just the control plane:
+
+  * ``POST /api/update/trigger`` — drop a request flag the sidecar picks up.
+  * ``GET  /api/update``         — report the sidecar's state + recent log.
+
+Control files live under ``UPDATE_CONTROL_DIR`` (default ``/control``, a named
+volume shared with the updater):
+
+  * ``request``       — touched by us; the updater consumes it and starts a run.
+  * ``status.json``   — ``{state, message, started_at, finished_at}`` (updater writes).
+  * ``update.log``    — ``update.sh`` output (updater writes).
+  * ``updater.alive`` — heartbeat the updater touches each loop; its presence +
+                        freshness is how we know the one-click updater is deployed.
+
+Safe by default: with no fresh heartbeat (e.g. the updater isn't deployed yet, as
+in tests/dev) the trigger is a no-op that explains how to enable it — nothing
+destructive ever runs from this process. Gated behind the LLM-settings gate (FR-UI-5).
 """
 
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -23,57 +37,94 @@ from applicant.ports.driving.update_trigger import UpdateResult
 
 router = APIRouter(prefix="/api/update", tags=["update"], dependencies=[Depends(require_llm_configured)])
 
-#: Path to the one-liner update script (scripts/update.sh). Resolved from repo root.
-_UPDATE_SCRIPT = Path(__file__).resolve().parents[4] / "scripts" / "update.sh"
+#: The updater touches ``updater.alive`` every few seconds; treat it as deployed
+#: only while that heartbeat is fresh.
+_ALIVE_WINDOW_S = 60
+#: How many trailing lines of the update log the UI shows.
+_LOG_TAIL_LINES = 60
+
+
+def _default_control_dir() -> Path:
+    return Path(os.environ.get("UPDATE_CONTROL_DIR", "/control"))
 
 
 class UpdateTrigger:
-    """``UpdateTriggerPort`` adapter — dispatches the guarded update script.
+    """``UpdateTriggerPort`` adapter — the control plane for the updater sidecar.
 
-    Real dispatch is opt-in (APPLICANT_UPDATE_ENABLED=1) so tests and dev never
-    mutate a deployment. The dry-run path reports what *would* happen (FR-OOBE-4).
+    Writes a request flag the sidecar consumes and reads back its state + log.
+    When the sidecar isn't deployed (no fresh heartbeat) the trigger is a safe
+    no-op so tests/dev and un-bootstrapped deployments never mutate anything.
     """
 
-    def __init__(self, script_path: Path = _UPDATE_SCRIPT) -> None:
-        self._script = script_path
+    def __init__(self, control_dir: Path | None = None) -> None:
+        self._dir = Path(control_dir) if control_dir is not None else _default_control_dir()
+
+    # -- control-file helpers ---------------------------------------------
+    def _updater_alive(self) -> bool:
+        beat = self._dir / "updater.alive"
+        try:
+            return beat.is_file() and (time.time() - beat.stat().st_mtime) < _ALIVE_WINDOW_S
+        except OSError:
+            return False
+
+    def _read_status(self) -> dict:
+        try:
+            data = json.loads((self._dir / "status.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"state": "idle", "message": "", "started_at": None, "finished_at": None}
+        if not isinstance(data, dict):
+            return {"state": "idle", "message": "", "started_at": None, "finished_at": None}
+        return data
+
+    def _log_tail(self) -> list[str]:
+        try:
+            text = (self._dir / "update.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
+        return text.splitlines()[-_LOG_TAIL_LINES:]
+
+    # -- driving API -------------------------------------------------------
+    def status(self) -> dict:
+        """Full update-surface status for the UI (soft — never raises)."""
+        st = self._read_status()
+        return {
+            "surface": "update",
+            "state": st.get("state", "idle"),
+            "message": st.get("message", ""),
+            "started_at": st.get("started_at"),
+            "finished_at": st.get("finished_at"),
+            "log_tail": self._log_tail(),
+            "updater_available": self._updater_alive(),
+        }
 
     def trigger_update(self) -> UpdateResult:
-        enabled = os.environ.get("APPLICANT_UPDATE_ENABLED") == "1"
-        if not self._script.exists():
-            return UpdateResult(started=False, message="Update script not found; nothing run.")
-        if not enabled:
+        if not self._updater_alive():
             return UpdateResult(
                 started=False,
                 message=(
-                    f"Dry run: would invoke {self._script.name} "
-                    "(backup DB, run migrations, support rollback). "
-                    "Set APPLICANT_UPDATE_ENABLED=1 to enable."
+                    "The one-click updater isn't running yet. Update once the normal way "
+                    "(scripts/update.sh --apply on the host) to deploy it; after that this "
+                    "button updates Applicant for you."
                 ),
             )
-        # Real (opt-in) dispatch — detached so the UI returns immediately.
-        # The enabled path MUST pass ``--apply`` so the script actually performs
-        # the update (backup -> migrate -> restart); without it the script is a
-        # dry-run that only prints the steps, so an "enabled" trigger that
-        # silently did nothing would be a footgun. The guard (APPLICANT_UPDATE_
-        # ENABLED=1 *and* script-exists) above is what keeps this from running in
-        # tests/dev — once past it, run for real.
-        import subprocess  # local import: only loaded on real dispatch
-
-        subprocess.Popen(  # noqa: S603 - script path is repo-fixed, not user input
-            ["/bin/bash", str(self._script), "--apply"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return UpdateResult(started=True, message=f"Started {self._script.name} --apply (background).")
+        if self._read_status().get("state") == "running":
+            return UpdateResult(started=False, message="An update is already in progress.")
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            (self._dir / "request").write_text(str(time.time()), encoding="utf-8")
+        except OSError as exc:
+            return UpdateResult(started=False, message=f"Could not request an update: {exc}")
+        return UpdateResult(started=True, message="Update requested — Applicant is updating in the background.")
 
 
 @router.get("")
 def index() -> dict:
-    return {"surface": "update", "status": "live", "phase": 4}
+    """Update-surface status (FR-OOBE-4) — drives the in-UI Update button."""
+    return UpdateTrigger().status()
 
 
 @router.post("/trigger")
 def trigger() -> dict:
-    """Invoke the guarded one-liner update (FR-OOBE-4). Safe by default (dry-run)."""
+    """Request a one-click update (FR-OOBE-4). Safe by default (no-op without the updater)."""
     result = UpdateTrigger().trigger_update()
     return {"started": result.started, "message": result.message}

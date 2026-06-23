@@ -1,15 +1,16 @@
-"""Coverage: update ROUTER + UpdateTrigger (src/applicant/app/routers/update.py).
+"""Coverage: update ROUTER + UpdateTrigger control plane (src/applicant/app/routers/update.py).
 
-The in-UI Update button invokes a guarded one-liner update script. Real dispatch is
-opt-in (APPLICANT_UPDATE_ENABLED=1 AND the script must exist) so the default path is a
-non-destructive dry-run. These tests drive: the index, the HTTP /trigger dry-run, the
-"script not found" branch, and the opt-in real-dispatch branch with ``subprocess.Popen``
-mocked so nothing actually runs. ``scripts/`` is never touched (a temp script is used).
+The in-UI Update button is now a control plane over the `updater` sidecar: the api
+drops a request flag in a shared control dir and the sidecar runs the real update.
+These tests drive the status surface, the safe no-op trigger (no updater deployed),
+the LLM gate, and the UpdateTrigger branches against a temp control dir — nothing
+real is ever dispatched.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,20 +31,24 @@ def client():
         yield c
 
 
-def test_index(client):
+def test_index_returns_status_surface(client):
     res = client.get("/api/update")
     assert res.status_code == 200
-    assert res.json() == {"surface": "update", "status": "live", "phase": 4}
+    body = res.json()
+    assert body["surface"] == "update"
+    # No control volume in the test process -> idle + updater not available.
+    assert body["state"] == "idle"
+    assert body["updater_available"] is False
+    assert body["log_tail"] == []
 
 
-def test_trigger_http_is_dry_run_by_default(client):
-    # APPLICANT_UPDATE_ENABLED is not set -> safe dry-run (started False).
+def test_trigger_http_safe_when_no_updater(client):
+    # No updater heartbeat -> safe no-op (started False) with an actionable message.
     res = client.post("/api/update/trigger")
     assert res.status_code == 200
     body = res.json()
     assert body["started"] is False
-    # The repo script exists, so the message is the "would invoke" dry-run note.
-    assert "Dry run" in body["message"]
+    assert "updater" in body["message"].lower()
 
 
 def test_trigger_router_blocked_before_llm_gate():
@@ -52,52 +57,72 @@ def test_trigger_router_blocked_before_llm_gate():
         assert c.post("/api/update/trigger").status_code == 409
 
 
-# --- UpdateTrigger unit branches (no app needed) ----------------------------
-def test_trigger_reports_missing_script(tmp_path, monkeypatch):
-    monkeypatch.delenv("APPLICANT_UPDATE_ENABLED", raising=False)
-    missing = tmp_path / "does-not-exist.sh"
-    result = UpdateTrigger(script_path=missing).trigger_update()
+# --- UpdateTrigger control-plane branches (temp control dir) -----------------
+def _beat(control_dir, *, age_s: float = 0.0) -> None:
+    """Write a heartbeat file, optionally aged into the past."""
+    alive = control_dir / "updater.alive"
+    alive.write_text("", encoding="utf-8")
+    if age_s:
+        old = time.time() - age_s
+        import os
+
+        os.utime(alive, (old, old))
+
+
+def test_no_updater_is_safe_noop(tmp_path):
+    result = UpdateTrigger(control_dir=tmp_path).trigger_update()
     assert result.started is False
-    assert "not found" in result.message
+    assert "normal way" in result.message
+    # And nothing was written.
+    assert not (tmp_path / "request").exists()
 
 
-def test_trigger_dry_run_when_script_present_but_disabled(tmp_path, monkeypatch):
-    monkeypatch.delenv("APPLICANT_UPDATE_ENABLED", raising=False)
-    script = tmp_path / "update.sh"
-    script.write_text("#!/bin/bash\necho hi\n", encoding="utf-8")
-    result = UpdateTrigger(script_path=script).trigger_update()
-    assert result.started is False
-    assert "Dry run" in result.message
-    assert "update.sh" in result.message
+def test_stale_heartbeat_counts_as_no_updater(tmp_path):
+    _beat(tmp_path, age_s=3600)  # an hour old -> stale
+    trig = UpdateTrigger(control_dir=tmp_path)
+    assert trig.status()["updater_available"] is False
+    assert trig.trigger_update().started is False
 
 
-def test_trigger_real_dispatch_when_enabled(tmp_path, monkeypatch):
-    """With APPLICANT_UPDATE_ENABLED=1 AND the script present, the trigger dispatches the
-    update detached. ``subprocess.Popen`` is mocked so no real process is spawned."""
-    script = tmp_path / "update.sh"
-    script.write_text("#!/bin/bash\necho hi\n", encoding="utf-8")
-    monkeypatch.setenv("APPLICANT_UPDATE_ENABLED", "1")
-
-    calls: list[list[str]] = []
-
-    class _FakePopen:
-        def __init__(self, args, **kwargs):
-            calls.append(args)
-
-    import subprocess
-
-    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
-    result = UpdateTrigger(script_path=script).trigger_update()
+def test_fresh_heartbeat_writes_request(tmp_path):
+    _beat(tmp_path)
+    trig = UpdateTrigger(control_dir=tmp_path)
+    assert trig.status()["updater_available"] is True
+    result = trig.trigger_update()
     assert result.started is True
-    assert "Started" in result.message
-    # CRIT-ops fix: the enabled path MUST pass --apply so the script actually
-    # performs the update (backup/migrate/restart) instead of a no-op dry run.
-    assert calls == [["/bin/bash", str(script), "--apply"]]
-    assert "--apply" in result.message
+    assert (tmp_path / "request").exists()
 
 
-def test_default_script_path_points_at_repo_scripts():
-    # Sanity: the resolved default path lands on scripts/update.sh under the repo root.
-    trigger = UpdateTrigger()
-    assert Path(trigger._script).name == "update.sh"
-    assert "scripts" in str(trigger._script)
+def test_trigger_blocks_when_already_running(tmp_path):
+    _beat(tmp_path)
+    (tmp_path / "status.json").write_text(
+        json.dumps({"state": "running", "message": "Updating…"}), encoding="utf-8"
+    )
+    result = UpdateTrigger(control_dir=tmp_path).trigger_update()
+    assert result.started is False
+    assert "already" in result.message.lower()
+    assert not (tmp_path / "request").exists()  # did not re-request
+
+
+def test_status_reads_state_and_log_tail(tmp_path):
+    _beat(tmp_path)
+    (tmp_path / "status.json").write_text(
+        json.dumps(
+            {"state": "success", "message": "Update complete.", "started_at": "t0", "finished_at": "t1"}
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "update.log").write_text("\n".join(f"line {i}" for i in range(200)), encoding="utf-8")
+    st = UpdateTrigger(control_dir=tmp_path).status()
+    assert st["state"] == "success"
+    assert st["message"] == "Update complete."
+    assert st["finished_at"] == "t1"
+    assert len(st["log_tail"]) == 60  # tail is capped
+    assert st["log_tail"][-1] == "line 199"
+
+
+def test_status_tolerates_corrupt_files(tmp_path):
+    (tmp_path / "status.json").write_text("not json{", encoding="utf-8")
+    st = UpdateTrigger(control_dir=tmp_path).status()
+    assert st["state"] == "idle"  # falls back cleanly
+    assert st["updater_available"] is False

@@ -34631,3 +34631,31 @@ body.theme-frosted .modal {
 @media (prefers-reduced-motion: reduce) {
   [style*="applicantPulse"] { animation: none !important; }
 }
+
+/* Update modal (#applicant-update-modal) live log tail: a monospace, scrollable
+   panel showing the updater's recent output while it runs. Reuses theme vars so
+   it tracks light/dark like every other panel. Matches the framing of the app's
+   other monospace log/output blocks. */
+.applicant-update-log {
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-family, 'Fira Code', 'Courier New', monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+/* The "Update now" button is disabled while an update is running — give it a
+   clear inactive cue (the shared .cal-btn has no :disabled rule). Scoped to the
+   Update modal so other surfaces are untouched. */
+#applicant-update-modal .cal-btn[disabled] {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+}

@@ -1370,6 +1370,13 @@ function initializeEventListeners() {
   // only when the engine reports there's activity. Imported unconditionally.
   import('./js/applicantActivity.js').catch(() => null);
 
+  // Update surface: the #rail-update sidebar entry + the one-click update modal.
+  // Like the Portal and Activity, it self-boots (wires the #rail-update launcher
+  // and opens its own modal), is NOT gated by the Applicant feature layer, and
+  // degrades gracefully when the engine/updater is unreachable. Imported
+  // unconditionally so the update control is always reachable from the rail.
+  import('./js/applicantUpdate.js').catch(() => null);
+
   // First-run setup wizard + home-base landing. The wizard self-skips if
   // setup/onboarding is already complete or the engine is unreachable; it returns
   // true only when it actually presented its blocking overlay. ORDERING: the
