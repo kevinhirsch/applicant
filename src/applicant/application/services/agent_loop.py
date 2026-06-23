@@ -120,6 +120,8 @@ class AgentLoop:
         setup_service=None,
         research_service=None,
         resume_ledger: ResumeLedger | None = None,
+        llm=None,
+        loop_toolset_factory=None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -152,6 +154,21 @@ class AgentLoop:
         # never starts new work while the gate is closed. When unset (legacy tests),
         # the gate is treated as open so behavior is unchanged.
         self._setup = setup_service
+        # FR-MIND-6 / FR-CUA-2: the agent-callable tool surface for the AUTONOMOUS loop.
+        # Today memory/skills/recall (and the bounded desktop action) reach the loop only
+        # as passive CONTEXT; this seam lets a tool-capable model CHOOSE to call them
+        # mid-reasoning. Both are optional/defaulted: ``llm`` is the loop's reasoning
+        # model, and ``loop_toolset_factory(campaign_id, llm) -> LoopToolset | None`` is a
+        # process-lived builder that returns the registered tool set (reusing the chat
+        # ChatToolbox + every existing guard) ONLY when the feature is opted in and the
+        # model advertises tool calling. ``None`` (the default) ⇒ no tool path is ever
+        # entered, so the loop behaves byte-identically to today. The toolset is built
+        # PER CAMPAIGN on demand (the tools are campaign-scoped) and is never cached on the
+        # instance, so the scheduler's per-tick rebuild can't leak campaign state across
+        # ticks (FR-MIND-10); the staging/dedupe substrate it writes through is the SAME
+        # process-lived curation ledger the rest of the system uses.
+        self._llm = llm
+        self._loop_toolset_factory = loop_toolset_factory
         # (campaign_id, date) -> count of applications acted on that day (FR-AGENT-1).
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
@@ -323,6 +340,42 @@ class AgentLoop:
 
     # ``run_once`` is the explicit single-pass entry point (alias of tick).
     run_once = tick
+
+    # --- agent-callable tools (FR-MIND-6 / FR-CUA-2) ----------------------
+    def tools_for(self, campaign_id: CampaignId):
+        """Build the loop's registered tool set for ``campaign_id``, or ``None``.
+
+        Returns ``None`` (no tool path — today's behavior) unless a toolset factory was
+        injected AND it yields an offerable tool set for this campaign. The factory
+        itself enforces the opt-in + tool-capable-model gates, so the default (no factory)
+        is a clean no-op. Built fresh per call (never cached on the instance) so the
+        per-tick rebuild can't leak campaign state across ticks (FR-MIND-10).
+        """
+        if self._loop_toolset_factory is None:
+            return None
+        try:
+            return self._loop_toolset_factory(campaign_id, self._llm)
+        except Exception:  # pragma: no cover - defensive: tool wiring never breaks a tick
+            return None
+
+    def run_assisted_reasoning(
+        self, campaign_id: CampaignId, system: str, prompt: str
+    ) -> str | None:
+        """Let the loop's tool-capable model CHOOSE to call the registered tools.
+
+        Drives the bounded tool-dispatch loop (memory ``remember``/``forget``,
+        ``save_playbook``/``update_playbook``, ``recall``, and the bounded ``desktop``
+        action) through the SAME guarded handlers the chat path uses: writes STAGE for
+        review (FR-MIND-9), an authority-claiming write is refused (FR-MIND-11), the
+        desktop action inherits the stop-boundary (FR-CUA), and each tool respects the
+        FR-UI-4 toggle. Returns the model's final text, or ``None`` when no tool path is
+        available (feature off / non-tool model / nothing offered) — so a caller can fall
+        back to its non-tool behavior unchanged.
+        """
+        toolset = self.tools_for(campaign_id)
+        if toolset is None:
+            return None
+        return toolset.run(self._llm, system, prompt)
 
     # --- criteria (FR-AGENT-3 / #6) ---------------------------------------
     def _criteria_for(self, campaign_id: CampaignId):
