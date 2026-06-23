@@ -30,6 +30,7 @@ from typing import Any
 
 import httpx
 
+from applicant.adapters.llm.context_window import ContextWindowManager
 from applicant.adapters.llm.provider_profiles import (
     get_profile,
     tool_call_arguments,
@@ -192,6 +193,8 @@ class OpenAICompatibleLLM:
         context_window: int = 8192,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 60.0,
+        context_manager: ContextWindowManager | None = None,
+        prefix_cache: str = "auto",
     ) -> None:
         if ladder is None and (provider or model):
             ladder = TierLadder(
@@ -208,6 +211,15 @@ class OpenAICompatibleLLM:
         self._ladder = ladder
         self._transport = transport
         self._timeout = timeout
+        # FR-MIND-8: bound the context (compress middle turns over budget). A
+        # disabled (token_budget=0) manager is a pure no-op, so the default path
+        # is byte-identical to before.
+        self._context_manager = context_manager or ContextWindowManager()
+        # FR-MIND-8: prefix-cache posture. "auto"/"on" apply provider cache
+        # breakpoints where the provider advertises support; "off" never does.
+        # Local/OpenAI-compatible providers advertise no support, so this is a
+        # clean no-op for them regardless of the setting.
+        self._prefix_cache = (prefix_cache or "auto").strip().lower()
 
     # --- helpers ----------------------------------------------------------
     def _client(self) -> httpx.Client:
@@ -249,6 +261,12 @@ class OpenAICompatibleLLM:
     ) -> LLMResult:
         if self._ladder is None:
             raise LLMNotConfigured("No LLM tier ladder is configured.")
+
+        # FR-MIND-8: bound the conversation before dispatch. With the manager
+        # disabled (the default) this returns the same list — a single-shot
+        # (system+user) call is unaffected; only a long multi-turn conversation
+        # over budget gets its middle turns compressed.
+        messages = self._context_manager.apply(messages)
 
         required = _estimate_tokens(messages) + (max_tokens or 0)
         # Clamp the 1-based starting rung into the ladder. A heavy task may request a
@@ -338,6 +356,7 @@ class OpenAICompatibleLLM:
         url = profile.chat_url(base)
         raw_messages = [{"role": m.role, "content": m.content} for m in messages]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
+        payload = self._apply_prefix_cache(profile, payload)
 
         text, raw = self._post_openai(tier, url, payload)
         structured = None
@@ -351,6 +370,7 @@ class OpenAICompatibleLLM:
                 # Rebuild request without native response_format, with schema prompt.
                 fb_raw_messages = [{"role": m.role, "content": m.content} for m in fb_messages]
                 fb_payload = profile.build_request(tier.model, fb_raw_messages, None, max_tokens)
+                fb_payload = self._apply_prefix_cache(profile, fb_payload)
                 text, raw = self._post_openai(tier, url, fb_payload)
                 # Re-validate the fallback against the schema (FR-LLM-4a): a
                 # malformed-but-parseable object must not be returned as structured.
@@ -409,6 +429,7 @@ class OpenAICompatibleLLM:
 
         raw_messages = [{"role": m.role, "content": m.content} for m in msgs]
         payload = profile.build_request(tier.model, raw_messages, json_schema, max_tokens)
+        payload = self._apply_prefix_cache(profile, payload)
 
         with self._client() as client:
             resp = client.post(url, headers=self._headers(tier), json=payload)
@@ -426,6 +447,23 @@ class OpenAICompatibleLLM:
             structured=structured,
             low_confidence=_looks_low_confidence(text),
         )
+
+    def _apply_prefix_cache(
+        self, profile: Any, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Add provider prefix-cache breakpoints when enabled and supported.
+
+        A clean no-op unless the configured posture is ``auto``/``on`` AND the
+        resolved provider profile advertises prefix-cache support. Local Ollama
+        and OpenAI-compatible cloud advertise none, so this returns the payload
+        unchanged for them regardless of the posture (FR-MIND-8).
+        """
+        if self._prefix_cache == "off":
+            return payload
+        if not getattr(profile, "supports_prefix_cache", False):
+            return payload
+        marked = profile.mark_prefix_cache(payload)
+        return marked if isinstance(marked, dict) else payload
 
     @staticmethod
     def _is_context_error(resp: httpx.Response) -> bool:
