@@ -15,7 +15,18 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # Runs on the self-hosted runner to speed up CI. The `self-hosted` label is
+    # present on every self-hosted runner, so this matches yours regardless of
+    # OS/arch (no risk of a label typo leaving the runner idle).
+    # Host prerequisites (no sudo used by this job): Docker reachable without
+    # sudo (runner user in the `docker` group) for the compose-config step; git.
+    # uv/Python and Node are installed by the workflow steps below.
+    #
+    # HOSTED FALLBACK: this is a required PR check with no GitHub-hosted fallback,
+    # so if the runner is offline PRs will queue until it returns. To flip back to
+    # GitHub-hosted, comment the `self-hosted` line and uncomment `ubuntu-latest`.
+    runs-on: self-hosted
+    # runs-on: ubuntu-latest   # <-- hosted fallback: swap if the runner is down
     steps:
       - uses: actions/checkout@v4
 

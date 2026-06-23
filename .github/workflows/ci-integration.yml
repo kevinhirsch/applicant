@@ -24,7 +24,21 @@ concurrency:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    # Runs on the self-hosted runner. The `self-hosted` label matches yours
+    # regardless of OS/arch. This lane needs heavy system deps (TeX, Xvfb, a
+    # browser) and Docker service containers — because the runner has NO
+    # passwordless sudo, those system deps must be PRE-BAKED on the runner host
+    # (this is also the speedup: no per-run apt installs). The steps below verify
+    # them and fail fast with guidance if any is missing, rather than installing.
+    # Host prerequisites: Docker reachable without sudo (for the postgres service
+    # container); TeX (lualatex or xelatex + moderncv/fontspec/fontawesome5);
+    # Xvfb (`xvfb-run`); fonts (open-sans, font-awesome).
+    #
+    # HOSTED FALLBACK: to run this lane on GitHub-hosted instead (which permits
+    # the `sudo apt-get` installs), comment the `self-hosted` line, uncomment
+    # `ubuntu-latest`, and restore the apt install steps from git history.
+    runs-on: self-hosted
+    # runs-on: ubuntu-latest   # <-- hosted fallback: swap if the runner is down
 
     services:
       postgres:
@@ -58,26 +72,29 @@ jobs:
         run: uv sync --extra browser
 
       # --- TeX (FR-RESUME-3/4 real-render path) ----------------------------
-      - name: Install TeX Live (lualatex + moderncv + fontspec + fontawesome5)
+      # No sudo on the self-hosted runner, so TeX must be PRE-BAKED on the host
+      # (texlive-latex-extra/-luatex/-xetex/-fonts-* + moderncv/fontspec/
+      # fontawesome5 + fonts-open-sans/-font-awesome). Verify, don't install.
+      - name: Verify TeX is installed on the runner
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            texlive-latex-extra \
-            texlive-fonts-recommended \
-            texlive-fonts-extra \
-            texlive-luatex \
-            texlive-xetex \
-            fonts-open-sans \
-            fonts-font-awesome
-          # Verify at least one engine is present.
+          if ! command -v lualatex >/dev/null && ! command -v xelatex >/dev/null; then
+            echo "::error::No TeX engine (lualatex/xelatex) on the runner. Pre-bake TeX Live on the self-hosted host (no sudo in CI): apt-get install texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-luatex texlive-xetex fonts-open-sans fonts-font-awesome"
+            exit 1
+          fi
           lualatex --version || xelatex --version
 
       # --- Browser binary (FR-PREFILL / FR-STEALTH) -------------------------
+      # patchright installs the browser into uv's cache (user-space, no sudo) and
+      # persists between runs on the self-hosted host. Xvfb must be pre-baked
+      # (needs sudo to apt-install), so verify it rather than install.
       - name: Install Chromium via patchright
+        run: uv run patchright install chromium
+      - name: Verify Xvfb is installed on the runner
         run: |
-          uv run patchright install chromium
-          # Virtual display for headless-incompatible browser runs.
-          sudo apt-get install -y --no-install-recommends xvfb
+          if ! command -v xvfb-run >/dev/null; then
+            echo "::error::xvfb-run not found on the runner. Pre-bake it on the self-hosted host (no sudo in CI): apt-get install xvfb"
+            exit 1
+          fi
 
       # --- Database schema --------------------------------------------------
       - name: Apply Alembic migrations
