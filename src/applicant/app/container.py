@@ -584,6 +584,13 @@ def build_container(settings: Settings | None = None) -> Container:
     # wire it additively so reasoning can consult memory without a construction cycle).
     # The per-request ChatService gets it directly in the request factory below.
     chat_service._agent_memory = agent_memory
+    # FR-MIND-1/2/5: likewise give the already-built scoring + material services the
+    # advisory curated-memory / saved-playbook substrate (both are constructed above,
+    # before the substrate; wire it additively so viability scoring + generation can
+    # consult learned context without a construction cycle). The per-tick and
+    # per-request copies receive it directly in their factories below.
+    scoring_service._agent_memory = agent_memory
+    material_service._agent_memory = agent_memory
     curation_ledger = CurationLedger()
     # FR-MIND-7/-13: a CHEAP, OPTIONAL LLM-backed summarizer from CURATION_MODEL. It
     # falls back to the trivial heuristic when no LLM is configured, so the hermetic
@@ -644,7 +651,12 @@ def build_container(settings: Settings | None = None) -> Container:
             tick_storage, discovery, embedding, ls, tool_registry=tool_registry
         )
         ss = ScoringService(
-            tick_storage, llm, embedding, learning=ls, tool_registry=tool_registry
+            tick_storage,
+            llm,
+            embedding,
+            learning=ls,
+            tool_registry=tool_registry,
+            agent_memory=agent_memory,
         )
         cs = CriteriaService(tick_storage, llm)
         ars = AgentRunService(tick_storage)
@@ -682,6 +694,7 @@ def build_container(settings: Settings | None = None) -> Container:
             pending_actions=pas,
             learning=ls,
             advanced_learning=adv,
+            agent_memory=agent_memory,
         )
         loop = AgentLoop(
             storage=tick_storage,
@@ -734,7 +747,12 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_criteria = CriteriaService(req_storage, llm)
         rs_pas = PendingActionsService(req_storage)
         rs_scoring = ScoringService(
-            req_storage, llm, embedding, learning=rs_ls, tool_registry=tool_registry
+            req_storage,
+            llm,
+            embedding,
+            learning=rs_ls,
+            tool_registry=tool_registry,
+            agent_memory=agent_memory,
         )
         rs_conversion = ConversionService(
             latex_tailor=latex_tailor, config_store=rs_config_store
@@ -792,6 +810,7 @@ def build_container(settings: Settings | None = None) -> Container:
             pending_actions=rs_pas,
             learning=rs_ls,
             advanced_learning=rs_adv,
+            agent_memory=agent_memory,
         )
         rs_campaign = CampaignService(req_storage)
         rs_campaign.set_criteria_service(rs_criteria)

@@ -125,6 +125,7 @@ class MaterialService:
         pending_actions=None,
         learning=None,
         advanced_learning=None,
+        agent_memory=None,
         review_base_url: str = "/review",
     ) -> None:
         self._storage = storage
@@ -139,6 +140,12 @@ class MaterialService:
         # Optional AdvancedLearningService so a redline add/subtract/free-text turn
         # folds the user's revision feedback into learning (FR-LEARN-3 / FR-RESUME-8).
         self._advanced_learning = advanced_learning
+        # Optional agent-memory trio (``.memory`` / ``.skills`` / ``.recall``,
+        # FR-MIND-1/2/3). When wired, generation appends a BOUNDED, advisory-only
+        # "what the assistant has learned" block to the system prompt (read fresh per
+        # call — FR-MIND-10). When ``None`` (the default), behavior is byte-identical
+        # to before: no block, no extra calls.
+        self._agent_memory = agent_memory
         # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
         self._notifications = notifications
         self._pending_actions = pending_actions
@@ -474,7 +481,9 @@ class MaterialService:
         # fabrication gate against the candidate's TRUE source (``base_source``, the
         # flattened real attribute set + history), NOT against the parent variant's own
         # text (which would be a vacuous source-to-self comparison).
-        generated = self._generate_text(parent_source, jd_terms, kind="resume_variant")
+        generated = self._generate_text(
+            parent_source, jd_terms, kind="resume_variant", campaign_id=campaign_id
+        )
         report = self.apply_post_filter(generated)
         self.assert_no_fabrication(base_source, report.text)
         new_variant = ResumeVariant(
@@ -644,7 +653,9 @@ class MaterialService:
             return None
         self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
         true_source = self._resolve_true_source(campaign_id, true_source)
-        body = self._generate_text(true_source, jd_terms, kind="cover_letter")
+        body = self._generate_text(
+            true_source, jd_terms, kind="cover_letter", campaign_id=campaign_id
+        )
         report = self.apply_post_filter(body)
         # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
         # narrative wording passes while invented skills/orgs/credentials are caught.
@@ -688,7 +699,9 @@ class MaterialService:
             else classify_screening_question(question)
         )
         if kind is ScreeningKind.ESSAY:
-            answer = self._generate_text(true_source, [question], kind="essay_answer")
+            answer = self._generate_text(
+                true_source, [question], kind="essay_answer", campaign_id=campaign_id
+            )
         elif kind is ScreeningKind.SENSITIVE:
             # EEO/demographic: no fabrication, no AI-guess, no PII leak. The answer
             # comes ONLY from an explicit stored EEO answer; absent that, decline.
@@ -1130,8 +1143,125 @@ class MaterialService:
             except Exception:  # pragma: no cover - defensive
                 pass
 
+    # --- learned context (FR-MIND-1/2/3/5; advisory only) -----------------
+    def _learned_context(
+        self, campaign_id: CampaignId | None, *, query: str
+    ) -> str:
+        """A BOUNDED "what the assistant has learned" block for generation (FR-MIND-5).
+
+        Mirrors the chatbot's advisory memory block but is local to this service (no
+        cross-service import). Read fresh from the agent-memory trio on every call
+        (never cached on the instance — FR-MIND-10):
+
+          (a) a few curated-memory lines (the user's style/preferences/corrections),
+          (b) the top matching saved-playbook hints (L0 metadata — e.g. how to phrase
+              answers for a given company/ATS — cheap, no bodies, FR-MIND-2/-13), and
+          (c) optionally one recall hit for a prior similar application.
+
+        SAFETY (FR-MIND-11 + FR-RESUME-2): every line is ADVISORY ONLY. It may shape
+        phrasing / voice / approach, but it can NEVER invent facts about the user and
+        it confers NO authority. Any memory line / skill / recall hit that *claims* a
+        safety-gated authority (submit/account/CAPTCHA/skip-review) is DROPPED via the
+        core ``claims_authority`` rule so it can never read as an instruction the
+        assistant must obey. The fabrication guard (``assert_no_fabrication``) still
+        runs afterward against the user's TRUE source, so a "skill" that suggested
+        inventing a credential cannot survive into the stored document.
+
+        Degrades silently to ``""`` when no ``agent_memory`` is wired (byte-identical
+        to the prior behavior) or nothing relevant is on file.
+        """
+        am = self._agent_memory
+        if am is None:
+            return ""
+        from applicant.core.rules.agent_memory import claims_authority
+
+        scope = str(campaign_id) if campaign_id is not None else None
+        lines: list[str] = []
+
+        # (a) curated memory — user style/preferences (bounded by the store).
+        try:
+            snap = am.memory.snapshot(campaign_id=scope)
+        except Exception:
+            snap = None
+        if snap is not None:
+            mem_lines: list[str] = []
+            for e in (tuple(snap.user) + tuple(snap.environment))[:8]:
+                txt = getattr(e, "text", "")
+                if not txt or claims_authority(txt):
+                    # Advisory-only: never surface an authority claim as guidance.
+                    continue
+                mem_lines.append(f"- {txt}")
+            if mem_lines:
+                lines.append(
+                    "What you have learned about this user's style and preferences "
+                    "(use for phrasing/voice only; never to invent facts):"
+                )
+                lines.extend(mem_lines)
+
+        # (b) a few relevant saved playbooks (L0 metadata — cheap, no bodies).
+        try:
+            metas = am.skills.list_skills(campaign_id=scope)
+        except Exception:
+            metas = ()
+        if metas:
+            q = {w for w in (query or "").lower().split() if len(w) > 3}
+            scored = []
+            for m in metas:
+                hay = (
+                    f"{getattr(m, 'description', '')} "
+                    f"{getattr(m, 'when_to_use', '')}"
+                ).lower()
+                if claims_authority(hay):
+                    # Advisory-only: drop a playbook that claims authority.
+                    continue
+                overlap = len(q & set(hay.split())) if q else 0
+                scored.append((overlap, m))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            skill_lines = [
+                f"- {getattr(m, 'name', '')}: "
+                f"{getattr(m, 'when_to_use', '') or getattr(m, 'description', '')}"
+                for _, m in scored[:3]
+            ]
+            skill_lines = [s for s in skill_lines if s.strip(" -:")]
+            if skill_lines:
+                lines.append("Saved playbooks you may consult (advice only):")
+                lines.extend(skill_lines)
+
+        # (c) one recall hit for a prior similar application (on-demand, cheap).
+        recall = getattr(am, "recall", None)
+        if recall is not None and query:
+            try:
+                hits = recall.search(query, limit=1, campaign_id=scope)
+            except Exception:
+                hits = ()
+            for h in hits:
+                txt = getattr(h, "text", "")
+                if not txt or claims_authority(txt):
+                    continue
+                snippet = txt.strip().replace("\n", " ")[:200]
+                if snippet:
+                    lines.append(
+                        "From a prior similar application (background only): "
+                        + snippet
+                    )
+                break
+
+        if not lines:
+            return ""
+        # Hard-bound the whole block so learned context never bloats the prompt
+        # (FR-MIND-13). A generous cap that still fits several lines + a recall hit.
+        block = "\n".join(lines)
+        return block[:1500]
+
     # --- internals --------------------------------------------------------
-    def _generate_text(self, true_source: str, terms: list[str], *, kind: str) -> str:
+    def _generate_text(
+        self,
+        true_source: str,
+        terms: list[str],
+        *,
+        kind: str,
+        campaign_id: CampaignId | None = None,
+    ) -> str:
         """1 LLM pass with deterministic truthful fallback when no LLM is wired."""
         if self._llm is not None and getattr(self._llm, "is_configured", lambda: False)():
             try:
@@ -1143,6 +1273,15 @@ class MaterialService:
                 system += "\n" + aggressiveness_directive(self._aggressiveness)
                 if self._extra_banned:
                     system += "\nAvoid these phrases: " + "; ".join(self._extra_banned)
+                # FR-MIND-1/2/5: append a BOUNDED, advisory-only "what the assistant has
+                # learned" block (curated style/preferences + matching saved-playbook
+                # hints + a prior-similar-application recall). Read fresh per call
+                # (FR-MIND-10). No-op when no ``agent_memory`` is wired => byte-identical.
+                learned = self._learned_context(
+                    campaign_id, query=" ".join([kind, *terms])
+                )
+                if learned:
+                    system += "\n\n" + learned
                 result = self._llm.complete(
                     [
                         ChatMessage(role="system", content=system),
