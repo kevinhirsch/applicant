@@ -574,7 +574,9 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.application.services.curation_service import (
         CurationLedger,
         CurationService,
+        build_llm_summarizer,
     )
+    from applicant.application.services.run_history import RunHistoryProvider
 
     agent_memory = build_agent_memory(settings, workspace)
     # FR-MIND-5: give the already-built chatbot the advisory curated-memory + saved-
@@ -583,13 +585,31 @@ def build_container(settings: Settings | None = None) -> Container:
     # The per-request ChatService gets it directly in the request factory below.
     chat_service._agent_memory = agent_memory
     curation_ledger = CurationLedger()
-    curation_service = CurationService(
-        memory_store=agent_memory.memory,
-        skill_store=agent_memory.skills,
-        ledger=curation_ledger,
-        memory_write_approval=settings.memory_write_approval,
-        skills_write_approval=settings.skills_write_approval,
+    # FR-MIND-7/-13: a CHEAP, OPTIONAL LLM-backed summarizer from CURATION_MODEL. It
+    # falls back to the trivial heuristic when no LLM is configured, so the hermetic
+    # lane (no model) behaves exactly as before. Reuses the main ``llm`` ladder (the
+    # CURATION_MODEL id is advisory until a dedicated curation tier is pinned).
+    curation_summarizer = build_llm_summarizer(llm, model=settings.curation_model)
+
+    def _make_curation(mem, skills, recall) -> CurationService:
+        return CurationService(
+            memory_store=mem,
+            skill_store=skills,
+            ledger=curation_ledger,
+            # FR-MIND-3: index each curated run into recall so ``recall.search`` returns
+            # real hits. Local/cheap (in-memory default; bridge no-ops when OFF).
+            recall=recall,
+            summarizer=curation_summarizer,
+            memory_write_approval=settings.memory_write_approval,
+            skills_write_approval=settings.skills_write_approval,
+        )
+
+    curation_service = _make_curation(
+        agent_memory.memory, agent_memory.skills, agent_memory.recall
     )
+    # FR-MIND-7: feed the scheduled nudge REAL run history — recent applications + their
+    # outcomes read from the per-tick storage, mapped to RunSummaries (bounded, cheap).
+    run_summaries_provider = RunHistoryProvider()
 
     agent_loop = AgentLoop(
         storage=storage,
@@ -684,14 +704,11 @@ def build_container(settings: Settings | None = None) -> Container:
             resume_ledger=resume_ledger,
         )
         # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
-        # process-lived CurationLedger + agent-memory adapters as the main service, so
-        # the curation dedupe state survives the per-tick rebuild instead of resetting.
-        tick_curation = CurationService(
-            memory_store=agent_memory.memory,
-            skill_store=agent_memory.skills,
-            ledger=curation_ledger,
-            memory_write_approval=settings.memory_write_approval,
-            skills_write_approval=settings.skills_write_approval,
+        # process-lived CurationLedger + agent-memory adapters (+ recall + summarizer)
+        # as the main service, so the curation dedupe state survives the per-tick
+        # rebuild instead of resetting.
+        tick_curation = _make_curation(
+            agent_memory.memory, agent_memory.skills, agent_memory.recall
         )
         return {
             "storage": tick_storage,
@@ -827,6 +844,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # per-tick factory supplies the isolated-session one sharing the SAME ledger.
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
+        # FR-MIND-7: the nudge now reviews ACTUAL runs — recent applications + outcomes
+        # read from the (per-tick) storage and mapped to RunSummaries, bounded + cheap.
+        run_summaries_provider=run_summaries_provider,
     )
 
     return Container(
