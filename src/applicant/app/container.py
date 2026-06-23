@@ -536,6 +536,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # debug read-model are wired additively below (they are built after this point).
         agent_run_service=agent_run_service,
         pending_actions=pending_actions_service,
+        # FR-AGENT-1/2: the run-control seam so the chat can also STEER the loop
+        # (pause/resume + daily throughput, clamped to the hard cap) by routing intents
+        # to the SAME gated operations the ops surface uses (the run service does both).
+        run_control=agent_run_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -840,7 +844,9 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         # FR-AGENT-7: per-request, req-storage-bound run reader (read-only ``status``) so
-        # the chatbot's own-work report uses this request's isolated Session.
+        # the chatbot's own-work report uses this request's isolated Session. The SAME
+        # service is the run-control seam (FR-AGENT-1/2) for steering from chat — a
+        # pause/resume/throughput change persists on THIS request's session (CONC-REQ-1).
         rs_agent_runs = AgentRunService(req_storage)
         rs_chat = ChatService(
             attribute_service=rs_attr,
@@ -859,6 +865,9 @@ def build_container(settings: Settings | None = None) -> Container:
             agent_run_service=rs_agent_runs,
             pending_actions=rs_pas,
             admin_query=rs_admin,
+            # FR-AGENT-1/2: same req-storage-bound run service is the control seam so a
+            # pause/resume/throughput steered from chat persists on this request's session.
+            run_control=rs_agent_runs,
         )
         rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
