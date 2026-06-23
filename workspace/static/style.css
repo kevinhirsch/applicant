@@ -61,6 +61,25 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+
+  /* ── Window kit ─────────────────────────────────────────────────────────
+     Single source of truth for tool-window / modal chrome dimensions. These
+     replace the magic numbers that were scattered through the .modal* rules,
+     and are the foundation the upcoming mobile-first window refactor builds
+     on. Values match the prior literals, so adopting them is a no-op visually.
+     Canonical window breakpoint is 768px (mobile sheet) / 769px (desktop
+     floating window); CSS @media can't read custom props, so that literal
+     stays in the queries — keep it consistent with this comment.            */
+  --window-max-w: 520px;                       /* desktop floating width    */
+  --window-max-h: 85vh;                        /* desktop max height        */
+  --window-radius: 10px;                       /* desktop corner radius     */
+  --window-pad: 10px;                          /* content padding           */
+  --window-header-gap: 6px;                    /* header → body gap         */
+  --window-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  /* Mobile bottom-sheet */
+  --window-sheet-radius: 14px;                 /* sheet top corners         */
+  --window-sheet-max-h: 85dvh;                 /* sheet height (dyn. vp)    */
+  --window-sheet-pad-top: 6px;                 /* tighter top (grab handle) */
 }
 
 :root.light {
@@ -1728,7 +1747,12 @@ body.bg-pattern-sparkles {
     #welcome-screen .welcome-sub,
     #welcome-screen .welcome-version {
       transition: opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease;
-      max-height: 60px;
+      /* Headroom for multi-line copy. The setup hint ("Add an AI endpoint…")
+         wraps to ~4 lines at the 375px mobile width and was clipped by the
+         old 60px cap (it only fit 3). This is just the expanded ceiling for
+         the collapse transition — the @media (max-height) rules still animate
+         it down to 0, so a larger value here costs nothing visually. */
+      max-height: 120px;
       overflow: hidden;
     }
     @media (max-height: 650px) {
@@ -4493,20 +4517,20 @@ body.bg-pattern-sparkles {
     .modal-content {
       background:var(--panel);
       border:1px solid var(--border);
-      width:min(520px, 92vw); max-height:85vh; padding:10px;
+      width:min(var(--window-max-w), 92vw); max-height:var(--window-max-h); padding:var(--window-pad);
       box-sizing:border-box; font-size:14px;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       letter-spacing: -0.015em;
       display:flex; flex-direction:column;
       position:relative;
       overflow-y:auto;
-      border-radius:10px;
-      box-shadow:0 8px 32px rgba(0,0,0,0.45);
+      border-radius:var(--window-radius);
+      box-shadow:var(--window-shadow);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
     }
     .modal-header {
-      display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
+      display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--window-header-gap);
       cursor:grab; user-select:none;
       /* Pin the header (with its close button) to the top of the
          scrollable modal-content so users can always dismiss the modal
@@ -4599,58 +4623,10 @@ body.bg-pattern-sparkles {
       .minimize-btn { display: none !important; }
       #modal-dock { display: none !important; }
     }
-    /* Minimized modals are hidden but stay in the DOM with their state intact */
-    .modal.minimized { display:none !important; }
-    /* Bottom dock for minimized modals */
-    #modal-dock {
-      position:fixed;
-      bottom:0;
-      left:0;
-      right:0;
-      display:flex;
-      flex-wrap:wrap;
-      gap:4px;
-      padding:4px 8px;
-      z-index:240;
-      pointer-events:none;
-      justify-content:flex-start;
-    }
-    #modal-dock:empty { display:none; }
-    .modal-dock-item {
-      background:var(--panel);
-      border:1px solid var(--border);
-      border-bottom:none;
-      border-radius:6px 6px 0 0;
-      padding:4px 4px 4px 10px;
-      display:inline-flex;
-      align-items:center;
-      gap:6px;
-      cursor:pointer;
-      pointer-events:auto;
-      font-size:12px;
-      color:var(--fg);
-      max-width:220px;
-      box-shadow:0 -2px 8px rgba(0,0,0,0.25);
-      transition:background 0.15s;
-    }
-    .modal-dock-item:hover { background:var(--bg); }
-    .modal-dock-label {
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      max-width:180px;
-    }
-    .modal-dock-close {
-      background:transparent;
-      border:none;
-      color:var(--fg);
-      cursor:pointer;
-      font-size:14px;
-      padding:0 4px;
-      line-height:1;
-      opacity:0.6;
-    }
-    .modal-dock-close:hover { color:var(--red); opacity:1; }
+    /* (Legacy minimize kit — .modal.minimized + #modal-dock + .modal-dock-*
+       — removed here. It was fully superseded by .modal.modal-minimized and
+       the #minimized-dock / .minimized-dock-chip system in modalManager.js;
+       the only remaining reference was a comment. No live JS/HTML used it.) */
     .modal-body { flex:1; overflow-y:auto; }
     .modal-body button { margin-top:6px; }
     /* Styled confirm dialog — keeps backdrop */
@@ -6065,17 +6041,17 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .settings-modal-content,
       #compare-model-overlay .modal-content {
         width: 100% !important;
-        /* 85dvh leaves comfortable headroom above the sheet so the user can
-           still see the chat behind it and the drag handle has breathing
+        /* sheet height leaves comfortable headroom above the sheet so the user
+           can still see the chat behind it and the drag handle has breathing
            room. Was 65vh (too short, content clipped) → 90vh (too tall, top
-           hugged the status bar). */
-        max-height: 85dvh !important;
+           hugged the status bar) → --window-sheet-max-h (85dvh). */
+        max-height: var(--window-sheet-max-h) !important;
         max-height: 85vh !important; /* fallback for browsers without dvh */
         height: auto !important;
-        border-radius: 14px 14px 0 0;
+        border-radius: var(--window-sheet-radius) var(--window-sheet-radius) 0 0;
         border: none;
         border-top: 1px solid var(--border);
-        padding-top: 6px !important;
+        padding-top: var(--window-sheet-pad-top) !important;
         /* Clip children to the rounded top corners — otherwise the sticky
            modal-header's var(--panel) background paints a darker
            rectangle past the radius and the corners look square again. */

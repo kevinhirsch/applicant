@@ -6,18 +6,20 @@
  * when the cursor is near a snap zone. On release, snaps the modal-content
  * to fill that zone with a springy animation.
  *
- * Snap zones (9):
- *   - top edge (10% strip)        → maximize
- *   - top-left corner             → top-left quarter
- *   - top-right corner            → top-right quarter
- *   - left edge                   → left half
- *   - right edge                  → right half
- *   - bottom-left corner          → bottom-left quarter
- *   - bottom-right corner         → bottom-right quarter
- *   - bottom edge                 → bottom half
- *   - sidebar edge (if present)   → snap next to the sidebar
+ * Live snap zones (desktop only; ≤768px is excluded — the swipe-dismiss UX
+ * takes precedence). See _zoneForPointer for the source of truth:
+ *   - dragged OVER the top edge (y ≤ 0)  → fullscreen (covers the sidebar)
+ *   - near the top edge (≤ 8px)          → maximize (fills the area beside the sidebar)
+ *   - right edge (≤ 24px)                → right half
+ *   - bottom edge (≤ 24px)               → bottom half
+ * Corner quarter-snaps and the LEFT-half snap are intentionally DISABLED — the
+ * sidebar lives on the left, and the corners were dropped on user request.
+ * Per-window limits (see _zoneForContent): settings-modal → right-half only;
+ * cookbook / theme / memory → fullscreen only.
  *
- * Mobile (≤768px) is excluded — the swipe-dismiss UX takes precedence.
+ * NOTE: a separate "edge dock" that reserves width and pushes the chat/content
+ * aside (rather than floating over it) lives in modalSnap.js — used mainly by
+ * Email's list/reader and the email↔document split view.
  *
  * Each modal-content remembers its pre-snap geometry so dragging away restores
  * the original size.
