@@ -120,6 +120,38 @@ chain spec → engine router → workspace proxy → JS → nav/section (see
 [traceability.md](traceability.md#front-door-reachability) and
 [dormant-surfaces.md](dormant-surfaces.md)).
 
+### Assistant learning + desktop assist (FR-MIND / FR-CUA)
+
+Two capabilities lifted-and-shifted from the Hermes Agent (MIT) substrate landed on `main`
+behind their own specs ([agent-intelligence.md](spec/agent-intelligence.md) `FR-MIND`,
+[computer-use.md](spec/computer-use.md) `FR-CUA`) and are now made **deploy-configurable and
+documented** so the stack is shippable:
+
+- **Assistant learning & memory (`FR-MIND`)** — curated memory ("what the assistant
+  remembers"), saved playbooks, cross-session recall, and a periodic curation review whose
+  proposed self-writes stage for approval. **Reachable and live** end-to-end: engine ports
+  (`MemoryStore`/`SkillStore`/`RecallIndex`, in-process default + a `bridge` to the front-door
+  store) → `app/routers/agent_memory.py` → workspace `/api/applicant/mind/*` proxy →
+  `applicantMind.js` memory panel + portal curation approvals. The three surfaces are `live`
+  in `src/applicant/dormant.py` (`assistant_memory`, `saved_playbooks`, `curation_approvals`).
+
+- **Desktop assist / computer use (`FR-CUA`)** — optional background desktop control,
+  confined to the sandbox/takeover surface, complementing the browser path. The port, the
+  core safety guards (stop-boundary, hard-blocks, no-secrets), the live-session toggle, and
+  the proxy routes are wired, but the surface ships **present-but-grayed** (`desktop_assist`,
+  `dormant` in `src/applicant/dormant.py`): the safe no-side-effects backend boots, and the
+  toggle stays locked with honest copy until the desktop driver + display stack are baked into
+  the **sandbox** image and the health preflight passes.
+
+The new deploy knobs are exposed in `.env.example` and passed through to the `api` service in
+`docker/docker-compose.prod.yml` (`MIND_BACKEND`, `MEMORY_WRITE_APPROVAL`,
+`SKILLS_WRITE_APPROVAL`, `MEMORY_MAX_CHARS`, `USER_MAX_CHARS`, `CURATION_SCHEDULE`,
+`CURATION_MODEL`; `COMPUTER_USE_BACKEND`, `CUA_DRIVER_CMD`, `COMPUTER_USE_MODE`,
+`COMPUTER_USE_APPROVALS`, `CUA_TELEMETRY`), all defaulting to the cautious config.py values
+(in-process memory store, review-on, curation off, no-op desktop backend, telemetry off). See
+[traceability.md](traceability.md) (FR-MIND / FR-CUA groups) and
+[dormant-surfaces.md](dormant-surfaces.md) for the reachability map.
+
 ### Production-hardening remediation (post-honest-re-audit)
 
 An honest re-audit found the earlier traceability matrix materially **overstated**: it claimed

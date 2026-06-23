@@ -141,6 +141,28 @@ services:
       # is False and callers degrade gracefully (no callback attempted).
       WORKSPACE_URL: http://applicant-ui:7000
       APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
+      # Assistant learning & memory substrate (docs/spec/agent-intelligence.md).
+      # Defaults match config.py: the self-contained in-process store, self-writes
+      # staged for review, background review OFF (ships dormant until wired). Set
+      # MIND_BACKEND=bridge to read the front-door memory/playbooks store over the
+      # internal callback channel (needs APPLICANT_INTERNAL_TOKEN above).
+      MIND_BACKEND: ${MIND_BACKEND:-in_memory}
+      MEMORY_WRITE_APPROVAL: ${MEMORY_WRITE_APPROVAL:-true}
+      SKILLS_WRITE_APPROVAL: ${SKILLS_WRITE_APPROVAL:-true}
+      MEMORY_MAX_CHARS: ${MEMORY_MAX_CHARS:-8000}
+      USER_MAX_CHARS: ${USER_MAX_CHARS:-4000}
+      CURATION_SCHEDULE: ${CURATION_SCHEDULE:-off}
+      CURATION_MODEL: ${CURATION_MODEL:-}
+      # Desktop assist / computer use (docs/spec/computer-use.md). Defaults match
+      # config.py: the no-side-effects backend, per-action approval, telemetry off.
+      # Ships present-but-grayed until the desktop driver is baked into the SANDBOX
+      # image (not this api image) — same "bake it in or it silently degrades" rule
+      # as TeX/LibreOffice/Chrome.
+      COMPUTER_USE_BACKEND: ${COMPUTER_USE_BACKEND:-noop}
+      CUA_DRIVER_CMD: ${CUA_DRIVER_CMD:-}
+      COMPUTER_USE_MODE: ${COMPUTER_USE_MODE:-som}
+      COMPUTER_USE_APPROVALS: ${COMPUTER_USE_APPROVALS:-manual}
+      CUA_TELEMETRY: ${CUA_TELEMETRY:-false}
       LOG_FORMAT: json
     # INTERNAL ONLY — no host publish. The front-door UI and sibling services
     # reach the engine in-network at http://api:8000.

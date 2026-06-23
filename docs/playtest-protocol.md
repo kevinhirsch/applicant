@@ -176,6 +176,25 @@ factual answers run at L1 (flash). **Note any task where the entry model is "too
 stupid"** (vague, wrong, fabricated, or refuses) and flag it for escalation —
 this is a first-class finding, recorded alongside CSS/copy defects.
 
+### 5b. Assistant learning panels + desktop assist degrade
+Two lift-and-shift capabilities to verify (specs: `docs/spec/agent-intelligence.md`,
+`docs/spec/computer-use.md`):
+- **What the assistant remembers / saved playbooks (live).** Open the Profile memory
+  panel (`applicantMind.js`) and confirm "what the assistant remembers" + "saved
+  playbooks" render and read back (proxy `/api/applicant/mind/memory` + `/mind/skills`).
+  All copy is plain-language Applicant — flag any leaked upstream/dev string
+  (e.g. `MEMORY.md`, `SKILL.md`, `skill_manage`, a codename) as a white-label bug.
+- **Curation approvals (live).** When the assistant proposes a memory/playbook write it
+  appears as an approve/deny item in the portal (`/api/applicant/mind/curation`). Confirm
+  **only approving** applies it (a proposal alone changes nothing) — that is the
+  advisory-not-authorization rule, not a bug.
+- **Desktop assist degrades (dormant).** In the live-session modal (`applicantRemote.js`)
+  the "let the assistant help on the desktop" toggle ships **present-but-grayed**:
+  `GET .../desktop/health` reports unavailable and `enable`/`action` are refused with
+  honest copy until the desktop driver is baked into the sandbox image. A grayed, honestly-
+  labeled control here is the **intended** state (no dead UI), not a defect — file a bug
+  only if it renders as if live, or returns a 5xx instead of a graceful disabled state.
+
 ---
 
 ## 6. THE CONTRACT SWEEP (fastest bug-finder)
