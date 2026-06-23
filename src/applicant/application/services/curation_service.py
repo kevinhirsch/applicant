@@ -30,6 +30,7 @@ from applicant.core.rules.agent_memory import claims_authority, is_save_worthy
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.memory_store import (
     KIND_ENVIRONMENT,
+    KIND_USER,
     SCOPE_CAMPAIGN,
     SCOPE_GLOBAL,
     MemoryEntry,
@@ -58,6 +59,12 @@ class RunSummary:
     succeeded: bool = True
     #: A short, stable key (e.g. an ATS tenant) so re-encounters map to the same skill.
     topic: str = ""
+    #: When True this summary is a **user-preference** lesson distilled from the user's
+    #: own feedback (a digest decline reason or a résumé/answer revision instruction,
+    #: FR-LEARN-3). It yields a curated **user** memory line (``KIND_USER``) — the user's
+    #: stated preference/correction — and never a skill (a preference is not a workflow).
+    #: Defaulted False so a plain run summary behaves exactly as before (byte-identical).
+    is_preference: bool = False
 
 
 @dataclass(frozen=True)
@@ -241,9 +248,13 @@ class CurationService:
                 self._index_recall(s, lesson)
                 if is_save_worthy(lesson):
                     scope = SCOPE_CAMPAIGN if s.campaign_id else SCOPE_GLOBAL
+                    # FR-MIND-1 / FR-LEARN-3: a user-preference summary (distilled from the
+                    # user's own decline/revision feedback) is a curated **user** memory line
+                    # — the user's stated preference/correction — not an environment lesson.
+                    kind = KIND_USER if s.is_preference else KIND_ENVIRONMENT
                     entry = MemoryEntry(
                         text=lesson,
-                        kind=KIND_ENVIRONMENT,
+                        kind=kind,
                         scope=scope,
                         campaign_id=s.campaign_id,
                     )
@@ -255,7 +266,9 @@ class CurationService:
                         )
                     )
 
-                if self._is_skill_worthy(s):
+                # A user preference is a stated correction, not a reusable workflow, so it
+                # never authors a skill — only run-history summaries do (FR-MIND-2).
+                if not s.is_preference and self._is_skill_worthy(s):
                     topic = s.topic or s.run_id
                     is_improvement = topic in self._ledger.proposed_skill_topics
                     self._ledger.proposed_skill_topics.add(topic)

@@ -254,6 +254,31 @@ def _build_orchestrator(settings: Settings) -> Any:
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
+def _compose_summary_providers(*providers: Any) -> Any:
+    """Combine run-summary providers into one ``provider(storage, now)`` callable.
+
+    Each provider maps the per-tick storage to a list of ``RunSummary`` records; the
+    composed callable concatenates them so a single curation nudge reviews every
+    source at once (FR-MIND-7). A provider that raises or returns nothing contributes
+    no summaries and never breaks the others, so an empty/absent source is a no-op and
+    behavior is byte-identical when there is no feedback to learn from.
+    """
+    real = tuple(p for p in providers if p is not None)
+    if not real:
+        return None
+
+    def _provider(storage, now=None) -> list:
+        out: list = []
+        for p in real:
+            try:
+                out.extend(p(storage, now) or [])
+            except Exception:  # pragma: no cover - defensive: one source never breaks others
+                continue
+        return out
+
+    return _provider
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
@@ -643,9 +668,16 @@ def build_container(settings: Settings | None = None) -> Container:
     curation_service = _make_curation(
         agent_memory.memory, agent_memory.skills, agent_memory.recall
     )
-    # FR-MIND-7: feed the scheduled nudge REAL run history — recent applications + their
-    # outcomes read from the per-tick storage, mapped to RunSummaries (bounded, cheap).
-    run_summaries_provider = RunHistoryProvider()
+    # FR-MIND-7 + FR-LEARN-3: feed the scheduled nudge BOTH real run history (recent
+    # applications + outcomes, mapped to RunSummaries) AND the user's OWN feedback —
+    # digest decline reasons (FR-DIG-5) + résumé/answer revision instructions
+    # (FR-RESUME-8), mapped to preference-tagged summaries — composed into one provider
+    # so both reach the curated-memory loop. Bounded + cheap; byte-identical when empty.
+    from applicant.application.services.feedback_history import FeedbackSummaryProvider
+
+    run_summaries_provider = _compose_summary_providers(
+        RunHistoryProvider(), FeedbackSummaryProvider()
+    )
 
     agent_loop = AgentLoop(
         storage=storage,
@@ -930,8 +962,8 @@ def build_container(settings: Settings | None = None) -> Container:
         # per-tick factory supplies the isolated-session one sharing the SAME ledger.
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
-        # FR-MIND-7: the nudge now reviews ACTUAL runs — recent applications + outcomes
-        # read from the (per-tick) storage and mapped to RunSummaries, bounded + cheap.
+        # FR-MIND-7 / FR-LEARN-3: the nudge reviews ACTUAL runs + the user's own
+        # feedback (composed provider above), mapped to RunSummaries, bounded + cheap.
         run_summaries_provider=run_summaries_provider,
         # FR-AGENT-7 / FR-OBS-2: the periodic status update on the configured cadence
         # (default ``off`` => dormant, byte-identical hermetic behavior).
