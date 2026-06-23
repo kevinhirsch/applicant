@@ -22,7 +22,11 @@ from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
-from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
+from applicant.core.entities.generated_document import (
+    DocumentType,
+    GeneratedDocument,
+    LearnedProvenance,
+)
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
@@ -139,7 +143,33 @@ def _document_to_entity(row: m.GeneratedMaterialModel) -> GeneratedDocument:
         content=row.content,
         storage_path=row.storage_path,
         approved=row.approved,
+        provenance=_provenance_from_rows(getattr(row, "provenance", None)),
     )
+
+
+def _provenance_from_rows(rows) -> tuple[LearnedProvenance, ...]:
+    """Rehydrate the advisory provenance list from its stored JSON (FR-MIND-5)."""
+    if not rows:
+        return ()
+    out: list[LearnedProvenance] = []
+    for r in rows:
+        if isinstance(r, dict):
+            out.append(
+                LearnedProvenance(
+                    kind=str(r.get("kind", "")),
+                    label=str(r.get("label", "")),
+                    ref=str(r.get("ref", "")),
+                )
+            )
+    return tuple(out)
+
+
+def _provenance_to_rows(items) -> list[dict]:
+    """Flatten the advisory provenance list to JSON-safe rows for storage."""
+    return [
+        {"kind": p.kind, "label": p.label, "ref": p.ref}
+        for p in (items or ())
+    ]
 
 
 def _revision_to_entity(row: m.RevisionSessionModel) -> RevisionSession:
@@ -471,6 +501,7 @@ class GeneratedDocumentRepo:
                 content=document.content,
                 storage_path=document.storage_path,
                 approved=document.approved,
+                provenance=_provenance_to_rows(document.provenance),
             )
         )
 
