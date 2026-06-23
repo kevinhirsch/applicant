@@ -262,6 +262,27 @@ class Settings(BaseSettings):
     # verification + final-submit remain irreducible regardless.
     allow_automated_accounts: bool = Field(default=False, alias="ALLOW_AUTOMATED_ACCOUNTS")
 
+    # --- Computer use / desktop control (FR-CUA, docs/spec/computer-use.md) ---
+    # Background desktop control (click/type/scroll/drag over the OS accessibility
+    # tree) confined to the sandbox/takeover surface, complementing the browser path.
+    # ``noop`` (default) records calls + performs NO side effects (the CI/test backend);
+    # ``cua`` selects the real TryCUA cua-driver adapter, which itself degrades to noop
+    # semantics until the driver is baked into the sandbox image (FR-CUA-12). Names
+    # mirror the upstream env switches for lift-and-shift clarity (the white-label rule
+    # applies to user-facing copy, not these engine env keys).
+    computer_use_backend: str = Field(default="noop", alias="COMPUTER_USE_BACKEND")
+    # Override the driver binary path for tests/CI/local builds (else detected on PATH).
+    cua_driver_cmd: str = Field(default="", alias="CUA_DRIVER_CMD")
+    # Capture mode: ``som`` (screenshot with numbered elements, default) or ``ax``
+    # (accessibility-tree text only — the degraded path when the model lacks vision,
+    # FR-CUA-11).
+    computer_use_mode: str = Field(default="som", alias="COMPUTER_USE_MODE")
+    # Approval posture: ``manual`` (review each action, default) or ``session`` (one
+    # authorization per open takeover). Maps to review-before-act (FR-CUA-4).
+    computer_use_approvals: str = Field(default="manual", alias="COMPUTER_USE_APPROVALS")
+    # Driver anonymous telemetry — OFF by default (upstream CUA_DRIVER_RS_TELEMETRY_ENABLED=0).
+    cua_telemetry: bool = Field(default=False, alias="CUA_TELEMETRY")
+
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
     # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the
     # egress IP's region in a real deployment; the defaults are a sensible coherent

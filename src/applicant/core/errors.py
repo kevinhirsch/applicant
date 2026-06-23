@@ -46,6 +46,19 @@ class PrefillBoundaryViolation(DomainError):
     """
 
 
+class ComputerUseBlocked(DomainError):
+    """A desktop (computer-use) action is forbidden by the core guards (FR-CUA-5/6).
+
+    Raised when a desktop action hits a hard block — a dangerous key combo or ``type``
+    pattern (``curl … | bash``, ``sudo rm -rf /``, a fork bomb, lock/log-out/empty-trash
+    combos, FR-CUA-5) or an attempt to type a secret/credential (FR-CUA-6). These are
+    denied server-side regardless of approval state; the prompt is never the gate.
+
+    The pre-fill stop-boundary (account-create/CAPTCHA/verify/final-submit, FR-CUA-3) is
+    enforced by RE-USING ``PrefillBoundaryViolation`` so computer use INHERITS that gate.
+    """
+
+
 class OnboardingIncomplete(DomainError):
     """Automated work was attempted before onboarding completed (FR-ONBOARD-2)."""
 

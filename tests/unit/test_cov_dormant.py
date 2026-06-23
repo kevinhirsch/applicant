@@ -43,11 +43,16 @@ def test_surface_keys_are_unique():
     assert len(keys) == len(set(keys))
 
 
-def test_only_two_surfaces_remain_genuinely_dormant():
-    # Per the spec the two grayed surfaces for MVP-1 are resume tuning + the
-    # multi-campaign switcher; everything else has been wired live.
+def test_only_expected_surfaces_remain_genuinely_dormant():
+    # The grayed surfaces are resume tuning + the multi-campaign switcher (MVP-1), plus
+    # desktop assist (FR-CUA-9: present-but-disabled until the driver is baked into the
+    # sandbox image). Everything else has been wired live.
     dormant_keys = {s.key for s in DORMANT_SURFACES if s.status == STATUS_DORMANT}
-    assert dormant_keys == {"resume_aggressiveness", "multi_campaign_switcher"}
+    assert dormant_keys == {
+        "resume_aggressiveness",
+        "multi_campaign_switcher",
+        "desktop_assist",
+    }
 
 
 def test_dormant_surface_is_frozen():

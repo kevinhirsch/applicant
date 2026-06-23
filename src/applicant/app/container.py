@@ -80,6 +80,10 @@ class Container:
     browser: Any
     detection: Any
     sandbox: Any
+    # Desktop control (FR-CUA): swappable computer-use sub-port of the sandbox, default
+    # ``noop`` (no side effects). Sibling of ``sandbox``; ships dormant until the driver
+    # is baked into the sandbox image (FR-CUA-9).
+    computer_use: Any
     latex_tailor: Any
     docx_tailor: Any
     font_installer: Any
@@ -365,6 +369,14 @@ def build_container(settings: Settings | None = None) -> Container:
     # stays selectable via REMOTE_VIEW_BACKEND=neko. Image selection + URL/token are
     # real here; the container/room control plane is integration-gated in the adapter.
     sandbox = _build_sandbox(settings, setup_service)
+    # Desktop control (FR-CUA): the swappable computer-use sub-port of the sandbox.
+    # Default ``noop`` (records calls, NO side effects) so the hermetic lane needs no
+    # cua-driver/display stack; ``COMPUTER_USE_BACKEND=cua`` selects the real adapter,
+    # which itself degrades to noop semantics until the driver is baked into the sandbox
+    # image (FR-CUA-12). Import-safe — the factory pulls in no heavy deps at boot.
+    from applicant.adapters.sandbox.computer_use import build_computer_use
+
+    computer_use = build_computer_use(settings)
     # Render fidelity (FR-RESUME-4): auto-enable the real compile/convert when the
     # engine binary is present at runtime (RESUME_RENDER=auto|on|off, default auto).
     latex_tailor = LatexTailor(render_mode=settings.resume_render)
@@ -768,6 +780,7 @@ def build_container(settings: Settings | None = None) -> Container:
         browser=browser,
         detection=detection,
         sandbox=sandbox,
+        computer_use=computer_use,
         latex_tailor=latex_tailor,
         docx_tailor=docx_tailor,
         font_installer=font_installer,
