@@ -490,6 +490,11 @@ def build_container(settings: Settings | None = None) -> Container:
         # Stage 2.5 lane A: inject the workspace callback so the assistant can
         # surface auto-detected upcoming interviews (degrades silently when off).
         workspace=workspace,
+        # FR-AGENT-1/2: the run-control seam so the chat can steer the autonomous loop
+        # (pause/resume + daily throughput, clamped to the hard cap) by routing intents
+        # to the SAME gated operations the ops surface uses. Optional/defaulted — when
+        # absent the chat politely declines a control request.
+        run_control=agent_run_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
@@ -738,6 +743,9 @@ def build_container(settings: Settings | None = None) -> Container:
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
             pending_actions=rs_pas,
         )
+        # FR-AGENT-1/2: req-storage-bound run-control so a pause/resume/throughput
+        # steered from chat persists on THIS request's isolated session (CONC-REQ-1).
+        rs_run_control = AgentRunService(req_storage)
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
@@ -748,6 +756,8 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-MIND-5: advisory curated-memory + saved-playbook context. Shares the
             # process-lived adapter trio; read fresh per call (FR-MIND-10).
             agent_memory=agent_memory,
+            # FR-AGENT-1/2: route loop-control intents to the existing gated operations.
+            run_control=rs_run_control,
         )
         rs_admin = AdminQueryService(req_storage, orchestrator)
         rs_submission = SubmissionService(
