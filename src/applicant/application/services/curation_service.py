@@ -284,6 +284,58 @@ class CurationService:
 
             return self._dispatch(reviewed, mem_props, skill_props)
 
+    # --- direct staging from the chat tool surface (FR-MIND-6 / FR-MIND-9) -
+    def stage_memory(
+        self,
+        text: str,
+        *,
+        kind: str = KIND_ENVIRONMENT,
+        campaign_id: str | None = None,
+        source_run_id: str = "chat",
+    ) -> CurationResult:
+        """Stage a single curated-memory line the assistant chose to remember.
+
+        Routes through the SAME write-approval policy as the scheduled nudge
+        (:meth:`_dispatch`): with approval on (the default, FR-MIND-9) the line is
+        STAGED for the user to approve in the Portal, not silently persisted; the user
+        MAY relax non-sensitive memory to auto-apply, but a line that *claims* a
+        safety-gated authority is always staged and flagged (FR-MIND-11). The tool
+        reports back from the returned counts ("noted, pending your approval").
+        """
+        scope = SCOPE_CAMPAIGN if campaign_id else SCOPE_GLOBAL
+        entry = MemoryEntry(text=text, kind=kind, scope=scope, campaign_id=campaign_id)
+        proposal = MemoryProposal(
+            entry=entry,
+            source_run_id=source_run_id,
+            claims_authority=claims_authority(text),
+        )
+        with self._ledger.lock:
+            return self._dispatch(0, [proposal], [])
+
+    def stage_skill(
+        self,
+        skill: Skill,
+        *,
+        is_improvement: bool = False,
+        source_run_id: str = "chat",
+    ) -> CurationResult:
+        """Stage a saved-playbook (skill) write the assistant chose to author.
+
+        Skills ALWAYS require approval (FR-MIND-9) regardless of any flag, so this
+        always stages — never auto-applies. A claim of authority is flagged for the
+        reviewer but confers nothing (FR-MIND-11).
+        """
+        proposal = SkillProposal(
+            skill=skill,
+            source_run_id=source_run_id,
+            is_improvement=is_improvement,
+            claims_authority=claims_authority(
+                f"{skill.description} {skill.when_to_use} {' '.join(skill.procedure)}"
+            ),
+        )
+        with self._ledger.lock:
+            return self._dispatch(0, [], [proposal])
+
     # --- staged-proposal review (FR-MIND-9) -------------------------------
     def list_staged(self) -> tuple[object, ...]:
         """Return the proposals awaiting human approval (a frozen tuple snapshot).

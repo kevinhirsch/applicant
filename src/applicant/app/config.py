@@ -239,6 +239,14 @@ class Settings(BaseSettings):
     # Model id for the (cheaper) background curation pass (FR-MIND-7/-13). Empty =>
     # reuse the main configured model.
     curation_model: str = Field(default="", alias="CURATION_MODEL")
+    # FR-MIND-6: lets the chat ASSISTANT call its own tools mid-conversation
+    # (remember/recall/save-a-playbook + a bounded desktop action). ``off`` (the
+    # conservative default) keeps the chat on its current single-shot completion,
+    # byte-identical to today. ``auto`` enables the bounded tool-dispatch loop ONLY
+    # when the configured model also advertises tool calling; otherwise it stays
+    # single-shot. Writes always stage for review (FR-MIND-9) and route through the
+    # FR-UI-4 toggles — tools can never bypass review or the stop-boundary.
+    chat_tools: str = Field(default="off", alias="CHAT_TOOLS")
 
     # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).

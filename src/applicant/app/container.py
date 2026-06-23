@@ -672,6 +672,23 @@ def build_container(settings: Settings | None = None) -> Container:
     curation_service = _make_curation(
         agent_memory.memory, agent_memory.skills, agent_memory.recall
     )
+    # FR-MIND-6: is a desktop-assist driver operable? Only then is the bounded
+    # ``desktop`` chat tool offered (a noop/absent driver => never offered). Derived
+    # from the driver's own preflight (server-side ground truth), defaulting safely to
+    # False so the tool stays dark unless a real driver reports healthy.
+    try:
+        _desktop_operable = bool(computer_use.health().ok)
+    except Exception:
+        _desktop_operable = False
+    # FR-MIND-6: give the chat ASSISTANT its self-callable tool surface. Additive +
+    # capability-gated: ``CHAT_TOOLS=auto`` only engages the tool loop when the model
+    # advertises tool calling; writes stage through curation (FR-MIND-9); each tool is
+    # gated by the FR-UI-4 registry. ``off`` (default) keeps the single-shot path.
+    chat_service._curation_service = curation_service
+    chat_service._tool_registry = tool_registry
+    chat_service._computer_use = computer_use
+    chat_service._desktop_operable = _desktop_operable
+    chat_service._chat_tools = (settings.chat_tools or "off").strip().lower()
     # FR-MIND-7 + FR-LEARN-3: feed the scheduled nudge BOTH real run history (recent
     # applications + outcomes, mapped to RunSummaries) AND the user's OWN feedback —
     # digest decline reasons (FR-DIG-5) + résumé/answer revision instructions
@@ -868,6 +885,16 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-AGENT-1/2: same req-storage-bound run service is the control seam so a
             # pause/resume/throughput steered from chat persists on this request's session.
             run_control=rs_agent_runs,
+            # FR-MIND-6: the assistant's self-callable tool surface (additive +
+            # capability-gated). The agent-memory stores + the CurationLedger are
+            # process-lived (shared), so the main ``curation_service`` stages chat-
+            # initiated memory/skill writes into the SAME review queue. The FR-UI-4
+            # registry + the bounded desktop driver are likewise process-lived.
+            curation_service=curation_service,
+            tool_registry=tool_registry,
+            computer_use=computer_use,
+            desktop_operable=_desktop_operable,
+            chat_tools=(settings.chat_tools or "off").strip().lower(),
         )
         rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
