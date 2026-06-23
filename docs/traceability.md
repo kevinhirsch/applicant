@@ -217,7 +217,7 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | FR-AGENT-4 | 0/1 | "Pause and notify on any question" | Delivered (re-verified) — pre-fill lands BLOCKED_QUESTION + emits a pending action/notification; the loop does NOT auto-proceed past the human-in-the-loop point (`agent_loop.py:22-28, 241-253`); flow+BDD |
 | FR-AGENT-5 | 0 | "Never continue on uncertain response" | Delivered — uncertainty-halt rule in core; unit test |
 | FR-AGENT-6 | 0/2 | "Pivot around blockers" | Delivered (re-verified) — a BLOCKED_* application yields its sandbox slot via `CapacityService` so other work proceeds and never stalls (`agent_loop.py:210-253`); test `tests/unit/test_agent_loop.py::test_pivot_yields_slot_when_blocked` |
-| FR-AGENT-7 | 1 | "One-sentence next-action log per run" | Delivered (re-verified) — each tick records a single-sentence intent via `AgentRunService.start_run` (`agent_loop.py:411-445`); agent_runs router; unit test |
+| FR-AGENT-7 | 1 | "One-sentence next-action log per run" | Delivered (re-verified) — each tick records a single-sentence intent via `AgentRunService.start_run` (`agent_loop.py:411-445`); agent_runs router; **now also surfaced two ways**: a read-only "what the agent is doing" snapshot (`app/routers/agent_status.py`, `/api/agent/status/{cid}` — now/next/recent, first-person, never fabricated) reachable via `/api/applicant/activity/snapshot` → `applicantActivity.js`; and a proactive daily status update (`status_update.py` `StatusUpdateService`) pushed through the existing notification ladder; unit test |
 
 ## FR-NOTIF
 
@@ -259,7 +259,7 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
 | FR-OBS-1 | 0 | "Structured logging with correlation IDs" | Delivered (re-verified) — structlog + correlation IDs + **value-based** secret redaction: secrets in non-secret-named keys or embedded in free-text messages are masked too, not just key-name redaction (`observability/logging.py:69-100`); redaction test |
-| FR-OBS-2 | 4 | "Debug surface" | Delivered — Phase 4; AdminQueryService + admin router (logs/screenshots/history/workflow state); contract test |
+| FR-OBS-2 | 4 | "Debug surface" | Delivered — Phase 4; AdminQueryService + admin router (logs/screenshots/history/workflow state); contract test. **Plus** the operator-facing live activity view: `agent_status.py` snapshot (now/next/recent) → `/api/applicant/activity/snapshot` → `applicantActivity.js` panel, and the chatbot reporting past/present/future from the same real state (`chat_service.py`, FR-MIND-4) — the agent is observable in plain language, not just the debug surface |
 
 ## FR-INSTALL
 
@@ -280,7 +280,7 @@ sandbox image. Engine chain: core guards → `ComputerUsePort` (`adapters/sandbo
 
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
-| FR-CUA-1/2 | 6 | "Desktop assist confined to the sandbox; swappable sub-port" | Delivered — `ComputerUsePort` + `noop` (default) / `cua_driver` adapters under `adapters/sandbox/computer_use/`; selected by `COMPUTER_USE_BACKEND`; unit/contract test against the noop adapter |
+| FR-CUA-1/2 | 6 | "Desktop assist confined to the sandbox; swappable sub-port" | Delivered — `ComputerUsePort` + `noop` (default) / `cua_driver` adapters under `adapters/sandbox/computer_use/`; selected by `COMPUTER_USE_BACKEND`; used by pre-fill for native OS upload dialogs the browser cannot reach (desktop self-use, #141); unit/contract test against the noop adapter |
 | FR-CUA-3 | 6 | "Desktop assist inherits the stop-boundary" | Delivered — the core stop-boundary guard denies account-create / CAPTCHA / final-submit for the desktop tool the same way as the browser path; guard derives its own ground truth (no caller flag opts past it); core unit test |
 | FR-CUA-4 | 6 | "Approval gate on destructive desktop actions" | Delivered — destructive actions route through review-before-act (`COMPUTER_USE_APPROVALS=manual`/`session`); unit test |
 | FR-CUA-5 | 6 | "Hard-blocked key combos / type patterns (server-side)" | Delivered — core denylist (dangerous combos + `curl…|bash` / `rm -rf` patterns) denied regardless of approval; core unit test |
@@ -301,16 +301,34 @@ memory, procedural skills, cross-session recall — re-homed onto engine ports +
 (`/api/agent-memory*`) → workspace `applicant_mind_routes.py` (`/api/applicant/mind/*`) →
 `applicantMind.js` (memory panel) + `applicantPortal.js` (curation approvals).
 
+**The learning loop now actually learns, uses, and reports itself.** The scheduled curation
+nudge reviews REAL inputs — run history (`application/services/run_history.py`
+`RunHistoryProvider`, real `Application` outcomes) AND the user's own feedback
+(`application/services/feedback_history.py` `FeedbackSummaryProvider`, from digest declines +
+résumé/answer revision instructions) — summarizes each run with a CHEAP optional LLM
+(`build_llm_summarizer`, `CURATION_MODEL`; degrades to a trivial summarizer for the hermetic
+lane) and **populates recall** through the `RecallIndex.index()` write path so the loop's recall
+tool returns real hits. The learned memory/skills then feed BACK into generation + scoring:
+`material_service` (résumé/cover/answers) and `scoring_service` (viability) each append a
+BOUNDED, advisory-only "what the assistant has learned" block read fresh per call (FR-MIND-10),
+which nudges output without conferring authority (FR-MIND-11) and never relaxes the
+no-fabrication guard (FR-RESUME-2). The chatbot IS this agent (FR-MIND-4 single first-person
+identity), narrating past/present/future from real read-only state (run status, scheduler
+estimate, application history — FR-AGENT-7 / FR-OBS-2; `chat_service.py`). End-to-end coverage:
+`tests/unit/test_loop_end_to_end.py` runs discovery→scoring→digest→approval→prefill→stop-boundary
+green WITH the learning hooks firing.
+
 | ID | WP | BDD Feature(s) | Status |
 |---|---|---|---|
-| FR-MIND-1 | 6 | "Curated memory (environment + user, bounded)" | Delivered — `MemoryStore` (add/replace/remove, size caps `MEMORY_MAX_CHARS`/`USER_MAX_CHARS`); frozen snapshot read per tick; unit test |
-| FR-MIND-2/3 | 6 | "Procedural skills + cross-session recall" | Delivered — `SkillStore` (create/patch/edit, progressive disclosure L0/L1) + `RecallIndex` (FTS + chromadb-analogue); in-memory + `bridge` adapters; unit test |
-| FR-MIND-4/5 | 6 | "Identity tier + tiered prompt assembly" | Delivered — identity slot sourced from the voice spec (white-labeled); ordered prompt tiers in the prompt builder; unit test |
+| FR-MIND-1 | 6 | "Curated memory (environment + user, bounded)" | Delivered — `MemoryStore` (add/replace/remove, size caps `MEMORY_MAX_CHARS`/`USER_MAX_CHARS`); frozen snapshot read per tick; the advisory "what I've learned" block is consumed by `material_service` + `scoring_service`; unit test + `tests/unit/test_loop_end_to_end.py` |
+| FR-MIND-2/3 | 6 | "Procedural skills + cross-session recall" | Delivered — `SkillStore` (create/patch/edit, progressive disclosure L0/L1) + `RecallIndex` (FTS + chromadb-analogue); curation now WRITES to recall (`RecallIndex.index()`) so the recall tool returns real hits; in-memory + `bridge` adapters; unit test |
+| FR-MIND-4/5 | 6 | "Identity tier + tiered prompt assembly" | Delivered — single first-person identity (the chatbot IS the autonomous agent); identity slot sourced from the voice spec (white-labeled); ordered prompt tiers in the prompt builder; `chat_service.py` narrates real state; unit test |
 | FR-MIND-6 | 6 | "Tool registry & dispatch" | Delivered — memory/skill/recall are registered tools dispatched through the central registry; unit test |
-| FR-MIND-7 | 6 | "Closed learning loop on a schedule" | Delivered — `CurationService` review nudge (`CURATION_SCHEDULE`, optional cheaper `CURATION_MODEL`) proposes memory/skill updates; unit test |
-| FR-MIND-9 | 6 | "Review-before-write; self-writes are gated" | Delivered — self-writes stage to the process-lived `CurationLedger` (`MEMORY_WRITE_APPROVAL`/`SKILLS_WRITE_APPROVAL` default on) → pending-actions approve/deny; only approval writes a proposal; unit test |
-| FR-MIND-10 | 6 | "Per-tick safety: state in process/Postgres, never the loop" | Delivered — curation state lives in the injected process-lived ledger / durable store and survives an `AgentLoop` rebuild; unit test asserts cross-tick survival |
-| FR-MIND-11 | 6 | "Memory/skills are advisory, never authorization" | Delivered — a skill claiming submit authority is denied by the core guard (ground truth not caller-supplied); ingested content is treated as untrusted; core unit test |
+| FR-MIND-7 | 6 | "Closed learning loop on a schedule" | Delivered — `CurationService` review nudge (`CURATION_SCHEDULE`, optional cheaper `CURATION_MODEL`) reviews REAL run history (`run_history.py` `RunHistoryProvider`) + user feedback (`feedback_history.py` `FeedbackSummaryProvider`, from digest declines + revision instructions), summarizes via `build_llm_summarizer`, and proposes memory/skill updates + recall writes — all staged for review; unit test + `tests/unit/test_loop_end_to_end.py` |
+| FR-MIND-8 | 6 | "LLM context management (compression + prefix cache)" | Delivered — `adapters/llm/context_window.py` `ContextWindowManager` compresses middle turns past `CONTEXT_COMPRESS_THRESHOLD` and applies a provider-gated prefix cache (`PREFIX_CACHE` = auto/on/off); applied at the LLM adapter; unit test |
+| FR-MIND-9 | 6 | "Review-before-write; self-writes are gated" | Delivered — self-writes (incl. the new history/feedback-driven proposals + recall writes) stage to the process-lived `CurationLedger` (`MEMORY_WRITE_APPROVAL`/`SKILLS_WRITE_APPROVAL` default on) → pending-actions approve/deny; only approval writes a proposal; unit test |
+| FR-MIND-10 | 6 | "Per-tick safety: state in process/Postgres, never the loop" | Delivered — curation state lives in the injected process-lived ledger / durable store and survives an `AgentLoop` rebuild; the advisory learned block is read FRESH per call (never cached on the loop); unit test asserts cross-tick survival |
+| FR-MIND-11 | 6 | "Memory/skills are advisory, never authorization" | Delivered — a skill claiming submit authority is denied by the core guard (ground truth not caller-supplied); the generation/scoring learned block is advisory-only and never relaxes the no-fabrication guard (FR-RESUME-2); ingested content is treated as untrusted; core unit test |
 | FR-MIND-12 | 6 | "Reachability & white-label" | Delivered — viewable/editable in the memory/profile panel; curation queue in the portal; `assistant_memory`/`saved_playbooks`/`curation_approvals` live in `src/applicant/dormant.py`; plain-language copy (no upstream strings; CI denylist gates it); `tests/unit/test_cov_dormant.py` |
 | FR-MIND-13 | 6 | "Keep it cheap & local" (SHOULD) | Delivered — recall/embeddings local (chromadb), curation prefers the cheaper model, progressive disclosure + bounds cap token cost; unit test |
 
@@ -351,8 +369,9 @@ router it forwards to is named in [frontend.md](frontend.md)).
 | FR-VAULT (credential vault, both banking modes) | Credential vault | `applicant_vault_routes.py` + `applicantVault.js` |
 | FR-CHAT (chatbot + job actions) | Chat / assistant | `applicant_chat_routes.py` + `applicantChat.js` |
 | FR-LOG-3/4, FR-OBS-2, FR-UI-4 (history, screenshots, logs, workflow state, mark-submitted, tool toggles) | Activity / debug | `applicant_admin_routes.py` + `applicantDebug.js` |
+| FR-AGENT-7 / FR-OBS-2 (what the agent is doing: now / next / recent) | Agent-activity panel + status strip | `applicant_activity_routes.py` (`/api/applicant/activity/{snapshot,status,intent,runs}` ← engine `agent_status.py`) + `applicantActivity.js` |
 | FR-OOBE-4 / FR-INSTALL-2 (in-UI Update button) | Activity/debug — Update button | `applicant_ops_routes.py` (Update trigger) + `applicantDebug.js` |
-| FR-MIND (what the assistant remembers, saved playbooks, curation approvals) | Profile — memory panel + pending-actions portal | `applicant_mind_routes.py` (`/api/applicant/mind/{memory,skills,curation}`) + `applicantMind.js` / `applicantPortal.js` |
+| FR-MIND (what the assistant remembers, saved playbooks, curation approvals; learned-from-runs/feedback curation proposals) | Profile — memory panel + pending-actions portal | `applicant_mind_routes.py` (`/api/applicant/mind/{memory,skills,curation}`) + `applicantMind.js` / `applicantPortal.js` |
 | FR-CUA (desktop assist on the live session) — **ships dormant/grayed** | Live remote view / takeover (opt-in toggle, present-but-grayed) | `applicant_remote_routes.py` (`.../desktop/{health,enable,disable,action}`) + `applicantRemote.js` |
 
 **Engine-internal, not a separate front-door surface (called out per the spec):**
