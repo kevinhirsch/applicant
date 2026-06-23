@@ -44,10 +44,18 @@ def test_surface_keys_are_unique():
 
 
 def test_only_two_surfaces_remain_genuinely_dormant():
-    # Per the spec the two grayed surfaces for MVP-1 are resume tuning + the
-    # multi-campaign switcher; everything else has been wired live.
+    # The MVP-1 grayed surfaces are resume tuning + the multi-campaign switcher.
+    # The FR-MIND agent-learning surfaces also ship dormant (FR-MIND-12): their
+    # engine-side ports/adapters/policy/curation skeleton landed, but the front-door
+    # panels + the workspace memory/skills bridge are not yet wired.
     dormant_keys = {s.key for s in DORMANT_SURFACES if s.status == STATUS_DORMANT}
-    assert dormant_keys == {"resume_aggressiveness", "multi_campaign_switcher"}
+    assert dormant_keys == {
+        "resume_aggressiveness",
+        "multi_campaign_switcher",
+        "assistant_memory",
+        "saved_playbooks",
+        "curation_approvals",
+    }
 
 
 def test_dormant_surface_is_frozen():

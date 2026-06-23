@@ -197,6 +197,30 @@ class Settings(BaseSettings):
     # explicit remote host is left untouched (already network-addressable).
     cookbook_local_host: str = Field(default="applicant-ui", alias="COOKBOOK_LOCAL_HOST")
 
+    # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
+    # Backend for the curated-memory / skills / recall stores. ``in_memory``
+    # (default) is the hermetic in-process trio (no deps; boot-/test-safe);
+    # ``bridge`` reaches the front-door substrate (workspace/services/memory/) over
+    # the engine->workspace callback channel (agent-intelligence.md §10 — recommended
+    # placement). The bridge degrades to empty behavior when that channel is OFF.
+    mind_backend: str = Field(default="in_memory", alias="MIND_BACKEND")
+    # Stage agent self-writes for human review by default (FR-MIND-9). Memory MAY be
+    # relaxed to auto-apply non-sensitive entries; skills/identity always require
+    # approval regardless of these flags.
+    memory_write_approval: bool = Field(default=True, alias="MEMORY_WRITE_APPROVAL")
+    skills_write_approval: bool = Field(default=True, alias="SKILLS_WRITE_APPROVAL")
+    # Curated-memory size caps (FR-MIND-1) — keep the per-tick prompt snapshot bounded
+    # (FR-MIND-13). Environment-lessons budget and the user-preferences budget.
+    memory_max_chars: int = Field(default=8000, ge=0, alias="MEMORY_MAX_CHARS")
+    user_max_chars: int = Field(default=4000, ge=0, alias="USER_MAX_CHARS")
+    # Cadence of the closed-loop curation nudge (FR-MIND-7). Empty/``off`` disables
+    # scheduling; a periodic string (e.g. ``daily``) opts in. Default OFF so the
+    # substrate ships dormant (FR-MIND-12) until the stores are wired.
+    curation_schedule: str = Field(default="off", alias="CURATION_SCHEDULE")
+    # Model id for the (cheaper) background curation pass (FR-MIND-7/-13). Empty =>
+    # reuse the main configured model.
+    curation_model: str = Field(default="", alias="CURATION_MODEL")
+
     # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).
     fonts_dir: str = Field(default=".applicant_fonts", alias="FONTS_DIR")
