@@ -7,8 +7,8 @@ owner-scoped proxy over :class:`src.applicant_engine.ApplicantEngineClient` (the
 engine owns the logic; the front door only forwards):
 
 * reads (``GET`` snapshot / skills / curation queue) require a logged-in user;
-* writes (approve / deny a curation proposal) require the existing
-  ``can_manage_memory`` privilege, matching the rest of the Brain modal;
+* writes (approve / deny a curation proposal, **forget a remembered line**) require
+  the existing ``can_manage_memory`` privilege, matching the rest of the Brain modal;
 * every engine failure surfaces through the typed :class:`EngineError`, translated
   into a clean HTTP response so a wired surface degrades gracefully (a down engine
   reports unavailable rather than 500ing).
@@ -43,8 +43,8 @@ async def _engine_get(engine: ApplicantEngineClient, path: str, params: Optional
     return await engine._request("GET", path, params=params)
 
 
-async def _engine_post(engine: ApplicantEngineClient, path: str) -> Any:
-    return await engine._request("POST", path)
+async def _engine_post(engine: ApplicantEngineClient, path: str, json: Optional[dict] = None) -> Any:
+    return await engine._request("POST", path, json=json)
 
 
 def setup_applicant_mind_routes() -> APIRouter:
@@ -105,6 +105,35 @@ def setup_applicant_mind_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             try:
                 return await _engine_get(engine, f"/api/agent-memory/skills/{name}")
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
+    # -- forget a remembered line (a WRITE — gated like curation approval) ---
+
+    @router.post("/forget")
+    async def forget(request: Request) -> dict:
+        """Forget one curated memory line.
+
+        A forget is a write, so it requires the same ``can_manage_memory`` privilege
+        as approving a curation proposal; the engine routes it through its own
+        review-before-write policy (staged for approval by default, applied only when
+        memory approval is relaxed). The body forwards ``ref`` (preferred) or ``text``.
+        """
+        require_privilege(request, "can_manage_memory")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        payload = {
+            k: body.get(k)
+            for k in ("ref", "text", "scope", "campaign_id")
+            if body.get(k) is not None
+        }
+        async with ApplicantEngineClient() as engine:
+            try:
+                return await _engine_post(engine, "/api/agent-memory/forget", json=payload)
             except EngineError as exc:
                 _raise_engine_http(exc)
 

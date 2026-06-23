@@ -83,6 +83,11 @@ def _ok_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ok": True, "id": "abc123"})
     if path == "/api/agent-memory/curation/abc123/deny":
         return httpx.Response(200, json={"ok": True, "id": "abc123"})
+    if path == "/api/agent-memory/forget":
+        import json as _json
+        sent = _json.loads(request.content.decode() or "{}")
+        return httpx.Response(200, json={"ok": True, "applied": 0, "staged": 1,
+                                         "id": "f1", "text": sent.get("ref") or sent.get("text")})
     return httpx.Response(404, json={"detail": "not found"})
 
 
@@ -107,6 +112,24 @@ def test_curation_list_and_approve_deny():
     assert client.get("/api/applicant/mind/curation").json()["count"] == 1
     assert client.post("/api/applicant/mind/curation/abc123/approve").json()["ok"] is True
     assert client.post("/api/applicant/mind/curation/abc123/deny").json()["ok"] is True
+
+
+def test_forget_proxied_with_payload():
+    client = _make_client(_ok_handler)
+    r = client.post("/api/applicant/mind/forget", json={"ref": "deadbeef"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["staged"] == 1
+    assert body["text"] == "deadbeef"
+
+
+def test_forget_degrades_when_engine_down():
+    def _down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    client = _make_client(_down)
+    r = client.post("/api/applicant/mind/forget", json={"text": "drop me"})
+    assert r.status_code == 503
 
 
 def test_status_ready_when_engine_up():

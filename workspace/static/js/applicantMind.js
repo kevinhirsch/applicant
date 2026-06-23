@@ -94,10 +94,20 @@ function _renderOffline() {
 function _renderMemory(snap) {
   const env = (snap.environment || []);
   const usr = (snap.user || []);
-  const line = (e) => `<li class="memory-item" style="margin:4px 0;">${esc(e.text)}</li>`;
+  // Each line carries a stable ref so its "Forget" button can target exactly it.
+  const line = (e) => `
+    <li class="memory-item" data-mem-ref="${esc(e.ref || '')}" data-mem-text="${esc(e.text)}"
+        style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;
+        list-style:none;margin:4px 0;padding:2px 0;">
+      <span style="flex:1;">${esc(e.text)}</span>
+      <button type="button" class="cal-btn applicant-mind-forget"
+          data-ref="${esc(e.ref || '')}" data-text="${esc(e.text)}"
+          title="Ask the assistant to forget this"
+          style="font-size:11px;opacity:0.85;">Forget</button>
+    </li>`;
   const block = (title, items, hint) => {
     const body = items.length
-      ? `<ul style="margin:6px 0 0;padding-left:18px;">${items.map(line).join('')}</ul>`
+      ? `<ul style="margin:6px 0 0;padding-left:0;">${items.map(line).join('')}</ul>`
       : `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">${esc(hint)}</div>`;
     return `<div class="memory-section" style="margin-bottom:14px;">
       <div style="font-weight:600;">${esc(title)}</div>${body}</div>`;
@@ -113,12 +123,30 @@ function _renderSkills(skills) {
       No saved playbooks yet. The assistant writes these from its own work.</div>`;
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((s) => `
-    <li class="memory-item" style="border:1px solid var(--border,#3334);border-radius:8px;
-        padding:8px 10px;margin:6px 0;">
+    <li class="memory-item applicant-mind-skill" data-skill="${esc(s.name)}" tabindex="0"
+        role="button" title="Open this playbook"
+        style="border:1px solid var(--border,#3334);border-radius:8px;
+        padding:8px 10px;margin:6px 0;cursor:pointer;">
       <div style="font-weight:600;">${esc(s.name)}</div>
       <div style="opacity:0.85;">${esc(s.description || '')}</div>
       ${s.when_to_use ? `<div style="opacity:0.7;margin-top:2px;">When: ${esc(s.when_to_use)}</div>` : ''}
+      <div class="applicant-mind-skill-body" style="display:none;margin-top:8px;"></div>
     </li>`).join('') + `</ul>`;
+}
+
+function _renderSkillBody(skill) {
+  const list = (title, arr) => {
+    const items = (arr || []).filter(Boolean);
+    if (!items.length) return '';
+    return `<div style="margin-top:6px;"><div style="font-weight:600;">${esc(title)}</div>
+      <ul style="margin:4px 0 0;padding-left:18px;">${items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  };
+  const when = skill.when_to_use
+    ? `<div style="margin-top:6px;"><span style="font-weight:600;">When to use:</span> ${esc(skill.when_to_use)}</div>`
+    : '';
+  const body = when + list('Procedure', skill.procedure)
+    + list('Pitfalls', skill.pitfalls) + list('How I check it worked', skill.verification);
+  return body || `<div style="opacity:0.7;">No further detail saved for this playbook yet.</div>`;
 }
 
 function _renderCuration(curation) {
@@ -176,6 +204,66 @@ function _wireCurationButtons() {
   });
 }
 
+function _wireForgetButtons() {
+  const body = _body();
+  body.querySelectorAll('.applicant-mind-forget').forEach((btn) => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const text = btn.dataset.text || '';
+      // Confirm first — a forget is a real change to what I remember.
+      const ok = window.confirm(`Forget this note?\n\n${text}`);
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const ref = btn.dataset.ref || '';
+        const payload = ref ? { ref } : { text };
+        const res = await _fetchJSON(`${API}/forget`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        // Honest feedback: the engine may apply now or stage for approval.
+        _toast(res && res.staged
+          ? 'Sent to your review queue — approve it to forget this.'
+          : 'Forgotten.');
+        await openApplicantMind();
+      } catch (e) {
+        _toast(e.message || 'Could not forget that.');
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+function _wireSkillRows() {
+  const body = _body();
+  body.querySelectorAll('.applicant-mind-skill').forEach((row) => {
+    const open = async () => {
+      const slot = row.querySelector('.applicant-mind-skill-body');
+      if (!slot) return;
+      // Toggle: collapse if already open.
+      if (slot.style.display !== 'none' && slot.dataset.loaded === '1') {
+        slot.style.display = 'none';
+        return;
+      }
+      if (slot.dataset.loaded === '1') { slot.style.display = 'block'; return; }
+      slot.style.display = 'block';
+      slot.innerHTML = '<div style="opacity:0.7;">Loading…</div>';
+      try {
+        const skill = await _fetchJSON(`${API}/skills/${encodeURIComponent(row.dataset.skill)}`);
+        slot.innerHTML = _renderSkillBody(skill);
+        slot.dataset.loaded = '1';
+      } catch (e) {
+        slot.innerHTML = `<div style="opacity:0.7;">${esc(e.message || 'Could not open that playbook.')}</div>`;
+      }
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+    });
+  });
+}
+
 // --- open ------------------------------------------------------------------
 
 export async function openApplicantMind() {
@@ -204,6 +292,8 @@ export async function openApplicantMind() {
         ${_renderSkills(skills)}
       </div>`;
     _wireCurationButtons();
+    _wireForgetButtons();
+    _wireSkillRows();
   } catch (e) {
     // 401 / engine unreachable — degrade to the connect-a-model note.
     _renderOffline();
