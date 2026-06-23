@@ -54,22 +54,24 @@ the portal — only approval applies a proposal, so the advisory-not-authorizati
 | Surface | Front-door section | Engine backing | Status |
 |---|---|---|---|
 | Compare | `compare` (rail + toolbar button) | none | **disabled** (visible, greyed, never wired) |
-| Desktop assist (live session) | `applicantRemote.js` (opt-in toggle in the live-session modal) | `remote` desktop endpoints → `/api/applicant/.../desktop/*`; `ComputerUsePort` (`noop` default) | **dormant** (present-but-grayed) |
+| Desktop assist (live session) | `applicantRemote.js` (opt-in toggle in the live-session modal) | `remote` desktop endpoints → `/api/applicant/.../desktop/*`; `ComputerUsePort` + real cua-driver MCP transport | **live (runtime capability-gated)** |
 
 `Compare` has no Applicant engine backing. `workspace/src/applicant_features.py` sets
 `present_but_disabled: True` for it, so the feature layer always reports it `disabled`.
 
 **Desktop assist** is the optional background desktop-control capability
 (`docs/spec/computer-use.md`, the `FR-CUA` group) — a lift-and-shift of the Hermes Agent
-(MIT) computer-use feature. The port, core safety guards (stop-boundary, hard-blocks,
-no-secrets), and the front-door toggle + proxy routes are all wired, but the surface ships
-**present-but-grayed**: the engine boots the safe no-side-effects backend, and the toggle
-stays locked with honest copy until the desktop driver and its display stack are baked into
-the **sandbox** image (not the `api` image) and the health preflight passes. It is registered
-`dormant` as `desktop_assist` in `src/applicant/dormant.py` and flips to live once the driver
-lands — same "bake the binary into the image or it silently degrades" rule as TeX/LibreOffice/
-Chrome. The honest disabled state is driven by the dormant registry +
-`workspace/src/applicant_features.py`.
+(MIT) computer-use feature. The whole chain is wired end-to-end: the port, the core safety
+guards (stop-boundary, hard-blocks, no-secrets), the **real cua-driver MCP/stdio transport**,
+and the front-door toggle + proxy routes. It is registered `live` in
+`src/applicant/dormant.py`, but its **operability is capability-gated at runtime, not by the
+registry flag**: the engine health preflight reports the control operable only when
+`COMPUTER_USE_BACKEND=cua` **and** the desktop driver (TryCUA cua-driver, MIT) is baked into
+the **sandbox** image (not the `api` image) so the preflight passes — otherwise the toggle
+renders locked with honest copy. With the default `noop` backend it is always locked, so the
+surface never silently does nothing. Same "bake the binary into the image or it degrades"
+rule as TeX/LibreOffice/Chrome; the bake is opt-in via `INSTALL_CUA_DRIVER=1` /
+`CUA_DRIVER_URL` in `docker/webtop-chrome/Dockerfile`.
 
 ## Adjacencies (not Applicant surfaces)
 
@@ -83,8 +85,9 @@ not through a separate operator-facing surface.
 ## Engine-side dormant registry (for reference)
 
 Within the engine, the surfaces that had grayed scaffolds during earlier phases are now
-`live` in `src/applicant/dormant.py`; the assistant-learning surfaces are live, and
-`desktop_assist` is the one surface still `dormant` (its driver is not yet baked in):
+`live` in `src/applicant/dormant.py` — including the assistant-learning surfaces and
+`desktop_assist`. Desktop assist is registered `live` (its chain is wired end-to-end) but
+its **operability is gated at runtime**, not by the registry flag (see below):
 
 | Engine surface key | Status |
 |---|---|
@@ -100,7 +103,7 @@ Within the engine, the surfaces that had grayed scaffolds during earlier phases 
 | `assistant_memory` (what the assistant remembers) | live |
 | `saved_playbooks` | live |
 | `curation_approvals` (learning curation queue) | live |
-| `desktop_assist` (computer use) | dormant |
+| `desktop_assist` (computer use) | live (runtime capability-gated) |
 
 The remote-session takeover defaults to the **configurable Ubuntu webtop full desktop**
 (`REMOTE_VIEW_BACKEND=webtop`; DE = `TAKEOVER_DESKTOP` → cinnamon default / xfce / gnome

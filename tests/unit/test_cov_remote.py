@@ -313,14 +313,43 @@ def test_desktop_state_unknown_session_404(client):
     assert client.get("/api/remote/sessions/never-provisioned/desktop").status_code == 404
 
 
-def test_desktop_enable_then_action_when_surface_live(app, monkeypatch):
-    # Flip the dormant surface to live in the in-process registry so the full
-    # opt-in -> guarded-action path is exercised against the noop backend (no
-    # driver needed). The core guards still apply: a boundary intent is refused.
-    import applicant.app.routers.remote as remote_router
+def _healthy_cua_adapter():
+    """A real ``CuaDriverComputerUse`` wired to a FAKE MCP session — so it reports the
+    ``cua`` backend as healthy (capability gate passes) and the core guards still apply,
+    with no real driver binary. Exercises the full opt-in -> guarded-action path."""
+    from applicant.adapters.sandbox.computer_use.cua_driver import CuaDriverComputerUse
 
-    monkeypatch.setattr(remote_router, "_desktop_assist_dormant", lambda: False)
+    class _FakeSession:
+        def start(self):
+            pass
+
+        def list_tools(self):
+            return {"capture", "click", "type", "key", "scroll", "drag", "focus_app", "health_report"}
+
+        def call_tool(self, name, arguments):
+            if name == "health_report":
+                return {"structuredContent": {"ok": True}, "content": [{"type": "text", "text": "ok"}]}
+            if name == "capture":
+                return {"structuredContent": {"element_count": 2}, "content": [{"type": "text", "text": "tree"}]}
+            return {"content": [{"type": "text", "text": "done"}], "isError": False}
+
+        def close(self):
+            pass
+
+    cu = CuaDriverComputerUse()
+    # Force "driver present" without a binary, and route MCP calls to the fake.
+    cu._probed = True
+    cu._resolved_cmd = "/fake/cua-driver"
+    cu._session_factory = _FakeSession
+    return cu
+
+
+def test_desktop_enable_then_action_when_surface_live(app, monkeypatch):
+    # Swap in a healthy non-noop adapter so the CAPABILITY gate opens and the full
+    # opt-in -> guarded-action path is exercised. The core guards still apply: a
+    # boundary intent is refused (403) and a hard-blocked type pattern is refused (400).
     with TestClient(app) as c:
+        c.app.state.container.computer_use = _healthy_cua_adapter()
         assert c.post(
             "/api/setup/llm",
             json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},

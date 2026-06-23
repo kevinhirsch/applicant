@@ -136,13 +136,17 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         surface_name="Desktop assist (live session)",
         requirement_ids=("FR-CUA-9", "FR-CUA-12"),
         wiring_notes=(
-            "ComputerUsePort + core guards (stop-boundary/hard-blocks/no-secrets) are "
-            "wired and the default no-op backend boots; the surface STAYS dormant until "
-            "the desktop driver + its display stack are baked into the sandbox image and "
-            "the health preflight passes (FR-CUA-9/12). Present-but-grayed until then."
+            "Wired end-to-end: ComputerUsePort + core guards + the real cua-driver "
+            "MCP/stdio transport, exposed by app/routers/remote.py (desktop/health + "
+            "per-session enable + guarded action), proxied at workspace "
+            "/api/applicant/remote/desktop/*, surfaced as the live-session 'desktop "
+            "help' toggle. Operability is CAPABILITY-gated at runtime, not by this flag: "
+            "the control is offered only when COMPUTER_USE_BACKEND=cua AND the desktop "
+            "driver is baked into the sandbox image so the health preflight passes; "
+            "otherwise the front door renders it locked. Live (Phase 6)."
         ),
         live_phase=6,
-        status=STATUS_DORMANT,
+        status=STATUS_LIVE,
     ),
     DormantSurface(
         key="assistant_memory",

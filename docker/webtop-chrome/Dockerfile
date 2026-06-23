@@ -74,12 +74,19 @@ RUN apt-get update && \
 # (rendering the front-door control locked, FR-CUA-9/12) unless the binary is
 # BAKED INTO THIS SANDBOX IMAGE — not just present on a dev box.
 #
-# The AT-SPI bus + xdotool/wmctrl helpers below are the display-stack dependency
-# and are safe to bake now (small, no behavior change). The driver binary is NOT
-# yet vendored (license review pending, spec §9/§10), so it is installed only when
-# CUA_DRIVER_URL is provided at build time; absent that, the surface stays dormant
-# and the engine's health preflight reports the driver missing (a deploy signal).
+# The AT-SPI bus + xdotool/wmctrl helpers below are the display-stack dependency and
+# are always baked (small, no behavior change). The driver itself (TryCUA cua-driver,
+# MIT — license confirmed, see NOTICE) is opt-in at build time so the default image
+# build needs no network fetch; absent it, the engine's health preflight reports the
+# driver missing and the front-door control renders LOCKED (FR-CUA-9/12) — never a
+# surface that silently does nothing. Two bake options:
+#   * INSTALL_CUA_DRIVER=1 → run the official upstream installer (fetches the platform
+#     binary + GeoIP), then put it on PATH.
+#   * CUA_DRIVER_URL=<url>  → drop a prebuilt binary deterministically (air-gapped /
+#     pinned mirrors). Takes precedence when set.
+# To light up desktop assist at runtime, also set the engine COMPUTER_USE_BACKEND=cua.
 ARG CUA_DRIVER_URL=""
+ARG INSTALL_CUA_DRIVER="0"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         at-spi2-core \
@@ -89,8 +96,14 @@ RUN apt-get update && \
     if [ -n "${CUA_DRIVER_URL}" ]; then \
         curl -fsSL "${CUA_DRIVER_URL}" -o /usr/local/bin/cua-driver && \
         chmod 0755 /usr/local/bin/cua-driver ; \
+    elif [ "${INSTALL_CUA_DRIVER}" = "1" ]; then \
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" && \
+        ( command -v cua-driver >/dev/null 2>&1 || \
+          for p in /root/.local/bin/cua-driver "$HOME/.local/bin/cua-driver" /root/.cua-driver/bin/cua-driver; do \
+              [ -x "$p" ] && ln -sf "$p" /usr/local/bin/cua-driver && break ; \
+          done ) ; \
     else \
-        echo "desktop-assist driver not baked (CUA_DRIVER_URL unset) — surface stays dormant (FR-CUA-9)" ; \
+        echo "desktop-assist driver not baked (set INSTALL_CUA_DRIVER=1 or CUA_DRIVER_URL) — surface stays locked (FR-CUA-9)" ; \
     fi && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
