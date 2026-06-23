@@ -531,6 +531,10 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         llm=llm,
         resume_provider=BaseResumeProvider(storage),
+        # FR-CUA: the desktop-assist port, used ONLY to complete a native OS file-picker
+        # the DOM can't satisfy during résumé attachment. Defaults to the noop backend,
+        # so the upload path degrades exactly as before until a real driver is operable.
+        computer_use=computer_use,
         allow_automated_accounts=settings.allow_automated_accounts,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
@@ -693,6 +697,10 @@ def build_container(settings: Settings | None = None) -> Container:
             notification=notification,
             llm=llm,
             resume_provider=BaseResumeProvider(tick_storage),
+            # FR-CUA: process-lived desktop-assist port (built ONCE above, never rebuilt
+            # per tick) so the autonomous pre-fill loop can complete a native OS
+            # file-picker the DOM can't satisfy. Defaults to noop → degrades as before.
+            computer_use=computer_use,
         )
         mat = MaterialService(
             tick_storage,
@@ -819,6 +827,8 @@ def build_container(settings: Settings | None = None) -> Container:
             notification=notification,
             llm=llm,
             resume_provider=BaseResumeProvider(req_storage),
+            # FR-CUA: same process-lived desktop-assist port (defaults to noop).
+            computer_use=computer_use,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
