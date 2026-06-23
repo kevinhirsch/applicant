@@ -490,10 +490,21 @@ def build_container(settings: Settings | None = None) -> Container:
         # Stage 2.5 lane A: inject the workspace callback so the assistant can
         # surface auto-detected upcoming interviews (degrades silently when off).
         workspace=workspace,
+        # FR-MIND-4 / FR-AGENT-7 / FR-OBS-2: read-only sources so the chat speaks AS the
+        # 24/7 agent and reports its own work truthfully. ``agent_run_service`` (latest
+        # next-action intent + today's applied count) and ``pending_actions_service``
+        # (what's awaiting the user) already exist here; the scheduler heartbeat and the
+        # debug read-model are wired additively below (they are built after this point).
+        agent_run_service=agent_run_service,
+        pending_actions=pending_actions_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
     admin_query_service = AdminQueryService(storage, orchestrator)
+    # FR-OBS-2: give the chatbot the recent-application read-model so "what have you been
+    # doing" answers from real history (wired additively — admin_query is built after the
+    # chatbot; the scheduler heartbeat is wired the same way once the scheduler exists).
+    chat_service._admin_query = admin_query_service
 
     # Phase 2: durable concurrency + final-approval gate + submission logging.
     from applicant.application.services.capacity_service import CapacityService
@@ -738,6 +749,10 @@ def build_container(settings: Settings | None = None) -> Container:
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
             pending_actions=rs_pas,
         )
+        rs_admin = AdminQueryService(req_storage, orchestrator)
+        # FR-AGENT-7: per-request, req-storage-bound run reader (read-only ``status``) so
+        # the chatbot's own-work report uses this request's isolated Session.
+        rs_agent_runs = AgentRunService(req_storage)
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
@@ -748,8 +763,15 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-MIND-5: advisory curated-memory + saved-playbook context. Shares the
             # process-lived adapter trio; read fresh per call (FR-MIND-10).
             agent_memory=agent_memory,
+            # FR-MIND-4 / FR-AGENT-7 / FR-OBS-2: the agent speaks AS the 24/7 agent and
+            # reports its own work from real, request-scoped read-only sources. The
+            # scheduler heartbeat is the process-lived singleton (no Session), wired
+            # additively below since it is built after this factory is defined.
+            agent_run_service=rs_agent_runs,
+            pending_actions=rs_pas,
+            admin_query=rs_admin,
         )
-        rs_admin = AdminQueryService(req_storage, orchestrator)
+        rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
             req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
         )
@@ -828,6 +850,10 @@ def build_container(settings: Settings | None = None) -> Container:
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
     )
+    # FR-OBS-2: give the chatbot the live scheduler heartbeat so "what are you doing now /
+    # when do you run next" answer from the real tick state (wired additively — the
+    # scheduler is built after the chatbot).
+    chat_service._scheduler = scheduler
 
     return Container(
         settings=settings,

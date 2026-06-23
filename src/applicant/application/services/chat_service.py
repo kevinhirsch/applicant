@@ -114,6 +114,11 @@ class ChatService:
         storage=None,
         workspace=None,
         agent_memory=None,
+        agent_run_service=None,
+        scheduler=None,
+        pending_actions=None,
+        admin_query=None,
+        identity_text=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -135,6 +140,26 @@ class ChatService:
         # injected content is ADVISORY context only — it never authorizes anything
         # (FR-MIND-11); the confirmation/safety gates derive their own ground truth.
         self._agent_memory = agent_memory
+        # The assistant IS the autonomous agent (FR-MIND-4 identity tier + FR-AGENT-7
+        # /FR-OBS-2 activity awareness). These read-only sources let it narrate its own
+        # work truthfully — what it has been doing, is doing now, and will do next:
+        #   - ``agent_run_service``: latest per-run intent sentence + today's applied
+        #     count vs the daily budget (``status(campaign_id)``); FR-AGENT-7.
+        #   - ``scheduler``: live tick heartbeat — running now / last tick / next-tick
+        #     estimate (``state()``); FR-OBS-2.
+        #   - ``pending_actions``: what is awaiting the user right now (FR-UI-3).
+        #   - ``admin_query``: recent application history / outcomes (FR-OBS-2).
+        # All optional/defaulted: absent => the chat behaves exactly as before (the
+        # status block is simply omitted). Truthfulness (FR-AGENT-5): the block is built
+        # only from these real sources and is never invented; if a source is missing or
+        # empty, that fact is omitted rather than fabricated.
+        self._agent_run_service = agent_run_service
+        self._scheduler = scheduler
+        self._pending_actions = pending_actions
+        self._admin_query = admin_query
+        # FR-MIND-4: optional user-tunable identity/voice text. Prompt-injection-scanned
+        # before use; when unsafe or unset, the built-in white-labeled voice is used.
+        self._identity_text = identity_text
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -199,19 +224,20 @@ class ChatService:
         if self._llm is None or not getattr(self._llm, "is_configured", lambda: False)():
             return deterministic
         try:
-            system = (
-                "You are the Applicant assistant. You help the user with their job "
-                "search and their application profile. Answer using the candidate's "
-                "saved profile and search criteria provided below — do NOT ask the user "
-                "for details that are already present there. Be concise. Never claim to "
-                "have changed any integral detail without confirmation."
-            )
+            system = self._identity_prompt()
             prompt = message
             profile_ctx = self._profile_context(campaign_id)
             if profile_ctx:
                 prompt += f"\n\n{profile_ctx}"
             if gaps:
                 prompt += f"\n\n(Known missing details: {', '.join(gaps)}.)"
+            # FR-AGENT-7 / FR-OBS-2: a bounded, freshly-assembled "current status" block
+            # so "what have you been doing / are you doing / will you do next" answer from
+            # real state. Read per reply (FR-MIND-10); omitted entirely when no sources
+            # are wired or nothing is known (truthful, never invented — FR-AGENT-5).
+            status_ctx = self._status_context(campaign_id)
+            if status_ctx:
+                prompt += f"\n\n{status_ctx}"
             interview_ctx = self._interview_context()
             if interview_ctx:
                 prompt += f"\n\n{interview_ctx}"
@@ -229,6 +255,178 @@ class ChatService:
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
             return deterministic
+
+    # --- identity tier (FR-MIND-4) ----------------------------------------
+    #: The built-in, white-labeled voice (FR-MIND-4 identity tier, slot #1), sourced
+    #: from docs/voice-and-truthfulness.md: first person, warm but direct, conversational
+    #: professional, demonstrate rather than state, truthful above all. The assistant IS
+    #: the autonomous agent that runs the user's job search 24/7 — one identity, one
+    #: persona. No codenames, no jargon (principle #3). No em-dashes (FR-RESUME-5).
+    _BUILTIN_IDENTITY = (
+        "You are Applicant, the autonomous agent that runs this person's job search "
+        "around the clock. You are not a separate help desk; you are the same agent that "
+        "discovers roles, scores them, tailors materials, pre-fills applications, and "
+        "holds everything at the review line for their approval. Speak in the first "
+        "person about your own work (\"I found\", \"I'm doing\", \"I'll do next\"). "
+        "Voice: warm but direct, conversational and professional, active voice. Show, "
+        "do not boast. Be concise. "
+        "Truthfulness comes first: only state what the provided context actually says. "
+        "If you do not have a fact, say you do not have it rather than guessing. Never "
+        "invent activity, numbers, or progress you were not given. Answer using the "
+        "candidate's saved profile and search criteria below, and do not ask for details "
+        "already present there. Never claim to have changed any integral detail without "
+        "the user's confirmation, and never claim to have submitted an application "
+        "yourself: every final submit waits for the user."
+    )
+
+    #: Markers that, in user-supplied identity text, signal an attempt to override the
+    #: agent's instructions or persona (a prompt-injection attempt). When any match, the
+    #: user text is rejected and the built-in voice is used instead (FR-MIND-4).
+    _IDENTITY_INJECTION = re.compile(
+        r"ignore (?:all |the )?(?:previous|prior|above) instructions|disregard (?:all |the )?"
+        r"(?:previous|prior|above)|you are now|new instructions:|system prompt|"
+        r"reveal (?:your |the )?(?:system )?prompt|act as (?:a |an )?(?:dan|jailbreak)",
+        re.IGNORECASE,
+    )
+
+    def _identity_prompt(self) -> str:
+        """The system-prompt identity tier (FR-MIND-4).
+
+        Returns the user-tunable identity text when one is configured AND it passes a
+        prompt-injection scan; otherwise the built-in white-labeled voice. User text is
+        appended to (never replaces) the built-in voice so the truthfulness/safety
+        clauses cannot be tuned away.
+        """
+        from applicant.core.rules.agent_memory import claims_authority
+
+        extra = (self._identity_text or "").strip()
+        if not extra:
+            return self._BUILTIN_IDENTITY
+        # FR-MIND-4 / FR-MIND-11: untrusted text — reject an override/injection attempt
+        # or an authority claim; fall back to the built-in voice unchanged.
+        if self._IDENTITY_INJECTION.search(extra) or claims_authority(extra):
+            return self._BUILTIN_IDENTITY
+        if len(extra) > 800:
+            extra = extra[:800]
+        return self._BUILTIN_IDENTITY + "\n\nTone preferences from the user: " + extra
+
+    # --- current-status context (FR-AGENT-7 / FR-OBS-2; truthful) ---------
+    def _status_context(self, campaign_id: CampaignId) -> str:
+        """A BOUNDED "current status" block the agent answers its own-work questions from.
+
+        Assembled fresh per reply (FR-MIND-10) from read-only sources, in three parts:
+        what I've been doing (recent applications + outcomes), what I'm doing now (the
+        scheduler tick heartbeat + today's applied count), and what's next (the latest
+        single-sentence next-action intent, the next-tick estimate, and what's pending).
+
+        Truthfulness (FR-AGENT-5): every line comes from real state. A source that is
+        absent or empty contributes nothing — it is never replaced with an invented
+        value. When no source yields anything, returns "" and the block is omitted, so a
+        chat with none of these wired behaves exactly as before.
+        """
+        recent: list[str] = []  # past
+        now_lines: list[str] = []  # present
+        next_lines: list[str] = []  # future
+
+        # --- what I've been doing (recent applications + outcomes) ---------
+        if self._admin_query is not None:
+            try:
+                history = self._admin_query.application_history(campaign_id, limit=5)
+            except TypeError:  # adapters without the ``limit`` kwarg
+                try:
+                    history = (self._admin_query.application_history(campaign_id) or [])[:5]
+                except Exception:
+                    history = []
+            except Exception:
+                history = []
+            for row in history or []:
+                title = (row.get("job_title") or row.get("role_name") or "a role").strip()
+                status = (row.get("status") or "").replace("_", " ").strip()
+                outs = [
+                    (o.get("type") or "").strip()
+                    for o in (row.get("outcomes") or [])
+                    if o.get("type")
+                ]
+                bit = title
+                if status:
+                    bit += f" ({status})"
+                if outs:
+                    bit += ", outcomes: " + ", ".join(outs[:3])
+                recent.append("- " + bit)
+
+        # --- what I'm doing now + what's next (run status: intent + counts) -
+        run_status = None
+        if self._agent_run_service is not None:
+            try:
+                run_status = self._agent_run_service.status(campaign_id)
+            except Exception:
+                run_status = None
+        if run_status is not None:
+            if run_status.get("paused"):
+                now_lines.append("My automated work is paused right now.")
+            applied = run_status.get("applied_today")
+            budget = run_status.get("daily_budget")
+            if applied is not None:
+                count_line = f"Applications I've started today: {applied}"
+                if budget:
+                    count_line += f" of a daily budget of {budget}"
+                now_lines.append(count_line + ".")
+            intent = (run_status.get("latest_intent") or "").strip()
+            if intent:
+                next_lines.append(f"My stated next step: {intent}")
+
+        # --- what I'm doing now (scheduler heartbeat) ----------------------
+        if self._scheduler is not None:
+            try:
+                sched = self._scheduler.state()
+            except Exception:
+                sched = None
+            if sched is not None:
+                if sched.get("running"):
+                    now_lines.append("I'm running a work cycle at this moment.")
+                last = sched.get("last_tick")
+                if last:
+                    now_lines.append(f"My last work cycle ran at {last}.")
+                nxt = sched.get("next_tick")
+                if nxt:
+                    next_lines.append(f"My next work cycle is due around {nxt}.")
+
+        # --- what's next (pending actions awaiting the user) ---------------
+        if self._pending_actions is not None:
+            try:
+                pending = self._pending_actions.list_pending(campaign_id)
+            except Exception:
+                pending = []
+            pending = list(pending or [])
+            if pending:
+                titles = [
+                    (getattr(p, "title", "") or "").strip()
+                    for p in pending[:5]
+                ]
+                titles = [t for t in titles if t]
+                head = (
+                    f"There are {len(pending)} item(s) waiting for you"
+                    if len(pending) != 1
+                    else "There is 1 item waiting for you"
+                )
+                if titles:
+                    head += ": " + "; ".join(titles)
+                next_lines.append(head + ".")
+
+        sections: list[str] = []
+        if recent:
+            sections.append("What I've been doing recently:\n" + "\n".join(recent[:5]))
+        if now_lines:
+            sections.append("What I'm doing now:\n" + "\n".join(f"- {x}" for x in now_lines))
+        if next_lines:
+            sections.append("What I'll do next:\n" + "\n".join(f"- {x}" for x in next_lines))
+        if not sections:
+            return ""
+        return (
+            "My current status (answer questions about your own work truthfully from "
+            "this; if something is not here, say you don't have that detail rather than "
+            "guessing):\n" + "\n\n".join(sections)
+        )
 
     # --- saved-profile context (FR-CHAT-1) --------------------------------
     def _profile_context(self, campaign_id: CampaignId) -> str:
