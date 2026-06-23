@@ -332,7 +332,18 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
     )
 
-    llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
+    # FR-MIND-8: bound the context (compress middle turns over a token budget) and
+    # apply provider prefix-cache breakpoints where supported. Threshold 0 (default)
+    # keeps the manager a no-op, so default behavior is unchanged.
+    from applicant.adapters.llm.context_window import ContextWindowManager
+
+    llm = OpenAICompatibleLLM(
+        ladder=setup_service.build_ladder(),
+        context_manager=ContextWindowManager(
+            token_budget=settings.context_compress_threshold
+        ),
+        prefix_cache=settings.prefix_cache,
+    )
     # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
     # + tests); live boards opt-in via DISCOVERY_LIVE (FR-DISC-4 network boundary).
     discovery_proxies = tuple(

@@ -108,6 +108,13 @@ EGRESS_MODE_DIRECT = "direct"
 EGRESS_MODE_RESIDENTIAL_PROXY = "residential-proxy"
 EGRESS_MODES = (EGRESS_MODE_DIRECT, EGRESS_MODE_RESIDENTIAL_PROXY)
 
+#: Prefix-cache posture (FR-MIND-8). ``auto``/``on`` apply provider cache
+#: breakpoints where the provider advertises support; ``off`` never does.
+PREFIX_CACHE_AUTO = "auto"
+PREFIX_CACHE_ON = "on"
+PREFIX_CACHE_OFF = "off"
+PREFIX_CACHE_MODES = (PREFIX_CACHE_AUTO, PREFIX_CACHE_ON, PREFIX_CACHE_OFF)
+
 
 def resolve_takeover_image(desktop: str, override: str = "") -> str:
     """Resolve a takeover DE to its container image (FR-SANDBOX-2).
@@ -145,6 +152,18 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_model: str = Field(default="", alias="LLM_MODEL")
+
+    # Context management (FR-MIND-8, FR-MIND-13). Token budget over which the LLM
+    # adapter compresses/evicts MIDDLE turns (the system tier + most recent turns
+    # are always kept). 0 (default) DISABLES it — current behavior is byte-identical
+    # until an operator opts in. Prefix caching applies provider cache breakpoints
+    # on the stable prefix where the configured provider supports it: ``auto``
+    # (default) / ``on`` enable it for capability-advertising providers; ``off``
+    # never does. A clean no-op for local Ollama / OpenAI-compatible lanes.
+    context_compress_threshold: int = Field(
+        default=0, ge=0, alias="CONTEXT_COMPRESS_THRESHOLD"
+    )
+    prefix_cache: str = Field(default="auto", alias="PREFIX_CACHE")
 
     # Credential vault (FR-VAULT-3)
     credential_keyfile: str = Field(default="secrets/master.key", alias="CREDENTIAL_KEYFILE")
@@ -378,6 +397,18 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"TAKEOVER_DESKTOP={v!r} is invalid; choose one of {TAKEOVER_DESKTOPS} "
                 "(default 'cinnamon')."
+            )
+        return norm
+
+    @field_validator("prefix_cache")
+    @classmethod
+    def _validate_prefix_cache(cls, v: str) -> str:
+        # Reject a typo at load instead of silently disabling prefix caching.
+        norm = (v or "").strip().lower()
+        if norm not in PREFIX_CACHE_MODES:
+            raise ValueError(
+                f"PREFIX_CACHE={v!r} is invalid; choose one of {PREFIX_CACHE_MODES} "
+                "(default 'auto')."
             )
         return norm
 

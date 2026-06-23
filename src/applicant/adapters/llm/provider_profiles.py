@@ -45,6 +45,16 @@ class ProviderProfile:
         Signature: ``(model, messages, json_schema, max_tokens) -> dict``.
     extract_text:
         Pull the assistant text out of the raw JSON response body.
+    supports_prefix_cache:
+        True iff the provider honors explicit prefix-cache breakpoints on the
+        stable prompt prefix (e.g. an Anthropic-style ``cache_control`` block).
+        OpenAI-compatible cloud and local Ollama lanes do NOT — they leave this
+        ``False`` so :func:`mark_prefix_cache` is never invoked and prefix caching
+        is a clean no-op for those lanes (FR-MIND-8).
+    mark_prefix_cache:
+        Given the built request ``payload`` dict, return it with cache breakpoints
+        applied to the stable prefix. Only consulted when ``supports_prefix_cache``
+        is True; defaults to an identity passthrough (no breakpoints).
     """
 
     name: str
@@ -55,6 +65,10 @@ class ProviderProfile:
     chat_url: Callable[[str], str]
     build_request: Callable[..., dict[str, Any]]
     extract_text: Callable[[dict[str, Any]], str]
+    supports_prefix_cache: bool = False
+    mark_prefix_cache: Callable[[dict[str, Any]], dict[str, Any]] = (
+        lambda payload: payload
+    )
 
 
 # ---------------------------------------------------------------------------
