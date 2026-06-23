@@ -13,6 +13,7 @@ from applicant.app.routers import (
     admin,
     agent_memory,
     agent_runs,
+    agent_status,
     attributes,
     campaigns,
     chat,
@@ -47,6 +48,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(criteria.router)
     app.include_router(discovery_sources.router)
     app.include_router(agent_runs.router)
+    app.include_router(agent_status.router)
     app.include_router(onboarding.router)
     app.include_router(fonts.router)
     app.include_router(conversion.router)

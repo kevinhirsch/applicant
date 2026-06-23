@@ -38,6 +38,11 @@ class ConfirmIn(BaseModel):
     value: str
 
 
+class ConfirmCriteriaIn(BaseModel):
+    campaign_id: str
+    changes: dict
+
+
 @router.get("")
 def index() -> dict:
     return {"surface": "chat", "phase": 4, "status": "live"}
@@ -56,6 +61,10 @@ def send_message(body: ChatIn, chat=Depends(get_chat_service)) -> dict:
         "message": result.message,
         "gaps": result.gaps,
         "proposed_changes": [c.as_dict() for c in result.proposed_changes],
+        # FR-AGENT-1/2, FR-CRIT: loop-control actions the turn steered. Non-integral
+        # ones are already applied; an integral criteria change carries
+        # ``requires_confirmation`` and is committed via ``/confirm-criteria``.
+        "control_actions": [a.as_dict() for a in result.control_actions],
     }
 
 
@@ -69,3 +78,24 @@ def confirm_change(body: ConfirmIn, chat=Depends(get_chat_service)) -> dict:
     except ConfirmationRequired as exc:  # pragma: no cover - confirm=True path
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return {"committed": True, "name": attr.name, "value": attr.value}
+
+
+@router.post("/confirm-criteria", status_code=200)
+def confirm_criteria(body: ConfirmCriteriaIn, chat=Depends(get_chat_service)) -> dict:
+    """Commit a confirmation-gated criteria refocus the user approved (FR-FB-3, FR-CRIT).
+
+    The chat surfaces an integral criteria change (e.g. a salary floor that shifts the
+    campaign's scope) as a proposal that needs confirmation; this commits it through the
+    criteria service's own gate.
+    """
+    try:
+        crit = chat.confirm_criteria_refocus(
+            CampaignId(body.campaign_id), changes=body.changes
+        )
+    except ConfirmationRequired as exc:  # pragma: no cover - confirm=True path
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    return {"committed": True, "salary_floor": getattr(crit, "salary_floor", None)}

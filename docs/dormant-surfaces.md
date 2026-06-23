@@ -34,6 +34,7 @@ Each row is wired across the whole chain — engine router → workspace
 | Email / digest panel | `emailLibrary/applicantDigest.js` | `digest` | `channels_configured` | **live** |
 | Feedback survey | digest/feedback flow | `feedback` | `channels_configured` | **live** |
 | Activity / debug (logs, screenshots, history, workflow state, variants) | `applicantDebug.js` | `admin` | `llm_configured` | **live** |
+| "What the agent is doing" panel (now / next / recent) + status strip | `applicantActivity.js` | `agent_status` (`/api/agent/status/{cid}`) → `/api/applicant/activity/{snapshot,status,intent,runs}` | `llm_configured` | **live** |
 | Run controls / mark-submitted / Update button | `applicantDebug.js` (ops tab) | `ops` / `admin` / `update` | `llm_configured` | **live** |
 | Live remote view / takeover + submit/authorize | `applicantRemote.js` | `remote` | reached from pending actions / chat | **live** |
 | Credential vault | `applicantVault.js` | `credentials` | `onboarding_complete` | **live** |
@@ -48,6 +49,16 @@ self-contained in-process store by default, and `MIND_BACKEND=bridge` points the
 the front-door memory/playbooks store over the internal callback channel. Self-writes the
 assistant proposes are staged for review (default on) and surface as approve/deny items in
 the portal — only approval applies a proposal, so the advisory-not-authorization rule holds.
+
+The curation queue is now fed by **real learning signal**: the scheduled review nudge mines
+actual run history and the user's own feedback (digest declines + résumé/answer revision
+instructions), summarizes each run with a cheap optional model, writes cross-session recall,
+and proposes memory/playbook updates — all of which land here as approve/deny items. The same
+learned memory then nudges generation and viability scoring (advisory only, never relaxing the
+no-fabrication guard). The chatbot is this same agent in first person, and its activity is also
+surfaced read-only in the **"what the agent is doing" panel** (now / next / recent) plus a
+proactive daily status update through the notification ladder. See
+[traceability.md](traceability.md) (FR-MIND / FR-AGENT-7 / FR-OBS-2) for the full chains.
 
 ## Present-but-disabled surface
 

@@ -46,6 +46,25 @@ class PrefillBoundaryViolation(DomainError):
     """
 
 
+class NativeFilePickerRequired(DomainError):
+    """A file attachment opened a NATIVE OS file-picker the browser DOM can't satisfy.
+
+    The default upload path drives the DOM ``<input type=file>`` directly (Playwright's
+    ``set_input_files`` — no OS dialog). Some ATS controls instead pop the operating
+    system's own file-open dialog, which lives OUTSIDE the page and cannot be completed
+    through the DOM. A browser adapter raises this to signal the off-page picker so the
+    caller MAY complete it with desktop assist (computer use, FR-CUA) when that backend
+    is operable — and otherwise degrade exactly as before (skip / human hand-off).
+
+    It carries the résumé/CV upload PATH so a desktop fallback can type it into the
+    dialog. A filesystem path is not a secret (FR-CUA-6 blocks only credentials).
+    """
+
+    def __init__(self, message: str = "", *, file_path: str | None = None) -> None:
+        super().__init__(message or "A native OS file-picker requires desktop assist.")
+        self.file_path = file_path
+
+
 class ComputerUseBlocked(DomainError):
     """A desktop (computer-use) action is forbidden by the core guards (FR-CUA-5/6).
 

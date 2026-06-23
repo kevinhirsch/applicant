@@ -40,6 +40,7 @@ from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.pending_action import PendingAction
+from applicant.core.errors import NativeFilePickerRequired
 from applicant.core.ids import ApplicationId, CampaignId, PendingActionId, new_id
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
 from applicant.core.state_machine import ApplicationState
@@ -139,6 +140,7 @@ class PrefillService:
         *,
         llm=None,
         resume_provider=None,
+        computer_use=None,
         required_field_types: frozenset[str] | None = None,
         allow_automated_accounts: bool = False,
     ) -> None:
@@ -151,6 +153,12 @@ class PrefillService:
         # FR-RESUME-4: resolves the uploadable résumé file for an application (the
         # uploaded base résumé by default). Optional: absent → file inputs are skipped.
         self._resume_provider = resume_provider
+        # FR-CUA: desktop-assist (computer-use) port, used ONLY to complete a native OS
+        # file-picker the DOM can't satisfy during résumé/cover-letter attachment.
+        # Optional/defaulted: absent — or the noop test backend / a non-operable driver —
+        # degrades EXACTLY as before (skip / human hand-off). It never drives any step
+        # other than the bounded file-attach (FR-CUA-3 stop-boundary stays untouched).
+        self._computer_use = computer_use
         # ADR-0004: only attempt automated account creation when the operator opted in.
         self._allow_automated_accounts = bool(allow_automated_accounts)
         # LLM port for ambiguous-mapping escalation (FR-PREFILL-3). Optional: when
@@ -825,6 +833,14 @@ class PrefillService:
             return
         try:
             self._browser.upload_file(app.id, fld.selector, path)
+        except NativeFilePickerRequired as picker:
+            # The attach control opened a NATIVE OS file-picker the DOM can't satisfy.
+            # If desktop assist (computer use) is operable, complete the off-page dialog
+            # with it (FR-CUA); otherwise degrade EXACTLY as before — skip / human
+            # hand-off — by treating it like any other soft upload failure.
+            picker_path = getattr(picker, "file_path", None) or path
+            if not self._complete_native_picker(app, fld, picker_path):
+                return
         except Exception as exc:  # noqa: BLE001 — soft failure, surface but continue
             self._emit_error(
                 app,
@@ -836,6 +852,53 @@ class PrefillService:
         result.uploaded_documents.append(
             {"selector": fld.selector, "label": fld.label, "path": path, "url": url}
         )
+
+    def _desktop_operable(self) -> bool:
+        """Whether desktop assist (computer use) is genuinely operable (FR-CUA).
+
+        Mirrors the router's capability gate (``app/routers/remote.py`` ``_desktop_health``):
+        a real driver answered the health preflight (``ok``) AND the active backend is NOT
+        the ``noop`` test backend. So a default ``COMPUTER_USE_BACKEND=noop`` deploy — or a
+        driver missing from the sandbox image — reports not-operable and we never attempt
+        the desktop path. Defensive: any error → not operable (degrade as before).
+        """
+        cu = self._computer_use
+        if cu is None:
+            return False
+        try:
+            report = cu.health()
+        except Exception:  # noqa: BLE001 — a flaky preflight must never crash the loop
+            return False
+        return bool(getattr(report, "ok", False)) and getattr(report, "backend", "") != "noop"
+
+    def _complete_native_picker(self, app, fld: DetectedField, path: str) -> bool:
+        """Complete a native OS file-picker with desktop assist (FR-CUA). Returns success.
+
+        STRICTLY bounded to the file-attach step (``StepKind.UPLOAD_DOCUMENT``): it only
+        ever focuses the dialog, types the résumé/CV PATH (a path is not a secret —
+        FR-CUA-6 blocks only credentials), and confirms. It NEVER clicks account-create /
+        submit / CAPTCHA; the desktop adapter additionally enforces the stop-boundary
+        (FR-CUA-3) on every action, and these actions carry no boundary ``intent`` so they
+        cannot trip it. Returns False (degrade — skip / human hand-off) when desktop assist
+        is not operable or any step fails."""
+        if not self._desktop_operable():
+            return False
+        cu = self._computer_use
+        try:
+            # Target the file-open dialog in the background (no foreground steal, FR-CUA-7),
+            # type the path the DOM couldn't supply, then confirm — the bounded vocabulary.
+            cu.focus_app("file-open-dialog")
+            cu.type_text(path, is_secret=False)
+            cu.key("enter")
+        except Exception as exc:  # noqa: BLE001 — desktop failure is a soft upload failure
+            self._emit_error(
+                app,
+                title=f"Could not attach résumé via desktop helper: {fld.label}",
+                detail=str(exc),
+                selector=fld.selector,
+            )
+            return False
+        return True
 
     # --- field resolution -------------------------------------------------
     @dataclass

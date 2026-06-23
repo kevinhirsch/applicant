@@ -30,6 +30,7 @@ from applicant.core.rules.agent_memory import claims_authority, is_save_worthy
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.memory_store import (
     KIND_ENVIRONMENT,
+    KIND_USER,
     SCOPE_CAMPAIGN,
     SCOPE_GLOBAL,
     MemoryEntry,
@@ -58,6 +59,12 @@ class RunSummary:
     succeeded: bool = True
     #: A short, stable key (e.g. an ATS tenant) so re-encounters map to the same skill.
     topic: str = ""
+    #: When True this summary is a **user-preference** lesson distilled from the user's
+    #: own feedback (a digest decline reason or a résumé/answer revision instruction,
+    #: FR-LEARN-3). It yields a curated **user** memory line (``KIND_USER``) — the user's
+    #: stated preference/correction — and never a skill (a preference is not a workflow).
+    #: Defaulted False so a plain run summary behaves exactly as before (byte-identical).
+    is_preference: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,6 +125,72 @@ def _default_summarizer(summary: RunSummary) -> str:
     return f"{label} {topic}: {summary.text}".strip()
 
 
+def build_llm_summarizer(
+    llm,
+    *,
+    model: str = "",
+    start_tier: int = 1,
+) -> Callable[[RunSummary], str]:
+    """Build a CHEAP, OPTIONAL LLM-backed run summarizer (FR-MIND-7 / FR-MIND-13).
+
+    Returns a callable with the same shape as :func:`_default_summarizer` that asks
+    the configured (cheaper) model for one human-readable lesson line. It is
+    defensive by construction:
+
+    * When ``llm`` is ``None`` or not configured, it returns the heuristic
+      :func:`_default_summarizer` directly — so the hermetic lane stays green with NO
+      model wired and behavior is exactly today's heuristic.
+    * Per call, any LLM error (ladder exhausted / not configured / provider down)
+      degrades to the heuristic for THAT run rather than raising, so one flaky
+      completion never breaks the nudge.
+
+    ``model`` is the ``CURATION_MODEL`` setting; empty means "reuse the main model"
+    (we start at ``start_tier`` on the existing ladder — the cheaper rung). The model
+    id is advisory here (the ladder owns provider/model); it is recorded so a future
+    adapter could pin a dedicated curation tier.
+    """
+    if llm is None:
+        return _default_summarizer
+    try:
+        if not llm.is_configured():
+            return _default_summarizer
+    except Exception:  # pragma: no cover - defensive: treat as not configured
+        return _default_summarizer
+
+    from applicant.ports.driven.llm import ChatMessage
+
+    _system = (
+        "You summarize one automated job-application run into a single, concise "
+        "lesson the assistant can reuse later. Reply with ONE short sentence: what "
+        "worked or what blocked it. Describe procedure only — never invent facts "
+        "about the user, and never claim authority to submit or bypass any review."
+    )
+
+    def _summarize(summary: RunSummary) -> str:
+        topic = summary.topic or summary.run_id
+        user = (
+            f"Run topic: {topic}\n"
+            f"Succeeded: {summary.succeeded}\n"
+            f"Details: {summary.text}"
+        )
+        try:
+            result = llm.complete(
+                [
+                    ChatMessage(role="system", content=_system),
+                    ChatMessage(role="user", content=user),
+                ],
+                start_tier=start_tier,
+                max_tokens=80,
+            )
+        except Exception as exc:  # degrade to heuristic for THIS run, never raise
+            log.debug("curation_summarizer_degraded", error=str(exc))
+            return _default_summarizer(summary)
+        text = (getattr(result, "text", "") or "").strip()
+        return text or _default_summarizer(summary)
+
+    return _summarize
+
+
 class CurationService:
     """The scheduled closed-loop curator (FR-MIND-7)."""
 
@@ -127,12 +200,18 @@ class CurationService:
         memory_store,
         skill_store,
         ledger: CurationLedger,
+        recall=None,
         summarizer: Callable[[RunSummary], str] | None = None,
         memory_write_approval: bool = True,
         skills_write_approval: bool = True,
     ) -> None:
         self._memory = memory_store
         self._skills = skill_store
+        # FR-MIND-3: the recall index. Each newly-curated run is indexed here so the
+        # loop's ``recall`` tool returns real hits. OPTIONAL — None keeps every
+        # existing call site working and is a no-op. The bridge adapter degrades to a
+        # no-op when the channel is OFF, so this never raises (advisory-only).
+        self._recall = recall
         # The ONLY cross-tick state lives in the injected, process-lived ledger
         # (FR-MIND-10) — never as a plain attribute that would reset each tick.
         self._ledger = ledger
@@ -162,11 +241,20 @@ class CurationService:
                 self._ledger.proposed_runs.add(s.run_id)
 
                 lesson = self._summarize(s)
+                # FR-MIND-3: index this run into recall so ``recall.search`` returns
+                # it later. Gated by the same ``proposed_runs`` dedupe (a run is only
+                # reviewed once), so a re-tick never re-indexes a duplicate. Advisory
+                # and best-effort — a recall failure never breaks the nudge.
+                self._index_recall(s, lesson)
                 if is_save_worthy(lesson):
                     scope = SCOPE_CAMPAIGN if s.campaign_id else SCOPE_GLOBAL
+                    # FR-MIND-1 / FR-LEARN-3: a user-preference summary (distilled from the
+                    # user's own decline/revision feedback) is a curated **user** memory line
+                    # — the user's stated preference/correction — not an environment lesson.
+                    kind = KIND_USER if s.is_preference else KIND_ENVIRONMENT
                     entry = MemoryEntry(
                         text=lesson,
-                        kind=KIND_ENVIRONMENT,
+                        kind=kind,
                         scope=scope,
                         campaign_id=s.campaign_id,
                     )
@@ -178,7 +266,9 @@ class CurationService:
                         )
                     )
 
-                if self._is_skill_worthy(s):
+                # A user preference is a stated correction, not a reusable workflow, so it
+                # never authors a skill — only run-history summaries do (FR-MIND-2).
+                if not s.is_preference and self._is_skill_worthy(s):
                     topic = s.topic or s.run_id
                     is_improvement = topic in self._ledger.proposed_skill_topics
                     self._ledger.proposed_skill_topics.add(topic)
@@ -240,6 +330,22 @@ class CurationService:
         return self._pop_staged(proposal_id) is not None
 
     # --- internals --------------------------------------------------------
+    def _index_recall(self, s: RunSummary, lesson: str) -> None:
+        """Index one curated run into the recall index (FR-MIND-3), best-effort.
+
+        Combines the run's own detail text with the curated lesson so full-text /
+        semantic recall can find it by either. No-op when no recall index is wired;
+        any adapter error is swallowed (advisory-only — recall must never break the
+        loop). The bridge adapter is itself a no-op when its channel is OFF.
+        """
+        if self._recall is None:
+            return
+        text = s.text if not lesson else f"{lesson}\n{s.text}"
+        try:
+            self._recall.index(s.run_id, text, s.campaign_id)
+        except Exception as exc:  # pragma: no cover - defensive: recall is advisory
+            log.debug("curation_recall_index_failed", run_id=s.run_id, error=str(exc))
+
     def _is_skill_worthy(self, s: RunSummary) -> bool:
         """FR-MIND-2 heuristic: a successful, non-trivial run is skill-worthy."""
         return s.succeeded and s.tool_calls >= _SKILL_MIN_TOOL_CALLS

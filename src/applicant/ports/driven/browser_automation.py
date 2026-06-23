@@ -73,6 +73,11 @@ class BrowserAutomationPort(Protocol):
 
         Uploads the rendered base résumé; a deterministic pre-fill step (no submit),
         so it stays inside the pre-fill-stop boundary.
+
+        MAY raise :class:`~applicant.core.errors.NativeFilePickerRequired` when the
+        attach control opens a NATIVE OS file-open dialog (off-page) the DOM can't
+        satisfy. The caller (pre-fill) may then complete it with desktop assist
+        (computer use, FR-CUA) when that backend is operable, else degrade as before.
         """
         ...
 

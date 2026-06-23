@@ -184,6 +184,33 @@ class NotificationService:
             log.info("digest_email_sent", subject=subject)
         return bool(sent)
 
+    # --- proactive agent status update (FR-AGENT-7 / FR-OBS-2) ------------
+    def notify_status_update(
+        self,
+        *,
+        campaign_id: str,
+        body: str,
+        day: date,
+        deep_link: str | None = None,
+    ) -> str:
+        """Push the periodic plain-language agent status update (FR-AGENT-7).
+
+        Informational (NORMAL urgency): it lands in the in-app inbox and fans out to
+        whatever channels the user has opted into — exactly the existing digest/decision
+        path, NOT a parallel channel. ``dedup_key`` is keyed per (campaign, UTC day) so a
+        re-driven same-day push is a no-op at the notifier (the scheduler already guards
+        the cadence; this is defense in depth, FR-NOTIF-3).
+        """
+        return self._notification.notify(
+            Notification(
+                title="Update from your job-search agent",
+                body=body,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+                dedup_key=f"status_update:{campaign_id}:{day.isoformat()}",
+            )
+        )
+
     # --- in-app notification center (FR-UI-3 feed) ------------------------
     def list_inbox(self, *, include_seen: bool = False) -> list:
         """Current in-app notifications backing the notification center.

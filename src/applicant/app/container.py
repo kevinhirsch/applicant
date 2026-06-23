@@ -132,6 +132,9 @@ class Container:
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
+    # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update service (PUSH
+    # sibling of the chatbot self-report). Dormant by default (STATUS_UPDATE_SCHEDULE=off).
+    status_update_service: Any = None
     # FR-MIND: the agent-learning substrate. ``agent_memory`` is the curated-memory /
     # skills / recall adapter trio (default ``in_memory``, hermetic). ``curation_service``
     # runs the scheduled closed loop; its cross-tick dedupe state lives in the
@@ -251,6 +254,31 @@ def _build_orchestrator(settings: Settings) -> Any:
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
+def _compose_summary_providers(*providers: Any) -> Any:
+    """Combine run-summary providers into one ``provider(storage, now)`` callable.
+
+    Each provider maps the per-tick storage to a list of ``RunSummary`` records; the
+    composed callable concatenates them so a single curation nudge reviews every
+    source at once (FR-MIND-7). A provider that raises or returns nothing contributes
+    no summaries and never breaks the others, so an empty/absent source is a no-op and
+    behavior is byte-identical when there is no feedback to learn from.
+    """
+    real = tuple(p for p in providers if p is not None)
+    if not real:
+        return None
+
+    def _provider(storage, now=None) -> list:
+        out: list = []
+        for p in real:
+            try:
+                out.extend(p(storage, now) or [])
+            except Exception:  # pragma: no cover - defensive: one source never breaks others
+                continue
+        return out
+
+    return _provider
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
@@ -332,7 +360,18 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
     )
 
-    llm = OpenAICompatibleLLM(ladder=setup_service.build_ladder())
+    # FR-MIND-8: bound the context (compress middle turns over a token budget) and
+    # apply provider prefix-cache breakpoints where supported. Threshold 0 (default)
+    # keeps the manager a no-op, so default behavior is unchanged.
+    from applicant.adapters.llm.context_window import ContextWindowManager
+
+    llm = OpenAICompatibleLLM(
+        ladder=setup_service.build_ladder(),
+        context_manager=ContextWindowManager(
+            token_budget=settings.context_compress_threshold
+        ),
+        prefix_cache=settings.prefix_cache,
+    )
     # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
     # + tests); live boards opt-in via DISCOVERY_LIVE (FR-DISC-4 network boundary).
     discovery_proxies = tuple(
@@ -490,10 +529,25 @@ def build_container(settings: Settings | None = None) -> Container:
         # Stage 2.5 lane A: inject the workspace callback so the assistant can
         # surface auto-detected upcoming interviews (degrades silently when off).
         workspace=workspace,
+        # FR-MIND-4 / FR-AGENT-7 / FR-OBS-2: read-only sources so the chat speaks AS the
+        # 24/7 agent and reports its own work truthfully. ``agent_run_service`` (latest
+        # next-action intent + today's applied count) and ``pending_actions_service``
+        # (what's awaiting the user) already exist here; the scheduler heartbeat and the
+        # debug read-model are wired additively below (they are built after this point).
+        agent_run_service=agent_run_service,
+        pending_actions=pending_actions_service,
+        # FR-AGENT-1/2: the run-control seam so the chat can also STEER the loop
+        # (pause/resume + daily throughput, clamped to the hard cap) by routing intents
+        # to the SAME gated operations the ops surface uses (the run service does both).
+        run_control=agent_run_service,
     )
     # Debug / observability read-models (FR-OBS-2 / FR-LOG-3): history, screenshots,
     # workflow state, logs, variant library — backed by real storage + orchestrator.
     admin_query_service = AdminQueryService(storage, orchestrator)
+    # FR-OBS-2: give the chatbot the recent-application read-model so "what have you been
+    # doing" answers from real history (wired additively — admin_query is built after the
+    # chatbot; the scheduler heartbeat is wired the same way once the scheduler exists).
+    chat_service._admin_query = admin_query_service
 
     # Phase 2: durable concurrency + final-approval gate + submission logging.
     from applicant.application.services.capacity_service import CapacityService
@@ -520,6 +574,10 @@ def build_container(settings: Settings | None = None) -> Container:
         notification=notification,
         llm=llm,
         resume_provider=BaseResumeProvider(storage),
+        # FR-CUA: the desktop-assist port, used ONLY to complete a native OS file-picker
+        # the DOM can't satisfy during résumé attachment. Defaults to the noop backend,
+        # so the upload path degrades exactly as before until a real driver is operable.
+        computer_use=computer_use,
         allow_automated_accounts=settings.allow_automated_accounts,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
@@ -574,7 +632,9 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.application.services.curation_service import (
         CurationLedger,
         CurationService,
+        build_llm_summarizer,
     )
+    from applicant.application.services.run_history import RunHistoryProvider
 
     agent_memory = build_agent_memory(settings, workspace)
     # FR-MIND-5: give the already-built chatbot the advisory curated-memory + saved-
@@ -582,13 +642,45 @@ def build_container(settings: Settings | None = None) -> Container:
     # wire it additively so reasoning can consult memory without a construction cycle).
     # The per-request ChatService gets it directly in the request factory below.
     chat_service._agent_memory = agent_memory
+    # FR-MIND-1/2/5: likewise give the already-built scoring + material services the
+    # advisory curated-memory / saved-playbook substrate (both are constructed above,
+    # before the substrate; wire it additively so viability scoring + generation can
+    # consult learned context without a construction cycle). The per-tick and
+    # per-request copies receive it directly in their factories below.
+    scoring_service._agent_memory = agent_memory
+    material_service._agent_memory = agent_memory
     curation_ledger = CurationLedger()
-    curation_service = CurationService(
-        memory_store=agent_memory.memory,
-        skill_store=agent_memory.skills,
-        ledger=curation_ledger,
-        memory_write_approval=settings.memory_write_approval,
-        skills_write_approval=settings.skills_write_approval,
+    # FR-MIND-7/-13: a CHEAP, OPTIONAL LLM-backed summarizer from CURATION_MODEL. It
+    # falls back to the trivial heuristic when no LLM is configured, so the hermetic
+    # lane (no model) behaves exactly as before. Reuses the main ``llm`` ladder (the
+    # CURATION_MODEL id is advisory until a dedicated curation tier is pinned).
+    curation_summarizer = build_llm_summarizer(llm, model=settings.curation_model)
+
+    def _make_curation(mem, skills, recall) -> CurationService:
+        return CurationService(
+            memory_store=mem,
+            skill_store=skills,
+            ledger=curation_ledger,
+            # FR-MIND-3: index each curated run into recall so ``recall.search`` returns
+            # real hits. Local/cheap (in-memory default; bridge no-ops when OFF).
+            recall=recall,
+            summarizer=curation_summarizer,
+            memory_write_approval=settings.memory_write_approval,
+            skills_write_approval=settings.skills_write_approval,
+        )
+
+    curation_service = _make_curation(
+        agent_memory.memory, agent_memory.skills, agent_memory.recall
+    )
+    # FR-MIND-7 + FR-LEARN-3: feed the scheduled nudge BOTH real run history (recent
+    # applications + outcomes, mapped to RunSummaries) AND the user's OWN feedback —
+    # digest decline reasons (FR-DIG-5) + résumé/answer revision instructions
+    # (FR-RESUME-8), mapped to preference-tagged summaries — composed into one provider
+    # so both reach the curated-memory loop. Bounded + cheap; byte-identical when empty.
+    from applicant.application.services.feedback_history import FeedbackSummaryProvider
+
+    run_summaries_provider = _compose_summary_providers(
+        RunHistoryProvider(), FeedbackSummaryProvider()
     )
 
     agent_loop = AgentLoop(
@@ -624,7 +716,12 @@ def build_container(settings: Settings | None = None) -> Container:
             tick_storage, discovery, embedding, ls, tool_registry=tool_registry
         )
         ss = ScoringService(
-            tick_storage, llm, embedding, learning=ls, tool_registry=tool_registry
+            tick_storage,
+            llm,
+            embedding,
+            learning=ls,
+            tool_registry=tool_registry,
+            agent_memory=agent_memory,
         )
         cs = CriteriaService(tick_storage, llm)
         ars = AgentRunService(tick_storage)
@@ -650,6 +747,10 @@ def build_container(settings: Settings | None = None) -> Container:
             notification=notification,
             llm=llm,
             resume_provider=BaseResumeProvider(tick_storage),
+            # FR-CUA: process-lived desktop-assist port (built ONCE above, never rebuilt
+            # per tick) so the autonomous pre-fill loop can complete a native OS
+            # file-picker the DOM can't satisfy. Defaults to noop → degrades as before.
+            computer_use=computer_use,
         )
         mat = MaterialService(
             tick_storage,
@@ -662,6 +763,7 @@ def build_container(settings: Settings | None = None) -> Container:
             pending_actions=pas,
             learning=ls,
             advanced_learning=adv,
+            agent_memory=agent_memory,
         )
         loop = AgentLoop(
             storage=tick_storage,
@@ -684,14 +786,11 @@ def build_container(settings: Settings | None = None) -> Container:
             resume_ledger=resume_ledger,
         )
         # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
-        # process-lived CurationLedger + agent-memory adapters as the main service, so
-        # the curation dedupe state survives the per-tick rebuild instead of resetting.
-        tick_curation = CurationService(
-            memory_store=agent_memory.memory,
-            skill_store=agent_memory.skills,
-            ledger=curation_ledger,
-            memory_write_approval=settings.memory_write_approval,
-            skills_write_approval=settings.skills_write_approval,
+        # process-lived CurationLedger + agent-memory adapters (+ recall + summarizer)
+        # as the main service, so the curation dedupe state survives the per-tick
+        # rebuild instead of resetting.
+        tick_curation = _make_curation(
+            agent_memory.memory, agent_memory.skills, agent_memory.recall
         )
         return {
             "storage": tick_storage,
@@ -717,7 +816,12 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_criteria = CriteriaService(req_storage, llm)
         rs_pas = PendingActionsService(req_storage)
         rs_scoring = ScoringService(
-            req_storage, llm, embedding, learning=rs_ls, tool_registry=tool_registry
+            req_storage,
+            llm,
+            embedding,
+            learning=rs_ls,
+            tool_registry=tool_registry,
+            agent_memory=agent_memory,
         )
         rs_conversion = ConversionService(
             latex_tailor=latex_tailor, config_store=rs_config_store
@@ -738,6 +842,12 @@ def build_container(settings: Settings | None = None) -> Container:
             req_storage, rs_ls, criteria=rs_criteria, advanced_learning=rs_adv,
             pending_actions=rs_pas,
         )
+        rs_admin = AdminQueryService(req_storage, orchestrator)
+        # FR-AGENT-7: per-request, req-storage-bound run reader (read-only ``status``) so
+        # the chatbot's own-work report uses this request's isolated Session. The SAME
+        # service is the run-control seam (FR-AGENT-1/2) for steering from chat — a
+        # pause/resume/throughput change persists on THIS request's session (CONC-REQ-1).
+        rs_agent_runs = AgentRunService(req_storage)
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
@@ -748,8 +858,18 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-MIND-5: advisory curated-memory + saved-playbook context. Shares the
             # process-lived adapter trio; read fresh per call (FR-MIND-10).
             agent_memory=agent_memory,
+            # FR-MIND-4 / FR-AGENT-7 / FR-OBS-2: the agent speaks AS the 24/7 agent and
+            # reports its own work from real, request-scoped read-only sources. The
+            # scheduler heartbeat is the process-lived singleton (no Session), wired
+            # additively below since it is built after this factory is defined.
+            agent_run_service=rs_agent_runs,
+            pending_actions=rs_pas,
+            admin_query=rs_admin,
+            # FR-AGENT-1/2: same req-storage-bound run service is the control seam so a
+            # pause/resume/throughput steered from chat persists on this request's session.
+            run_control=rs_agent_runs,
         )
-        rs_admin = AdminQueryService(req_storage, orchestrator)
+        rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(
             req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
         )
@@ -762,6 +882,8 @@ def build_container(settings: Settings | None = None) -> Container:
             notification=notification,
             llm=llm,
             resume_provider=BaseResumeProvider(req_storage),
+            # FR-CUA: same process-lived desktop-assist port (defaults to noop).
+            computer_use=computer_use,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
@@ -775,6 +897,7 @@ def build_container(settings: Settings | None = None) -> Container:
             pending_actions=rs_pas,
             learning=rs_ls,
             advanced_learning=rs_adv,
+            agent_memory=agent_memory,
         )
         rs_campaign = CampaignService(req_storage)
         rs_campaign.set_criteria_service(rs_criteria)
@@ -813,6 +936,27 @@ def build_container(settings: Settings | None = None) -> Container:
             services["_session"] = req_session
             return services
 
+    # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH
+    # sibling of the chatbot self-report. Assembles a short, first-person, white-labeled
+    # summary from READ-ONLY sources (run status + next-action intent, recent history,
+    # the pending count, the scheduler heartbeat) and pushes it through the EXISTING
+    # notification path (in-app inbox + opt-in fan-out). All sources are optional/defensive
+    # (no fabrication); the scheduler gates the cadence (default off => dormant, no
+    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read from env directly so config.py
+    # stays untouched (additive, deploy-controllable; ``off``/``daily``).
+    import os as _os
+
+    from applicant.application.services.status_update import StatusUpdateService
+
+    status_update_service = StatusUpdateService(
+        notification_service=notification_service,
+        agent_run_service=agent_run_service,
+        admin_query=admin_query_service,
+        pending_actions=pending_actions_service,
+        # scheduler is wired additively below (it is built after this point).
+    )
+    status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
+
     scheduler = Scheduler(
         storage=storage,
         agent_loop=agent_loop,
@@ -827,7 +971,20 @@ def build_container(settings: Settings | None = None) -> Container:
         # per-tick factory supplies the isolated-session one sharing the SAME ledger.
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
+        # FR-MIND-7 / FR-LEARN-3: the nudge reviews ACTUAL runs + the user's own
+        # feedback (composed provider above), mapped to RunSummaries, bounded + cheap.
+        run_summaries_provider=run_summaries_provider,
+        # FR-AGENT-7 / FR-OBS-2: the periodic status update on the configured cadence
+        # (default ``off`` => dormant, byte-identical hermetic behavior).
+        status_update_service=status_update_service,
+        status_update_schedule=status_update_schedule,
     )
+    # FR-OBS-2: give the chatbot the live scheduler heartbeat so "what are you doing now /
+    # when do you run next" answer from the real tick state (wired additively — the
+    # scheduler is built after the chatbot).
+    chat_service._scheduler = scheduler
+    # Same live heartbeat for the proactive status update ("right now I'm running a cycle").
+    status_update_service._scheduler = scheduler
 
     return Container(
         settings=settings,
@@ -877,6 +1034,7 @@ def build_container(settings: Settings | None = None) -> Container:
         research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
+        status_update_service=status_update_service,
         agent_memory=agent_memory,
         curation_service=curation_service,
         curation_ledger=curation_ledger,

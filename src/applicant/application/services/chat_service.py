@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 
 from applicant.core.entities.attribute import Attribute
+from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP, clamp_throughput
 from applicant.core.ids import CampaignId
 from applicant.core.rules.confirmation_gate import requires_confirmation
 from applicant.core.rules.sensitive_fields import is_sensitive_field
@@ -67,6 +68,49 @@ _INTEGRAL_NAMES = frozenset(
     {"first name", "last name", "legal name", "email address", "phone"}
 )
 
+# --- loop-control intent parsing (FR-AGENT-1/2, FR-CRIT) -------------------
+# A small, EXPLICIT set of directives that steer the autonomous loop. The chatbot
+# only routes a matched intent to the existing run-control / criteria services; it
+# never free-form mutates arbitrary config (those services own the gates + clamps).
+
+#: "pause" / "stop applying" / "hold off" — pause automated work (FR-AGENT-2).
+_PAUSE = re.compile(
+    r"\b(?:pause|stop|halt|hold off|hold on|suspend|freeze)\b"
+    r"(?!.*\b(?:resume|unpause|continue|restart)\b)",
+    re.IGNORECASE,
+)
+#: "resume" / "unpause" / "start again" / "keep going" — resume automated work.
+_RESUME = re.compile(
+    r"\b(?:resume|unpause|un-?pause|continue|carry on|keep going|start (?:again|up)|"
+    r"get going|pick (?:it |things )?back up)\b",
+    re.IGNORECASE,
+)
+#: "apply to N a day" / "set throughput to N" / "do N per day" — daily target (FR-AGENT-1).
+_THROUGHPUT = re.compile(
+    r"(?:throughput|daily (?:target|cap|limit|budget|throughput)|"
+    r"(?:apply|application|applications)|per day|a day|each day|/day)",
+    re.IGNORECASE,
+)
+#: A bare integer in the message (used to read off the requested throughput number).
+_INT = re.compile(r"(?<![\w.])(\d{1,4})(?![\w.])")
+#: "focus on remote roles" / "remote only" — refocus to remote work (criteria, FR-CRIT).
+_REMOTE = re.compile(r"\bremote(?:\s+(?:only|roles|jobs|work|positions))?\b", re.IGNORECASE)
+#: "raise the salary floor to N" / "minimum salary N" — set the salary floor (integral).
+_SALARY = re.compile(
+    r"(?:salary|pay|comp(?:ensation)?|base)\b.*?(?:floor|min(?:imum)?|at least|above|over|to)?"
+    r"\s*\$?\s*(\d[\d,]{2,})(?:\s*k\b)?",
+    re.IGNORECASE,
+)
+#: A trailing "k" on the salary number multiplies by 1000 ("120k" -> 120000).
+_SALARY_K = re.compile(r"(\d[\d,]*)\s*k\b", re.IGNORECASE)
+#: Verbs that mark a refocus/steer directive (so plain mention of "remote" in a
+#: question is not treated as a criteria edit).
+_REFOCUS_LEAD = re.compile(
+    r"\b(?:focus|prioriti[sz]e|refocus|narrow|only|restrict|limit|target|search for|"
+    r"look for|switch to|raise|lower|set|bump|increase|decrease|require)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class ProposedChange:
@@ -93,12 +137,41 @@ class ProposedChange:
 
 
 @dataclass(frozen=True)
+class ControlAction:
+    """A loop-control action the user steered via chat (FR-AGENT-1/2, FR-CRIT).
+
+    Mirrors :class:`ProposedChange`'s confirmation contract (FR-FB-3): a non-integral
+    control (pause/resume, throughput within range) is applied directly and reported
+    with ``applied=True``; an integral one (a criteria change that shifts campaign
+    scope) is surfaced as a proposal with ``requires_confirmation=True`` and is NOT
+    committed until the user confirms it. ``ok=False`` marks an action the agent could
+    not take (out-of-range value, or the control isn't wired) so the reply stays truthful.
+    """
+
+    kind: str  # "pause" | "resume" | "throughput" | "criteria"
+    applied: bool = False
+    requires_confirmation: bool = False
+    ok: bool = True
+    detail: dict = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "applied": self.applied,
+            "requires_confirmation": self.requires_confirmation,
+            "ok": self.ok,
+            "detail": dict(self.detail),
+        }
+
+
+@dataclass(frozen=True)
 class ChatTurnResult:
     """The result of one conversational turn."""
 
     message: str
     gaps: list[str] = field(default_factory=list)
     proposed_changes: list[ProposedChange] = field(default_factory=list)
+    control_actions: list[ControlAction] = field(default_factory=list)
 
 
 class ChatService:
@@ -114,6 +187,12 @@ class ChatService:
         storage=None,
         workspace=None,
         agent_memory=None,
+        agent_run_service=None,
+        scheduler=None,
+        pending_actions=None,
+        admin_query=None,
+        identity_text=None,
+        run_control=None,
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
@@ -135,6 +214,36 @@ class ChatService:
         # injected content is ADVISORY context only — it never authorizes anything
         # (FR-MIND-11); the confirmation/safety gates derive their own ground truth.
         self._agent_memory = agent_memory
+        # The assistant IS the autonomous agent (FR-MIND-4 identity tier + FR-AGENT-7
+        # /FR-OBS-2 activity awareness). These read-only sources let it narrate its own
+        # work truthfully — what it has been doing, is doing now, and will do next:
+        #   - ``agent_run_service``: latest per-run intent sentence + today's applied
+        #     count vs the daily budget (``status(campaign_id)``); FR-AGENT-7.
+        #   - ``scheduler``: live tick heartbeat — running now / last tick / next-tick
+        #     estimate (``state()``); FR-OBS-2.
+        #   - ``pending_actions``: what is awaiting the user right now (FR-UI-3).
+        #   - ``admin_query``: recent application history / outcomes (FR-OBS-2).
+        # All optional/defaulted: absent => the chat behaves exactly as before (the
+        # status block is simply omitted). Truthfulness (FR-AGENT-5): the block is built
+        # only from these real sources and is never invented; if a source is missing or
+        # empty, that fact is omitted rather than fabricated.
+        self._agent_run_service = agent_run_service
+        self._scheduler = scheduler
+        self._pending_actions = pending_actions
+        self._admin_query = admin_query
+        # FR-MIND-4: optional user-tunable identity/voice text. Prompt-injection-scanned
+        # before use; when unsafe or unset, the built-in white-labeled voice is used.
+        self._identity_text = identity_text
+        # Run-control seam (FR-AGENT-1/2): the existing run-control service the chat
+        # routes loop-steering intents to (pause/resume + daily throughput). The engine
+        # OWNS the logic + the hard cap; the chat only matches an explicit intent and
+        # calls the existing gated operation. Optional/defaulted: when absent the chat
+        # politely declines a control request rather than crashing or fabricating. The
+        # expected surface (duck-typed so a read-only status double still works for the
+        # rest of the chat) is:
+        #   - ``set_active(campaign_id, active: bool)`` -> pause/resume
+        #   - ``configure_run(campaign_id, throughput_target=int)`` -> daily target
+        self._run_control = run_control
 
     # --- gap finding (FR-CHAT-1) ------------------------------------------
     def identify_gaps(self, campaign_id: CampaignId) -> list[str]:
@@ -199,19 +308,20 @@ class ChatService:
         if self._llm is None or not getattr(self._llm, "is_configured", lambda: False)():
             return deterministic
         try:
-            system = (
-                "You are the Applicant assistant. You help the user with their job "
-                "search and their application profile. Answer using the candidate's "
-                "saved profile and search criteria provided below — do NOT ask the user "
-                "for details that are already present there. Be concise. Never claim to "
-                "have changed any integral detail without confirmation."
-            )
+            system = self._identity_prompt()
             prompt = message
             profile_ctx = self._profile_context(campaign_id)
             if profile_ctx:
                 prompt += f"\n\n{profile_ctx}"
             if gaps:
                 prompt += f"\n\n(Known missing details: {', '.join(gaps)}.)"
+            # FR-AGENT-7 / FR-OBS-2: a bounded, freshly-assembled "current status" block
+            # so "what have you been doing / are you doing / will you do next" answer from
+            # real state. Read per reply (FR-MIND-10); omitted entirely when no sources
+            # are wired or nothing is known (truthful, never invented — FR-AGENT-5).
+            status_ctx = self._status_context(campaign_id)
+            if status_ctx:
+                prompt += f"\n\n{status_ctx}"
             interview_ctx = self._interview_context()
             if interview_ctx:
                 prompt += f"\n\n{interview_ctx}"
@@ -229,6 +339,178 @@ class ChatService:
         except Exception:
             # Any LLM failure degrades to the deterministic reply (offline-safe).
             return deterministic
+
+    # --- identity tier (FR-MIND-4) ----------------------------------------
+    #: The built-in, white-labeled voice (FR-MIND-4 identity tier, slot #1), sourced
+    #: from docs/voice-and-truthfulness.md: first person, warm but direct, conversational
+    #: professional, demonstrate rather than state, truthful above all. The assistant IS
+    #: the autonomous agent that runs the user's job search 24/7 — one identity, one
+    #: persona. No codenames, no jargon (principle #3). No em-dashes (FR-RESUME-5).
+    _BUILTIN_IDENTITY = (
+        "You are Applicant, the autonomous agent that runs this person's job search "
+        "around the clock. You are not a separate help desk; you are the same agent that "
+        "discovers roles, scores them, tailors materials, pre-fills applications, and "
+        "holds everything at the review line for their approval. Speak in the first "
+        "person about your own work (\"I found\", \"I'm doing\", \"I'll do next\"). "
+        "Voice: warm but direct, conversational and professional, active voice. Show, "
+        "do not boast. Be concise. "
+        "Truthfulness comes first: only state what the provided context actually says. "
+        "If you do not have a fact, say you do not have it rather than guessing. Never "
+        "invent activity, numbers, or progress you were not given. Answer using the "
+        "candidate's saved profile and search criteria below, and do not ask for details "
+        "already present there. Never claim to have changed any integral detail without "
+        "the user's confirmation, and never claim to have submitted an application "
+        "yourself: every final submit waits for the user."
+    )
+
+    #: Markers that, in user-supplied identity text, signal an attempt to override the
+    #: agent's instructions or persona (a prompt-injection attempt). When any match, the
+    #: user text is rejected and the built-in voice is used instead (FR-MIND-4).
+    _IDENTITY_INJECTION = re.compile(
+        r"ignore (?:all |the )?(?:previous|prior|above) instructions|disregard (?:all |the )?"
+        r"(?:previous|prior|above)|you are now|new instructions:|system prompt|"
+        r"reveal (?:your |the )?(?:system )?prompt|act as (?:a |an )?(?:dan|jailbreak)",
+        re.IGNORECASE,
+    )
+
+    def _identity_prompt(self) -> str:
+        """The system-prompt identity tier (FR-MIND-4).
+
+        Returns the user-tunable identity text when one is configured AND it passes a
+        prompt-injection scan; otherwise the built-in white-labeled voice. User text is
+        appended to (never replaces) the built-in voice so the truthfulness/safety
+        clauses cannot be tuned away.
+        """
+        from applicant.core.rules.agent_memory import claims_authority
+
+        extra = (self._identity_text or "").strip()
+        if not extra:
+            return self._BUILTIN_IDENTITY
+        # FR-MIND-4 / FR-MIND-11: untrusted text — reject an override/injection attempt
+        # or an authority claim; fall back to the built-in voice unchanged.
+        if self._IDENTITY_INJECTION.search(extra) or claims_authority(extra):
+            return self._BUILTIN_IDENTITY
+        if len(extra) > 800:
+            extra = extra[:800]
+        return self._BUILTIN_IDENTITY + "\n\nTone preferences from the user: " + extra
+
+    # --- current-status context (FR-AGENT-7 / FR-OBS-2; truthful) ---------
+    def _status_context(self, campaign_id: CampaignId) -> str:
+        """A BOUNDED "current status" block the agent answers its own-work questions from.
+
+        Assembled fresh per reply (FR-MIND-10) from read-only sources, in three parts:
+        what I've been doing (recent applications + outcomes), what I'm doing now (the
+        scheduler tick heartbeat + today's applied count), and what's next (the latest
+        single-sentence next-action intent, the next-tick estimate, and what's pending).
+
+        Truthfulness (FR-AGENT-5): every line comes from real state. A source that is
+        absent or empty contributes nothing — it is never replaced with an invented
+        value. When no source yields anything, returns "" and the block is omitted, so a
+        chat with none of these wired behaves exactly as before.
+        """
+        recent: list[str] = []  # past
+        now_lines: list[str] = []  # present
+        next_lines: list[str] = []  # future
+
+        # --- what I've been doing (recent applications + outcomes) ---------
+        if self._admin_query is not None:
+            try:
+                history = self._admin_query.application_history(campaign_id, limit=5)
+            except TypeError:  # adapters without the ``limit`` kwarg
+                try:
+                    history = (self._admin_query.application_history(campaign_id) or [])[:5]
+                except Exception:
+                    history = []
+            except Exception:
+                history = []
+            for row in history or []:
+                title = (row.get("job_title") or row.get("role_name") or "a role").strip()
+                status = (row.get("status") or "").replace("_", " ").strip()
+                outs = [
+                    (o.get("type") or "").strip()
+                    for o in (row.get("outcomes") or [])
+                    if o.get("type")
+                ]
+                bit = title
+                if status:
+                    bit += f" ({status})"
+                if outs:
+                    bit += ", outcomes: " + ", ".join(outs[:3])
+                recent.append("- " + bit)
+
+        # --- what I'm doing now + what's next (run status: intent + counts) -
+        run_status = None
+        if self._agent_run_service is not None:
+            try:
+                run_status = self._agent_run_service.status(campaign_id)
+            except Exception:
+                run_status = None
+        if run_status is not None:
+            if run_status.get("paused"):
+                now_lines.append("My automated work is paused right now.")
+            applied = run_status.get("applied_today")
+            budget = run_status.get("daily_budget")
+            if applied is not None:
+                count_line = f"Applications I've started today: {applied}"
+                if budget:
+                    count_line += f" of a daily budget of {budget}"
+                now_lines.append(count_line + ".")
+            intent = (run_status.get("latest_intent") or "").strip()
+            if intent:
+                next_lines.append(f"My stated next step: {intent}")
+
+        # --- what I'm doing now (scheduler heartbeat) ----------------------
+        if self._scheduler is not None:
+            try:
+                sched = self._scheduler.state()
+            except Exception:
+                sched = None
+            if sched is not None:
+                if sched.get("running"):
+                    now_lines.append("I'm running a work cycle at this moment.")
+                last = sched.get("last_tick")
+                if last:
+                    now_lines.append(f"My last work cycle ran at {last}.")
+                nxt = sched.get("next_tick")
+                if nxt:
+                    next_lines.append(f"My next work cycle is due around {nxt}.")
+
+        # --- what's next (pending actions awaiting the user) ---------------
+        if self._pending_actions is not None:
+            try:
+                pending = self._pending_actions.list_pending(campaign_id)
+            except Exception:
+                pending = []
+            pending = list(pending or [])
+            if pending:
+                titles = [
+                    (getattr(p, "title", "") or "").strip()
+                    for p in pending[:5]
+                ]
+                titles = [t for t in titles if t]
+                head = (
+                    f"There are {len(pending)} item(s) waiting for you"
+                    if len(pending) != 1
+                    else "There is 1 item waiting for you"
+                )
+                if titles:
+                    head += ": " + "; ".join(titles)
+                next_lines.append(head + ".")
+
+        sections: list[str] = []
+        if recent:
+            sections.append("What I've been doing recently:\n" + "\n".join(recent[:5]))
+        if now_lines:
+            sections.append("What I'm doing now:\n" + "\n".join(f"- {x}" for x in now_lines))
+        if next_lines:
+            sections.append("What I'll do next:\n" + "\n".join(f"- {x}" for x in next_lines))
+        if not sections:
+            return ""
+        return (
+            "My current status (answer questions about your own work truthfully from "
+            "this; if something is not here, say you don't have that detail rather than "
+            "guessing):\n" + "\n\n".join(sections)
+        )
 
     # --- saved-profile context (FR-CHAT-1) --------------------------------
     def _profile_context(self, campaign_id: CampaignId) -> str:
@@ -413,13 +695,245 @@ class ChatService:
     def converse(self, campaign_id: CampaignId, message: str) -> ChatTurnResult:
         gaps = self.identify_gaps(campaign_id)
         proposals: list[ProposedChange] = []
-        parsed = self._parse_proposal(message)
-        if parsed is not None:
-            proposals.append(self._maybe_autoapply(campaign_id, parsed))
-        reply = self._reply_text(campaign_id, message, gaps)
+        # FR-AGENT-1/2, FR-CRIT: route loop-steering directives (pause/resume, daily
+        # throughput, criteria refocus) to the existing run-control / criteria services.
+        # When the turn IS a control directive, the agent reports back in the first person
+        # what it actually did (or could not do), and we skip the attribute-statement
+        # parser so e.g. "pause" is never mis-read as setting an attribute.
+        controls, control_reply = self._handle_controls(campaign_id, message)
+        if not controls:
+            parsed = self._parse_proposal(message)
+            if parsed is not None:
+                proposals.append(self._maybe_autoapply(campaign_id, parsed))
+        reply = control_reply or self._reply_text(campaign_id, message, gaps)
         # FR-LEARN-3: fold a cheap chat taste signal so every input feeds learning.
         self._fold_chat_taste(campaign_id, message)
-        return ChatTurnResult(message=reply, gaps=gaps, proposed_changes=proposals)
+        return ChatTurnResult(
+            message=reply,
+            gaps=gaps,
+            proposed_changes=proposals,
+            control_actions=controls,
+        )
+
+    # --- loop-control routing (FR-AGENT-1/2, FR-CRIT, FR-FB-3) -------------
+    def _handle_controls(
+        self, campaign_id: CampaignId, message: str
+    ) -> tuple[list[ControlAction], str]:
+        """Detect + apply loop-control directives; return (actions, first-person reply).
+
+        Only an EXPLICIT matched intent is acted on (no free-form config mutation). The
+        engine owns the logic and the gates: pause/resume + throughput go through the
+        run-control service (throughput clamped to the hard cap, FR-AGENT-1); a criteria
+        refocus goes through ``criteria_service.edit_criteria`` so an integral scope
+        change still requires the user's confirmation (FR-FB-3). When a needed control is
+        not wired, the agent says so plainly instead of pretending it acted.
+        """
+        text = message.strip()
+        is_question = text.endswith("?") or bool(_QUESTION_LEAD.match(text))
+        actions: list[ControlAction] = []
+        replies: list[str] = []
+
+        # --- pause / resume (FR-AGENT-2) -----------------------------------
+        # A question ("can you pause?") is informational, not an imperative.
+        if not is_question:
+            if _RESUME.search(text):
+                act, line = self._do_pause_resume(campaign_id, resume=True)
+                actions.append(act)
+                replies.append(line)
+            elif _PAUSE.search(text):
+                act, line = self._do_pause_resume(campaign_id, resume=False)
+                actions.append(act)
+                replies.append(line)
+
+        # --- daily throughput (FR-AGENT-1) ---------------------------------
+        if not is_question and _THROUGHPUT.search(text):
+            n = self._read_throughput_number(text)
+            if n is not None:
+                act, line = self._do_throughput(campaign_id, n)
+                actions.append(act)
+                replies.append(line)
+
+        # --- criteria refocus (FR-CRIT, gated by FR-FB-3) ------------------
+        if _REFOCUS_LEAD.search(text):
+            for act, line in self._do_criteria_refocus(campaign_id, text):
+                actions.append(act)
+                replies.append(line)
+
+        return actions, " ".join(replies).strip()
+
+    def _run_control_target(self):
+        """The object that performs run-control writes, or ``None`` if unavailable.
+
+        Prefers the explicitly-injected ``run_control`` service; degrades to ``None``
+        when it (or the specific method) is missing so the caller declines gracefully.
+        """
+        return self._run_control
+
+    def _do_pause_resume(
+        self, campaign_id: CampaignId, *, resume: bool
+    ) -> tuple[ControlAction, str]:
+        target = self._run_control_target()
+        verb = "resume" if resume else "pause"
+        set_active = getattr(target, "set_active", None) if target is not None else None
+        if set_active is None:
+            return (
+                ControlAction(kind=verb, ok=False, applied=False),
+                f"I can't {verb} my automated work from here right now.",
+            )
+        try:
+            set_active(campaign_id, resume)
+        except Exception:
+            return (
+                ControlAction(kind=verb, ok=False, applied=False),
+                f"I wasn't able to {verb} my automated work just now.",
+            )
+        if resume:
+            line = "Okay, I've resumed. I'll start picking up new applications again."
+        else:
+            line = (
+                "Okay, I've paused. I'll hold off on starting new applications until you "
+                "tell me to resume."
+            )
+        return ControlAction(kind=verb, applied=True), line
+
+    @staticmethod
+    def _read_throughput_number(text: str) -> int | None:
+        m = _INT.search(text)
+        if m is None:
+            return None
+        try:
+            return int(m.group(1))
+        except (TypeError, ValueError):  # pragma: no cover - regex guarantees digits
+            return None
+
+    def _do_throughput(
+        self, campaign_id: CampaignId, requested: int
+    ) -> tuple[ControlAction, str]:
+        # Reject an out-of-range request with a clear message; never silently exceed the
+        # hard cap (FR-AGENT-1). 0/negative is a floor violation; above the cap is rejected.
+        if requested < 1 or requested > THROUGHPUT_HARD_CAP:
+            return (
+                ControlAction(
+                    kind="throughput",
+                    ok=False,
+                    applied=False,
+                    detail={"requested": requested, "hard_cap": THROUGHPUT_HARD_CAP},
+                ),
+                (
+                    f"I can apply to between 1 and {THROUGHPUT_HARD_CAP} roles a day, so "
+                    f"{requested} a day is outside what I can do. Pick a number in that "
+                    "range and I'll set it."
+                ),
+            )
+        target = self._run_control_target()
+        configure = getattr(target, "configure_run", None) if target is not None else None
+        if configure is None:
+            return (
+                ControlAction(
+                    kind="throughput", ok=False, applied=False,
+                    detail={"requested": requested},
+                ),
+                "I can't change my daily application target from here right now.",
+            )
+        applied_value = clamp_throughput(requested)
+        try:
+            configure(campaign_id, throughput_target=applied_value)
+        except Exception:
+            return (
+                ControlAction(
+                    kind="throughput", ok=False, applied=False,
+                    detail={"requested": requested},
+                ),
+                "I wasn't able to change my daily application target just now.",
+            )
+        return (
+            ControlAction(
+                kind="throughput", applied=True,
+                detail={"throughput_target": applied_value},
+            ),
+            (
+                f"Done. I'll aim for up to {applied_value} applications a day from here on."
+            ),
+        )
+
+    def _do_criteria_refocus(
+        self, campaign_id: CampaignId, text: str
+    ) -> list[tuple[ControlAction, str]]:
+        """Refocus the search via the existing criteria edit path (FR-CRIT, FR-FB-3).
+
+        Returns one (action, reply) per matched facet. A non-integral facet (work mode:
+        remote) applies directly; an integral facet (salary floor — campaign scope) is
+        surfaced as a confirmation-gated PROPOSAL and is NOT committed here. The criteria
+        service owns the gate, so the chat never bypasses it.
+        """
+        out: list[tuple[ControlAction, str]] = []
+        if self._criteria is None:
+            return out
+
+        # work mode: remote (non-integral -> applies directly)
+        if _REMOTE.search(text):
+            try:
+                self._criteria.edit_criteria(
+                    campaign_id, changes={"work_modes": ["remote"]}
+                )
+                out.append((
+                    ControlAction(
+                        kind="criteria", applied=True,
+                        detail={"work_modes": ["remote"]},
+                    ),
+                    "I've refocused the search on remote roles.",
+                ))
+            except Exception:
+                out.append((
+                    ControlAction(kind="criteria", ok=False, applied=False),
+                    "I couldn't refocus the search on remote roles just now.",
+                ))
+
+        # salary floor (integral -> needs confirmation, FR-FB-3)
+        floor = self._read_salary_floor(text)
+        if floor is not None:
+            out.append((
+                ControlAction(
+                    kind="criteria",
+                    applied=False,
+                    requires_confirmation=True,
+                    detail={"salary_floor": floor},
+                ),
+                (
+                    f"Setting the salary floor to {floor} changes the scope of the search, "
+                    "so I'll hold off until you confirm. Want me to apply it?"
+                ),
+            ))
+        return out
+
+    @staticmethod
+    def _read_salary_floor(text: str) -> int | None:
+        km = _SALARY_K.search(text)
+        if km is not None and re.search(r"salary|pay|comp|base", text, re.IGNORECASE):
+            try:
+                return int(km.group(1).replace(",", "")) * 1000
+            except (TypeError, ValueError):  # pragma: no cover
+                return None
+        m = _SALARY.search(text)
+        if m is None:
+            return None
+        try:
+            return int(m.group(1).replace(",", ""))
+        except (TypeError, ValueError):  # pragma: no cover
+            return None
+
+    def confirm_criteria_refocus(
+        self, campaign_id: CampaignId, *, changes: dict
+    ):
+        """Commit a confirmation-gated criteria refocus the user approved (FR-FB-3).
+
+        Routes to ``criteria_service.edit_criteria`` with ``confirm=True`` so the
+        integral-change gate is satisfied — the chat never sets ``confirm`` on its own;
+        the user's explicit confirmation drives it, exactly like ``confirm_change``.
+        """
+        if self._criteria is None:
+            raise RuntimeError("criteria control is not available")
+        return self._criteria.edit_criteria(campaign_id, changes=changes, confirm=True)
 
     # --- chat taste folding (FR-LEARN-3) ----------------------------------
     def _fold_chat_taste(self, campaign_id: CampaignId, message: str) -> None:
