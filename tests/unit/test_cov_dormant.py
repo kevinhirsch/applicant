@@ -44,16 +44,16 @@ def test_surface_keys_are_unique():
 
 
 def test_only_expected_surfaces_remain_genuinely_dormant():
-    # The grayed surfaces are resume tuning + the multi-campaign switcher (MVP-1) and
-    # desktop assist (FR-CUA-9: present-but-disabled until the driver is baked into the
-    # sandbox image). The FR-MIND agent-learning surfaces are now wired end-to-end
-    # (engine /api/agent-memory router -> workspace /api/applicant/mind proxy -> JS
-    # panel), so they are live. Everything else is wired live too.
+    # The only genuinely-grayed surfaces are resume tuning + the multi-campaign switcher
+    # (MVP-1). FR-MIND's agent-learning surfaces and FR-CUA's desktop assist are now
+    # wired end-to-end and registered LIVE; desktop assist is additionally CAPABILITY-
+    # gated at runtime (it shows locked until COMPUTER_USE_BACKEND=cua and the desktop
+    # driver is baked into the sandbox image so the health preflight passes), which is a
+    # runtime gate, not a dormant-registry flag.
     dormant_keys = {s.key for s in DORMANT_SURFACES if s.status == STATUS_DORMANT}
     assert dormant_keys == {
         "resume_aggressiveness",
         "multi_campaign_switcher",
-        "desktop_assist",
     }
 
 

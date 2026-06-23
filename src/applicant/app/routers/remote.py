@@ -36,24 +36,6 @@ from applicant.core.errors import ComputerUseBlocked, PrefillBoundaryViolation, 
 from applicant.core.rules.computer_use import CaptureMode, DesktopAction
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
 from applicant.core.state_machine import ApplicationState
-from applicant.dormant import DORMANT_SURFACES, STATUS_LIVE
-
-#: The dormant-surface key backing the desktop-assist control (FR-CUA-9). The front
-#: door greys the toggle until this surface is ``live`` AND the health preflight passes.
-_DESKTOP_ASSIST_KEY = "desktop_assist"
-
-
-def _desktop_assist_dormant() -> bool:
-    """True while the desktop-assist surface ships dormant (driver not yet baked).
-
-    Read from the in-process dormant registry (the single source of truth the
-    front-door feature layer also reads), so the gate cannot drift from the backlog.
-    """
-    for surface in DORMANT_SURFACES:
-        if surface.key == _DESKTOP_ASSIST_KEY:
-            return surface.status != STATUS_LIVE
-    return True
-
 
 router = APIRouter(
     prefix="/api/remote",
@@ -455,14 +437,21 @@ class DesktopActionIn(BaseModel):
 
 
 def _desktop_health(container: Container) -> dict:
-    """The desktop-assist preflight + dormancy state, as a plain dict (FR-CUA-12)."""
+    """The desktop-assist preflight, as a plain dict (FR-CUA-12).
+
+    Operability is CAPABILITY-gated, not flag-gated: the control is operable only when a
+    *real* desktop driver answered the health preflight (``ok``) AND the active backend
+    is not the ``noop`` test backend. So a default ``COMPUTER_USE_BACKEND=noop`` deploy —
+    or a ``cua`` backend whose driver binary isn't baked into the sandbox image — reports
+    ``available: false`` and the front door renders the control locked, honestly. The
+    surface is wired LIVE; what gates it is the presence of a working driver, not a static
+    dormancy flag (``dormant`` is retained for back-compat / observability only)."""
     report = container.computer_use.health()
-    dormant = _desktop_assist_dormant()
-    # The control is only operable when the surface is live AND the driver is healthy.
-    available = bool(report.ok) and not dormant
+    available = bool(report.ok) and report.backend != "noop"
     return {
         "available": available,
-        "dormant": dormant,
+        # Back-compat field: true only while NO real desktop driver is operable.
+        "dormant": not available,
         "ok": bool(report.ok),
         "backend": report.backend,
         "detail": report.detail,
