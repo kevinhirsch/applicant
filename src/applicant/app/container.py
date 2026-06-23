@@ -312,16 +312,34 @@ def build_container(settings: Settings | None = None) -> Container:
         resume_parser=resume_parser,
     )
 
-    # The onboarding gate (FR-ONBOARD-2) reports True once ANY campaign has a
-    # completed intake. Channels are modeled until Phase 1 wires real backends.
+    # The hard apply-gate: autonomous applying (discovery -> apply) is BLOCKED until
+    # the required-to-apply essentials exist for SOME campaign (target roles, work
+    # mode, locations, salary floor, key skills, and a résumé). The onboarding form
+    # itself requires virtually nothing — the agent gathers these over time (chat,
+    # résumé parse, learning) — so the gate keys on the readiness of the essentials,
+    # not on a fully-completed comprehensive intake. It BLOCKS, never half-applies.
     def _onboarding_gate() -> bool:
         for c in storage.campaigns.list():
-            if onboarding_service.is_complete(str(c.id)):
+            if onboarding_service.is_ready_to_apply(str(c.id)):
                 return True
         return False
 
+    # The matching "what's still missing" reporter for the gate: the FIRST campaign's
+    # readiness drives the setup-status payload + chat copy so the front door can say
+    # "I can't start applying until I know: ..." with the real remaining items. Reads
+    # real campaign data only; never fabricated.
+    def _apply_readiness():
+        campaigns = list(storage.campaigns.list())
+        for c in campaigns:
+            r = onboarding_service.apply_readiness(str(c.id))
+            if r.ready:
+                return r
+        if campaigns:
+            return onboarding_service.apply_readiness(str(campaigns[0].id))
+        return None
+
     # Setup service so the persisted ladder can configure the LLM adapter; its
-    # automated-work gate now requires ONLY the LLM + onboarding gates (channels
+    # automated-work gate now requires ONLY the LLM + apply-readiness gates (channels
     # and the sandbox moved into Settings and are optional). The channels gate is
     # still wired so the status payload reports channel state for the Settings UI;
     # it reads the wizard-persisted channel config OR env defaults.
@@ -332,6 +350,7 @@ def build_container(settings: Settings | None = None) -> Container:
         onboarding_gate=_onboarding_gate,
         sandbox_backend=settings.sandbox_backend,
     )
+    setup_service.set_apply_readiness_reporter(_apply_readiness)
 
     def _channels_gate() -> bool:
         return setup_service.channels_configured() or bool(
@@ -649,6 +668,11 @@ def build_container(settings: Settings | None = None) -> Container:
     # per-request copies receive it directly in their factories below.
     scoring_service._agent_memory = agent_memory
     material_service._agent_memory = agent_memory
+    # FR-MIND-1/3: let onboarding completion SEED the agent from the user's own profile/
+    # résumé — a bounded set of curated memory entries + recall index of their history —
+    # so the agent is not cold-start on day one. Optional/additive: with the in-memory
+    # default substrate it seeds into that store; absent a substrate it is a no-op.
+    onboarding_service.set_agent_memory(agent_memory)
     curation_ledger = CurationLedger()
     # FR-MIND-7/-13: a CHEAP, OPTIONAL LLM-backed summarizer from CURATION_MODEL. It
     # falls back to the trivial heuristic when no LLM is configured, so the hermetic
@@ -672,6 +696,23 @@ def build_container(settings: Settings | None = None) -> Container:
     curation_service = _make_curation(
         agent_memory.memory, agent_memory.skills, agent_memory.recall
     )
+    # FR-MIND-6: is a desktop-assist driver operable? Only then is the bounded
+    # ``desktop`` chat tool offered (a noop/absent driver => never offered). Derived
+    # from the driver's own preflight (server-side ground truth), defaulting safely to
+    # False so the tool stays dark unless a real driver reports healthy.
+    try:
+        _desktop_operable = bool(computer_use.health().ok)
+    except Exception:
+        _desktop_operable = False
+    # FR-MIND-6: give the chat ASSISTANT its self-callable tool surface. Additive +
+    # capability-gated: ``CHAT_TOOLS=auto`` only engages the tool loop when the model
+    # advertises tool calling; writes stage through curation (FR-MIND-9); each tool is
+    # gated by the FR-UI-4 registry. ``off`` (default) keeps the single-shot path.
+    chat_service._curation_service = curation_service
+    chat_service._tool_registry = tool_registry
+    chat_service._computer_use = computer_use
+    chat_service._desktop_operable = _desktop_operable
+    chat_service._chat_tools = (settings.chat_tools or "off").strip().lower()
     # FR-MIND-7 + FR-LEARN-3: feed the scheduled nudge BOTH real run history (recent
     # applications + outcomes, mapped to RunSummaries) AND the user's OWN feedback —
     # digest decline reasons (FR-DIG-5) + résumé/answer revision instructions
@@ -868,6 +909,16 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-AGENT-1/2: same req-storage-bound run service is the control seam so a
             # pause/resume/throughput steered from chat persists on this request's session.
             run_control=rs_agent_runs,
+            # FR-MIND-6: the assistant's self-callable tool surface (additive +
+            # capability-gated). The agent-memory stores + the CurationLedger are
+            # process-lived (shared), so the main ``curation_service`` stages chat-
+            # initiated memory/skill writes into the SAME review queue. The FR-UI-4
+            # registry + the bounded desktop driver are likewise process-lived.
+            curation_service=curation_service,
+            tool_registry=tool_registry,
+            computer_use=computer_use,
+            desktop_operable=_desktop_operable,
+            chat_tools=(settings.chat_tools or "off").strip().lower(),
         )
         rs_chat._scheduler = scheduler
         rs_submission = SubmissionService(

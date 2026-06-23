@@ -156,7 +156,9 @@ def test_automated_work_gate_requires_llm_channels_onboarding(client):
     client.post("/api/setup/advance/channels")
     assert client.get("/api/setup/status").json()["automated_work_allowed"] is False
 
-    # Onboarding complete (FR-ONBOARD-2) finally opens the gate.
+    # Onboarding complete is necessary but NOT sufficient: the gate now hard-blocks
+    # until the required-to-apply ESSENTIALS exist (the agent cannot apply without
+    # target roles, work mode, locations, a salary floor, key skills, and a résumé).
     cid = _make_campaign(client)
     for section in REQUIRED_SECTIONS:
         client.post(
@@ -164,5 +166,26 @@ def test_automated_work_gate_requires_llm_channels_onboarding(client):
             json={"section": section.value, "data": {"answer": "v"}},
         )
     assert client.post(f"/api/onboarding/{cid}/complete").json()["complete"] is True
+    # Stub-completed intake does NOT satisfy the essentials -> applying stays blocked.
+    assert client.get("/api/setup/status").json()["automated_work_allowed"] is False
+
+    # Provide the essentials through the same UI endpoints the wizard uses; only then
+    # does the gate open (block-until-essentials, FR-ONBOARD-2).
+    assert client.put(
+        f"/api/criteria/{cid}",
+        json={
+            "titles": ["Software Engineer"],
+            "locations": ["Remote"],
+            "work_modes": ["remote"],
+            "keywords": ["python", "fastapi"],
+            "salary_floor": 120000,
+            "confirm": True,
+        },
+    ).status_code == 200
+    resume = b"Jane Q Candidate\njane@example.com\n\nExperience:\nEngineer at Acme 2020 - Present\n"
+    assert client.post(
+        f"/api/onboarding/{cid}/base-resume",
+        files={"file": ("resume.txt", resume, "text/plain")},
+    ).status_code == 200
 
     assert client.get("/api/setup/status").json()["automated_work_allowed"] is True

@@ -24,9 +24,9 @@ Each row is wired across the whole chain — engine router → workspace
 
 | Surface | Front-door section / JS | Engine router | Activation gate | Status |
 |---|---|---|---|---|
-| OOBE setup / onboarding wizard | `applicantOnboarding.js` (blocking overlay) | `setup` / `onboarding` / `fonts` / `conversion` / `model_endpoints` | auto-launches; gates the rest | **live** |
+| OOBE setup / onboarding wizard (minimal "connect a model" form + apply-readiness banner) | `applicantOnboarding.js` (blocking overlay) | `setup` / `onboarding` / `fonts` / `conversion` / `model_endpoints` | auto-launches; gates the rest | **live** |
 | Pending-actions portal | `applicantPortal.js` (home base) | `pending_actions` | always (the queue) | **live** |
-| Documents / résumé redline review | documents section + redline | `documents` | `onboarding_complete` | **live** |
+| Documents / résumé redline review (incl. "What I drew on" provenance panel) | documents section + redline | `documents` | `onboarding_complete` | **live** |
 | Profile — criteria editor | memory/profile section | `criteria` | `onboarding_complete` | **live** |
 | Profile — attribute-cloud editor | memory/profile section | `attributes` | `onboarding_complete` | **live** |
 | Profile — learning (attributes + conversion) | memory/profile section | `attributes` / `conversion` | `onboarding_complete` | **live** |
@@ -59,6 +59,24 @@ no-fabrication guard). The chatbot is this same agent in first person, and its a
 surfaced read-only in the **"what the agent is doing" panel** (now / next / recent) plus a
 proactive daily status update through the notification ladder. See
 [traceability.md](traceability.md) (FR-MIND / FR-AGENT-7 / FR-OBS-2) for the full chains.
+
+**Wave 2 reachability deltas** (deeper learning + onboarding):
+- **"What I drew on" provenance panel** — material generation records which learned memory /
+  playbooks / recall it drew on (`GeneratedDocument.provenance`), and the document-review surface
+  renders it as a "What I drew on" panel (FR-MIND-5/11) — no new section, an addition to the
+  existing résumé redline review.
+- **Agent-callable tools** — the chat assistant can call `remember`/`forget`/`save_playbook`/
+  `update_playbook`/`recall`/`desktop` mid-conversation (`chat_tools.py` `ChatToolbox`, opt-in via
+  `CHAT_TOOLS`, default `off`); the writes stage in the same curation approval queue above, so the
+  advisory-not-authorization rule holds (FR-MIND-6/9/11).
+- **Onboarding seed** — completing onboarding seeds bounded curated memory + recall from the user's
+  own profile/résumé (`onboarding_seed.py`), so the memory/playbooks panels read non-empty earlier
+  (FR-MIND-1/3); idempotent.
+- **Apply-readiness banner + setup-status fields** — the OOBE wizard now requires ~only "connect a
+  model"; the automated-work gate stays BLOCKED until the REQUIRED-TO-APPLY essentials exist
+  (`core/rules/apply_readiness.py`), and `/api/setup/status` adds `apply_ready` / `apply_missing` /
+  `apply_blocked_reason` so the wizard surfaces an honest "what's still needed to start applying"
+  banner (FR-ONBOARD/FR-OOBE).
 
 ## Present-but-disabled surface
 

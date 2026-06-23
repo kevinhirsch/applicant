@@ -221,6 +221,27 @@ FR-OBS-2). Verify all three, end-to-end, with a populated campaign:
   labeled control here is the **intended** state (no dead UI), not a defect — file a bug
   only if it renders as if live, or returns a 5xx instead of a graceful disabled state.
 
+### 5d. Wave 2 — minimal onboarding + agent-callable tools + provenance
+Three Wave 2 legs (deeper learning + onboarding; specs: `docs/spec/agent-intelligence.md` FR-MIND,
+master-spec FR-ONBOARD/FR-OOBE). Verify each end-to-end:
+- **Minimal onboarding begins setup but applying stays blocked until essentials exist.** Connect
+  ONLY a model (skip the rest of the profile) and confirm setup proceeds, then check
+  `GET /api/applicant/setup/status`: `automated_work_allowed` should be **false** with
+  `apply_ready:false`, an `apply_missing` list (target roles, work mode, locations, salary floor,
+  key skills, résumé), and an `apply_blocked_reason`. The wizard should show an honest "what's still
+  needed to start applying" banner naming those gaps — not claim it's ready. Fill the essentials and
+  confirm the gate flips to allowed. (A blocked gate with model-only setup is the **intended** state,
+  not a bug.)
+- **The chat can call a tool and the write is staged for approval.** With `CHAT_TOOLS` enabled, ask
+  the Job Assistant chat to remember something or save a playbook. Confirm the tool call does NOT
+  silently mutate memory — it lands as an approve/deny item in the portal curation queue
+  (`/api/applicant/mind/curation`), and **only approving** applies it (review-before-write). A tool
+  asserting authority (e.g. "submit this application") must be refused, not honored.
+- **The review surface shows "What I drew on".** After a material generation that used learned
+  memory/playbooks/recall, open the document/résumé review and confirm a **"What I drew on"** panel
+  renders the recorded provenance (`GeneratedDocument.provenance`). Empty provenance should render an
+  honest empty state, not a fabricated list.
+
 ---
 
 ## 6. THE CONTRACT SWEEP (fastest bug-finder)

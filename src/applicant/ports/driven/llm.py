@@ -87,8 +87,46 @@ class TierLadder:
 
 @dataclass(frozen=True)
 class ChatMessage:
-    role: str  # "system" | "user" | "assistant"
+    role: str  # "system" | "user" | "assistant" | "tool"
     content: str
+    # FR-MIND-6: optional tool-call round-trip fields. They default to empty, so a
+    # plain (role, content) message is byte-identical to before and every existing
+    # call site keeps working unchanged. ``tool_calls`` carries the assistant's
+    # requested calls (echoed back so the provider can thread the conversation);
+    # ``tool_call_id`` tags a ``role="tool"`` result message back to its call.
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool/function call the model requested (FR-MIND-6).
+
+    ``arguments`` is the raw JSON-string the model emitted (parsed by the dispatcher,
+    defensively, exactly like structured output — FR-LLM-4a). ``id`` ties a tool
+    result message back to the call that produced it.
+    """
+
+    id: str
+    name: str
+    arguments: str = "{}"
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """The outcome of one tool-capable completion turn (FR-MIND-6).
+
+    Either the model requested ``tool_calls`` (and ``text`` is usually empty), or it
+    returned a final ``text`` reply with no calls. The caller dispatches the calls,
+    feeds the results back, and loops until the model stops calling tools or the round
+    cap is hit.
+    """
+
+    text: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    tier: int = 1
+    model: str = ""
+    raw: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,4 +166,35 @@ class LLMPort(Protocol):
 
     def is_configured(self) -> bool:
         """True once a provider/model/endpoint is set (gates downstream, FR-UI-5)."""
+        ...
+
+    # --- FR-MIND-6: optional tool/function calling ------------------------
+    # These two are CAPABILITY-GATED extensions. A caller checks ``supports_tools()``
+    # first; when it is False (a local Ollama lane, or an unconfigured ladder) the
+    # caller falls back to the single-shot ``complete`` path — so default behavior is
+    # unchanged. The base Protocol gives both a defaulted body so an adapter that does
+    # NOT implement them is still a valid ``LLMPort`` (back-compat).
+
+    def supports_tools(self) -> bool:
+        """True iff the configured provider advertises OpenAI-style tool calling.
+
+        Detected from the provider profile (FR-MIND-6). False keeps the chat on its
+        current single-shot path, byte-identical to today.
+        """
+        return False
+
+    def complete_with_tools(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]],
+        *,
+        start_tier: int = 1,
+        max_tokens: int | None = None,
+    ) -> ToolCallResult:
+        """One tool-capable completion turn (FR-MIND-6).
+
+        Sends ``tools`` (OpenAI function schemas) to the model and returns either the
+        tool calls it requested or its final text. The caller runs the dispatch loop.
+        Raises :class:`LLMLadderExhausted` on exhaustion, like :meth:`complete`.
+        """
         ...

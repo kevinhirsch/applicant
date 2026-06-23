@@ -26,7 +26,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from applicant.core.entities.generated_document import DocumentType, GeneratedDocument
+from applicant.core.entities.generated_document import (
+    DocumentType,
+    GeneratedDocument,
+    LearnedProvenance,
+)
 from applicant.core.entities.resume_variant import ResumeFitScoring, ResumeVariant
 from applicant.core.entities.revision_session import (
     RevisionSession,
@@ -160,6 +164,11 @@ class MaterialService:
         # Truthful-framing dial (FR-RESUME-9); present-but-grayed in the UI (FR-UI-2)
         # but wired so a backend-only flip makes it live.
         self._aggressiveness: int = AGGRESSIVENESS_DEFAULT
+        # Transient: the advisory learned-item provenance from the most recent
+        # ``_generate_text`` pass (FR-MIND-5/-11, FR-OBS-2). The storing generator
+        # reads it right after generation and attaches it to the material; empty
+        # when no agent-memory substrate was drawn on.
+        self._last_provenance: tuple[LearnedProvenance, ...] = ()
 
     # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
     def tailoring_for(self, campaign_id: CampaignId):
@@ -665,7 +674,11 @@ class MaterialService:
         check_source = self._with_application_context(true_source, application_id)
         self.assert_no_fabrication(check_source, report.text, prose=True)
         doc = self._store_document(
-            campaign_id, application_id, DocumentType.COVER_LETTER, report.text
+            campaign_id,
+            application_id,
+            DocumentType.COVER_LETTER,
+            report.text,
+            provenance=self._last_provenance,
         )
         self._announce_review_ready(doc, "Cover letter ready for review")
         return doc
@@ -698,10 +711,14 @@ class MaterialService:
             if essay is not None
             else classify_screening_question(question)
         )
+        # Only the essay path consults the learned-context block; the factual /
+        # sensitive paths draw on nothing learned, so their provenance is empty.
+        provenance: tuple[LearnedProvenance, ...] = ()
         if kind is ScreeningKind.ESSAY:
             answer = self._generate_text(
                 true_source, [question], kind="essay_answer", campaign_id=campaign_id
             )
+            provenance = self._last_provenance
         elif kind is ScreeningKind.SENSITIVE:
             # EEO/demographic: no fabrication, no AI-guess, no PII leak. The answer
             # comes ONLY from an explicit stored EEO answer; absent that, decline.
@@ -728,7 +745,11 @@ class MaterialService:
                 check_source, report.text, prose=(kind is ScreeningKind.ESSAY)
             )
         doc = self._store_document(
-            campaign_id, application_id, DocumentType.SCREENING_ANSWER, report.text
+            campaign_id,
+            application_id,
+            DocumentType.SCREENING_ANSWER,
+            report.text,
+            provenance=provenance,
         )
         self._announce_review_ready(doc, "Screening answer ready for review")
         return doc
@@ -907,6 +928,8 @@ class MaterialService:
             content=content,
             storage_path=doc.storage_path,
             approved=True,
+            # Keep the "What I drew on" record through approval.
+            provenance=doc.provenance,
         )
         self._storage.documents.add(approved)
         self._storage.commit()
@@ -1147,7 +1170,18 @@ class MaterialService:
     def _learned_context(
         self, campaign_id: CampaignId | None, *, query: str
     ) -> str:
-        """A BOUNDED "what the assistant has learned" block for generation (FR-MIND-5).
+        """The bounded learned-context prompt block only (see
+        :meth:`_learned_context_with_provenance`). Kept so any external caller of
+        the historical signature still gets the prompt block unchanged."""
+        block, _prov = self._learned_context_with_provenance(campaign_id, query=query)
+        return block
+
+    def _learned_context_with_provenance(
+        self, campaign_id: CampaignId | None, *, query: str
+    ) -> tuple[str, tuple[LearnedProvenance, ...]]:
+        """A BOUNDED "what the assistant has learned" block for generation (FR-MIND-5)
+        PLUS the advisory provenance of which learned items it drew on (FR-MIND-5/-11,
+        FR-OBS-2).
 
         Mirrors the chatbot's advisory memory block but is local to this service (no
         cross-service import). Read fresh from the agent-memory trio on every call
@@ -1158,25 +1192,32 @@ class MaterialService:
               answers for a given company/ATS — cheap, no bodies, FR-MIND-2/-13), and
           (c) optionally one recall hit for a prior similar application.
 
+        The returned provenance lists EXACTLY the items folded into the block — the
+        same memory lines / playbook names / recall run-id, nothing more. It is purely
+        descriptive ("What I drew on"): it confers NO authority and never asserts a
+        fact about the user.
+
         SAFETY (FR-MIND-11 + FR-RESUME-2): every line is ADVISORY ONLY. It may shape
         phrasing / voice / approach, but it can NEVER invent facts about the user and
         it confers NO authority. Any memory line / skill / recall hit that *claims* a
         safety-gated authority (submit/account/CAPTCHA/skip-review) is DROPPED via the
         core ``claims_authority`` rule so it can never read as an instruction the
-        assistant must obey. The fabrication guard (``assert_no_fabrication``) still
-        runs afterward against the user's TRUE source, so a "skill" that suggested
-        inventing a credential cannot survive into the stored document.
+        assistant must obey (and so it is never recorded as provenance). The
+        fabrication guard (``assert_no_fabrication``) still runs afterward against the
+        user's TRUE source, so a "skill" that suggested inventing a credential cannot
+        survive into the stored document.
 
-        Degrades silently to ``""`` when no ``agent_memory`` is wired (byte-identical
-        to the prior behavior) or nothing relevant is on file.
+        Degrades silently to ``("", ())`` when no ``agent_memory`` is wired
+        (byte-identical to the prior behavior) or nothing relevant is on file.
         """
         am = self._agent_memory
         if am is None:
-            return ""
+            return "", ()
         from applicant.core.rules.agent_memory import claims_authority
 
         scope = str(campaign_id) if campaign_id is not None else None
         lines: list[str] = []
+        provenance: list[LearnedProvenance] = []
 
         # (a) curated memory — user style/preferences (bounded by the store).
         try:
@@ -1191,6 +1232,9 @@ class MaterialService:
                     # Advisory-only: never surface an authority claim as guidance.
                     continue
                 mem_lines.append(f"- {txt}")
+                provenance.append(
+                    LearnedProvenance(kind="memory", label=txt.strip(), ref=txt.strip())
+                )
             if mem_lines:
                 lines.append(
                     "What you have learned about this user's style and preferences "
@@ -1217,12 +1261,21 @@ class MaterialService:
                 overlap = len(q & set(hay.split())) if q else 0
                 scored.append((overlap, m))
             scored.sort(key=lambda t: t[0], reverse=True)
-            skill_lines = [
-                f"- {getattr(m, 'name', '')}: "
-                f"{getattr(m, 'when_to_use', '') or getattr(m, 'description', '')}"
-                for _, m in scored[:3]
-            ]
-            skill_lines = [s for s in skill_lines if s.strip(" -:")]
+            top = scored[:3]
+            skill_lines = []
+            for _, m in top:
+                name = getattr(m, "name", "")
+                desc = getattr(m, "when_to_use", "") or getattr(m, "description", "")
+                line = f"- {name}: {desc}"
+                if not line.strip(" -:"):
+                    continue
+                skill_lines.append(line)
+                if name:
+                    provenance.append(
+                        LearnedProvenance(
+                            kind="playbook", label=f"the '{name}' playbook", ref=name
+                        )
+                    )
             if skill_lines:
                 lines.append("Saved playbooks you may consult (advice only):")
                 lines.extend(skill_lines)
@@ -1244,14 +1297,21 @@ class MaterialService:
                         "From a prior similar application (background only): "
                         + snippet
                     )
+                    provenance.append(
+                        LearnedProvenance(
+                            kind="recall",
+                            label="a prior similar application",
+                            ref=str(getattr(h, "run_id", "") or ""),
+                        )
+                    )
                 break
 
         if not lines:
-            return ""
+            return "", ()
         # Hard-bound the whole block so learned context never bloats the prompt
         # (FR-MIND-13). A generous cap that still fits several lines + a recall hit.
         block = "\n".join(lines)
-        return block[:1500]
+        return block[:1500], tuple(provenance)
 
     # --- internals --------------------------------------------------------
     def _generate_text(
@@ -1262,7 +1322,17 @@ class MaterialService:
         kind: str,
         campaign_id: CampaignId | None = None,
     ) -> str:
-        """1 LLM pass with deterministic truthful fallback when no LLM is wired."""
+        """1 LLM pass with deterministic truthful fallback when no LLM is wired.
+
+        Records the advisory learned-item provenance for THIS pass on
+        ``_last_provenance`` so the calling generator can attach it to the stored
+        material (FR-MIND-5/-11, FR-OBS-2). Provenance reflects what was ACTUALLY
+        drawn on: it is set only when the learned block was folded into the LLM
+        prompt, and cleared on the deterministic fallback (which consults no learned
+        context), so it never overstates the influence.
+        """
+        # Default: nothing was drawn on (the deterministic fallback path).
+        self._last_provenance = ()
         if self._llm is not None and getattr(self._llm, "is_configured", lambda: False)():
             try:
                 from applicant.ports.driven.llm import ChatMessage
@@ -1277,11 +1347,14 @@ class MaterialService:
                 # learned" block (curated style/preferences + matching saved-playbook
                 # hints + a prior-similar-application recall). Read fresh per call
                 # (FR-MIND-10). No-op when no ``agent_memory`` is wired => byte-identical.
-                learned = self._learned_context(
+                # The provenance lists exactly the items folded in, recorded for the
+                # review UI's "What I drew on" line.
+                learned, provenance = self._learned_context_with_provenance(
                     campaign_id, query=" ".join([kind, *terms])
                 )
                 if learned:
                     system += "\n\n" + learned
+                    self._last_provenance = provenance
                 result = self._llm.complete(
                     [
                         ChatMessage(role="system", content=system),
@@ -1296,7 +1369,9 @@ class MaterialService:
                 )
                 return _strip_llm_preamble(result.text)
             except Exception:
-                pass  # fall back to deterministic reframing; never block
+                # Generation fell back to the deterministic path — no learned context
+                # was actually used, so do not record provenance for it.
+                self._last_provenance = ()
         return self.reframe_truthfully(true_source, terms)
 
     def _revise(self, content: str, kind: str, instruction: str) -> tuple[str, str]:
@@ -1360,7 +1435,13 @@ class MaterialService:
             return None
 
     def _store_document(
-        self, campaign_id: CampaignId, application_id: ApplicationId, dtype: DocumentType, content: str
+        self,
+        campaign_id: CampaignId,
+        application_id: ApplicationId,
+        dtype: DocumentType,
+        content: str,
+        *,
+        provenance: tuple[LearnedProvenance, ...] = (),
     ) -> GeneratedDocument:
         doc = GeneratedDocument(
             id=GeneratedDocumentId(new_id()),
@@ -1369,6 +1450,9 @@ class MaterialService:
             type=dtype,
             content=content,
             approved=False,
+            # Advisory "What I drew on" record (FR-MIND-5/-11, FR-OBS-2). Empty
+            # unless the learned-context block was actually folded into generation.
+            provenance=tuple(provenance),
         )
         self._storage.documents.add(doc)
         self._storage.commit()
@@ -1383,6 +1467,9 @@ class MaterialService:
             content=content,
             storage_path=doc.storage_path,
             approved=doc.approved,
+            # Preserve the original draft's provenance across a revision turn —
+            # the learned items it drew on still describe where the draft came from.
+            provenance=doc.provenance,
         )
         self._storage.documents.add(updated)
         self._storage.commit()

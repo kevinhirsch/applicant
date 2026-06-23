@@ -43,6 +43,8 @@ from applicant.ports.driven.llm import (
     LLMResult,
     TierConfig,
     TierLadder,
+    ToolCall,
+    ToolCallResult,
 )
 
 log = get_logger(__name__)
@@ -69,6 +71,32 @@ _tool_call_arguments = tool_call_arguments
 
 def _normalize_base(base_url: str) -> str:
     return base_url.rstrip("/")
+
+
+def _tool_message_dict(m: ChatMessage) -> dict[str, Any]:
+    """Serialize one ``ChatMessage`` to the OpenAI wire shape, tool-aware (FR-MIND-6).
+
+    A plain (role, content) message serializes exactly as before. An assistant message
+    carrying ``tool_calls`` echoes them back (so the provider can thread the
+    conversation), and a ``role="tool"`` result message carries its ``tool_call_id``.
+    """
+    if m.role == "tool":
+        return {
+            "role": "tool",
+            "tool_call_id": m.tool_call_id or "",
+            "content": m.content,
+        }
+    out: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.tool_calls:
+        out["tool_calls"] = [
+            {
+                "id": c.id,
+                "type": "function",
+                "function": {"name": c.name, "arguments": c.arguments},
+            }
+            for c in m.tool_calls
+        ]
+    return out
 
 
 def _estimate_tokens(messages: list[ChatMessage]) -> int:
@@ -494,3 +522,114 @@ class OpenAICompatibleLLM:
     @property
     def ladder(self) -> TierLadder | None:
         return self._ladder
+
+    # --- FR-MIND-6: optional tool/function calling ------------------------
+    def supports_tools(self) -> bool:
+        """True iff the configured provider profile advertises tool calling.
+
+        Detected from the provider profile (the OpenAI-compatible lane does; the
+        local Ollama ``/api/chat`` lane does not). False keeps callers on the
+        single-shot ``complete`` path, so default behavior is unchanged (FR-MIND-6).
+        """
+        if self._ladder is None:
+            return False
+        tier = self._ladder.at(0)
+        return bool(get_profile(tier.provider, tier.base_url).supports_tools)
+
+    def complete_with_tools(
+        self,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]],
+        *,
+        start_tier: int = 1,
+        max_tokens: int | None = None,
+    ) -> ToolCallResult:
+        """One tool-capable completion turn over the OpenAI-compatible lane (FR-MIND-6).
+
+        Single-tier dispatch (the caller drives the multi-round loop). The active tier
+        starts at ``start_tier`` and climbs on a transport error / context overflow,
+        exactly like :meth:`complete`. Returns the model's requested tool calls (parsed
+        from the provider's ``tool_calls`` shape) or its final text reply.
+        """
+        if self._ladder is None:
+            raise LLMNotConfigured("No LLM tier ladder is configured.")
+
+        messages = self._context_manager.apply(messages)
+        required = _estimate_tokens(messages) + (max_tokens or 0)
+        idx = min(max(0, start_tier - 1), len(self._ladder) - 1)
+        if self._ladder.at(idx).context_window < required:
+            fit = self._ladder.first_fitting(required, from_index=idx)
+            if fit is None:
+                raise LLMLadderExhausted(
+                    f"Prompt needs ~{required} tokens; no tier's context window fits."
+                )
+            idx = fit
+
+        last_error: Exception | None = None
+        while idx < len(self._ladder):
+            tier = self._ladder.at(idx)
+            try:
+                return self._call_tier_with_tools(tier, idx + 1, messages, tools, max_tokens)
+            except _Overflow:
+                nxt = self._ladder.first_fitting(required, from_index=idx + 1)
+                if nxt is None:
+                    raise LLMLadderExhausted(
+                        "Context overflow and no larger tier available.",
+                    ) from None
+                idx = nxt
+                continue
+            except (httpx.HTTPError, LLMNotConfigured, ValueError) as exc:
+                last_error = exc
+                log.warning("llm_tool_tier_failed", tier=idx + 1, error=str(exc))
+                idx += 1
+                continue
+
+        raise LLMLadderExhausted(
+            "Tier ladder exhausted; top tier is the ceiling.",
+            last_error=last_error,
+        )
+
+    def _call_tier_with_tools(
+        self,
+        tier: TierConfig,
+        tier_no: int,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None,
+    ) -> ToolCallResult:
+        if _estimate_tokens(messages) > tier.context_window:
+            raise _Overflow()
+        profile = get_profile(tier.provider, tier.base_url)
+        base = _normalize_base(tier.base_url)
+        url = profile.chat_url(base)
+
+        payload: dict[str, Any] = {
+            "model": tier.model,
+            "messages": [_tool_message_dict(m) for m in messages],
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        payload = self._apply_prefix_cache(profile, payload)
+
+        with self._client() as client:
+            resp = client.post(url, headers=self._headers(tier), json=payload)
+            if resp.status_code in (400, 413, 422) and self._is_context_error(resp):
+                raise _Overflow()
+            resp.raise_for_status()
+            raw = resp.json()
+        if not isinstance(raw, dict):
+            raw = {}
+        calls = [
+            ToolCall(id=cid, name=name, arguments=args)
+            for cid, name, args in profile.parse_tool_calls(raw)
+        ]
+        text = "" if calls else profile.extract_text(raw)
+        return ToolCallResult(
+            text=text,
+            tool_calls=tuple(calls),
+            tier=tier_no,
+            model=tier.model,
+            raw=raw,
+        )

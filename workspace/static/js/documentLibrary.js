@@ -1838,6 +1838,45 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return (type || 'Document').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 
+    // Compact, first-person "What I drew on" panel — surfaces the learned items
+    // (saved preferences / playbooks / a prior application) that shaped a draft so
+    // the assistant's learning is visible and the user can trust where the
+    // phrasing came from. Purely descriptive: it does not change what was written,
+    // and the draft stays fully editable in the review loop below. Returns null
+    // (so the caller renders nothing) when there is no provenance to show.
+    function _applicantProvenancePanel(provenance) {
+      const items = Array.isArray(provenance) ? provenance : [];
+      // Only items with a human-readable label are worth showing; ref ids stay
+      // internal (traceability), never shown raw to the user.
+      const labels = items
+        .map(p => (p && typeof p.label === 'string') ? p.label.trim() : '')
+        .filter(Boolean);
+      if (!labels.length) return null;
+
+      const panel = document.createElement('div');
+      panel.className = 'memory-item';
+      panel.style.cssText = 'font-size:11px;border:1px solid var(--border);border-radius:6px;padding:6px 8px;opacity:0.9;display:flex;flex-direction:column;gap:4px;';
+
+      const head = document.createElement('div');
+      head.style.cssText = 'font-weight:600;opacity:0.8;display:flex;align-items:center;gap:5px;';
+      head.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.7;"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.5.4.8 1 .8 1.6v.7h6.4v-.7c0-.6.3-1.2.8-1.6A7 7 0 0 0 12 2z"/></svg>' +
+        '<span>What I drew on</span>';
+      head.title = 'The things I have learned about you that shaped this draft. This is just for transparency — you can still change anything below.';
+      panel.appendChild(head);
+
+      const list = document.createElement('ul');
+      list.style.cssText = 'margin:0;padding-left:16px;display:flex;flex-direction:column;gap:2px;';
+      labels.forEach(label => {
+        const li = document.createElement('li');
+        li.style.cssText = 'opacity:0.85;';
+        li.textContent = label;
+        list.appendChild(li);
+      });
+      panel.appendChild(list);
+      return panel;
+    }
+
     // Pull a readable message out of the proxy's error JSON ({error,message,...}).
     async function _applicantErrText(res) {
       try {
@@ -2119,6 +2158,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         body.textContent = preview;
         card.appendChild(body);
       }
+
+      // "What I drew on" — the learned items (your saved preferences / playbooks /
+      // a prior application) that shaped this draft. Transparency only; nothing
+      // here changes what was written, and the draft is still fully editable
+      // below. Hidden entirely when the assistant drew on nothing learned.
+      const drewOn = _applicantProvenancePanel(item.provenance);
+      if (drewOn) card.appendChild(drewOn);
 
       const actions = document.createElement('div');
       actions.className = 'doclib-card-expanded-actions';

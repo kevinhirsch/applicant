@@ -55,6 +55,16 @@ class ProviderProfile:
         Given the built request ``payload`` dict, return it with cache breakpoints
         applied to the stable prefix. Only consulted when ``supports_prefix_cache``
         is True; defaults to an identity passthrough (no breakpoints).
+    supports_tools:
+        True iff the provider advertises OpenAI-style function/tool calling
+        (``tools=`` + ``tool_calls`` in the response). The OpenAI-compatible cloud
+        lane advertises it; the local Ollama ``/api/chat`` shape does not, so it is
+        left ``False`` and the chat tool-call loop is never engaged for it — the
+        chat does its current single-shot completion exactly as before (FR-MIND-6).
+    parse_tool_calls:
+        Given the raw response body, return the assistant's requested tool calls as
+        a list of ``(call_id, name, arguments_json_str)`` tuples, or ``[]`` when the
+        model returned plain text. Only consulted when ``supports_tools`` is True.
     """
 
     name: str
@@ -68,6 +78,10 @@ class ProviderProfile:
     supports_prefix_cache: bool = False
     mark_prefix_cache: Callable[[dict[str, Any]], dict[str, Any]] = (
         lambda payload: payload
+    )
+    supports_tools: bool = False
+    parse_tool_calls: Callable[[dict[str, Any]], list[tuple[str, str, str]]] = (
+        lambda raw: []
     )
 
 
@@ -97,6 +111,47 @@ def tool_call_arguments(message: dict[str, Any]) -> str | None:
     if isinstance(legacy, dict) and isinstance(legacy.get("arguments"), str):
         return legacy["arguments"]
     return None
+
+
+def _openai_parse_tool_calls(raw: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Parse the assistant's requested tool calls from an OpenAI-style body (FR-MIND-6).
+
+    Returns ``(call_id, name, arguments_json_str)`` tuples for every tool/function
+    call the model emitted, supporting both the modern ``tool_calls[]`` shape and the
+    legacy ``function_call`` shape. Returns ``[]`` when the assistant replied with
+    plain content (the model chose NOT to call a tool) — the caller then treats the
+    turn as a final text reply, so a tool-capable model that elects not to use a tool
+    behaves exactly like the single-shot path.
+    """
+    choices = raw.get("choices") if isinstance(raw, dict) else None
+    if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
+        return []
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return []
+    out: list[tuple[str, str, str]] = []
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for i, call in enumerate(tool_calls):
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            if not isinstance(fn, dict):
+                continue
+            name = fn.get("name") or ""
+            args = fn.get("arguments")
+            if not isinstance(args, str):
+                args = "{}"
+            call_id = call.get("id") or f"call_{i}"
+            if name:
+                out.append((str(call_id), str(name), args))
+    if out:
+        return out
+    legacy = message.get("function_call")
+    if isinstance(legacy, dict) and legacy.get("name"):
+        args = legacy.get("arguments")
+        out.append(("call_0", str(legacy["name"]), args if isinstance(args, str) else "{}"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +315,8 @@ OPENAI_PROFILE: ProviderProfile = ProviderProfile(
     chat_url=_openai_chat_url,
     build_request=_openai_build_request,
     extract_text=_openai_extract_text,
+    supports_tools=True,
+    parse_tool_calls=_openai_parse_tool_calls,
 )
 
 #: Ordered list of profiles.  First profile whose ``detect`` returns True is used.

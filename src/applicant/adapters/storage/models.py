@@ -169,6 +169,10 @@ class GeneratedMaterialModel(Base):
     storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     redline_state: Mapped[dict] = mapped_column(JSONType, default=dict)
+    # Advisory-only learned-item provenance ("What I drew on", FR-MIND-5/-11,
+    # FR-OBS-2). A bounded list of {kind,label,ref}; empty by default so a draft
+    # made without an agent-memory substrate stores nothing extra.
+    provenance: Mapped[list] = mapped_column(JSONType, default=list)
 
 
 # 10 ------------------------------------------------------------------------

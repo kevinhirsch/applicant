@@ -87,6 +87,23 @@ class SkillProposal:
 
 
 @dataclass(frozen=True)
+class ForgetProposal:
+    """A staged proposal to FORGET (remove) curated memory lines (FR-MIND-1/-9).
+
+    A forget is a write, so it is gated by the same review-before-write policy: when
+    memory write-approval is on (the default) the request is staged for the user to
+    approve in the Portal before anything is removed; relaxing approval lets a forget
+    apply directly. ``find`` is the substring matched against memory text (the same
+    semantics as :meth:`MemoryStore.remove`); ``preview`` is the human-readable text
+    of the entry the user asked to forget, for an honest confirmation in the UI.
+    """
+
+    find: str
+    source_run_id: str = "user"
+    preview: str = ""
+
+
+@dataclass(frozen=True)
 class CurationResult:
     """The outcome of one curation tick (introspection + tests)."""
 
@@ -284,6 +301,84 @@ class CurationService:
 
             return self._dispatch(reviewed, mem_props, skill_props)
 
+    # --- direct staging from the chat tool surface (FR-MIND-6 / FR-MIND-9) -
+    def stage_memory(
+        self,
+        text: str,
+        *,
+        kind: str = KIND_ENVIRONMENT,
+        campaign_id: str | None = None,
+        source_run_id: str = "chat",
+    ) -> CurationResult:
+        """Stage a single curated-memory line the assistant chose to remember.
+
+        Routes through the SAME write-approval policy as the scheduled nudge
+        (:meth:`_dispatch`): with approval on (the default, FR-MIND-9) the line is
+        STAGED for the user to approve in the Portal, not silently persisted; the user
+        MAY relax non-sensitive memory to auto-apply, but a line that *claims* a
+        safety-gated authority is always staged and flagged (FR-MIND-11). The tool
+        reports back from the returned counts ("noted, pending your approval").
+        """
+        scope = SCOPE_CAMPAIGN if campaign_id else SCOPE_GLOBAL
+        entry = MemoryEntry(text=text, kind=kind, scope=scope, campaign_id=campaign_id)
+        proposal = MemoryProposal(
+            entry=entry,
+            source_run_id=source_run_id,
+            claims_authority=claims_authority(text),
+        )
+        with self._ledger.lock:
+            return self._dispatch(0, [proposal], [])
+
+    def stage_skill(
+        self,
+        skill: Skill,
+        *,
+        is_improvement: bool = False,
+        source_run_id: str = "chat",
+    ) -> CurationResult:
+        """Stage a saved-playbook (skill) write the assistant chose to author.
+
+        Skills ALWAYS require approval (FR-MIND-9) regardless of any flag, so this
+        always stages — never auto-applies. A claim of authority is flagged for the
+        reviewer but confers nothing (FR-MIND-11).
+        """
+        proposal = SkillProposal(
+            skill=skill,
+            source_run_id=source_run_id,
+            is_improvement=is_improvement,
+            claims_authority=claims_authority(
+                f"{skill.description} {skill.when_to_use} {' '.join(skill.procedure)}"
+            ),
+        )
+        with self._ledger.lock:
+            return self._dispatch(0, [], [proposal])
+    # --- user-initiated forget (FR-MIND-1 remove, gated by FR-MIND-9) -----
+    def stage_forget(
+        self,
+        find: str,
+        *,
+        preview: str = "",
+        source_run_id: str = "user",
+    ) -> dict:
+        """Forget the curated memory line(s) matching ``find`` (substring).
+
+        A forget is a WRITE, so it honours the SAME review-before-write policy as an
+        add (FR-MIND-9): when memory write-approval is on (the default) it is STAGED
+        for the user to approve in the Portal and nothing is removed yet; when the
+        operator has relaxed memory approval it applies immediately via
+        :meth:`MemoryStore.remove`. Returns a small result the router forwards:
+        ``applied`` (lines removed now) and ``staged`` (1 when queued for review).
+        """
+        if self._memory_write_approval:
+            proposal = ForgetProposal(
+                find=find, preview=preview or find, source_run_id=source_run_id
+            )
+            with self._ledger.lock:
+                self._ledger.staged.append(proposal)
+            return {"applied": 0, "staged": 1, "id": _proposal_id(proposal)}
+        removed = self._memory.remove(find)
+        return {"applied": int(removed), "staged": 0, "id": None}
+
     # --- staged-proposal review (FR-MIND-9) -------------------------------
     def list_staged(self) -> tuple[object, ...]:
         """Return the proposals awaiting human approval (a frozen tuple snapshot).
@@ -322,6 +417,10 @@ class CurationService:
                     self._skills.create(p.skill)
             else:
                 self._skills.create(p.skill)
+            return True
+        if isinstance(p, ForgetProposal):
+            # Applying a forget removes the matching curated lines (FR-MIND-1/-9).
+            self._memory.remove(p.find)
             return True
         return False
 
@@ -411,6 +510,8 @@ def _proposal_id(p: object) -> str:
         basis = f"memory|{p.source_run_id}|{p.entry.kind}|{p.entry.text}"
     elif isinstance(p, SkillProposal):
         basis = f"skill|{p.source_run_id}|{p.skill.name}|{p.skill.version}"
+    elif isinstance(p, ForgetProposal):
+        basis = f"forget|{p.source_run_id}|{p.find}"
     else:  # pragma: no cover - defensive
         basis = repr(p)
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
@@ -449,6 +550,16 @@ def proposal_to_dict(p: object) -> dict:
             "is_improvement": bool(p.is_improvement),
             "source_run_id": p.source_run_id,
             "claims_authority": bool(p.claims_authority),
+        }
+    if isinstance(p, ForgetProposal):
+        return {
+            "id": _proposal_id(p),
+            "type": "forget",
+            "label": "Forget something remembered",
+            "text": p.preview or p.find,
+            "find": p.find,
+            "source_run_id": p.source_run_id,
+            "claims_authority": False,
         }
     return {"id": _proposal_id(p), "type": "unknown"}  # pragma: no cover - defensive
 
