@@ -45,7 +45,7 @@ export function showScoreboard() {
 
   const content = document.createElement('div');
   content.className = 'modal-content';
-  content.style.maxWidth = '520px';
+  content.style.setProperty('--window-w', '520px');
 
   const header = document.createElement('div');
   header.className = 'modal-header';

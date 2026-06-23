@@ -442,7 +442,7 @@ function _showReport(report, { company = '', role = '' } = {}) {
 
   overlay = _el('div', { cls: 'modal', attrs: { id: 'applicant-research-overlay' } });
   const box = _el('div', { cls: 'modal-content styled-confirm-box' });
-  box.style.cssText = 'max-width:560px;';
+  box.style.cssText = '--window-w:560px;';
 
   const header = _el('div', { cls: 'modal-header' });
   const heading = [role, company].filter(Boolean).join(' · ');
@@ -628,7 +628,7 @@ function _askSurvey() {
 
     overlay = _el('div', { cls: 'modal', attrs: { id: 'applicant-survey-overlay' } });
     const box = _el('div', { cls: 'modal-content styled-confirm-box' });
-    box.style.cssText = 'max-width:440px;';
+    box.style.cssText = '--window-w:440px;';
 
     const header = _el('div', { cls: 'modal-header' });
     header.appendChild(_el('h4', { text: 'Quick survey' }));

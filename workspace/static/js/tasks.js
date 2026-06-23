@@ -576,6 +576,11 @@ function _renderTaskChips() {
     const b = document.createElement('button');
     b.className = 'memory-cat-chip' + (active ? ' active' : '');
     b.textContent = label;
+    // Keep each chip on a single line at its full width so a label (e.g.
+    // "documents (N)") is never sliced mid-word: on mobile the row switches to
+    // horizontal scroll (flex-wrap:nowrap), and a shrinkable chip would clip.
+    b.style.whiteSpace = 'nowrap';
+    b.style.flexShrink = '0';
     b.addEventListener('click', () => { _taskFilter = value; _renderList(); });
     bar.appendChild(b);
   };
@@ -1805,6 +1810,10 @@ async function _renderActivityView() {
     }
     chipBar.innerHTML = html;
     chipBar.querySelectorAll('.memory-cat-chip').forEach(chip => {
+      // Single line at full width so a label (e.g. "documents") is never sliced
+      // mid-word; the row scrolls horizontally on mobile (flex-wrap:nowrap).
+      chip.style.whiteSpace = 'nowrap';
+      chip.style.flexShrink = '0';
       chip.addEventListener('click', () => {
         const key = chip.dataset.key;
         _solo = key ? (_solo === key ? null : key) : null;  // "all" or re-click clears

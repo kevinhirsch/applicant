@@ -2364,7 +2364,7 @@ async function _showCalSettings() {
   overlay.style.display = 'flex';
   overlay.style.zIndex = '999';
   overlay.innerHTML = `
-    <div class="modal-content" style="width:420px;max-width:92vw;">
+    <div class="modal-content" style="--window-w:420px;">
       <div class="modal-header">
         <h4>Calendar Settings</h4>
         <button class="close-btn" id="cal-settings-close">\u2716</button>

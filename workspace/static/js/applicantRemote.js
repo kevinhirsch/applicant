@@ -72,7 +72,7 @@ function _ensureModalEl() {
   modal.id = 'applicant-remote-modal';
   modal.className = 'modal hidden';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:980px;width:96%;display:flex;flex-direction:column;max-height:92vh;">
+    <div class="modal-content" style="--window-w:980px;display:flex;flex-direction:column;max-height:92vh;">
       <div class="modal-header" style="gap:10px;">
         <h4>Live application session</h4>
         <select id="applicant-remote-picker" class="settings-select" title="Choose which live session to watch"
@@ -87,9 +87,9 @@ function _ensureModalEl() {
         </p>
 
         <div id="applicant-remote-frame-wrap"
-             style="position:relative;border:1px solid var(--border-color,#3334);border-radius:8px;overflow:hidden;background:#0b0b0b;min-height:420px;">
+             style="position:relative;border:1px solid var(--border-color,#3334);border-radius:8px;overflow:hidden;background:#0b0b0b;min-height:42dvh;max-height:480px;">
           <iframe id="applicant-remote-frame" title="Live session"
-                  style="width:100%;height:480px;border:0;display:block;background:#0b0b0b;"
+                  style="width:100%;height:42dvh;max-height:480px;border:0;display:block;background:#0b0b0b;"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock"
                   referrerpolicy="no-referrer"></iframe>
           <div id="applicant-remote-empty"

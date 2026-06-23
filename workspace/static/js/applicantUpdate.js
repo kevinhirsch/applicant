@@ -76,7 +76,7 @@ function _ensureModalEl() {
   modal.id = 'applicant-update-modal';
   modal.className = 'modal hidden';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width:560px;width:94%;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
+    <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
         <h4>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="3" x2="12" y2="16"/></svg>
