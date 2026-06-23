@@ -135,6 +135,9 @@ class Container:
     # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update service (PUSH
     # sibling of the chatbot self-report). Dormant by default (STATUS_UPDATE_SCHEDULE=off).
     status_update_service: Any = None
+    # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" onboarding
+    # nudge. Dormant by default (ESSENTIALS_NUDGE_SCHEDULE=off).
+    essentials_nudge_service: Any = None
     # FR-MIND: the agent-learning substrate. ``agent_memory`` is the curated-memory /
     # skills / recall adapter trio (default ``in_memory``, hermetic). ``curation_service``
     # runs the scheduled closed loop; its cross-tick dedupe state lives in the
@@ -1008,6 +1011,19 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
 
+    # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" nudge. When
+    # automated work is BLOCKED specifically because apply-essentials are missing (read
+    # from ``onboarding_service.apply_readiness().missing`` — never fabricated) and the
+    # user has gone idle, it pushes ONE friendly first-person notification naming exactly
+    # what's still needed, through the EXISTING notification path (in-app inbox + opt-in
+    # fan-out). Default schedule ``off`` => dormant (byte-identical hermetic behavior).
+    from applicant.application.services.essentials_nudge import EssentialsNudgeService
+
+    essentials_nudge_service = EssentialsNudgeService(
+        notification_service=notification_service,
+        onboarding_service=onboarding_service,
+    )
+
     scheduler = Scheduler(
         storage=storage,
         agent_loop=agent_loop,
@@ -1029,6 +1045,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # (default ``off`` => dormant, byte-identical hermetic behavior).
         status_update_service=status_update_service,
         status_update_schedule=status_update_schedule,
+        # FR-NOTIF / FR-ONBOARD: the proactive "still blocked on essentials" nudge on the
+        # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
+        essentials_nudge_service=essentials_nudge_service,
+        essentials_nudge_schedule=settings.essentials_nudge_schedule,
     )
     # FR-OBS-2: give the chatbot the live scheduler heartbeat so "what are you doing now /
     # when do you run next" answer from the real tick state (wired additively — the
@@ -1086,6 +1106,7 @@ def build_container(settings: Settings | None = None) -> Container:
         agent_loop=agent_loop,
         scheduler=scheduler,
         status_update_service=status_update_service,
+        essentials_nudge_service=essentials_nudge_service,
         agent_memory=agent_memory,
         curation_service=curation_service,
         curation_ledger=curation_ledger,
