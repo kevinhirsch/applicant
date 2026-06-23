@@ -211,6 +211,33 @@ class NotificationService:
             )
         )
 
+    # --- proactive "still blocked on essentials" nudge (FR-NOTIF / FR-ONBOARD) ---
+    def notify_essentials_nudge(
+        self,
+        *,
+        campaign_id: str,
+        body: str,
+        day: date,
+        deep_link: str | None = None,
+    ) -> str:
+        """Push the friendly "I'm still blocked — I need X to start" nudge (FR-ONBOARD).
+
+        Informational (NORMAL urgency): it lands in the in-app inbox and fans out to
+        whatever channels the user has opted into — exactly the existing digest/status
+        path, NOT a parallel channel. ``dedup_key`` is keyed per (campaign, UTC day) so a
+        re-driven same-day push is a no-op at the notifier (the scheduler already guards
+        the cadence; this is defense in depth, FR-NOTIF-3).
+        """
+        return self._notification.notify(
+            Notification(
+                title="One more step to start your job search",
+                body=body,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+                dedup_key=f"essentials_nudge:{campaign_id}:{day.isoformat()}",
+            )
+        )
+
     # --- in-app notification center (FR-UI-3 feed) ------------------------
     def list_inbox(self, *, include_seen: bool = False) -> list:
         """Current in-app notifications backing the notification center.

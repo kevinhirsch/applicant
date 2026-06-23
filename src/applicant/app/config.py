@@ -236,6 +236,12 @@ class Settings(BaseSettings):
     # scheduling; a periodic string (e.g. ``daily``) opts in. Default OFF so the
     # substrate ships dormant (FR-MIND-12) until the stores are wired.
     curation_schedule: str = Field(default="off", alias="CURATION_SCHEDULE")
+    # Cadence of the proactive "I'm still blocked on essentials" onboarding nudge
+    # (FR-NOTIF / FR-ONBOARD). Empty/``off`` disables scheduling; a periodic string
+    # (e.g. ``daily``) opts in to a once-per-(campaign, UTC day) push naming the missing
+    # apply-essentials. Default OFF so the hermetic lane is byte-identical (no behavior
+    # change) until a deploy opts in.
+    essentials_nudge_schedule: str = Field(default="off", alias="ESSENTIALS_NUDGE_SCHEDULE")
     # Model id for the (cheaper) background curation pass (FR-MIND-7/-13). Empty =>
     # reuse the main configured model.
     curation_model: str = Field(default="", alias="CURATION_MODEL")

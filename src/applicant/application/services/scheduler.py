@@ -48,6 +48,8 @@ class Scheduler:
         run_summaries_provider=None,
         status_update_service=None,
         status_update_schedule: str = "off",
+        essentials_nudge_service=None,
+        essentials_nudge_schedule: str = "off",
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
@@ -84,6 +86,22 @@ class Scheduler:
         # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same day
         # never re-pushes the update (mirrors the digest/curation per-day idempotency).
         self._status_update_days: dict[tuple[str, date], bool] = {}
+        # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" nudge.
+        # ``essentials_nudge_service`` checks each active campaign's apply-readiness and,
+        # when automated work is BLOCKED specifically because apply-essentials are missing,
+        # pushes ONE friendly first-person notification naming exactly what's still needed
+        # — through the EXISTING notification path (in-app inbox + opt-in fan-out, NOT a
+        # parallel channel). ``essentials_nudge_schedule`` gates the cadence exactly like
+        # the curation/status-update nudges: ``off``/empty (default) keeps it dormant — a
+        # fast no-op with NO behavior change; anything else opts in to a once-per-UTC-day
+        # push keyed per (campaign, UTC day). Unlike the other nudges this fires while the
+        # automated-work gate is CLOSED (the whole point is the user hasn't unblocked it),
+        # but ONLY when the close is due to missing apply-essentials — never otherwise.
+        self._essentials_nudge = essentials_nudge_service
+        self._essentials_nudge_schedule = (essentials_nudge_schedule or "off").strip().lower()
+        # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same day
+        # never re-pushes the nudge (mirrors the status-update per-day idempotency).
+        self._essentials_nudge_days: dict[tuple[str, date], bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -176,6 +194,10 @@ class Scheduler:
             #      (FR-AGENT-7/FR-OBS-2), gated + idempotent. Uses the SAME campaigns the
             #      loop ticked above so a freshly-removed campaign gets none.
             status_pushed = self._run_status_updates(storage, now)
+            # (b3) push the proactive "still blocked on essentials" nudge once per
+            #      (campaign, UTC day) (FR-NOTIF / FR-ONBOARD), gated + idempotent. Uses
+            #      the SAME campaigns the loop ticked so a freshly-removed campaign gets none.
+            essentials_nudged = self._run_essentials_nudges(storage, now)
         finally:
             self._tick_running = False
             if session is not None:
@@ -194,6 +216,7 @@ class Scheduler:
             ladder_fired=len(fired),
             curation_reviewed=curated.get("reviewed", 0),
             status_updates=len(status_pushed),
+            essentials_nudges=len(essentials_nudged),
         )
         return {
             "ticked": ticked,
@@ -207,6 +230,10 @@ class Scheduler:
             # FR-AGENT-7 / FR-OBS-2: campaign ids that got a status update pushed this
             # tick (empty when disabled / gated / already-pushed / nothing to report).
             "status_updates": status_pushed,
+            # FR-NOTIF / FR-ONBOARD: campaign ids that got a "still blocked on essentials"
+            # nudge pushed this tick (empty when disabled / already-pushed / gate open /
+            # nothing missing / blocked for some other reason).
+            "essentials_nudges": essentials_nudged,
         }
 
     def state(self, now: datetime | None = None) -> dict:
@@ -420,6 +447,53 @@ class Scheduler:
         """Keep the once-per-day status-update guard bounded over 24/7 operation."""
         self._status_update_days = {
             k: v for k, v in self._status_update_days.items() if k[1] == today
+        }
+
+    # --- proactive "still blocked on essentials" nudge (FR-NOTIF / FR-ONBOARD) ---
+    def _run_essentials_nudges(self, storage, now: datetime) -> list[str]:
+        """Push the "I'm still blocked" nudge at most once per (campaign, UTC day).
+
+        Fast no-op when disabled (``ESSENTIALS_NUDGE_SCHEDULE`` off / no service). For
+        each active campaign that hasn't been nudged today, asks the service to check
+        apply-readiness and push ONE friendly first-person notification naming exactly
+        the missing apply-essentials. The service emits NOTHING when the gate is open /
+        nothing's missing (FR-AGENT-5: the list comes from ``apply_readiness``, never
+        fabricated), in which case the day is still marked so a re-tick does not retry.
+
+        Distinct from the curation/status-update nudges, this does NOT consult the
+        automated-work gate: the gate is CLOSED precisely because essentials are missing
+        (that is the situation it exists to nudge about). It is still scoped to that one
+        cause — the service only emits when ``apply_readiness`` reports missing essentials,
+        so a gate closed for any OTHER reason (no LLM, etc.) yields no nudge. Returns the
+        campaign ids actually nudged this tick.
+        """
+        if self._essentials_nudge is None or self._essentials_nudge_schedule in ("", "off"):
+            return []
+        today = now.date()
+        self._prune_essentials_nudge_days(today)
+        pushed: list[str] = []
+        for campaign in self._active_campaigns(storage):
+            key = (str(campaign.id), today)
+            if self._essentials_nudge_days.get(key):
+                continue
+            # Mark BEFORE emitting so a crash mid-push doesn't loop it the same day; the
+            # notifier dedup key (per campaign + UTC day) is the second line of defense.
+            self._essentials_nudge_days[key] = True
+            try:
+                handle = self._essentials_nudge.emit(campaign.id, now)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(
+                    "essentials_nudge_failed", campaign_id=str(campaign.id), error=str(exc)
+                )
+                continue
+            if handle:
+                pushed.append(str(campaign.id))
+        return pushed
+
+    def _prune_essentials_nudge_days(self, today: date) -> None:
+        """Keep the once-per-day essentials-nudge guard bounded over 24/7 operation."""
+        self._essentials_nudge_days = {
+            k: v for k, v in self._essentials_nudge_days.items() if k[1] == today
         }
 
     def _active_campaigns(self, storage=None):
