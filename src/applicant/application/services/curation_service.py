@@ -87,6 +87,23 @@ class SkillProposal:
 
 
 @dataclass(frozen=True)
+class ForgetProposal:
+    """A staged proposal to FORGET (remove) curated memory lines (FR-MIND-1/-9).
+
+    A forget is a write, so it is gated by the same review-before-write policy: when
+    memory write-approval is on (the default) the request is staged for the user to
+    approve in the Portal before anything is removed; relaxing approval lets a forget
+    apply directly. ``find`` is the substring matched against memory text (the same
+    semantics as :meth:`MemoryStore.remove`); ``preview`` is the human-readable text
+    of the entry the user asked to forget, for an honest confirmation in the UI.
+    """
+
+    find: str
+    source_run_id: str = "user"
+    preview: str = ""
+
+
+@dataclass(frozen=True)
 class CurationResult:
     """The outcome of one curation tick (introspection + tests)."""
 
@@ -335,6 +352,32 @@ class CurationService:
         )
         with self._ledger.lock:
             return self._dispatch(0, [], [proposal])
+    # --- user-initiated forget (FR-MIND-1 remove, gated by FR-MIND-9) -----
+    def stage_forget(
+        self,
+        find: str,
+        *,
+        preview: str = "",
+        source_run_id: str = "user",
+    ) -> dict:
+        """Forget the curated memory line(s) matching ``find`` (substring).
+
+        A forget is a WRITE, so it honours the SAME review-before-write policy as an
+        add (FR-MIND-9): when memory write-approval is on (the default) it is STAGED
+        for the user to approve in the Portal and nothing is removed yet; when the
+        operator has relaxed memory approval it applies immediately via
+        :meth:`MemoryStore.remove`. Returns a small result the router forwards:
+        ``applied`` (lines removed now) and ``staged`` (1 when queued for review).
+        """
+        if self._memory_write_approval:
+            proposal = ForgetProposal(
+                find=find, preview=preview or find, source_run_id=source_run_id
+            )
+            with self._ledger.lock:
+                self._ledger.staged.append(proposal)
+            return {"applied": 0, "staged": 1, "id": _proposal_id(proposal)}
+        removed = self._memory.remove(find)
+        return {"applied": int(removed), "staged": 0, "id": None}
 
     # --- staged-proposal review (FR-MIND-9) -------------------------------
     def list_staged(self) -> tuple[object, ...]:
@@ -374,6 +417,10 @@ class CurationService:
                     self._skills.create(p.skill)
             else:
                 self._skills.create(p.skill)
+            return True
+        if isinstance(p, ForgetProposal):
+            # Applying a forget removes the matching curated lines (FR-MIND-1/-9).
+            self._memory.remove(p.find)
             return True
         return False
 
@@ -463,6 +510,8 @@ def _proposal_id(p: object) -> str:
         basis = f"memory|{p.source_run_id}|{p.entry.kind}|{p.entry.text}"
     elif isinstance(p, SkillProposal):
         basis = f"skill|{p.source_run_id}|{p.skill.name}|{p.skill.version}"
+    elif isinstance(p, ForgetProposal):
+        basis = f"forget|{p.source_run_id}|{p.find}"
     else:  # pragma: no cover - defensive
         basis = repr(p)
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
@@ -501,6 +550,16 @@ def proposal_to_dict(p: object) -> dict:
             "is_improvement": bool(p.is_improvement),
             "source_run_id": p.source_run_id,
             "claims_authority": bool(p.claims_authority),
+        }
+    if isinstance(p, ForgetProposal):
+        return {
+            "id": _proposal_id(p),
+            "type": "forget",
+            "label": "Forget something remembered",
+            "text": p.preview or p.find,
+            "find": p.find,
+            "source_run_id": p.source_run_id,
+            "claims_authority": False,
         }
     return {"id": _proposal_id(p), "type": "unknown"}  # pragma: no cover - defensive
 

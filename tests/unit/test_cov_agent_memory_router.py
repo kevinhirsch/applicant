@@ -79,3 +79,55 @@ def test_curation_list_approve_and_deny(client):
     pid2 = proposal_to_dict(curation.list_staged()[0])["id"]
     assert client.post(f"/api/agent-memory/curation/{pid2}/deny").json()["ok"] is True
     assert curation.list_staged() == ()
+
+
+def test_snapshot_entries_carry_stable_refs(client):
+    mem = client.app.state.container.agent_memory.memory
+    mem.add(MemoryEntry(text="Acme uses Workday", kind="environment"))
+    body = client.get("/api/agent-memory").json()
+    refs = [e["ref"] for e in body["environment"] if "Workday" in e["text"]]
+    assert refs and refs[0]
+    # Stable: a second read yields the same ref for the same line.
+    body2 = client.get("/api/agent-memory").json()
+    refs2 = [e["ref"] for e in body2["environment"] if "Workday" in e["text"]]
+    assert refs == refs2
+
+
+def test_forget_stages_for_review_by_default(client):
+    container = client.app.state.container
+    mem = container.agent_memory.memory
+    mem.add(MemoryEntry(text="Forget me please", kind="environment"))
+    ref = next(
+        e["ref"] for e in client.get("/api/agent-memory").json()["environment"]
+        if "Forget me" in e["text"]
+    )
+    # Default posture is review-on (FR-MIND-9): a forget is STAGED, not applied.
+    r = client.post("/api/agent-memory/forget", json={"ref": ref})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["staged"] == 1 and body["applied"] == 0
+    # Still remembered until approval.
+    assert any("Forget me" in e.text for e in mem.snapshot().all())
+    # It shows up in the review queue as a forget proposal, and approving removes it.
+    queued = client.get("/api/agent-memory/curation").json()["items"]
+    forget = next(p for p in queued if p["type"] == "forget")
+    assert client.post(f"/api/agent-memory/curation/{forget['id']}/approve").json()["ok"] is True
+    assert not any("Forget me" in e.text for e in mem.snapshot().all())
+
+
+def test_forget_applies_immediately_when_approval_relaxed(client):
+    container = client.app.state.container
+    mem = container.agent_memory.memory
+    container.curation_service._memory_write_approval = False
+    mem.add(MemoryEntry(text="Drop this now", kind="user"))
+    ref = next(
+        e["ref"] for e in client.get("/api/agent-memory").json()["user"]
+        if "Drop this" in e["text"]
+    )
+    r = client.post("/api/agent-memory/forget", json={"ref": ref})
+    assert r.json()["applied"] == 1 and r.json()["staged"] == 0
+    assert not any("Drop this" in e.text for e in mem.snapshot().all())
+
+
+def test_forget_requires_a_target(client):
+    assert client.post("/api/agent-memory/forget", json={}).status_code == 400
