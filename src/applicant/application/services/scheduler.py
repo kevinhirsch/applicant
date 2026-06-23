@@ -46,6 +46,8 @@ class Scheduler:
         curation_service=None,
         curation_schedule: str = "off",
         run_summaries_provider=None,
+        status_update_service=None,
+        status_update_schedule: str = "off",
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
@@ -69,6 +71,19 @@ class Scheduler:
         # never re-runs the nudge. The proposal ledger is content-hashed too, so even
         # a double-run could not duplicate proposals (defense in depth, FR-MIND-7).
         self._curation_days: dict[date, bool] = {}
+        # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH
+        # sibling of the chatbot self-report. ``status_update_service`` assembles a short,
+        # first-person plain-language summary from read-only state and pushes it through
+        # the EXISTING notification path (in-app inbox + opt-in fan-out, NOT a parallel
+        # channel). ``status_update_schedule`` gates the cadence exactly like the curation
+        # nudge: ``off``/empty (default) keeps it dormant — a fast no-op with NO behavior
+        # change; anything else opts in to a once-per-UTC-day push keyed like the daily
+        # digest. Gated on the automated-work gate, idempotent per (campaign, UTC day).
+        self._status_update = status_update_service
+        self._status_update_schedule = (status_update_schedule or "off").strip().lower()
+        # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same day
+        # never re-pushes the update (mirrors the digest/curation per-day idempotency).
+        self._status_update_days: dict[tuple[str, date], bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -157,6 +172,10 @@ class Scheduler:
             #     (its summaries provider may read recent runs from it). Runs inside the
             #     same try so the session is always closed in the finally below.
             curated = self._run_curation(curation, storage, now)
+            # (b2) push the proactive periodic agent status update once per UTC day
+            #      (FR-AGENT-7/FR-OBS-2), gated + idempotent. Uses the SAME campaigns the
+            #      loop ticked above so a freshly-removed campaign gets none.
+            status_pushed = self._run_status_updates(storage, now)
         finally:
             self._tick_running = False
             if session is not None:
@@ -174,6 +193,7 @@ class Scheduler:
             campaigns=len(ticked),
             ladder_fired=len(fired),
             curation_reviewed=curated.get("reviewed", 0),
+            status_updates=len(status_pushed),
         )
         return {
             "ticked": ticked,
@@ -184,6 +204,9 @@ class Scheduler:
             # FR-MIND-7 / FR-OBS-2: a small introspectable result for the curation
             # nudge — ``ran`` False (with a reason) when disabled / gated / already-run.
             "curation": curated,
+            # FR-AGENT-7 / FR-OBS-2: campaign ids that got a status update pushed this
+            # tick (empty when disabled / gated / already-pushed / nothing to report).
+            "status_updates": status_pushed,
         }
 
     def state(self, now: datetime | None = None) -> dict:
@@ -355,6 +378,48 @@ class Scheduler:
             return
         self._curation_days = {
             d: v for d, v in self._curation_days.items() if d == today
+        }
+
+    # --- proactive periodic status update (FR-AGENT-7 / FR-OBS-2) ---------
+    def _run_status_updates(self, storage, now: datetime) -> list[str]:
+        """Push the periodic agent status update at most once per (campaign, UTC day).
+
+        Fast no-op when (a) disabled (``STATUS_UPDATE_SCHEDULE`` off / no service), or
+        (b) the automated-work gate is closed. For each active campaign that has not yet
+        received today's update, asks the service to assemble + push it through the
+        existing notification path; the service emits NOTHING when there is nothing
+        truthful to report (FR-AGENT-5), in which case the day is still marked so a
+        re-tick does not retry it. Returns the campaign ids actually pushed this tick.
+        """
+        if self._status_update is None or self._status_update_schedule in ("", "off"):
+            return []
+        if not self._automated_work_allowed():
+            return []
+        today = now.date()
+        self._prune_status_update_days(today)
+        pushed: list[str] = []
+        for campaign in self._active_campaigns(storage):
+            key = (str(campaign.id), today)
+            if self._status_update_days.get(key):
+                continue
+            # Mark BEFORE emitting so a crash mid-push doesn't loop it the same day; the
+            # notifier dedup key (per campaign + UTC day) is the second line of defense.
+            self._status_update_days[key] = True
+            try:
+                handle = self._status_update.emit(campaign.id, now)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(
+                    "status_update_failed", campaign_id=str(campaign.id), error=str(exc)
+                )
+                continue
+            if handle:
+                pushed.append(str(campaign.id))
+        return pushed
+
+    def _prune_status_update_days(self, today: date) -> None:
+        """Keep the once-per-day status-update guard bounded over 24/7 operation."""
+        self._status_update_days = {
+            k: v for k, v in self._status_update_days.items() if k[1] == today
         }
 
     def _active_campaigns(self, storage=None):
