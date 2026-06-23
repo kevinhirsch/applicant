@@ -37,16 +37,39 @@ Each row is wired across the whole chain — engine router → workspace
 | Run controls / mark-submitted / Update button | `applicantDebug.js` (ops tab) | `ops` / `admin` / `update` | `llm_configured` | **live** |
 | Live remote view / takeover + submit/authorize | `applicantRemote.js` | `remote` | reached from pending actions / chat | **live** |
 | Credential vault | `applicantVault.js` | `credentials` | `onboarding_complete` | **live** |
+| Profile — what the assistant remembers | `applicantMind.js` (memory panel) | `agent_memory` (`/api/agent-memory`) → `/api/applicant/mind/memory` | `llm_configured` | **live** |
+| Profile — saved playbooks | `applicantMind.js` (playbooks panel) | `agent_memory` (`/api/agent-memory/skills`) → `/api/applicant/mind/skills` | `llm_configured` | **live** |
+| Learning curation approvals | `applicantMind.js` / `applicantPortal.js` (approve/deny) | `agent_memory` (`/api/agent-memory/curation`) → `/api/applicant/mind/curation` | `llm_configured` | **live** |
+
+The three learning surfaces above come from the assistant-learning substrate
+(`docs/spec/agent-intelligence.md`, the `FR-MIND` group) — a lift-and-shift of the Hermes
+Agent (MIT) learning loop. They are wired end-to-end today: the engine answers from its
+self-contained in-process store by default, and `MIND_BACKEND=bridge` points the ports at
+the front-door memory/playbooks store over the internal callback channel. Self-writes the
+assistant proposes are staged for review (default on) and surface as approve/deny items in
+the portal — only approval applies a proposal, so the advisory-not-authorization rule holds.
 
 ## Present-but-disabled surface
 
 | Surface | Front-door section | Engine backing | Status |
 |---|---|---|---|
 | Compare | `compare` (rail + toolbar button) | none | **disabled** (visible, greyed, never wired) |
+| Desktop assist (live session) | `applicantRemote.js` (opt-in toggle in the live-session modal) | `remote` desktop endpoints → `/api/applicant/.../desktop/*`; `ComputerUsePort` (`noop` default) | **dormant** (present-but-grayed) |
 
 `Compare` has no Applicant engine backing. `workspace/src/applicant_features.py` sets
 `present_but_disabled: True` for it, so the feature layer always reports it `disabled`.
-This is the only deliberately-disabled Applicant surface.
+
+**Desktop assist** is the optional background desktop-control capability
+(`docs/spec/computer-use.md`, the `FR-CUA` group) — a lift-and-shift of the Hermes Agent
+(MIT) computer-use feature. The port, core safety guards (stop-boundary, hard-blocks,
+no-secrets), and the front-door toggle + proxy routes are all wired, but the surface ships
+**present-but-grayed**: the engine boots the safe no-side-effects backend, and the toggle
+stays locked with honest copy until the desktop driver and its display stack are baked into
+the **sandbox** image (not the `api` image) and the health preflight passes. It is registered
+`dormant` as `desktop_assist` in `src/applicant/dormant.py` and flips to live once the driver
+lands — same "bake the binary into the image or it silently degrades" rule as TeX/LibreOffice/
+Chrome. The honest disabled state is driven by the dormant registry +
+`workspace/src/applicant_features.py`.
 
 ## Adjacencies (not Applicant surfaces)
 
@@ -59,8 +82,9 @@ not through a separate operator-facing surface.
 
 ## Engine-side dormant registry (for reference)
 
-Within the engine, surfaces that had grayed scaffolds during earlier phases are now
-all `live` in `src/applicant/dormant.py`:
+Within the engine, the surfaces that had grayed scaffolds during earlier phases are now
+`live` in `src/applicant/dormant.py`; the assistant-learning surfaces are live, and
+`desktop_assist` is the one surface still `dormant` (its driver is not yet baked in):
 
 | Engine surface key | Status |
 |---|---|
@@ -73,6 +97,10 @@ all `live` in `src/applicant/dormant.py`:
 | Chatbot | live |
 | Update trigger | live |
 | Remote-session takeover | live |
+| `assistant_memory` (what the assistant remembers) | live |
+| `saved_playbooks` | live |
+| `curation_approvals` (learning curation queue) | live |
+| `desktop_assist` (computer use) | dormant |
 
 The remote-session takeover defaults to the **configurable Ubuntu webtop full desktop**
 (`REMOTE_VIEW_BACKEND=webtop`; DE = `TAKEOVER_DESKTOP` → cinnamon default / xfce / gnome

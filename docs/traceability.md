@@ -269,6 +269,51 @@ green (`uv run pytest -q`: **613 passed, 14 skipped**).
 | FR-INSTALL-2 | 4 | "Update script with backup/migrate/rollback" | Delivered — Phase 4; `scripts/update.sh` (backup/migrate/restart/rollback); update-script test |
 | FR-INSTALL-3 | 4 | "Docker Compose ships whole stack" | Delivered — Phase 4; Compose stack; compose-stack smoke test |
 
+## FR-CUA (computer use / desktop assist)
+
+Extends the master spec via [computer-use.md](spec/computer-use.md). Lift-and-shift of the
+Hermes Agent (`kevinhirsch/hermes-agent`, MIT) computer-use feature onto a swappable
+`ComputerUsePort`; ships **dormant** (FR-CUA-9) until the desktop driver is baked into the
+sandbox image. Engine chain: core guards → `ComputerUsePort` (`adapters/sandbox/computer_use/`)
+→ `app/routers/remote.py` desktop-assist endpoints → workspace `applicant_remote_routes.py`
+(`/api/applicant/.../desktop/*`) → `applicantRemote.js`.
+
+| ID | WP | BDD Feature(s) | Status |
+|---|---|---|---|
+| FR-CUA-1/2 | 6 | "Desktop assist confined to the sandbox; swappable sub-port" | Delivered — `ComputerUsePort` + `noop` (default) / `cua_driver` adapters under `adapters/sandbox/computer_use/`; selected by `COMPUTER_USE_BACKEND`; unit/contract test against the noop adapter |
+| FR-CUA-3 | 6 | "Desktop assist inherits the stop-boundary" | Delivered — the core stop-boundary guard denies account-create / CAPTCHA / final-submit for the desktop tool the same way as the browser path; guard derives its own ground truth (no caller flag opts past it); core unit test |
+| FR-CUA-4 | 6 | "Approval gate on destructive desktop actions" | Delivered — destructive actions route through review-before-act (`COMPUTER_USE_APPROVALS=manual`/`session`); unit test |
+| FR-CUA-5 | 6 | "Hard-blocked key combos / type patterns (server-side)" | Delivered — core denylist (dangerous combos + `curl…|bash` / `rm -rf` patterns) denied regardless of approval; core unit test |
+| FR-CUA-6 | 6 | "No secret typing; vault is the credential source" | Delivered — desktop `type` refuses secrets; credentials come from the vault fill path; unit test |
+| FR-CUA-7 | 6 | "No-foreground / co-working invariant" | Delivered — background pid-scoped input contract on the port (no cursor-steal/refocus); contract test |
+| FR-CUA-8 | 6 | "Every desktop action logged + screenshotted; eviction" | Delivered — actions logged to the per-application record with capture; screenshot eviction + image token accounting; unit test |
+| FR-CUA-9/12 | 6 | "Present-but-disabled until reachable; health preflight" | Delivered — registered dormant in `src/applicant/dormant.py` (`desktop_assist`); `health()` preflight degrades to noop when the driver is absent; `tests/unit/test_cov_remote.py` / `test_cov_dormant.py` |
+| FR-CUA-10 | 6 | "White-label & honest copy" | Delivered — all front-door copy is plain-language Applicant; no driver/upstream codenames (CI denylist gates it) |
+| FR-CUA-11 | 6 | "Degraded text-only (ax) mode" (SHOULD) | Delivered — `COMPUTER_USE_MODE=ax` accessibility-tree path; falls back to human handoff on empty AX trees; unit test |
+
+## FR-MIND (assistant learning / memory / playbooks)
+
+Extends the master spec via [agent-intelligence.md](spec/agent-intelligence.md). Lift-and-shift
+of the Hermes Agent (`kevinhirsch/hermes-agent`, MIT) learning/looping substrate — curated
+memory, procedural skills, cross-session recall — re-homed onto engine ports + the workspace
+`workspace/services/memory/` store. Engine chain: `MemoryStore`/`SkillStore`/`RecallIndex` ports
+(in-memory default + `bridge` over the callback channel) → `app/routers/agent_memory.py`
+(`/api/agent-memory*`) → workspace `applicant_mind_routes.py` (`/api/applicant/mind/*`) →
+`applicantMind.js` (memory panel) + `applicantPortal.js` (curation approvals).
+
+| ID | WP | BDD Feature(s) | Status |
+|---|---|---|---|
+| FR-MIND-1 | 6 | "Curated memory (environment + user, bounded)" | Delivered — `MemoryStore` (add/replace/remove, size caps `MEMORY_MAX_CHARS`/`USER_MAX_CHARS`); frozen snapshot read per tick; unit test |
+| FR-MIND-2/3 | 6 | "Procedural skills + cross-session recall" | Delivered — `SkillStore` (create/patch/edit, progressive disclosure L0/L1) + `RecallIndex` (FTS + chromadb-analogue); in-memory + `bridge` adapters; unit test |
+| FR-MIND-4/5 | 6 | "Identity tier + tiered prompt assembly" | Delivered — identity slot sourced from the voice spec (white-labeled); ordered prompt tiers in the prompt builder; unit test |
+| FR-MIND-6 | 6 | "Tool registry & dispatch" | Delivered — memory/skill/recall are registered tools dispatched through the central registry; unit test |
+| FR-MIND-7 | 6 | "Closed learning loop on a schedule" | Delivered — `CurationService` review nudge (`CURATION_SCHEDULE`, optional cheaper `CURATION_MODEL`) proposes memory/skill updates; unit test |
+| FR-MIND-9 | 6 | "Review-before-write; self-writes are gated" | Delivered — self-writes stage to the process-lived `CurationLedger` (`MEMORY_WRITE_APPROVAL`/`SKILLS_WRITE_APPROVAL` default on) → pending-actions approve/deny; only approval writes a proposal; unit test |
+| FR-MIND-10 | 6 | "Per-tick safety: state in process/Postgres, never the loop" | Delivered — curation state lives in the injected process-lived ledger / durable store and survives an `AgentLoop` rebuild; unit test asserts cross-tick survival |
+| FR-MIND-11 | 6 | "Memory/skills are advisory, never authorization" | Delivered — a skill claiming submit authority is denied by the core guard (ground truth not caller-supplied); ingested content is treated as untrusted; core unit test |
+| FR-MIND-12 | 6 | "Reachability & white-label" | Delivered — viewable/editable in the memory/profile panel; curation queue in the portal; `assistant_memory`/`saved_playbooks`/`curation_approvals` live in `src/applicant/dormant.py`; plain-language copy (no upstream strings; CI denylist gates it); `tests/unit/test_cov_dormant.py` |
+| FR-MIND-13 | 6 | "Keep it cheap & local" (SHOULD) | Delivered — recall/embeddings local (chromadb), curation prefers the cheaper model, progressive disclosure + bounds cap token cost; unit test |
+
 ## NFR
 
 | ID | WP | BDD Feature(s) | Status |
@@ -307,6 +352,8 @@ router it forwards to is named in [frontend.md](frontend.md)).
 | FR-CHAT (chatbot + job actions) | Chat / assistant | `applicant_chat_routes.py` + `applicantChat.js` |
 | FR-LOG-3/4, FR-OBS-2, FR-UI-4 (history, screenshots, logs, workflow state, mark-submitted, tool toggles) | Activity / debug | `applicant_admin_routes.py` + `applicantDebug.js` |
 | FR-OOBE-4 / FR-INSTALL-2 (in-UI Update button) | Activity/debug — Update button | `applicant_ops_routes.py` (Update trigger) + `applicantDebug.js` |
+| FR-MIND (what the assistant remembers, saved playbooks, curation approvals) | Profile — memory panel + pending-actions portal | `applicant_mind_routes.py` (`/api/applicant/mind/{memory,skills,curation}`) + `applicantMind.js` / `applicantPortal.js` |
+| FR-CUA (desktop assist on the live session) — **ships dormant/grayed** | Live remote view / takeover (opt-in toggle, present-but-grayed) | `applicant_remote_routes.py` (`.../desktop/{health,enable,disable,action}`) + `applicantRemote.js` |
 
 **Engine-internal, not a separate front-door surface (called out per the spec):**
 
