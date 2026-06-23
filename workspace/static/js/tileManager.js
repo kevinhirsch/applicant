@@ -10,24 +10,21 @@
  * takes precedence). See _zoneForPointer for the source of truth:
  *   - dragged OVER the top edge (y ≤ 0)  → fullscreen (covers the sidebar)
  *   - near the top edge (≤ 8px)          → maximize (fills the area beside the sidebar)
- *   - right edge (≤ 24px)                → right half
- *   - bottom edge (≤ 24px)               → bottom half
- * Corner quarter-snaps and the LEFT-half snap are intentionally DISABLED — the
- * sidebar lives on the left, and the corners were dropped on user request.
- * Per-window limits (see _zoneForContent): settings-modal → right-half only;
- * cookbook / theme / memory → fullscreen only.
+ * The generic right-half / bottom-half tile-snaps were removed (user request —
+ * low value for the floating tool windows); corner quarter-snaps and the
+ * left-half snap were already disabled. So only the top-edge maximize/fullscreen
+ * remain. Per-window limits (see _zoneForContent): cookbook / theme / memory →
+ * fullscreen only; settings does not tile.
  *
  * NOTE: a separate "edge dock" that reserves width and pushes the chat/content
  * aside (rather than floating over it) lives in modalSnap.js — used mainly by
- * Email's list/reader and the email↔document split view.
+ * Email's list/reader and the email↔document split view, and is unaffected.
  *
  * Each modal-content remembers its pre-snap geometry so dragging away restores
  * the original size.
  */
 
-const EDGE_THRESHOLD_PX = 24;     // how close to an edge counts as "near"
-const CORNER_THRESHOLD_PX = 64;   // corner box size
-const TOP_FULL_STRIP_PX = 8;      // top strip → maximize
+const TOP_FULL_STRIP_PX = 8;      // top strip → maximize (the only edge snap left)
 
 let _ghost = null;
 let _activeZone = null;
@@ -113,14 +110,13 @@ function _zoneForPointer(x, y) {
     return { name: 'maximize', rect: { left: safe.left, top: safe.top, width: W, height: H } };
   }
 
-  // Corner quarter-snaps DISABLED (user request) — only the top strip
-  // (maximize) and the right/bottom half-snaps remain. The LEFT-half snap
-  // is also disabled (the sidebar lives there; docking over it is awkward).
-  if (x >= safe.right - EDGE_THRESHOLD_PX)
-    return { name: 'right-half', rect: { left: safe.left + W / 2, top: safe.top, width: W / 2, height: H } };
-  if (y >= safe.bottom - EDGE_THRESHOLD_PX)
-    return { name: 'bottom-half', rect: { left: safe.left, top: safe.top + H / 2, width: W, height: H / 2 } };
-
+  // Side / corner snaps are intentionally disabled. The generic right-half and
+  // bottom-half tile-snaps were removed (user request — low value for the
+  // floating tool windows, which already open centered in the chat area);
+  // corner quarter-snaps and the left-half snap were already gone. Only the
+  // top-edge maximize/fullscreen survive here. (Email's useful left/right
+  // *edge-dock* — which reserves width and pushes content aside — is a separate
+  // system in modalSnap.js and is unaffected.)
   return null;
 }
 
@@ -128,10 +124,10 @@ function _zoneForContent(content, x, y) {
   const modal = content && content.closest && content.closest('.modal, .research-overlay');
   const zone = _zoneForPointer(x, y);
   if (!zone) return null;
-  // Settings has a dense two-column layout; the full-height sidebar-style dock
-  // crushes it. Let it tile only into the normal right half, where the nav can
-  // flip to top tabs via CSS when the window gets narrow.
-  if (modal && modal.id === 'settings-modal' && zone.name !== 'right-half') return null;
+  // Settings only ever tiled into the right half; with the generic side-snap
+  // removed it no longer tiles. Its dense two-column layout is crushed by the
+  // top maximize/fullscreen, so opt it out entirely rather than allow those.
+  if (modal && modal.id === 'settings-modal') return null;
   if (modal && (modal.id === 'cookbook-modal'
       || modal.id === 'theme-modal'
       || modal.id === 'memory-modal')
@@ -381,7 +377,7 @@ export function snapModalToZone(modal, zone) {
   if (!modal || !zone) return;
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
-  if (modal.id === 'settings-modal' && zone.name !== 'right-half') return;
+  if (modal.id === 'settings-modal') return;  // settings no longer tiles (see _zoneForContent)
   _applySnap(content, zone.rect, zone.name);
 }
 
