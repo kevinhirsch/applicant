@@ -162,6 +162,28 @@ documented** so the stack is shippable:
     `CONTEXT_COMPRESS_THRESHOLD` + a provider-gated prefix cache (`PREFIX_CACHE`) at the LLM
     adapter (`adapters/llm/context_window.py`).
 
+  **Wave 2 — deeper learning + onboarding** landed on `main` on top of the above:
+  - **Agent-callable tools (FR-MIND-6).** A capability-gated tool-calling seam on the LLM
+    port/adapter lets the chat assistant call `remember` / `forget` / `save_playbook` /
+    `update_playbook` / `recall` / `desktop` mid-conversation (`chat_tools.py` `ChatToolbox`;
+    opt-in via `CHAT_TOOLS`, default `off`). Writes route through review-before-write
+    (FR-MIND-9) and stage for approval; a tool asserting `claims_authority` is refused
+    (FR-MIND-11); `desktop` goes through the FR-CUA guards; each tool is gated by the FR-UI-4
+    tool registry.
+  - **Onboarding seed (FR-MIND-1/3).** Completing onboarding seeds a bounded curated-memory
+    baseline and indexes cross-session recall from the user's own profile/résumé
+    (`onboarding_seed.py`); idempotent, and a no-op when the substrate is absent.
+  - **Learned-context provenance (FR-MIND-5/11).** Generation now records which learned
+    memory / playbooks / recall it drew on (`GeneratedDocument.provenance`, migration `0006`);
+    the document-review surface shows a "What I drew on" panel.
+  - **Minimal onboarding + block-until-essentials gate (FR-ONBOARD/FR-OOBE).** A new core
+    rule `core/rules/apply_readiness.py` defines the REQUIRED-TO-APPLY set (target roles, work
+    mode, locations, salary floor, key skills, résumé). The onboarding form now requires
+    ~only "connect a model"; the automated-work gate (`automated_work_allowed`) keys on
+    `is_ready_to_apply()` and stays BLOCKED until those essentials exist. `/api/setup/status`
+    emits `apply_ready` / `apply_missing` / `apply_blocked_reason`, and the wizard renders an
+    honest "what's still needed to start applying" banner.
+
   **Proven green end-to-end** by the hermetic loop smoke `tests/unit/test_loop_end_to_end.py`,
   which runs discovery → scoring → digest → approval → pre-fill → stop-boundary WITH the learning
   hooks firing.
