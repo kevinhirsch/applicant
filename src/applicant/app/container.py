@@ -132,6 +132,9 @@ class Container:
     # Phase 5: the agent run loop + scheduler that finally drive everything end-to-end.
     agent_loop: Any = None
     scheduler: Any = None
+    # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update service (PUSH
+    # sibling of the chatbot self-report). Dormant by default (STATUS_UPDATE_SCHEDULE=off).
+    status_update_service: Any = None
     # FR-MIND: the agent-learning substrate. ``agent_memory`` is the curated-memory /
     # skills / recall adapter trio (default ``in_memory``, hermetic). ``curation_service``
     # runs the scheduled closed loop; its cross-tick dedupe state lives in the
@@ -813,6 +816,27 @@ def build_container(settings: Settings | None = None) -> Container:
             services["_session"] = req_session
             return services
 
+    # FR-AGENT-7 / FR-OBS-2: the proactive periodic agent status update — the PUSH
+    # sibling of the chatbot self-report. Assembles a short, first-person, white-labeled
+    # summary from READ-ONLY sources (run status + next-action intent, recent history,
+    # the pending count, the scheduler heartbeat) and pushes it through the EXISTING
+    # notification path (in-app inbox + opt-in fan-out). All sources are optional/defensive
+    # (no fabrication); the scheduler gates the cadence (default off => dormant, no
+    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read from env directly so config.py
+    # stays untouched (additive, deploy-controllable; ``off``/``daily``).
+    import os as _os
+
+    from applicant.application.services.status_update import StatusUpdateService
+
+    status_update_service = StatusUpdateService(
+        notification_service=notification_service,
+        agent_run_service=agent_run_service,
+        admin_query=admin_query_service,
+        pending_actions=pending_actions_service,
+        # scheduler is wired additively below (it is built after this point).
+    )
+    status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
+
     scheduler = Scheduler(
         storage=storage,
         agent_loop=agent_loop,
@@ -827,7 +851,14 @@ def build_container(settings: Settings | None = None) -> Container:
         # per-tick factory supplies the isolated-session one sharing the SAME ledger.
         curation_service=curation_service,
         curation_schedule=settings.curation_schedule,
+        # FR-AGENT-7 / FR-OBS-2: the periodic status update on the configured cadence
+        # (default ``off`` => dormant, byte-identical hermetic behavior).
+        status_update_service=status_update_service,
+        status_update_schedule=status_update_schedule,
     )
+    # FR-OBS-2: give the status update the live scheduler heartbeat so "right now I'm
+    # running a cycle" reflects real tick state (wired additively — scheduler built after).
+    status_update_service._scheduler = scheduler
 
     return Container(
         settings=settings,
@@ -877,6 +908,7 @@ def build_container(settings: Settings | None = None) -> Container:
         research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
+        status_update_service=status_update_service,
         agent_memory=agent_memory,
         curation_service=curation_service,
         curation_ledger=curation_ledger,
