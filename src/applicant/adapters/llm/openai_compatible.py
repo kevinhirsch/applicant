@@ -222,6 +222,7 @@ class OpenAICompatibleLLM:
         transport: httpx.BaseTransport | None = None,
         timeout: float = 60.0,
         context_manager: ContextWindowManager | None = None,
+        app_context_manager: Any | None = None,
         prefix_cache: str = "auto",
     ) -> None:
         if ladder is None and (provider or model):
@@ -243,6 +244,14 @@ class OpenAICompatibleLLM:
         # disabled (token_budget=0) manager is a pure no-op, so the default path
         # is byte-identical to before.
         self._context_manager = context_manager or ContextWindowManager()
+        # FR-MIND-8: an OPTIONAL richer application-layer context manager
+        # (duck-typed ``.compress(...) -> result.turns``) that supersedes the
+        # placeholder when wired — it summarizes the middle turns with parent/child
+        # lineage instead of a generic placeholder. Adapter-layer code must NOT import
+        # the application type (that would invert the hexagonal layering), so it is
+        # held untyped and consulted by duck-typing. ``None`` (the default) keeps the
+        # current placeholder path, so existing call sites + tests are byte-identical.
+        self._app_context_manager = app_context_manager
         # FR-MIND-8: prefix-cache posture. "auto"/"on" apply provider cache
         # breakpoints where the provider advertises support; "off" never does.
         # Local/OpenAI-compatible providers advertise no support, so this is a
@@ -258,6 +267,22 @@ class OpenAICompatibleLLM:
         headers = {"Content-Type": "application/json"}
         headers.update(profile.headers(tier.api_key))
         return headers
+
+    def _bound_context(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        """Bound the multi-turn message list before dispatch (FR-MIND-8).
+
+        Prefers the richer application-layer context manager (lineage-aware middle-turn
+        summarization) when one is wired; otherwise falls back to the placeholder
+        ``ContextWindowManager``. Both are no-ops below threshold, so the default path
+        (neither over budget) is byte-identical to before.
+        """
+        app = self._app_context_manager
+        if app is not None and hasattr(app, "compress"):
+            result = app.compress(messages)
+            turns = getattr(result, "turns", None)
+            if isinstance(turns, list):
+                return turns
+        return self._context_manager.apply(messages)
 
     # --- FR-LLM-2: model auto-pull ----------------------------------------
     def list_models(self, *, tier_index: int = 0) -> list[str]:
@@ -294,7 +319,7 @@ class OpenAICompatibleLLM:
         # disabled (the default) this returns the same list — a single-shot
         # (system+user) call is unaffected; only a long multi-turn conversation
         # over budget gets its middle turns compressed.
-        messages = self._context_manager.apply(messages)
+        messages = self._bound_context(messages)
 
         required = _estimate_tokens(messages) + (max_tokens or 0)
         # Clamp the 1-based starting rung into the ladder. A heavy task may request a
@@ -554,7 +579,7 @@ class OpenAICompatibleLLM:
         if self._ladder is None:
             raise LLMNotConfigured("No LLM tier ladder is configured.")
 
-        messages = self._context_manager.apply(messages)
+        messages = self._bound_context(messages)
         required = _estimate_tokens(messages) + (max_tokens or 0)
         idx = min(max(0, start_tier - 1), len(self._ladder) - 1)
         if self._ladder.at(idx).context_window < required:

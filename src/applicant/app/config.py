@@ -253,6 +253,16 @@ class Settings(BaseSettings):
     # single-shot. Writes always stage for review (FR-MIND-9) and route through the
     # FR-UI-4 toggles — tools can never bypass review or the stop-boundary.
     chat_tools: str = Field(default="off", alias="CHAT_TOOLS")
+    # FR-MIND-6 / FR-CUA-2: lets the AUTONOMOUS agent loop call the SAME tools the chat
+    # assistant can (remember/forget/save-or-update a playbook/recall + a bounded desktop
+    # action) mid-reasoning, instead of only receiving them as passive context. ``off``
+    # (the conservative default) registers no tools and keeps the loop byte-identical to
+    # today. ``auto`` registers the tool set ONLY when the configured model also advertises
+    # tool calling. Writes always stage for review (FR-MIND-9), an authority-claiming write
+    # is refused (FR-MIND-11), the desktop action inherits the stop-boundary (FR-CUA), and
+    # each tool respects the per-tool on/off toggles — the loop tools reuse the chat
+    # toolbox + every existing guard and can never bypass review or the stop-boundary.
+    loop_tools: str = Field(default="off", alias="LOOP_TOOLS")
 
     # Fonts (FR-FONT-1/2). A confined, configurable dir for runtime font installs;
     # all filesystem/fc-cache ops are restricted to this dir (never system-wide).

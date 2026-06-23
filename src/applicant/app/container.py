@@ -386,14 +386,36 @@ def build_container(settings: Settings | None = None) -> Container:
     # apply provider prefix-cache breakpoints where supported. Threshold 0 (default)
     # keeps the manager a no-op, so default behavior is unchanged.
     from applicant.adapters.llm.context_window import ContextWindowManager
+    from applicant.application.services.context_manager import ContextManager
 
+    # FR-MIND-8/-13: the richer, lineage-aware application context manager. It
+    # summarizes the MIDDLE turns (parent/child lineage recorded) once context
+    # crosses the threshold; threshold 0 (default) disables it, so ``.compress`` is
+    # an identity and the default path is a strict no-op (byte-identical behavior).
+    # An OPTIONAL/defaulted dependency of the LLM adapter — when wired it supersedes
+    # the placeholder window manager. Its summarizer defaults to a deterministic
+    # heuristic now; the cheap-model summarizer is wired in AFTER ``llm`` exists
+    # (below) to avoid a construction cycle, mirroring the curation summarizer.
+    app_context_manager = ContextManager(
+        threshold=settings.context_compress_threshold,
+    )
     llm = OpenAICompatibleLLM(
         ladder=setup_service.build_ladder(),
         context_manager=ContextWindowManager(
             token_budget=settings.context_compress_threshold
         ),
+        app_context_manager=app_context_manager,
         prefix_cache=settings.prefix_cache,
     )
+    # FR-MIND-8/-13: upgrade the context summarizer to the CHEAP, OPTIONAL cheap-model
+    # path now that ``llm`` exists. Defensive: ``build_llm_summarizer`` returns the
+    # deterministic heuristic when no model is configured, so the hermetic lane stays
+    # byte-identical and a flaky completion degrades per-pass rather than raising.
+    from applicant.application.services.context_manager import (
+        build_llm_summarizer as _build_context_summarizer,
+    )
+
+    app_context_manager.summarizer = _build_context_summarizer(llm)
     # Master aggregator (FR-DISC-2). Offline fake clients by default (hermetic boot
     # + tests); live boards opt-in via DISCOVERY_LIVE (FR-DISC-4 network boundary).
     discovery_proxies = tuple(
@@ -747,6 +769,30 @@ def build_container(settings: Settings | None = None) -> Container:
         RunHistoryProvider(), FeedbackSummaryProvider()
     )
 
+    # FR-MIND-6 / FR-CUA-2: the AUTONOMOUS loop's agent-callable tool set. A factory that
+    # builds the SAME guarded tools the chat assistant uses (``ChatToolbox`` via
+    # ``LoopToolset``) per campaign, ONLY when ``LOOP_TOOLS`` is opted in AND the model
+    # advertises tool calling — otherwise it returns ``None`` and the loop runs exactly as
+    # today (default OFF ⇒ no tools registered). The factory binds whichever curation
+    # service the call site owns so loop-initiated writes stage into the SAME process-lived
+    # review queue (FR-MIND-9/-10); the registry + desktop driver are process-lived too.
+    from applicant.application.services.loop_tools import build_loop_toolset
+
+    def _make_loop_toolset_factory(curation):
+        def _factory(campaign_id, tick_llm):
+            return build_loop_toolset(
+                setting=settings.loop_tools,
+                llm=tick_llm,
+                campaign_id=campaign_id,
+                agent_memory=agent_memory,
+                curation_service=curation,
+                tool_registry=tool_registry,
+                computer_use=computer_use,
+                desktop_operable=_desktop_operable,
+            )
+
+        return _factory
+
     agent_loop = AgentLoop(
         storage=storage,
         agent_run_service=agent_run_service,
@@ -766,6 +812,8 @@ def build_container(settings: Settings | None = None) -> Container:
         setup_service=setup_service,
         research_service=research_service,
         resume_ledger=resume_ledger,
+        llm=llm,
+        loop_toolset_factory=_make_loop_toolset_factory(curation_service),
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -837,6 +885,14 @@ def build_container(settings: Settings | None = None) -> Container:
             advanced_learning=adv,
             agent_memory=agent_memory,
         )
+        # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
+        # process-lived CurationLedger + agent-memory adapters (+ recall + summarizer)
+        # as the main service, so the curation dedupe state survives the per-tick
+        # rebuild instead of resetting. Built before the loop so the loop's tool set
+        # (FR-MIND-6) stages writes into this SAME process-lived review queue.
+        tick_curation = _make_curation(
+            agent_memory.memory, agent_memory.skills, agent_memory.recall
+        )
         loop = AgentLoop(
             storage=tick_storage,
             agent_run_service=ars,
@@ -856,13 +912,10 @@ def build_container(settings: Settings | None = None) -> Container:
             setup_service=setup_service,
             research_service=research_service,
             resume_ledger=resume_ledger,
-        )
-        # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
-        # process-lived CurationLedger + agent-memory adapters (+ recall + summarizer)
-        # as the main service, so the curation dedupe state survives the per-tick
-        # rebuild instead of resetting.
-        tick_curation = _make_curation(
-            agent_memory.memory, agent_memory.skills, agent_memory.recall
+            llm=llm,
+            # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
+            # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
+            loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
         )
         return {
             "storage": tick_storage,
