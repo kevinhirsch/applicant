@@ -44,6 +44,7 @@ def _parse_feed_xml(text: str):
     # Stdlib fallback: it expands entities, so reject any feed declaring a
     # DTD / internal entities before parsing (billion-laughs DoS guard).
     import xml.etree.ElementTree as ET
+    import defusedxml.ElementTree as DefusedET
 
     lowered = text.lower()
     if "<!doctype" in lowered or "<!entity" in lowered:
@@ -51,7 +52,7 @@ def _parse_feed_xml(text: str):
             "Refusing to parse an RSS/Atom feed declaring a DTD/entities "
             "(entity-expansion DoS guard)."
         )
-    return ET.fromstring(text)
+    return DefusedET.fromstring(text)
 
 
 # --- LIVE clients (network boundary — integration-only) --------------------
