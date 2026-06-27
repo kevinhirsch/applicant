@@ -139,9 +139,11 @@ jobs:
       # --- ATS dry-run summary ---------------------------------------------
       - name: ATS dry-run result summary
         if: always()
+        env:
+          ATS_DRY_RUN_URL: ${{ github.event.inputs.ats_dry_run_url }}
         run: |
-          if [ -n "${{ github.event.inputs.ats_dry_run_url }}" ]; then
-            echo "ATS dry-run URL: ${{ github.event.inputs.ats_dry_run_url }}"
+          if [ -n "$ATS_DRY_RUN_URL" ]; then
+            echo "ATS dry-run URL: $ATS_DRY_RUN_URL"
             grep -E "test_ats_prefill_dryrun|PASSED|FAILED|SKIPPED" reports/integration.log \
               | head -20 || true
           else
