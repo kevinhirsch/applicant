@@ -32,6 +32,57 @@ from applicant.observability.logging import get_logger
 log = get_logger(__name__)
 
 
+# --- per-board rate limiter (FR-LEARN-6, #195) ----------------------------
+import time as _time
+
+
+@dataclass
+class _Bucket:
+    tokens: int
+    refill_at: float
+
+
+class PerBoardRateLimiter:
+    """Sliding-window token bucket per source key (#195).
+
+    Each source (job board) gets its own bucket: max_calls tokens refilled every
+    period_seconds. A source that exceeds its rate is skipped for the remainder
+    of the window so a single flaky/aggressive board never hogs the discovery run.
+    Separate from the campaign-level/capacity-service LLM rate limiter.
+    """
+
+    def __init__(self, max_calls: int = 5, period_seconds: float = 60.0) -> None:
+        self._max_calls = max_calls
+        self._period = period_seconds
+        self._buckets: dict[str, _Bucket] = {}
+
+    def admit(self, key: str) -> bool:
+        now = _time.monotonic()
+        b = self._buckets.get(key)
+        if b is None:
+            self._buckets[key] = _Bucket(tokens=self._max_calls - 1, refill_at=now + self._period)
+            return True
+        if now >= b.refill_at:
+            self._buckets[key] = _Bucket(tokens=self._max_calls - 1, refill_at=now + self._period)
+            return True
+        if b.tokens > 0:
+            self._buckets[key] = _Bucket(tokens=b.tokens - 1, refill_at=b.refill_at)
+            return True
+        return False
+
+    def reset(self, key: str) -> None:
+        self._buckets.pop(key, None)
+
+    def remaining(self, key: str) -> int:
+        now = _time.monotonic()
+        b = self._buckets.get(key)
+        if b is None:
+            return self._max_calls
+        if now >= b.refill_at:
+            return self._max_calls
+        return b.tokens
+
+
 # --- proxy hook seam (FR-DISC-6) ------------------------------------------
 @dataclass(frozen=True)
 class ProxyConfig:
@@ -402,11 +453,13 @@ class JobSpySearxngDiscovery:
         sources: list[Source] | None = None,
         proxy: ProxyConfig | None = None,
         proxy_url: str | None = None,
+        rate_limiter: PerBoardRateLimiter | None = None,
     ) -> None:
         # proxy / proxy_url is the FR-DISC-6 proxy hook (off by default).
         if proxy is None and proxy_url:
             proxy = ProxyConfig(proxies=(proxy_url,), enabled=True)
         self._proxy = proxy or ProxyConfig()
+        self._rate_limiter = rate_limiter or PerBoardRateLimiter()
         self._sources: dict[str, Source] = {}
         self._enabled: dict[str, bool] = {}
         for src in sources or [SampleSource()]:
@@ -464,6 +517,11 @@ class JobSpySearxngDiscovery:
         seen: set[str] = set()
         aggregated: list[JobPosting] = []
         for key in keys:
+            # Per-board rate limiter (#195): skip a source that has exceeded its
+            # rate-limit window so one aggressive board never hogs the run.
+            if not self._rate_limiter.admit(key):
+                log.info("rate_limit_skip", source=key)
+                continue
             for posting in self._sources[key].fetch(campaign_id, criteria):
                 if posting.source_url in seen:
                     continue
