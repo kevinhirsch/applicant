@@ -193,6 +193,10 @@ safety server-side (never gate on caller input), reachability = done, green incr
 14. **Subagent evidence inline or it's lost** — ephemeral; the final message must hold raw output.
 15. **Merge only when authorized.**
 16. **Reconcile before fanning out** — parallel overseer sessions happen.
+17. **Agents can't reliably introspect their own model/config** — an instance reported running
+    `gpt-5.1-codex-max` with no codex key (impossible); sometimes it doesn't know its own model.
+    Verify via config files + launch flags + hard facts, never the agent's self-report. The only
+    behavioral proof of `max_steps=0` is "it ran past 20 rounds."
 
 ## Live-verify recipe
 `docs/playtest-protocol.md` §1. Real LLM key: runtime-only, gitignored, never commit/log; remind owner to rotate.
