@@ -156,7 +156,9 @@ def csrf_foreign_request(uiclientsecctx):
 
 @when("the request reaches the front-door request guard")
 def csrf_reach_guard(uiclientsecctx):
-    mod = uiclientsecctx["middleware"]
+    # The CSRF Given only records the foreign/app origins; load the middleware
+    # lazily here so this step works whether or not an earlier step set it.
+    mod = uiclientsecctx.get("middleware") or _load_core_middleware()
     uiclientsecctx["verify_origin"] = getattr(mod, "verify_origin", None)
 
 
