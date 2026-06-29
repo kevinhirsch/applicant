@@ -560,6 +560,7 @@ class PrefillService:
             try:
                 cred = store.retrieve(scope, tenant_key)
             except Exception:  # pragma: no cover - defensive
+                log.warning("Credential lookup failed for scope %s key %s", scope, tenant_key, exc_info=True)
                 cred = None
             if cred is not None:
                 return cred
