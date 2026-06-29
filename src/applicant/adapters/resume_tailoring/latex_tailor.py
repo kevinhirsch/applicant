@@ -350,7 +350,19 @@ class LatexTailor:
         # --- real compile (only when explicitly enabled and a TeX engine exists) ---
         out_root = self._output_dir or (Path.cwd() / ".artifacts" / "latex")
         out_root.mkdir(parents=True, exist_ok=True)
-        work = out_root / str(variant_id)
+        # ``variant_id`` is an opaque id, but treat it as untrusted: a value carrying
+        # path separators / ``..`` could otherwise make ``work`` (and the resume.tex
+        # written into it below) escape ``out_root`` and clobber an arbitrary file
+        # (path traversal / file inclusion). Contain it to a per-variant subdir.
+        out_root_real = out_root.resolve()
+        work = (out_root_real / str(variant_id)).resolve()
+        try:
+            work.relative_to(out_root_real)
+        except ValueError as exc:
+            raise ValueError(
+                f"refusing résumé artifact path outside {out_root_real}: "
+                f"variant_id {variant_id!r} escapes the output dir"
+            ) from exc
         work.mkdir(parents=True, exist_ok=True)
         # The cover-letter class loads its bundled fonts via a path RELATIVE to the
         # compile cwd (``\setmainfont[Path = OpenFonts/fonts/...]``). The compile runs

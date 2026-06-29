@@ -47,6 +47,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from core.safe_path import is_within_base
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -775,7 +776,16 @@ app.include_router(setup_applicant_research_routes())
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
-    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
+    """Read an HTML file and inject the CSP nonce into inline <script> tags.
+
+    Containment guard: ``file_path`` must resolve inside ``BASE_DIR`` before it is
+    opened. Current callers pass a path built from ``abs_join(BASE_DIR, ...)``, but
+    that only absolutizes — it does not verify containment, so a future caller
+    threading user input here would otherwise be a path-traversal sink. Reject
+    anything that escapes the served-app root.
+    """
+    if not is_within_base(BASE_DIR, file_path):
+        raise HTTPException(404, "not found")
     with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")

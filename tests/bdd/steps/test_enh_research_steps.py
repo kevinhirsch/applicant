@@ -100,6 +100,70 @@ def public_allowed(rctx):
 
 
 # ===========================================================================
+# GREEN — #310: per-request route guard re-validates redirects + subresources
+# ===========================================================================
+class _FakeRoute:
+    """Stand-in for a Playwright Route: records whether the guard aborted or
+    continued the request (the integration sink itself is browser-gated, but the
+    guard's decision logic is pure and tested here)."""
+
+    def __init__(self, url: str):
+        self.request = SimpleNamespace(url=url)
+        self.aborted = False
+        self.continued = False
+
+    def abort(self):
+        self.aborted = True
+
+    def continue_(self):
+        self.continued = True
+
+
+def _run_guard(url: str) -> _FakeRoute:
+    # ``_guard_route`` does not touch instance state, so an empty object is a valid
+    # ``self`` — exercise the real adapter method that the browser would install.
+    from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+    route = _FakeRoute(url)
+    PlaywrightPageSource._guard_route(object.__new__(PlaywrightPageSource), route)
+    return route
+
+
+@given("a scraped posting URL on a public host that 3xx-redirects to a metadata host")
+def redirect_to_metadata(rctx):
+    # The browser surfaces the redirect target as the request URL on the hop; the
+    # cloud-metadata link-local address is the canonical SSRF target.
+    rctx["hop_url"] = "http://169.254.169.254/latest/meta-data/"
+
+
+@when("the harness follows the navigation")
+def follow_navigation(rctx):
+    rctx["route"] = _run_guard(rctx["hop_url"])
+
+
+@then("the redirect hop to the blocked host is aborted and no body is captured")
+def redirect_hop_aborted(rctx):
+    assert rctx["route"].aborted is True
+    assert rctx["route"].continued is False
+
+
+@given("a page that issues a subresource request to a private-range host")
+def subresource_private(rctx):
+    rctx["hop_url"] = "http://10.0.0.5/internal-asset.js"
+
+
+@when("the page loads")
+def page_loads(rctx):
+    rctx["route"] = _run_guard(rctx["hop_url"])
+
+
+@then("the subresource request to the blocked host is aborted by route interception")
+def subresource_aborted(rctx):
+    assert rctx["route"].aborted is True
+    assert rctx["route"].continued is False
+
+
+# ===========================================================================
 # GREEN + PENDING — privilege gate (#311, workspace/src/auth_helpers.py)
 # ===========================================================================
 def _load_auth_helpers(monkeypatch):
@@ -278,13 +342,6 @@ _PENDING_THEN_PROBES = {
     "each material receives a quality score against a rubric": lambda: _probe(
         "applicant.evaluation.material_judge", "judge_material"
     ),
-    # --- #310 redirect / subresource interception ---
-    "the redirect hop to the blocked host is aborted and no body is captured": lambda: _probe(
-        "applicant.core.rules.url_safety", "ip_chain_is_blocked"
-    ),
-    "the subresource request to the blocked host is aborted by route interception": lambda: _probe(
-        "applicant.core.rules.url_safety", "ip_chain_is_blocked"
-    ),
 }
 
 
@@ -347,11 +404,6 @@ _PENDING_NARRATIVE = [
     "the harness compares candidate against baseline",
     "a set of generated résumé/cover-letter materials",
     "the LLM-as-judge evaluation runs",
-    # #310 redirect / subresource
-    "a scraped posting URL on a public host that 3xx-redirects to a metadata host",
-    "the harness follows the navigation",
-    "a page that issues a subresource request to a private-range host",
-    "the page loads",
 ]
 
 
