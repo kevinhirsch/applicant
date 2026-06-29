@@ -75,6 +75,27 @@ deny  = ["Bash(git push --force:*)", "Bash(rm -rf:*)", "Edit(.env*)", "Read(.env
 Push / PR / merge stay owner-confirmed regardless. Keep a `todo_write` (`/todo`) entry per group,
 flipped in_progress→done; refresh each `wait`.
 
+## Model routing — flash default · pro for hard · both at MAX effort
+Two models, used dynamically; max thinking whenever either runs. Config (user `~/.reasonix/config.toml`):
+```toml
+[[providers]]
+name    = "deepseek"
+kind    = "openai"
+models  = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default = "deepseek-v4-flash"   # fast lane = the bulk of work (1M ctx, cheap)
+effort  = "max"                 # max thinking on BOTH models, always
+
+[agent]
+planner_model   = "deepseek-v4-pro"        # decomposition/planning on the strong model
+subagent_model  = "deepseek-v4-flash"      # executors default to flash
+subagent_models = { review = "deepseek-v4-pro", security_review = "deepseek-v4-pro" }
+```
+Model is **config/role-based, not a runtime `task()` arg** (unless your build accepts `model`/`effort`
+per call — `effort` it does). So route by *which lane you dispatch into*, and judge per task:
+- **flash** — mechanical/localized: single-file fixes, config bumps, dead-code, docs, read-only audits, well-scoped issues with a clear seam.
+- **pro** — hard reasoning: cross-cutting refactors, architecture, safety-critical logic (guards / state machine), ambiguous or underspecified issues, planning, review/security.
+- **Escalate flash→pro** when a flash agent stalls or fails — it's an "every angle" move in Oversight.
+
 ## Reasonix self-extensions
 - `REASONIX.md` — auto-loaded always-on memory.
 - `.reasonix/commands/`: `/gate` (full gate set), `/wave <id>` (dispatch a wave).

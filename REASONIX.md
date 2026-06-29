@@ -12,6 +12,7 @@ open PRs before fanning out.
 - Background subagents (`task(run_in_background:true)`), `max_steps=0`. One per file-disjoint issue. `/wave <id>`.
 - **Worktree-or-serialize. Never concurrent writers on the shared tree** — changes interleave, unattributable. Read-only audits may fan out.
 - `continue_from` resumes a subagent with context; commit per issue so progress banks.
+- **Models:** flash = default (mechanical/localized/audits); pro = hard reasoning (refactors, architecture, safety-critical, ambiguous, planning, review/security). **Both at `effort="max"`.** Escalate flash→pro when flash stalls/fails. Config in SOUL.md "Model routing".
 
 ## Monitor + steer (talk while it runs)
 - After dispatch, loop **escalating short `wait`s**. **First `wait` = 15s. Hard-cap EVERY `wait` at 120s.** Reset to 15s on any change. A multi-minute `wait` is a bug — blind and unsteerable until it returns.
