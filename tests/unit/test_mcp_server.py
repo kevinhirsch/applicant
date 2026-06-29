@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 class TestMcpServerRegistration:
     """MCP server registration and tool discovery."""
@@ -42,7 +40,7 @@ class TestMcpServerRegistration:
 
     def test_mcp_in_create_app_source(self) -> None:
         """The main.create_app source mentions register_mcp_server."""
-        with open("src/applicant/app/main.py", "r", encoding="utf-8") as f:
+        with open("src/applicant/app/main.py", encoding="utf-8") as f:
             source = f.read()
         assert "register_mcp_server" in source
         assert "mcp_server" in source

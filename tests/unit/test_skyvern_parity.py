@@ -8,8 +8,6 @@ Tests the three implemented gaps:
 
 from __future__ import annotations
 
-import pytest
-
 from applicant.core.entities.plan import (
     GotoOp,
     OpKind,
@@ -17,7 +15,6 @@ from applicant.core.entities.plan import (
     StopOp,
 )
 from applicant.core.rules.plan import (
-    STOP_REASONS,
     validate_plan,
 )
 

@@ -24,8 +24,7 @@ class TestEvalHarnessScaffold:
 
     def test_harness_planner_imports(self) -> None:
         """The harness module imports core planner types."""
-        from applicant.core.entities.plan import Plan, OpKind, GotoOp, FillOp, StopOp
-        from applicant.ports.driving.planner import PlannerPort, PlannerInput, PlannerObservation
+        from applicant.core.entities.plan import Plan
         assert Plan is not None
 
     def test_harness_scoring_imports(self) -> None:
@@ -67,8 +66,8 @@ class TestEvalHarnessScaffold:
 
     def test_harness_planner_adapter(self) -> None:
         """The harness planner adapter signature matches PlannerPort."""
-        from applicant.ports.driving.planner import PlannerPort, PlannerInput
         from applicant.core.entities.plan import Plan
+        from applicant.ports.driving.planner import PlannerInput, PlannerPort
 
         class EvalPlanner:
             """A dummy planner for eval that returns empty plans."""
@@ -133,7 +132,7 @@ class TestEvalRunner:
 
     def test_metrics_collection(self) -> None:
         """Metrics are collected and aggregated across tasks."""
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
 
         @dataclass
         class TaskResult:

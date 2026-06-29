@@ -25,13 +25,16 @@ import logging
 import re
 import socket
 import time
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
 from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+if TYPE_CHECKING:
+    from applicant.core.entities.plan import Plan
 
 log = logging.getLogger(__name__)
 
@@ -196,7 +199,7 @@ class PageSource(Protocol):
         """True if the current page is a post-submission confirmation (FR-LOG-4)."""
         ...
 
-    def execute(self, plan: "Plan") -> list[dict]:
+    def execute(self, plan: Plan) -> list[dict]:
         """Execute a Plan-as-Data typed-DSL plan against the current page.
 
         Returns a list of per-op results ``[{"op": ..., "ok": bool, "detail": ...}]``.
@@ -364,7 +367,7 @@ class FakePageSource:
             changes["url"] = url
         self._pages[self._index] = replace(page, **changes)
 
-    def execute(self, plan: "Plan") -> list[dict]:
+    def execute(self, plan: Plan) -> list[dict]:
         """Execute a plan-as-data typed-DSL plan (fake: apply to in-memory pages)."""
         from applicant.core.entities.plan import OpKind
 
@@ -1795,9 +1798,9 @@ class PlaywrightPageSource:
             body_text = ""
         return detect_confirmation(url=self._page.url, text=body_text)
 
-    def execute(self, plan: "Plan") -> list[dict]:  # pragma: no cover - integration-gated
+    def execute(self, plan: Plan) -> list[dict]:  # pragma: no cover - integration-gated
         """Execute a plan-as-data typed-DSL plan against the live Playwright page."""
-        from applicant.core.entities.plan import OpKind, FillOp, SelectOp, GotoOp
+        from applicant.core.entities.plan import OpKind
 
         results: list[dict] = []
         for op in plan:

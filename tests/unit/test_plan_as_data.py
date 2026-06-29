@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from applicant.core.entities.plan import (
     ClickOp,
     FillOp,

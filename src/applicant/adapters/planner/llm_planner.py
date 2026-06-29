@@ -31,8 +31,8 @@ from applicant.core.entities.plan import (
     UploadOp,
     WaitOp,
 )
-from applicant.ports.driving.planner import PlannerInput, PlannerObservation, PlannerPort
 from applicant.ports.driven.llm import ChatMessage
+from applicant.ports.driving.planner import PlannerInput, PlannerObservation
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class LLMPlanner:
                 [ChatMessage(role="user", content=prompt)],
                 start_tier=1,
             )
-        except Exception as exc:
+        except Exception:
             log.warning("LLMPlanner: LLM call failed", exc_info=True)
             return Plan(ops=())
 
@@ -105,38 +105,26 @@ class LLMPlanner:
 
     def _build_prompt(self, input_: PlannerInput) -> str:
         parts = [_DSL_SCHEMA_DESCRIPTION]
-        parts.append(f"
-GOAL: {input_.goal}")
+        parts.append(f"\nGOAL: {input_.goal}")
         if input_.observation:
             obs = input_.observation
-            parts.append(f"
-CURRENT URL: {obs.url}")
-            parts.append(f"
-DOM SNAPSHOT ({obs.snapshot_tokens} tokens):
-{obs.html_summary}")
+            parts.append(f"\nCURRENT URL: {obs.url}")
+            parts.append(f"\nDOM SNAPSHOT ({obs.snapshot_tokens} tokens):\n{obs.html_summary}")
         if input_.facts:
             facts_str = "; ".join(f"{k}: {v}" for k, v in input_.facts.items())
-            parts.append(f"
-ATTRIBUTE MANIFEST (id: label):
-{facts_str}")
+            parts.append(f"\nATTRIBUTE MANIFEST (id: label):\n{facts_str}")
         if input_.constraints:
             for k, v in input_.constraints.items():
-                parts.append(f"
-CONSTRAINT {k}: {v}")
+                parts.append(f"\nCONSTRAINT {k}: {v}")
         if input_.failure_reason:
-            parts.append(f"
-PREVIOUS ATTEMPT FAILED: {input_.failure_reason}")
-        parts.append("
-
-Respond with ONLY a JSON array of operation objects. No explanation.")
-        return "
-".join(parts)
+            parts.append(f"\nPREVIOUS ATTEMPT FAILED: {input_.failure_reason}")
+        parts.append("\n\nRespond with ONLY a JSON array of operation objects. No explanation.")
+        return "\n".join(parts)
 
     def _parse_json_plan(self, text: str) -> list[Op]:
         cleaned = text.strip()
         if cleaned.startswith("```"):
-            first_newline = cleaned.find("
-")
+            first_newline = cleaned.find("\n")
             if first_newline != -1:
                 cleaned = cleaned[first_newline:]
             if cleaned.endswith("```"):
