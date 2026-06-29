@@ -349,7 +349,8 @@ def test_desktop_enable_then_action_when_surface_live(app, monkeypatch):
     # opt-in -> guarded-action path is exercised. The core guards still apply: a
     # boundary intent is refused (403) and a hard-blocked type pattern is refused (400).
     with TestClient(app) as c:
-        c.app.state.container.computer_use = _healthy_cua_adapter()
+        # Container is frozen after construction; bypass with object.__setattr__ for test.
+        object.__setattr__(c.app.state.container, "computer_use", _healthy_cua_adapter())
         assert c.post(
             "/api/setup/llm",
             json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},

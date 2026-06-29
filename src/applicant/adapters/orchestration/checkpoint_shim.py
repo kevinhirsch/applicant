@@ -115,12 +115,17 @@ class CheckpointShimOrchestrator:
             try:
                 raw = p.read_text()
                 return json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"Corrupted checkpoint for workflow {workflow_id!r} at {p}: "
-                    f"JSON parse error — {exc}. The file may be truncated or "
-                    "contain invalid content. Remove the file or restore from backup."
-                ) from exc
+            except json.JSONDecodeError:
+                # Corrupted checkpoint: log and treat as "no checkpoint" so the step
+                # re-executes from scratch (transparent recovery, #218). Raising here
+                # would prevent any recovery; returning empty state lets the workflow
+                # restart cleanly. The warning surfaces the event for operators.
+                log.warning(
+                    "checkpoint_corrupted_treating_as_empty",
+                    workflow_id=workflow_id,
+                    path=str(p),
+                )
+                return {"steps": {}}
             except OSError as exc:
                 raise OSError(
                     f"Failed to read checkpoint for workflow {workflow_id!r} from {p}: {exc}. "
@@ -340,23 +345,6 @@ class CheckpointShimOrchestrator:
     def _queues_path(self) -> Path:
         return self._dir / "_queues.json"
 
-    def _save_queue(self, name: str, q: _Queue) -> None:
-        """Persist all queues' admit/wait state so slots survive a restart (DUR-1).
-
-        ``admit_times`` (the rolling rate-limit window) uses ``time.monotonic`` which
-        is not portable across processes, so it is intentionally NOT persisted — only
-        the durable ``active`` set + ``waiting`` FIFO + caps are, which is what guards
-        the concurrency slot against re-grant.
-        """
-        data: dict[str, Any] = {}
-        for qname, queue in self._queues.items():
-            data[qname] = {
-                "concurrency": queue.concurrency,
-                "limiter_limit": queue.limiter_limit,
-                "limiter_period": queue.limiter_period,
-                "active": sorted(queue.active),
-                "waiting": list(queue.waiting),
-            }
     def _save_queue(self, name: str, q: _Queue) -> None:
         """Persist all queues' admit/wait state so slots survive a restart (DUR-1).
 
