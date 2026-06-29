@@ -199,6 +199,7 @@ class ChatHandler:
                                     if _m is not None:
                                         _m["vision"] = _vtext
                             except Exception:
+                                logger.warning("Failed to set vision text for attachment %s", att_id)
                                 pass
                     else:
                         # Main model is text-only — use VL model for description.
@@ -215,6 +216,7 @@ class ChatHandler:
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
                             except Exception:
+                                logger.warning("Failed to read cached vision description for %s", _vcache)
                                 vl_desc = None
                         if not vl_desc:
                             vl_result = analyze_image_with_vl_result(file_info["path"])
@@ -226,6 +228,7 @@ class ChatHandler:
                                     with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
                                 except Exception:
+                                    logger.warning("Failed to cache vision description to %s", _vcache)
                                     pass
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
                         # Surface the description to the client live so it renders as a

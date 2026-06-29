@@ -173,6 +173,7 @@ def _sniff_doc_language(text: str) -> str:
             _json.loads(s)
             return "json"
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     # Shebang
     first = s.split("\n", 1)[0].strip().lower()
@@ -1205,6 +1206,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     await mcp.disconnect_server(sid)
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     pass
             db.delete(srv)
             db.commit()
@@ -1425,6 +1427,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
             diff = (now - ts).total_seconds()
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             return 'unknown'
         if diff < 60: return 'just now'
         if diff < 3600: return f'{int(diff / 60)}m ago'
@@ -1615,6 +1618,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     raw_models = _json.loads(ep.cached_models or "[]") or []
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     raw_models = []
                 # If cache is empty, still allow matching against endpoint name
                 # for callers using model@endpoint elsewhere later.
@@ -1912,6 +1916,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     from routes.calendar_routes import parse_due_for_user as _pdt_user
                     due_iso = _pdt_user(due_raw)
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     due_iso = due_raw  # fall through; trust the model
             if due_iso and title:
                 # Calendar event reminders are represented as Notes. If the
@@ -2470,6 +2475,7 @@ async def _cookbook_servers() -> Dict[str, Any]:
             r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         return {"default_host": "", "hosts": []}
     env = (state or {}).get("env") or {}
     if not isinstance(env, dict):
@@ -2842,6 +2848,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             if len(preview) > 4000:
                 preview = preview[:4000] + "\n... (truncated)"
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             payload = None
             preview = (resp.text or "")[:4000]
         if resp.status_code >= 400:
@@ -3208,6 +3215,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         try:
             data = resp.json()
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             data = {}
         kill_failed = isinstance(data, dict) and data.get("exit_code") not in (None, 0)
         kill_err = ((data.get("stderr") or data.get("error") or "").strip() if isinstance(data, dict) else "")
@@ -3394,6 +3402,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
             body = (r.json() or {}).get("stdout", "") if r.headers.get("content-type", "").startswith("application/json") else ""
             server_up = '"data"' in body or '"object"' in body
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     # Read+modify+write cookbook state. APPEND a task entry; do NOT
@@ -3450,6 +3459,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         try:
             from src.tool_implementations import do_manage_endpoints  # avoid forward ref issues
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             do_manage_endpoints = None
         if do_manage_endpoints is not None:
             try:
@@ -3667,6 +3677,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     if repo and repo not in downloaded:
                         downloaded.append(repo)
             except Exception:
+                logger.warning("Bare exception in tool_implementations.py")
                 downloaded = []
             if downloaded:
                 host_str = f" on {raw_host or host}" if (raw_host or host) else ""
@@ -3747,6 +3758,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         try:
             return _json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             return None
 
     if action in ("read", "open", "view", "get"):
@@ -3878,6 +3890,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -3890,6 +3903,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                     if email and email not in contacts:
                         contacts[email] = {"name": c.get("name") or email, "source": "email history"}
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
 
     if not contacts:
@@ -3982,6 +3996,7 @@ def _load_vault_config() -> Dict:
         try:
             return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     return {}
 
@@ -4091,6 +4106,7 @@ async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
                 category="Vault",
             )
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     # Mask secret values — passwords and TOTP seeds must never reach the LLM
@@ -4141,6 +4157,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         try:
             cfg = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     cfg["session"] = session
     from datetime import datetime as _dt
@@ -4150,6 +4167,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         import os as _os
         _os.chmod(str(p), 0o600)
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}

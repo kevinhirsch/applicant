@@ -23,6 +23,7 @@ never fabricates.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -77,6 +78,8 @@ from applicant.core.rules.truthfulness import (
     unsupported_prose_claims,
     voice_alignment,
 )
+
+log = logging.getLogger(__name__)
 
 #: FR-RESUME-7 default selection threshold (coverage as a 0-100 percentage).
 FIT_THRESHOLD = 70
@@ -188,6 +191,7 @@ class MaterialService:
             try:
                 engine = self._conversion.get_engine(str(campaign_id))
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 engine = None
             if engine == "docx":
                 return self._docx_tailoring
@@ -303,6 +307,7 @@ class MaterialService:
         try:
             attrs = self._storage.attributes.list_for_campaign(campaign_id)
         except Exception:
+            log.warning("Bare exception in material_service.py")
             attrs = []
         for a in attrs:
             val = getattr(a, "value", None)
@@ -344,6 +349,7 @@ class MaterialService:
         try:
             app = self._storage.applications.get(application_id)
         except Exception:
+            log.warning("Bare exception in material_service.py")
             app = None
         if app is None:
             return ""
@@ -353,6 +359,7 @@ class MaterialService:
             try:
                 posting = self._storage.postings.get(pid)
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 posting = None
             if posting is not None:
                 bits += [
@@ -695,6 +702,7 @@ class MaterialService:
             try:
                 return self._embedding.similarity(a, b) >= CLUSTER_SIMILARITY
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 pass
         return False
 
@@ -1142,6 +1150,7 @@ class MaterialService:
                     dedup_key=f"material_review:{doc.id}",
                 )
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 pass
         if self._notifications is not None:
             try:
@@ -1152,6 +1161,7 @@ class MaterialService:
                     deep_link=deep_link,
                 )
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 pass
 
     # --- factual screening-answer scoping (FR-ANSWER-1, NFR-PRIV-1, #5) ----
@@ -1329,6 +1339,7 @@ class MaterialService:
         try:
             snap = am.memory.snapshot(campaign_id=scope)
         except Exception:
+            log.warning("Bare exception in material_service.py")
             snap = None
         if snap is not None:
             mem_lines: list[str] = []
@@ -1352,6 +1363,7 @@ class MaterialService:
         try:
             metas = am.skills.list_skills(campaign_id=scope)
         except Exception:
+            log.warning("Bare exception in material_service.py")
             metas = ()
         if metas:
             q = {w for w in (query or "").lower().split() if len(w) > 3}
@@ -1392,6 +1404,7 @@ class MaterialService:
             try:
                 hits = recall.search(query, limit=1, campaign_id=scope)
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 hits = ()
             for h in hits:
                 txt = getattr(h, "text", "")
@@ -1478,6 +1491,7 @@ class MaterialService:
                 )
                 return _strip_llm_preamble(result.text)
             except Exception:
+                log.warning("Bare exception in material_service.py")
                 # Generation fell back to the deterministic path — no learned context
                 # was actually used, so do not record provenance for it.
                 self._last_provenance = ()
@@ -1541,6 +1555,7 @@ class MaterialService:
             text = _strip_llm_preamble((result.text or "").strip())
             return text or None
         except Exception:
+            log.warning("Bare exception in material_service.py")
             return None
 
     def _store_document(

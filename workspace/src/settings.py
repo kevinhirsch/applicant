@@ -193,6 +193,7 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
             if key in prefs and prefs[key] not in (None, ""):
                 return prefs[key]
         except Exception:
+            logger.warning("Failed to parse settings, using default")
             pass
     return get_setting(key, default)
 

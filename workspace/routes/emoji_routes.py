@@ -60,6 +60,7 @@ def setup_emoji_routes() -> APIRouter:
                 try:
                     fp.write_bytes(r.content)
                 except Exception:
+                    logger.warning("Bare exception in emoji_routes.py")
                     pass  # cache write is best-effort
                 return Response(r.content, media_type="image/svg+xml", headers=_SVG_HEADERS)
         except Exception as e:

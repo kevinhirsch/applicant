@@ -320,6 +320,7 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
                     raise ValueError("empty file")
                 _json.loads(txt)  # valid JSON → keep
             except Exception:
+                logger.warning('Bare exception in builtin_actions')
                 p.unlink(missing_ok=True)
                 removed.append(p.stem[:8])
         if not removed:
@@ -354,6 +355,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                 if saved.get("last_created_at"):
                     last_watermark = datetime.fromisoformat(saved["last_created_at"])
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             last_watermark = None
 
         db = SessionLocal()
@@ -605,6 +607,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 db.commit()
             except Exception:
+                logger.warning('Bare exception in builtin_actions')
                 pass
 
             # Pass 2: batch LLM classification (10 events per call)
@@ -768,6 +771,7 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                             "subject": _decode_header(msg.get("Subject", "")),
                         })
                     except Exception:
+                        logger.warning('Bare exception in builtin_actions')
                         continue
             finally:
                 try: conn.logout()
@@ -813,6 +817,7 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                     try:
                         return raw.decode("utf-8", errors="replace")
                     except Exception:
+                        logger.warning('Bare exception in builtin_actions')
                         return str(raw)
                 finally:
                     try: conn.logout()
@@ -965,6 +970,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                             "from_address": from_addr,
                         })
                     except Exception:
+                        logger.warning('Bare exception in builtin_actions')
                         continue
             finally:
                 try: conn.logout()
@@ -1002,6 +1008,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             }
             conn.close()
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             cached = {}
 
         cutoff_iso = (_dt.utcnow() - _td(days=30)).isoformat()
@@ -1042,6 +1049,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                             text = raw.decode("utf-8", errors="replace")
                             bodies.append(text[:4000])
                         except Exception:
+                            logger.warning('Bare exception in builtin_actions')
                             continue
                 finally:
                     try: conn2.logout()
@@ -1144,6 +1152,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
             from core.auth import AuthManager
             _allow_null = not AuthManager().is_configured
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             _allow_null = False
         db = SessionLocal()
         try:
@@ -1211,6 +1220,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
                         if t:
                             todo_lines.append(f"{n.title or 'Checklist'}: {t}")
                 except Exception:
+                    logger.warning('Bare exception in builtin_actions')
                     continue
             elif n.pinned and n.title:
                 todo_lines.append(n.title)
@@ -1400,6 +1410,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             recent = None
         if recent is not None and recent < (20 * 60):
             raise TaskDeferred(
@@ -1462,6 +1473,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 STATE.write_text(_legacy.read_text())
             except Exception:
+                logger.warning('Bare exception in builtin_actions')
                 pass
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
         # every note's due time lands inside at least one tick's window.
@@ -1482,11 +1494,13 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                     d = d.astimezone().astimezone(_tz.utc)
                 return d.astimezone(_tz.utc)
             except Exception:
+                logger.warning('Bare exception in builtin_actions')
                 return None
 
         try:
             cache = _json.loads(STATE.read_text()) if STATE.exists() else {}
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             cache = {}
 
         db = _SL()
@@ -1526,6 +1540,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         if last_dt >= reping_cutoff:
                             continue
                     except Exception:
+                        logger.warning('Bare exception in builtin_actions')
                         pass
                 # Compose + dispatch.
                 title = (n.title or "Reminder").strip() or "Reminder"
@@ -1544,6 +1559,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         if pending:
                             body_parts.append("Pending:\n" + "\n".join(f"- {t}" for t in pending[:8]))
                     except Exception:
+                        logger.warning('Bare exception in builtin_actions')
                         pass
                 body = "\n\n".join(p for p in body_parts if p) or title
                 try:
@@ -1669,6 +1685,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 cache = _json.loads(cache_file.read_text()) if cache_file.exists() else {"uids": {}}
             except Exception:
+                logger.warning('Bare exception in builtin_actions')
                 cache = {"uids": {}}
 
             def _scan_one(account=acc, cache_uids=cache.get("uids", {})):
@@ -1750,6 +1767,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                 else:
                                     body_snippet = (msg.get_payload(decode=True) or b"").decode("utf-8", errors="ignore")[:1600]
                             except Exception:
+                                logger.warning('Bare exception in builtin_actions')
                                 body_snippet = ""
                             results[-1].update({
                                 "subject": subject,
@@ -1953,6 +1971,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                             if not isinstance(_existing, list):
                                 _existing = []
                         except Exception:
+                            logger.warning('Bare exception in builtin_actions')
                             _existing = []
                         # Drop previous triage-owned tags so re-classification
                         # can upgrade/downgrade/clear without touching manual tags.
@@ -1996,6 +2015,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         try:
             prior = _json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
         except Exception:
+            logger.warning('Bare exception in builtin_actions')
             prior = {}
         notified_uids = set(prior.get("notified_uids", []))
 

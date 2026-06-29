@@ -102,6 +102,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         except asyncio.CancelledError:
             raise            # our own cancellation — propagate
         except Exception:
+            logger.warning("Failed to aclose generator in agent_runs")
             pass
     try:
         async for ev in agen:
@@ -115,6 +116,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         try:
             await agen.aclose()
         except Exception:
+            logger.warning("Failed to close generator in agent_runs cleanup")
             pass
     except Exception as e:
         logger.error("[agent-run] %s failed: %s", session_id, e, exc_info=True)
@@ -131,6 +133,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             try:
                 q.put_nowait((None, None))
             except Exception:
+                logger.warning("Failed to signal end-of-queue in agent_runs")
                 pass
         # Run is terminal — arm the grace timer so it (and its buffer) is
         # eventually freed even if nobody ever reconnects. subscribe() cancels

@@ -27,6 +27,7 @@ def _is_local_endpoint(url: str) -> bool:
         host = urlparse(url).hostname or ""
         return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)
     except Exception:
+        logger.warning("Failed to parse URL: %s", url)
         return False
 
 # ---------------------------------------------------------------------------
@@ -212,6 +213,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
                         return n_ctx
         except Exception:
+            logger.warning("Failed to query llama.cpp /slots for context length")
             pass
 
     models_url = endpoint_url.replace("/chat/completions", "/models")

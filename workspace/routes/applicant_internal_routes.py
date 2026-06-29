@@ -300,11 +300,13 @@ def _resolve_research_endpoint_safe():
     try:
         from src.endpoint_resolver import resolve_endpoint
     except Exception:
+        logger.warning("Bare exception in applicant_internal_routes.py")
         return None
     for tier in ("research", "utility", "default", "chat"):
         try:
             url, model, headers = resolve_endpoint(tier)
         except Exception:
+            logger.warning("Bare exception in applicant_internal_routes.py")
             continue
         if url:
             return url, model, headers
@@ -502,6 +504,7 @@ async def _json(request: Request) -> dict:
     try:
         body = await request.json()
     except Exception:
+        logger.warning("Bare exception in applicant_internal_routes.py")
         body = {}
     return body if isinstance(body, dict) else {}
 
@@ -749,6 +752,7 @@ def setup_applicant_internal_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in applicant_internal_routes.py")
             body = {}
         if not isinstance(body, dict):
             body = {}
@@ -824,6 +828,7 @@ def setup_applicant_internal_routes() -> APIRouter:
             try:
                 sources = handler._extract_sources(findings)
             except Exception:
+                logger.warning("Bare exception in applicant_internal_routes.py")
                 sources = []
         sources = sources[:_RESEARCH_MAX_SOURCES]
 

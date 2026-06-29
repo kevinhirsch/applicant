@@ -293,6 +293,7 @@ class SubmissionService:
                 application.campaign_id, application, posting=posting
             )
         except Exception:  # pragma: no cover - learning must never break a submission
+            log.warning("record_and_persist_conversion failed for campaign %s", application.campaign_id)
             pass
 
     def _record_submission_yield(self, application: Application) -> None:
@@ -307,6 +308,7 @@ class SubmissionService:
                 posting.campaign_id, posting.source_key, "submissions"
             )
         except Exception:  # pragma: no cover - learning must never break a submission
+            log.warning("record_and_persist_conversion failed for campaign %s", application.campaign_id)
             pass
 
     # --- internals --------------------------------------------------------

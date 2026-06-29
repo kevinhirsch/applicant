@@ -254,6 +254,7 @@ def _cleanup_compose_uploads(tokens) -> None:
         try:
             (COMPOSE_UPLOADS_DIR / Path(token).name).unlink(missing_ok=True)
         except Exception:
+            logger.warning("Bare exception in email_helpers.py")
             pass
 
 
@@ -439,6 +440,7 @@ def _init_scheduled_db():
         if "applicant_kind" not in cols:
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN applicant_kind TEXT")
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         pass
     # Lazy migration: add turns_json to email_boundaries for server-side
     # thread parsing cache (talon-style precomputed reply chain).
@@ -447,6 +449,7 @@ def _init_scheduled_db():
         if "turns_json" not in cols:
             conn.execute("ALTER TABLE email_boundaries ADD COLUMN turns_json TEXT")
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         pass
     # Per-sender signature cache. Populated by `learn_sender_signatures`
     # action: the LLM extracts the common trailing block across N emails
@@ -630,6 +633,7 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
     try:
         conn.sock.settimeout(_IMAP_TIMEOUT_SECONDS)
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         pass
     conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
@@ -670,6 +674,7 @@ def _imap(account_id: str | None = None, owner: str = ""):
         try:
             yield conn
         except Exception:
+            logger.warning("Bare exception in email_helpers.py")
             ok = False
             raise
         finally:
@@ -679,6 +684,7 @@ def _imap(account_id: str | None = None, owner: str = ""):
                 except TypeError:
                     pool_release(account_id, conn, ok=ok)
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 pass
         return
     # Fallback: plain connect+logout. Used pre-setup or in tests.
@@ -689,6 +695,7 @@ def _imap(account_id: str | None = None, owner: str = ""):
         try:
             conn.logout()
         except Exception:
+            logger.warning("Bare exception in email_helpers.py")
             pass
 
 
@@ -736,6 +743,7 @@ def _detect_sent_folder(conn):
             if c in names:
                 return c
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         pass
     return "Sent"
 
@@ -764,6 +772,7 @@ def _detect_drafts_folder(conn):
             if c in names:
                 return c
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         pass
     return "Drafts"
 
@@ -790,6 +799,7 @@ def _detect_spam_folder(conn):
                 fallback = fallback or name
         return preferred or fallback
     except Exception:
+        logger.warning("Bare exception in email_helpers.py")
         return None
 
 
@@ -838,6 +848,7 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
             try:
                 filename = _decode_header(filename)
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 pass
         fname_lower = (filename or "").lower()
         payload = part.get_payload(decode=True)
@@ -859,6 +870,7 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
                     try:
                         _os.unlink(tmp.name)
                     except Exception:
+                        logger.warning("Bare exception in email_helpers.py")
                         pass
             elif ct.startswith("text/") or fname_lower.endswith((".txt", ".md", ".csv", ".log", ".json")):
                 text = payload.decode("utf-8", errors="replace")
@@ -1035,6 +1047,7 @@ def _fetch_sender_thread_context(sender_addr: str,
                 if st_sel != "OK":
                     continue
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 continue
             try:
                 addr_escaped = sender_addr.replace('"', '\\"')
@@ -1045,6 +1058,7 @@ def _fetch_sender_thread_context(sender_addr: str,
                 # Most recent first.
                 uids = list(reversed(uids))
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 continue
 
             for raw_uid in uids:
@@ -1136,6 +1150,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                     is_known = True
                     break
         except Exception:
+            logger.warning("Bare exception in email_helpers.py")
             pass
         if not is_known and sender_addr:
             try:
@@ -1145,6 +1160,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                     if st_known == "OK" and dk and dk[0]:
                         is_known = True
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 pass
         if not is_known:
             logger.info(f"Pre-retrieval skipped — unknown sender {sender_addr}")
@@ -1184,6 +1200,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                     if st_sel != "OK":
                         continue
                 except Exception:
+                    logger.warning("Bare exception in email_helpers.py")
                     continue
                 for term in terms_list:
                     try:
@@ -1208,6 +1225,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                                     f"[{folder} match for \"{term}\"]\nFrom: {hfrom}\nDate: {hdate}\nSubject: {hsubj}\n{hbody}"
                                 )
                             except Exception:
+                                logger.warning("Bare exception in email_helpers.py")
                                 continue
                     except Exception as _e:
                         logger.warning(f"  search {folder} {term!r} failed: {_e}")
@@ -1215,6 +1233,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
             try:
                 ctx_conn.logout()
             except Exception:
+                logger.warning("Bare exception in email_helpers.py")
                 pass
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
@@ -1235,6 +1254,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
                         parts.append(f"Phone: {c['phone']}")
                     context_snippets.append(f"[Contact match for \"{term}\"] " + ", ".join(parts))
         except Exception:
+            logger.warning("Bare exception in email_helpers.py")
             pass
     except Exception as e:
         logger.warning(f"Pre-retrieval failed: {e}")

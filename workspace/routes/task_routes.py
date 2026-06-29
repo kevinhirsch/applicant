@@ -149,6 +149,7 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
             if sess and sess.endpoint_url:
                 return sess.endpoint_url or ""
     except Exception:
+        logger.warning("Bare exception in task_routes.py")
         pass
 
     model = (getattr(run, "model", None) or getattr(task, "model", None) or "").strip()
@@ -164,10 +165,12 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
                 try:
                     cached = json.loads(ep.cached_models) or []
                 except Exception:
+                    logger.warning("Bare exception in task_routes.py")
                     cached = []
             if model in cached:
                 return ep.base_url or ""
     except Exception:
+        logger.warning("Bare exception in task_routes.py")
         pass
     return ""
 
@@ -207,6 +210,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             title = result.strip().strip('"\'').strip()
             return title[:60] if title else prompt[:50].strip()
         except Exception:
+            logger.warning("Bare exception in task_routes.py")
             first = prompt.split('\n')[0].split('.')[0].strip()
             return first[:50] if first else "Untitled Task"
 
@@ -314,6 +318,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 return True
             return bool(auth.is_admin(user))
         except Exception:
+            logger.warning("Bare exception in task_routes.py")
             return False
 
     @router.post("")
@@ -339,6 +344,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 from croniter import croniter
                 croniter(req.cron_expression)
             except Exception:
+                logger.warning("Bare exception in task_routes.py")
                 raise HTTPException(400, "Invalid cron expression")
         if req.trigger_type == "event" and not req.trigger_event:
             raise HTTPException(400, "Event name is required for event-triggered tasks")
@@ -488,6 +494,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         child.unlink()
                         removed_files += 1
                     except Exception:
+                        logger.warning("Bare exception in task_routes.py")
                         pass
             owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (user or "default"))
             for state_path in [Path(f"data/email_urgency_state_{owner_slug}.json")]:
@@ -496,6 +503,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         state_path.unlink()
                         removed_files += 1
                 except Exception:
+                    logger.warning("Bare exception in task_routes.py")
                     pass
 
         return {"ok": True, "action": action, "cleared": cleared, "files": removed_files}
@@ -561,6 +569,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         from croniter import croniter
                         croniter(req.cron_expression)
                     except Exception:
+                        logger.warning("Bare exception in task_routes.py")
                         raise HTTPException(400, "Invalid cron expression")
                 task.cron_expression = req.cron_expression or None
 
@@ -842,6 +851,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         "description": tool.get("description", ""),
                     })
         except Exception:
+            logger.warning("Bare exception in task_routes.py")
             pass
         return {"targets": targets}
 

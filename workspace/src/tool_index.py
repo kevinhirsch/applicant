@@ -210,12 +210,14 @@ class ToolIndex:
             if existing and existing["ids"]:
                 self._collection.delete(ids=existing["ids"])
         except Exception:
+            logger.warning("Bare exception in tool_index.py")
             pass
 
         # Get current MCP tools
         try:
             all_tools = mcp_mgr.get_tool_descriptions_for_prompt(disabled_map or {})
         except Exception:
+            logger.warning("Bare exception in tool_index.py")
             all_tools = ""
 
         if not all_tools:

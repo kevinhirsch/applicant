@@ -266,6 +266,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
                     elif isinstance(err, str):
                         error_msg = err[:120]
             except Exception:
+                logger.warning("Bare exception in model_routes.py")
                 pass
             return {"status": "fail", "latency_ms": latency, "error": error_msg}
     except httpx.TimeoutException:
@@ -296,6 +297,7 @@ def _classify_endpoint(base_url: str) -> str:
         if _TAILSCALE_RE.match(host):
             return "local"
     except Exception:
+        logger.warning("Bare exception in model_routes.py")
         pass
     return "api"
 
@@ -419,6 +421,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                 except Exception as e:
                     last_error = str(e)[:120]
     except Exception:
+        logger.warning("Bare exception in model_routes.py")
         pass
 
     return {"reachable": False, "status_code": None, "error": last_error}
@@ -523,6 +526,7 @@ def setup_model_routes(model_discovery):
                     db.close()
                 _invalidate_models_cache()
             except Exception:
+                logger.warning("Bare exception in model_routes.py")
                 pass
             finally:
                 _refresh_inflight["v"] = False
@@ -561,6 +565,7 @@ def setup_model_routes(model_discovery):
                 try:
                     model_ids = json.loads(ep.cached_models)
                 except Exception:
+                    logger.warning("Bare exception in model_routes.py")
                     pass
             ep_model_type = getattr(ep, "model_type", None) or "llm"
             # Filter out hidden (probe-failed) models
@@ -569,6 +574,7 @@ def setup_model_routes(model_discovery):
                 try:
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
+                    logger.warning("Bare exception in model_routes.py")
                     pass
             model_ids = [m for m in model_ids if m not in hidden]
             # Build correct URL based on provider
@@ -620,6 +626,7 @@ def setup_model_routes(model_discovery):
             from src.auth_helpers import get_current_user as _gcu
             owner = _gcu(request) or ""
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             owner = ""
         # Reject anonymous in configured deployments — no leaking the model
         # list to unauthenticated callers.
@@ -630,6 +637,7 @@ def setup_model_routes(model_discovery):
         except HTTPException:
             raise
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             pass
         # Admins see every endpoint (they manage the global pool); regular
         # users get the owner-scoped view.
@@ -639,6 +647,7 @@ def setup_model_routes(model_discovery):
             if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
                 _is_admin = bool(auth_mgr.is_admin(owner))
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             _is_admin = False
         now = _time.time()
         # Cache key includes the admin flag so a demotion / promotion doesn't
@@ -923,12 +932,14 @@ def setup_model_routes(model_discovery):
                     try:
                         all_models = json.loads(r.cached_models)
                     except Exception:
+                        logger.warning("Bare exception in model_routes.py")
                         pass
                 hidden = set()
                 if r.hidden_models:
                     try:
                         hidden = set(json.loads(r.hidden_models))
                     except Exception:
+                        logger.warning("Bare exception in model_routes.py")
                         pass
                 visible = [m for m in all_models if m not in hidden]
                 status = "online" if all_models else "offline"
@@ -1169,6 +1180,7 @@ def setup_model_routes(model_discovery):
                 try:
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
+                    logger.warning("Bare exception in model_routes.py")
                     pass
             # Try live probe, fall back to cached
             all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
@@ -1179,6 +1191,7 @@ def setup_model_routes(model_discovery):
                 try:
                     all_models = json.loads(ep.cached_models)
                 except Exception:
+                    logger.warning("Bare exception in model_routes.py")
                     pass
             return [
                 {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
@@ -1225,6 +1238,7 @@ def setup_model_routes(model_discovery):
         try:
             _user = _gcu(request) or ""
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             _user = ""
         # Admins resolve via the global defaults (they own them, and the
         # scoped resolution was making the picker disappear for them).
@@ -1238,6 +1252,7 @@ def setup_model_routes(model_discovery):
             if _user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
                 _is_admin = bool(auth_mgr.is_admin(_user))
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             _is_admin = False
         if _user and not _is_admin:
             from routes.prefs_routes import _load_for_user
@@ -1310,6 +1325,7 @@ def setup_model_routes(model_discovery):
                     if models:
                         model = models[0]
                 except Exception:
+                    logger.warning("Bare exception in model_routes.py")
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
         finally:
@@ -1326,6 +1342,7 @@ def setup_model_routes(model_discovery):
                 if not isinstance(body, dict):
                     body = {}
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             body = {}
         db = SessionLocal()
         try:
@@ -1423,6 +1440,7 @@ def setup_model_routes(model_discovery):
             from src.ai_interaction import get_session_manager
             manager = get_session_manager()
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             manager = None
         if not manager:
             return 0
@@ -1435,6 +1453,7 @@ def setup_model_routes(model_discovery):
                     sess.headers = {}
                     cleared += 1
         except Exception:
+            logger.warning("Bare exception in model_routes.py")
             return cleared
         return cleared
 

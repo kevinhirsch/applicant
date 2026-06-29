@@ -327,6 +327,7 @@ def _resolve_resource_url(uid: str) -> str:
     try:
         _fetch_contacts(force=True)
     except Exception:
+        logger.warning("Bare exception in contacts_routes.py")
         pass
     return _lookup() or _vcard_url(uid)
 
@@ -466,12 +467,14 @@ def _import_csv_contacts(text: str) -> Dict:
         sample = raw[:2048]
         dialect = csv.Sniffer().sniff(sample)
     except Exception:
+        logger.warning("Bare exception in contacts_routes.py")
         dialect = csv.excel
 
     stream = io.StringIO(raw)
     try:
         has_header = csv.Sniffer().has_header(raw[:2048])
     except Exception:
+        logger.warning("Bare exception in contacts_routes.py")
         has_header = True
 
     rows = []
@@ -534,6 +537,7 @@ def _import_csv_contacts(text: str) -> Dict:
                     if created and created.get("uid"):
                         _update_contact(created["uid"], name, [email], [phone])
                 except Exception:
+                    logger.warning("Bare exception in contacts_routes.py")
                     pass
         else:
             failed += 1
