@@ -65,7 +65,12 @@ from applicant.application.workflows import application_pipeline
 
 @dataclass
 class Container:
-    """Holds every adapter + service. Built once at startup, injected via deps."""
+    """Holds every adapter + service. Built once at startup, injected via deps.
+
+    FROZEN after construction: ``__init__`` builds it, and then
+    ``__setattr__`` prevents mutation so phase agents cannot accidentally
+    swap out services at runtime (defense-in-depth — the wiring contract).
+    """
 
     settings: Settings
 
@@ -162,6 +167,22 @@ class Container:
     # is configured (in-memory storage is thread-safe enough for the no-DB lane and is
     # shared). Each call returns a dict including ``_session`` to close in ``finally``.
     request_services_factory: Any = None
+
+    _frozen: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Freeze the container after construction."""
+        object.__setattr__(self, "_frozen", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Prevent mutation after the container is built (FROZEN enforcement)."""
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"Cannot set attribute {name!r} on frozen Container. "
+                "The container is built once at startup and must not be mutated "
+                "at runtime by phase agents."
+            )
+        object.__setattr__(self, name, value)
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
