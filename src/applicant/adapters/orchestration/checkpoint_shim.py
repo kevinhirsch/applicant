@@ -19,11 +19,15 @@ import os
 import tempfile
 import threading
 import time
+from applicant.observability.logging import get_logger
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -117,16 +121,35 @@ class CheckpointShimOrchestrator:
                     f"JSON parse error — {exc}. The file may be truncated or "
                     "contain invalid content. Remove the file or restore from backup."
                 ) from exc
+            except OSError as exc:
+                raise OSError(
+                    f"Failed to read checkpoint for workflow {workflow_id!r} from {p}: {exc}. "
+                    "The disk may have failed or the file may be inaccessible."
+                ) from exc
         return {"steps": {}}
 
     def _save(self, workflow_id: str, state: dict[str, Any]) -> None:
         p = self._path(workflow_id)
-        # Atomic write so a crash mid-write never corrupts the checkpoint.
-        fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        # Atomically write so a crash mid-write never corrupts the checkpoint.
+        # Check for disk-full / write failure before writing the final checkpoint.
+        try:
+            fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        except OSError as exc:
+            raise OSError(
+                f"Cannot create temporary checkpoint file for workflow {workflow_id!r} "
+                f"in {self._dir}: {exc}. Check disk space and permissions."
+            ) from exc
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(state, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, p)
+        except OSError as exc:
+            raise OSError(
+                f"Failed to write checkpoint for workflow {workflow_id!r} to {p}: {exc}. "
+                "The disk may be full or the filesystem is read-only."
+            ) from exc
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -221,7 +244,20 @@ class CheckpointShimOrchestrator:
             wf_id = p.stem.replace(".checkpoint", "")
             try:
                 state = json.loads(p.read_text())
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError:
+                log.warning(
+                    "checkpoint_corrupted_skipped",
+                    workflow_id=wf_id,
+                    path=str(p),
+                )
+                continue
+            except OSError as exc:
+                log.warning(
+                    "checkpoint_read_failed_skipped",
+                    workflow_id=wf_id,
+                    path=str(p),
+                    error=str(exc),
+                )
                 continue
             steps = state.get("steps", {})
             if self._TERMINAL_STEP in steps or state.get("terminal"):
@@ -320,12 +356,42 @@ class CheckpointShimOrchestrator:
                 "active": sorted(queue.active),
                 "waiting": list(queue.waiting),
             }
+    def _save_queue(self, name: str, q: _Queue) -> None:
+        """Persist all queues' admit/wait state so slots survive a restart (DUR-1).
+
+        ``admit_times`` (the rolling rate-limit window) uses ``time.monotonic`` which
+        is not portable across processes, so it is intentionally NOT persisted — only
+        the durable ``active`` set + ``waiting`` FIFO + caps are, which is what guards
+        the concurrency slot against re-grant.
+        """
+        data: dict[str, Any] = {}
+        for qname, queue in self._queues.items():
+            data[qname] = {
+                "concurrency": queue.concurrency,
+                "limiter_limit": queue.limiter_limit,
+                "limiter_period": queue.limiter_period,
+                "active": sorted(queue.active),
+                "waiting": list(queue.waiting),
+            }
         p = self._queues_path()
-        fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        try:
+            fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        except OSError as exc:
+            raise OSError(
+                f"Cannot create temporary queue file in {self._dir}: {exc}. "
+                "Check disk space and permissions."
+            ) from exc
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, p)
+        except OSError as exc:
+            raise OSError(
+                f"Failed to write queue state to {p}: {exc}. "
+                "The disk may be full or the filesystem is read-only."
+            ) from exc
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
