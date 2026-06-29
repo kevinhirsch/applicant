@@ -29,6 +29,7 @@ const API = '/api/applicant/activity';
 const STATUS_POLL_MS = 45000;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _statusPollIv = null;
 let _runsLoading = false;
 
@@ -137,6 +138,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-activity-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Activity');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
@@ -155,6 +159,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
   modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -166,6 +173,7 @@ function _close() {
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-activity-body'); }

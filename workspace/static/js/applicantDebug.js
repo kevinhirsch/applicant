@@ -34,6 +34,7 @@ const ADMIN = '/api/applicant/admin';
 const OPS = '/api/applicant/ops';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _activeTab = 'activity';
 let _campaignId = null;
 
@@ -60,6 +61,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-debug-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Applicant diagnostics');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:860px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
@@ -85,6 +89,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
@@ -115,6 +122,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';

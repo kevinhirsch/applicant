@@ -20,6 +20,7 @@ import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 const API = '/api/applicant/chat';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _campaigns = [];
 let _activeCampaignId = null;
 let _sending = false;
@@ -35,6 +36,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-chat-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Job Assistant');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:720px;display:flex;flex-direction:column;max-height:86vh;">
       <div class="modal-header">
@@ -49,6 +53,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -56,6 +63,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
