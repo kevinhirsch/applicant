@@ -1193,10 +1193,45 @@ class PrefillService:
 
     @staticmethod
     def _lookup(label: str, attributes: list[Attribute]) -> str | None:
+        """Find the BEST matching attribute for a field label.
+
+        Priority (highest first):
+        1. Exact label-to-name match (case-insensitive).
+        2. Exact label-to-alias match (case-insensitive).
+        3. Loose match via attr.matches() (substring etc.).
+        Within each tier, a non-sensitive attribute is preferred over a sensitive one
+        (FR-ATTR-6), so an explicit non-sensitive answer wins over an EEO answer when
+        both happen to match the same label."""
+        low_label = label.strip().lower()
+        # Tier 1: exact name match (case-insensitive).
+        exact_non_sensitive = None
+        exact_sensitive = None
         for attr in attributes:
-            if attr.matches(label):
-                return attr.value
-        return None
+            if attr.name.strip().lower() == low_label:
+                if not attr.is_sensitive:
+                    return attr.value  # highest priority: exact + non-sensitive
+                exact_sensitive = attr.value
+        if exact_sensitive is not None:
+            return exact_sensitive
+        # Tier 2: exact alias match.
+        alias_non_sensitive = None
+        alias_sensitive = None
+        for attr in attributes:
+            if low_label in {a.lower() for a in attr.aliases}:
+                if not attr.is_sensitive:
+                    return attr.value
+                alias_sensitive = attr.value
+        if alias_sensitive is not None:
+            return alias_sensitive
+        # Tier 3: loose match (substring, token overlap, etc.).
+        loose_non_sensitive = None
+        loose_sensitive = None
+        for attr in attributes:
+            if attr.matches(label) and attr.name.strip().lower() != low_label:
+                if not attr.is_sensitive:
+                    return attr.value
+                loose_sensitive = attr.value
+        return loose_sensitive
 
     # --- block emitters ---------------------------------------------------
     def _block_missing_attr(self, app, fld: DetectedField, result: PrefillResult) -> PrefillResult:
