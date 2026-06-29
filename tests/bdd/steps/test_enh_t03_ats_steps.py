@@ -887,12 +887,6 @@ def check_false_positive(t03ctx):
     t03ctx["result"] = t03ctx["is_ctx_error"](resp)
 
 
-@then("the current substring heuristic wrongly flags it as a context error")
-def heuristic_false_positive(t03ctx):
-    # GREEN: documents the bug — the bare "context" substring trips on unrelated text.
-    assert t03ctx["result"] is True
-
-
 @when(
     "a content-filter error envelope mentioning the context of the request is checked strictly"
 )

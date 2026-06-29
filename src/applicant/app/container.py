@@ -58,6 +58,7 @@ from applicant.application.services.learning_service import LearningService
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.pending_actions_service import PendingActionsService
+from applicant.application.services.retention_service import RetentionService
 from applicant.application.services.scoring_service import ScoringService
 from applicant.application.services.setup_service import SetupService
 from applicant.application.workflows import application_pipeline
@@ -1261,6 +1262,13 @@ def build_container(settings: Settings | None = None) -> Container:
         # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
         essentials_nudge_service=essentials_nudge_service,
         essentials_nudge_schedule=settings.essentials_nudge_schedule,
+        # #363: PII retention sweep — prunes stored PII/EEO older than the configured
+        # window once per UTC day (default ``off`` => dormant, byte-identical behavior).
+        retention_service=RetentionService(
+            storage,
+            pii_retention_days=settings.pii_retention_days,
+        ),
+        retention_schedule=settings.pii_retention_schedule,
         # FR-OBS-2 / NFR-OPS: how many CONSECUTIVE failed ticks raise ONE operator alert
         # through the existing notification ladder (idempotent). Uses the process-lived
         # metrics singleton so the agent-status surface reads the same registry.
