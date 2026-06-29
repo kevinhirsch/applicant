@@ -50,7 +50,7 @@ subagents for file-disjoint issues, review their output, capture screenshots via
 ## Capability map (non-obvious rows only — the rest you already know from your tool list)
 | Capability | Tool | Notes |
 |---|---|---|
-| Parallel subagents | `parallel_tasks` | Context-isolated; collects results when all finish |
+| Parallel subagents | `parallel_tasks` | Context-isolated; **blocks the whole turn until all finish — owner can't steer mid-wave. NOT the overseer default** (see "Talk-while-it-runs") |
 | Background subagents | `task(run_in_background:true)` | Persists across turns; collect with `wait` |
 | Resume a subagent | `task(continue_from: "sa_...")` | Reasonix equivalent of SendMessage |
 | Background timers | `bash(run_in_background:true, "sleep N")` | Persists across turns; read with `bash_output` |
@@ -116,11 +116,36 @@ evidence inline," (3) "run node --check," (4) a `max_steps` budget that matches 
 size, and (5) "commit per issue + bank partial progress." Everything else is context the
 subagent can derive from the issue body you forward.
 
+## Talk-while-it-runs — keep the owner's channel open (overseer default)
+**The owner wants to steer *while* a wave runs, not only between waves — default to this.**
+Reasonix delivers queued follow-up input ("while a turn runs, non-empty input is queued as
+follow-up feedback") **at the next turn boundary**, so the dispatch primitive decides how
+often the owner is heard:
+- ❌ `parallel_tasks` **blocks the whole turn** until every subagent finishes — the owner's
+  queued message can't land until the wave collects. Do NOT use it as the default.
+- ✅ **Background dispatch + incremental poll** opens a turn boundary on every poll, so
+  queued owner input is picked up mid-wave. This is the overseer default.
+
+### The loop (use this for every wave)
+1. **Fan out:** one `task(run_in_background:true)` per file-disjoint issue; record each `sa_` id.
+2. **Poll in SHORT increments:** a brief `wait` / `bash_output`, then **end the turn**. Never
+   one long blocking `wait` on all tasks — that recreates the `parallel_tasks` problem and
+   slams the channel shut for the whole wave.
+3. **Top of every poll turn: check for an owner message and reconcile BEFORE continuing** —
+   redirect a live subagent via `task(continue_from: "sa_...")`, cancel/re-scope, or note it.
+4. Repeat until all `sa_` ids report done, then run the gate set + open the PR as usual.
+
+**Trade-off (accepted by the owner):** more orchestration turns and a few prefix-cache
+misses, in exchange for a steering channel that stays open the entire wave. Responsiveness
+over raw throughput. Hard interrupt (`Esc` / `Ctrl+C`) stays available when something must
+stop NOW rather than at the next poll boundary.
+
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
 2. Reconcile with any parallel sessions: check `git log origin/main --oneline -20` and
    `mcp__github__list_pull_requests` for work already in flight.
-3. File-disjoint → `parallel_tasks`. Same file → serialize.
+3. File-disjoint → **background dispatch + incremental poll** (`task(run_in_background:true)`),
+   NOT `parallel_tasks` — see "Talk-while-it-runs" below. Same file → serialize.
 4. Verify subagent output: `git diff --stat origin/main...HEAD` for true scope (3-dot,
    not 2-dot — 2-dot shows phantom "deletions" of newer main commits).
 5. Run the full gate set yourself (anti-pattern: trusting a subagent's "green").
