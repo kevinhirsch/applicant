@@ -100,6 +100,38 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=detail)
 
 
+_SAFE_CHANGE_KEYS = frozenset(
+    {"kind", "name", "value", "is_integral", "is_sensitive", "requires_confirmation", "applied"}
+)
+
+
+def _scrub_chat_reply(raw: dict) -> dict:
+    """Whitelist the engine's chat reply to only user-facing fields.
+
+    The engine may include ``control_actions`` (internal agent-loop orchestration
+    state that can carry run IDs and internal session handles) and other fields
+    that are not needed by and must not be forwarded to the browser.
+    """
+    changes = []
+    for c in raw.get("proposed_changes") or []:
+        if isinstance(c, dict):
+            changes.append({k: v for k, v in c.items() if k in _SAFE_CHANGE_KEYS})
+    return {
+        "message": raw.get("message") or "",
+        "gaps": [g for g in (raw.get("gaps") or []) if isinstance(g, str)],
+        "proposed_changes": changes,
+    }
+
+
+def _scrub_confirm_reply(raw: dict) -> dict:
+    """Whitelist the engine's confirm reply to only user-facing fields."""
+    return {
+        "committed": bool(raw.get("committed")),
+        "name": raw.get("name") or "",
+        "value": raw.get("value") or "",
+    }
+
+
 def setup_applicant_chat_routes() -> APIRouter:
     router = APIRouter(prefix="/api/applicant/chat", tags=["applicant-chat"])
 
@@ -171,7 +203,7 @@ def setup_applicant_chat_routes() -> APIRouter:
                 )
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return result or {}
+        return _scrub_chat_reply(result or {})
 
     @router.post("/confirm")
     async def confirm_change(body: ConfirmIn, request: Request) -> dict:
@@ -188,7 +220,7 @@ def setup_applicant_chat_routes() -> APIRouter:
                 )
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return result or {}
+        return _scrub_confirm_reply(result or {})
 
     # -- pending job actions ----------------------------------------------
 
