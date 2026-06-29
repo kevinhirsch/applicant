@@ -55,6 +55,8 @@ class Scheduler:
         status_update_schedule: str = "off",
         essentials_nudge_service=None,
         essentials_nudge_schedule: str = "off",
+        retention_service=None,
+        retention_schedule: str = "off",
         metrics: Metrics | None = None,
         failure_alert_threshold: int = DEFAULT_FAILURE_ALERT_THRESHOLD,
     ) -> None:
@@ -109,6 +111,15 @@ class Scheduler:
         # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same day
         # never re-pushes the nudge (mirrors the status-update per-day idempotency).
         self._essentials_nudge_days: dict[tuple[str, date], bool] = {}
+        # #363: PII retention sweep. ``retention_service.prune_pii_older_than()`` removes
+        # stored PII/EEO older than the configured window. ``retention_schedule`` gates
+        # the cadence: ``off``/empty (default) disables it entirely; anything else opts
+        # in to a once-per-UTC-day sweep so the substrate ships dormant until configured.
+        self._retention = retention_service
+        self._retention_schedule = (retention_schedule or "off").strip().lower()
+        # (UTC date) -> True. Once-per-day guard so re-running a tick the same day never
+        # re-runs the sweep (follows the same pattern as curation/status-update).
+        self._retention_days: dict[date, bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -224,6 +235,9 @@ class Scheduler:
             #      (campaign, UTC day) (FR-NOTIF / FR-ONBOARD), gated + idempotent. Uses
             #      the SAME campaigns the loop ticked so a freshly-removed campaign gets none.
             essentials_nudged = self._run_essentials_nudges(storage, now)
+            # (b4) #363: run the PII retention sweep once per UTC day, gated +
+            #     idempotent. Prunes stored PII/EEO older than the configured window.
+            retention_pruned = self._run_pii_retention(now)
         except Exception:
             # The tick body itself blew up (services factory / campaign query / a nudge
             # ran unguarded) — count it as a failed tick for stall detection, then
@@ -279,6 +293,8 @@ class Scheduler:
             # nudge pushed this tick (empty when disabled / already-pushed / gate open /
             # nothing missing / blocked for some other reason).
             "essentials_nudges": essentials_nudged,
+            # #363: PII retention sweep — pruned count (0 when disabled/gated/already-run).
+            "pii_retention": retention_pruned,
             # FR-OBS-2 / NFR-OPS: this tick's health (False when every attempted campaign
             # failed). The metrics surface tracks the cross-tick consecutive-failure run.
             "tick_ok": tick_ok,
@@ -602,6 +618,31 @@ class Scheduler:
         self._essentials_nudge_days = {
             k: v for k, v in self._essentials_nudge_days.items() if k[1] == today
         }
+
+    # --- #363 PII retention sweep -----------------------------------------
+    def _run_pii_retention(self, now: datetime) -> int:
+        """Prune PII older than the configured window, at most once per UTC day.
+
+        Gated on ``retention_schedule`` — ``off``/empty (default) is a dormant no-op.
+        Once-per-day idempotent (re-ticking the same day skips). Returns the count of
+        PII rows pruned (0 when disabled / gated / already-run).
+        """
+        if self._retention is None or self._retention_schedule == "off":
+            return 0
+        today = now.date()
+        if self._retention_days.get(today):
+            return 0
+        try:
+            result = self._retention.prune_pii_older_than()
+            pruned = int(result.get("pruned", 0))
+            if pruned:
+                log.info("pii_retention_swept", pruned=pruned)
+        except Exception:  # pragma: no cover — retention must never break a tick
+            log.warning("pii_retention_sweep_failed", exc_info=True)
+            return 0
+        finally:
+            self._retention_days[today] = True
+        return pruned
 
     def _active_campaigns(self, storage=None):
         store = storage or self._storage

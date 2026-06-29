@@ -174,6 +174,10 @@ class Settings(BaseSettings):
     # time-based prune) — byte-identical to today until an operator opts in. ge=0 so a
     # negative window is rejected at load rather than silently disabling retention.
     pii_retention_days: int = Field(default=0, ge=0, alias="PII_RETENTION_DAYS")
+    # PII retention sweep schedule (#363). ``off`` (default) keeps it dormant; ``daily``
+    # opts in to a once-per-UTC-day sweep. Mirrors the curation/status-update/essentials
+    # nudge schedule pattern so the deploy surface stays uniform.
+    pii_retention_schedule: str = Field(default="off", alias="PII_RETENTION_SCHEDULE")
 
     # Durable orchestration (FR-DUR-3). "shim" (default, no PG) or "dbos".
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
