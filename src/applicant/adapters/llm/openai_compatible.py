@@ -518,14 +518,55 @@ class OpenAICompatibleLLM:
         marked = profile.mark_prefix_cache(payload)
         return marked if isinstance(marked, dict) else payload
 
-    @staticmethod
-    def _is_context_error(resp: httpx.Response) -> bool:
+    # Specific phrases / error codes that signal a real context-window overflow.
+    # The bare substring "context" is intentionally absent — a content-filter
+    # rejection that mentions "in the context of the request policy" must NOT
+    # trigger an overflow escalation (#285).
+    _CONTEXT_OVERFLOW_CODES = frozenset(
+        {
+            "context_length_exceeded",
+            "context_window_exceeded",
+        }
+    )
+    _CONTEXT_OVERFLOW_PHRASES = (
+        "maximum context length",
+        "context window",
+        "context_length_exceeded",
+        "context_window_exceeded",
+        "too many tokens",
+        "token limit exceeded",
+        "tokens limit exceeded",
+        "reduce the length",
+    )
+
+    @classmethod
+    def _is_context_error(cls, resp: httpx.Response) -> bool:
+        """Return True only for genuine context-window overflow signals (#285).
+
+        Matches provider error codes (``context_length_exceeded`` /
+        ``context_window_exceeded``) or specific phrases that appear in real
+        overflow responses — NOT the bare substring "context", which is too broad
+        and mis-classifies unrelated rejections (content-filter, auth, rate-limit)
+        that happen to mention "context" in their human-readable text.
+        """
+        return cls._is_context_error_strict(resp)
+
+    @classmethod
+    def _is_context_error_strict(cls, resp: httpx.Response) -> bool:
+        """Strict context-overflow classifier — same logic as ``_is_context_error`` (#285)."""
         try:
             body = resp.json()
         except (json.JSONDecodeError, ValueError):
             return False
+        # Check the structured error code field first (exact, case-insensitive).
+        err = body.get("error") if isinstance(body, dict) else None
+        if isinstance(err, dict):
+            code = str(err.get("code") or "").lower()
+            if code in cls._CONTEXT_OVERFLOW_CODES:
+                return True
+        # Fall back to a phrase scan over the full serialised body.
         msg = json.dumps(body).lower()
-        return "context" in msg or "maximum context" in msg or "too long" in msg
+        return any(phrase in msg for phrase in cls._CONTEXT_OVERFLOW_PHRASES)
 
     @staticmethod
     def _with_schema_prompt(

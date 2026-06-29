@@ -907,13 +907,8 @@ def check_strict(t03ctx):
             }
         }
     )
-    # PENDING: a strict classifier that matches specific codes, not the word "context".
-    strict = _require_attr(
-        OpenAICompatibleLLM,
-        "_is_context_error_strict",
-        "OpenAICompatibleLLM._is_context_error_strict",
-    )
-    t03ctx["result"] = strict(resp)
+    # #285: the strict classifier matches specific codes/phrases, not the bare word "context".
+    t03ctx["result"] = OpenAICompatibleLLM._is_context_error_strict(resp)
 
 
 @then("it is not flagged as a context error")

@@ -12,12 +12,6 @@ Feature: Context-overflow detection matches the real error, not the word context
     When a context-length-exceeded error envelope is checked
     Then it is detected as a context error
 
-  Scenario: Today an unrelated error mentioning the word context is misdetected
-    Given the context-error classifier
-    When a content-filter error envelope mentioning the context of the request is checked
-    Then the current substring heuristic wrongly flags it as a context error
-
-  @pending
   Scenario: An unrelated error mentioning the word context is not a context error
     Given the context-error classifier
     When a content-filter error envelope mentioning the context of the request is checked strictly
