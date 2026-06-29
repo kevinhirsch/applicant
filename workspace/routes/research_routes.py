@@ -86,6 +86,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
         except Exception:
+            logger.warning("Bare exception in research_routes.py")
             return False
 
     @router.get("/api/research/active")
@@ -147,6 +148,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
+            logger.warning("Bare exception in research_routes.py")
             raise HTTPException(404, "Research not found")
         if owner != user:
             raise HTTPException(404, "Research not found")
@@ -231,6 +233,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "archived": bool(d.get("archived")),
                 })
             except Exception:
+                logger.warning("Bare exception in research_routes.py")
                 continue
 
         # Sort
@@ -296,6 +299,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             except HTTPException:
                 raise
             except Exception:
+                logger.warning("Bare exception in research_routes.py")
                 raise HTTPException(404, "Research not found")
             json_path.unlink()
             deleted = True
@@ -334,6 +338,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     except HTTPException:
                         raise
                     except Exception:
+                        logger.warning("Bare exception in research_routes.py")
                         pass
                 user = tool_owner
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
@@ -361,6 +366,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         if models:
                             ep_model = _first_chat_model(models)
                     except Exception:
+                        logger.warning("Bare exception in research_routes.py")
                         pass
             finally:
                 db.close()
@@ -397,6 +403,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                                 if models:
                                     ep_model = _first_chat_model(models)
                             except Exception:
+                                logger.warning("Bare exception in research_routes.py")
                                 pass
                 finally:
                     db.close()
@@ -559,6 +566,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                             if models:
                                 fallback_model = models[0]
                         except Exception:
+                            logger.warning("Bare exception in research_routes.py")
                             pass
                     _merge(fallback_url, fallback_model, fallback_headers)
             finally:

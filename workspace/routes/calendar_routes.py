@@ -237,6 +237,7 @@ def parse_due_for_user(s: str) -> str:
             parsed2 = parsed2.replace(tzinfo=user_tz)
         return parsed2.isoformat()
     except Exception:
+        logger.warning("Bare exception in calendar_routes.py")
         # Final fallback: legacy parser, naive.
         return _parse_dt(s).isoformat()
 
@@ -370,6 +371,7 @@ def _parse_dt(s: str) -> datetime:
         from dateutil import parser as _du
         return _du.parse(s)
     except Exception:
+        logger.warning("Bare exception in calendar_routes.py")
         raise ValueError(f"could not parse datetime: {s!r}")
 
 
@@ -526,6 +528,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in calendar_routes.py")
             body = {}
         prefs = _load_for_user(owner) or {}
         cfg = dict(prefs.get("caldav") or {})
@@ -556,6 +559,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in calendar_routes.py")
             body = {}
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
@@ -1197,6 +1201,7 @@ def setup_calendar_routes() -> APIRouter:
                     dt = datetime.fromisoformat(dtstart)
                     dtend = (dt + timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:00")
             except Exception:
+                logger.warning("Bare exception in calendar_routes.py")
                 dtend = dtstart
 
         return {

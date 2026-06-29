@@ -7,6 +7,9 @@ check-in"). Everything about it is user-editable: name, personality, model,
 enabled tools, timezone, and the three check-in times/prompts/enabled flags.
 """
 
+import logging
+
+log = logging.getLogger(__name__)
 import json
 from datetime import datetime
 from typing import Optional
@@ -46,6 +49,7 @@ def _crew_to_dict(c: CrewMember) -> dict:
     try:
         tools = json.loads(c.enabled_tools) if c.enabled_tools else []
     except Exception:
+        log.warning("Bare exception in assistant_routes.py")
         tools = []
     return {
         "id": c.id,
@@ -187,6 +191,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 try:
                     existing = json.loads(crew_db.enabled_tools) if crew_db.enabled_tools else []
                 except Exception:
+                    log.warning("Bare exception in assistant_routes.py")
                     existing = []
                 if payload.allow_autonomous_email:
                     for t in ("send_email", "reply_to_email"):
@@ -319,6 +324,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
             from zoneinfo import available_timezones
             zones = sorted(available_timezones())
         except Exception:
+            log.warning("Bare exception in assistant_routes.py")
             zones = ["UTC"]
         return {"timezones": zones}
 

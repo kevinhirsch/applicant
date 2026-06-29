@@ -5,6 +5,9 @@ A thin, admin-gated proxy to the Ollama instance Applicant is wired to (the
 Lets the UI install / list / remove local models without touching the command
 line. Pull progress is streamed back as Server-Sent Events.
 """
+import logging
+
+log = logging.getLogger(__name__)
 from __future__ import annotations
 
 import json
@@ -25,6 +28,7 @@ def _in_docker() -> bool:
             cg = fh.read()
         return any(m in cg for m in ("docker", "containerd", "kubepods"))
     except Exception:
+        log.warning("Bare exception in ollama_routes.py")
         return False
 
 
@@ -52,6 +56,7 @@ def setup_ollama_routes():
                 await c.get(f"{root}/api/tags")
             return {"reachable": True, "endpoint": root}
         except Exception:
+            log.warning("Bare exception in ollama_routes.py")
             return {"reachable": False, "endpoint": root}
 
     @router.get("/models")

@@ -78,6 +78,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     try:
         user = get_current_user(request)
     except Exception:
+        logger.warning("Bare exception in chat_helpers.py")
         user = None
     if not user:
         return
@@ -248,6 +249,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
                 "endpoint_name": ep.name,
             }
         except Exception:
+            logger.warning("Bare exception in chat_helpers.py")
             continue
 
     return None
@@ -470,6 +472,7 @@ def accumulate_token_usage(session_id: str, metrics: dict):
             db_s.total_output_tokens = (db_s.total_output_tokens or 0) + out_t
             db.commit()
     except Exception:
+        logger.warning("Bare exception in chat_helpers.py")
         db.rollback()
     finally:
         db.close()

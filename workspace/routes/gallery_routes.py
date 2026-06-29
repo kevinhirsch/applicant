@@ -144,6 +144,7 @@ def setup_gallery_routes() -> APIRouter:
                     img.width = new_im.width
                     img.height = new_im.height
             except Exception:
+                logger.warning("Bare exception in gallery_routes.py")
                 pass
             try:
                 db.commit()
@@ -668,6 +669,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             data = await request.json()
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             data = {}
         ids = data.get("ids") or []
         if not ids:
@@ -848,6 +850,7 @@ def setup_gallery_routes() -> APIRouter:
                     try:
                         meta = _json.loads(m.meta_data)
                     except Exception:
+                        logger.warning("Bare exception in gallery_routes.py")
                         continue
                     events = meta.get("tool_events") or []
                     new_events = []
@@ -885,6 +888,7 @@ def setup_gallery_routes() -> APIRouter:
                             try:
                                 prev_meta = _json.loads(prev.meta_data) if prev.meta_data else {}
                             except Exception:
+                                logger.warning("Bare exception in gallery_routes.py")
                                 prev_meta = {}
                             # Only purge the prompt if it has no tool
                             # events of its own (i.e. it's a pure user
@@ -1150,6 +1154,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             strength = float(strength)
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             strength = 0.45
         strength = max(0.05, min(0.95, strength))
         # New two-stage controls. Clients may send either color_match/seam_fix
@@ -1157,10 +1162,12 @@ def setup_gallery_routes() -> APIRouter:
         try:
             color_match = float(body.get("color_match", strength))
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             color_match = strength
         try:
             seam_fix = float(body.get("seam_fix", 0.0))
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             seam_fix = 0.0
         color_match = max(0.0, min(1.0, color_match))
         seam_fix = max(0.0, min(1.0, seam_fix))
@@ -1320,6 +1327,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             strength = float(body.get("strength", 0.5))
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             strength = 0.5
         strength = max(0.0, min(1.0, strength))
         try:
@@ -1370,6 +1378,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             scale = int(body.get("scale", 2))
         except Exception:
+            logger.warning("Bare exception in gallery_routes.py")
             scale = 2
         scale = 2 if scale not in (2, 4) else scale
         try:
@@ -1449,6 +1458,7 @@ def setup_gallery_routes() -> APIRouter:
                         min(W, bbox[2] + pad), min(H, bbox[3] + pad),
                     )
             except Exception:
+                logger.warning("Bare exception in gallery_routes.py")
                 hint = None
                 bbox = None
 
@@ -1471,6 +1481,7 @@ def setup_gallery_routes() -> APIRouter:
                 tmp.putalpha(mask_img)
                 cut = tmp
             except Exception:
+                logger.warning("Bare exception in gallery_routes.py")
                 return {"error": "No background removal model available. Install rembg: pip install rembg"}
 
         # Compose the cropped result back into a full-size transparent canvas.

@@ -74,6 +74,7 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
                         cfg.get("from_address") or "",
                     ])
                 except Exception:
+                    logger.warning("Bare exception in email_routes.py")
                     resolved_account_id = None
             row = db.get(_EA, resolved_account_id) if resolved_account_id else None
             if row:
@@ -81,6 +82,7 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
         finally:
             db.close()
     except Exception:
+        logger.warning("Bare exception in email_routes.py")
         pass
     out = []
     for a in aliases:
@@ -161,6 +163,7 @@ def _list_imap_folders(conn) -> tuple[list, list[str]]:
         names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
         return folders, names
     except Exception:
+        logger.warning("Bare exception in email_routes.py")
         return [], []
 
 
@@ -220,6 +223,7 @@ def _uid_exists(conn, uid: str) -> bool:
                 return True
         return False
     except Exception:
+        logger.warning("Bare exception in email_routes.py")
         return False
 
 
@@ -423,6 +427,7 @@ def _sanitize_email_html(raw: str) -> str:
         p.feed(raw or "")
         p.close()
     except Exception:
+        logger.warning("Bare exception in email_routes.py")
         return None
     inner = "".join(p.out).strip()
     if not inner:
@@ -486,6 +491,7 @@ def setup_email_routes():
                         del _IMAP_POOL[pool_key]
                         return conn, True  # reused
                     except Exception:
+                        logger.warning("Bare exception in email_routes.py")
                         try: conn.logout()
                         except Exception: pass
                         del _IMAP_POOL[pool_key]
@@ -686,6 +692,7 @@ def setup_email_routes():
                                     elif r[1]:
                                         _tag_seq_fallback.append(str(r[1]).strip())
                             except Exception:
+                                logger.warning("Bare exception in email_routes.py")
                                 continue
                     _ct.close()
                 except Exception as _te:
@@ -754,6 +761,7 @@ def setup_email_routes():
                         try:
                             tg = json.loads(r[1] or "[]")
                         except Exception:
+                            logger.warning("Bare exception in email_routes.py")
                             tg = []
                         if isinstance(tg, list):
                             tg = ["marketing" if str(t).strip().lower().replace("_", "-") == "promo" else t for t in tg]
@@ -819,6 +827,7 @@ def setup_email_routes():
                             try:
                                 tags = json.loads(tags_raw or "[]")
                             except Exception:
+                                logger.warning("Bare exception in email_routes.py")
                                 tags = []
                             if isinstance(tags, list):
                                 tags = ["marketing" if str(t).strip().lower().replace("_", "-") == "promo" else t for t in tags]
@@ -1006,6 +1015,7 @@ def setup_email_routes():
                 try:
                     name, addr = email.utils.parseaddr(s or "")
                 except Exception:
+                    logger.warning("Bare exception in email_routes.py")
                     continue
                 if not addr:
                     continue
@@ -1171,6 +1181,7 @@ def setup_email_routes():
                         conn2.select(_q(folder))
                         conn2.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
                 except Exception:
+                    logger.warning("Bare exception in email_routes.py")
                     pass
             _t_total = _t.monotonic() - _t0
             if _t_total > 2.0:
@@ -1218,6 +1229,7 @@ def setup_email_routes():
                         if _rs and _rs[0]:
                             cached_sender_sig = _rs[0]
                 except Exception:
+                    logger.warning("Bare exception in email_routes.py")
                     pass
                 if _row3:
                     cached_boundaries = {"sig_start": _row3[0], "quote_start": _row3[1]}
@@ -1237,9 +1249,11 @@ def setup_email_routes():
                             ):
                                 cached_turns = _parsed["turns"]
                         except Exception:
+                            logger.warning("Bare exception in email_routes.py")
                             cached_turns = None
                 _c.close()
             except Exception:
+                logger.warning("Bare exception in email_routes.py")
                 pass
 
             # If no cached turns, parse on-the-fly so the client never has
@@ -1322,12 +1336,14 @@ def setup_email_routes():
             try:
                 epoch = float((em or {}).get("date_epoch") or 0)
             except Exception:
+                logger.warning("Bare exception in email_routes.py")
                 epoch = 0
             if epoch and now - epoch > _WARM_RECENT_SECONDS:
                 continue
             try:
                 size = int((em or {}).get("size") or 0)
             except Exception:
+                logger.warning("Bare exception in email_routes.py")
                 size = 0
             if size > _WARM_MAX_BYTES:
                 continue
@@ -2068,8 +2084,10 @@ def setup_email_routes():
                                                 if addr not in matches:
                                                     matches[addr] = display
                             except Exception:
+                                logger.warning("Bare exception in email_routes.py")
                                 continue
                     except Exception:
+                        logger.warning("Bare exception in email_routes.py")
                         continue
                     if len(matches) >= 10:
                         break
@@ -2196,6 +2214,7 @@ def setup_email_routes():
                                     if st_uid == "OK" and uid_data and uid_data[0]:
                                         sent_uid = uid_data[0].split()[-1].decode("ascii", errors="ignore")
                             except Exception:
+                                logger.warning("Bare exception in email_routes.py")
                                 pass
                         # Auto-mark the source email as Answered/done so it
                         # disappears from "undone" filters.
@@ -2225,6 +2244,7 @@ def setup_email_routes():
                                             logger.info(f"Marked source {mid[:60]!r} as \\Answered in {folder_name}")
                                             break
                                     except Exception:
+                                        logger.warning("Bare exception in email_routes.py")
                                         continue
                             except Exception as e:
                                 logger.warning(f"Failed to auto-mark source as answered: {e}")
@@ -2352,6 +2372,7 @@ def setup_email_routes():
                             if body.strip() and len(body) > 20:
                                 out.append(body[:1000])
                         except Exception:
+                            logger.warning("Bare exception in email_routes.py")
                             continue
                     return out, None
             except Exception as e:
@@ -2599,6 +2620,7 @@ def setup_email_routes():
                                 try:
                                     _h = json.loads(_h)
                                 except Exception:
+                                    logger.warning("Bare exception in email_routes.py")
                                     _h = None
                                     break
                             else:
@@ -2713,12 +2735,14 @@ def setup_email_routes():
                 _u_url, _u_model, _u_headers = resolve_endpoint("utility", owner=owner)
                 _add(_u_url, _u_model, _u_headers)
             except Exception:
+                logger.warning("Bare exception in email_routes.py")
                 pass
             # Primary default chat endpoint — last working chat config.
             try:
                 _d_url, _d_model, _d_headers = resolve_endpoint("default", owner=owner)
                 _add(_d_url, _d_model, _d_headers)
             except Exception:
+                logger.warning("Bare exception in email_routes.py")
                 pass
             # Configured fallback chains last.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
@@ -2859,6 +2883,7 @@ def setup_email_routes():
         try:
             data = _json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in email_routes.py")
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         # Drop `notified_uids` from the payload — it's an internal scheduler
         # debounce, not UI-relevant.
@@ -3034,6 +3059,7 @@ def setup_email_routes():
         try:
             body = await req.json()
         except Exception:
+            logger.warning("Bare exception in email_routes.py")
             return {"ok": False, "imap": {"ok": False, "error": "invalid request body"}}
 
         # Saved-account shortcut — hydrate missing credentials from the DB row,
