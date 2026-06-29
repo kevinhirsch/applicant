@@ -389,22 +389,32 @@ class ScoringService:
 
     @staticmethod
     def _parse_json_loose(text: str) -> dict:
-        """Best-effort extract a JSON object from a model reply (defensive)."""
+        """Best-effort extract a JSON object from a model reply (defensive).
+
+        Logs a warning when the extracted dict lacks a ``score`` key (#345) so
+        operators can detect models that silently omit the expected field rather
+        than having the error swallowed in the caller's fallback chain.
+        """
         import json
         import re
 
+        obj: dict = {}
         try:
-            obj = json.loads(text)
-            return obj if isinstance(obj, dict) else {}
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                obj = parsed
         except Exception:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 try:
-                    obj = json.loads(match.group(0))
-                    return obj if isinstance(obj, dict) else {}
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, dict):
+                        obj = parsed
                 except Exception:
-                    return {}
-        return {}
+                    pass
+        if obj and "score" not in obj:
+            log.warning("parse_json_loose_missing_score", snippet=text[:200])
+        return obj
 
     def _learned_context(self, campaign_id) -> str:
         """A BOUNDED, advisory curated-memory block about the user's taste (FR-MIND-1/5).
