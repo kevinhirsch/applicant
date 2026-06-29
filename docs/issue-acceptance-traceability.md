@@ -1,18 +1,12 @@
 # Issue acceptance traceability — requirement ↔ acceptance ↔ code
 
-Master sheet for implementing the open tracker. **Every open issue has an executable
-acceptance spec** (Gherkin) and a DeepSeek-ready work-order comment on GitHub. This table
-is the single index: issue → requirement → acceptance feature → binding step module →
-green (already holds) / pending (to implement).
+Master sheet for implementing the open tracker. Every open issue has an executable
+acceptance spec (Gherkin) + a DeepSeek-ready work-order comment on GitHub. Untagged
+scenarios = GREEN regression guards for shipped behaviour; `@pending` = TDD reds
+(xfail via `tests/bdd/conftest.py`). Definition of done per issue = its `@pending`
+scenarios pass + `ruff check .` + full hermetic suite green + single Alembic head.
 
-- **Acceptance criteria** live in `tests/bdd/features/enhancements/<feature>` (Given/When/Then).
-- **`@pending`** scenarios are TDD reds (xfail via `tests/bdd/conftest.py`); implement until they
-  pass with the tag removed. **Green** scenarios are regression guards for shipped behaviour.
-- **Requirement** column: the explicit `# Requirement:` header where present, else the feature title.
-- Definition of done per issue = its `@pending` scenarios pass + `ruff check .` + full hermetic
-  suite green + single Alembic head. See the issue's GitHub work-order comment for the file:line locus.
-
-**199 issues covered** · 135 green scenarios · 362 pending.
+**212 issues** · 140 green · 395 pending.
 
 | Issue | Requirement / acceptance | Feature | Step module | green | pending |
 |---|---|---|---|---|---|
@@ -215,3 +209,16 @@ green (already holds) / pending (to implement).
 | #356 | The webhook_token column MUST NOT persist a plaintext token — it is | `enh_356_webhook_token_encryption.feature` | `test_enh_n1_security_steps.py` | 1 | 1 |
 | #357 | The editor JS surface MUST be individually audited — at minimum the | `enh_357_editor_js_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
 | #358 | Every remaining unaudited area listed in this master tracker MUST be | `enh_358_master_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
+| #360 | The engine MUST scan/neutralize untrusted scraped text (job description, | `enh_360_prompt_injection_scoring.feature` | `test_enh_systemic_steps.py` | 0 | 4 |
+| #361 | The vault MUST support master-key rotation (re-encrypt all stored secrets | `enh_361_vault_key_rotation.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
+| #362 | The engine MUST emit operational metrics (tick success/failure, scheduler | `enh_362_loop_metrics_alerting.feature` | `test_enh_systemic_steps.py` | 0 | 3 |
+| #363 | Deleting a campaign (or user) MUST purge all associated résumés, parsed PII, | `enh_363_pii_erasure_retention.feature` | `test_enh_systemic_steps.py` | 1 | 3 |
+| #364 | A runnable end-to-end test MUST exercise the full pipeline (discovery → | `enh_364_e2e_pipeline_harness.feature` | `test_enh_systemic_steps.py` | 1 | 2 |
+| #365 | A test MUST stand up a database at a prior revision with representative rows, | `enh_365_migration_data_integrity.feature` | `test_enh_systemic_steps.py` | 0 | 2 |
+| #366 | The front-door MUST have a JS unit-test harness (a configured test runner | `enh_366_js_test_harness.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
+| #367 | Before pre-fill/apply, the engine MUST score a posting for scam / | `enh_367_scam_ghost_job_guard.feature` | `test_enh_spirit_steps.py` | -1 | 3 |
+| #368 | Before applying, the engine MUST check the user's own application | `enh_368_reapply_cooldown_guard.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #369 | Scoring/discovery MUST down-rank or exclude postings whose stated | `enh_369_work_auth_eligibility_filter.feature` | `test_enh_spirit_steps.py` | 2 | 2 |
+| #370 | After rendering, the engine MUST run an ATS-parseability self-check on | `enh_370_ats_parseability_selfcheck.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #371 | The engine MUST enforce a configurable per-company application cap per | `enh_371_per_company_volume_cap.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #372 | On submission (or review-approval at the stop-boundary), the engine | `enh_372_submission_snapshot.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
