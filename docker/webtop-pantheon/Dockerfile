@@ -61,13 +61,27 @@ RUN apt-get update && \
 # (the coherent real-Linux/Chrome identity; not Chromium, not headless). Plus a
 # realistic desktop FONT SET so font enumeration looks like a real machine, not a bare
 # container. fc-cache rebuilds the font index.
+# Google's signing key is pinned by FINGERPRINT, not "trust whatever the URL
+# returns" (#164): download the key, dearmor it, and assert its fingerprint matches
+# Google's published Linux Package Signing key before writing it into the apt
+# keyring — a swapped/MITM'd key fails the build instead of silently signing a
+# malicious repo. The apt source uses https (not http) so the index/.deb transport
+# is also authenticated end to end.
+ARG GOOGLE_SIGNING_KEY_FPR="EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg && \
     install -d -m 0755 /etc/apt/keyrings && \
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /tmp/google-key.pub && \
+    gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google-key.pub && \
+    fpr="$(gpg --show-keys --with-colons --with-fingerprint /tmp/google-key.pub \
+        | awk -F: '/^fpr:/ {print $10; exit}')" && \
+    if [ "$fpr" != "${GOOGLE_SIGNING_KEY_FPR}" ]; then \
+        echo "ERROR: Google signing key fingerprint mismatch: got '$fpr', expected '${GOOGLE_SIGNING_KEY_FPR}'" >&2; \
+        exit 1; \
+    fi && \
+    rm -f /tmp/google-key.pub && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
         > /etc/apt/sources.list.d/google-chrome.list && \
     echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
         | debconf-set-selections && \
