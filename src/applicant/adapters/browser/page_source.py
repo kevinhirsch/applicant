@@ -179,6 +179,10 @@ class PageSource(Protocol):
         'ok' | 'email_verify' | 'failed' (gated by the adapter)."""
         ...
 
+    def submit_account(self) -> None:
+        """Click the account-creating submit (boundary check in adapter)."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
