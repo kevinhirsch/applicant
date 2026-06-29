@@ -78,18 +78,32 @@ class ScoringService:
         if posting is None:
             return ViabilityScoring(posting_id=posting_id, score=0.0, rationale="posting not found")
         scoring = self._score(posting, criteria)
-        self._persist_score(posting, scoring, criteria_sig=self._criteria_sig(criteria))
+        self._persist_score(
+            posting,
+            scoring,
+            criteria_sig=self._criteria_sig(criteria),
+            learning_sig=self._learning_sig(posting.campaign_id),
+        )
         return scoring
 
     def _persist_score(
-        self, posting: JobPosting, scoring: ViabilityScoring, *, criteria_sig: str = ""
+        self,
+        posting: JobPosting,
+        scoring: ViabilityScoring,
+        *,
+        criteria_sig: str = "",
+        learning_sig: str = "",
     ) -> None:
         """Durably store the viability score + rationale on the posting (FR-DIG-4).
 
         So the digest rationale survives restart instead of being recomputed every
         run. ``criteria_sig`` records WHICH criteria produced the score so the digest
         can reuse it only while the criteria are unchanged (it re-scores on a change).
-        Best-effort: a storage hiccup must not break scoring/digest delivery.
+        ``learning_sig`` (#239) records the learning-MODEL state the score was computed
+        against so a new conversion / taste shift also invalidates the cached score —
+        without it the digest kept returning the stale pre-conversion score until the
+        user happened to edit their criteria. Best-effort: a storage hiccup must not
+        break scoring/digest delivery.
         """
         import dataclasses
 
@@ -101,12 +115,49 @@ class ScoringService:
                     "text": scoring.rationale,
                     "viable": self.is_viable(scoring),
                     "criteria_sig": criteria_sig,
+                    "learning_sig": learning_sig,
                 },
             )
             self._storage.postings.add(updated)
             self._storage.commit()
         except Exception:  # pragma: no cover - never let persistence break scoring
             pass
+
+    def _learning_sig(self, campaign_id) -> str:
+        """Stable signature of the LEARNING state a score depends on (#239).
+
+        Empty (``""``) when no learning service is wired or the model is at cold start
+        (no conversions, no taste) — so a campaign with no learning reuses exactly as
+        before. Folds the converting-role signature (centroid sample count + discrete
+        feature keys/weights) AND the approve/decline ``feature_stats`` so that EITHER a
+        new conversion OR a new taste signal yields a fresh signature, invalidating the
+        stale cached score on the next digest. Guarded: a learning hiccup degrades to
+        ``""`` (reuse on criteria alone) rather than breaking the digest.
+        """
+        if self._learning is None:
+            return ""
+        try:
+            model = self._learning.load_model(campaign_id)
+        except Exception:  # pragma: no cover - never let learning break scoring
+            return ""
+        sig = getattr(model, "converting_role_signature", {}) or {}
+        samples = int(getattr(model, "converting_samples", 0) or 0)
+        feature_stats = getattr(model, "feature_stats", {}) or {}
+        # Sort for a deterministic, order-independent digest of the learning state.
+        sig_part = ";".join(
+            f"{k}={sig[k]}" for k in sorted(sig) if k != "vector"
+        )
+        # The centroid vector is a long float list; fold its sample count + a coarse
+        # presence marker instead of every float (a new conversion bumps ``samples``).
+        vector_present = "v" if sig.get("vector") else ""
+        stats_part = ";".join(
+            f"{feat}={sorted((feature_stats.get(feat) or {}).items())}"
+            for feat in sorted(feature_stats)
+        )
+        material = f"{samples}|{vector_present}|{sig_part}|{stats_part}"
+        if material == "0|||":
+            return ""  # cold start: no learning state to key on
+        return hashlib.blake2b(material.encode("utf-8"), digest_size=8).hexdigest()
 
     def _criteria_sig(self, criteria: SearchCriteria | None) -> str:
         """Stable signature of the criteria a score was computed against.
@@ -143,12 +194,16 @@ class ScoringService:
         matches the current criteria; otherwise compute fresh and persist it.
         """
         sig = self._criteria_sig(criteria)
+        learning_sig = self._learning_sig(posting.campaign_id)
         persisted = getattr(posting, "viability_score", None)
         rationale = getattr(posting, "rationale", None) or {}
         if (
             persisted is not None
             and isinstance(rationale, dict)
             and rationale.get("criteria_sig") == sig
+            # #239: reuse only when the LEARNING state also matches — a new conversion
+            # or taste shift changes ``learning_sig`` and forces a fresh, biased score.
+            and rationale.get("learning_sig", "") == learning_sig
         ):
             return ViabilityScoring(
                 posting_id=posting.id,
@@ -156,7 +211,7 @@ class ScoringService:
                 rationale=str(rationale.get("text") or ""),
             )
         scoring = self._score(posting, criteria)
-        self._persist_score(posting, scoring, criteria_sig=sig)
+        self._persist_score(posting, scoring, criteria_sig=sig, learning_sig=learning_sig)
         return scoring
 
     def score_posting(
@@ -192,6 +247,19 @@ class ScoringService:
             rationale = "No search criteria set yet — scored neutral so nothing is dropped."
         else:
             base, rationale = self._base_score(posting, criteria, criteria_text, jd_text)
+        # #237: fold the accumulated per-feature approve/decline TASTE into the base
+        # score so the feedback loop actually closes — a posting carrying a value the
+        # user has consistently declined is nudged down, an approved one nudged up.
+        # ``1.0`` (no taste / no match) leaves the score byte-identical to before.
+        taste = self._taste_bias(posting.campaign_id, f"{jd_text} {criteria_text}")
+        if taste != 1.0:
+            biased_base = max(0.0, min(1.0, base * taste))
+            direction = "up" if taste > 1.0 else "down"
+            rationale += (
+                f"; nudged {direction} by your past approve/decline taste "
+                f"(x{taste:.2f}, FR-LEARN-1)"
+            )
+            base = biased_base
         score = base
         alignment = self._signature_alignment(posting.campaign_id, jd_text)
         if alignment > 0.0:
@@ -366,6 +434,23 @@ class ScoringService:
         )
         # Hard-bound so learned context never bloats the scoring prompt (FR-MIND-13).
         return block[:1200]
+
+    def _taste_bias(self, campaign_id, text: str) -> float:
+        """Accumulated approve/decline taste multiplier for a posting (#237, FR-LEARN-1).
+
+        Reads the per-campaign ``feature_stats`` taste signal through the wired
+        ``LearningService`` and returns a bounded multiplier in ``[0.8, 1.2]``. Returns
+        ``1.0`` (no bias) when no learning service is wired or nothing matches, so a
+        cold campaign — and the no-learning baseline scorer — score byte-identically to
+        before. Guarded: a learning/storage hiccup must never 500 the digest.
+        """
+        if self._learning is None:
+            return 1.0
+        try:
+            model = self._learning.load_model(campaign_id)
+            return self._learning.taste_bias(model, text)
+        except Exception:  # pragma: no cover - taste bias must never break scoring
+            return 1.0
 
     def _signature_alignment(self, campaign_id, jd_text: str) -> float:
         """Advisory converting-signature alignment in [0,1] for a JD (FR-LEARN-5).

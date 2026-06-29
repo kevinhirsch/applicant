@@ -479,15 +479,18 @@ def score_declined_posting(t05ctx):
     ).score_posting(posting, criteria)
     t05ctx["biased_score"] = biased.score
     t05ctx["baseline_score"] = baseline.score
+    t05ctx["biased_rationale"] = biased.rationale
 
 
 @then(
     "the recorded feature stats lower its viability score relative to the unbiased baseline"
 )
 def stats_lower_score(t05ctx):
-    # feature_stats is never read by scoring, so the declined-feature signal has zero
-    # effect — biased == baseline. Genuine red until biasing is wired (@pending).
+    # #237: feature_stats is now READ by scoring via LearningService.taste_bias, so the
+    # repeatedly-declined "frontend" signal nudges a frontend posting's score down
+    # below the no-learning baseline, and the bias is disclosed in the rationale.
     assert t05ctx["biased_score"] < t05ctx["baseline_score"]
+    assert "taste" in t05ctx["biased_rationale"].lower()
 
 
 # ===========================================================================
@@ -569,11 +572,21 @@ def close_conversion_loop(t05ctx):
 
 @then("the Phase-1 converting-role centroid vector is populated by that conversion")
 def centroid_populated_by_loop(t05ctx):
-    model = t05ctx["learning"].load_model(t05ctx["campaign_id"])
-    # The live loop folds only the DISCRETE signature; record_converting_role (which
-    # writes the centroid ``vector``) is never called, so the Phase-1 centroid stays
-    # empty. Genuine red for @pending.
-    assert model.converting_role_signature.get("vector")
+    learning = t05ctx["learning"]
+    model = learning.load_model(t05ctx["campaign_id"])
+    # #238: the live conversion loop now folds BOTH facets — the discrete role-feature
+    # signature AND the Phase-1 embedding centroid ``vector`` — off one conversion, so
+    # the centroid is populated (and counted once) and Phase-1 converting_alignment is
+    # non-zero after a real conversion through the submission loop.
+    vector = model.converting_role_signature.get("vector")
+    assert vector
+    assert model.converting_samples == 1
+    # The discrete signature is still folded (single source of truth for samples).
+    assert any(k.startswith("role:") for k in model.converting_role_signature)
+    # And the now-populated centroid makes the Phase-1 alignment reader non-zero.
+    posting = t05ctx["storage"].postings.list_for_campaign(t05ctx["campaign_id"])[0]
+    jd = f"{posting.title} {posting.description}"
+    assert learning.converting_alignment(model, jd) > 0.0
 
 
 # ===========================================================================
@@ -717,8 +730,9 @@ def rescore_after_learning(t05ctx):
     "the digest reflects the higher learning-biased score rather than the stale one"
 )
 def digest_reflects_learning(t05ctx):
-    # The cache key is criteria-only, so unchanged criteria return the stale cold score
-    # even though the converting signature now aligns. Genuine red for @pending.
+    # #239: the digest cache key now folds a learning-state signature, so learning the
+    # converting-role signature invalidates the stale cold score even with UNCHANGED
+    # criteria — the re-score recomputes and reflects the higher learning-biased value.
     assert t05ctx["post_learning"].score > t05ctx["cold_score"]
 
 

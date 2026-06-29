@@ -494,6 +494,12 @@ class MaterialService:
             parent_source, jd_terms, kind="resume_variant", campaign_id=campaign_id
         )
         report = self.apply_post_filter(generated)
+        # Fail-closed (NFR-TRUTH-1): the fabrication post-check runs BEFORE the variant
+        # is persisted, so a forked variant whose generated body adds an unsupported
+        # claim raises TruthfulnessViolation and nothing is stored. If generation
+        # raised earlier (LLM/parse error), ``_generate_text`` already fell back to the
+        # provably-truthful deterministic reframe — which still passes through this same
+        # gate — so no unverified body can ever reach ``resume_variants.add``.
         self.assert_no_fabrication(base_source, report.text)
         new_variant = ResumeVariant(
             id=ResumeVariantId(new_id()),
@@ -727,15 +733,18 @@ class MaterialService:
         # narrative wording passes while invented skills/orgs/credentials are caught.
         # The target company + role title are the addressee/position, not claims about
         # the candidate, so allow them as context (else a letter naming the employer
-        # it is addressed to would self-report as a fabrication).
+        # it is addressed to would self-report as a fabrication). The fabrication
+        # post-check is enforced fail-closed at the persistence boundary by
+        # ``_store_document`` (NFR-TRUTH-1) — nothing is stored unless it passes.
         check_source = self._with_application_context(true_source, application_id)
-        self.assert_no_fabrication(check_source, report.text, prose=True)
         doc = self._store_document(
             campaign_id,
             application_id,
             DocumentType.COVER_LETTER,
             report.text,
             provenance=self._last_provenance,
+            verify_source=check_source,
+            prose=True,
         )
         self._announce_review_ready(doc, "Cover letter ready for review")
         return doc
@@ -792,22 +801,34 @@ class MaterialService:
         report = self.apply_post_filter(answer)
         # Sensitive answers are policy-driven (explicit EEO answer or the canned
         # decline), not generated from true_source, so the fabrication guard (which
-        # compares against true_source) does not apply to them (FR-ATTR-6).
-        if kind is not ScreeningKind.SENSITIVE:
-            # Essay answers are free prose (entity-shaped check); factual answers are
-            # terse and stay on the strict per-token check. The target company/role is
-            # legitimate context (the position being answered about), not a claim.
-            check_source = self._with_application_context(true_source, application_id)
-            self.assert_no_fabrication(
-                check_source, report.text, prose=(kind is ScreeningKind.ESSAY)
+        # compares against true_source) does not apply to them (FR-ATTR-6); they are
+        # persisted as policy-exempt. Essay/factual answers ARE derived from the true
+        # source, so the fabrication post-check is enforced fail-closed at the
+        # persistence boundary by ``_store_document`` (NFR-TRUTH-1): essay answers are
+        # free prose (entity-shaped check); factual answers stay on the strict
+        # per-token check. The target company/role is legitimate context (the position
+        # being answered about), not a claim.
+        if kind is ScreeningKind.SENSITIVE:
+            doc = self._store_document(
+                campaign_id,
+                application_id,
+                DocumentType.SCREENING_ANSWER,
+                report.text,
+                provenance=provenance,
+                verify_source=None,
+                policy_exempt=True,
             )
-        doc = self._store_document(
-            campaign_id,
-            application_id,
-            DocumentType.SCREENING_ANSWER,
-            report.text,
-            provenance=provenance,
-        )
+        else:
+            check_source = self._with_application_context(true_source, application_id)
+            doc = self._store_document(
+                campaign_id,
+                application_id,
+                DocumentType.SCREENING_ANSWER,
+                report.text,
+                provenance=provenance,
+                verify_source=check_source,
+                prose=(kind is ScreeningKind.ESSAY),
+            )
         self._announce_review_ready(doc, "Screening answer ready for review")
         return doc
 
@@ -1499,7 +1520,36 @@ class MaterialService:
         content: str,
         *,
         provenance: tuple[LearnedProvenance, ...] = (),
+        verify_source: str | None,
+        prose: bool = False,
+        policy_exempt: bool = False,
     ) -> GeneratedDocument:
+        """Persist a generated document, fail-closed on truthfulness (NFR-TRUTH-1).
+
+        The fabrication post-check runs HERE, at the persistence boundary, as the
+        last gate before ``documents.add`` — so unverified generated text can NEVER
+        reach storage even if a caller forgot to check or an earlier step raised
+        before its own (caller-level) check. ``verify_source`` is the candidate's
+        TRUE ground truth the content is checked against; ``prose`` selects the
+        entity-shaped check for free-prose material (cover letters / essays).
+
+        ``policy_exempt=True`` is the ONLY way to persist content that is not derived
+        from ``verify_source`` (the EEO/sensitive path: a canned decline or an
+        explicit stored answer, which the source-comparison check does not apply to,
+        FR-ATTR-6). A non-exempt call MUST pass a ``verify_source``; passing ``None``
+        without ``policy_exempt`` is a programming error and raises rather than
+        silently persisting unchecked text.
+        """
+        if not policy_exempt:
+            if verify_source is None:
+                # White-label (principle #3): no requirement-id jargon in the message.
+                raise TruthfulnessViolation(
+                    "refusing to persist generated material without a truthfulness "
+                    "ground-truth source to check it against"
+                )
+            # Mandatory fail-closed post-check at the persistence boundary. Raises
+            # TruthfulnessViolation on any unsupported claim; nothing is stored.
+            self.assert_no_fabrication(verify_source, content, prose=prose)
         doc = GeneratedDocument(
             id=GeneratedDocumentId(new_id()),
             campaign_id=campaign_id,

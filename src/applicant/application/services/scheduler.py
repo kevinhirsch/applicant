@@ -27,6 +27,11 @@ import threading
 from datetime import UTC, date, datetime
 
 from applicant.observability.logging import get_logger
+from applicant.observability.metrics import (
+    DEFAULT_FAILURE_ALERT_THRESHOLD,
+    Metrics,
+    get_metrics,
+)
 
 log = get_logger(__name__)
 
@@ -50,6 +55,8 @@ class Scheduler:
         status_update_schedule: str = "off",
         essentials_nudge_service=None,
         essentials_nudge_schedule: str = "off",
+        metrics: Metrics | None = None,
+        failure_alert_threshold: int = DEFAULT_FAILURE_ALERT_THRESHOLD,
     ) -> None:
         self._storage = storage
         self._loop = agent_loop
@@ -111,6 +118,15 @@ class Scheduler:
         # 24/7 loop owns the only writer, so a plain attribute is enough.
         self._last_tick_at: datetime | None = None
         self._tick_running: bool = False
+        # FR-OBS-2 / NFR-OPS: the operational metrics surface (tick counts, success/
+        # failure, scheduler-liveness heartbeat) that updates EVERY tick and the
+        # consecutive-tick-failure alert ladder. Defaults to the process-lived
+        # singleton (so the agent-status surface + a real exporter read the same
+        # registry); tests inject a fresh isolated ``Metrics()`` to avoid global
+        # bleed-through. The threshold is the configurable N consecutive failures that
+        # raises ONE operator alert through the EXISTING notification ladder.
+        self._metrics = metrics or get_metrics()
+        self._metrics.set_failure_alert_threshold(failure_alert_threshold)
         # FR-ONBOARD-2 / FR-OOBE-3: the automated-work gate. Each per-campaign loop tick
         # consults this and starts NO new work (discovery/digest/pipeline) while the
         # gate is closed — only in-flight recovery re-drive proceeds. The scheduler
@@ -164,6 +180,14 @@ class Scheduler:
         ) or self._curation
 
         ticked: list[str] = []
+        # FR-OBS-2 / NFR-OPS: track this tick's health so the metrics surface records
+        # success/failure and the consecutive-failure alert can fire. A tick is a
+        # FAILURE when (a) an unexpected exception escapes the tick body, or (b) there
+        # were active campaigns but EVERY one of them failed its loop tick (a real
+        # stall — not a single transient blip on one campaign).
+        tick_ok = True
+        campaign_attempts = 0
+        campaign_failures = 0
         try:
             for campaign in self._active_campaigns(storage):
                 # (a) advance the per-campaign run loop one step. IDEM-1: the loop
@@ -176,10 +200,12 @@ class Scheduler:
                 if not lock.acquire(blocking=False):
                     log.info("campaign_tick_skipped_in_progress", campaign_id=str(campaign.id))
                     continue
+                campaign_attempts += 1
                 try:
                     loop.tick(campaign.id, now)
                     ticked.append(str(campaign.id))
-                except Exception as exc:  # pragma: no cover - defensive
+                except Exception as exc:
+                    campaign_failures += 1
                     log.warning(
                         "campaign_tick_failed", campaign_id=str(campaign.id), error=str(exc)
                     )
@@ -198,6 +224,13 @@ class Scheduler:
             #      (campaign, UTC day) (FR-NOTIF / FR-ONBOARD), gated + idempotent. Uses
             #      the SAME campaigns the loop ticked so a freshly-removed campaign gets none.
             essentials_nudged = self._run_essentials_nudges(storage, now)
+        except Exception:
+            # The tick body itself blew up (services factory / campaign query / a nudge
+            # ran unguarded) — count it as a failed tick for stall detection, then
+            # re-raise so the caller (lifespan / DBOS workflow) still sees the error.
+            tick_ok = False
+            self._record_tick_metrics(now, success=False, campaigns=len(ticked))
+            raise
         finally:
             self._tick_running = False
             if session is not None:
@@ -206,14 +239,26 @@ class Scheduler:
                 except Exception:  # pragma: no cover - defensive
                     pass
 
+        # A tick where every attempted campaign failed is a stall, not a success.
+        if campaign_attempts > 0 and campaign_failures == campaign_attempts:
+            tick_ok = False
+
         # (c) advance the notification escalation ladder (FR-NOTIF-2). The ladder is
         # in the (shared) notifier, not the DB, so it uses the shared service.
         fired = self._advance_ladders(now)
+
+        # (d) FR-OBS-2 / NFR-OPS: record the tick on the metrics surface (heartbeat +
+        # success/failure counters) and raise ONE operator alert through the existing
+        # notification ladder if N consecutive ticks have now failed (idempotent).
+        self._record_tick_metrics(
+            now, success=tick_ok, campaigns=len(ticked), ladder_fired=len(fired)
+        )
 
         log.info(
             "scheduler_tick",
             campaigns=len(ticked),
             ladder_fired=len(fired),
+            tick_ok=tick_ok,
             curation_reviewed=curated.get("reviewed", 0),
             status_updates=len(status_pushed),
             essentials_nudges=len(essentials_nudged),
@@ -234,14 +279,75 @@ class Scheduler:
             # nudge pushed this tick (empty when disabled / already-pushed / gate open /
             # nothing missing / blocked for some other reason).
             "essentials_nudges": essentials_nudged,
+            # FR-OBS-2 / NFR-OPS: this tick's health (False when every attempted campaign
+            # failed). The metrics surface tracks the cross-tick consecutive-failure run.
+            "tick_ok": tick_ok,
         }
+
+    # --- operational metrics + consecutive-failure alert (FR-OBS-2 / NFR-OPS) ---
+    def _record_tick_metrics(
+        self, now: datetime, *, success: bool, **counters: int
+    ) -> None:
+        """Record this tick on the metrics surface and alert on a sustained stall.
+
+        Updates the tick counters + scheduler-liveness heartbeat for EVERY tick
+        (FR-OBS-2), then asks the metrics surface whether N consecutive ticks have now
+        failed. If so it raises ONE operator alert through the EXISTING notification
+        ladder (``NotificationService.notify_error`` — IMMEDIATE urgency, surfaced any
+        hour, FR-NOTIF-5) rather than only a log line. The alert is idempotent: the
+        metrics surface latches after the first alert of a stall and re-arms only after
+        a tick succeeds, so a long outage produces ONE alert, not one per tick.
+        """
+        try:
+            self._metrics.record_tick(success=success, now=now, **counters)
+            alert = self._metrics.consecutive_failure_alert()
+        except Exception:  # pragma: no cover - defensive: metrics must never break a tick
+            return
+        if alert:
+            self._raise_failure_alert(alert)
+
+    def _raise_failure_alert(self, alert: dict) -> None:
+        """Surface ONE operator alert for a sustained scheduler stall (FR-OBS-2)."""
+        count = alert.get("consecutive_failures")
+        threshold = alert.get("threshold")
+        log.error(
+            "scheduler_consecutive_failure_alert",
+            consecutive_failures=count,
+            threshold=threshold,
+        )
+        notifier = self._notifications
+        if notifier is None:
+            return
+        try:
+            notifier.notify_error(
+                title="Your job-search agent is stuck",
+                body=(
+                    f"I've hit a problem on {count} runs in a row and have paused "
+                    "automatic work until it clears. Please check on me when you can."
+                ),
+                # One dedup key per stall episode so even if this fired twice the
+                # notifier collapses it to a single operator alert (defense in depth).
+                dedup_key="scheduler_stall",
+            )
+        except Exception as exc:  # pragma: no cover - defensive: alert send is best-effort
+            log.warning("scheduler_failure_alert_send_failed", error=str(exc))
+
+    def metrics_snapshot(self) -> dict:
+        """A read-only snapshot of the operational metrics surface (FR-OBS-2)."""
+        try:
+            return self._metrics.snapshot()
+        except Exception:  # pragma: no cover - defensive
+            return {}
 
     def state(self, now: datetime | None = None) -> dict:
         """Live scheduler heartbeat for the status endpoint (FR-AGENT-7/FR-OBS-2).
 
         ``running`` is true while a tick executes; ``last_tick`` is when the most
         recent tick started; ``next_tick`` is the estimated next fire (``last_tick``
-        + the configured interval) when the cadence is known. All timestamps ISO-8601.
+        + the configured interval) when the cadence is known. ``metrics`` carries the
+        operational counters + scheduler-liveness heartbeat (FR-OBS-2 / NFR-OPS) so the
+        status surface exposes tick totals, success/failure, and whether a stall alert
+        is currently armed. All timestamps ISO-8601.
         """
         now = now or datetime.now(UTC)
         last = self._last_tick_at
@@ -256,6 +362,7 @@ class Scheduler:
             "next_tick": nxt.isoformat() if nxt else None,
             "interval_seconds": self._interval_seconds,
             "now": now.isoformat(),
+            "metrics": self.metrics_snapshot(),
         }
 
     def run_now(self, campaign_id, now: datetime | None = None) -> dict:

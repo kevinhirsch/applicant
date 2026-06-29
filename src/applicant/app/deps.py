@@ -77,6 +77,14 @@ def get_campaign_service(
     return _resolved(services, container, "campaign_service")
 
 
+def get_data_lifecycle_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """The campaign-delete purge + PII retention service (#363, CONC-REQ-1)."""
+    return _resolved(services, container, "data_lifecycle_service")
+
+
 def get_onboarding_service(container: Container = Depends(get_container)):
     return container.onboarding_service
 

@@ -153,9 +153,10 @@ services:
       USER_MAX_CHARS: ${USER_MAX_CHARS:-4000}
       CURATION_SCHEDULE: ${CURATION_SCHEDULE:-off}
       CURATION_MODEL: ${CURATION_MODEL:-}
-      # Proactive-notification cadences (off/daily), dormant by default — parity with
-      # CURATION_SCHEDULE so the Settings controls actually take effect in prod.
-      ESSENTIALS_NUDGE_SCHEDULE: ${ESSENTIALS_NUDGE_SCHEDULE:-off}
+      # Proactive-notification cadences (off/daily). The essentials nudge is ON by
+      # default in prod so onboarding continues conversationally — the engine probes
+      # for required-to-apply data the minimal wizard didn't collect (#406 / FR-OOBE-2).
+      ESSENTIALS_NUDGE_SCHEDULE: ${ESSENTIALS_NUDGE_SCHEDULE:-daily}
       STATUS_UPDATE_SCHEDULE: ${STATUS_UPDATE_SCHEDULE:-off}
       # Desktop assist / computer use (docs/spec/computer-use.md). Defaults match
       # config.py: the no-side-effects backend, per-action approval, telemetry off.

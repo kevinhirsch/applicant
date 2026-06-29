@@ -42,6 +42,11 @@ from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.errors import NativeFilePickerRequired
 from applicant.core.ids import ApplicationId, CampaignId, PendingActionId, new_id
+from applicant.core.rules.ats_match_rate import (
+    DEFAULT_MATCH_RATE_FLOOR,
+    field_match_rate,
+    is_probable_wrong_ats,
+)
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
@@ -126,6 +131,15 @@ class PrefillResult:
     account_handoff: bool = False
     #: pre-filled values offered for the emergency copy/paste handoff (FR-PREFILL-7).
     handoff_values: dict[str, str] = field(default_factory=dict)
+    #: running count of fillable fields DETECTED across the whole run (#177). A file
+    #: input or an essay/sensitive field still COUNTS as detected — the universal-ATS
+    #: match-rate measures "did the page model line up with the real form at all".
+    fields_detected: int = 0
+    #: running count of fields the engine actually FILLED across the whole run (#177).
+    fields_filled: int = 0
+    #: True when the run was flagged as a probable wrong-ATS / near-empty fill and held
+    #: for human review instead of being offered for final submission (#177).
+    wrong_ats_flagged: bool = False
 
 
 class PrefillService:
@@ -143,6 +157,7 @@ class PrefillService:
         computer_use=None,
         required_field_types: frozenset[str] | None = None,
         allow_automated_accounts: bool = False,
+        match_rate_floor: float = DEFAULT_MATCH_RATE_FLOOR,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -169,6 +184,10 @@ class PrefillService:
         self._required_types = required_field_types or frozenset(
             {"text", "password", "select", SCREENING_FACTUAL}
         )
+        # #177: minimum acceptable field-match rate (filled / detected) for a run; below
+        # it (with at least one field detected) the run is flagged as a probable
+        # wrong-ATS / near-empty fill for human review rather than offered for submission.
+        self._match_rate_floor = float(match_rate_floor)
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -685,6 +704,14 @@ class PrefillService:
         return result
 
     def _reach_final_approval(self, app, result) -> PrefillResult:
+        # #177: before offering the run for final submission, check the field-match
+        # rate (filled / detected). A run that walked the whole flow but matched almost
+        # nothing is a probable wrong-ATS / near-empty fill — flag it for human review
+        # instead of silently submitting garbage (universal-ATS robustness).
+        if is_probable_wrong_ats(
+            result.fields_filled, result.fields_detected, floor=self._match_rate_floor
+        ):
+            return self.flag_probable_wrong_ats(app, result)
         app = app.with_status(ApplicationState.MATERIAL_PREP)
         app = app.with_status(ApplicationState.MATERIAL_REVIEW)
         app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
@@ -694,6 +721,64 @@ class PrefillService:
             kind="final_approval",
             title="Final approval / submit",
             session_url=result.sandbox_session_url,
+        )
+        self._persist(app)
+        return result
+
+    @staticmethod
+    def field_match_rate(filled: int, detected: int) -> float:
+        """The fraction of detected fillable fields actually filled over a run (#177).
+
+        Thin pass-through to the pure core rule (``core.rules.ats_match_rate``) so the
+        accounting the loop records on the :class:`PrefillResult` is also computable on
+        demand. ``detected == 0`` is a perfect rate (nothing to fill, nothing to flag).
+        """
+        return field_match_rate(filled, detected)
+
+    def flag_probable_wrong_ats(self, app, result) -> PrefillResult:
+        """Flag a probable wrong-ATS / near-empty-fill run for human review (#177).
+
+        Universal-ATS coverage drives ANY form via the generic live-DOM driver, but
+        when the run's field-match rate (filled / detected) came in below the floor the
+        page model did not line up with the real form — pre-fill landed (almost)
+        nothing. Rather than offer such a run for final submission, hold it for the
+        human: land the established ``EMERGENCY_DATA_HANDOFF`` waiting state (a §7-legal
+        PREFILLING transition) with the copy/paste values the user can apply by hand,
+        and a ``wrong_ats`` pending action that surfaces the low match rate. The human
+        either takes over the live session or marks it submitted manually.
+        """
+        rate = self.field_match_rate(result.fields_filled, result.fields_detected)
+        if app.status is not ApplicationState.PREFILLING:
+            app = app.with_status(ApplicationState.PREFILLING)
+        # Best-effort assemble the values that WOULD have been filled, for paste — the
+        # same handoff payload the emergency path offers (FR-PREFILL-7).
+        values: dict[str, str] = {}
+        try:
+            for fld in self._browser.detect_fields(app.id):
+                resolved = self._resolve_value(fld, [], result)
+                if resolved.value is not None and not resolved.defer_essay:
+                    values[fld.label] = resolved.value
+        except Exception:  # noqa: BLE001 — never crash the loop assembling the paste set
+            values = dict(result.handoff_values)
+        app = app.with_status(ApplicationState.EMERGENCY_DATA_HANDOFF)
+        result.state = app.status
+        result.wrong_ats_flagged = True
+        result.handoff_values = values
+        pct = round(rate * 100)
+        result.pending_action_id = self._emit_waiting(
+            application=app,
+            kind="wrong_ats",
+            title="Pre-fill matched too few fields — review needed",
+            session_url=result.sandbox_session_url,
+            payload={
+                "reason": "probable_wrong_ats",
+                "fields_filled": result.fields_filled,
+                "fields_detected": result.fields_detected,
+                "match_rate": rate,
+                "match_rate_pct": pct,
+                "match_rate_floor": self._match_rate_floor,
+                "handoff_values": values,
+            },
         )
         self._persist(app)
         return result
@@ -717,12 +802,20 @@ class PrefillService:
         state = self._browser.current_state(aid)
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
+            # #177: every fillable field DETECTED counts toward the run's match rate
+            # (filled / detected), so a wrong page model that detects fields but fills
+            # none is observable. The count includes file/essay/sensitive fields — the
+            # rate measures whether the page model lined up with the real form at all.
+            result.fields_detected += 1
             # File inputs can't be text-filled and never count as a missing-attribute
             # block. A résumé/CV input gets the rendered base résumé attached (FR-RESUME-4,
             # Phase 2: upload the base résumé as-is); cover-letter / unknown file inputs
             # are still skipped so the rest of the form pre-fills regardless.
             if fld.field_type == "file":
+                before = len(result.uploaded_documents)
                 self._maybe_upload_resume(app, fld, state.url, result)
+                if len(result.uploaded_documents) > before:
+                    result.fields_filled += 1  # a résumé/CV actually attached.
                 continue
             resolved = self._resolve_value(fld, attributes, result)
 
@@ -769,6 +862,7 @@ class PrefillService:
                 )
                 continue
             page_log[fld.selector] = resolved.value
+            result.fields_filled += 1  # #177: a field value actually landed.
             if resolved.generated:
                 # A DRAFTED screening answer — record it so it is surfaced for the
                 # user's review before any submit (FR-ANSWER-1, FR-RESUME-8).

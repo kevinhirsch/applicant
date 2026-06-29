@@ -6,10 +6,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from applicant.app.deps import get_campaign_service, require_llm_configured
+from applicant.app.deps import (
+    get_campaign_service,
+    get_data_lifecycle_service,
+    require_llm_configured,
+)
+from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
 
 router = APIRouter(
     prefix="/api/campaigns",
@@ -31,3 +36,25 @@ def list_campaigns(svc=Depends(get_campaign_service)) -> list[dict]:
 def create_campaign(body: CreateCampaignIn, svc=Depends(get_campaign_service)) -> dict:
     c = svc.create_campaign(body.name)
     return {"id": c.id, "name": c.name}
+
+
+@router.delete("/{campaign_id}")
+def delete_campaign(
+    campaign_id: str,
+    svc=Depends(get_campaign_service),
+    lifecycle=Depends(get_data_lifecycle_service),
+) -> dict:
+    """Delete a campaign and PURGE all its associated data (#363, FR-CRIT-4, NFR-PRIV-1).
+
+    Cascades the erasure across the stores — résumés/variants, parsed PII, EEO answers,
+    generated materials, attributes, the application-scoped children, AND the banked
+    credentials — then verifies nothing PII-bearing survives. The reserved system
+    campaign (instance secrets) is never deletable here.
+    """
+    if campaign_id == SYSTEM_CAMPAIGN_ID:
+        raise HTTPException(status_code=422, detail="The system campaign cannot be deleted.")
+    cid = CampaignId(campaign_id)
+    if svc.get_campaign(cid) is None:
+        raise HTTPException(status_code=404, detail="No such campaign.")
+    result = lifecycle.delete_campaign(cid)
+    return {"deleted": True, **result}

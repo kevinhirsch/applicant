@@ -16,7 +16,6 @@ Feature: Approve and decline signals are recorded but never bias scoring
     When the model is persisted and reloaded
     Then the per-feature stats are restored from storage
 
-  @pending
   Scenario: Accumulated taste signals actually bias the next viability score
     Given a campaign that has approved a feature and declined another
     When a posting matching the declined feature is scored

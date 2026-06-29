@@ -14,10 +14,12 @@ from applicant.adapters.browser.ats import (
     ATS_REGISTRY,
     SCREENING_ESSAY,
     SCREENING_FACTUAL,
+    GenericAts,
     GreenhouseAts,
     LeverAts,
     WorkdayAts,
     resolve_ats,
+    resolve_ats_strict,
 )
 
 WORKDAY_URL = "https://acme.myworkdayjobs.com/job/123"
@@ -59,9 +61,30 @@ class TestAtsResolution:
         adapter = resolve_ats("https://boards.greenhouse.io/acme/jobs/1")
         assert isinstance(adapter, GreenhouseAts)
 
-    def test_unknown_url_defaults_to_workday(self):
-        # MVP-1 ships Workday; unknown ATSes default to it (FR-PREFILL-2).
-        assert isinstance(resolve_ats("https://unknown.example/apply"), WorkdayAts)
+    def test_unknown_url_resolves_to_generic_driver(self):
+        # #173: 1.0 commits to UNIVERSAL coverage — an unknown ATS resolves to the
+        # vendor-agnostic GENERIC live-DOM driver, NOT the Workday fixed-page model
+        # (which would mis-apply the wrong page shape) (FR-PREFILL-2).
+        resolved = resolve_ats("https://unknown.example/apply")
+        assert isinstance(resolved, GenericAts)
+        assert not isinstance(resolved, WorkdayAts)
+        # The generic driver imposes no fixed multi-page model: a single live-DOM page
+        # ending on final submit, with no hard-coded account-create gate.
+        pages = resolved.pages("https://unknown.example/apply")
+        assert len(pages) == 1
+        assert pages[-1].is_final_submit is True
+        assert not any(p.is_account_create for p in pages)
+
+    def test_strict_resolver_returns_none_for_unknown(self):
+        # #173: the strict resolver does not default to anything — None for an unknown
+        # ATS (so an unrecognized ATS is still detectable), the vendor for a match.
+        assert resolve_ats_strict("https://unknown.example/apply") is None
+        assert isinstance(resolve_ats_strict(WORKDAY_URL), WorkdayAts)
+
+    def test_generic_is_not_in_registry(self):
+        # GenericAts is the explicit fallback, not a URL-matched registry entry.
+        assert "generic" not in ATS_REGISTRY
+        assert GenericAts().matches(WORKDAY_URL) is False
 
     def test_registry_is_extensible(self):
         # NFR-EXT-1: a new ATS = a new registry entry, no core change.

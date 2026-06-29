@@ -268,7 +268,55 @@ class LeverAts(AtsAdapter):
         ]
 
 
+class GenericAts(AtsAdapter):
+    """The vendor-agnostic GENERIC live-DOM driver (issue #173, FR-PREFILL-2).
+
+    1.0 commits to UNIVERSAL ATS coverage: the engine fills ANY application form, not
+    only the three modeled vendors. An UNKNOWN ATS URL must NOT be mis-applied with
+    Workday's fixed six-page model (the old fallback) — that drives the wrong page
+    shape and fills the wrong selectors. Instead it resolves to THIS adapter, which
+    imposes NO fixed page sequence: the real :class:`PlaywrightPageSource` walks the
+    page from the live DOM (combobox/listbox detection, the
+    aria-label→labelledby→<label>→placeholder label chain, DOM-``required`` authority)
+    and the maximal-pre-fill loop drives that generic field-walk page by page until
+    there is no "Next"/"Continue" control left.
+
+    It deliberately ``matches`` no URL — it is the FALLBACK, returned by
+    :func:`resolve_ats` only when no registered vendor adapter matched. For the
+    in-memory :class:`FakePageSource` (hermetic tests) it models a SINGLE generic
+    application page carrying its detected fields plus the final submit on the same
+    page (universal single-page shape) — never the fixed Workday account→EEO→submit
+    flow — so the fake exercises the same one-page generic walk the real driver does.
+    """
+
+    name = "generic"
+
+    def matches(self, url: str) -> bool:
+        # Never matched by URL: this is the explicit fallback in resolve_ats, not a
+        # vendor whose hostnames we recognize.
+        return False
+
+    def tenant_key(self, url: str) -> str:
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"generic:{host}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        # No fixed multi-page model: a single live-DOM page that also carries the
+        # final submit (the universal single-page shape). The real driver reads the
+        # actual DOM; the fake models one page so the generic field-walk + final-submit
+        # boundary are exercised hermetically without assuming any vendor's flow.
+        return [
+            FakePage(
+                url=f"{url}",
+                is_final_submit=True,
+                fields=(),
+            ),
+        ]
+
+
 #: Registry of ATS adapters keyed by name (extensible — FR-PREFILL-2 / NFR-EXT-1).
+#: GenericAts is NOT registered here: it matches no URL and is the explicit fallback
+#: that :func:`resolve_ats` returns when no vendor adapter matched.
 ATS_REGISTRY: dict[str, type[AtsAdapter]] = {
     WorkdayAts.name: WorkdayAts,
     GreenhouseAts.name: GreenhouseAts,
@@ -277,9 +325,30 @@ ATS_REGISTRY: dict[str, type[AtsAdapter]] = {
 
 
 def resolve_ats(url: str) -> AtsAdapter:
-    """Pick an ATS adapter from a URL (Workday default for MVP-1)."""
+    """Pick an ATS adapter from a URL — vendor adapter if matched, else GENERIC.
+
+    A matched Workday / Greenhouse / Lever URL returns its dedicated adapter (its
+    modeled flow shape). An UNKNOWN ATS URL returns :class:`GenericAts` — the
+    vendor-agnostic live-DOM driver (issue #173) — so the engine fills ANY form via
+    the generic field-walk and NEVER silently mis-applies Workday's fixed page model
+    to a form it does not recognize.
+    """
+    matched = resolve_ats_strict(url)
+    if matched is not None:
+        return matched
+    return GenericAts()  # universal coverage: unknown ATSes use the generic driver.
+
+
+def resolve_ats_strict(url: str) -> AtsAdapter | None:
+    """Resolve ONLY to a recognized vendor adapter; ``None`` for an unknown ATS.
+
+    The strict resolver does not fall back to any default — it returns ``None`` when no
+    registered vendor adapter matches, so a caller can detect an unrecognized ATS (e.g.
+    to flag the operator) rather than silently driving it. :func:`resolve_ats` wraps
+    this and substitutes the generic driver for the ``None`` case.
+    """
     for cls in ATS_REGISTRY.values():
         adapter = cls()
         if adapter.matches(url):
             return adapter
-    return WorkdayAts()  # MVP-1 ships Workday; unknown ATSes default to it.
+    return None

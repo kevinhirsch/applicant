@@ -168,6 +168,13 @@ class Settings(BaseSettings):
     # Credential vault (FR-VAULT-3)
     credential_keyfile: str = Field(default="secrets/master.key", alias="CREDENTIAL_KEYFILE")
 
+    # PII retention policy (#363, FR-CRIT-4, NFR-PRIV-1). How many days stored PII
+    # (parsed PII / EEO answers + the onboarding intake) is kept before a retention
+    # sweep prunes it. Default 0 = keep PII until the campaign is deleted (no
+    # time-based prune) — byte-identical to today until an operator opts in. ge=0 so a
+    # negative window is rejected at load rather than silently disabling retention.
+    pii_retention_days: int = Field(default=0, ge=0, alias="PII_RETENTION_DAYS")
+
     # Durable orchestration (FR-DUR-3). "shim" (default, no PG) or "dbos".
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
     checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
@@ -179,6 +186,15 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = Field(default=False, alias="SCHEDULER_ENABLED")
     scheduler_interval_seconds: float = Field(
         default=60.0, alias="SCHEDULER_INTERVAL_SECONDS"
+    )
+    # Observability / NFR-OPS (FR-OBS-2): how many CONSECUTIVE scheduler ticks must
+    # fail before the loop raises ONE operator alert through the existing notification
+    # ladder (idempotent — it re-arms only after a tick succeeds again). Default 3
+    # catches a real stall fast while tolerating a single transient blip. ge=1 so a
+    # 0/negative value (which would alert on the first failure or never) is rejected
+    # at load rather than silently disabling stall detection.
+    loop_failure_alert_threshold: int = Field(
+        default=3, ge=1, alias="LOOP_FAILURE_ALERT_THRESHOLD"
     )
 
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
@@ -326,6 +342,18 @@ class Settings(BaseSettings):
     # pre-fills live ATS pages (FR-PREFILL-1/2). Without this the engine would only
     # ever SIMULATE pre-fill.
     browser_real: bool = Field(default=False, alias="BROWSER_REAL")
+
+    # Universal-ATS field-match-rate floor (issue #177, FR-PREFILL-2/6). The pre-fill
+    # loop fills ANY form via the generic live-DOM driver (issue #173); this is the
+    # minimum acceptable ratio of fields actually filled to fields detected over a run.
+    # When at least one field was detected but the run came in BELOW this floor — the
+    # selectors missed / nothing mapped — the application is FLAGGED as a probable
+    # wrong-ATS / near-empty fill for human review instead of being offered for final
+    # submission (never silently submit garbage). Default 0.2 (20%); ge=0/le=1 reject a
+    # nonsensical floor at load. Set 0 to disable the flag (always offer for review).
+    ats_match_rate_floor: float = Field(
+        default=0.2, ge=0.0, le=1.0, alias="ATS_MATCH_RATE_FLOOR"
+    )
 
     # Let the engine CREATE an account at the ATS account gate from a predefined
     # credential set (ADR-0004), not just log in to an existing one. Default OFF: the

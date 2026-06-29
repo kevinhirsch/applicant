@@ -31,9 +31,12 @@ error -> xfail, never a collection error.
 
 from __future__ import annotations
 
+import datetime as _dt
 import importlib
 import json
+import os
 import pathlib
+import stat
 import sys
 
 import pytest
@@ -193,13 +196,18 @@ def vault_with_secrets(sysctx, tmp_path):
 
 @when("the master key is rotated to a new key")
 def rotate_master_key(sysctx, tmp_path):
-    # No rotate/reencrypt method exists on the credential store today (a repo-wide
-    # search returns 0). Probe the intended rotation seam on the store.
+    # #361 IMPLEMENTED: the store re-encrypts every record under a fresh master key
+    # written to ``new_keyfile`` (0600) and swaps the live box. Capture the OLD key
+    # bytes BEFORE rotation so the "old key no longer decrypts" leg is verifiable.
     store = sysctx["store"]
-    rotate = store.rotate_master_key  # AttributeError today -> honest red
+    with open(sysctx["keyfile"], "rb") as f:
+        sysctx["old_key_bytes"] = f.read()
     new_keyfile = str(tmp_path / "master.new.key")
-    rotate(new_keyfile)
+    rotated = store.rotate_master_key(new_keyfile)
     sysctx["new_keyfile"] = new_keyfile
+    sysctx["rotated_count"] = rotated
+    # Snapshot the now re-sealed record (under the NEW key) for the old-key check.
+    sysctx["rotated_sealed"] = dict(store._store)
 
 
 @then(
@@ -207,14 +215,34 @@ def rotate_master_key(sysctx, tmp_path):
     "and the old key no longer does"
 )
 def secrets_reencrypted(sysctx):
+    from applicant.core.errors import CredentialDecryptError
+
     store = sysctx["store"]
     cid = sysctx["cid"]
-    # New key reads it back.
-    assert store.retrieve(cid, "acme").secret == "s3cr3t"
-    # A fresh store on the OLD key must no longer decrypt the rotated record.
-    old = InMemoryCredentialStore(keyfile=sysctx["keyfile"])
-    with pytest.raises(ValueError):
+    # The rotation actually touched the record(s).
+    assert sysctx["rotated_count"] == 1
+    # New key (the live, rotated box) decrypts the re-sealed record back to plaintext.
+    got = store.retrieve(cid, "acme")
+    assert got is not None and got.secret == "s3cr3t"
+    # The new key-file exists with strict 0600 perms (FR-VAULT-3).
+    mode = stat.S_IMODE(os.stat(sysctx["new_keyfile"]).st_mode)
+    assert mode == 0o600
+    # A store re-opened on the OLD key, fed the RE-SEALED record, must NOT silently read
+    # an empty credential — it raises the distinct contained decrypt-failure.
+    old = InMemoryCredentialStore(keyfile=str(_OLD_KEYFILE(sysctx)))
+    old._store = dict(sysctx["rotated_sealed"])
+    with pytest.raises(CredentialDecryptError):
         old.retrieve(cid, "acme")
+
+
+def _OLD_KEYFILE(sysctx):
+    """Materialize the captured pre-rotation key bytes into a fresh key-file path."""
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".oldkey")
+    with os.fdopen(fd, "wb") as f:
+        f.write(sysctx["old_key_bytes"])
+    return path
 
 
 @given("a sealed credential record and a vault opened with the wrong key")
@@ -232,15 +260,14 @@ def vault_wrong_key(sysctx, tmp_path):
 
 @when("the record is retrieved through the credential store")
 def retrieve_wrong_key(sysctx):
-    # Today _unseal raises ValueError on a bad key — a contained error. The gap is a
-    # DISTINCT, surfaced decrypt-failure EVENT type, not a bare ValueError. Probe it.
+    # #361 IMPLEMENTED: a bad-key unseal now raises the DISTINCT, contained
+    # ``CredentialDecryptError`` (a ValueError subclass) — never a silent empty
+    # credential. Capture whatever comes back so the Then can assert the error type.
     store = sysctx["wrong_store"]
-    errors_mod = importlib.import_module(
-        "applicant.core.errors"
-    )
-    sysctx["decrypt_error_type"] = errors_mod.CredentialDecryptError  # absent today
+    errors_mod = importlib.import_module("applicant.core.errors")
+    sysctx["decrypt_error_type"] = errors_mod.CredentialDecryptError
     try:
-        store.retrieve(sysctx["cid"], "acme")
+        sysctx["returned"] = store.retrieve(sysctx["cid"], "acme")
         sysctx["raised"] = None
     except Exception as exc:  # noqa: BLE001
         sysctx["raised"] = exc
@@ -250,7 +277,13 @@ def retrieve_wrong_key(sysctx):
     "a distinct decrypt-failure event is surfaced rather than a silently empty credential"
 )
 def distinct_decrypt_failure(sysctx):
+    # It must RAISE — never return a (silently empty / wrong) credential.
+    assert sysctx["raised"] is not None, "wrong key returned a credential silently"
     assert isinstance(sysctx["raised"], sysctx["decrypt_error_type"])
+    # The distinct error is still contained as a ValueError (back-compat) and never
+    # leaks plaintext in its message.
+    assert isinstance(sysctx["raised"], ValueError)
+    assert "s3cr3t" not in str(sysctx["raised"])
 
 
 # ===========================================================================
@@ -277,40 +310,139 @@ def tick_logged(sysctx):
 
 @given("the observability metrics surface")
 def metrics_surface(sysctx):
-    sysctx["metrics_modpath"] = "applicant.observability.metrics"
+    # The metrics module now ships (observability/metrics.py). Use a FRESH, isolated
+    # ``Metrics`` instance so the process-lived singleton can't bleed across scenarios.
+    metrics_mod = importlib.import_module("applicant.observability.metrics")
+    sysctx["metrics_mod"] = metrics_mod
+    sysctx["metrics_obj"] = metrics_mod.Metrics()
 
 
 @when("the loop ticks")
 def metrics_loop_tick(sysctx):
-    # observability/ has only logging.py today — no metrics module. Probe it.
-    metrics = importlib.import_module(sysctx["metrics_modpath"])
-    metrics.record_tick(success=True)
-    sysctx["metrics"] = metrics
+    from datetime import UTC, datetime
+
+    sysctx["heartbeat_at"] = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+    sysctx["metrics_obj"].record_tick(success=True, now=sysctx["heartbeat_at"])
 
 
 @then("a tick counter and a scheduler-liveness heartbeat are updated for that tick")
 def metrics_updated(sysctx):
-    snap = sysctx["metrics"].snapshot()
-    assert snap["ticks_total"] >= 1
-    assert snap["last_heartbeat"] is not None
+    snap = sysctx["metrics_obj"].snapshot()
+    # The tick counter advanced for exactly this tick and a liveness heartbeat is set
+    # to the injected clock value (FR-OBS-2) — not merely "non-None".
+    assert snap["ticks_total"] == 1
+    assert snap["ticks_succeeded"] == 1
+    assert snap["last_heartbeat"] == sysctx["heartbeat_at"].isoformat()
+    assert snap["last_tick_success"] is True
 
 
 @given("the loop has failed several consecutive ticks")
 def consecutive_failures(sysctx):
-    metrics = importlib.import_module("applicant.observability.metrics")
+    metrics_mod = importlib.import_module("applicant.observability.metrics")
+    # A fresh instance at the DEFAULT threshold so the probe is independent of the
+    # process-lived singleton and any other scenario's recorded ticks.
+    metrics = metrics_mod.Metrics(
+        failure_alert_threshold=metrics_mod.DEFAULT_FAILURE_ALERT_THRESHOLD
+    )
     for _ in range(5):
         metrics.record_tick(success=False)
-    sysctx["metrics"] = metrics
+    sysctx["metrics_obj"] = metrics
 
 
 @when("the consecutive-failure threshold is crossed")
 def threshold_crossed(sysctx):
-    sysctx["alert"] = sysctx["metrics"].consecutive_failure_alert()
+    sysctx["alert"] = sysctx["metrics_obj"].consecutive_failure_alert()
 
 
 @then("a surfaced operator alert is raised rather than only a log line")
 def alert_surfaced(sysctx):
-    assert sysctx["alert"] is not None
+    alert = sysctx["alert"]
+    # A real alert descriptor, not just a truthy value: it names how many consecutive
+    # ticks failed and the threshold that was crossed (FR-OBS-2 / NFR-OPS).
+    assert isinstance(alert, dict)
+    assert alert["consecutive_failures"] >= alert["threshold"]
+    # Idempotent: the SAME stall does not re-alert (no spam) until a tick succeeds.
+    assert sysctx["metrics_obj"].consecutive_failure_alert() is None
+
+
+# --- the Scheduler wires the alert through the existing notification ladder ---
+class _StallingLoop:
+    """An AgentLoop whose every campaign tick raises — models a sustained stall."""
+
+    def tick(self, campaign_id, now=None, **_kw):
+        raise RuntimeError("boom")
+
+
+class _RecordingNotifier:
+    """A minimal NotificationPort that records each dispatched notification."""
+
+    def __init__(self) -> None:
+        self.notifications: list = []
+
+    def notify(self, notification) -> str:
+        self.notifications.append(notification)
+        return f"handle-{len(self.notifications)}"
+
+    def expire(self, dedup_key: str) -> None:  # pragma: no cover - unused here
+        pass
+
+    def advance(self, now=None) -> list:
+        return []
+
+
+@given("a scheduler whose every campaign tick fails")
+def stalling_scheduler(sysctx):
+    from datetime import UTC, datetime
+
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.scheduler import Scheduler
+    from applicant.core.entities.campaign import Campaign
+    from applicant.observability.metrics import Metrics
+
+    storage = InMemoryStorage()
+    storage.campaigns.add(Campaign(id=CampaignId(new_id()), name="Stall"))
+    notifier = _RecordingNotifier()
+    notif_service = NotificationService(notifier)
+    sysctx["notifier"] = notifier
+    sysctx["threshold"] = 3
+    sysctx["scheduler"] = Scheduler(
+        storage=storage,
+        agent_loop=_StallingLoop(),
+        notification_service=notif_service,
+        # A FRESH metrics instance so the alert latch is isolated from the singleton.
+        metrics=Metrics(),
+        failure_alert_threshold=sysctx["threshold"],
+    )
+    sysctx["clock"] = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+
+
+@when("the failure threshold of consecutive ticks is crossed")
+def stall_threshold_crossed(sysctx):
+    from datetime import timedelta
+
+    # Run MORE ticks than the threshold to prove the alert fires ONCE, not per tick.
+    sched = sysctx["scheduler"]
+    now = sysctx["clock"]
+    for i in range(sysctx["threshold"] + 2):
+        out = sched.tick(now + timedelta(minutes=i))
+        # Every tick is recorded as failed (all campaigns failed their loop tick).
+        assert out["tick_ok"] is False
+    sysctx["snapshot"] = sched.metrics_snapshot()
+
+
+@then("exactly one operator alert is surfaced through the notification ladder")
+def one_operator_alert(sysctx):
+    sent = sysctx["notifier"].notifications
+    # Exactly ONE alert reached the notification ladder despite many failed ticks
+    # (idempotent — the stall does not spam) and it was an IMMEDIATE operator error.
+    assert len(sent) == 1
+    alert = sent[0]
+    assert alert.urgency.name == "IMMEDIATE"
+    assert alert.dedup_key == "scheduler_stall"
+    # The metrics surface reflects the sustained failure run.
+    snap = sysctx["snapshot"]
+    assert snap["consecutive_failures"] >= sysctx["threshold"]
+    assert snap["alerting"] is True
 
 
 # ===========================================================================
@@ -361,20 +493,88 @@ def runs_bounded(sysctx):
 
 
 @given("a campaign with stored PII, generated materials, and banked credentials")
-def campaign_with_pii(sysctx):
-    sysctx["storage"] = InMemoryStorage()
-    sysctx["cid"] = CampaignId(new_id())
+def campaign_with_pii(sysctx, tmp_path):
+    from applicant.adapters.credentials.pg_credential_store import (
+        InMemoryCredentialStore,
+    )
+    from applicant.core.entities.application import Application
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.entities.campaign import Campaign
+    from applicant.core.entities.generated_document import (
+        DocumentType,
+        GeneratedDocument,
+    )
+    from applicant.core.entities.onboarding_profile import OnboardingProfile
+    from applicant.core.entities.resume_variant import ResumeVariant
+    from applicant.core.ids import (
+        ApplicationId,
+        AttributeId,
+        GeneratedDocumentId,
+        JobPostingId,
+        OnboardingProfileId,
+        ResumeVariantId,
+    )
+
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    storage.campaigns.add(Campaign(id=cid, name="Acme search"))
+    # Parsed PII + a sensitive EEO answer (FR-ATTR-6).
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="phone", value="555-0100")
+    )
+    storage.attributes.add(
+        Attribute(
+            id=AttributeId(new_id()),
+            campaign_id=cid,
+            name="veteran_status",
+            value="protected-veteran",
+            is_sensitive=True,
+        )
+    )
+    # The full onboarding intake (identity/EEO/history).
+    storage.onboarding_profiles.add(
+        OnboardingProfile(
+            id=OnboardingProfileId(new_id()),
+            campaign_id=cid,
+            intake={"full_name": "Jane PII", "ssn_last4": "6789"},
+        )
+    )
+    # A résumé variant + a generated material (tied to an application).
+    storage.resume_variants.add(
+        ResumeVariant(id=ResumeVariantId(new_id()), campaign_id=cid, storage_path="/r.tex")
+    )
+    aid = ApplicationId(new_id())
+    storage.applications.add(
+        Application(id=aid, campaign_id=cid, posting_id=JobPostingId(new_id()))
+    )
+    storage.documents.add(
+        GeneratedDocument(
+            id=GeneratedDocumentId(new_id()),
+            campaign_id=cid,
+            application_id=aid,
+            type=DocumentType.RESUME,
+            content="Jane PII résumé body",
+        )
+    )
+    # Banked credentials in the sealed vault.
+    creds = InMemoryCredentialStore(keyfile=str(tmp_path / "master.key"))
+    creds.store(cid, Credential(tenant_key="acme.workday", username="jane", secret="pw"))
+    sysctx["storage"] = storage
+    sysctx["credentials"] = creds
+    sysctx["cid"] = cid
+    sysctx["aid"] = aid
 
 
 @when("the campaign is deleted")
 def delete_campaign(sysctx):
-    # No campaign-wide purge exists: CampaignRepository has add/get/list only and no
-    # service exposes "delete a campaign -> purge PII/materials/credentials". Probe
-    # the intended erasure service seam.
+    # #363 IMPLEMENTED: a cohesive erasure service cascades the campaign-delete purge
+    # across the relational store AND the sealed credential vault.
     svc_mod = importlib.import_module(
         "applicant.application.services.erasure_service"
     )
-    sysctx["erasure"] = svc_mod.ErasureService(sysctx["storage"])
+    sysctx["erasure"] = svc_mod.ErasureService(
+        sysctx["storage"], sysctx["credentials"]
+    )
     sysctx["result"] = sysctx["erasure"].delete_campaign(sysctx["cid"])
 
 
@@ -382,29 +582,72 @@ def delete_campaign(sysctx):
     "all its PII, materials, and credentials are verifiably absent from storage"
 )
 def pii_absent(sysctx):
-    # The erasure result must report a verifiable, complete purge.
+    storage = sysctx["storage"]
+    cid = sysctx["cid"]
+    aid = sysctx["aid"]
+    # The erasure result reports a verifiable, complete purge.
     assert sysctx["result"].get("purged") is True
+    # And every PII-bearing / material / credential row is genuinely gone.
+    assert storage.attributes.list_for_campaign(cid) == []
+    assert storage.onboarding_profiles.get_for_campaign(cid) is None
+    assert storage.resume_variants.list_for_campaign(cid) == []
+    assert storage.documents.list_for_application(aid) == []
+    assert storage.applications.list_for_campaign(cid) == []
+    assert storage.campaigns.get(cid) is None
+    assert sysctx["credentials"].list_tenants(cid) == []
 
 
 @given("a configurable PII retention window")
 def retention_window(sysctx):
-    sysctx["storage"] = InMemoryStorage()
+    from applicant.core.entities.attribute import Attribute
+    from applicant.core.entities.onboarding_profile import OnboardingProfile
+    from applicant.core.ids import AttributeId, OnboardingProfileId
+
+    storage = InMemoryStorage()
+    cid = CampaignId(new_id())
+    now = _dt.datetime.now(_dt.UTC)
+    old = now - _dt.timedelta(days=120)
+    # OLD PII (recorded 120 days ago) — must be pruned by a 30-day window.
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="phone", value="555"),
+        recorded_at=old,
+    )
+    storage.onboarding_profiles.add(
+        OnboardingProfile(
+            id=OnboardingProfileId(new_id()), campaign_id=cid, intake={"x": 1}
+        ),
+        recorded_at=old,
+    )
+    # IN-WINDOW PII (recorded just now) — must be retained.
+    storage.attributes.add(
+        Attribute(id=AttributeId(new_id()), campaign_id=cid, name="email", value="a@b.c"),
+        recorded_at=now,
+    )
+    sysctx["storage"] = storage
+    sysctx["cid"] = cid
 
 
 @when("the retention sweep runs")
 def retention_sweep(sysctx):
-    # No PII retention policy exists (only agent-run RUN_RETENTION). Probe the seam.
+    # #363 IMPLEMENTED: the retention service prunes PII older than the window.
     svc_mod = importlib.import_module(
         "applicant.application.services.retention_service"
     )
-    svc = svc_mod.RetentionService(sysctx["storage"])
-    sysctx["swept"] = svc.prune_pii_older_than(days=30)
+    svc = svc_mod.RetentionService(sysctx["storage"], pii_retention_days=30)
+    sysctx["swept"] = svc.prune_pii_older_than()
 
 
 @then("PII older than the window is pruned while in-window PII is retained")
 def pii_pruned(sysctx):
-    assert isinstance(sysctx["swept"], dict)
-    assert "pruned" in sysctx["swept"]
+    swept = sysctx["swept"]
+    assert isinstance(swept, dict)
+    assert "pruned" in swept
+    # Two old records (one attribute + one onboarding intake) pruned.
+    assert swept["pruned"] == 2
+    # The in-window attribute survives; the old ones are gone.
+    remaining = sysctx["storage"].attributes.list_for_campaign(sysctx["cid"])
+    assert [a.name for a in remaining] == ["email"]
+    assert sysctx["storage"].onboarding_profiles.get_for_campaign(sysctx["cid"]) is None
 
 
 # ===========================================================================

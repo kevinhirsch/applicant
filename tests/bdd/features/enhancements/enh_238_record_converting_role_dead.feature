@@ -13,7 +13,6 @@ Feature: The converting-role centroid works directly but is never populated by t
     Then the converting-role signature carries a non-empty centroid vector
     And the alignment of a similar role is greater than zero
 
-  @pending
   Scenario: A real conversion through the live loop populates the Phase-1 centroid
     Given a campaign whose application converts through the submission loop
     When the conversion loop closes

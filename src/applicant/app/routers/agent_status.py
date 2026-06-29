@@ -153,6 +153,15 @@ def agent_status(
         now_block["run_mode"] = status["run_mode"]
     if status.get("last_run_at"):
         now_block["last_run_at"] = status["last_run_at"]
+    # FR-OBS-2 / NFR-OPS: surface the 24/7 loop's liveness heartbeat so the status
+    # surface shows when the scheduler last ticked (independent of this campaign).
+    if sched.get("last_tick"):
+        now_block["last_tick"] = sched["last_tick"]
+    # The operational metrics surface (tick totals, success/failure, heartbeat, and
+    # whether a consecutive-failure stall alert is currently armed). Updates each tick.
+    metrics = sched.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        now_block["metrics"] = metrics
 
     intent = status.get("latest_intent")
     next_block: dict = {"sentence": _next_sentence(intent)}

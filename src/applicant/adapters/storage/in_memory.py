@@ -7,7 +7,7 @@ and contract tests run without Postgres.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
@@ -57,13 +57,20 @@ class _CampaignRepo:
     def list(self) -> list[Campaign]:
         return list(self._d.values())
 
+    def delete(self, cid: CampaignId) -> int:
+        return 1 if self._d.pop(str(cid), None) is not None else 0
+
 
 class _AttributeRepo:
     def __init__(self) -> None:
         self._d: dict[str, Attribute] = {}
+        # PII retention (#363): when each attribute was recorded, so a retention
+        # sweep can prune parsed PII / EEO answers older than the window.
+        self._ts: dict[str, datetime] = {}
 
-    def add(self, a: Attribute) -> None:
+    def add(self, a: Attribute, *, recorded_at: datetime | None = None) -> None:
         self._d[str(a.id)] = a
+        self._ts[str(a.id)] = recorded_at or datetime.now(UTC)
 
     def get(self, aid: AttributeId) -> Attribute | None:
         return self._d.get(str(aid))
@@ -73,6 +80,22 @@ class _AttributeRepo:
 
     def delete(self, aid: AttributeId) -> None:  # CRIT-profile: attribute delete (FR-ATTR-3)
         self._d.pop(str(aid), None)
+        self._ts.pop(str(aid), None)
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, a in self._d.items() if a.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+            self._ts.pop(k, None)
+        return len(stale)
+
+    def prune_recorded_before(self, cutoff: datetime) -> int:
+        """Delete attributes recorded before ``cutoff`` (PII retention, #363)."""
+        stale = [k for k, ts in self._ts.items() if ts < cutoff]
+        for k in stale:
+            self._d.pop(k, None)
+            del self._ts[k]
+        return len(stale)
 
 
 class _PostingRepo:
@@ -100,6 +123,12 @@ class _PostingRepo:
             ),
             key=lambda p: str(p.id),
         )
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, p in self._d.items() if p.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
 
 
 class _ApplicationRepo:
@@ -149,6 +178,15 @@ class _ApplicationRepo:
             key=lambda a: str(a.id),
         )
 
+    def ids_for_campaign(self, cid: CampaignId) -> set[str]:
+        return {str(a.id) for a in self._d.values() if a.campaign_id == cid}
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, a in self._d.items() if a.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
 
 class _VariantRepo:
     def __init__(self) -> None:
@@ -163,6 +201,12 @@ class _VariantRepo:
     def list_for_campaign(self, cid: CampaignId) -> list[ResumeVariant]:
         return [v for v in self._d.values() if v.campaign_id == cid]
 
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, v in self._d.items() if v.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
 
 class _DocumentRepo:
     def __init__(self) -> None:
@@ -176,6 +220,15 @@ class _DocumentRepo:
 
     def list_for_application(self, aid: ApplicationId) -> list[GeneratedDocument]:
         return [d for d in self._d.values() if d.application_id == aid]
+
+    def list_for_campaign(self, cid: CampaignId) -> list[GeneratedDocument]:
+        return [d for d in self._d.values() if d.campaign_id == cid]
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, d in self._d.items() if d.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
 
 
 class _RevisionRepo:
@@ -193,6 +246,14 @@ class _RevisionRepo:
             if str(s.material_id) == str(mid):
                 return s
         return None
+
+    def delete_for_materials(self, material_ids: set[str]) -> int:
+        stale = [
+            k for k, s in self._d.items() if str(s.material_id) in material_ids
+        ]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
 
 
 class _DecisionRepo:
@@ -213,6 +274,13 @@ class _DecisionRepo:
 
     def list_for_application(self, aid: ApplicationId) -> list[Decision]:
         return [d for d in self._l if d.application_id == aid]
+
+    def delete_for_applications(self, application_ids: set[str]) -> int:
+        before = len(self._l)
+        self._l = [
+            d for d in self._l if str(d.application_id) not in application_ids
+        ]
+        return before - len(self._l)
 
     def list_approved_postings_for_campaign(
         self, cid: CampaignId
@@ -281,6 +349,13 @@ class _OutcomeRepo:
             for e in self._l
         )
 
+    def delete_for_applications(self, application_ids: set[str]) -> int:
+        before = len(self._l)
+        self._l = [
+            e for e in self._l if str(e.application_id) not in application_ids
+        ]
+        return before - len(self._l)
+
 
 class _ScreenshotRepo:
     def __init__(self, applications: _ApplicationRepo) -> None:
@@ -293,6 +368,13 @@ class _ScreenshotRepo:
 
     def list_for_application(self, aid: ApplicationId) -> list[ApplicationScreenshot]:
         return [s for s in self._l if s.application_id == aid]
+
+    def delete_for_applications(self, application_ids: set[str]) -> int:
+        before = len(self._l)
+        self._l = [
+            s for s in self._l if str(s.application_id) not in application_ids
+        ]
+        return before - len(self._l)
 
     def list_for_campaign(
         self,
@@ -353,6 +435,12 @@ class _PendingRepo:
         if cur:
             self._d[str(pid)] = dataclasses.replace(cur, resolved=True)
 
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, p in self._d.items() if p.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
 
 class _FieldMappingRepo:
     def __init__(self) -> None:
@@ -385,6 +473,14 @@ class _FieldMappingRepo:
         scoped = [m for m in matches if m.campaign_id is not None]
         return (scoped or matches or [None])[0]
 
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        # Only per-campaign mappings carry PII-adjacent values; globally-learned
+        # mappings (campaign_id is None) are reusable schema and are NOT purged.
+        stale = [k for k, mp in self._d.items() if mp.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
 
 class _DiscoverySourceRepo:
     def __init__(self) -> None:
@@ -402,6 +498,12 @@ class _DiscoverySourceRepo:
 
     def list_for_campaign(self, cid: CampaignId) -> list[DiscoverySource]:
         return [s for s in self._d.values() if s.campaign_id == cid]
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, s in self._d.items() if s.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
 
 
 class _AgentRunRepo:
@@ -467,6 +569,12 @@ class _AgentRunRepo:
             self._d.pop(str(r.id), None)
         return len(stale)
 
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, r in self._d.items() if r.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
 
 class _DetectionEventRepo:
     def __init__(self, applications: _ApplicationRepo) -> None:
@@ -482,6 +590,13 @@ class _DetectionEventRepo:
             key=lambda e: (e.timestamp, str(e.id)),
         )
 
+    def delete_for_applications(self, application_ids: set[str]) -> int:
+        before = len(self._l)
+        self._l = [
+            e for e in self._l if str(e.application_id) not in application_ids
+        ]
+        return before - len(self._l)
+
     def list_for_campaign(self, cid: CampaignId) -> list[DetectionEvent]:
         out = []
         for e in self._l:
@@ -494,12 +609,30 @@ class _DetectionEventRepo:
 class _OnboardingProfileRepo:
     def __init__(self) -> None:
         self._d: dict[str, OnboardingProfile] = {}
+        # PII retention (#363): when each intake (identity/EEO/history) was recorded.
+        self._ts: dict[str, datetime] = {}
 
-    def add(self, p: OnboardingProfile) -> None:
+    def add(self, p: OnboardingProfile, *, recorded_at: datetime | None = None) -> None:
         self._d[str(p.campaign_id)] = p
+        self._ts[str(p.campaign_id)] = recorded_at or datetime.now(UTC)
 
     def get_for_campaign(self, cid: CampaignId) -> OnboardingProfile | None:
         return self._d.get(str(cid))
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        self._ts.pop(str(cid), None)
+        return 1 if self._d.pop(str(cid), None) is not None else 0
+
+    def list_all(self) -> list[OnboardingProfile]:
+        return list(self._d.values())
+
+    def prune_recorded_before(self, cutoff: datetime) -> int:
+        """Delete onboarding intakes recorded before ``cutoff`` (PII retention, #363)."""
+        stale = [k for k, ts in self._ts.items() if ts < cutoff]
+        for k in stale:
+            self._d.pop(k, None)
+            del self._ts[k]
+        return len(stale)
 
 
 class InMemoryStorage:
@@ -531,3 +664,50 @@ class InMemoryStorage:
 
     def healthcheck(self) -> bool:
         return True
+
+    def purge_campaign(self, cid: CampaignId) -> dict[str, int]:
+        """Cascade-delete every row belonging to ``cid`` (#363, FR-CRIT-4, NFR-PRIV-1).
+
+        Erases the PII-bearing + derived rows for a campaign in one pass: the
+        onboarding intake (identity/EEO/history), the per-campaign attribute cloud
+        (parsed PII + EEO answers), résumé variants, generated materials, and every
+        application-scoped child (decisions/outcomes/screenshots/detection events/
+        redline sessions), plus postings, field mappings, discovery sources, agent
+        runs, pending actions, and finally the campaign row itself. Banked credentials
+        are erased separately via the credential store (sealed off-storage). Returns a
+        per-store deletion count so the caller can verify a complete purge.
+        """
+        app_ids = self.applications.ids_for_campaign(cid)
+        material_ids = {str(d.id) for d in self.documents.list_for_campaign(cid)}
+        counts: dict[str, int] = {
+            "onboarding_profiles": self.onboarding_profiles.delete_for_campaign(cid),
+            "attributes": self.attributes.delete_for_campaign(cid),
+            "revisions": self.revisions.delete_for_materials(material_ids),
+            "documents": self.documents.delete_for_campaign(cid),
+            "resume_variants": self.resume_variants.delete_for_campaign(cid),
+            "decisions": self.decisions.delete_for_applications(app_ids),
+            "outcomes": self.outcomes.delete_for_applications(app_ids),
+            "screenshots": self.screenshots.delete_for_applications(app_ids),
+            "detection_events": self.detection_events.delete_for_applications(app_ids),
+            "applications": self.applications.delete_for_campaign(cid),
+            "postings": self.postings.delete_for_campaign(cid),
+            "field_mappings": self.field_mappings.delete_for_campaign(cid),
+            "discovery_sources": self.discovery_sources.delete_for_campaign(cid),
+            "agent_runs": self.agent_runs.delete_for_campaign(cid),
+            "pending_actions": self.pending_actions.delete_for_campaign(cid),
+            "campaigns": self.campaigns.delete(cid),
+        }
+        return counts
+
+    def prune_pii_older_than(self, cutoff: datetime) -> dict[str, int]:
+        """Prune PII (attributes + onboarding intakes) recorded before ``cutoff``.
+
+        Retention policy (#363): only the PII-bearing stores are swept; in-window PII
+        is retained. Returns a per-store deletion count.
+        """
+        return {
+            "attributes": self.attributes.prune_recorded_before(cutoff),
+            "onboarding_profiles": self.onboarding_profiles.prune_recorded_before(
+                cutoff
+            ),
+        }

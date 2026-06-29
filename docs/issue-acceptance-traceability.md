@@ -1,12 +1,11 @@
 # Issue acceptance traceability — requirement ↔ acceptance ↔ code
 
 Every open tracker issue has an executable acceptance spec (Gherkin) + a DeepSeek-ready
-work-order comment. Untagged = GREEN regression guards; `@pending` = TDD reds (xfail via
-`tests/bdd/conftest.py`). FR-level acceptance specs for implemented-but-unspec'd requirements
-live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural guards:
-`tests/architecture/test_reachability_contract.py` + `tests/e2e/test_pipeline_journey.py`.
+work-order comment. Untagged = GREEN regression guards; `@pending` = TDD reds (xfail).
+FR-level specs for implemented-but-unspec'd requirements live as `spec_*.feature`.
+Structural guards: `tests/architecture/test_reachability_contract.py` + `tests/e2e/`.
 
-**240 issues** · 162 green · 433 pending.
+**240 issues** · 180 green · 416 pending.
 
 | Issue | Requirement / acceptance | Feature | Step module | green | pending |
 |---|---|---|---|---|---|
@@ -25,11 +24,11 @@ live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural gu
 | #170 | Résumé parser preserves parenthesized contact and history fields | `enh_170_phone_paren.feature` | `test_enh_t07_materials_steps.py` | 1 | 1 |
 | #171 | # Issue #171 — Greenhouse/Lever ATS adapters are shells (adapters/browser/ats.py) — FR-PREFILL-2 / NFR-EXT-1 | `enh_171_greenhouse_lever_shells.feature` | `test_enh_t03_ats_steps.py` | 2 | 2 |
 | #172 | Quiet hours silence non-critical notifications instead of firing 24/7 | `enh_172_quiet_hours.feature` | `test_enh_t06_notifications_steps.py` | 2 | 2 |
-| #173 | # Issue #173 — Unknown ATS falls through to Workday (adapters/browser/ats.py resolve_ats) — FR-PREFILL-2 | `enh_173_unknown_ats_fallback.feature` | `test_enh_t03_ats_steps.py` | 2 | 1 |
+| #173 | # Issue #173 — Unknown ATS must not silently get the Workday page model | `enh_173_unknown_ats_fallback.feature` | `test_enh_t03_ats_steps.py` | 3 | 0 |
 | #174 | Real integrations are opt-in and a production preset could flip them together | `enh_174_hermetic_lane_defaults.feature` | `test_enh_t05_learning_steps.py` | 1 | 1 |
 | #175 | Automated account creation is off by default and could allow per-tenant credentials | `enh_175_automated_accounts_default.feature` | `test_enh_t05_learning_steps.py` | 1 | 1 |
 | #176 | Multi-campaign switcher front-door wiring | `enh_176_multi_campaign_switcher_dormant.feature` | `test_enh_t08_frontend_steps.py` | 1 | 1 |
-| #177 | # Issue #177 — No ATS detection on pre-fill failure (application/services/prefill_service.py) — FR-PREFILL-2/6 | `enh_177_ats_detection_match_rate.feature` | `test_enh_t03_ats_steps.py` | 0 | 2 |
+| #177 | # Issue #177 — A low field-match rate flags a probable wrong-ATS pre-fill for review | `enh_177_ats_detection_match_rate.feature` | `test_enh_t03_ats_steps.py` | 2 | 0 |
 | #178 | Résumé rendering degrades honestly when render binaries are absent | `enh_178_render_stub_path.feature` | `test_enh_t07_materials_steps.py` | 3 | 1 |
 | #179 | # Issue #179 — FR-CUA — adapters/sandbox/computer_use/* + dormant.py + docker/webtop-chrome | `enh_179_desktop_assist_image_bake.feature` | `test_enh_t12_cua_steps.py` | 3 | 2 |
 | #180 | # Issue #180 — application/services/agent_loop.py (ResumeLedger) + app/container.py | `enh_180_agentloop_per_tick_state.feature` | `test_enh_t04_orchestration_steps.py` | 1 | 2 |
@@ -89,9 +88,9 @@ live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural gu
 | #234 | One failed channel delivery does not abort the rest of the ladder advance | `enh_234_one_failure_crashes_tick.feature` | `test_enh_t06_notifications_steps.py` | 0 | 1 |
 | #235 | The notification delivery state machine is guarded against concurrent access | `enh_235_sent_dict_lock.feature` | `test_enh_t06_notifications_steps.py` | -1 | 2 |
 | #236 | The email escalation delay can never be driven to an instant zero-second blast | `enh_236_email_timeout_floor.feature` | `test_enh_t06_notifications_steps.py` | 0 | 2 |
-| #237 | Approve and decline signals are recorded but never bias scoring | `enh_237_feature_stats_unread.feature` | `test_enh_t05_learning_steps.py` | 2 | 1 |
-| #238 | The converting-role centroid works directly but is never populated by the live loop | `enh_238_record_converting_role_dead.feature` | `test_enh_t05_learning_steps.py` | 1 | 1 |
-| #239 | Digest score reuse keys on criteria only, ignoring learning state | `enh_239_digest_cache_ignores_learning.feature` | `test_enh_t05_learning_steps.py` | 2 | 1 |
+| #237 | Approve and decline signals are recorded but never bias scoring | `enh_237_feature_stats_unread.feature` | `test_enh_t05_learning_steps.py` | 3 | 0 |
+| #238 | The converting-role centroid works directly but is never populated by the live loop | `enh_238_record_converting_role_dead.feature` | `test_enh_t05_learning_steps.py` | 2 | 0 |
+| #239 | Digest score reuse keys on criteria only, ignoring learning state | `enh_239_digest_cache_ignores_learning.feature` | `test_enh_t05_learning_steps.py` | 3 | 0 |
 | #240 | A failed conversion never breaks a submission but is lost without a log | `enh_240_conversion_loop_swallows.feature` | `test_enh_t05_learning_steps.py` | 1 | 1 |
 | #241 | # Issue #241 — adapters/storage/in_memory.py (commit / rollback) | `enh_241_inmemory_transactional.feature` | `test_enh_t04_orchestration_steps.py` | 1 | 2 |
 | #242 | # Issue #242 — adapters/storage/repositories.py AgentRunRepo (latest / max_seq / prune_old) | `enh_242_agentrun_repo_n_plus_one.feature` | `test_enh_t04_orchestration_steps.py` | 2 | 2 |
@@ -210,9 +209,9 @@ live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural gu
 | #357 | The editor JS surface MUST be individually audited — at minimum the | `enh_357_editor_js_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
 | #358 | Every remaining unaudited area listed in this master tracker MUST be | `enh_358_master_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
 | #360 | The engine MUST scan/neutralize untrusted scraped text (job description, | `enh_360_prompt_injection_scoring.feature` | `test_enh_systemic_steps.py` | 0 | 4 |
-| #361 | The vault MUST support master-key rotation (re-encrypt all stored secrets | `enh_361_vault_key_rotation.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
-| #362 | The engine MUST emit operational metrics (tick success/failure, scheduler | `enh_362_loop_metrics_alerting.feature` | `test_enh_systemic_steps.py` | 0 | 3 |
-| #363 | Deleting a campaign (or user) MUST purge all associated résumés, parsed PII, | `enh_363_pii_erasure_retention.feature` | `test_enh_systemic_steps.py` | 1 | 3 |
+| #361 | The vault MUST support master-key rotation (re-encrypt all stored secrets | `enh_361_vault_key_rotation.feature` | `test_enh_systemic_steps.py` | 2 | 0 |
+| #362 | The engine MUST emit operational metrics (tick success/failure, scheduler | `enh_362_loop_metrics_alerting.feature` | `test_enh_systemic_steps.py` | 4 | 0 |
+| #363 | Deleting a campaign (or user) MUST purge all associated résumés, parsed PII, | `enh_363_pii_erasure_retention.feature` | `test_enh_systemic_steps.py` | 4 | 0 |
 | #364 | A runnable end-to-end test MUST exercise the full pipeline (discovery → | `enh_364_e2e_pipeline_harness.feature` | `test_enh_systemic_steps.py` | 1 | 2 |
 | #365 | A test MUST stand up a database at a prior revision with representative rows, | `enh_365_migration_data_integrity.feature` | `test_enh_systemic_steps.py` | 0 | 2 |
 | #366 | The front-door MUST have a JS unit-test harness (a configured test runner | `enh_366_js_test_harness.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
@@ -249,4 +248,4 @@ live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural gu
 | #403 | A chat-proposed, confirmation-gated criteria change MUST be committable | `enh_403_chat_confirm_criteria.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
 | #404 | If learned adjustments are operator-applicable from the UI, the front-door | `enh_404_criteria_learned_proxy.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
 | #405 | The review gate's submittability check is reachable from the front-door | `enh_405_ensure_submittable_proxy.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
-| #406 | The engine MUST proactively surface missing required-to-apply | `enh_406_chat_continued_onboarding.feature` | `test_enh_reachgaps_steps.py` | 0 | 2 |
+| #406 | The engine MUST proactively surface missing required-to-apply | `enh_406_chat_continued_onboarding.feature` | `test_enh_reachgaps_steps.py` | 2 | 0 |
