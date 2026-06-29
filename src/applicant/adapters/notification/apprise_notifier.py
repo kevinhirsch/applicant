@@ -578,7 +578,6 @@ class AppriseNotifier:
 
     def deliver_now(self) -> list[str]:
         """Force-flush notifications deferred by quiet hours (FR-NOTIF-5, #302)."""
-        ts = self._now_secs()
         with self._sent_lock:
             deliveries = list(self._sent.values())
         fired: list[str] = []
