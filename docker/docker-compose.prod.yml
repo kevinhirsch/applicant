@@ -153,6 +153,10 @@ services:
       USER_MAX_CHARS: ${USER_MAX_CHARS:-4000}
       CURATION_SCHEDULE: ${CURATION_SCHEDULE:-off}
       CURATION_MODEL: ${CURATION_MODEL:-}
+      # Proactive-notification cadences (off/daily), dormant by default — parity with
+      # CURATION_SCHEDULE so the Settings controls actually take effect in prod.
+      ESSENTIALS_NUDGE_SCHEDULE: ${ESSENTIALS_NUDGE_SCHEDULE:-off}
+      STATUS_UPDATE_SCHEDULE: ${STATUS_UPDATE_SCHEDULE:-off}
       # Desktop assist / computer use (docs/spec/computer-use.md). Defaults match
       # config.py: the no-side-effects backend, per-action approval, telemetry off.
       # Ships present-but-grayed until the desktop driver is baked into the SANDBOX

@@ -216,3 +216,13 @@ def test_fanout_respects_optin_inapp_always_present():
     # forced external send.
     fired_channels = {c.channel for c in notifier._notification._captured}
     assert fired_channels == {"in_app"}
+
+
+def test_status_update_schedule_is_a_settings_field():
+    """Deploy parity: STATUS_UPDATE_SCHEDULE is read through Settings (like its
+    CURATION_SCHEDULE / ESSENTIALS_NUDGE_SCHEDULE siblings), not a raw os.getenv —
+    so the documented env var + the compose passthrough actually reach the engine."""
+    from applicant.app.config import Settings
+
+    assert Settings().status_update_schedule == "off"  # dormant by default
+    assert Settings(STATUS_UPDATE_SCHEDULE="daily").status_update_schedule == "daily"

@@ -1093,10 +1093,8 @@ def build_container(settings: Settings | None = None) -> Container:
     # the pending count, the scheduler heartbeat) and pushes it through the EXISTING
     # notification path (in-app inbox + opt-in fan-out). All sources are optional/defensive
     # (no fabrication); the scheduler gates the cadence (default off => dormant, no
-    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read from env directly so config.py
-    # stays untouched (additive, deploy-controllable; ``off``/``daily``).
-    import os as _os
-
+    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read through Settings (like its
+    # siblings) so the deploy surface stays uniform; ``off``/``daily``.
     from applicant.application.services.status_update import StatusUpdateService
 
     status_update_service = StatusUpdateService(
@@ -1106,7 +1104,7 @@ def build_container(settings: Settings | None = None) -> Container:
         pending_actions=pending_actions_service,
         # scheduler is wired additively below (it is built after this point).
     )
-    status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
+    status_update_schedule = settings.status_update_schedule
 
     # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" nudge. When
     # automated work is BLOCKED specifically because apply-essentials are missing (read

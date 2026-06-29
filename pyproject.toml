@@ -13,15 +13,17 @@ dependencies = [
     "alembic",
     "psycopg[binary]",
     "pydantic",
-    "pydantic-settings",
+    # >=2.14.2 fixes a path-traversal advisory (GHSA-4xgf-cpjx-pc3j).
+    "pydantic-settings>=2.14.2",
     "structlog",
     "httpx",
     # LangGraph is the reasoning loop *within* durable steps (architecture §3.15).
     "langgraph",
     # Base-resume parsing for the onboarding attribute-cloud bootstrap (FR-ONBOARD-3).
     # python-docx parses .docx; pypdf is a pure-python PDF text extractor (cheap).
+    # pypdf >=6.14.2 clears two advisories incl. GHSA-jm82-fx9c-mx94.
     "python-docx",
-    "pypdf",
+    "pypdf>=6.14.2",
     # Multipart form parsing for base-resume + font uploads via the UI (zero-CLI).
     "python-multipart",
     # Wave-one master aggregator over the easy boards (LinkedIn/Indeed/Glassdoor/
