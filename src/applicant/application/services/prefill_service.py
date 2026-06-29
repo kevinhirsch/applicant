@@ -544,6 +544,11 @@ class PrefillService:
             try:
                 tenant_key = tenant_of(app.id)
             except Exception:
+                log.warning(
+                    "tenant_of() failed for application %s — credential lookup degraded",
+                    app.id,
+                    exc_info=True,
+                )
                 return None
         if not tenant_key:
             return None
