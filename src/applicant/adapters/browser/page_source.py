@@ -618,6 +618,20 @@ class PlaywrightPageSource:
         except Exception:  # noqa: BLE001 — any error means crashed/dead
             return True
 
+    def health_check(self) -> bool:  # pragma: no cover - integration-gated
+        """Verify the browser page is still connected and responsive.
+
+        Returns True if the browser page is reachable and evaluates a trivial
+        expression without error, False otherwise.  Never raises."""
+        try:
+            page = getattr(self, "_page", None)
+            if page is None:
+                return False
+            page.evaluate("1 + 1")
+            return True
+        except Exception:  # noqa: BLE001 — health check never raises
+            return False
+
     def _recover(self) -> None:  # pragma: no cover - integration-gated
         """Attempt to recover from a browser crash by tearing down and re-launching.
 
