@@ -54,7 +54,21 @@ if [[ -z "${SELF}" || ! -f "${SELF}" ]]; then
   fi
   if [[ -d "${CLONE_DIR}/.git" ]]; then
     printf '\033[1;36m[install]\033[0m %s\n' "Reusing existing checkout at ${CLONE_DIR} (git pull --ff-only)…"
-    git -C "${CLONE_DIR}" pull --ff-only --quiet || true
+    # Capture the pull result instead of swallowing it with `|| true` (issue #281):
+    # `|| true` masked network/auth errors, a non-fast-forward divergence, a detached
+    # HEAD, merge conflicts, etc., so the install would silently build from stale or
+    # corrupt source. Only the genuinely-benign "Already up to date" outcome is
+    # tolerated; any other non-zero pull is surfaced and aborts with a clear message.
+    if _pull_out="$(git -C "${CLONE_DIR}" pull --ff-only 2>&1)"; then
+      printf '\033[1;36m[install]\033[0m %s\n' "${_pull_out}"
+    elif grep -qiE 'already up[ -]to[ -]date' <<<"${_pull_out}"; then
+      printf '\033[1;36m[install]\033[0m %s\n' "Checkout already up to date."
+    else
+      echo "Failed to update the existing checkout at ${CLONE_DIR}:" >&2
+      echo "${_pull_out}" >&2
+      echo "Resolve it (e.g. 'git -C ${CLONE_DIR} status'), or set APPLICANT_DIR=<free path> for a fresh clone, then re-run." >&2
+      exit 1
+    fi
   elif [[ -e "${CLONE_DIR}" ]]; then
     echo "${CLONE_DIR} exists but is not an Applicant git checkout. Set APPLICANT_DIR=<free path> and re-run." >&2
     exit 1
