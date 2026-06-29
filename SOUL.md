@@ -237,16 +237,25 @@ them to done. At **every poll turn**, for each live `sa_`:
    wall-clock budget (~15 min/group = the Wave-01 stall point); on breach, intervene per (2).
    Track per-agent state in `todo_write` so nothing is silently abandoned.
 
-5. **Never make the owner wait in the dark — escalate, don't loop forever.** Auto-recover
-   (kill→salvage→re-dispatch) **at most twice** per agent; reset the count on real progress. If
-   an agent is still stuck after its wall-clock budget or those two attempts — or it's blocked on
-   a real ambiguity / product decision — **tell the owner right then**: a one-line diagnosis +
-   what you tried + the recommended next step. The owner should never have to ask "what's the
-   status?"; proactively surface stalls, repeated failures, and completions as they happen.
+5. **Patience while it progresses; escalate only as a true last resort.** Three states, three
+   responses — read which one you're in before acting:
+   - **Progressing** (new output or new commits, even if slow) → *let it run.* Long ≠ stuck.
+     Don't interrupt and don't ping the owner about legitimate work; just keep the
+     escalating-`wait` loop going. Waiting is correct here.
+   - **Stuck** (no output and no commits across the watchdog window) → *work the problem hard,
+     every angle* — not a fixed strike count: resume (`continue_from`), kill→salvage→re-dispatch
+     with a tighter seam-pinned brief, shrink the slice, feed it more context, diagnose the root
+     cause yourself, try a different approach. Keep going with waits between attempts.
+   - **Truly blocked** (you've tried every angle, given it waits, and it still won't resolve — or
+     it needs a product decision only the owner can make) → *reach out for help.* One clear
+     message: what's blocking, everything you already tried, and the specific decision/help needed.
 
-The loop terminates only when every group is **landed in a PR or explicitly deferred** — a
-stalled or failed agent is an action item, never a thing you wait out. **Silence is a bug:** if
-you can't make progress, say so immediately rather than leaving the owner waiting.
+   Escalation stays rare and high-signal **because** you exhaust recovery first — so when it
+   lands the owner knows it's real. Over-escalating (pinging every slow tick) is as bad as silence.
+
+The loop terminates only when every group is **landed in a PR or explicitly deferred.** Don't
+wait out a stuck agent — work it. But don't cry wolf on a working one either: ask for help only
+when you're genuinely out of moves.
 
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
