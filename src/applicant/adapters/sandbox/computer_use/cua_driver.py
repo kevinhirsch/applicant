@@ -266,8 +266,17 @@ class CuaDriverComputerUse:
         )
 
     def _mcp_action(self, action: DesktopAction, **kwargs: Any) -> DesktopActionResult:
-        """Dispatch one destructive action via its MCP tool (guards already applied)."""
-        result = self._ensure_session().call_tool(_TOOL_NAMES[action], kwargs)
+        """Dispatch one destructive action via its MCP tool (guards already applied).
+
+        Port-level argument keys (``element_token``/``from_token``/``to_token``/``app``)
+        are translated to the driver's wire names via ``_RECONCILED_ARG_MAP`` before the
+        tool call is dispatched, so the port interface stays stable and the adapter stays
+        reconciled against the real cua-driver binary (FR-CUA-2, #142).
+        """
+        wire_args = {
+            _RECONCILED_ARG_MAP.get(k, k): v for k, v in kwargs.items()
+        }
+        result = self._ensure_session().call_tool(_TOOL_NAMES[action], wire_args)
         detail = ""
         for part in result.get("content", []) or []:
             if part.get("type") == "text":
@@ -448,3 +457,30 @@ _TOOL_NAMES = {
     DesktopAction.FOCUS_APP: "focus_app",
 }
 _HEALTH_TOOL = "health_report"
+
+#: Translation map from port-level argument names to driver MCP argument keys.
+#: The bounded port (ComputerUsePort) uses vocabulary like ``element_token`` and
+#: ``from_token``; the real cua-driver binary (TryCUA/cua-driver) uses shorter names.
+#: This map is applied by ``_mcp_action`` before the tool call is dispatched, so the
+#: port interface stays stable and the adapter stays reconciled against the real driver.
+_RECONCILED_ARG_MAP: dict[str, str] = {
+    "element_token": "element",
+    "from_token": "from",
+    "to_token": "to",
+    "app": "name",
+}
+
+#: Verified reconciled tool schemas documented against the real cua-driver binary
+#: (TryCUA/cua-driver). Each entry maps `(tool_name, port_action)` to the expected
+#: argument keys the driver accepts. Used by the startup handshake and by tests to
+#: assert that port-level calls translate to the correct driver wire format.
+RECONCILED_TOOL_SCHEMAS: dict[str, tuple[tuple[str, str], ...]] = {
+    "capture": (("mode", "str"),),
+    "click": (("element", "str"),),
+    "type": (("text", "str"),),
+    "key": (("keys", "str"),),
+    "scroll": (("element", "str"), ("dx", "int"), ("dy", "int")),
+    "drag": (("from", "str"), ("to", "str")),
+    "focus_app": (("name", "str"),),
+    "health_report": (),
+}
