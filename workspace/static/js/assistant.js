@@ -13,6 +13,7 @@ const API = '/api/assistant';
 
 let _cachedSettings = null;   // most recent GET /api/assistant/settings payload
 let _modalEl = null;
+let _modalA11yCleanup = null;
 
 async function _fetchJSON(url, opts = {}) {
   const res = await fetch(url, { credentials: 'same-origin', ...opts });
@@ -79,6 +80,7 @@ async function _runCheckInNow(taskId) {
 // ── Settings modal ─────────────────────────────────────────────────────────
 
 function _closeModal() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
@@ -107,6 +109,8 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _closeModal);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeModal(); });
   modal.querySelector('#assistant-settings-close').addEventListener('click', _closeModal);
   modal.addEventListener('click', (e) => {

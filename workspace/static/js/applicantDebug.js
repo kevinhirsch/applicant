@@ -33,6 +33,7 @@ const ADMIN = '/api/applicant/admin';
 const OPS = '/api/applicant/ops';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _activeTab = 'activity';
 let _campaignId = null;
 
@@ -124,6 +125,8 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -155,6 +158,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';

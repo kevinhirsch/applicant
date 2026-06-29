@@ -27,6 +27,7 @@ const OPS = '/api/applicant/ops';
 const POLL_MS = 3000;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _pollIv = null;
 
 function esc(s) {
@@ -92,6 +93,8 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-update-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -101,6 +104,7 @@ function _ensureModalEl() {
 
 function _close() {
   _stopPolling();
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';

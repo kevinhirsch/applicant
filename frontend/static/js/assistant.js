@@ -107,7 +107,25 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeModal(); });
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') _closeModal();
+    // Focus trapping: Tab wraps inside the modal
+    if (e.key === 'Tab') {
+      const focusable = modal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
   modal.querySelector('#assistant-settings-close').addEventListener('click', _closeModal);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _closeModal();

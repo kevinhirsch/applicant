@@ -28,6 +28,7 @@ const API = '/api/applicant/activity';
 const STATUS_POLL_MS = 45000;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _statusPollIv = null;
 let _runsLoading = false;
 
@@ -177,6 +178,8 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
   modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
@@ -189,6 +192,7 @@ function _close() {
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-activity-body'); }
