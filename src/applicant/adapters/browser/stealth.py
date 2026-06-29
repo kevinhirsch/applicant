@@ -24,10 +24,12 @@ What lives here (and the requirement each satisfies):
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 
 # --- FR-STEALTH-1: coherent, honest browser identity ------------------------
@@ -35,7 +37,8 @@ from dataclasses import dataclass, field
 #: cannot be probed (e.g. the hermetic test lane, no browser installed). The UA,
 #: the ``Sec-CH-UA`` header and the engine all derive from this single value so
 #: they NEVER disagree. Bump this when the bundled/installed Chrome is upgraded.
-PINNED_CHROME_MAJOR = 124
+#: May be overridden via the ``APPLICANT_CHROME_MAJOR`` environment variable.
+PINNED_CHROME_MAJOR = int(os.environ.get('APPLICANT_CHROME_MAJOR', '130'))
 
 #: OWNER DECISION (FR-STEALTH-1): present a COHERENT REAL Linux + Google Chrome
 #: identity, NOT a spoofed Windows persona. Real Google Chrome on Linux yields the
@@ -127,11 +130,20 @@ def detect_chrome_major(channel: str = "chrome") -> int | None:
     :data:`PINNED_CHROME_MAJOR`. Pure-ish + best-effort: any failure -> ``None``
     (the hermetic lane never has Chrome installed, so this stays ``None`` there).
     """
-    candidates = (
-        ("google-chrome-stable", "google-chrome", "chrome")
-        if channel == "chrome"
-        else ("chromium", "chromium-browser")
-    )
+    # Container and beta binary names: in Docker/K8s deployments Chrome may be
+    # installed under non-standard names (chromium, chromium-browser) even for
+    # the chrome channel, and google-chrome-beta is another common name.
+    if channel == "chrome":
+        candidates = (
+            "google-chrome-stable",
+            "google-chrome",
+            "chrome",
+            "chromium",
+            "chromium-browser",
+            "google-chrome-beta",
+        )
+    else:
+        candidates = ("chromium", "chromium-browser")
     for name in candidates:
         path = shutil.which(name)
         if not path:
@@ -148,6 +160,29 @@ def detect_chrome_major(channel: str = "chrome") -> int | None:
     return None  # pragma: no cover - covered via monkeypatched PATH in tests
 
 
+def resolve_chrome_major(channel: str = "chrome") -> int:
+    """Resolve the Chrome major version: env override, then probe, then pinned default.
+
+    Priority:
+    1. ``APPLICANT_CHROME_MAJOR`` environment variable (container deploy override).
+    2. ``detect_chrome_major(channel)`` (the installed binary probe).
+    3. :data:`PINNED_CHROME_MAJOR` (the build-time fallback).
+
+    This lets operators pin the major in a container via env var rather than relying
+    on PATH probing, and keeps the UA <-> CH-UA <-> engine coherent (FR-STEALTH-1).
+    """
+    env_val = os.environ.get("APPLICANT_CHROME_MAJOR")
+    if env_val is not None:
+        try:
+            return int(env_val)
+        except (TypeError, ValueError):
+            pass
+    probed = detect_chrome_major(channel)
+    if probed is not None:
+        return probed
+    return PINNED_CHROME_MAJOR
+
+
 def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
     """The coherent real-Linux/Chrome fingerprint, version-pinned to installed Chrome.
 
@@ -155,7 +190,7 @@ def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
     able (so the UA/CH-UA match the real browser the human will take over), else
     falls back to :data:`PINNED_CHROME_MAJOR`. Always internally coherent.
     """
-    major = detect_chrome_major(channel) or PINNED_CHROME_MAJOR
+    major = resolve_chrome_major(channel)
     return _build_fingerprint(major, channel=channel)
 
 #: FR-STEALTH-5: honest best-effort caveat surfaced in UX copy. Anti-detection is
@@ -362,22 +397,27 @@ class ProfileStore:
         # NORMALIZED_FINGERPRINT; the adapter passes its tz/locale-pinned fingerprint
         # so every per-tenant profile is consistent with the residential egress.
         self._fingerprint = dict(fingerprint) if fingerprint else dict(NORMALIZED_FINGERPRINT)
+        # Thread-safety for concurrent for_tenant() calls (default sandbox concurrency
+        # of 3 can race on the read-modify-write of visit_count without a lock).
+        self._lock = threading.Lock()
 
     def for_tenant(self, tenant_key: str) -> BrowserProfile:
-        profile = self._profiles.get(tenant_key)
-        if profile is None:
-            profile = BrowserProfile(
-                tenant_key=tenant_key,
-                user_data_dir=f"{self._root}/{tenant_key}",
-                fingerprint=dict(self._fingerprint),
-            )
-            self._profiles[tenant_key] = profile
-        profile.visit_count += 1
-        return profile
+        with self._lock:
+            profile = self._profiles.get(tenant_key)
+            if profile is None:
+                profile = BrowserProfile(
+                    tenant_key=tenant_key,
+                    user_data_dir=f"{self._root}/{tenant_key}",
+                    fingerprint=dict(self._fingerprint),
+                )
+                self._profiles[tenant_key] = profile
+            profile.visit_count += 1
+            return profile
 
     def is_returning(self, tenant_key: str) -> bool:
-        profile = self._profiles.get(tenant_key)
-        return profile is not None and profile.visit_count > 1
+        with self._lock:
+            profile = self._profiles.get(tenant_key)
+            return profile is not None and profile.visit_count > 1
 
 
 # --- FR-STEALTH-4: residential egress (config seam + guardrail) --------------
