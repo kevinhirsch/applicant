@@ -21,6 +21,7 @@ This is the clearly-marked boundary the work package asks for: swapping
 
 from __future__ import annotations
 
+import logging
 import re
 import socket
 import time
@@ -31,6 +32,8 @@ from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
 from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+log = logging.getLogger(__name__)
 
 
 def url_safety_violation(url: str) -> str | None:
@@ -425,6 +428,8 @@ class PlaywrightPageSource:
         self._context = None
         self._page = None
         self._browser = None
+        self._headless = headless
+        self._user_data_dir = user_data_dir
         # Captured per-navigation main-frame HTTP status + the expected host so
         # current() can populate cautious-mode signals (FR-PREFILL-6).
         self._status: int | None = None
@@ -597,6 +602,65 @@ class PlaywrightPageSource:
         except Exception:
             pass
 
+    def _is_crashed(self) -> bool:  # pragma: no cover - integration-gated
+        """Check whether the browser page has crashed (detached or closed).
+
+        Returns True if the page or context is no longer usable, so callers can
+        trigger recovery instead of operating on a dead browser."""
+        try:
+            page = getattr(self, "_page", None)
+            if page is None:
+                return True
+            # A simple no-op evaluate: if the page is detached this raises.
+            page.evaluate("1 + 1")
+            return False
+        except Exception:  # noqa: BLE001 — any error means crashed/dead
+            return True
+
+    def health_check(self) -> bool:  # pragma: no cover - integration-gated
+        """Verify the browser page is still connected and responsive.
+
+        Returns True if the browser page is reachable and evaluates a trivial
+        expression without error, False otherwise.  Never raises."""
+        try:
+            page = getattr(self, "_page", None)
+            if page is None:
+                return False
+            page.evaluate("1 + 1")
+            return True
+        except Exception:  # noqa: BLE001 — health check never raises
+            return False
+
+    def _recover(self) -> None:  # pragma: no cover - integration-gated
+        """Attempt to recover from a browser crash by tearing down and re-launching.
+
+        Logs the recovery attempt. If re-launch fails the exception propagates."""
+        log.warning("Browser crash detected — attempting recovery")
+        self._safe_teardown()
+        # Re-launch using stored constructor parameters.
+        self._launch_chromium(
+            headless=getattr(self, "_headless", False),
+            user_data_dir=getattr(self, "_user_data_dir", ""),
+        )
+
+
+    def _crash_safe_call(self, fn, *args, **kwargs):  # pragma: no cover - integration-gated
+        """Execute a page/browser operation with crash detection and recovery.
+
+        If the operation raises :class:`TargetClosedError` or :class:`TimeoutError`
+        (Playwright's signals for a detached/dead page), attempts to recover by
+        re-launching the browser and retrying once.  Other exceptions propagate
+        immediately."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            if exc_name in ("TargetClosedError", "TimeoutError"):
+                log.warning("Browser crash detected during operation", exc_info=exc)
+                self._recover()
+                return fn(*args, **kwargs)
+            raise
+
     def _safe_teardown(self) -> None:  # pragma: no cover - integration-gated
         """Best-effort cleanup of a partially-constructed driver.
 
@@ -621,13 +685,15 @@ class PlaywrightPageSource:
                 browser.close()
             elif context is not None:
                 context.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Browser teardown (context/browser) failed", exc_info=exc)
+            raise
         try:
             if pw is not None:
                 pw.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Playwright stop failed", exc_info=exc)
+            raise
 
     @staticmethod
     def fingerprint_init_script(fingerprint: dict[str, str]) -> str:
@@ -836,7 +902,7 @@ class PlaywrightPageSource:
         try:
             self._page.wait_for_load_state("networkidle", timeout=timeout_ms)
         except Exception:
-            pass
+            log.warning("_settle(): wait_for_load_state timed out after %d ms", timeout_ms, exc_info=True)
 
     def _click_first(self, selectors) -> bool:  # pragma: no cover - integration-gated
         """Click the first present + enabled selector; return whether one was clicked."""
@@ -1502,7 +1568,7 @@ class PlaywrightPageSource:
                 try:
                     self._page.wait_for_load_state("networkidle", timeout=10_000)
                 except Exception:
-                    pass
+                    log.warning("advance(): wait_for_load_state timed out after 10 s", exc_info=True)
             except Exception:
                 continue
             # Detect end-of-flow: clicking did not move us anywhere new.
