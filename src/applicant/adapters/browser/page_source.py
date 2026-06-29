@@ -1446,9 +1446,13 @@ class PlaywrightPageSource:
         if trigger is None:
             raise ValueError(f"dropdown not found: {selector!r}")
         trigger.click()
+        # Resolve the listbox container for scoping (issue #226): prefer
+        # aria-controls on the trigger (the dropdown's own listbox), then a
+        # [role=listbox] sibling/ancestor, then fall back to page-wide.
+        listbox_sel = self._resolve_listbox_selector(trigger)
         # 1. Match the options shown on open (no typing) — catches short lists + the
         #    synonym/decline case, which typing would WRONGLY filter to nothing.
-        if self._pick_visible_option(value, 1.5):
+        if self._pick_visible_option(value, 1.5, listbox_selector=listbox_sel):
             return
         # 2. Typeable combobox with a long/filtered list (e.g. country): type a SHORT
         #    filter query — the first couple of meaningful words — to narrow it down
@@ -1461,7 +1465,7 @@ class PlaywrightPageSource:
             except Exception:
                 pass
             self._page.keyboard.type(self._filter_query(value), delay=15)
-            if self._pick_visible_option(value, 4.0):
+            if self._pick_visible_option(value, 4.0, listbox_selector=listbox_sel):
                 return
             # Leave no half-typed filter string behind.
             try:
@@ -1471,6 +1475,29 @@ class PlaywrightPageSource:
                 pass
         raise ValueError(f"no listbox option matching {value!r}")
 
+    @staticmethod
+    def _resolve_listbox_selector(trigger) -> str:  # pragma: no cover
+        """Resolve a CSS selector scoping the listbox container for ``trigger``.
+
+        Tries aria-controls (points to the listbox id), then aria-owns, then
+        looks for a [role=listbox] among siblings. Returns empty string when
+        none is found (falls back to page-wide option polling)."""
+        try:
+            controls = (trigger.get_attribute("aria-controls") or "").strip()
+            if controls:
+                # Sanitize: ids can contain special chars, use attribute selector
+                return f'#' + controls.replace(" ", ".").replace(":", "\\:")
+            owns = (trigger.get_attribute("aria-owns") or "").strip()
+            if owns:
+                return f'#' + owns.replace(" ", ".").replace(":", "\\:")
+            # Look for a listbox among siblings (common react-select pattern)
+            parent = trigger.evaluate("e => e.parentElement ? e.parentElement.id : ''")
+            if parent:
+                return f"#{parent} [role='listbox']"
+        except Exception:
+            pass
+        return ""
+
     @classmethod
     def _filter_query(cls, value: str) -> str:  # pragma: no cover
         """A short query to FILTER a long combobox list: the first couple of meaningful
@@ -1478,14 +1505,24 @@ class PlaywrightPageSource:
         words = [w for w in value.split() if not cls._norm_text(w).isdigit()]
         return " ".join(words[:2]) if words else value
 
-    def _pick_visible_option(self, value: str, timeout_s: float) -> bool:  # pragma: no cover
+    def _pick_visible_option(self, value: str, timeout_s: float, listbox_selector: str = "") -> bool:  # pragma: no cover
         """Poll up to ``timeout_s`` for a VISIBLE ``[role=option]`` matching ``value``
         and click it (exact preferred, else a loose/decline match). Returns True iff
-        one was clicked. Visibility scoping skips options of other closed dropdowns."""
+        one was clicked.
+
+        When ``listbox_selector`` is provided, options are scoped to only those inside
+        that specific listbox container (issue #226), preventing stale options from a
+        different/detached dropdown from being matched. Without it, falls back to
+        page-wide visibility scoping (skips hidden options of other closed dropdowns).\�""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             fallback = None
-            for opt in self._page.query_selector_all("[role='option']"):
+            candidates = (
+                self._page.query_selector_all(listbox_selector + " [role='option']")
+                if listbox_selector
+                else self._page.query_selector_all("[role='option']")
+            )
+            for opt in candidates:
                 try:
                     if not opt.is_visible():
                         continue
