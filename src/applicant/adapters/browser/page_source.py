@@ -240,7 +240,37 @@ class FakePageSource:
     ) -> None:
         # The fake model records the value; cadence is accepted for protocol parity
         # (the real driver applies it) and ignored here.
+        # For dropdown fields (select, listbox, combobox), validate that the value
+        # matches a real option — this closes the fake-model coverage gap for dropdown
+        # matching (issue #225) so CI exercises the same option-resolution logic.
+        for field in self._page.fields:
+            if field.selector == selector and field.field_type in (
+                "select", "listbox", SCREENING_FACTUAL
+            ):
+                if not self._match_dropdown_option(value, field.options):
+                    raise ValueError(
+                        f"no option matching {value!r} in {field.label} "
+                        f"(available: {field.options})"
+                    )
+                break
         self._page.filled[selector] = value
+
+    @staticmethod
+    def _match_dropdown_option(value: str, options: tuple[str, ...]) -> bool:
+        """Check if ``value`` matches one of the given ``options`` (exact or loose).
+
+        Uses the same option-matching logic as the real Playwright driver so the
+        fake exercises the same resolution rules in CI (issue #225).
+        """
+        from applicant.adapters.browser.page_source import PlaywrightPageSource
+
+        if not options:
+            return True  # no constraints to validate against
+        for opt in options:
+            m = PlaywrightPageSource._option_match(value, opt)
+            if m is not None:
+                return True
+        return False
 
     def set_input_files(self, selector: str, file_path: str) -> None:
         # The fake model records the uploaded path (the real driver attaches it via
