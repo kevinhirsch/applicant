@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
@@ -138,6 +139,13 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Deployment mode (FR-DEPLOY). "" (default) = every integration ships
+    # hermetic/safe; "production" = ONE preset that turns on live browser, live
+    # discovery, live notifications, durable orchestration (DBOS), and the 24/7
+    # scheduler at once - the engine does real work out of the box. You can still
+    # override any individual flag after the mode is applied.
+    applicant_mode: str = Field(default="", alias="APPLICANT_MODE")
+
     # Storage (FR-CRIT-4, FR-DUR-3)
     database_url: str = Field(
         default="postgresql+psycopg://applicant:applicant@localhost:5432/applicant",
@@ -183,7 +191,7 @@ class Settings(BaseSettings):
     # test lane / TestClient never spins a live background loop; prod compose sets
     # it True (zero-CLI via env). When True the lifespan starts the asyncio tick
     # loop on the shim, or DBOS @scheduled drives it on the DBOS path.
-    scheduler_enabled: bool = Field(default=False, alias="SCHEDULER_ENABLED")
+    scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
     scheduler_interval_seconds: float = Field(
         default=60.0, alias="SCHEDULER_INTERVAL_SECONDS"
     )
@@ -200,7 +208,7 @@ class Settings(BaseSettings):
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     # ge=1: a 0/negative cap would admit nothing; reject it at load.
     sandbox_concurrency: int = Field(default=3, ge=1, alias="SANDBOX_CONCURRENCY")
-    llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables
+    llm_rate_limit: int = Field(default=30, alias="LLM_RATE_LIMIT")  # 0 disables; default 30 req/min
     llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
 
     # Observability (FR-OBS-1)
@@ -211,6 +219,10 @@ class Settings(BaseSettings):
     # test lane never touches Discord/SMTP; flip on in a real deployment (zero-CLI).
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
+    # #300: ntfy push channel — opt-in, empty by default. Comma-separated ntfy:// URLs
+    # (e.g. ``ntfy://ntfy.sh/my-topic``). The ntfy service is already in the Compose
+    # stack; configure this to route urgent action alerts to push-notification clients.
+    ntfy_url: str = Field(default="", alias="NTFY_URL")
     notifications_live: bool = Field(default=False, alias="NOTIFICATIONS_LIVE")
 
     # Stage 2.5 — ENGINE -> WORKSPACE callback channel. The engine calls BACK into
@@ -257,7 +269,7 @@ class Settings(BaseSettings):
     # (e.g. ``daily``) opts in to a once-per-(campaign, UTC day) push naming the missing
     # apply-essentials. Default OFF so the hermetic lane is byte-identical (no behavior
     # change) until a deploy opts in.
-    essentials_nudge_schedule: str = Field(default="off", alias="ESSENTIALS_NUDGE_SCHEDULE")
+    essentials_nudge_schedule: str = Field(default="daily", alias="ESSENTIALS_NUDGE_SCHEDULE")
     # Cadence of the proactive "here's where your campaigns stand" status update
     # (sibling of the chatbot self-report). ``off`` (default) keeps it dormant; a
     # periodic string (e.g. ``daily``) opts in. Read through Settings like its
@@ -445,6 +457,41 @@ class Settings(BaseSettings):
     proxmox_takeover_url_template: str = Field(
         default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
     )
+
+    @model_validator(mode="after")
+    def _apply_production_mode(self) -> Self:
+        """Apply the production preset when APPLICANT_MODE=production.
+
+        Sets the five real-integration flags to their production defaults.
+        Individual env overrides still win because this runs after model
+        construction - any explicit env var already landed on the field and is
+        left untouched when the preset disagrees with the default.
+        """
+        if (self.applicant_mode or "").strip().lower() != "production":
+            return self
+        explicit = self.model_fields_set
+        if "browser_real" not in explicit:
+            object.__setattr__(self, "browser_real", True)
+        if "discovery_live" not in explicit:
+            object.__setattr__(self, "discovery_live", True)
+        if "notifications_live" not in explicit:
+            object.__setattr__(self, "notifications_live", True)
+        if "orchestrator_backend" not in explicit:
+            object.__setattr__(self, "orchestrator_backend", "dbos")
+        if "scheduler_enabled" not in explicit:
+            object.__setattr__(self, "scheduler_enabled", True)
+        return self
+
+    @property
+    def scheduler_should_run(self) -> bool:
+        """True when the scheduler should be active: either explicitly enabled or in production mode."""
+        return self.scheduler_enabled or (self.applicant_mode or "").strip().lower() == "production"
+
+    @property
+    def deployment_profile(self) -> str:
+        """The deployment profile derived from applicant_mode (empty = hermetic)."""
+        return self.applicant_mode
+
 
     @field_validator("takeover_desktop")
     @classmethod

@@ -166,6 +166,9 @@ class Container:
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     """Return (engine, session_factory, storage). Falls back to in-memory."""
+    import logging
+    _logger = logging.getLogger("applicant.storage")
+
     try:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
         from applicant.adapters.storage.session import make_engine, make_session_factory
@@ -177,8 +180,16 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
         if storage.healthcheck():
             return engine, session_factory, storage
         session.close()
-    except Exception:
-        pass
+        _logger.warning(
+            "Database healthcheck failed — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts."
+        )
+    except Exception as exc:
+        _logger.warning(
+            "Cannot connect to database (%s) — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts.",
+            exc,
+        )
     # No reachable DB (tests / first boot) — use in-memory storage.
     return None, None, InMemoryStorage()
 
@@ -535,6 +546,9 @@ def build_container(settings: Settings | None = None) -> Container:
     notification = AppriseNotifier(
         discord_webhook_url=chan.get("discord_webhook_url") or settings.discord_webhook_url,
         apprise_urls=chan.get("apprise_urls") or settings.apprise_urls,
+        # #300: ntfy push channel — opt-in, empty by default (no push). Persisted
+        # alongside the other channels so it survives restarts.
+        ntfy_url=chan.get("ntfy_url") or settings.ntfy_url,
         quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
         quiet_tz=quiet["tz"],
         always_on=not quiet["enabled"],

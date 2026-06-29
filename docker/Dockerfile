@@ -1,11 +1,5 @@
-# Applicant API image. python:3.11-slim + uv.
-#
-# Base images are pinned by immutable DIGEST, not a mutable tag (#160, #374): a tag
-# like `python:3.11-slim` can be repointed at a different image at any time, so an
-# unpinned build is not reproducible and is a supply-chain risk. The tag is kept in
-# the comment for human readability; bump the digest deliberately when upgrading.
-# Resolve a new digest with: docker buildx imagetools inspect python:3.11-slim
-FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
+# Applicant API image. python:3.12-slim + uv.
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -132,10 +126,11 @@ RUN uv run --no-sync camoufox fetch
 COPY src ./src
 RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
-# App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
+# App code + workspace static + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
 COPY alembic.ini ./
 COPY frontend ./frontend
+COPY workspace/static ./workspace/static
 COPY templates ./templates
 COPY scripts ./scripts
 

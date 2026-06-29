@@ -21,6 +21,7 @@
 // (the list returns tenant keys only), and the password field is type=password.
 
 import uiModule from './ui.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const API = '/api/applicant/vault';
 
@@ -29,39 +30,9 @@ let _modalA11yCleanup = null;
 let _campaignId = '';
 let _busy = false;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try { uiModule.showToast(msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 // ── modal scaffold ──────────────────────────────────────────────────────────
 
