@@ -1,4 +1,4 @@
-"""Model-endpoint router — add a model source and auto-list its models.
+"""Model-endpoint router â€” add a model source and auto-list its models.
 
 Backs the setup page's "Add Models" section (ported from the Applicant settings flow):
 the user pastes a base URL (local Ollama or a cloud API) plus an optional key, and
@@ -19,6 +19,7 @@ live model fetch so the browser never holds the raw provider key.
 from __future__ import annotations
 
 from enum import Enum
+
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel

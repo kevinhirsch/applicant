@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from fastapi import Depends, HTTPException, Request, status
+
+from applicant.app.container import Container
 from applicant.core.ids import validate_id as _validate_id
 
 
@@ -25,9 +27,6 @@ def ValidatedPathParam(value: str) -> str:
     Rejects empty, NUL-byte, and path-traversal values before they reach the handler.
     """
     return _validate_id(value)
-
-
-from applicant.app.container import Container
 
 
 def get_container(request: Request) -> Container:

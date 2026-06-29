@@ -12,10 +12,10 @@ import asyncio
 import re
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, field_validator
-from typing import Any
 
 from applicant.app.deps import (
     get_container,
