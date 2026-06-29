@@ -38,6 +38,7 @@
 //     progress) instead of raw <input type=file>.
 
 import fileHandlerModule from './fileHandler.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
@@ -99,43 +100,9 @@ const NEVER_DOES = [
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
-function esc(s) {
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try {
-    if (window.uiModule && typeof window.uiModule.showToast === 'function') {
-      window.uiModule.showToast(msg);
-      return;
-    }
-  } catch { /* fall through */ }
-  try { console.warn('[setup]', msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    err.body = data;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 // (Multipart uploads no longer hand-roll FormData here — the fonts/resume steps
 // reuse fileHandler.js's picker uploadPending(), which builds + POSTs the form.)
 
