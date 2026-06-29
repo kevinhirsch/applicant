@@ -337,6 +337,72 @@ class CredentialModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+# G16: Post-submission lifecycle tables ----------------------------------------
+
+
+class SubmissionSnapshotModel(Base):
+    __tablename__ = "submission_snapshots"
+    __table_args__ = (Index("ix_submission_snapshot_application", "application_id"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
+    answers: Mapped[dict] = mapped_column(JSONType, default=dict)
+    materials: Mapped[list] = mapped_column(JSONType, default=list)
+    ats_metadata: Mapped[dict] = mapped_column(JSONType, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class RejectionSignalModel(Base):
+    __tablename__ = "rejection_signals"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(32), default="ats_status")
+    signal_text: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    detail: Mapped[dict] = mapped_column(JSONType, default=dict)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class GhostingSignalModel(Base):
+    __tablename__ = "ghosting_signals"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
+    sla_days: Mapped[int] = mapped_column(Integer, default=14)
+    submission_age_days: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[dict] = mapped_column(JSONType, default=dict)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class FollowUpModel(Base):
+    __tablename__ = "follow_ups"
+    __table_args__ = (Index("ix_follow_ups_due", "scheduled_at", "status"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.id"), nullable=False, index=True)
+    template: Mapped[str] = mapped_column(String(32), default="thank_you")
+    status: Mapped[str] = mapped_column(String(16), default="SCHEDULED")
+    subject: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class PortfolioAttachmentModel(Base):
+    __tablename__ = "portfolio_attachments"
+    __table_args__ = (Index("ix_portfolio_attachments_application", "application_id"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
+    application_id: Mapped[str | None] = mapped_column(ForeignKey("applications.id"), nullable=True, index=True)
+    attachment_type: Mapped[str] = mapped_column(String(32), default="other")
+    file_name: Mapped[str] = mapped_column(String(512), default="")
+    storage_path: Mapped[str] = mapped_column(Text, default="")
+    display_name: Mapped[str] = mapped_column(String(512), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    metadata: Mapped[dict] = mapped_column(JSONType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 # derived -------------------------------------------------------------------
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
@@ -382,4 +448,10 @@ ALL_TABLES = [
     AppConfigModel,
     CredentialModel,
     PendingActionModel,
+    # G16: Post-submission lifecycle tables.
+    SubmissionSnapshotModel,
+    RejectionSignalModel,
+    GhostingSignalModel,
+    FollowUpModel,
+    PortfolioAttachmentModel,
 ]
