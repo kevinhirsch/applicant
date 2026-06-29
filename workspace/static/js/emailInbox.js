@@ -228,7 +228,7 @@ async function _refreshUnreadCount() {
     // Parallel: unread list + urgency state.
     const [listRes, urgRes] = await Promise.all([
       fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=50&filter=unread${_acct()}`),
-      fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(() => null),
+      fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(e => { console.error('Failed to fetch urgency state:', e); return null; }),
     ]);
     if (!listRes || !listRes.ok) return;
     const data = await listRes.json();
@@ -281,7 +281,7 @@ export function markInboxAsSeen() {
         const dot = document.getElementById('email-unread-dot');
         if (dot) dot.style.display = 'none';
       })
-      .catch(() => {});
+      .catch(e => console.error('Failed to mark inbox as seen:', e));
   } catch (e) {}
 }
 
@@ -676,7 +676,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       } else {
         let draftToastTimer = null;
         draftToastTimer = setTimeout(() => {
-          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
+          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(e => console.error('Failed to show draft toast:', e));
         }, 450);
         try {
           let currentModel = '';
@@ -707,13 +707,13 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
           } else {
             const _msg = result.error || 'AI reply could not be generated';
             console.error('AI reply generation failed:', _msg);
-            import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
+            import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(e => console.error('Failed to show AI reply error toast:', e));
             return;
           }
         } catch (e) {
           if (draftToastTimer) clearTimeout(draftToastTimer);
           console.error('AI reply generation failed:', e);
-          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(e2 => console.error('Failed to show AI reply error toast:', e2));
           return;
         }
       }
@@ -880,7 +880,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
           // import pattern the rest of this file uses. (Previously this
           // referenced a bare `uiModule`, throwing a ReferenceError that
           // the outer catch swallowed → reply silently did nothing.)
-          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(e => console.error('Failed to show reply draft error toast:', e));
           return;
         }
         const doc = await docRes.json();
@@ -906,7 +906,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     // look like "nothing happened". Dynamic import — uiModule isn't a
     // static import in this file.
     const msg = e && e.message ? e.message : String(e);
-    import('./ui.js').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
+    import('./ui.js').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(e => console.error('Failed to show reply error toast:', e));
   } finally {
     if (spinner) { spinner.destroy(); spinner.element.remove(); }
     if (itemEl) {
@@ -1191,7 +1191,7 @@ async function _composeNew() {
     }
     if (!sid) {
       console.error('compose: could not obtain a session_id');
-      import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
+      import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(e => console.error('Failed to show no-session error:', e));
       return;
     }
     const res = await fetch(`${API_BASE}/api/document`, {
@@ -1205,8 +1205,8 @@ async function _composeNew() {
       }),
     });
     if (!res.ok) {
-      console.error('compose POST failed', res.status, await res.text().catch(() => ''));
-      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
+      console.error('compose POST failed', res.status, await res.text().catch(e => { console.error('Failed to read error response body:', e); return ''; }));
+      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(e => console.error('Failed to show new-email error:', e));
       return;
     }
     const doc = await res.json();

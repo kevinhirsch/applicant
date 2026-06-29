@@ -50,7 +50,7 @@ function _preloadVisibleMarkdown() {
     const pre = card.querySelector('.skill-md-pre');
     const apply = (md) => { if (pre) pre.textContent = md || '(empty)'; card._mdLoaded = true; card._md = md || ''; };
     if (_mdCache.has(name)) { apply(_mdCache.get(name)); return; }
-    _fetchSkillMarkdown(name).then(apply).catch(() => {});
+    _fetchSkillMarkdown(name).then(apply).catch(e => console.error('Silent catch in skills:', e));
   });
 }
 
@@ -105,7 +105,7 @@ export async function loadSkills(cascade = false) {
     if (!_auditPoll) {
       _fetchAuditStatus().then(st => {
         if (st.status === 'running') _auditAllSkills();
-      }).catch(() => {});
+      }).catch(e => console.error('Silent catch in skills:', e));
     }
   } catch (e) {
     console.error('Failed to load skills:', e);

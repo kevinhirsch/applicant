@@ -232,7 +232,7 @@ async function _renderStep() {
 async function _advanceAndContinue(stepKey) {
   // Mark the engine step complete (best-effort) then move forward (linearly).
   try { _status = await _post(`${SETUP}/advance/${stepKey}`); }
-  catch { await _refreshStatus().catch(() => {}); }
+  catch { await _refreshStatus().catch(e => console.error('Silent catch in applicantOnboarding:', e)); }
   // Settings reuse: a relocated step renderer is being driven from a Settings
   // panel (no wizard overlay open) — save only, never drive wizard navigation.
   if (!_overlay) return;
@@ -244,7 +244,7 @@ async function _advanceAndContinue(stepKey) {
 // advance — the engine still gates real automated work server-side until setup is
 // actually done, so letting the user roam the wizard is safe.
 async function _nextStep() {
-  await _refreshStatus().catch(() => {});
+  await _refreshStatus().catch(e => console.error('Silent catch in applicantOnboarding:', e));
   if (_stepIndex >= STEPS.length - 1) { await _finish(); return; }
   _stepIndex += 1;
   await _renderStep();
@@ -774,7 +774,7 @@ async function _renderSandbox() {
   // into the sandbox image and the engine's health preflight passes. The actual
   // opt-in is per live session (in the live-session surface); here we surface the
   // capability + the honest best-effort caveat, and reflect the locked state.
-  _renderDesktopAssistSetting().catch(() => {});
+  _renderDesktopAssistSetting().catch(e => console.error('Silent catch in applicantOnboarding:', e));
 
   const backendSel = document.getElementById('ao-sb-backend');
   const winBox = document.getElementById('ao-sb-win');

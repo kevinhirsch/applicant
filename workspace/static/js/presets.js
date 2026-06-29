@@ -658,7 +658,7 @@ export function openCustomPresetModal() {
           fetch(`${API_BASE}/api/presets/custom`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...(presets.custom || {}), name: (presets.custom && presets.custom.character_name) || '', enabled: false }),
-          }).catch(() => {});
+          }).catch(e => console.error('Silent catch in presets:', e));
         } catch {}
       }
       const m = document.getElementById('custom-preset-modal');
@@ -820,7 +820,7 @@ export async function saveCustomPreset(showToast, showError) {
             id: (userTemplates.find(t => t.name === saveName) || {}).id || '',
             name: saveName, system_prompt, temperature: config.temperature, max_tokens: config.max_tokens,
           }),
-        }).then(r => { if (r.ok) loadUserTemplates(); }).catch(() => {});
+        }).then(r => { if (r.ok) loadUserTemplates(); }).catch(e => console.error('Silent catch in presets:', e));
       }
 
       if (showToast) {
@@ -933,7 +933,7 @@ function _reloadMemoryList() {
   import('./memory.js').then(m => {
     if (m.renderMemoryList) m.renderMemoryList();
     if (m.updateMemoryCount) m.updateMemoryCount();
-  }).catch(() => {});
+  }).catch(e => console.error('Silent catch in presets:', e));
 }
 
 /**
@@ -990,7 +990,7 @@ function _syncCharIndicator() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...presets.custom, name: presets.custom.character_name || '', enabled: false }),
-          }).catch(() => {});
+          }).catch(e => console.error('Silent catch in presets:', e));
           return;
         }
         if (typeof openCustomPresetModal === 'function') openCustomPresetModal();
