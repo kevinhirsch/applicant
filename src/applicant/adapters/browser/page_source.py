@@ -289,8 +289,19 @@ class FakePageSource:
         return self._page.is_account_create
 
     def is_account_gate(self) -> bool:
-        # The fake model marks the account-create page as the gate.
-        return self._page.is_account_create
+        # Align with PlaywrightPageSource.is_account_gate (issue #213): the gate is
+        # broader than account-create — a sign-in-only page (email/password fields,
+        # no create-account option) is a gate too. When the page is not flagged as
+        # account-create, fall back to URL-path and detection-signal login markers.
+        if self._page.is_account_create:
+            return True
+        url = (self._page.url or "").lower()
+        if any(m in url for m in ("/signin", "/login", "/sign-in", "/log-in")):
+            return True
+        signals = " ".join(self._page.detection_signals or ()).lower()
+        if any(m in signals for m in ("sign in", "log in", "login")):
+            return True
+        return False
 
     def is_final_submit_page(self) -> bool:
         return self._page.is_final_submit
