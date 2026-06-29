@@ -281,8 +281,8 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         ? langIcon(doc.language, 12, { style: 'opacity:0.65;flex-shrink:0;color:currentColor;margin-right:4px;' })
         : '';
       const langChip = `<span class="doc-tab-lang">${lic}</span>`;
-      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${title}">
-        ${verChip}${langChip}<span class="doc-tab-title">${shortTitle}</span>
+      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${_escHtml(title)}">
+        ${verChip}${langChip}<span class="doc-tab-title">${_escHtml(shortTitle)}</span>
         <button class="doc-tab-close" data-doc-id="${id}" title="Unlink from chat (kept in the Library)">&times;</button>
       </div>`;
     }
@@ -9199,9 +9199,9 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
             <span class="doc-version-num">v${v.version_number}</span>
-            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
+            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${_escHtml(v.source)}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
-          ${v.summary ? `<div class="doc-version-summary">${v.summary}</div>` : ''}
+          ${v.summary ? `<div class="doc-version-summary">${_escHtml(v.summary)}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
           ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
         </div>
