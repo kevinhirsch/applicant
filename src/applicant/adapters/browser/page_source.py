@@ -714,10 +714,23 @@ class PlaywrightPageSource:
     #: incoherence (FR-STEALTH-1). With a context present, the fingerprint init script
     #: above masks the SwiftShader vendor/renderer to the coherent values. On a host
     #: that does have a usable GPU the flag is a no-op (SwiftShader stays a fallback).
-    _STEALTH_ARGS = (
-        "--disable-blink-features=AutomationControlled",
-        "--enable-unsafe-swiftshader",
-    )
+    @staticmethod
+    def _stealth_args(chrome_major: int | None = None) -> tuple[str, ...]:
+        """Return the browser launch args based on the Chrome major version.
+
+        ``--disable-blink-features=AutomationControlled`` is always included to mask
+        the automation tell (FR-STEALTH-1).
+
+        ``--enable-unsafe-swiftshader`` is only included when Chrome major < 125
+        because Chrome 125+ removed this flag entirely; passing it to a newer Chrome
+        causes the browser to exit with an unrecognised flag error and is itself a
+        stale-automation tell. On a GPU-less host Chrome 125+ relies on the built-in
+        SwiftShader fallback implicitly, so the flag is unnecessary.
+        """
+        args = ["--disable-blink-features=AutomationControlled"]
+        if chrome_major is None or chrome_major < 125:
+            args.append("--enable-unsafe-swiftshader")
+        return tuple(args)
 
     @staticmethod
     def launch_kwargs(
@@ -755,7 +768,9 @@ class PlaywrightPageSource:
             "timezone_id": fingerprint.get("timezone", "America/Phoenix"),
             "viewport": {"width": int(width or 1920), "height": int(height or 1080)},
             "device_scale_factor": scale_f,
-            "args": list(PlaywrightPageSource._STEALTH_ARGS),
+            "args": list(PlaywrightPageSource._stealth_args(
+                int(fingerprint.get("chrome_major", "0")) if fingerprint.get("chrome_major") else None
+            )),
         }
         if proxy:
             # FR-STEALTH-4: residential proxy actually used for automation egress.

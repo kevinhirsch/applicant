@@ -204,7 +204,10 @@ class TestEgressThreadedIntoLaunch:
         """
         from applicant.adapters.browser.page_source import PlaywrightPageSource
 
-        args = PlaywrightPageSource.launch_kwargs(NORMALIZED_FINGERPRINT, proxy=None)["args"]
+        # Use a fingerprint with Chrome major < 125 so the SwiftShader flag is included.
+        old_fp = dict(NORMALIZED_FINGERPRINT)
+        old_fp["chrome_major"] = "124"
+        args = PlaywrightPageSource.launch_kwargs(old_fp, proxy=None)["args"]
         assert "--enable-unsafe-swiftshader" in args
         # The automation tell stays removed.
         assert "--disable-blink-features=AutomationControlled" in args
