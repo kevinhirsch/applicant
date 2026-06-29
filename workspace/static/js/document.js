@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { _sanitizeHtml } from './emailLibrary/utils.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -2242,7 +2243,7 @@ import * as Modals from './modalManager.js';
     // If it already contains a formatting/structural HTML tag, it's a saved
     // WYSIWYG body — use it verbatim. (Checking a leading '<' isn't enough: a
     // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
-    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return t;
+    if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return _sanitizeHtml(t);
     try { return markdownModule.mdToHtml(text); }
     catch (_) {
       const d = document.createElement('div'); d.textContent = text;

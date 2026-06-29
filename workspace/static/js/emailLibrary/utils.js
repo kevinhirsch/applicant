@@ -128,18 +128,46 @@ export function _initials(s) {
   return (first + last).toUpperCase();
 }
 
-// HTML sanitizer for rendering remote email bodies. Strips script/iframe/
-// form/style/etc., kills `on*` handlers, blocks `javascript:`/`vbscript:`/
-// `data:` URLs on every known URL attribute, scrubs inline colour/font/
-// position styles so the theme can take over, and wraps highlight-bearing
-// inline tags in <mark> so they render legibly across themes.
+// HTML sanitizer for rendering remote email bodies.  An **allowlist**
+// (not denylist) approach: only tags in ALLOWED_TAGS are kept; every
+// other element is unwrapped (children survive, the tag itself is
+// removed).  Attribute scrubbing is still denylist-style (strip on*,
+// dangerous URL schemes, sensitive attributes), and inline-style
+// url() references are neutralized to block read-receipt beacons.
+// The sanitizer is idempotent — running it twice on the same input
+// produces the same output.
+const ALLOWED_TAGS = new Set([
+  'A', 'ABBR', 'ADDRESS', 'AREA', 'ARTICLE', 'ASIDE',
+  'B', 'BDI', 'BDO', 'BLOCKQUOTE', 'BR', 'CAPTION', 'CITE',
+  'CODE', 'COL', 'COLGROUP', 'DATA', 'DD', 'DEL', 'DFN',
+  'DIV', 'DL', 'DT', 'EM', 'FIELDSET', 'FIGCAPTION',
+  'FIGURE', 'FOOTER', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'HEADER', 'HGROUP', 'HR', 'I', 'IMG', 'INS', 'KBD',
+  'LEGEND', 'LI', 'MAIN', 'MARK', 'NAV', 'OL', 'P', 'PRE',
+  'Q', 'RP', 'RT', 'RUBY', 'S', 'SAMP', 'SECTION', 'SMALL',
+  'SPAN', 'STRONG', 'SUB', 'SUP', 'TABLE', 'TBODY', 'TD',
+  'TFOOT', 'TH', 'THEAD', 'TIME', 'TR', 'U', 'UL', 'VAR',
+  'WBR',
+]);
 export function _sanitizeHtml(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.querySelectorAll(
-    'script, iframe, object, embed, form, style, link, ' +
-    'svg, math, base, meta, noscript, frame, frameset, applet, portal'
-  ).forEach(el => el.remove());
 
+  // --- Pass 1: unwrap every element whose tag is NOT in the allowlist ---
+  // Iterate in reverse so children unwrapped from a removed parent are
+  // re-examined in the same pass (idempotent by construction — no tag
+  // that survives this pass can be a banned one).
+  const all = Array.from(doc.querySelectorAll('*'));
+  for (let i = all.length - 1; i >= 0; i--) {
+    const el = all[i];
+    if (ALLOWED_TAGS.has(el.tagName)) continue;
+    // Unwrap: move children before the element, then remove it.
+    const parent = el.parentNode;
+    if (!parent) { el.remove(); continue; }
+    while (el.firstChild) parent.insertBefore(el.firstChild, el);
+    el.remove();
+  }
+
+  // --- Pass 2: scrub attributes on surviving elements ---
   const URL_ATTRS = ['href', 'src', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
   const isDangerousUrl = (val) => {
     if (!val) return false;
@@ -147,11 +175,11 @@ export function _sanitizeHtml(html) {
     return v.startsWith('javascript:') || v.startsWith('vbscript:') || v.startsWith('data:');
   };
 
-  const STRIP_CSS_PROPS = ['color', 'background', 'background-color',
-                           'font-family', 'font', '-webkit-text-fill-color',
-                           'position', 'z-index'];
+  const STRIP_CSS_PROPS = new Set(['color', 'background', 'background-color',
+    'background-image', 'font-family', 'font', '-webkit-text-fill-color',
+    'position', 'z-index']);
   const HIGHLIGHT_INLINE_TAGS = new Set(['SPAN', 'FONT', 'EM', 'B', 'I',
-                                         'STRONG', 'SMALL', 'U']);
+    'STRONG', 'SMALL', 'U']);
   const HAS_BG_COLOR = /background(?:-color)?\s*:\s*(?!\s*(?:transparent|none|inherit|initial)\b)[^;]+/i;
   const _markedForHighlight = [];
 
@@ -178,9 +206,11 @@ export function _sanitizeHtml(html) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
         const lower = decl.toLowerCase();
+        // Block javascript: / expression() / url() — url() is a tracking beacon.
         if (lower.includes('javascript:') || lower.includes('expression(')) return false;
+        if (/url\s*\(/i.test(lower)) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
-        return !STRIP_CSS_PROPS.includes(prop);
+        return !STRIP_CSS_PROPS.has(prop);
       });
       if (kept.length) el.setAttribute('style', kept.join('; '));
       else el.removeAttribute('style');
