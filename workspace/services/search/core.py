@@ -7,21 +7,21 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Set
 from urllib.parse import urlparse
 
-from .analytics import (
+from src.search.analytics import (
     NetworkError,
     ParseError,
     RateLimitError,
     error_logger,
     _record_query,
 )
-from .cache import (
+from src.search.cache import (
     SEARCH_CACHE_DIR,
     search_cache_index,
     generate_cache_key,
     cleanup_cache,
 )
-from .query import _cache_duration_for_query
-from .ranking import rank_search_results
+from src.search.query import _cache_duration_for_query
+from src.search.ranking import rank_search_results
 from .providers import (
     searxng_search_api,
     brave_search,

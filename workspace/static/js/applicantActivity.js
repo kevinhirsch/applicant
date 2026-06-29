@@ -22,6 +22,7 @@
 // .hwfit-loading / .applicant-status-strip).
 
 import uiModule from './ui.js';
+import { esc, _fetchJSON } from './applicantCore.js';
 
 const API = '/api/applicant/activity';
 // Slow poll for the always-visible strip — mirrors the Portal's BADGE_POLL_MS.
@@ -31,27 +32,7 @@ let _modalEl = null;
 let _statusPollIv = null;
 let _runsLoading = false;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
 // Compact relative time ("just now", "5m ago", "3h ago", "2d ago"). Accepts an
 // ISO string, an epoch-seconds number, or an epoch-ms number. Returns '' when the

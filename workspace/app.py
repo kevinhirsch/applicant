@@ -496,6 +496,32 @@ async def llm_service_error_handler(request: Request, exc: LLMServiceError):
 async def web_search_error_handler(request: Request, exc: WebSearchError):
     return JSONResponse(status_code=502, content={"error": "WEB_SEARCH_ERROR", "message": str(exc)})
 
+# Global catch-all: any unhandled exception that bypasses the specific handlers
+# above is caught here. Logs full context server-side (path, method,
+# x-request-id / x-correlation-id if present, exception type + traceback) so
+# crashes are always diagnosable, and returns a generic 500 to the client so
+# no internal detail or traceback is ever leaked to untrusted callers (#252).
+import traceback as _traceback
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    request_id = (
+        request.headers.get("x-request-id")
+        or request.headers.get("x-correlation-id")
+    )
+    logger.error(
+        "unhandled_exception path=%s method=%s request_id=%s exc_type=%s\n%s",
+        request.url.path,
+        request.method,
+        request_id,
+        type(exc).__name__,
+        _traceback.format_exc(),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected error occurred. Please try again later."},
+    )
+
 # ========= WEBHOOK MANAGER =========
 from src.webhook_manager import WebhookManager
 
