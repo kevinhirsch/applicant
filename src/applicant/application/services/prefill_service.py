@@ -1090,6 +1090,7 @@ class PrefillService:
                 start_tier=FIELD_MAPPING_START_TIER,
             )
         except Exception:
+            log.warning("LLM escalation failed for field %r", fld.label, exc_info=True)
             return None  # LLM unavailable → fall through to soft error (frugal).
         if getattr(res, "low_confidence", False):
             return None
