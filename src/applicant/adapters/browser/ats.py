@@ -183,6 +183,7 @@ class GreenhouseAts(AtsAdapter):
 
     Not an MVP-1 target; it exists so the "new ATS = new subclass, no core change"
     claim is demonstrable. Greenhouse typically has no separate account-create page.
+    Models the real Greenhouse apply flow with common field mappings (issue #171).
     """
 
     name = "greenhouse"
@@ -198,6 +199,42 @@ class GreenhouseAts(AtsAdapter):
                     DetectedField("#first_name", "First Name", "text"),
                     DetectedField("#last_name", "Last Name", "text"),
                     DetectedField("#email", "Email", "text"),
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("#job_application_answers_attributes_0_education", "Highest Education", "select", options=("High School", "Associate", "Bachelor", "Master", "PhD")),
+                    DetectedField("input[type='file']", "Resume/CV", "file"),
+                    DetectedField("#cover_letter", "Cover Letter", "textarea"),
+                    DetectedField("#linkedin_profile", "LinkedIn Profile", "text"),
+                    DetectedField("#website", "Website", "text"),
+                    DetectedField("#job_application_answers_attributes_1_work_authorization", "Work Authorization", "select", options=("Yes", "No", "Sponsorship needed")),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/apply/questions",
+                fields=(
+                    DetectedField(
+                        "#job_application_answers_attributes_2_race",
+                        "Race/Ethnicity",
+                        "select",
+                        options=("...", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#job_application_answers_attributes_3_gender",
+                        "Gender",
+                        "select",
+                        options=("Male", "Female", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#job_application_answers_attributes_4_veteran",
+                        "Protected Veteran Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#job_application_answers_attributes_5_disability",
+                        "Disability Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
                 ),
             ),
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
@@ -238,6 +275,10 @@ class LeverAts(AtsAdapter):
                     DetectedField("input[name=phone]", "Phone", "text"),
                     DetectedField("input[name=org]", "Current company", "text"),
                     DetectedField("input[name=urls[LinkedIn]]", "LinkedIn URL", "text"),
+                    DetectedField("input[name=urls[Portfolio]]", "Portfolio URL", "text"),
+                    DetectedField("input[name=urls[GitHub]]", "GitHub URL", "text"),
+                    DetectedField("textarea[name=comments]", "Additional information", "textarea"),
+                    DetectedField("input[name=resume]", "Resume", "file"),
                 ),
             ),
             FakePage(
@@ -255,12 +296,35 @@ class LeverAts(AtsAdapter):
                         "Why are you interested in this role?",
                         SCREENING_ESSAY,
                     ),
+                    DetectedField(
+                        "textarea[name=cards[race]]",
+                        "Race/Ethnicity",
+                        SCREENING_ESSAY,
+                    ),
+                    DetectedField(
+                        "select[name=cards[education]]",
+                        "Highest education level",
+                        "select",
+                        options=("High School", "Associate", "Bachelor", "Master", "PhD"),
+                    ),
                     # Lever surfaces EEO via its own self-identification card.
                     DetectedField(
                         "select[name=eeo[gender]]",
                         "Gender",
                         "select",
                         options=("Male", "Female", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "select[name=eeo[veteran]]",
+                        "Protected Veteran Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "select[name=eeo[disability]]",
+                        "Disability Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
                     ),
                 ),
             ),
