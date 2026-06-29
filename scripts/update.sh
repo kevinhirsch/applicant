@@ -163,16 +163,52 @@ fi
 # (the deploy tree is not edited by hand). .env / .backups are untracked/ignored
 # and survive the reset.
 APPLICANT_BRANCH="${APPLICANT_BRANCH:-main}"
+# What the sync changed drives the smart-skip below. Defaults are CONSERVATIVE:
+# rebuild BOTH images, back up, and migrate unless we can positively PROVE an input
+# is unchanged — so an aggressive skip can never miss a real change.
+REBUILD_API=1; REBUILD_UI=1; RUN_MIGRATE=1
+OLD_REV=""; NEW_REV=""
 # APPLICANT_SELFTEST=1 skips the destructive git reset (set by the test suite so a
 # unit test can never hard-reset the working tree to origin/main).
 if [[ "${APPLICANT_SELFTEST:-0}" != "1" && -d "${REPO_ROOT}/.git" ]]; then
+  OLD_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
   log "0/5 Syncing source to origin/${APPLICANT_BRANCH}"
   run git -C "${REPO_ROOT}" fetch origin "${APPLICANT_BRANCH}"
   run git -C "${REPO_ROOT}" reset --hard "origin/${APPLICANT_BRANCH}"
+  NEW_REV="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 else
   log "0/5 No git checkout at ${REPO_ROOT}; skipping source sync."
 fi
 
+# --- Smart-skip: only do the work the sync actually requires -------------------
+# Compare the pre/post-sync revisions and rebuild only the image(s) whose build
+# inputs changed, migrate only when a new Alembic revision landed, and back up only
+# when we will migrate (a code-only deploy never touches the schema). Guarded to a
+# real --apply run with a git checkout: the dry-run preview and the hermetic
+# self-test keep the conservative do-everything defaults, so the full flow is still
+# shown/tested. This block runs BEFORE the backup step on purpose.
+if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" && -n "${NEW_REV}" ]]; then
+  if [[ "${OLD_REV}" == "${NEW_REV}" ]]; then
+    log "Already at origin/${APPLICANT_BRANCH} (${NEW_REV:0:12}) — nothing new to deploy."
+    REBUILD_API=0; REBUILD_UI=0; RUN_MIGRATE=0
+  else
+    CHANGED="$(git -C "${REPO_ROOT}" diff --name-only "${OLD_REV}" "${NEW_REV}" 2>/dev/null || true)"
+    # Engine (api) image inputs — its source plus everything COPYed into its build.
+    grep -qE '^(src/|pyproject\.toml|uv\.lock|README\.md|alembic\.ini|frontend/|templates/|scripts/|docker/Dockerfile)' <<<"${CHANGED}" || REBUILD_API=0
+    # Front-door (applicant-ui) image inputs — the vendored app + its Dockerfile/entrypoint.
+    grep -qE '^workspace/' <<<"${CHANGED}" || REBUILD_UI=0
+    # Migrations — only a change under the Alembic versions dir adds/removes a revision.
+    grep -qE '^src/applicant/adapters/storage/alembic/versions/' <<<"${CHANGED}" || RUN_MIGRATE=0
+    log "Changed since ${OLD_REV:0:12}: api=$([[ ${REBUILD_API} -eq 1 ]] && echo rebuild || echo skip), ui=$([[ ${REBUILD_UI} -eq 1 ]] && echo rebuild || echo skip), migrate=$([[ ${RUN_MIGRATE} -eq 1 ]] && echo yes || echo no)"
+  fi
+  # Safety net: never skip building an image that does not yet exist (first deploy,
+  # a pruned image, or a prior failed build). The skip is an optimization, not a
+  # correctness gate.
+  docker image inspect applicant/api:latest >/dev/null 2>&1 || REBUILD_API=1
+  docker image inspect applicant/ui:latest  >/dev/null 2>&1 || REBUILD_UI=1
+fi
+
+if [[ "${RUN_MIGRATE}" -eq 1 ]]; then
 log "1/5 Backing up the database to ${DUMP_FILE}"
 # Back up BEFORE migrate so rollback is always possible (FR-INSTALL-2). A failed or
 # empty backup MUST abort the update — never proceed to migrate with no valid dump.
@@ -196,11 +232,25 @@ else
   # Dry-run: print the command WITHOUT redirecting anything into the dump file.
   echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
 fi
+else
+  log "1/5 No migration in this update — skipping the database backup (schema untouched)."
+fi
 
-log "2/5 Pulling base images + rebuilding local images (front-door UI + engine api) from synced source"
+log "2/5 Pulling base images + rebuilding CHANGED local images from synced source"
 run docker compose -f "${COMPOSE_FILE}" pull --ignore-buildable
-run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
+# Rebuild only the images whose build inputs changed (decided above). Docker layer
+# caching already makes an unchanged rebuild cheap, but skipping avoids the build
+# context upload + cache check entirely. Both default to rebuild unless proven unchanged.
+BUILD_TARGETS=()
+[[ "${REBUILD_UI}" -eq 1 ]] && BUILD_TARGETS+=("applicant-ui")
+[[ "${REBUILD_API}" -eq 1 ]] && BUILD_TARGETS+=("api")
+if [[ "${#BUILD_TARGETS[@]}" -gt 0 ]]; then
+  run docker compose -f "${COMPOSE_FILE}" build "${BUILD_TARGETS[@]}"
+else
+  log "    No image inputs changed — both local images already current, skipping build."
+fi
 
+if [[ "${RUN_MIGRATE}" -eq 1 ]]; then
 log "3/5 Running database migrations (BLOCKING — gates the new stack)"
 # Fail-closed: migrate as a BLOCKING one-off (`run --rm`, which does NOT serve
 # traffic) BEFORE the new stack is brought up to serve. If `alembic upgrade head`
@@ -219,6 +269,9 @@ if [[ "${APPLY}" -eq 1 ]]; then
 else
   echo "    (would run) docker compose -f ${COMPOSE_FILE} run --rm api uv run alembic upgrade head"
   echo "    (on failure, would auto-restore ${DUMP_FILE} and abort before serving)"
+fi
+else
+  log "3/5 No new migration in this update — skipping (schema already at head)."
 fi
 
 log "4/5 Restarting the stack on the freshly built images (built once in 2/5 — no rebuild)"

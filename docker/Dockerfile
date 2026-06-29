@@ -80,22 +80,36 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching). Include the 'browser' extra
-# (camoufox + patchright) so the real PatchrightBrowser the engine wires
-# unconditionally (container.py) can actually launch a browser — without it, the
-# first pre-fill fails with "No browser driver installed". For the chromium fallback
-# engine, channel=chrome uses the system Chrome above, so no separate
-# `patchright install chromium` download is needed.
+# --- Dependency layer (cache-stable) ------------------------------------------
+# Install ONLY third-party dependencies first, from the lockfile, WITHOUT the
+# project's own source. This is the expensive layer (the full dep tree, plus the
+# camoufox browser download below), so isolating it from the app code means it is
+# reused from cache across every code-only update: it busts ONLY when
+# pyproject.toml / uv.lock change, never when src/ changes. Includes the 'browser'
+# extra (camoufox + patchright) so the real PatchrightBrowser the engine wires
+# unconditionally (container.py) can launch a browser. --no-install-project:
+# resolve+install deps but skip building/installing the local `applicant` package
+# (that needs the source, copied in the cheap layer below).
 COPY pyproject.toml uv.lock* README.md ./
-COPY src ./src
-RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
+RUN uv sync --no-dev --extra browser --frozen --no-install-project \
+    || uv sync --no-dev --extra browser --no-install-project
 
 # Fetch the Camoufox browser binary + the GeoIP dataset (the `geoip` extra) into the
 # image so the DEFAULT engine launches offline at runtime — the engine detects tools
 # via shutil.which()/lazy import and silently degrades when absent, so the binary
 # must be baked in here (CI does not build images; this layer is first exercised at
-# deploy `compose up --build`).
-RUN uv run camoufox fetch
+# deploy `compose up --build`). --no-sync runs camoufox from the dependency venv
+# above WITHOUT re-syncing (the local project is not copied yet), and because this
+# layer depends only on the deps it is cached across code changes instead of
+# re-downloading hundreds of MB on every update.
+RUN uv run --no-sync camoufox fetch
+
+# --- Project layer (cheap; rebuilt on code changes) ---------------------------
+# Now copy the engine source and install just the local `applicant` package on top
+# of the already-installed deps. A code change busts only this fast layer — no apt,
+# no dependency reinstall, no camoufox re-fetch.
+COPY src ./src
+RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
 # App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
