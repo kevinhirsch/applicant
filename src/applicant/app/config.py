@@ -446,6 +446,13 @@ class Settings(BaseSettings):
         default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
     )
 
+    # --- Pre-submit safety (G07) --------------------------------------------
+    # Scam/ghost-job detection: maximum allowed age (in days) for a listing.
+    # Postings older than this are blocked before the pipeline starts.
+    presubmit_max_listing_age_days: int = Field(
+        default=90, ge=0, alias="PRESUBMIT_MAX_LISTING_AGE_DAYS"
+    )
+
     @field_validator("takeover_desktop")
     @classmethod
     def _validate_takeover_desktop(cls, v: str) -> str:

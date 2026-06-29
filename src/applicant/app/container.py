@@ -870,6 +870,10 @@ def build_container(settings: Settings | None = None) -> Container:
         resume_ledger=resume_ledger,
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
+        # G07: pre-submit safety parameters from settings.
+        presubmit_safety_params={
+            "max_age_days": settings.presubmit_max_listing_age_days,
+        },
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -974,6 +978,10 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
             loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
+            # G07: pre-submit safety parameters from settings.
+            presubmit_safety_params={
+                "max_age_days": settings.presubmit_max_listing_age_days,
+            },
         )
         return {
             "storage": tick_storage,
