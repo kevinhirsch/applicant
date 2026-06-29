@@ -77,6 +77,14 @@ KNOWN_UNWIRED: dict[str, str] = {
     # ops/discovery surface (applicantDebug renders data.exploration_budget); the
     # research-scoped budget GET is the unconsumed twin.
     "GET /api/applicant/research/{campaign_id}/budget": "release-readiness §2d (FR-LEARN-6 read via ops/discovery)",
+    # G27 dead-code removal: applicantActivity.js and applicantPortal.js were deleted
+    # (orphaned — replaced by applicantChat.js and applicantMind.js). Their proxy
+    # routes are preserved for backward compat but have no front-end consumer.
+    "GET /api/applicant/activity/status": "G27 dead-code cleanup (#261, #264)",
+    "GET /api/applicant/activity/intent": "G27 dead-code cleanup (#261, #264)",
+    "GET /api/applicant/activity/runs": "G27 dead-code cleanup (#261, #264)",
+    "GET /api/applicant/activity/snapshot": "G27 dead-code cleanup (#261, #264)",
+    "POST /api/applicant/portal/missing-attribute": "G27 dead-code cleanup (#261, #264)",
 }
 
 
