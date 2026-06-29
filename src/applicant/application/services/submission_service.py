@@ -68,7 +68,7 @@ def _reviewable_materials_for(storage, application_id) -> list[ReviewableMateria
 
 
 class SubmissionService:
-    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None) -> None:
+    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None, post_submission=None) -> None:
         self._storage = storage
         self._browser = browser
         # Optional LearningService so a real submission records the SUBMISSIONS leg of
@@ -186,7 +186,7 @@ class SubmissionService:
                 )
                 self._post_submission.enter_post_submission(logged, snapshot=snapshot)
             except Exception:
-                pass
+                log.warning("post_submission_entry_failed", application_id=str(application.id), exc_info=True)
         return event
 
     def mark_submitted(

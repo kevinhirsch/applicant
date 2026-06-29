@@ -673,8 +673,11 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_period=settings.llm_rate_period or None,
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
+    from applicant.application.services.post_submission_service import PostSubmissionService
+    post_submission_service = PostSubmissionService(storage, notification_service)
     submission_service = SubmissionService(
-        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service
+        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
+        post_submission=post_submission_service,
     )
     prefill_service = PrefillService(
         storage=storage,
@@ -911,8 +914,11 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=pas,
         )
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        post_sub = PostSubmissionService(tick_storage, notification_service)
         sub = SubmissionService(
-            tick_storage, browser, learning=ls, advanced_learning=adv
+            tick_storage, browser, learning=ls, advanced_learning=adv,
+            post_submission=post_sub,
         )
         pf = PrefillService(
             storage=tick_storage,
@@ -1079,8 +1085,11 @@ def build_container(settings: Settings | None = None) -> Container:
             onboarding=rs_onboarding,
         )
         rs_chat._scheduler = scheduler
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        rs_post_sub = PostSubmissionService(req_storage, notification_service)
         rs_submission = SubmissionService(
-            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
+            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,
+            post_submission=rs_post_sub,
         )
         rs_prefill = PrefillService(
             storage=req_storage,
