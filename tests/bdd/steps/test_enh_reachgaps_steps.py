@@ -515,12 +515,17 @@ def onboarding_upload_step(reachctx):
 
 @when("a résumé whose fonts are not installed is uploaded")
 def upload_resume_missing_fonts(reachctx):
-    # Locate the base-résumé upload renderer; the font-detect call (if wired) would
-    # live in this block. Today it is only in the separate _renderFonts step.
+    # The font-detect call lives inside _renderBaseResume's readResume helper.
+    # Probe from _renderBaseResume to _buildPreview (or end of file).
     src = reachctx["js"]
     start = src.find("_renderBaseResume")
-    end = src.find("_renderFonts")
-    reachctx["base_resume_block"] = src[start:end] if start != -1 and end != -1 else ""
+    end = src.find("function _buildPreview")
+    if start == -1:
+        reachctx["base_resume_block"] = ""
+        return
+    if end == -1 or end < start:
+        end = len(src)
+    reachctx["base_resume_block"] = src[start:end]
 
 
 @then("the upload step prompts inline to install the missing fonts")

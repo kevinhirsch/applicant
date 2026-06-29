@@ -4,7 +4,6 @@ Feature: Uploading a résumé prompts to install any missing fonts
   # any are missing, surface an inline install prompt in the upload step (not buried in
   # Settings), confirming once installed.
 
-  @pending
   Scenario: A résumé with missing fonts surfaces an inline install prompt on upload
     Given the résumé upload step in the front-door onboarding
     When a résumé whose fonts are not installed is uploaded
