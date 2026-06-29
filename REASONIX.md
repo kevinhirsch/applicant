@@ -23,6 +23,9 @@ already-done). Reconcile against `git log origin/main --oneline -20` + open PRs 
 - Steer in natural language while it runs; queued input lands at the next poll boundary.
   End the turn after dispatch so an owner message or completion wakes you. `Esc`/`Ctrl+C` = stop now.
 - Maintain a `todo_write` entry per group; refresh every poll.
+- **Oversee actively (not dispatch-and-wait).** Every poll, check each agent for stall/error:
+  `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones,
+  surface real blockers to the owner. A stalled agent is an action item. See SOUL.md "Oversight".
 
 ## The gate set (or run `/gate`)
 ```bash

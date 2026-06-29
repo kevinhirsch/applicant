@@ -1,7 +1,11 @@
+---
+description: Dispatch a wave with isolated, uncapped, steerable subagents
+argument-hint: [wave-id]
+---
 Dispatch wave "$ARGUMENTS" the Claude-Code way: isolated, uncapped, owner-steerable.
 
-1. **Resolve & reconcile.** Pull the groups/issues for wave $ARGUMENTS from the wave plan in
-   the overseer's working notes. Reconcile against `git log origin/main --oneline -20` and open
+1. **Resolve & reconcile.** Pull the groups/issues for wave $ARGUMENTS from
+   `docs/deepseek-wave-plan.md`. Reconcile against `git log origin/main --oneline -20` and open
    PRs; drop any issue that has since closed.
 
 2. **Dispatch one background subagent per file-disjoint group**, with `max_steps=0` (no round
@@ -14,9 +18,11 @@ Dispatch wave "$ARGUMENTS" the Claude-Code way: isolated, uncapped, owner-steera
    Otherwise dispatch the groups **serially**. Read-only audit groups (`read_only_task`) may
    fan out freely regardless.
 
-4. **Stay steerable.** End the turn after dispatch; poll in short increments (`wait`/
+4. **Stay steerable & oversee.** End the turn after dispatch; poll in short increments (`wait`/
    `bash_output`), never one long blocking wait. At each poll: handle any owner message first
-   (natural language — interpret intent), then continue. Keep a `todo_write` entry per group.
+   (natural language — interpret intent), then run the liveness/error check from SOUL.md
+   "Oversight" — `kill_shell`+salvage+re-dispatch stalled agents (no output/commits for ~15m),
+   `continue_from` to correct failing ones, surface real blockers. Keep a `todo_write` per group.
 
 5. **Land it.** When a group finishes: verify true scope with `git diff --stat
    origin/main...HEAD`, run `/gate`, then open ONE focused PR (`Closes #N` for each issue +

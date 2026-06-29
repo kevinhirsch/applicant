@@ -71,23 +71,31 @@ subagents for file-disjoint issues, review their output, capture screenshots via
   uncommitted, zero-commit changes** that had to be untangled by hand.) Fix — the Claude-Code
   `isolation:"worktree"` equivalent: give each parallel write-agent its own `git worktree`
   (`git worktree add ../wt-<group> origin/main`) and run it there, so its edits and commits are
-  isolated. **If you can't give each agent a distinct working dir, SERIALIZE write agents**
-  (the proven Wave-01 recovery). Read-only audits (`read_only_task`) may still fan out freely.
-  Never `git stash` concurrently.
+  isolated. **Reasonix doesn't document a per-subagent working dir, so SERIALIZE write agents by
+  default** (the proven Wave-01 recovery); adopt the worktree path only if a build can launch an
+  agent in a given cwd. Read-only audits (`read_only_task`) may still fan out freely. Never
+  `git stash` concurrently.
 - **No `CronCreate`** — background timers live only within the session. Re-arm on resume.
 - **Subagents are ephemeral** — they return one answer then vanish (unless resumed via
   `continue_from`). Evidence must be inline in the final report; a path alone dies.
 
 ## Autonomy defaults (mirror Claude Code subagent behavior)
-Set these once so the overseer behaves like Claude Code out of the box:
-- **No round cap on write batches.** `agent.max_steps = 0` (or ≥250). Claude Code doesn't cap
-  subagent tool rounds; the 20-step default is what starved Wave 01 before any edit landed.
-- **Permission mode = Auto, with explicit `deny` for risky ops.** Auto-allows ordinary
-  edits/bash (like Claude Code's accept-edits flow); `deny` + plan-approval still gate the
-  dangerous stuff. Recommended rules:
-    - `allow`: `Bash(uv run *)`, `Bash(git *)`, `Edit(*)`, `Bash(node --check *)`
-    - `deny`: `Bash(git push --force*)`, `Bash(rm -rf *)`, anything reading/writing secrets/`.env`
-  Hard-to-reverse / outward-facing actions (push, PR, merge) stay owner-confirmed.
+Apply once in the **user-global** config — `~/.reasonix/config.toml` (Windows:
+`%AppData%\reasonix\config.toml`). `max_steps` is user/global **only**; a project `reasonix.toml`
+cannot override it, so this is a one-time owner setup, not a repo file.
+
+```toml
+[agent]
+max_steps = 0            # no round cap — Claude Code doesn't cap subagent rounds; the 20-step
+planner_max_steps = 0    # default is what starved Wave 01 before any edit landed.
+
+[permissions]
+mode  = "ask"            # fallback: listed allow-commands auto-run, unknown ones ask, deny blocks
+allow = ["Bash(uv run:*)", "Bash(git:*)", "Bash(node --check:*)", "Bash(python -m compileall:*)", "Edit(*)"]
+deny  = ["Bash(git push --force:*)", "Bash(rm -rf:*)", "Edit(.env*)", "Read(.env*)"]
+```
+This is the Claude-Code accept-edits posture: ordinary edits/bash flow, dangerous ops are denied,
+and hard-to-reverse / outward-facing actions (push, PR, merge) stay owner-confirmed regardless.
 - **Live todo per wave.** Use `todo_write` (`/todo`) — one entry per group in the wave, flipped
   in_progress→done as agents land — so the owner sees progress, like Claude Code's TodoWrite.
   Refresh it at every poll turn.
@@ -103,8 +111,8 @@ so the playbook is enforced by the harness, not by memory:
       verbatim, and `max_steps=0`; one background subagent per file-disjoint issue.
 - **Hooks** (`/hooks`): a **session-start** hook that `export`s the hermetic `DATABASE_URL`
   (kills the BDD hang, lesson 1), and a **stop / pre-PR** hook that runs `/gate` automatically
-  so "self-verified gates" is mechanical, not forgettable. Confirm the exact hook schema via
-  `/hooks` / `docs/SPEC.md` before wiring — the intent is fixed, the syntax may drift.
+  so "self-verified gates" is mechanical, not forgettable. The SPEC doesn't pin a hook schema,
+  so confirm it via `/hooks` in your build before wiring — the intent is fixed, the syntax isn't.
 
 ## Subagent brief format (battle-tested 2026-06-29)
 
@@ -204,6 +212,28 @@ mapping is for the overseer — the owner just speaks normally):
 Same rules as Claude Code: queued input lands at the next turn boundary (keep polls short —
 "Talk-while-it-runs" above); `Esc`/`Ctrl+C` is the immediate interrupt; ambiguous input → ask,
 don't guess; never silently ignore owner input.
+
+## Oversight — error correction & unsticking (this IS the job, not dispatch-and-wait)
+Dispatching is the easy part; overseeing means catching stuck and broken agents and driving
+them to done. At **every poll turn**, for each live `sa_`:
+
+1. **Liveness check.** Is it progressing — new tool output, new commits (`git -C <wt> log
+   --oneline origin/main..`)? A "may be stalled / no output for Nm" warning, or two polls with
+   no new output or commits, means **stuck**.
+2. **Unstick a stalled agent.** Inspect with `bash_output` / `wait` first. If truly hung:
+   `kill_shell` it, **salvage** any committed work (its branch/worktree commits survive), then
+   **re-dispatch** — `continue_from` if it banked progress, else a fresh agent with a tighter,
+   seam-pinned brief and a smaller issue slice. Never let an agent burn wall-clock in silence.
+3. **Error-correct a failing agent.** If it reports an error, a gate fails, or the diff looks
+   wrong: diagnose the cause yourself, then resume it (`continue_from`) with the specific fix —
+   don't accept a red result, don't blindly re-run the same thing. If it's blocked on a real
+   ambiguity or a product decision, surface it to the owner instead of guessing.
+4. **Watchdog.** Give each agent a wall-clock budget (~15 min/group is the Wave-01 stall point);
+   on breach, intervene per (2). Track per-agent state in the `todo_write` panel so nothing is
+   silently abandoned.
+
+The loop terminates only when every group is **landed in a PR or explicitly deferred** — a
+stalled or failed agent is an action item, never a thing you wait out.
 
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
@@ -320,8 +350,8 @@ PRs #409–#413 are all **merged** as of 2026-06-29. Closed issues: #360, #379, 
 ### Open count
 **239 open issues** as of 2026-06-29 (down from 244). The full grouping/sequencing of every
 open issue into 31 groups across 14 dependency-ordered waves (3 parallel tracks per wave:
-Engine / Front-door / Infra-Sec) lives in the overseer's working notes — prune any issue
-that has since closed before dispatching a wave.
+Engine / Front-door / Infra-Sec) is in **`docs/deepseek-wave-plan.md`** — prune any issue that
+has since closed before dispatching a wave (`/wave <id>`).
 
 ### Parked
 Post-1.0 backlog per `docs/release-readiness-1.0.md` §2d.

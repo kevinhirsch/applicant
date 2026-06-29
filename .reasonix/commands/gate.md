@@ -1,3 +1,6 @@
+---
+description: Run the full green-increment gate set (never trust a subagent's green)
+---
 Run the full green-increment gate set — never trust a subagent's "green."
 
 Run every command below from the repo root and report PASS/FAIL for each. No `-k` subsets,
