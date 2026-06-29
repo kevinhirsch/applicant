@@ -20,12 +20,16 @@ already-done). Reconcile against `git log origin/main --oneline -20` + open PRs 
 - **Concurrent write agents are unsafe on the shared tree** even when file-disjoint: isolate
   each in its own `git worktree`, or SERIALIZE. Read-only audits may fan out. Never `git stash`
   concurrently. Use `/wave <id>`.
-- Steer in natural language while it runs; queued input lands at the next poll boundary.
-  End the turn after dispatch so an owner message or completion wakes you. `Esc`/`Ctrl+C` = stop now.
+- Steer in natural language while it runs; queued input lands at the next `wait` return.
+  After dispatch, run an **active supervision loop of escalating short `wait`s** (15s→120s, reset
+  to short on any change) — effectively a live monitor; each return is a steering + liveness +
+  completion checkpoint. `Esc`/`Ctrl+C` = stop now.
 - Maintain a `todo_write` entry per group; refresh every poll.
 - **Oversee actively (not dispatch-and-wait).** Every poll, check each agent for stall/error:
   `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones,
-  surface real blockers to the owner. A stalled agent is an action item. See SOUL.md "Oversight".
+  surface real blockers to the owner. A stalled agent is an action item. Auto-recover ≤2×, then
+  **escalate to the owner with a diagnosis — never leave them waiting in the dark.** Silence is a
+  bug. See SOUL.md "Oversight".
 
 ## The gate set (or run `/gate`)
 ```bash

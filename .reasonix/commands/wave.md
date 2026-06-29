@@ -18,11 +18,12 @@ Dispatch wave "$ARGUMENTS" the Claude-Code way: isolated, uncapped, owner-steera
    Otherwise dispatch the groups **serially**. Read-only audit groups (`read_only_task`) may
    fan out freely regardless.
 
-4. **Stay steerable & oversee.** End the turn after dispatch; poll in short increments (`wait`/
-   `bash_output`), never one long blocking wait. At each poll: handle any owner message first
-   (natural language — interpret intent), then run the liveness/error check from SOUL.md
-   "Oversight" — `kill_shell`+salvage+re-dispatch stalled agents (no output/commits for ~15m),
-   `continue_from` to correct failing ones, surface real blockers. Keep a `todo_write` per group.
+4. **Stay steerable & oversee.** After dispatch, run an active supervision loop of escalating
+   short `wait`s (15s→120s, reset to short on any change) — a live monitor, never one long
+   blocking wait. On each `wait` return: handle any owner message first (natural language —
+   interpret intent), then run the liveness/error check from SOUL.md "Oversight" —
+   `kill_shell`+salvage+re-dispatch stalled agents (no output/commits for ~15m), `continue_from`
+   to correct failing ones, surface real blockers. Keep a `todo_write` per group.
 
 5. **Land it.** When a group finishes: verify true scope with `git diff --stat
    origin/main...HEAD`, run `/gate`, then open ONE focused PR (`Closes #N` for each issue +

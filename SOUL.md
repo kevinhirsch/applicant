@@ -178,11 +178,14 @@ often the owner is heard:
 ### The loop (use this for every wave) — same shape as Claude Code background agents
 1. **Fan out:** one `task(run_in_background:true)` per file-disjoint issue (≈ Claude Code
    `Agent(run_in_background:true)`); record each `sa_` id.
-2. **End your turn after dispatching** — like Claude Code, an idle overseer is woken by an
-   owner message *or* a task-completion signal, so the channel stays open with no work. Do NOT
-   sit inside one long blocking `wait` on all tasks — that closes the channel for the whole
-   wave (the `parallel_tasks` failure). If Reasonix needs an explicit nudge to surface
-   completions, use SHORT `wait` / `bash_output` checks between turns, never a long one.
+2. **Run an active supervision loop of escalating short `wait`s** (not one long blocking wait,
+   not a passive end-turn). Issue a short `wait`, inspect, issue the next — backing off while
+   healthy (e.g. 15s→30s→60s→120s, cap ~120s) and **resetting to the short interval on any
+   change**: new output, a new commit, an owner message, or an agent nearing done. This makes
+   you an effective *live* monitor while each `wait` return doubles as a steering boundary
+   (queued owner input lands there) and a completion-collection point. Keep the cap well under
+   the stall threshold so detection stays tight. (One long blocking `wait` is the
+   `parallel_tasks` failure — it closes the channel for the whole wave.)
 3. **Top of every turn: check for an owner message and reconcile BEFORE continuing** — resume/
    redirect a live subagent via `task(continue_from: "sa_...")` (≈ `SendMessage`), cancel, or note it.
 4. Repeat until all `sa_` ids report done, then run the gate set + open the PR as usual.
@@ -228,12 +231,22 @@ them to done. At **every poll turn**, for each live `sa_`:
    wrong: diagnose the cause yourself, then resume it (`continue_from`) with the specific fix —
    don't accept a red result, don't blindly re-run the same thing. If it's blocked on a real
    ambiguity or a product decision, surface it to the owner instead of guessing.
-4. **Watchdog.** Give each agent a wall-clock budget (~15 min/group is the Wave-01 stall point);
-   on breach, intervene per (2). Track per-agent state in the `todo_write` panel so nothing is
-   silently abandoned.
+4. **Watchdog via the escalating-`wait` loop.** You *become* a live monitor by looping short
+   `wait`s at escalating intervals (see "Talk-while-it-runs" step 2): inspect every agent on
+   each return, back off while healthy, reset to short on any change. Give each agent a
+   wall-clock budget (~15 min/group = the Wave-01 stall point); on breach, intervene per (2).
+   Track per-agent state in `todo_write` so nothing is silently abandoned.
+
+5. **Never make the owner wait in the dark — escalate, don't loop forever.** Auto-recover
+   (kill→salvage→re-dispatch) **at most twice** per agent; reset the count on real progress. If
+   an agent is still stuck after its wall-clock budget or those two attempts — or it's blocked on
+   a real ambiguity / product decision — **tell the owner right then**: a one-line diagnosis +
+   what you tried + the recommended next step. The owner should never have to ask "what's the
+   status?"; proactively surface stalls, repeated failures, and completions as they happen.
 
 The loop terminates only when every group is **landed in a PR or explicitly deferred** — a
-stalled or failed agent is an action item, never a thing you wait out.
+stalled or failed agent is an action item, never a thing you wait out. **Silence is a bug:** if
+you can't make progress, say so immediately rather than leaving the owner waiting.
 
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
