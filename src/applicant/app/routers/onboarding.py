@@ -14,7 +14,8 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from typing import Any
 
 from applicant.app.deps import (
     get_container,
@@ -82,7 +83,14 @@ async def _read_capped(file: UploadFile, max_bytes: int) -> bytes:
 
 class SaveSectionIn(BaseModel):
     section: str
-    data: dict
+    data: dict[str, Any]
+
+    @field_validator("section")
+    @classmethod
+    def _section_must_be_valid(cls, v: str) -> str:
+        if v not in {e.value for e in IntakeSection}:
+            raise ValueError(f"Unknown intake section: {v}")
+        return v
 
 
 class ConfirmConflictIn(BaseModel):
