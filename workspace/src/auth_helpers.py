@@ -1,7 +1,10 @@
 """Shared auth helpers used by all route files."""
 
+import logging
 from typing import Optional
 from fastapi import Request, HTTPException
+
+log = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -50,6 +53,7 @@ def require_privilege(request: Request, key: str) -> str:
     try:
         privs = auth_mgr.get_privileges(user) or {}
     except Exception:
+        log.warning("get_privileges failed for user %s", user)
         return user
     # True = permitted; missing key defaults to permitted (unknown privileges
     # fail open — the UI gates display-side).
