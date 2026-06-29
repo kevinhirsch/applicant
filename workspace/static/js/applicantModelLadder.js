@@ -17,6 +17,7 @@
 // model or reordering never wipes a saved key.
 
 import uiModule from './ui.js';
+import { esc, _toast, _fetchJSON, _put } from './applicantCore.js';
 
 const SETUP = '/api/applicant/setup';
 const MAX_TIERS = 5;
@@ -33,35 +34,9 @@ const PROVIDERS = [
 let _host = null;
 let _tiers = [];
 
-function esc(s) {
-  try { if (typeof uiModule.esc === 'function') return uiModule.esc(s); } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) { try { uiModule.showToast(msg); } catch { /* no-op */ } }
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _put(url, body) {
-  return _fetchJSON(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 function _blankTier() {
   return {

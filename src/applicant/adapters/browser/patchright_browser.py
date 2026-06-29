@@ -90,6 +90,7 @@ class PatchrightBrowser:
         persona: str = "linux",
         automated_accounts: bool = False,
         profiles_dir: str = "profiles",
+        max_sessions: int = 100,
     ) -> None:
         # FR-STEALTH-1: a single coherent REAL Linux + Google Chrome identity for
         # every session. The Chrome major is version-pinned to the installed Chrome
@@ -132,6 +133,7 @@ class PatchrightBrowser:
         # ``factory(ats, fingerprint, user_data_dir=...)`` so the resolved per-tenant
         # ``user_data_dir`` (FR-STEALTH-3) can be asserted without a real browser.
         self._source_factory = source_factory
+        self._max_sessions = max_sessions
         self._sessions: dict[str, _Session] = {}
 
     # --- BrowserAutomationPort -------------------------------------------
@@ -157,6 +159,10 @@ class PatchrightBrowser:
         source.open(url)
         # FR-STEALTH-2: a per-session human-interaction model (deterministic rng).
         human = HumanInteraction(random.Random(self._rng.random()))
+        if len(self._sessions) >= self._max_sessions:
+            # Evict the oldest session to keep the map bounded.
+            oldest_key = next(iter(self._sessions))
+            self.close(ApplicationId(oldest_key))
         self._sessions[str(application_id)] = _Session(source, human, tenant_key)
         return source.current()
 
@@ -375,7 +381,24 @@ class PatchrightBrowser:
             )
         return FakePageSource(ats)
 
+    def close(self, application_id: ApplicationId) -> None:
+        """Close and dispose the session for the given application.
+
+        Tears down the page source and evicts the session from the internal map
+        so the adapter does not leak defunct sessions (FR-STEALTH-3). Safe to
+        call multiple times; a second call for an already-closed session is a no-op.
+        """
+        session = self._sessions.pop(str(application_id), None)
+        if session is not None:
+            try:
+                teardown = getattr(session.source, "close", None)
+                if callable(teardown):
+                    teardown()
+            except Exception:
+                pass
+
     def _session(self, application_id: ApplicationId) -> _Session:
+
         session = self._sessions.get(str(application_id))
         if session is None:
             raise KeyError(f"no open page for application {application_id}; call open() first")

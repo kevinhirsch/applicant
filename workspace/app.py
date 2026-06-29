@@ -65,7 +65,39 @@ app = FastAPI(
 )
 
 # ========= CORS =========
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
+def parse_allowed_origins(raw: str | None = None) -> list[str]:
+    """Parse ALLOWED_ORIGINS env var with whitespace stripping, empty-entry
+    filtering, and basic URL validation. Trailing slashes are normalised away
+    so ``https://example.com/`` and ``https://example.com`` are treated as
+    equivalent.
+
+    Returns a list of well-formed origin strings suitable for
+    ``CORSMiddleware(allow_origins=...)``.
+    """
+    from urllib.parse import urlparse
+
+    if raw is None:
+        raw = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1")
+    origins: list[str] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        # Normalise trailing slash
+        part = part.rstrip("/")
+        # Basic URL validation: must have a scheme and netloc
+        parsed = urlparse(part)
+        if not parsed.scheme or not parsed.netloc:
+            # Accept bare hostnames like "localhost" or "127.0.0.1" by
+            # prepending "http://" for validation
+            test = urlparse("http://" + part)
+            if not test.netloc:
+                continue
+        origins.append(part)
+    return origins
+
+
+allowed_origins = parse_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -495,6 +527,32 @@ async def llm_service_error_handler(request: Request, exc: LLMServiceError):
 @app.exception_handler(WebSearchError)
 async def web_search_error_handler(request: Request, exc: WebSearchError):
     return JSONResponse(status_code=502, content={"error": "WEB_SEARCH_ERROR", "message": str(exc)})
+
+# Global catch-all: any unhandled exception that bypasses the specific handlers
+# above is caught here. Logs full context server-side (path, method,
+# x-request-id / x-correlation-id if present, exception type + traceback) so
+# crashes are always diagnosable, and returns a generic 500 to the client so
+# no internal detail or traceback is ever leaked to untrusted callers (#252).
+import traceback as _traceback
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    request_id = (
+        request.headers.get("x-request-id")
+        or request.headers.get("x-correlation-id")
+    )
+    logger.error(
+        "unhandled_exception path=%s method=%s request_id=%s exc_type=%s\n%s",
+        request.url.path,
+        request.method,
+        request_id,
+        type(exc).__name__,
+        _traceback.format_exc(),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected error occurred. Please try again later."},
+    )
 
 # ========= WEBHOOK MANAGER =========
 from src.webhook_manager import WebhookManager

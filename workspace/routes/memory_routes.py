@@ -32,6 +32,9 @@ from src.endpoint_resolver import resolve_endpoint
 
 logger = logging.getLogger(__name__)
 
+#: Max upload size for memory import (bytes). Prevents disk exhaustion.
+MAX_MEMORY_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
     """Set up memory-related routes."""
     router = APIRouter(prefix="/api/memory", tags=["memory"])
@@ -341,6 +344,11 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
         # Read file content
         content = await file.read()
+        if len(content) > MAX_MEMORY_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_MEMORY_UPLOAD_BYTES} bytes."
+            )
         filename = file.filename or "upload"
         _, ext = os.path.splitext(filename.lower())
 

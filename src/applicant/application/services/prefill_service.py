@@ -32,6 +32,7 @@ tested; swapping in the real Playwright page-source is the only change to go liv
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -50,6 +51,9 @@ from applicant.core.rules.ats_match_rate import (
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
+
+log = logging.getLogger(__name__)
+
 
 #: Topic the durable orchestrator uses for the final-approval gate (FR-NOTIF-2).
 FINAL_APPROVAL_TOPIC = "final_approval"
@@ -137,6 +141,8 @@ class PrefillResult:
     fields_detected: int = 0
     #: running count of fields the engine actually FILLED across the whole run (#177).
     fields_filled: int = 0
+    #: selectors that FAILED to fill (field-level failures).
+    fields_failed: list[dict] = field(default_factory=list)
     #: True when the run was flagged as a probable wrong-ATS / near-empty fill and held
     #: for human review instead of being offered for final submission (#177).
     wrong_ats_flagged: bool = False
@@ -514,6 +520,17 @@ class PrefillService:
             # Application" and skips the entire form (universal-ATS support, FR-PREFILL-2/3).
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
+                # G11 #177: Log ATS type on prefill failure for diagnostics.
+                from applicant.adapters.browser.ats import resolve_ats
+                try:
+                    state = self._browser.current_state(aid)
+                    ats_type = type(resolve_ats(state.url)).__name__ if state and state.url else "unknown"
+                except Exception:
+                    ats_type = "unknown"
+                log.warning(
+                    "Prefill blocked on ATS %s — state=%s missing_attr=%s",
+                    ats_type, blocked.state, blocked.missing_attribute,
+                )
                 return blocked
             self._capture_screenshot(aid, result)
 
@@ -539,6 +556,11 @@ class PrefillService:
             try:
                 tenant_key = tenant_of(app.id)
             except Exception:
+                log.warning(
+                    "tenant_of() failed for application %s — credential lookup degraded",
+                    app.id,
+                    exc_info=True,
+                )
                 return None
         if not tenant_key:
             return None
@@ -555,6 +577,7 @@ class PrefillService:
             try:
                 cred = store.retrieve(scope, tenant_key)
             except Exception:  # pragma: no cover - defensive
+                log.warning("Credential lookup failed for scope %s key %s", scope, tenant_key, exc_info=True)
                 cred = None
             if cred is not None:
                 return cred
@@ -571,6 +594,12 @@ class PrefillService:
         try:
             return bool(log_in(aid, credential.username, credential.secret))
         except Exception:  # pragma: no cover - defensive: login failure -> hand off
+            log.warning(
+                "Login attempt failed for application %s — probable browser crash or "
+                "connection error, not a wrong-password rejection",
+                aid,
+                exc_info=True,
+            )
             return False
 
     def _on_account_gate(self, aid) -> bool:
@@ -666,7 +695,7 @@ class PrefillService:
             if tenant_key:
                 store.capture(app.campaign_id, tenant_key, username, password)
         except Exception:  # pragma: no cover - defensive
-            pass
+            log.warning("Failed to capture credential for tenant", exc_info=True)
 
     def _two_factor_handoff(self, app, result) -> PrefillResult:
         """Google sign-in needs a second factor the engine cannot produce. Hold the
@@ -826,6 +855,9 @@ class PrefillService:
         """
         aid = app.id
         state = self._browser.current_state(aid)
+        if state is None:
+            log.warning("current_state() returned None for application %s", aid)
+            return result
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
             # #177: every fillable field DETECTED counts toward the run's match rate
@@ -886,6 +918,14 @@ class PrefillService:
                     detail=str(exc),
                     selector=fld.selector,
                 )
+                # Record the failure in page_log and audit trail (G11 #205).
+                page_log[fld.selector] = f"__FAILED__:{exc}"
+                result.fields_failed.append({
+                    "selector": fld.selector,
+                    "label": fld.label,
+                    "url": state.url,
+                    "error": str(exc),
+                })
                 continue
             page_log[fld.selector] = resolved.value
             result.fields_filled += 1  # #177: a field value actually landed.
@@ -1102,6 +1142,7 @@ class PrefillService:
                 start_tier=FIELD_MAPPING_START_TIER,
             )
         except Exception:
+            log.warning("LLM escalation failed for field %r", fld.label, exc_info=True)
             return None  # LLM unavailable → fall through to soft error (frugal).
         if getattr(res, "low_confidence", False):
             return None
@@ -1117,8 +1158,9 @@ class PrefillService:
     def _is_screening_question(fld: DetectedField) -> bool:
         """A free-text answer field we draft for, vs a plain data field (name/email).
         A ``<textarea>`` is inherently a free-text prompt; a text input qualifies only
-        when its label READS like a question (ends with '?' or is a long-form prompt).
-        Never sensitive (FR-ATTR-6 — EEO is never AI-drafted)."""
+        when its label READS like a question (ends with '?' or uses question-like
+        phrasing such as "describe", "explain", "tell us about"). Never sensitive
+        (FR-ATTR-6 — EEO is never AI-drafted)."""
         if is_sensitive_field(fld.label):
             return False
         if fld.field_type == "textarea":
@@ -1126,7 +1168,23 @@ class PrefillService:
         if fld.field_type not in ("text", SCREENING_FACTUAL):
             return False
         label = (fld.label or "").strip()
-        return label.endswith("?") or len([w for w in label.split() if w]) >= 6
+        low = label.lower()
+        # Ends with '?' is a strong signal.
+        if label.endswith("?"):
+            return True
+        # Question-like phrasing beats simple word count.
+        _QUESTION_TRIGGERS = (
+            "describe", "explain", "tell us", "tell me", "how do you",
+            "how would you", "why do you", "what is your", "what are your",
+            "please describe", "please explain", "in detail", "elaborate",
+            "walk me through", "share your experience", "give an example",
+            "provide an example", "briefly describe",
+        )
+        if any(trigger in low for trigger in _QUESTION_TRIGGERS):
+            return True
+        # Free-text label with enough words to be a prompt (not name/email/phone).
+        words = [w for w in label.split() if w]
+        return len(words) >= 6
 
     def _generate_screening_answer(
         self, fld: DetectedField, attributes: list[Attribute]
@@ -1179,6 +1237,14 @@ class PrefillService:
 
     @staticmethod
     def _lookup(label: str, attributes: list[Attribute]) -> str | None:
+        """Return the value of the first attribute that matches ``label``.
+
+        Matching is by exact name or alias (case-insensitive), delegated to
+        ``Attribute.matches()``. List order is deterministic: whichever attribute
+        appears first in ``attributes`` wins. A priority-ordering upgrade (exact
+        name > alias > loose) is tracked in issue #210 and governed by the
+        ``@pending`` BDD scenario in enh_210_attribute_match_priority.feature.
+        """
         for attr in attributes:
             if attr.matches(label):
                 return attr.value
@@ -1276,7 +1342,8 @@ class PrefillService:
         outcomes log endpoint) — not just held in the in-memory ``PrefillResult``.
         """
         ref = self._browser.screenshot(aid)
-        url = self._browser.current_state(aid).url
+        state = self._browser.current_state(aid)
+        url = state.url if state is not None else ""
         result.screenshots.append(ref)
         result.screenshot_pages.append(url)
         self._archive_screenshot(aid, ref, url)
@@ -1307,6 +1374,9 @@ class PrefillService:
         the explicitly-extracted signal tuple — not just ``signals`` (FR-PREFILL-6).
         """
         state = self._browser.current_state(aid)
+        if state is None:
+            log.warning("current_state() returned None in _check_detection for %s", aid)
+            return None
         page_signals: dict = {"signals": state.detection_signals}
         status = getattr(state, "status", None)
         if status is not None:

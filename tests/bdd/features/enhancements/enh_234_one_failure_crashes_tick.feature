@@ -6,7 +6,6 @@ Feature: One failed channel delivery does not abort the rest of the ladder advan
   # dropping every OTHER pending rung due that tick. advance should catch per-rung delivery
   # failures so one unreachable channel can't take down unrelated escalations.
 
-  @pending
   Scenario: A raising delivery on one notification does not lose another notification's due rung
     Given a notifier whose dispatch raises for one notification but succeeds for another
     When the ladder is advanced with both rungs due on the same tick
