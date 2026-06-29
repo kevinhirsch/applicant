@@ -71,6 +71,18 @@ subagents for file-disjoint issues, review their output, capture screenshots via
 than a 200-word structured brief for read-only research. For write tasks, the minimal
 format plus 3 critical constraints wins.
 
+### Round budget — size it or the agent dies empty (#1 failure mode, 2026-06-29)
+A whole wave hit the **20-round default cap before writing a line of code** — the budget
+went to re-exploration, not edits. An 8–12-issue group needs roughly **6–8 rounds per
+issue**. Prefer raising the cap over shrinking groups (a file-disjoint 10-issue group is
+fine *when the budget matches it*). Apply both halves:
+- **Dispatch with headroom.** Set `max_steps ≥ 8 × issue_count` (≥80 for a 10-issue group).
+  The cap is cheap; a starved agent that returns nothing is not. If the harness allows it,
+  drop the cap entirely for write batches — the owner is fine eliminating the round cap.
+- **Make the agent bank progress.** The brief MUST tell it to commit after each issue and,
+  if steps run low, to STOP and report what's done with inline evidence rather than spend
+  its last rounds exploring. Six landed fixes beat zero.
+
 ### For read-only research/audit tasks:
 Plain English, one sentence. "Find all X in the repo. Report file:line + context for each."
 
@@ -83,6 +95,14 @@ Branch: fix/<numbers>-<topic> (create from origin/main — do NOT commit to main
 
 Do NOT open a PR. Do NOT push. Return your diff + evidence inline.
 
+Work the budget (you have a finite step count — spend it on edits, not exploration):
+- Go straight to the seam above. One broad grep, then edit — do NOT re-survey the repo.
+- Do the issues most-localized-first and COMMIT after each (`fix(#NNN): ...`) so progress
+  banks even if you run out of steps.
+- Run the full gate set ONCE at the end, not after every issue.
+- If steps run low: STOP, commit, and report the issues you finished with inline evidence.
+  Never die mid-explore with nothing committed.
+
 Before reporting done:
 - Run `node --check` on any changed JS file
 - Paste your COMPLETE evidence inline — per-change PASS/FAIL with concrete output.
@@ -91,9 +111,10 @@ Before reporting done:
 Constraints: no upstream codenames in strings, no FR-/NFR- jargon, no `assert True`.
 ```
 
-The three things that actually prevent disasters: (1) "do NOT open a PR," (2) "paste
-evidence inline," (3) "run node --check." Everything else is context that the subagent
-can derive from the issue body you forward.
+The five things that actually prevent disasters: (1) "do NOT open a PR," (2) "paste
+evidence inline," (3) "run node --check," (4) a `max_steps` budget that matches the group
+size, and (5) "commit per issue + bank partial progress." Everything else is context the
+subagent can derive from the issue body you forward.
 
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
@@ -198,20 +219,22 @@ docker compose -f docker/docker-compose.prod.yml up -d
 ## Where things stand (best-effort snapshot — verify with `git log` + open PRs)
 > Last updated: 2026-06-29
 
-### In flight (PRs open)
-| Branch | PR | Issues |
-|---|---|---|
-| `fix/381-csrf-protection` | #409 | #381 CSRF |
-| `fix/384-389-email-xss` | #410 | #384, #389 Email XSS |
-| `fix/379-380-382-modal-a11y` | #411 | #379, #380, #382 Modal a11y |
-| `fix/400-font-prompt` | #412 | #400 Font prompt |
-| `fix/360-prompt-injection` | #413 | #360 Prompt injection |
+### Recently merged (verify with `mcp__github__list_pull_requests state:closed`)
+PRs #409–#413 are all **merged** as of 2026-06-29. Closed issues: #360, #379, #381, #384,
+#389, #400. (#380, #382 may still show open — re-check before re-dispatching the a11y group.)
+
+### Open count
+**239 open issues** as of 2026-06-29 (down from 244). The full grouping/sequencing of every
+open issue into 31 groups across 14 dependency-ordered waves (3 parallel tracks per wave:
+Engine / Front-door / Infra-Sec) lives in the overseer's working notes — prune any issue
+that has since closed before dispatching a wave.
 
 ### Parked
 Post-1.0 backlog per `docs/release-readiness-1.0.md` §2d.
-Already-done on main: #362, #237, #238, #239, #173, #177, #363, #361, #406.
+Already-done on main: #362, #237, #238, #239, #173, #177, #363, #361, #406, and the merged
+set above (#360, #379, #381, #384, #389, #400).
 
 ### Owner action
-Review + merge PRs #409–#413 (any order — all file-disjoint from `origin/main`).
+None pending — #409–#413 merged. Next: dispatch Wave 02 (G14 / G08 / G21) once Wave 01 lands.
 
 — 🫡
