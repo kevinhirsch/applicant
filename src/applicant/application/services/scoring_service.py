@@ -27,6 +27,7 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
 from applicant.core.ids import JobPostingId
+from applicant.core.rules.prompt_injection import neutralize_untrusted_text
 from applicant.ports.driven.llm import ChatMessage
 
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
@@ -314,6 +315,9 @@ class ScoringService:
         if criteria.human_readable:
             crit_lines.append("In their own words: " + criteria.human_readable)
         criteria_block = "\n".join(crit_lines) or "(no explicit criteria)"
+        # Neutralize untrusted scraped text before it enters the LLM prompt so an
+        # attacker-controlled job description cannot steer the score (FR-SEC-6).
+        safe_description = neutralize_untrusted_text(posting.description or "")
         jd_block = "\n".join(
             line
             for line in [
@@ -322,7 +326,7 @@ class ScoringService:
                 f"Work mode: {posting.work_mode}" if posting.work_mode else "",
                 f"Location: {posting.location}" if posting.location else "",
                 f"Salary: {posting.salary}" if posting.salary else "",
-                f"Description: {posting.description}" if posting.description else "",
+                f"Description: {safe_description}" if posting.description else "",
             ]
             if line
         )
