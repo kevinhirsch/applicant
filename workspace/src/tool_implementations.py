@@ -15,6 +15,39 @@ MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
 
+# ---------------------------------------------------------------------------
+# Secret-masking helpers (#314, #315)
+# These helpers ensure plaintext credentials NEVER flow back to the LLM
+# context. The real credential fill happens via the non-LLM browser path.
+# ---------------------------------------------------------------------------
+
+def _mask_vault_secret(value: str) -> str:
+    """Return a masked representation of a vault password or TOTP secret.
+
+    The actual value is never sent to the model. The non-LLM browser-fill path
+    resolves the real value directly from the vault session out-of-band.
+    """
+    if not value:
+        return "(none)"
+    # Show only the first character followed by redaction markers so the model
+    # knows a value is set without seeing the plaintext.
+    return value[0] + "****"
+
+
+def _mask_api_token(raw_token: str) -> str:
+    """Return a masked representation of an API bearer token.
+
+    The first 8 characters (the visible prefix stored on the ApiToken model)
+    are retained so the user can identify which token was created; the rest is
+    redacted. The raw token should be copied by the user from a secure channel,
+    not retrieved from the model context.
+    """
+    if not raw_token:
+        return "****"
+    visible = raw_token[:8]
+    return visible + "****"
+
+
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
@@ -1332,7 +1365,17 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
                          created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(t)
             db.commit()
-            return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
+            # Mask the raw token so it never enters the LLM context (#315).
+            # The user must retrieve the token from the API Tokens panel in
+            # Settings — it cannot be recovered from here after creation.
+            return {
+                "response": (
+                    f"Created token '{name}' (prefix: {_mask_api_token(raw_token)}). "
+                    "Copy your token from the API Tokens panel — it will not be shown again."
+                ),
+                "token_prefix": raw_token[:8],
+                "exit_code": 0,
+            }
 
         elif action == "delete":
             tid = args.get("token_id", "")
@@ -2612,6 +2655,33 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/backup/restore", # destructive restore
 )
 
+# Explicit ALLOWLIST of path prefixes the app_api loopback is permitted to
+# reach (#313). Converting to an allowlist means NEW endpoints are NOT
+# reachable by the LLM by default — they must be explicitly added here.
+# Only add prefixes whose full surface has been audited for agent-safe
+# access (no destructive whole-file overwrites, no PII leakage, etc.).
+# The per-method blocklist (_APP_API_BLOCKLIST_METHOD_PATH) continues to
+# fence off specific write operations even within allowlisted prefixes.
+_APP_API_ALLOWLIST_PREFIXES = (
+    "/api/cookbook/",      # cookbook GPU/preset/status (read-mostly)
+    "/api/research/",      # research list / status (start is method-blocked)
+    "/api/sessions/",      # session list / management
+    "/api/documents/",     # document CRUD
+    "/api/memory/",        # memory entries
+    "/api/skills/",        # skill CRUD
+    "/api/gallery/",       # image gallery
+    "/api/calendar/",      # calendar (event writes are method-blocked)
+    "/api/notes/",         # notes (writes are method-blocked)
+    "/api/model/",         # model list / status (download/serve are blocked)
+    "/api/email/",         # email list / read (account list is method-blocked)
+    "/api/webhooks/",      # webhook config (agent-managed)
+    "/api/tasks/",         # task CRUD (agent-managed)
+    "/api/crew/",          # crew member management
+    "/api/search/",        # search
+    "/api/v1/",            # versioned public API
+    "/api/applicant/",     # applicant engine proxy endpoints
+)
+
 # (method, prefix) pairs to refuse specifically. Used for endpoints
 # where GET is fine but writes are destructive — saw the agent wipe
 # cookbook_state.json (presets + tasks) by POSTing {"tasks": []} to
@@ -2720,6 +2790,17 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+    # Allowlist check (#313): only explicitly permitted path prefixes are reachable.
+    # New endpoints are NOT auto-exposed — they must be added to _APP_API_ALLOWLIST_PREFIXES.
+    if not any(path.startswith(p) for p in _APP_API_ALLOWLIST_PREFIXES):
+        return {
+            "error": (
+                f"Path not on the app_api allowlist: {path}. "
+                "Only explicitly permitted API paths are reachable. "
+                "Use action='endpoints' to see what is available."
+            ),
+            "exit_code": 1,
+        }
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -4012,13 +4093,19 @@ async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
     except Exception:
         pass
 
+    # Mask secret values — passwords and TOTP seeds must never reach the LLM
+    # context (#314). The non-LLM browser-fill path resolves values directly
+    # from the vault session (via bw get item) out-of-band, not through here.
+    raw_password = login.get("password") or ""
+    raw_totp = login.get("totp") or ""
+
     output = [
         f"Vault item: {name}",
         f"Username: {login.get('username', '(none)')}",
-        f"Password: {login.get('password', '(none)')}",
+        f"Password: {_mask_vault_secret(raw_password)} (credential ready for browser fill)",
     ]
-    if login.get("totp"):
-        output.append(f"TOTP secret: {login['totp']}")
+    if raw_totp:
+        output.append(f"TOTP secret: {_mask_vault_secret(raw_totp)} (TOTP ready for browser fill)")
     uris = login.get("uris") or []
     if uris:
         output.append("URLs: " + ", ".join(u.get("uri", "") for u in uris))

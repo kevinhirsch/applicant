@@ -875,12 +875,14 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         """Unauthenticated endpoint — the token IS the auth."""
         db = SessionLocal()
         try:
+            # Fetch by task_id + status only; compare the decrypted webhook_token
+            # in Python (#356: the column is now EncryptedText and non-deterministic
+            # Fernet ciphertext cannot be compared in SQL).
             task = db.query(ScheduledTask).filter(
                 ScheduledTask.id == task_id,
-                ScheduledTask.webhook_token == token,
                 ScheduledTask.status == "active",
             ).first()
-            if not task:
+            if not task or task.webhook_token != token:
                 raise HTTPException(404, "Not found")
         finally:
             db.close()

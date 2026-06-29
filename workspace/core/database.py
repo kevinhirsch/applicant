@@ -519,7 +519,7 @@ class ScheduledTask(TimestampMixin, Base):
 
     cron_expression = Column(String, nullable=True)           # cron string e.g. "*/5 * * * *"
     then_task_id   = Column(String, ForeignKey("scheduled_tasks.id", ondelete="SET NULL"), nullable=True)
-    webhook_token  = Column(String, nullable=True, unique=True)
+    webhook_token  = Column(EncryptedText, nullable=True)  # encrypted at rest; uniqueness enforced by index
     crew_member_id = Column(String, nullable=True)     # optional link to crew_members.id
     # character_id historically referenced an agent_characters table that was
     # never actually created. Keep the column for schema compatibility but
