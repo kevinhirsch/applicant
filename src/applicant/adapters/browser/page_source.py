@@ -442,7 +442,7 @@ class PlaywrightPageSource:
         self._browser = None
         # Captured per-navigation main-frame HTTP status + the expected host so
         # current() can populate cautious-mode signals (FR-PREFILL-6).
-        self._status: int | None = None
+        self._status: tuple[int, float] | None = None
         self._expected_host: str | None = None
         # Camoufox engine (the default product path): a local launch only. A CDP
         # endpoint forces the chromium path (remote real Chrome over CDP).
@@ -605,10 +605,15 @@ class PlaywrightPageSource:
             pass
 
     def _on_response(self, response) -> None:  # pragma: no cover - integration-gated
-        """Capture the main-frame document response status for cautious mode."""
+        """Capture the main-frame document response status with a timestamp.
+
+        Records a (status, timestamp) pair so the captured statuses can be correlated
+        with the pre-fill action sequence when debugging (FR-PREFILL-6). The timestamp
+        is a monotonic float (time.monotonic) for ordering, not a wall clock.
+        """
         try:
             if response.url == self._page.url or response.request.is_navigation_request():
-                self._status = response.status
+                self._status = (response.status, time.monotonic())
         except Exception:
             pass
 
@@ -890,7 +895,7 @@ class PlaywrightPageSource:
         self._expected_host = url.split("//", 1)[-1].split("/", 1)[0] or None
         response = self._page.goto(url)
         if response is not None:
-            self._status = response.status
+            self._status = (response.status, time.monotonic())
         # FR-PREFILL-1: let the SPA hydrate so the field-scan / screenshot / page
         # predicates see the real DOM, not the empty shell rendered at ``load``.
         self._settle()
@@ -1128,8 +1133,15 @@ class PlaywrightPageSource:
         )
 
     def _last_status(self) -> int | None:  # pragma: no cover - integration-gated
-        """The HTTP status of the last main-frame response, if captured."""
-        return getattr(self, "_status", None)
+        """The HTTP status of the last main-frame response, if captured.
+
+        The raw _status is a (status, timestamp) tuple; extract just the status
+        int for consumption by the page-state builder.
+        """
+        raw = getattr(self, "_status", None)
+        if isinstance(raw, tuple):
+            return raw[0]
+        return raw
 
     #: Selectors for ACTIVE (rendered) challenge widgets. An embedded-but-invisible
     #: reCAPTCHA script is NOT one of these — only a visible challenge counts, so the
