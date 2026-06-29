@@ -546,6 +546,9 @@ def build_container(settings: Settings | None = None) -> Container:
     notification = AppriseNotifier(
         discord_webhook_url=chan.get("discord_webhook_url") or settings.discord_webhook_url,
         apprise_urls=chan.get("apprise_urls") or settings.apprise_urls,
+        # #300: ntfy push channel — opt-in, empty by default (no push). Persisted
+        # alongside the other channels so it survives restarts.
+        ntfy_url=chan.get("ntfy_url") or settings.ntfy_url,
         quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
         quiet_tz=quiet["tz"],
         always_on=not quiet["enabled"],
