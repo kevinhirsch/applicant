@@ -228,9 +228,9 @@ def default_settings(t04ctx):
     t04ctx["settings"] = Settings(DATABASE_URL="postgresql+psycopg://x:x@127.0.0.1:1/none")
 
 
-@then("the scheduler is disabled")
-def scheduler_disabled(t04ctx):
-    assert t04ctx["settings"].scheduler_enabled is False
+@then("the scheduler is enabled")
+def scheduler_enabled_by_default(t04ctx):
+    assert t04ctx["settings"].scheduler_enabled is True
 
 
 @then("a sensible tick interval is still configured")
@@ -255,12 +255,15 @@ def scheduler_enabled(t04ctx):
 
 @then("a deployment profile reports the scheduler should run")
 def deployment_profile_autoenables(t04ctx):
-    # No deployment-profile helper exists that auto-enables the loop for a real deploy
-    # without a manual env flag — probe for one.
-    settings = t04ctx["settings"]
-    assert hasattr(settings, "deployment_profile") or hasattr(
-        settings, "scheduler_should_run"
-    ), "No profile/helper auto-enables the 24/7 loop out of the box (#185)."
+    # APPLICANT_MODE=production auto-enables the scheduler via the model_validator
+    # so a real deploy gets a running loop without a manual SCHEDULER_ENABLED flag.
+    from applicant.app.config import Settings
+    prod = Settings(
+        DATABASE_URL="postgresql+psycopg://x:x@127.0.0.1:1/none",
+        APPLICANT_MODE="production",
+    )
+    assert prod.scheduler_enabled is True
+    # The non-production default is also now True (#185)
 
 
 # ===========================================================================

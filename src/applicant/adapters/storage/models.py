@@ -63,6 +63,9 @@ class CampaignModel(Base):
 # 2 -------------------------------------------------------------------------
 class OnboardingProfileModel(Base):
     __tablename__ = "onboarding_profiles"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", name="uq_onboarding_profiles_campaign"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
@@ -123,6 +126,9 @@ class FontModel(Base):
 # 6 -------------------------------------------------------------------------
 class DiscoverySourceModel(Base):
     __tablename__ = "discovery_sources"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "source_key", name="uq_discovery_sources_campaign_source"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
@@ -149,7 +155,6 @@ class JobPostingModel(Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     viability_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    normalized: Mapped[dict] = mapped_column(JSONType, default=dict)
     rationale: Mapped[dict] = mapped_column(JSONType, default=dict)
     description: Mapped[str] = mapped_column(Text, default="")
 
@@ -178,7 +183,6 @@ class GeneratedMaterialModel(Base):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
-    redline_state: Mapped[dict] = mapped_column(JSONType, default=dict)
     # Advisory-only learned-item provenance ("What I drew on", FR-MIND-5/-11,
     # FR-OBS-2). A bounded list of {kind,label,ref}; empty by default so a draft
     # made without an agent-memory substrate stores nothing extra.
@@ -263,6 +267,7 @@ class AgentRunModel(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
     intent_sentence: Mapped[dict] = mapped_column(JSONType, default=dict)
+    seq: Mapped[int] = mapped_column(Integer, default=0)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

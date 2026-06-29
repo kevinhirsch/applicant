@@ -166,6 +166,9 @@ class Container:
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     """Return (engine, session_factory, storage). Falls back to in-memory."""
+    import logging
+    _logger = logging.getLogger("applicant.storage")
+
     try:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
         from applicant.adapters.storage.session import make_engine, make_session_factory
@@ -177,8 +180,16 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
         if storage.healthcheck():
             return engine, session_factory, storage
         session.close()
-    except Exception:
-        pass
+        _logger.warning(
+            "Database healthcheck failed — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts."
+        )
+    except Exception as exc:
+        _logger.warning(
+            "Cannot connect to database (%s) — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts.",
+            exc,
+        )
     # No reachable DB (tests / first boot) — use in-memory storage.
     return None, None, InMemoryStorage()
 

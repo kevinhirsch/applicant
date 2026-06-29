@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from applicant.application.workflows.application_pipeline import WORKFLOW_NAME
 from applicant.dormant import seed_dormant_surfaces
+from applicant.observability.capabilities import capability_status
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -78,6 +79,25 @@ async def _scheduler_loop(container) -> None:
 async def lifespan(app: FastAPI):
     container = app.state.container
     scheduler_task: asyncio.Task | None = None
+
+    # 0) Startup capability report — log which optional capabilities are REAL vs
+    #    stub/degraded so operators can see the engine's effective configuration
+    #    without digging through adapter code or waiting for a silent failure.
+    try:
+        caps = capability_status(
+            browser_real=getattr(container.settings, "browser_real", False),
+            postgres_engine=getattr(container, "engine", None),
+        )
+        for cap, status in caps.items():
+            is_real = status.startswith("ok")
+            log.info(
+                "capability_status",
+                capability=cap,
+                status=status,
+                real=is_real,
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("capability_status_failed", error=str(exc))
 
     # 1) Recover + RE-DRIVE interrupted durable workflows (FR-DUR-1).
     try:
