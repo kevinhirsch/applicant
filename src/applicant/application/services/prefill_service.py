@@ -605,11 +605,42 @@ class PrefillService:
         except Exception:  # pragma: no cover - defensive
             return "failed"
 
+    def allow_account_creation_for_tenant(self, tenant_key: str) -> bool:
+        """Whether account creation is allowed for a given tenant.
+
+        Returns True when the global ALLOW_AUTOMATED_ACCOUNTS opt-in is on, OR
+        when a stored credential already exists for this tenant (per-tenant allowance:
+        returning users who previously banked credentials shouldn't hit a manual
+        hand-off at every account-creation gate, #175).
+        """
+        if self._allow_automated_accounts:
+            return True
+        if not self._credentials or not tenant_key:
+            return False
+        try:
+            has_cred = self._credentials.retrieve(
+                scope="", key=tenant_key
+            ) is not None
+            if not has_cred:
+                # Also check the shared scope for predefined credentials
+                has_cred = self._credentials.retrieve(
+                    scope="__shared__", key=tenant_key
+                ) is not None
+            return has_cred
+        except Exception:  # pragma: no cover - defensive
+            return False
+
     def _maybe_create_account(self, app) -> str | None:
         """Create an account from the predefined set if enabled (ADR-0004). Returns
         'ok' | 'email_verify' on a created account (credential banked), else ``None``
         (not enabled / no predefined set / stub browser / creation failed → hand off)."""
-        if not self._allow_automated_accounts:
+        # Per-tenant credential allowance (#175): if a stored credential already
+        # exists for this tenant, allow account creation without the global opt-in.
+        tenant_of = getattr(self._browser, "tenant_key", None)
+        tenant_key = tenant_of(app.id) if callable(tenant_of) else None
+        if not self._allow_automated_accounts and not (
+            tenant_key and self.allow_account_creation_for_tenant(tenant_key)
+        ):
             return None
         predefined = self._lookup_credential(app, tenant_key=PREDEFINED_CREDENTIAL_KEY)
         if predefined is None:
