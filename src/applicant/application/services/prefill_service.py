@@ -137,6 +137,8 @@ class PrefillResult:
     fields_detected: int = 0
     #: running count of fields the engine actually FILLED across the whole run (#177).
     fields_filled: int = 0
+    #: selectors that FAILED to fill (field-level failures).
+    fields_failed: list[dict] = field(default_factory=list)
     #: True when the run was flagged as a probable wrong-ATS / near-empty fill and held
     #: for human review instead of being offered for final submission (#177).
     wrong_ats_flagged: bool = False
@@ -860,6 +862,14 @@ class PrefillService:
                     detail=str(exc),
                     selector=fld.selector,
                 )
+                # Record the failure in page_log and audit trail (G11 #205).
+                page_log[fld.selector] = f"__FAILED__:{exc}"
+                result.fields_failed.append({
+                    "selector": fld.selector,
+                    "label": fld.label,
+                    "url": state.url,
+                    "error": str(exc),
+                })
                 continue
             page_log[fld.selector] = resolved.value
             result.fields_filled += 1  # #177: a field value actually landed.
