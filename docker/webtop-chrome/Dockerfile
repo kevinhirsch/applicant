@@ -99,8 +99,23 @@ RUN apt-get update && \
 #   * CUA_DRIVER_URL=<url>  → drop a prebuilt binary deterministically (air-gapped /
 #     pinned mirrors). Takes precedence when set.
 # To light up desktop assist at runtime, also set the engine COMPUTER_USE_BACKEND=cua.
+#
+# INTEGRITY (#375): neither baking path trusts an unverified remote payload. The
+# installer is NEVER piped straight into a shell (`curl … | bash`); it is downloaded
+# to a file, its sha256 is verified against an operator-supplied expected checksum,
+# and only then executed. Likewise a prebuilt CUA_DRIVER_URL binary is verified
+# before it is made executable. We do NOT ship a hard-coded checksum default for the
+# upstream `main` installer because that script is mutable upstream — pinning a fake
+# value would defeat the check. Instead the build PRINTS the downloaded script's
+# sha256 and fails closed unless the operator pins it via CUA_DRIVER_INSTALL_SHA256
+# (set it to the value the build logs, after auditing the script, or pin a commit via
+# CUA_DRIVER_INSTALL_URL). Both checks fail the build on mismatch rather than running
+# a tampered payload.
 ARG CUA_DRIVER_URL=""
+ARG CUA_DRIVER_SHA256=""
 ARG INSTALL_CUA_DRIVER="0"
+ARG CUA_DRIVER_INSTALL_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh"
+ARG CUA_DRIVER_INSTALL_SHA256=""
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         at-spi2-core \
@@ -109,9 +124,24 @@ RUN apt-get update && \
         wmctrl && \
     if [ -n "${CUA_DRIVER_URL}" ]; then \
         curl -fsSL "${CUA_DRIVER_URL}" -o /usr/local/bin/cua-driver && \
+        if [ -n "${CUA_DRIVER_SHA256}" ]; then \
+            echo "${CUA_DRIVER_SHA256}  /usr/local/bin/cua-driver" | sha256sum -c - \
+              || { echo "ERROR: cua-driver binary sha256 mismatch (CUA_DRIVER_SHA256)" >&2; exit 1; } ; \
+        else \
+            echo "WARNING: CUA_DRIVER_URL set without CUA_DRIVER_SHA256 — binary integrity not verified" >&2 ; \
+        fi && \
         chmod 0755 /usr/local/bin/cua-driver ; \
     elif [ "${INSTALL_CUA_DRIVER}" = "1" ]; then \
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" && \
+        curl -fsSL "${CUA_DRIVER_INSTALL_URL}" -o /tmp/cua-install.sh && \
+        echo "cua-driver installer sha256: $(sha256sum /tmp/cua-install.sh | cut -d' ' -f1)" && \
+        if [ -z "${CUA_DRIVER_INSTALL_SHA256}" ]; then \
+            echo "ERROR: refusing to run the cua-driver installer unverified. Audit the script above, then rebuild with CUA_DRIVER_INSTALL_SHA256=<the printed sha256> (or pin a commit via CUA_DRIVER_INSTALL_URL)." >&2; \
+            exit 1; \
+        fi && \
+        echo "${CUA_DRIVER_INSTALL_SHA256}  /tmp/cua-install.sh" | sha256sum -c - \
+          || { echo "ERROR: cua-driver installer sha256 mismatch (CUA_DRIVER_INSTALL_SHA256)" >&2; exit 1; } && \
+        /bin/bash /tmp/cua-install.sh && \
+        rm -f /tmp/cua-install.sh && \
         ( command -v cua-driver >/dev/null 2>&1 || \
           for p in /root/.local/bin/cua-driver "$HOME/.local/bin/cua-driver" /root/.cua-driver/bin/cua-driver; do \
               [ -x "$p" ] && ln -sf "$p" /usr/local/bin/cua-driver && break ; \
