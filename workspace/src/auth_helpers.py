@@ -36,10 +36,14 @@ def require_privilege(request: Request, key: str) -> str:
     """Reject callers whose `auth.json` privilege flag for `key` is False.
     Returns the username so the route handler can keep using it.
 
-    Admins always have every privilege via `auth_manager.get_privileges`
-    (which returns ADMIN_PRIVILEGES wholesale), so this is a no-op for
-    them. In unauthenticated single-user mode (`require_user` returns ""),
+    Admins always pass — they have unconditional access to all capabilities.
+    In unauthenticated single-user mode (`require_user` returns ""),
     privileges aren't enforced.
+
+    Fail-closed: an unknown privilege key (not explicitly set in the user's
+    privilege map) is denied. Only keys that are explicitly set to a truthy
+    value are permitted. This prevents new or misspelled privilege keys from
+    silently opening access.
     """
     user = require_user(request)
     if not user:
@@ -47,13 +51,19 @@ def require_privilege(request: Request, key: str) -> str:
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is None:
         return user
+    # Admins bypass all privilege checks.
+    try:
+        if auth_mgr.is_admin(user):
+            return user
+    except Exception:
+        pass
     try:
         privs = auth_mgr.get_privileges(user) or {}
     except Exception:
-        return user
-    # True = permitted; missing key defaults to permitted (unknown privileges
-    # fail open — the UI gates display-side).
-    if not privs.get(key, True):
+        # If we can't read privileges, fail closed.
+        raise HTTPException(403, "Unable to verify permissions.")
+    # Fail closed: missing key = denied. Only an explicit truthy value permits.
+    if not privs.get(key, False):
         raise HTTPException(403, f"Your account is not allowed to {key.replace('_', ' ')}.")
     return user
 
