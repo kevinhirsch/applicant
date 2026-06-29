@@ -1147,7 +1147,7 @@ class AgentLoop:
         NOT used to land the final-approval gate — that goes through
         ``_advance_to`` so an illegal pre-state can never be silently force-set (#2).
         """
-        from applicant.core.state_machine import can_transition, IllegalStateTransition
+        from applicant.core.state_machine import IllegalStateTransition, can_transition
 
         current = self._storage.applications.get(app.id) or app
         if current.status is to:

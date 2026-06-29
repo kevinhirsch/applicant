@@ -19,13 +19,13 @@ import os
 import tempfile
 import threading
 import time
-from applicant.observability.logging import get_logger
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
