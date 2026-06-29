@@ -27,6 +27,10 @@ BACKUP_DIR="${APPLICANT_BACKUP_DIR:-${REPO_ROOT}/.backups}"
 # (default 7) so daily backups cannot fill the disk indefinitely; older ones are
 # pruned after each successful backup. Set to 0 to disable pruning (keep forever).
 BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-7}"
+# Pre-update snapshot of the deployable state (issue #279): the git commit and the
+# image refs that were live BEFORE this update, so --rollback can revert the code +
+# images alongside the DB rather than leaving new code on top of restored old data.
+DEPLOY_SNAPSHOT="${BACKUP_DIR}/last-deploy.images"
 
 # Append-only, line-based build output (no redraw frames) so update logs stay readable.
 export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
@@ -162,15 +166,31 @@ prune_backups() {
 }
 
 # --- rollback path ----------------------------------------------------------
+# A real rollback reverts the CODE + IMAGES alongside the database (issue #279):
+# restoring only the DB would leave the NEW code/images on top of OLD data (after
+# the new migrations already ran), a broken mix. Revert the git checkout to the
+# snapshotted pre-update commit, re-point the images at their :previous tags
+# (docker image tag), redeploy, then restore the DB dump. If the pre-update
+# snapshot is missing we cannot safely revert code/images, so FAIL LOUDLY rather
+# than silently doing a partial (DB-only) rollback.
 if [[ "${ROLLBACK}" -eq 1 ]]; then
-  log "Rollback requested — restoring the most recent backup."
+  log "Rollback — reverting code + images + database to the pre-update snapshot."
+  # Fail loudly if the snapshot is missing rather than a silent partial DB-only rollback (#279).
+  [[ -f "${DEPLOY_SNAPSHOT}" ]] || { echo "No pre-update snapshot at ${DEPLOY_SNAPSHOT}; refusing partial DB-only rollback." >&2; exit 1; }
+  GIT_REV=""; API_IMAGE_ID=""; UI_IMAGE_ID=""
+  # shellcheck disable=SC1090
+  source "${DEPLOY_SNAPSHOT}"
+  # 1. Revert source to the snapshotted commit (git reset --hard; SELFTEST-guarded).
+  [[ -n "${GIT_REV}" && -d "${REPO_ROOT}/.git" && "${APPLICANT_SELFTEST:-0}" != "1" ]] && run git -C "${REPO_ROOT}" reset --hard "${GIT_REV}"
+  # 2. Re-point the images at their pre-update IDs (docker image tag …:previous).
+  [[ -n "${API_IMAGE_ID}" ]] && run docker image tag applicant/api:previous applicant/api:latest
+  [[ -n "${UI_IMAGE_ID}" ]] && run docker image tag applicant/ui:previous applicant/ui:latest
+  # 3. Restore the most recent DB dump, then redeploy the reverted stack.
   LATEST="$(ls -1t "${BACKUP_DIR}"/applicant-*.sql 2>/dev/null | head -n1 || true)"
-  if [[ -z "${LATEST}" ]]; then
-    echo "No backup found in ${BACKUP_DIR}; nothing to roll back." >&2
-    exit 1
-  fi
-  log "Latest backup: ${LATEST}"
+  [[ -n "${LATEST}" ]] || { echo "No DB backup in ${BACKUP_DIR}; nothing to roll back." >&2; exit 1; }
+  log "Restoring DB backup ${LATEST} and redeploying."
   restore_dump "${LATEST}"
+  run docker compose -f "${COMPOSE_FILE}" up -d
   log "Rollback complete (or dry-run printed above)."
   exit 0
 fi
@@ -235,6 +255,28 @@ if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" &
   # correctness gate.
   docker image inspect applicant/api:latest >/dev/null 2>&1 || REBUILD_API=1
   docker image inspect applicant/ui:latest  >/dev/null 2>&1 || REBUILD_UI=1
+fi
+
+# --- Snapshot the pre-update deployable state for rollback (issue #279) --------
+# BEFORE step 2/5 rebuilds the images, record the git commit and the current image
+# IDs that are live right now. --rollback re-points the images at these IDs and
+# checks the source back out to this commit, so a rollback reverts code + images
+# together with the DB — not just the DB on top of new code. Re-tag the running
+# images under stable :previous refs so the IDs survive a later rebuild/prune, and
+# pin the per-dump .images sibling for count-paired rotation.
+if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" ]]; then
+  _api_prev="$(docker image inspect --format '{{.Id}}' applicant/api:latest 2>/dev/null || true)"
+  _ui_prev="$(docker image inspect --format '{{.Id}}' applicant/ui:latest 2>/dev/null || true)"
+  [[ -n "${_api_prev}" ]] && docker image tag "${_api_prev}" applicant/api:previous >/dev/null 2>&1 || true
+  [[ -n "${_ui_prev}" ]] && docker image tag "${_ui_prev}" applicant/ui:previous >/dev/null 2>&1 || true
+  {
+    printf 'GIT_REV=%s\n' "${OLD_REV}"
+    printf 'API_IMAGE_ID=%s\n' "${_api_prev}"
+    printf 'UI_IMAGE_ID=%s\n' "${_ui_prev}"
+  } >"${DEPLOY_SNAPSHOT}"
+  # Pin a per-dump copy so rotation prunes the snapshot with its dump.
+  [[ "${RUN_MIGRATE}" -eq 1 ]] && cp -f "${DEPLOY_SNAPSHOT}" "${DUMP_FILE%.sql}.images" 2>/dev/null || true
+  log "Snapshotted pre-update state for rollback: git ${OLD_REV:0:12}, images api/ui:previous."
 fi
 
 if [[ "${RUN_MIGRATE}" -eq 1 ]]; then

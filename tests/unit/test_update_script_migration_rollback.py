@@ -26,7 +26,10 @@ def test_migration_step_has_autorollback_and_gates_serving():
     # The migration runs as a blocking one-off BEFORE `up -d` serves the new stack.
     # (The serving step is a plain `up -d` — step 2/5 already built the images, so it
     # no longer re-passes --build; what matters is migrate-before-serve ordering.)
-    assert text.index("alembic upgrade head") < text.index("up -d")
+    # Scope to the update path: the --rollback branch (issue #279) also redeploys with
+    # `up -d`, and it appears earlier in the file, so compare within the update flow.
+    update_path = text.split("update path")[1]
+    assert update_path.index("alembic upgrade head") < update_path.index("up -d")
     # On migration failure the script auto-restores the dump it just took and exits 1.
     mig = text.split("Running database migrations")[1].split("4/5")[0]
     assert "restore_dump" in mig, "migration failure must auto-restore the backup"
