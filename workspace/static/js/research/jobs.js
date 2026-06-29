@@ -17,7 +17,7 @@ function _loadDismissed() {
   } catch { return new Set(); }
 }
 function _saveDismissed(set) {
-  try { localStorage.setItem(_DISMISSED_KEY, JSON.stringify([...set])); } catch {}
+  try { localStorage.setItem(_DISMISSED_KEY, JSON.stringify([...set])); } catch (e) { console.warn("localStorage access failed", e) }
 }
 function _isDismissed(id) { return _loadDismissed().has(id); }
 function _markDismissed(ids) {
@@ -92,7 +92,7 @@ async function _reconnectActive() {
     }
 
     _notify();
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/jobs.js", e) }
 }
 
 function _parseDuration(s) {
@@ -161,7 +161,7 @@ export async function cancelJob(id) {
   const job = _jobs.find(j => j.id === id);
   if (!job) return;
   if (job.status === 'queued') { job.status = 'cancelled'; _notify(); return; }
-  try { await fetch(`${_apiBase}/api/research/cancel/${id}`, { method: 'POST', credentials: 'same-origin' }); } catch {}
+  try { await fetch(`${_apiBase}/api/research/cancel/${id}`, { method: 'POST', credentials: 'same-origin' }); } catch (e) { console.warn("fetch request failed", e) }
   _finishJob(job, 'cancelled');
 }
 
@@ -274,7 +274,7 @@ function _connectStream(job) {
         return;
       }
       _notify();
-    } catch {}
+    } catch (e) { console.warn("fetch request failed", e) }
   };
 
   es.onerror = () => {
@@ -307,7 +307,7 @@ function _finishJob(job, status) {
   job.elapsed = Date.now() - (job.startedAt || Date.now());
   if (status === 'done') {
     if ('Notification' in window && Notification.permission === 'granted') {
-      try { new Notification('Research Complete', { body: job.query.slice(0, 80) }); } catch {}
+      try { new Notification('Research Complete', { body: job.query.slice(0, 80) }); } catch (e) { console.warn("Notification display failed", e) }
     }
     if (_onCompleteCb) _onCompleteCb(job);
   }
@@ -329,7 +329,7 @@ async function _fetchResult(job) {
     job.findings = d.raw_findings;
     if (d.category && !job.category) job.category = d.category;
     _notify();
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/jobs.js", e) }
 }
 
 function _notify() { if (_renderCb) _renderCb(); }
