@@ -27,7 +27,7 @@ def extract_strings(root: str) -> dict[str, list[str]]:
                 continue
             path = os.path.join(dirpath, fn)
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     tree = ast.parse(f.read(), filename=path)
             except (SyntaxError, UnicodeDecodeError):
                 continue

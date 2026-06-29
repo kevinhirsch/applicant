@@ -12,9 +12,10 @@ Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
-from pathlib import Path
 from pydantic import BaseModel
 
 from applicant.app.container import Container
@@ -138,8 +139,6 @@ def download_artifact(variant_id: str, material=Depends(get_material_service)) -
     output. Returns 404 when the artifact does not exist (stub mode or compile
     failure).
     """
-    from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
-    from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
 
     # Check LaTeX artifact path first, then docx.
     artifact_dir = Path.cwd() / ".artifacts"

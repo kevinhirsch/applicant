@@ -12,7 +12,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
-from pathlib import Path
 from pydantic import BaseModel
 
 from applicant.app.deps import (
@@ -80,7 +79,6 @@ def download_preview(
 
     Returns the PDF when the real TeX engine produced output; 404 in stub mode.
     """
-    from applicant.app.routers.ui import _static_dir
     source = _base_source(campaign_id, onboarding)
     preview = svc.build_preview(campaign_id, source)
     if preview.storage_path:

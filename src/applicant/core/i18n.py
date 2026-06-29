@@ -22,7 +22,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from threading import local
 
@@ -116,7 +115,7 @@ def load_translations_file(locale: str, filepath: str | Path) -> int:
     path = Path(filepath)
     if not path.is_file():
         return 0
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         return 0

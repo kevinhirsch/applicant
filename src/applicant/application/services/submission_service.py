@@ -50,7 +50,8 @@ def _verify_ats_parse(resume_text: str) -> tuple[bool, str]:
     try:
         from applicant.adapters.resume_parser.resume_parser import ResumeParser
         parser = ResumeParser()
-        import tempfile, os
+        import os
+        import tempfile
         fd, tmp = tempfile.mkstemp(suffix=".txt", text=True)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:

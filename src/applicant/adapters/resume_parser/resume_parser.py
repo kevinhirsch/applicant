@@ -19,7 +19,6 @@ import re
 import zipfile
 from pathlib import Path
 
-from applicant.core.locale_config import DEFAULT_LOCALE
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.resume_parser import (
     EducationEntry,
