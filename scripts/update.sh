@@ -23,6 +23,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker/docker-compose.prod.yml"
 ENV_FILE="${REPO_ROOT}/.env"
 BACKUP_DIR="${APPLICANT_BACKUP_DIR:-${REPO_ROOT}/.backups}"
+# Backup retention (issue #282): keep only the most recent BACKUP_KEEP_COUNT dumps
+# (default 7) so daily backups cannot fill the disk indefinitely; older ones are
+# pruned after each successful backup. Set to 0 to disable pruning (keep forever).
+BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-7}"
 
 # Append-only, line-based build output (no redraw frames) so update logs stay readable.
 export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
@@ -132,6 +136,31 @@ restore_dump() {
   fi
 }
 
+# Backup retention (issue #282): keep only the newest ${BACKUP_KEEP_COUNT} dumps so
+# daily backups can never fill the disk. Prune anything older than the newest N by
+# count (newest-first), and prune the matching image-ref snapshots (issue #279)
+# alongside their dumps so the two stay in lockstep. A count of 0 disables pruning.
+prune_backups() {
+  [[ "${BACKUP_KEEP_COUNT}" -gt 0 ]] || { log "Backup pruning disabled (BACKUP_KEEP_COUNT=0)."; return 0; }
+  local stale
+  # `ls -1t` is newest-first; tail past the keep-count is the set to delete.
+  stale="$(ls -1t "${BACKUP_DIR}"/applicant-*.sql 2>/dev/null | tail -n "+$((BACKUP_KEEP_COUNT + 1))" || true)"
+  if [[ -z "${stale}" ]]; then
+    log "Backup retention: ${BACKUP_KEEP_COUNT} kept; nothing to prune."
+    return 0
+  fi
+  log "Backup retention: keeping the newest ${BACKUP_KEEP_COUNT}; pruning $(wc -l <<<"${stale}") older dump(s)."
+  while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
+    if [[ "${APPLY}" -eq 1 ]]; then
+      # Drop the stale applicant-*.sql dump and its sibling image-ref snapshot.
+      rm -f "${BACKUP_DIR}/$(basename "${f}")" "${f%.sql}.images"
+    else
+      echo "    (would run) rm -f ${f}   # prune old applicant-*.sql dump + .images sibling"
+    fi
+  done <<<"${stale}"
+}
+
 # --- rollback path ----------------------------------------------------------
 if [[ "${ROLLBACK}" -eq 1 ]]; then
   log "Rollback requested — restoring the most recent backup."
@@ -232,6 +261,8 @@ else
   # Dry-run: print the command WITHOUT redirecting anything into the dump file.
   echo "    (would run) docker compose -f ${COMPOSE_FILE} exec -T ${DB_SERVICE} pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} >${DUMP_FILE}"
 fi
+# Rotate old backups so daily dumps cannot fill the disk (issue #282).
+prune_backups
 else
   log "1/5 No migration in this update — skipping the database backup (schema untouched)."
 fi
