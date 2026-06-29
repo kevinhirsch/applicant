@@ -1,12 +1,12 @@
 # Enhancement BDD coverage — issue → feature map
 
-Every open tracker issue (and the deep-research roadmap items) has a Gherkin
-acceptance spec here. Scenarios with no tag are GREEN regression coverage for
-behaviour that already ships; `@pending` scenarios are TDD red specs for
-designed-but-unbuilt behaviour (mapped to xfail by `tests/bdd/conftest.py`).
+Every open tracker issue (and the deep-research / Skyvern-parity roadmap items)
+has a Gherkin acceptance spec here. Scenarios with no tag are GREEN regression
+coverage for behaviour that already ships; `@pending` scenarios are TDD red specs
+for designed-but-unbuilt behaviour (mapped to xfail by `tests/bdd/conftest.py`).
 Drop the `@pending` tag when the feature lands and it becomes a hard gate.
 
-**155 features** · binding step modules: `tests/bdd/steps/test_enh_*_steps.py`
+**157 features** · binding step modules: `tests/bdd/steps/test_enh_*_steps.py`
 
 | Issue | Feature file | Scenarios | @pending |
 |---|---|---|---|
@@ -165,3 +165,5 @@ Drop the `@pending` tag when the feature lands and it becomes a hard gate.
 | #310 | `enh_310_ssrf_redirect.feature` | 4 | 3 |
 | #311 | `enh_311_require_privilege.feature` | 2 | 2 |
 | #312 | `enh_312_db_fallback_warning.feature` | 2 | 2 |
+| #350 | `enh_350_captcha_solver_port.feature` | 7 | 6 |
+| #351 | `enh_351_skyvern_parity.feature` | 4 | 5 |
