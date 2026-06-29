@@ -130,11 +130,20 @@ def detect_chrome_major(channel: str = "chrome") -> int | None:
     :data:`PINNED_CHROME_MAJOR`. Pure-ish + best-effort: any failure -> ``None``
     (the hermetic lane never has Chrome installed, so this stays ``None`` there).
     """
-    candidates = (
-        ("google-chrome-stable", "google-chrome", "chrome")
-        if channel == "chrome"
-        else ("chromium", "chromium-browser")
-    )
+    # Container and beta binary names: in Docker/K8s deployments Chrome may be
+    # installed under non-standard names (chromium, chromium-browser) even for
+    # the chrome channel, and google-chrome-beta is another common name.
+    if channel == "chrome":
+        candidates = (
+            "google-chrome-stable",
+            "google-chrome",
+            "chrome",
+            "chromium",
+            "chromium-browser",
+            "google-chrome-beta",
+        )
+    else:
+        candidates = ("chromium", "chromium-browser")
     for name in candidates:
         path = shutil.which(name)
         if not path:
