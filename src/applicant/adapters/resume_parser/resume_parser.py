@@ -26,7 +26,7 @@ from applicant.ports.driven.resume_parser import (
 log = get_logger(__name__)
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_PHONE_RE = re.compile(r"(?:\+?\d[\d\s().-]{7,}\d)")
+_PHONE_RE = re.compile(r"(?:\+?\(?\d[\d\s().-]{7,}\d)")
 # A dated work-history line: "Title, Company    Jan 2020 - Present"
 _DATE_RANGE_RE = re.compile(
     r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|"
