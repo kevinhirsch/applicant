@@ -19,7 +19,6 @@ Feature: Cookie-authed state-changing requests are protected against cross-site 
     When the content-security policy for a normal page is produced
     Then the script policy is nonce-based and does not allow inline scripts
 
-  @pending
   Scenario: A cross-site forged state change is refused
     Given a cookie-authenticated state-changing request from a foreign origin
     When the request reaches the front-door request guard

@@ -150,46 +150,67 @@ def csrf_script_nonce_no_inline(uiclientsecctx):
 
 @given("a cookie-authenticated state-changing request from a foreign origin")
 def csrf_foreign_request(uiclientsecctx):
-    # Record the cross-site context the guard must reject. No real socket.
     uiclientsecctx["foreign_origin"] = "https://evil.example"
     uiclientsecctx["app_origin"] = "https://app.example"
 
 
 @when("the request reaches the front-door request guard")
 def csrf_reach_guard(uiclientsecctx):
-    # The intended fix exposes a server-side CSRF seam — either an Origin/Referer
-    # allowlist checker or a per-session double-submit-token verifier — in the
-    # middleware module. Probe for any such seam (none exists today).
-    mod = uiclientsecctx["middleware"]
-    candidates = (
-        "verify_csrf",
-        "csrf_protect",
-        "check_origin",
-        "require_same_origin",
-        "verify_origin",
-        "csrf_middleware",
-        "CSRFMiddleware",
-        "double_submit_token",
-        "verify_csrf_token",
-    )
-    uiclientsecctx["csrf_guard"] = next(
-        (getattr(mod, name) for name in candidates if hasattr(mod, name)),
-        None,
-    )
-    # Also count any CSRF/Origin awareness in the module source as a fallback seam.
-    src = (WORKSPACE / "core" / "middleware.py").read_text()
-    uiclientsecctx["csrf_source_aware"] = bool(
-        re.search(r"\bcsrf\b", src, re.IGNORECASE)
-        or re.search(r'request\.headers\.get\(\s*["\']origin', src, re.IGNORECASE)
-        or re.search(r'request\.headers\.get\(\s*["\']referer', src, re.IGNORECASE)
-    )
+    # The CSRF Given only records the foreign/app origins; load the middleware
+    # lazily here so this step works whether or not an earlier step set it.
+    mod = uiclientsecctx.get("middleware") or _load_core_middleware()
+    uiclientsecctx["verify_origin"] = getattr(mod, "verify_origin", None)
 
 
 @then("the forged cross-origin request is refused by a server-side CSRF guard")
 def csrf_forged_refused(uiclientsecctx):
-    assert uiclientsecctx["csrf_guard"] is not None or uiclientsecctx["csrf_source_aware"], (
-        "no server-side CSRF guard exists — cookie-authed non-GET /api/* mutations are "
-        "protected only by SameSite=Lax, with no Origin/Referer check or double-submit token"
+    verify = uiclientsecctx["verify_origin"]
+    assert verify is not None, (
+        "verify_origin not found in workspace/core/middleware.py — "
+        "the server-side CSRF guard is missing"
+    )
+    assert callable(verify), "verify_origin must be callable"
+
+    # Build a minimal fake request with a foreign Origin header.
+    from starlette.requests import Request
+
+    foreign_origin = uiclientsecctx["foreign_origin"]
+    app_origin = uiclientsecctx["app_origin"]
+
+    # Cross-origin → must be refused
+    foreign_scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/some-mutation",
+        "headers": [
+            (b"origin", foreign_origin.encode()),
+        ],
+        "query_string": b"",
+        "client": ("10.0.0.1", 1234),
+        "server": ("app.example", 443),
+        "scheme": "https",
+    }
+    foreign_req = Request(foreign_scope)
+    assert not verify(foreign_req), (
+        f"CSRF guard must reject foreign origin {foreign_origin!r}"
+    )
+
+    # Same-origin → must be accepted
+    same_origin_scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/some-mutation",
+        "headers": [
+            (b"origin", app_origin.encode()),
+        ],
+        "query_string": b"",
+        "client": ("127.0.0.1", 1234),
+        "server": ("app.example", 443),
+        "scheme": "https",
+    }
+    same_req = Request(same_origin_scope)
+    assert verify(same_req), (
+        f"CSRF guard must accept same-origin request from {app_origin!r}"
     )
 
 
