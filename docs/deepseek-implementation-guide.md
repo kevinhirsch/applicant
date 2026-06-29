@@ -39,8 +39,10 @@ A structural gate runs inside the suite: `tests/architecture/test_reachability_c
 consumer (+ a nav section for a surface), or it fails.** Don't break it.
 
 ## 4. Hard rules (non-negotiable)
-- **White-label:** no upstream codenames (`firehouse/orwell/odysseus/smokey/hermes-agent`) and no
-  `FR-`/`NFR-` jargon in user-facing strings. The product is "Applicant". (CI denylist enforces this.)
+- **White-label:** no upstream-fork vendor/persona codenames, and no `FR-`/`NFR-` jargon, in
+  user-facing strings (or shipped artifacts generally). The product is "Applicant". The CI
+  white-label step holds the exact codename denylist and fails the build on any match — run
+  `uv run ruff check .` plus that step's `git grep` before pushing if unsure.
 - **Hexagonal:** `core/` is pure (no IO/outward imports); dependencies point inward. `lint-imports` enforces it.
 - **Safety guards are server-side:** review-before-submit, the pre-fill stop-boundary, and the
   fabrication guard derive their own ground truth — never gate a safety check on a caller-supplied
