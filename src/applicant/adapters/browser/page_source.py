@@ -29,8 +29,41 @@ from urllib.parse import urlsplit
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
-from applicant.core.rules.url_safety import ip_is_blocked, scheme_is_allowed
+from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+
+def url_safety_violation(url: str) -> str | None:
+    """Return a reason string if ``url`` targets a non-public host (SSRF), else None.
+
+    Shared core of the SSRF guard: require an http(s) scheme and resolve the host —
+    if it (or ANY address it resolves to) is a loopback/link-local/private/reserved/
+    metadata address the URL is unsafe. Resolving the host (not just inspecting the
+    literal) closes the DNS-rebinding hole where a public name points at an internal
+    IP. ``getaddrinfo`` of a numeric literal or ``localhost`` needs no network, so the
+    logic stays testable. Returns ``None`` only for a safe, public http(s) URL.
+
+    Used both at the navigation entry (``assert_navigable_url``, which raises) and at
+    the per-request route guard (``PlaywrightPageSource``, which aborts the request) so
+    redirects and subresources are re-validated, not just the entry URL.
+    """
+    raw = (url or "").strip()
+    parts = urlsplit(raw)
+    if not scheme_is_allowed(parts.scheme):
+        return f"non-http(s) URL (scheme {parts.scheme!r})"
+    host = (parts.hostname or "").strip()
+    if not host:
+        return "URL with no host"
+    port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return f"{host!r}: DNS resolution failed"
+    addrs = [info[4][0] for info in infos]
+    # Refuse if ANY resolved address is non-public (a host can resolve to several).
+    if ip_chain_is_blocked(addrs):
+        return f"{host!r}: resolves to a non-public address ({', '.join(addrs)})"
+    return None
 
 
 def assert_navigable_url(url: str) -> None:
@@ -42,34 +75,10 @@ def assert_navigable_url(url: str) -> None:
     resolves to) is a loopback/link-local/private/reserved/metadata address we
     raise instead of letting the browser reach the cloud-metadata endpoint, the
     internal ``api`` service, or a LAN host. Public destinations pass through.
-
-    Resolving the host (not just inspecting the literal) closes the DNS-rebinding
-    hole where a public name points at an internal IP. ``getaddrinfo`` of a numeric
-    literal or ``localhost`` needs no network, so the guard's logic stays testable.
     """
-    raw = (url or "").strip()
-    parts = urlsplit(raw)
-    if not scheme_is_allowed(parts.scheme):
-        raise InvalidInput(
-            f"refusing to navigate non-http(s) URL (scheme {parts.scheme!r})."
-        )
-    host = (parts.hostname or "").strip()
-    if not host:
-        raise InvalidInput("refusing to navigate a URL with no host.")
-    port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
-    try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except OSError as exc:
-        raise InvalidInput(
-            f"refusing to navigate {host!r}: DNS resolution failed."
-        ) from exc
-    for info in infos:
-        addr = info[4][0]
-        if ip_is_blocked(addr):
-            raise InvalidInput(
-                f"refusing to navigate {host!r}: resolves to non-public address "
-                f"{addr} (SSRF guard)."
-            )
+    reason = url_safety_violation(url)
+    if reason is not None:
+        raise InvalidInput(f"refusing to navigate {reason} (SSRF guard).")
 
 #: Characters allowed in a screenshot filename slug; everything else is replaced.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -546,7 +555,39 @@ class PlaywrightPageSource:
             self._context.set_default_navigation_timeout(30_000)
         except Exception:
             pass
+        # SSRF guard for the WHOLE navigation, not just the entry URL: a scraped
+        # posting that resolves public but 3xx-redirects to an internal/metadata host,
+        # OR any subresource the page requests, would otherwise reach a non-public host
+        # and have its body captured. Intercept every request (main frame + redirects +
+        # subresources) and abort any whose resolved IP is non-public (#310, refs #168).
+        try:
+            self._context.route("**/*", self._guard_route)
+        except Exception:
+            pass
         self._page.on("response", self._on_response)
+
+    def _guard_route(self, route) -> None:  # pragma: no cover - integration-gated
+        """Abort a request whose target resolves to a non-public host (SSRF).
+
+        Reuses the same scheme + DNS-resolution + ``ip_is_blocked`` logic as the
+        entry-URL guard via ``url_safety_violation`` so the policy is identical on
+        every hop. Continues the request only when the destination is a public
+        http(s) host; aborts otherwise (Playwright treats an aborted request as a
+        network failure, so the blocked body is never fetched)."""
+        try:
+            target = route.request.url
+        except Exception:
+            target = ""
+        if url_safety_violation(target) is not None:
+            try:
+                route.abort()
+            except Exception:
+                pass
+            return
+        try:
+            route.continue_()
+        except Exception:
+            pass
 
     def _on_response(self, response) -> None:  # pragma: no cover - integration-gated
         """Capture the main-frame document response status for cautious mode."""
