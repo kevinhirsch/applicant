@@ -140,6 +140,25 @@ misses, in exchange for a steering channel that stays open the entire wave. Resp
 over raw throughput. Hard interrupt (`Esc` / `Ctrl+C`) stays available when something must
 stop NOW rather than at the next poll boundary.
 
+### Owner steering protocol (parse this at the top of every poll turn)
+Keywords are **case-insensitive, one directive per line**; more than one may arrive at once.
+Act on them BEFORE doing anything else in the turn, then acknowledge what you did in one line.
+
+| Directive | Overseer action |
+|---|---|
+| `STATUS` | Report each live `sa_` id + a one-line progress note. Take no other action. |
+| `PAUSE` | Stop dispatching new work and do NOT advance to the next wave; let in-flight subagents finish. Hold until `RESUME`. |
+| `RESUME` (or `GO`) | Undo `PAUSE`; continue the loop. |
+| `STOP #NNN` / `STOP ALL` | Hard-cancel (`Esc`/`Ctrl+C`) that subagent (or all). Exclude cancelled work from the PR. |
+| `RESCOPE #NNN <text>` | Redirect that issue's live subagent via `task(continue_from:"sa_...")`, forwarding `<text>` as new guidance. If it already finished, re-dispatch with the amended brief. |
+| `DROP #NNN` | Abandon the issue: cancel its subagent, remove from the wave, record it as deferred in the PR body. |
+| `ADD #NNN <note>` | File-disjoint check, then dispatch a new background subagent for #NNN into the current wave. |
+| `HOLD PR` | Finish all work but do NOT open the PR; wait for `GO PR`. |
+
+Anything **without** a keyword = freeform steering: apply it to the most relevant in-flight
+subagent (via `continue_from`) if it's unambiguous, otherwise hold it and ask the owner at
+the next poll rather than guessing. Never silently ignore owner input.
+
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
 2. Reconcile with any parallel sessions: check `git log origin/main --oneline -20` and
