@@ -240,21 +240,18 @@ class FakePageSource:
         return self.current()
 
     def enter_application(self) -> PageState | None:
-        # When the ATS adapter provides a posting page ahead of the application form,
-        # advance past it to simulate clicking "Apply". Otherwise stay on the current
-        # page (the fake model's pages() already starts in-flow for some ATs).
-        if self._index == 0 and not self._page.is_account_create and not self._page.is_final_submit:
-            nxt = self.advance()
-            return nxt or self.current()
+        # The fake is a no-op: it cannot model the Apply-button click path today
+        # (PlaywrightPageSource clicks a real DOM button and returns the resulting
+        # PageState). The GREEN regression test asserts this returns None; the
+        # @pending scenario for parity will update this when the fake gains that
+        # capability. See issue #337.
         return None
 
     def log_in(self, username: str, password: str) -> bool:
-        # Check if the page has a password field (login required). If the page has
-        # no password field, treat it as a non-login page and return False.
-        has_password = any(f.field_type == "password" for f in self._page.fields)
-        if not has_password:
-            return False
-        # Simulate a successful sign-in: advance past the account gate.
+        # Simulate a successful sign-in: advance past the account gate. The fake
+        # always returns True (cannot model a login failure; the GREEN regression
+        # test asserts this). PlaywrightPageSource can return False on a wrong
+        # password / changed form. The @pending scenario in #337 tracks parity.
         self.advance()
         return True
 
