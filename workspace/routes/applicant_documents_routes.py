@@ -131,9 +131,15 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
             status_code=502,
             content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
         )
+    # 4xx: pass detail through (client-correctable: 404 not found, 409 review-required).
     return JSONResponse(
         status_code=exc.status,
-        content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
+        content={
+            "error": "engine_error",
+            "message": "The application engine reported an error.",
+            "engine_status": exc.status,
+            "detail": exc.detail,
+        },
     )
 
 

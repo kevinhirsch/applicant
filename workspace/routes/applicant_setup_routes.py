@@ -78,9 +78,16 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
             status_code=502,
             content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
         )
+    # 4xx: pass the engine's detail through so the wizard can react precisely
+    # (e.g. 400 bad LLM settings, 409 onboarding incomplete with section list).
     return JSONResponse(
         status_code=exc.status,
-        content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
+        content={
+            "error": "engine_error",
+            "message": "The application engine reported an error.",
+            "engine_status": exc.status,
+            "detail": exc.detail,
+        },
     )
 
 

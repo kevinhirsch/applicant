@@ -92,9 +92,16 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
             status_code=502,
             content={"error": "engine_error", "message": "The live-session service reported an error.", "engine_status": exc.status},
         )
+    # 4xx: pass detail through (client-correctable: 403 boundary, 404 not found,
+    # 409 review-required) so the UI can show the engine's own reason.
     return JSONResponse(
         status_code=exc.status,
-        content={"error": "engine_error", "message": "The live-session service reported an error.", "engine_status": exc.status},
+        content={
+            "error": "engine_error",
+            "message": "The live-session service reported an error.",
+            "engine_status": exc.status,
+            "detail": exc.detail,
+        },
     )
 
 

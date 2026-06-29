@@ -163,6 +163,8 @@ def test_degrades_when_manager_absent(monkeypatch):
     app = FastAPI()  # no memory_manager / skills_manager on state
     app.include_router(setup_applicant_internal_routes())
     c = TestClient(app)
-    assert c.get(f"{PREFIX}/memory/snapshot", headers=_h()).json() == {
+    # Owner attribution is now required (#230); pass one so we reach the
+    # degradation path (manager absent) rather than the auth gate (400).
+    assert c.get(f"{PREFIX}/memory/snapshot", headers=_h("someone")).json() == {
         "environment": [], "user": [], "truncated": False}
-    assert c.get(f"{PREFIX}/skills", headers=_h()).json() == {"skills": []}
+    assert c.get(f"{PREFIX}/skills", headers=_h("someone")).json() == {"skills": []}
