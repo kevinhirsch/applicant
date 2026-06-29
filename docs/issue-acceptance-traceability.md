@@ -1,18 +1,12 @@
 # Issue acceptance traceability — requirement ↔ acceptance ↔ code
 
-Master sheet for implementing the open tracker. **Every open issue has an executable
-acceptance spec** (Gherkin) and a DeepSeek-ready work-order comment on GitHub. This table
-is the single index: issue → requirement → acceptance feature → binding step module →
-green (already holds) / pending (to implement).
+Every open tracker issue has an executable acceptance spec (Gherkin) + a DeepSeek-ready
+work-order comment. Untagged = GREEN regression guards; `@pending` = TDD reds (xfail via
+`tests/bdd/conftest.py`). FR-level acceptance specs for implemented-but-unspec'd requirements
+live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural guards:
+`tests/architecture/test_reachability_contract.py` + `tests/e2e/test_pipeline_journey.py`.
 
-- **Acceptance criteria** live in `tests/bdd/features/enhancements/<feature>` (Given/When/Then).
-- **`@pending`** scenarios are TDD reds (xfail via `tests/bdd/conftest.py`); implement until they
-  pass with the tag removed. **Green** scenarios are regression guards for shipped behaviour.
-- **Requirement** column: the explicit `# Requirement:` header where present, else the feature title.
-- Definition of done per issue = its `@pending` scenarios pass + `ruff check .` + full hermetic
-  suite green + single Alembic head. See the issue's GitHub work-order comment for the file:line locus.
-
-**199 issues covered** · 135 green scenarios · 362 pending.
+**240 issues** · 162 green · 433 pending.
 
 | Issue | Requirement / acceptance | Feature | Step module | green | pending |
 |---|---|---|---|---|---|
@@ -215,3 +209,44 @@ green (already holds) / pending (to implement).
 | #356 | The webhook_token column MUST NOT persist a plaintext token — it is | `enh_356_webhook_token_encryption.feature` | `test_enh_n1_security_steps.py` | 1 | 1 |
 | #357 | The editor JS surface MUST be individually audited — at minimum the | `enh_357_editor_js_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
 | #358 | Every remaining unaudited area listed in this master tracker MUST be | `enh_358_master_audit_tracking.feature` | `test_enh_n5_lifecycle_steps.py` | 2 | 1 |
+| #360 | The engine MUST scan/neutralize untrusted scraped text (job description, | `enh_360_prompt_injection_scoring.feature` | `test_enh_systemic_steps.py` | 0 | 4 |
+| #361 | The vault MUST support master-key rotation (re-encrypt all stored secrets | `enh_361_vault_key_rotation.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
+| #362 | The engine MUST emit operational metrics (tick success/failure, scheduler | `enh_362_loop_metrics_alerting.feature` | `test_enh_systemic_steps.py` | 0 | 3 |
+| #363 | Deleting a campaign (or user) MUST purge all associated résumés, parsed PII, | `enh_363_pii_erasure_retention.feature` | `test_enh_systemic_steps.py` | 1 | 3 |
+| #364 | A runnable end-to-end test MUST exercise the full pipeline (discovery → | `enh_364_e2e_pipeline_harness.feature` | `test_enh_systemic_steps.py` | 1 | 2 |
+| #365 | A test MUST stand up a database at a prior revision with representative rows, | `enh_365_migration_data_integrity.feature` | `test_enh_systemic_steps.py` | 0 | 2 |
+| #366 | The front-door MUST have a JS unit-test harness (a configured test runner | `enh_366_js_test_harness.feature` | `test_enh_systemic_steps.py` | -1 | 3 |
+| #367 | Before pre-fill/apply, the engine MUST score a posting for scam / | `enh_367_scam_ghost_job_guard.feature` | `test_enh_spirit_steps.py` | -1 | 3 |
+| #368 | Before applying, the engine MUST check the user's own application | `enh_368_reapply_cooldown_guard.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #369 | Scoring/discovery MUST down-rank or exclude postings whose stated | `enh_369_work_auth_eligibility_filter.feature` | `test_enh_spirit_steps.py` | 2 | 2 |
+| #370 | After rendering, the engine MUST run an ATS-parseability self-check on | `enh_370_ats_parseability_selfcheck.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #371 | The engine MUST enforce a configurable per-company application cap per | `enh_371_per_company_volume_cap.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #372 | On submission (or review-approval at the stop-boundary), the engine | `enh_372_submission_snapshot.feature` | `test_enh_spirit_steps.py` | 1 | 2 |
+| #379 | Every Applicant overlay MUST move focus into the dialog on open and restore focus to the trigger on close. | `enh_379_modal_focus_management.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #380 | Modal overlays (especially the blocking first-run wizard) MUST trap Tab and Shift+Tab within the dialog. | `enh_380_modal_focus_trap.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #381 | The front-door MUST CSRF-protect cookie-authenticated non-GET /api/* | `enh_381_csrf_protection.feature` | `test_enh_uiclientsec_steps.py` | 1 | 2 |
+| #382 | Every dismissible Applicant modal MUST close on the Escape key. | `enh_382_modal_escape_close.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #383 | Externally-loaded scripts MUST carry a Subresource Integrity hash (or be | `enh_383_script_integrity.feature` | `test_enh_uiclientsec_steps.py` | 0 | 3 |
+| #384 | The front-door MUST pass received-email HTML through an allowlist sanitizer | `enh_384_email_composer_innerhtml.feature` | `test_enh_uixss_steps.py` | 1 | 1 |
+| #385 | Every Applicant overlay MUST carry role="dialog", aria-modal="true", and an accessible name. | `enh_385_dialog_aria_roles.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #386 | Every target="_blank" anchor MUST include rel="noopener" | `enh_386_noopener_links.feature` | `test_enh_uiclientsec_steps.py` | 0 | 4 |
+| #387 | Panels that re-render on a selector/tab change MUST stamp an incrementing request token (or AbortController) and discard/abort stale responses before  | `enh_387_panel_stale_response_guard.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #388 | Every visible label in the Applicant forms MUST associate to its control via for and id. | `enh_388_orphaned_labels.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #389 | The front-door MUST sanitize received email HTML with an allowlist sanitizer | `enh_389_email_sanitizer_allowlist.feature` | `test_enh_uixss_steps.py` | 1 | 3 |
+| #390 | The Save run settings button MUST disable for the request duration and re-enable in a finally block, matching the Run-now and Pause controls. | `enh_390_run_save_inflight_disable.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #391 | The front-door MUST HTML-escape doc.title / shortTitle before interpolating | `enh_391_doc_tab_title_escape.feature` | `test_enh_uixss_steps.py` | 1 | 1 |
+| #392 | _onFeedback and _onSurvey MUST guard re-entry while a prompt or submit is outstanding, matching the per-row Approve/Pass/Research guards. | `enh_392_digest_feedback_survey_guard.feature` | `test_enh_uirobust_steps.py` | 1 | 2 |
+| #393 | Icon and glyph-only buttons MUST carry an explicit aria-label as their accessible name. | `enh_393_glyph_button_aria_label.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #394 | The status-strip pulse animation MUST be disabled under prefers-reduced-motion: reduce. | `enh_394_pulse_reduced_motion.feature` | `test_enh_uia11y_steps.py` | 1 | 1 |
+| #395 | The front-door MUST pass v.summary and v.source through the HTML escaper | `enh_395_version_summary_escape.feature` | `test_enh_uixss_steps.py` | 1 | 1 |
+| #396 | _markSubmitted MUST disable the triggering button (or guard re-entry by application id) until the POST resolves, so a manual submission cannot be reco | `enh_396_mark_submitted_disable.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #397 | The front-door MUST wrap img.gps.lat / img.gps.lng in the escaping helper | `enh_397_gallery_gps_escape.feature` | `test_enh_uixss_steps.py` | 1 | 1 |
+| #398 | Critical above-the-fold CSS MUST be deliverable without blocking on the full ~1.1MB sheet, independent of any size reduction tracked by #265. | `enh_398_stylesheet_render_blocking.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #399 | The live-session iframe MUST use a viewport-relative height that expands on small/handheld viewports rather than being capped at a fixed 480px. | `enh_399_remote_iframe_responsive_height.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #400 | On base-résumé upload the front-door MUST detect required fonts and, when | `enh_400_font_prompt_on_upload.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #401 | The front-door MUST expose a "deliver/refresh digest now" control that | `enh_401_digest_deliver_now.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #402 | The front-door SHOULD offer a "preview the email as sent" view backed by | `enh_402_digest_html_preview.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #403 | A chat-proposed, confirmation-gated criteria change MUST be committable | `enh_403_chat_confirm_criteria.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #404 | If learned adjustments are operator-applicable from the UI, the front-door | `enh_404_criteria_learned_proxy.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #405 | The review gate's submittability check is reachable from the front-door | `enh_405_ensure_submittable_proxy.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #406 | The engine MUST proactively surface missing required-to-apply | `enh_406_chat_continued_onboarding.feature` | `test_enh_reachgaps_steps.py` | 0 | 2 |
