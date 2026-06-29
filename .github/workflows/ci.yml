@@ -29,6 +29,8 @@ jobs:
     # runs-on: ubuntu-latest   # <-- hosted fallback: swap if the runner is down
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave git creds on the self-hosted runner (#167)
 
       # --- White-label denylist -------------------------------------------------
       # The product is white-labeled as "Applicant"; no upstream-fork vendor/persona
