@@ -35,13 +35,20 @@ class ApplicationState(str, Enum):
     FINISHED_BY_ENGINE = "FINISHED_BY_ENGINE"
     EMERGENCY_DATA_HANDOFF = "EMERGENCY_DATA_HANDOFF"
     FAILED = "FAILED"
+    # G16: Post-submission lifecycle states.
+    POST_SUBMISSION = "POST_SUBMISSION"
+    AWAITING_RESPONSE = "AWAITING_RESPONSE"
+    REJECTED = "REJECTED"
+    GHOSTED = "GHOSTED"
+    FOLLOWING_UP = "FOLLOWING_UP"
+    ARCHIVED = "ARCHIVED"
 
 
 S = ApplicationState
 
 #: Terminal states — no outgoing transitions (except none).
 TERMINAL_STATES: frozenset[ApplicationState] = frozenset(
-    {S.DECLINED, S.SUBMITTED_BY_USER, S.FINISHED_BY_ENGINE, S.FAILED}
+    {S.DECLINED, S.SUBMITTED_BY_USER, S.FINISHED_BY_ENGINE, S.FAILED, S.ARCHIVED}
 )
 
 #: User-waiting states — each emits a notification + pending-action and pivots (§7).
@@ -55,6 +62,9 @@ WAITING_STATES: frozenset[ApplicationState] = frozenset(
         S.MATERIAL_REVIEW,
         S.AWAITING_FINAL_APPROVAL,
         S.EMERGENCY_DATA_HANDOFF,
+        # G16: post-submission waiting states.
+        S.AWAITING_RESPONSE,
+        S.FOLLOWING_UP,
     }
 )
 
@@ -92,9 +102,16 @@ _TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
     S.EMERGENCY_DATA_HANDOFF: frozenset({S.SUBMITTED_BY_USER}),
     # Terminal states: no outgoing transitions.
     S.DECLINED: frozenset(),
-    S.SUBMITTED_BY_USER: frozenset(),
-    S.FINISHED_BY_ENGINE: frozenset(),
+    S.SUBMITTED_BY_USER: frozenset({S.POST_SUBMISSION}),
+    S.FINISHED_BY_ENGINE: frozenset({S.POST_SUBMISSION}),
     S.FAILED: frozenset(),
+    # G16: Post-submission lifecycle transitions.
+    S.POST_SUBMISSION: frozenset({S.AWAITING_RESPONSE, S.REJECTED, S.GHOSTED}),
+    S.AWAITING_RESPONSE: frozenset({S.REJECTED, S.GHOSTED, S.FOLLOWING_UP, S.ARCHIVED}),
+    S.REJECTED: frozenset({S.ARCHIVED}),
+    S.GHOSTED: frozenset({S.FOLLOWING_UP, S.ARCHIVED}),
+    S.FOLLOWING_UP: frozenset({S.REJECTED, S.GHOSTED, S.AWAITING_RESPONSE, S.ARCHIVED}),
+    S.ARCHIVED: frozenset(),
 }
 
 
