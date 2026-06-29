@@ -1186,6 +1186,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
         essentials_nudge_service=essentials_nudge_service,
         essentials_nudge_schedule=settings.essentials_nudge_schedule,
+        # FR-OBS-2 / NFR-OPS: how many CONSECUTIVE failed ticks raise ONE operator alert
+        # through the existing notification ladder (idempotent). Uses the process-lived
+        # metrics singleton so the agent-status surface reads the same registry.
+        failure_alert_threshold=settings.loop_failure_alert_threshold,
     )
     # FR-OBS-2: give the chatbot the live scheduler heartbeat so "what are you doing now /
     # when do you run next" answer from the real tick state (wired additively — the

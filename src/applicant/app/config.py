@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     scheduler_interval_seconds: float = Field(
         default=60.0, alias="SCHEDULER_INTERVAL_SECONDS"
     )
+    # Observability / NFR-OPS (FR-OBS-2): how many CONSECUTIVE scheduler ticks must
+    # fail before the loop raises ONE operator alert through the existing notification
+    # ladder (idempotent — it re-arms only after a tick succeeds again). Default 3
+    # catches a real stall fast while tolerating a single transient blip. ge=1 so a
+    # 0/negative value (which would alert on the first failure or never) is rejected
+    # at load rather than silently disabling stall detection.
+    loop_failure_alert_threshold: int = Field(
+        default=3, ge=1, alias="LOOP_FAILURE_ALERT_THRESHOLD"
+    )
 
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     # ge=1: a 0/negative cap would admit nothing; reject it at load.

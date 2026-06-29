@@ -277,40 +277,139 @@ def tick_logged(sysctx):
 
 @given("the observability metrics surface")
 def metrics_surface(sysctx):
-    sysctx["metrics_modpath"] = "applicant.observability.metrics"
+    # The metrics module now ships (observability/metrics.py). Use a FRESH, isolated
+    # ``Metrics`` instance so the process-lived singleton can't bleed across scenarios.
+    metrics_mod = importlib.import_module("applicant.observability.metrics")
+    sysctx["metrics_mod"] = metrics_mod
+    sysctx["metrics_obj"] = metrics_mod.Metrics()
 
 
 @when("the loop ticks")
 def metrics_loop_tick(sysctx):
-    # observability/ has only logging.py today — no metrics module. Probe it.
-    metrics = importlib.import_module(sysctx["metrics_modpath"])
-    metrics.record_tick(success=True)
-    sysctx["metrics"] = metrics
+    from datetime import UTC, datetime
+
+    sysctx["heartbeat_at"] = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+    sysctx["metrics_obj"].record_tick(success=True, now=sysctx["heartbeat_at"])
 
 
 @then("a tick counter and a scheduler-liveness heartbeat are updated for that tick")
 def metrics_updated(sysctx):
-    snap = sysctx["metrics"].snapshot()
-    assert snap["ticks_total"] >= 1
-    assert snap["last_heartbeat"] is not None
+    snap = sysctx["metrics_obj"].snapshot()
+    # The tick counter advanced for exactly this tick and a liveness heartbeat is set
+    # to the injected clock value (FR-OBS-2) — not merely "non-None".
+    assert snap["ticks_total"] == 1
+    assert snap["ticks_succeeded"] == 1
+    assert snap["last_heartbeat"] == sysctx["heartbeat_at"].isoformat()
+    assert snap["last_tick_success"] is True
 
 
 @given("the loop has failed several consecutive ticks")
 def consecutive_failures(sysctx):
-    metrics = importlib.import_module("applicant.observability.metrics")
+    metrics_mod = importlib.import_module("applicant.observability.metrics")
+    # A fresh instance at the DEFAULT threshold so the probe is independent of the
+    # process-lived singleton and any other scenario's recorded ticks.
+    metrics = metrics_mod.Metrics(
+        failure_alert_threshold=metrics_mod.DEFAULT_FAILURE_ALERT_THRESHOLD
+    )
     for _ in range(5):
         metrics.record_tick(success=False)
-    sysctx["metrics"] = metrics
+    sysctx["metrics_obj"] = metrics
 
 
 @when("the consecutive-failure threshold is crossed")
 def threshold_crossed(sysctx):
-    sysctx["alert"] = sysctx["metrics"].consecutive_failure_alert()
+    sysctx["alert"] = sysctx["metrics_obj"].consecutive_failure_alert()
 
 
 @then("a surfaced operator alert is raised rather than only a log line")
 def alert_surfaced(sysctx):
-    assert sysctx["alert"] is not None
+    alert = sysctx["alert"]
+    # A real alert descriptor, not just a truthy value: it names how many consecutive
+    # ticks failed and the threshold that was crossed (FR-OBS-2 / NFR-OPS).
+    assert isinstance(alert, dict)
+    assert alert["consecutive_failures"] >= alert["threshold"]
+    # Idempotent: the SAME stall does not re-alert (no spam) until a tick succeeds.
+    assert sysctx["metrics_obj"].consecutive_failure_alert() is None
+
+
+# --- the Scheduler wires the alert through the existing notification ladder ---
+class _StallingLoop:
+    """An AgentLoop whose every campaign tick raises — models a sustained stall."""
+
+    def tick(self, campaign_id, now=None, **_kw):
+        raise RuntimeError("boom")
+
+
+class _RecordingNotifier:
+    """A minimal NotificationPort that records each dispatched notification."""
+
+    def __init__(self) -> None:
+        self.notifications: list = []
+
+    def notify(self, notification) -> str:
+        self.notifications.append(notification)
+        return f"handle-{len(self.notifications)}"
+
+    def expire(self, dedup_key: str) -> None:  # pragma: no cover - unused here
+        pass
+
+    def advance(self, now=None) -> list:
+        return []
+
+
+@given("a scheduler whose every campaign tick fails")
+def stalling_scheduler(sysctx):
+    from datetime import UTC, datetime
+
+    from applicant.application.services.notification_service import NotificationService
+    from applicant.application.services.scheduler import Scheduler
+    from applicant.core.entities.campaign import Campaign
+    from applicant.observability.metrics import Metrics
+
+    storage = InMemoryStorage()
+    storage.campaigns.add(Campaign(id=CampaignId(new_id()), name="Stall"))
+    notifier = _RecordingNotifier()
+    notif_service = NotificationService(notifier)
+    sysctx["notifier"] = notifier
+    sysctx["threshold"] = 3
+    sysctx["scheduler"] = Scheduler(
+        storage=storage,
+        agent_loop=_StallingLoop(),
+        notification_service=notif_service,
+        # A FRESH metrics instance so the alert latch is isolated from the singleton.
+        metrics=Metrics(),
+        failure_alert_threshold=sysctx["threshold"],
+    )
+    sysctx["clock"] = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+
+
+@when("the failure threshold of consecutive ticks is crossed")
+def stall_threshold_crossed(sysctx):
+    from datetime import timedelta
+
+    # Run MORE ticks than the threshold to prove the alert fires ONCE, not per tick.
+    sched = sysctx["scheduler"]
+    now = sysctx["clock"]
+    for i in range(sysctx["threshold"] + 2):
+        out = sched.tick(now + timedelta(minutes=i))
+        # Every tick is recorded as failed (all campaigns failed their loop tick).
+        assert out["tick_ok"] is False
+    sysctx["snapshot"] = sched.metrics_snapshot()
+
+
+@then("exactly one operator alert is surfaced through the notification ladder")
+def one_operator_alert(sysctx):
+    sent = sysctx["notifier"].notifications
+    # Exactly ONE alert reached the notification ladder despite many failed ticks
+    # (idempotent — the stall does not spam) and it was an IMMEDIATE operator error.
+    assert len(sent) == 1
+    alert = sent[0]
+    assert alert.urgency.name == "IMMEDIATE"
+    assert alert.dedup_key == "scheduler_stall"
+    # The metrics surface reflects the sustained failure run.
+    snap = sysctx["snapshot"]
+    assert snap["consecutive_failures"] >= sysctx["threshold"]
+    assert snap["alerting"] is True
 
 
 # ===========================================================================

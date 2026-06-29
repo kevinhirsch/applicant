@@ -32,6 +32,7 @@ from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.learning_model import LearningModel
 from applicant.core.ids import AttributeId, CampaignId, DiscoverySourceId, new_id
 from applicant.core.rules.confirmation_gate import requires_confirmation
+from applicant.core.rules.taste_bias import taste_bias
 
 
 @dataclass(frozen=True)
@@ -372,6 +373,20 @@ class LearningService:
     def converting_titles(self, model: LearningModel) -> list[str]:
         """Titles of roles that actually converted, for discovery bias (FR-LEARN-5)."""
         return list(model.converting_role_signature.get("titles", []))
+
+    # --- approve/decline taste bias (FR-LEARN-1/3, #237) ------------------
+    def taste_bias(self, model: LearningModel, text: str) -> float:
+        """Bounded multiplicative bias from accumulated approve/decline taste (#237).
+
+        Reads the per-feature ``feature_stats`` the approve/decline fold accumulates
+        (and that ``load_model``/``persist_model`` round-trip) and returns a small
+        signed multiplier in ``[0.8, 1.2]`` for a posting's text: a value the user has
+        consistently DECLINED nudges the score down, a consistently APPROVED one nudges
+        it up. Returns exactly ``1.0`` when nothing in the posting matches the learned
+        taste, so a cold campaign is byte-identical to before. This wires the previously
+        write-only ``feature_stats`` into scoring so the feedback loop actually closes.
+        """
+        return taste_bias(model.feature_stats, text)
 
     def converting_alignment(self, model: LearningModel, jd_text: str) -> float:
         """Cosine-ish alignment in [0,1] of a JD to the converting-role signature.

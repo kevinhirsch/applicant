@@ -17,7 +17,6 @@ Feature: Digest score reuse keys on criteria only, ignoring learning state
     When the digest re-scores it after the criteria change
     Then a fresh score is computed for the new criteria
 
-  @pending
   Scenario: A new conversion invalidates a stale digest score
     Given a posting scored at cold start before any conversions
     When the campaign learns a converting-role signature that aligns with the posting
