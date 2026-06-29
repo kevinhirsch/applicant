@@ -35,6 +35,48 @@ from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+# ATS parse self-check: minimum field count for a parsable generated resume.
+_ATS_PARSE_MIN_FIELDS = 3
+_ATS_PARSE_MIN_SECTION_WORDS = 5
+
+
+def _verify_ats_parse(resume_text: str) -> tuple[bool, str]:
+    """Verify a generated resume parses through the standard resume parser (issue #370).
+
+    Parses the text with ResumeParser and checks that identity, work history and
+    skills are all present. Returns (ok, message). Best-effort: never blocks
+    submission — warns instead.
+    """
+    try:
+        from applicant.adapters.resume_parser.resume_parser import ResumeParser
+        parser = ResumeParser()
+        import os
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".txt", text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(resume_text)
+            parsed = parser.parse(tmp)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        missing = []
+        if not parsed.full_name:
+            missing.append("full name")
+        if not parsed.work_history:
+            missing.append("work history")
+        if not parsed.skills:
+            missing.append("skills")
+        if not parsed.email and not parsed.phone:
+            missing.append("contact info")
+        if missing:
+            return False, f"ATS parse self-check: missing {', '.join(missing)}"
+        return True, "ATS parse self-check passed"
+    except Exception as exc:
+        return False, f"ATS parse self-check error: {exc}"
+
 
 def _reviewable_materials_for(storage, application_id) -> list[ReviewableMaterial]:
     """Build the review-gate material set for an application (FR-RESUME-8, FR-RESUME-8).
@@ -138,6 +180,20 @@ class SubmissionService:
             log.info("submission_already_recorded", application_id=str(application.id))
             return existing_event
         self.ensure_submittable(application.id)
+        # ATS parse self-check: verify the generated resume parses correctly (issue #370).
+        # Best-effort — logs a warning but does not block submission.
+        try:
+            app = self._storage.applications.get(application.id)
+            if app is not None and app.resume_variant_id is not None:
+                variant = self._storage.resume_variants.get(app.resume_variant_id)
+                if variant is not None and variant.source:
+                    ok, msg = _verify_ats_parse(variant.source)
+                    if not ok:
+                        log.warning("ats_parse_self_check_failed", application_id=str(application.id), detail=msg)
+                    else:
+                        log.info("ats_parse_self_check_passed", application_id=str(application.id))
+        except Exception:
+            pass
         terminal = (
             ApplicationState.FINISHED_BY_ENGINE
             if source is OutcomeSource.AUTO
