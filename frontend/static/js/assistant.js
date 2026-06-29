@@ -97,7 +97,7 @@ function _ensureModalEl() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
           Assistant settings
         </h4>
-        <button class="close-btn" id="assistant-settings-close">✖</button>
+        <button class="close-btn" id="assistant-settings-close" aria-label="Close assistant settings">✖</button>
       </div>
       <div class="modal-body" id="assistant-settings-body">
         <div class="hwfit-loading">Loading…</div>
