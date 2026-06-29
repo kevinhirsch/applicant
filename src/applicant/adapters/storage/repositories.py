@@ -119,6 +119,7 @@ def _application_to_entity(row: m.ApplicationModel) -> Application:
         resume_variant_id=(ResumeVariantId(row.resume_variant_id) if row.resume_variant_id else None),
         sandbox_session_url=row.sandbox_session_url,
         attributes_used=dict(row.attributes_used or {}),
+        created_at=row.created_at,
     )
 
 
