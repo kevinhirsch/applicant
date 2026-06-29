@@ -1468,9 +1468,13 @@ class PlaywrightPageSource:
             if self._wait_for_option(value, 4.0, listbox_selector=listbox_sel):
                 return
             # Leave no half-typed filter string behind.
+            # Guard against detached element after navigation (issue #342):
+            # skip the Escape/clear cleanup when the trigger element was
+            # detached from the DOM (e.g. option selection navigated away).
             try:
-                self._page.keyboard.press("Escape")
-                trigger.fill("")
+                if trigger.evaluate("e => e.isConnected"):
+                    self._page.keyboard.press("Escape")
+                    trigger.fill("")
             except Exception:
                 pass
         raise ValueError(f"no listbox option matching {value!r}")
