@@ -577,6 +577,12 @@ class PrefillService:
         try:
             return bool(log_in(aid, credential.username, credential.secret))
         except Exception:  # pragma: no cover - defensive: login failure -> hand off
+            log.warning(
+                "Login attempt failed for application %s — probable browser crash or "
+                "connection error, not a wrong-password rejection",
+                aid,
+                exc_info=True,
+            )
             return False
 
     def _on_account_gate(self, aid) -> bool:
