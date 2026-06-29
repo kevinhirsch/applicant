@@ -659,6 +659,22 @@ class PrefillService:
             return status
         return None
 
+    def allow_account_creation_for_tenant(self, tenant_domain: str) -> bool:
+        """Return True when account creation may proceed for a tenant even if the
+        global ALLOW_AUTOMATED_ACCOUNTS is off, because a stored (non-predefined)
+        credential already exists for that ATS. This is the per-tenant allowance that
+        lets returning users skip the manual hand-off for accounts they already banked
+        (ADR-0004 extension). The global flag still gates brand-new tenants."""
+        # Per-tenant allowance: a stored credential for this domain exists and is
+        # not a predefined seed -- the user already banked an account here.
+        if self._allow_automated_accounts:
+            return True  # global opt-in covers all tenants
+        # Check whether a real (non-predefined) credential is stored for this domain.
+        for cred in self._storage.list_credentials():
+            if cred.tenant_domain == tenant_domain and cred.key != PREDEFINED_CREDENTIAL_KEY:
+                return True
+        return False
+
     def _capture_credential(self, app, username: str, password: str) -> None:
         """Bank a freshly-created account credential under the ATS tenant key so future
         applications at this tenant log in automatically (FR-VAULT-2)."""

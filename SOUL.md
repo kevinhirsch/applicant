@@ -61,7 +61,8 @@ when authorized.
 
 ## Autonomy defaults
 User-global `~/.reasonix/config.toml` (Windows `%AppData%\reasonix\config.toml`). `max_steps` is
-user-global only — a project file can't override it.
+user-global only — a project file can't override it. **One-time setup; needs a relaunch to take
+effect, so it is NOT part of `/kickoff`** — don't re-apply it per wave.
 ```toml
 [agent]
 max_steps = 0            # no round cap (the 20-step default starved Wave 01 before any edit)
@@ -126,9 +127,11 @@ six landed fixes beat zero.
 ## Talk-while-it-runs
 Steer the overseer like Claude Code: type plain English while a wave runs; it lands at the next
 `wait` return. No keywords. Loop after dispatch:
-1. **Escalating short `wait`s** — **first `wait` = 15s; hard-cap EVERY `wait` at 120s.** Then
-   15s→30s→60s→120s, reset to 15s on any change. A multi-minute `wait` is a bug: you learn of a
-   stall or a completion that late, and you can't be steered until it returns. Each return =
+1. **Short `wait`s — default 15s; NEVER exceed ~30s while the owner is in the loop.** Each `wait`
+   blocks the dialogue for its full length (queued owner input only lands when it returns), so a
+   120s wait = a 2-minute lockout = a bug. Ramp 15s→30s only while genuinely quiet; **reset to
+   15s on any change or any owner message.** The 120s figure is a worst-case ceiling for
+   *unattended* long-monitoring — NOT your working value; don't default to it. Each return =
    liveness + completion + steering boundary.
 2. **Read owner input first, act, ack in one line.** Map intent: "stop"→`Esc`/kill;
    "redirect #N"→`continue_from`; "add #N"→new agent; "skip #N"→drop + note in PR;
@@ -193,6 +196,15 @@ safety server-side (never gate on caller input), reachability = done, green incr
 14. **Subagent evidence inline or it's lost** — ephemeral; the final message must hold raw output.
 15. **Merge only when authorized.**
 16. **Reconcile before fanning out** — parallel overseer sessions happen.
+17. **Agents can't reliably introspect their own model/config** — an instance reported running
+    `gpt-5.1-codex-max` with no codex key (impossible); sometimes it doesn't know its own model.
+    Verify via config files + launch flags + hard facts, never the agent's self-report. The only
+    behavioral proof of `max_steps=0` is "it ran past 20 rounds."
+18. **The full gate exceeds the 120s bash cap** — `uv run pytest -m "not integration"` (cold env)
+    + boot smoke blow past 2 min and get killed. Raise `bash_timeout_seconds` (≥600 or 0) in
+    `~/.reasonix/config.toml` — it's user-global, **needs a relaunch**. It's a *shell* cap, NOT
+    reasoning effort — don't touch `effort` for it. And don't block on the boot-smoke timeout
+    (lesson 2, Windows) — the reachability test is the import proof.
 
 ## Live-verify recipe
 `docs/playtest-protocol.md` §1. Real LLM key: runtime-only, gitignored, never commit/log; remind owner to rotate.

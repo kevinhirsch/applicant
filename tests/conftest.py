@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from datetime import UTC, datetime
 
 import pytest
@@ -12,6 +11,28 @@ from applicant.adapters.notification.apprise_notifier import AppriseNotifier
 from applicant.adapters.orchestration.checkpoint_shim import CheckpointShimOrchestrator
 from applicant.adapters.storage.in_memory import InMemoryStorage
 from applicant.adapters.tools.tool_registry import ToolRegistry
+
+
+@pytest.fixture(autouse=True)
+def _stub_fc_cache(monkeypatch):
+    """Prevent real fc-cache subprocess calls in the hermetic lane.
+
+    fc-cache takes ~2 s on machines where fontconfig is installed.  The few
+    tests that explicitly exercise the fc-cache boundary already monkeypatch
+    ``shutil.which`` and ``subprocess.run`` on the font-installer module using
+    the same function-scoped ``monkeypatch`` fixture — their ``setattr`` calls
+    execute after this autouse setup and therefore WIN for the test body, then
+    everything is restored together when the fixture tears down.
+    """
+    import applicant.adapters.fonts.font_installer as _fi_mod
+
+    _real_which = _fi_mod.shutil.which
+
+    monkeypatch.setattr(
+        _fi_mod.shutil,
+        "which",
+        lambda name: None if name == "fc-cache" else _real_which(name),
+    )
 
 
 @pytest.fixture
@@ -83,13 +104,17 @@ def open_automated_work_gate(client) -> None:
 
 @pytest.fixture
 def sqlite_storage():
-    """A real SQLAlchemy storage backed by SQLite (schema via metadata)."""
+    """A real SQLAlchemy storage backed by an in-memory SQLite DB (schema via metadata).
+
+    Uses ``sqlite:///:memory:`` instead of a temp file so schema creation is
+    ~8 ms (pure memory) rather than ~300 ms (file I/O), without changing any
+    observable behaviour — the fixture has always been ephemeral.
+    """
     from applicant.adapters.storage.models import Base
     from applicant.adapters.storage.repositories import SqlAlchemyStorage
     from applicant.adapters.storage.session import make_engine, make_session_factory
 
-    db = tempfile.mktemp(suffix=".db")
-    engine = make_engine(f"sqlite:///{db}")
+    engine = make_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     session = make_session_factory(engine)()
     yield SqlAlchemyStorage(session)

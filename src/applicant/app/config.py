@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     # ge=1: a 0/negative cap would admit nothing; reject it at load.
     sandbox_concurrency: int = Field(default=3, ge=1, alias="SANDBOX_CONCURRENCY")
-    llm_rate_limit: int = Field(default=30, alias="LLM_RATE_LIMIT")
+    llm_rate_limit: int = Field(default=30, alias="LLM_RATE_LIMIT")  # 0 disables; default 30 req/min
     llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
 
     # Observability (FR-OBS-1)
@@ -477,6 +477,17 @@ class Settings(BaseSettings):
         if "scheduler_enabled" not in explicit:
             object.__setattr__(self, "scheduler_enabled", True)
         return self
+
+    @property
+    def scheduler_should_run(self) -> bool:
+        """True when the scheduler should be active: either explicitly enabled or in production mode."""
+        return self.scheduler_enabled or (self.applicant_mode or "").strip().lower() == "production"
+
+    @property
+    def deployment_profile(self) -> str:
+        """The deployment profile derived from applicant_mode (empty = hermetic)."""
+        return self.applicant_mode
+
 
     @field_validator("takeover_desktop")
     @classmethod

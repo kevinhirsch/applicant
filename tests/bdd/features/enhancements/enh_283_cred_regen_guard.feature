@@ -4,8 +4,9 @@ Feature: The installer will not regenerate credentials against an initialized da
   # .env and re-runs install, a new random Postgres password is minted while the data volume
   # still carries the OLD password, so the app fails to authenticate. The installer must
   # detect an already-initialized Postgres volume and refuse to regenerate credentials.
+  # The guard now inspects `docker volume ls` for the project's pgdata volume and refuses to
+  # mint new credentials when it exists (explicit APPLICANT_FORCE_CRED_REGEN opt-in) → hard gate.
 
-  @pending
   Scenario: An existing database volume blocks credential regeneration
     Given the installer script
     When its credential generation guard is inspected

@@ -72,6 +72,7 @@ dev = [
     "pytest-bdd",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-xdist",
     "httpx",
     "ruff",
     "import-linter",
@@ -84,6 +85,7 @@ dev = [
     "pytest-bdd",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-xdist",
     "httpx",
     "ruff",
     "import-linter",
@@ -110,7 +112,7 @@ markers = [
     "pending: enhancement BDD spec not yet implemented (tag mapped to xfail; TDD red)",
     "architecture: import-linter structural boundary tests (NFR-ARCH-1)",
 ]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -n auto"
 asyncio_mode = "auto"
 
 [tool.ruff]

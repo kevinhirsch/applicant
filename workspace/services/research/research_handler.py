@@ -14,9 +14,23 @@ import time
 from pathlib import Path
 from typing import Optional, Dict
 
+from core.safe_path import UnsafePathError, safe_join
+
 logger = logging.getLogger(__name__)
 
 RESEARCH_DATA_DIR = Path("data/deep_research")
+
+
+def _session_path(session_id: str) -> Optional[Path]:
+    """Resolve the on-disk JSON path for ``session_id``, contained to the research
+    data dir. ``session_id`` is request-supplied, so reject any value that would
+    traverse outside ``RESEARCH_DATA_DIR`` (path traversal / file inclusion).
+    Returns ``None`` when the id cannot form a safe path so callers degrade soft."""
+    try:
+        return Path(safe_join(str(RESEARCH_DATA_DIR), f"{session_id}.json"))
+    except UnsafePathError:
+        logger.warning("rejecting unsafe research session id: %r", session_id)
+        return None
 
 
 class ResearchHandler:
@@ -111,8 +125,8 @@ class ResearchHandler:
                 "started_at": entry["started_at"],
             }
         # Check disk for completed research
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
-        if path.exists():
+        path = _session_path(session_id)
+        if path and path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return {
@@ -148,8 +162,8 @@ class ResearchHandler:
             if entry["status"] in ("done", "error", "cancelled"):
                 return entry.get("result")
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
-        if path.exists():
+        path = _session_path(session_id)
+        if path and path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("result")
@@ -168,8 +182,8 @@ class ResearchHandler:
             if researcher and researcher.findings:
                 return self._extract_sources(researcher.findings)
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
-        if path.exists():
+        path = _session_path(session_id)
+        if path and path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("sources")
@@ -193,8 +207,8 @@ class ResearchHandler:
     def clear_result(self, session_id: str):
         """Remove persisted result after it's been consumed."""
         self._active_tasks.pop(session_id, None)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
-        if path.exists():
+        path = _session_path(session_id)
+        if path and path.exists():
             try:
                 path.unlink()
             except Exception:
@@ -210,7 +224,9 @@ class ResearchHandler:
                 sources = self._extract_sources(researcher.findings)
             entry["sources"] = sources
 
-            path = RESEARCH_DATA_DIR / f"{session_id}.json"
+            path = _session_path(session_id)
+            if path is None:
+                return
             data = {
                 "query": entry["query"],
                 "status": entry["status"],
