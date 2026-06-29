@@ -254,20 +254,30 @@ class FakePageSource:
         return self.current()
 
     def enter_application(self) -> PageState | None:
-        # The fake model's pages() already starts at the application's first page
-        # (account-create), so there is no separate posting/landing page to click
-        # through — a no-op that keeps the flow on the current page.
+        # When the ATS adapter provides a posting page ahead of the application form,
+        # advance past it to simulate clicking "Apply". Otherwise stay on the current
+        # page (the fake model's pages() already starts in-flow for some ATs).
+        if self._index == 0 and not self._page.is_account_create and not self._page.is_final_submit:
+            nxt = self.advance()
+            return nxt or self.current()
         return None
 
     def log_in(self, username: str, password: str) -> bool:
-        # Simulate a successful sign-in: advance past the account gate. (The fake
-        # assumes the supplied credential is valid; failure paths are exercised with
-        # dedicated stubs.)
+        # Check if the page has a password field (login required). If the page has
+        # no password field, treat it as a non-login page and return False.
+        has_password = any(f.field_type == "password" for f in self._page.fields)
+        if not has_password:
+            return False
+        # Simulate a successful sign-in: advance past the account gate.
         self.advance()
         return True
 
     def offers_google_signin(self) -> bool:
-        # The fake models an email/password account-create gate, not OAuth.
+        # Check page field labels for Google OAuth markers.
+        for f in self._page.fields:
+            label_lower = f.label.lower()
+            if "google" in label_lower or "sign in with" in label_lower:
+                return True
         return False
 
     def log_in_with_google(self, username: str, password: str) -> str:
@@ -286,8 +296,13 @@ class FakePageSource:
         return self._page.is_account_create
 
     def is_account_gate(self) -> bool:
-        # The fake model marks the account-create page as the gate.
-        return self._page.is_account_create
+        # The fake model marks the account-create page as the gate, or any page
+        # with a password field (sign-in-only gate without account creation).
+        if self._page.is_account_create:
+            return True
+        if any(f.field_type == "password" for f in self._page.fields):
+            return True
+        return False
 
     def is_final_submit_page(self) -> bool:
         return self._page.is_final_submit
