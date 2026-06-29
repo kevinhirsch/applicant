@@ -1,7 +1,7 @@
 """StaticFiles mount helper (mirrors the Applicant serving pattern) (FR-UI-1).
 
-Serves ``workspace/static`` (the workspace front-door shell + our screens under
-``workspace/static/``) at ``/static``.
+Serves ``frontend/static`` (the vendored Applicant shell + our screens under
+``frontend/static/applicant/``) at ``/static``.
 """
 
 from __future__ import annotations

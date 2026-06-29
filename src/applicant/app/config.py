@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     )
 
     # Frontend (FR-UI-1)
-    app_static_dir: str = Field(default="workspace/static", alias="APP_STATIC_DIR")
+    app_static_dir: str = Field(default="frontend/static", alias="APP_STATIC_DIR")
 
     # LLM (FR-LLM-1/2). Empty until configured via OOBE; the gate keys off these.
     llm_provider: str = Field(default="", alias="LLM_PROVIDER")
