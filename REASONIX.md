@@ -26,10 +26,11 @@ already-done). Reconcile against `git log origin/main --oneline -20` + open PRs 
   completion checkpoint. `Esc`/`Ctrl+C` = stop now.
 - Maintain a `todo_write` entry per group; refresh every poll.
 - **Oversee actively (not dispatch-and-wait).** Every poll, check each agent for stall/error:
-  `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones,
-  surface real blockers to the owner. A stalled agent is an action item. Auto-recover ≤2×, then
-  **escalate to the owner with a diagnosis — never leave them waiting in the dark.** Silence is a
-  bug. See SOUL.md "Oversight".
+  `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones.
+  **If it's progressing, let it run** (long ≠ stuck — don't ping). **If stuck, work every angle**
+  (`continue_from`, re-dispatch tighter, smaller slice, more context, new approach). **Only when
+  truly blocked — every angle tried — reach out** with a clear diagnosis of what's blocking and
+  what you tried. Don't over-escalate, don't go silent. See SOUL.md "Oversight".
 
 ## The gate set (or run `/gate`)
 ```bash
