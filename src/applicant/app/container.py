@@ -49,7 +49,6 @@ from applicant.application.services.chat_service import ChatService
 from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.criteria_service import CriteriaService
 from applicant.application.services.data_lifecycle_service import DataLifecycleService
-from applicant.application.services.retention_service import RetentionService
 from applicant.application.services.digest_service import DigestService
 from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.feedback_service import FeedbackService
@@ -59,6 +58,7 @@ from applicant.application.services.learning_service import LearningService
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.pending_actions_service import PendingActionsService
+from applicant.application.services.retention_service import RetentionService
 from applicant.application.services.scoring_service import ScoringService
 from applicant.application.services.setup_service import SetupService
 from applicant.application.workflows import application_pipeline
