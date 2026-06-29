@@ -198,6 +198,11 @@ safety server-side (never gate on caller input), reachability = done, green incr
     `gpt-5.1-codex-max` with no codex key (impossible); sometimes it doesn't know its own model.
     Verify via config files + launch flags + hard facts, never the agent's self-report. The only
     behavioral proof of `max_steps=0` is "it ran past 20 rounds."
+18. **The full gate exceeds the 120s bash cap** — `uv run pytest -m "not integration"` (cold env)
+    + boot smoke blow past 2 min and get killed. Raise `bash_timeout_seconds` (≥600 or 0) in
+    `~/.reasonix/config.toml` — it's user-global, **needs a relaunch**. It's a *shell* cap, NOT
+    reasoning effort — don't touch `effort` for it. And don't block on the boot-smoke timeout
+    (lesson 2, Windows) — the reachability test is the import proof.
 
 ## Live-verify recipe
 `docs/playtest-protocol.md` §1. Real LLM key: runtime-only, gitignored, never commit/log; remind owner to rotate.
