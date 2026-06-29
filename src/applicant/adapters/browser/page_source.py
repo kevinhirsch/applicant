@@ -429,6 +429,8 @@ class PlaywrightPageSource:
         self._context = None
         self._page = None
         self._browser = None
+        self._headless = headless
+        self._user_data_dir = user_data_dir
         # Captured per-navigation main-frame HTTP status + the expected host so
         # current() can populate cautious-mode signals (FR-PREFILL-6).
         self._status: int | None = None
@@ -600,6 +602,51 @@ class PlaywrightPageSource:
                 self._status = response.status
         except Exception:
             pass
+
+    def _is_crashed(self) -> bool:  # pragma: no cover - integration-gated
+        """Check whether the browser page has crashed (detached or closed).
+
+        Returns True if the page or context is no longer usable, so callers can
+        trigger recovery instead of operating on a dead browser."""
+        try:
+            page = getattr(self, "_page", None)
+            if page is None:
+                return True
+            # A simple no-op evaluate: if the page is detached this raises.
+            page.evaluate("1 + 1")
+            return False
+        except Exception:  # noqa: BLE001 — any error means crashed/dead
+            return True
+
+    def _recover(self) -> None:  # pragma: no cover - integration-gated
+        """Attempt to recover from a browser crash by tearing down and re-launching.
+
+        Logs the recovery attempt. If re-launch fails the exception propagates."""
+        log.warning("Browser crash detected — attempting recovery")
+        self._safe_teardown()
+        # Re-launch using stored constructor parameters.
+        self._launch_chromium(
+            headless=getattr(self, "_headless", False),
+            user_data_dir=getattr(self, "_user_data_dir", ""),
+        )
+
+
+    def _crash_safe_call(self, fn, *args, **kwargs):  # pragma: no cover - integration-gated
+        """Execute a page/browser operation with crash detection and recovery.
+
+        If the operation raises :class:`TargetClosedError` or :class:`TimeoutError`
+        (Playwright's signals for a detached/dead page), attempts to recover by
+        re-launching the browser and retrying once.  Other exceptions propagate
+        immediately."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            if exc_name in ("TargetClosedError", "TimeoutError"):
+                log.warning("Browser crash detected during operation", exc_info=exc)
+                self._recover()
+                return fn(*args, **kwargs)
+            raise
 
     def _safe_teardown(self) -> None:  # pragma: no cover - integration-gated
         """Best-effort cleanup of a partially-constructed driver.
