@@ -1530,10 +1530,18 @@ class PlaywrightPageSource:
 
     @classmethod
     def _filter_query(cls, value: str) -> str:  # pragma: no cover
-        """A short query to FILTER a long combobox list: the first couple of meaningful
-        words (skip pure-number tokens). Typing the full value often matches nothing."""
+        """Build a short query to FILTER a long combobox list.
+
+        Skips pure-number tokens (dialing codes). Uses 3-4 words for values
+        longer than 2 words to disambiguate shared prefixes (e.g.
+        "United States Minor Outlying Islands" -> "United States Minor")
+        so a short prefix like "United States" does not match both options.
+        Falls back to the full value when no meaningful words are found."""
         words = [w for w in value.split() if not cls._norm_text(w).isdigit()]
-        return " ".join(words[:2]) if words else value
+        if not words:
+            return value
+        n = min(len(words), 4 if len(words) > 2 else 2)
+        return " ".join(words[:n])
 
     def _pick_visible_option(self, value: str, timeout_s: float, listbox_selector: str = "") -> bool:  # pragma: no cover
         """Poll up to ``timeout_s`` for a VISIBLE ``[role=option]`` matching ``value``
