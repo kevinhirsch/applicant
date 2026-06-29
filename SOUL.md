@@ -220,9 +220,14 @@ don't guess; never silently ignore owner input.
 Dispatching is the easy part; overseeing means catching stuck and broken agents and driving
 them to done. At **every poll turn**, for each live `sa_`:
 
-1. **Liveness check.** Is it progressing — new tool output, new commits (`git -C <wt> log
-   --oneline origin/main..`)? A "may be stalled / no output for Nm" warning, or two polls with
-   no new output or commits, means **stuck**.
+1. **Liveness check — "no visible output" is NOT "stuck."** DeepSeek often runs long *silent*
+   stretches (reasoning/edits with no chat output); the harness "may be stalled / no output for
+   Nm" warning is a prompt to **inspect, not proof of a hang.** Treat the agent as **alive** if
+   *any* of these moved since the last check: the token counter (`↓ N tokens`), the `bash_output`
+   tail, or new commits (`git -C <wt> log --oneline origin/main..`). Only **no new tokens AND no
+   new output AND no new commits across the watchdog window** = genuinely **stuck**.
+   *(Live example: a G20 agent sat 15m with no visible output, but tokens were moving — it then
+   delivered all 8 fixes. Killing on the warning alone would have thrown the work away.)*
 2. **Unstick a stalled agent.** Inspect with `bash_output` / `wait` first. If truly hung:
    `kill_shell` it, **salvage** any committed work (its branch/worktree commits survive), then
    **re-dispatch** — `continue_from` if it banked progress, else a fresh agent with a tighter,
@@ -234,16 +239,18 @@ them to done. At **every poll turn**, for each live `sa_`:
 4. **Watchdog via the escalating-`wait` loop.** You *become* a live monitor by looping short
    `wait`s at escalating intervals (see "Talk-while-it-runs" step 2): inspect every agent on
    each return, back off while healthy, reset to short on any change. Give each agent a
-   wall-clock budget (~15 min/group = the Wave-01 stall point); on breach, intervene per (2).
-   Track per-agent state in `todo_write` so nothing is silently abandoned.
+   wall-clock budget; **a breach is the budget elapsed AND the liveness signals in (1) all flat**
+   — never the bare "no visible output" warning. Track per-agent state in `todo_write` so nothing
+   is silently abandoned.
 
 5. **Patience while it progresses; escalate only as a true last resort.** Three states, three
    responses — read which one you're in before acting:
    - **Progressing** (new output or new commits, even if slow) → *let it run.* Long ≠ stuck.
      Don't interrupt and don't ping the owner about legitimate work; just keep the
      escalating-`wait` loop going. Waiting is correct here.
-   - **Stuck** (no output and no commits across the watchdog window) → *work the problem hard,
-     every angle* — not a fixed strike count: resume (`continue_from`), kill→salvage→re-dispatch
+   - **Stuck** (no token movement AND no new output AND no new commits across the watchdog
+     window — *not* merely the 15m "no visible output" warning) → *work the problem hard, every
+     angle* — not a fixed strike count: resume (`continue_from`), kill→salvage→re-dispatch
      with a tighter seam-pinned brief, shrink the slice, feed it more context, diagnose the root
      cause yourself, try a different approach. Keep going with waits between attempts.
    - **Truly blocked** (you've tried every angle, given it waits, and it still won't resolve — or

@@ -27,7 +27,9 @@ already-done). Reconcile against `git log origin/main --oneline -20` + open PRs 
 - Maintain a `todo_write` entry per group; refresh every poll.
 - **Oversee actively (not dispatch-and-wait).** Every poll, check each agent for stall/error:
   `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones.
-  **If it's progressing, let it run** (long ≠ stuck — don't ping). **If stuck, work every angle**
+  **If it's progressing, let it run** (long ≠ stuck; **"no visible output" ≠ stuck** — token
+  movement or new commits = alive; the 15m warning means *inspect*, not kill). **If stuck (no
+  tokens/output/commits across the window), work every angle**
   (`continue_from`, re-dispatch tighter, smaller slice, more context, new approach). **Only when
   truly blocked — every angle tried — reach out** with a clear diagnosis of what's blocking and
   what you tried. Don't over-escalate, don't go silent. See SOUL.md "Oversight".
