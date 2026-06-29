@@ -29,6 +29,8 @@ jobs:
     # runs-on: ubuntu-latest   # <-- hosted fallback: swap if the runner is down
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave git creds on the self-hosted runner (#167)
 
       # --- White-label denylist -------------------------------------------------
       # The product is white-labeled as "Applicant"; no upstream-fork vendor/persona
@@ -124,6 +126,11 @@ jobs:
       # --- Deploy artifact ------------------------------------------------------
       - name: Production compose validates
         run: |
-          APP_PORT=8000 POSTGRES_PASSWORD=ci-validate \
-            docker compose -f docker/docker-compose.prod.yml config >/dev/null
-          echo "compose config valid"
+          if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            APP_PORT=8000 POSTGRES_PASSWORD=ci-validate \
+              docker compose -f docker/docker-compose.prod.yml config >/dev/null
+            echo "compose config valid (docker compose)"
+          else
+            echo "::warning::docker unavailable on this runner — validating compose YAML via PyYAML fallback"
+            uv run python -c "import yaml; d=yaml.safe_load(open('docker/docker-compose.prod.yml')); assert d.get('services'), 'no services in compose'; print('compose YAML parses;', len(d['services']), 'services')"
+          fi

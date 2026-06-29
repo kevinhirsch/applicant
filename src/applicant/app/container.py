@@ -179,6 +179,36 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     return None, None, InMemoryStorage()
 
 
+def ensure_system_campaign(storage: Any) -> bool:
+    """Idempotently seed the reserved ``__system__`` campaign.
+
+    Instance-level secrets (the LLM key, sandbox tokens) are sealed in the
+    credential store, whose ``campaign_id`` is a NOT-NULL FK to ``campaigns`` — so
+    the ``__system__`` row must exist before any such credential is written. No-op
+    on in-memory storage (no FK; also keeps the hermetic lane's campaign listings
+    clean) and when the row already exists. Returns True iff a row was created.
+
+    MUST run before the LLM env-seed in :func:`build_container`: otherwise the
+    credential insert raises ForeignKeyViolation on a real database, because the
+    only other seed runs at lifespan startup — after the container is built.
+    """
+    if getattr(storage, "_session", None) is None:
+        return False
+    from applicant.core.entities.campaign import Campaign
+    from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
+
+    sid = CampaignId(SYSTEM_CAMPAIGN_ID)
+    if storage.campaigns.get(sid) is not None:
+        return False
+    try:
+        storage.campaigns.add(Campaign(id=sid, name="System (internal)", active=False))
+        storage.commit()
+        return True
+    except Exception:  # pragma: no cover - concurrent first-boot seed race
+        storage.rollback()
+        return storage.campaigns.get(sid) is not None
+
+
 def _build_remote_view(settings: Settings) -> Any:
     """Pick the remote-view sub-port by REMOTE_VIEW_BACKEND (FR-SANDBOX-2).
 
@@ -332,7 +362,14 @@ def build_container(settings: Settings | None = None) -> Container:
     # "I can't start applying until I know: ..." with the real remaining items. Reads
     # real campaign data only; never fabricated.
     def _apply_readiness():
-        campaigns = list(storage.campaigns.list())
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+        # Exclude the reserved __system__ campaign (instance secrets only — it has no
+        # criteria/résumé). Including it made the "what's still missing" surface fall
+        # back to ITS emptiness (campaigns[0]) and report every essential missing —
+        # e.g. claiming a résumé is needed right after one was uploaded to the real
+        # campaign. Mirror campaign_service.list_campaigns(), which already excludes it.
+        campaigns = [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
         for c in campaigns:
             r = onboarding_service.apply_readiness(str(c.id))
             if r.ready:
@@ -361,6 +398,11 @@ def build_container(settings: Settings | None = None) -> Container:
         )
 
     setup_service.set_channels_gate(_channels_gate)
+    # The LLM env-seed below seals the key in the credential store (campaign-FK).
+    # Ensure the reserved __system__ campaign exists FIRST, or the env-config path
+    # crashes on boot against a real DB — lifespan's seed runs only later. See
+    # ensure_system_campaign.
+    ensure_system_campaign(storage)
     # Seed L1 from env on first boot if the UI hasn't set a ladder yet (FR-LLM-2).
     if settings.llm_configured and not setup_service.get_tiers():
         from applicant.ports.driving.setup_wizard import LLMSettings as _LLMSettings
@@ -1093,10 +1135,8 @@ def build_container(settings: Settings | None = None) -> Container:
     # the pending count, the scheduler heartbeat) and pushes it through the EXISTING
     # notification path (in-app inbox + opt-in fan-out). All sources are optional/defensive
     # (no fabrication); the scheduler gates the cadence (default off => dormant, no
-    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read from env directly so config.py
-    # stays untouched (additive, deploy-controllable; ``off``/``daily``).
-    import os as _os
-
+    # behavior change). ``STATUS_UPDATE_SCHEDULE`` is read through Settings (like its
+    # siblings) so the deploy surface stays uniform; ``off``/``daily``.
     from applicant.application.services.status_update import StatusUpdateService
 
     status_update_service = StatusUpdateService(
@@ -1106,7 +1146,7 @@ def build_container(settings: Settings | None = None) -> Container:
         pending_actions=pending_actions_service,
         # scheduler is wired additively below (it is built after this point).
     )
-    status_update_schedule = _os.getenv("STATUS_UPDATE_SCHEDULE", "off")
+    status_update_schedule = settings.status_update_schedule
 
     # FR-NOTIF / FR-ONBOARD: the proactive "I'm still blocked on essentials" nudge. When
     # automated work is BLOCKED specifically because apply-essentials are missing (read

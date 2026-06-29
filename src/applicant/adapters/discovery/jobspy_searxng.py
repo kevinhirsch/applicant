@@ -90,7 +90,7 @@ def _normalize_work_mode(raw: object) -> str | None:
         return "hybrid"
     if any(k in text for k in ("on-site", "onsite", "in person", "in-person", "office")):
         return "onsite"
-    return text
+    return text[:64]  # work_mode column is VARCHAR(64) — clamp arbitrary board text
 
 
 def _clean(value: object) -> str | None:
@@ -100,6 +100,19 @@ def _clean(value: object) -> str | None:
     if not text or text.lower() == "nan":
         return None
     return text
+
+
+def _clip(value: str | None, limit: int) -> str | None:
+    """Truncate a scraped value to its DB column width.
+
+    Board/metasearch rows are external/untrusted and routinely exceed the bounded
+    ``job_postings`` VARCHAR columns (e.g. a >512-char title). The in-memory test
+    store has no length limit, so this overflow only surfaces on a real Postgres as
+    ``StringDataRightTruncation`` — clamp at ingest so it can never reach the DB.
+    """
+    if value is None:
+        return None
+    return value[:limit]
 
 
 def normalize_row(
@@ -122,12 +135,14 @@ def normalize_row(
     return JobPosting(
         id=JobPostingId(new_id()),
         campaign_id=campaign_id,
-        title=title,
-        company=company,
+        # Clamp bounded VARCHAR columns to their widths; source_url/description are
+        # TEXT (unbounded) so they pass through. (FR-DISC-3; real-DB overflow guard.)
+        title=_clip(title, 512),
+        company=_clip(company, 512) or "",
         source_url=url,
-        location=_clean(raw.get("location")),
+        location=_clip(_clean(raw.get("location")), 512),
         work_mode=_normalize_work_mode(raw.get("work_mode") or raw.get("is_remote")),
-        salary=salary,
+        salary=_clip(salary, 128),
         description=_clean(raw.get("description")) or "",
         source_key=source_key,
     )

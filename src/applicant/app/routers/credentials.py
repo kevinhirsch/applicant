@@ -58,11 +58,25 @@ class CaptureIn(BaseModel):
     secret: str
 
 
+def _require_existing_campaign(container: Container, campaign_id: str) -> CampaignId:
+    """Validate the campaign exists before banking under it.
+
+    ``credentials.campaign_id`` is a NOT-NULL FK to ``campaigns``; banking under a
+    campaign that doesn't exist raises a ForeignKeyViolation on a real DB (the
+    in-memory store has no FK, so this only surfaces in production). Return a clean
+    404 instead of a 500 for the front-door."""
+    cid = CampaignId(campaign_id)
+    if container.storage.campaigns.get(cid) is None:
+        raise HTTPException(status_code=404, detail="No such campaign for this credential.")
+    return cid
+
+
 @router.post("", status_code=201)
 def bank_manual(body: BankIn, container: Container = Depends(get_container)) -> dict:
     """Manually bank a credential set in the vault (FR-VAULT-2, preferred upfront)."""
+    cid = _require_existing_campaign(container, body.campaign_id)
     container.credentials.store(
-        CampaignId(body.campaign_id),
+        cid,
         Credential(tenant_key=body.tenant_key, username=body.username, secret=body.secret),
     )
     return {"campaign_id": body.campaign_id, "tenant_key": body.tenant_key, "source": "manual"}
@@ -71,9 +85,8 @@ def bank_manual(body: BankIn, container: Container = Depends(get_container)) -> 
 @router.post("/capture", status_code=201)
 def capture(body: CaptureIn, container: Container = Depends(get_container)) -> dict:
     """Auto-capture credentials entered during live account-creation (FR-VAULT-2)."""
-    container.credentials.capture(
-        CampaignId(body.campaign_id), body.tenant_key, body.username, body.secret
-    )
+    cid = _require_existing_campaign(container, body.campaign_id)
+    container.credentials.capture(cid, body.tenant_key, body.username, body.secret)
     return {"campaign_id": body.campaign_id, "tenant_key": body.tenant_key, "source": "captured"}
 
 

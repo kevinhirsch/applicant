@@ -22,11 +22,54 @@ This is the clearly-marked boundary the work package asks for: swapping
 from __future__ import annotations
 
 import re
+import socket
 import time
 from typing import Protocol, runtime_checkable
+from urllib.parse import urlsplit
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
+from applicant.core.errors import InvalidInput
+from applicant.core.rules.url_safety import ip_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+
+def assert_navigable_url(url: str) -> None:
+    """Refuse to navigate an UNTRUSTED URL that targets a non-public host (SSRF).
+
+    The pre-fill loop opens a scraped job-posting ``source_url`` in the real
+    browser; that value is attacker-influenced. Before the browser touches it we
+    require an http(s) scheme and resolve the host — if it (or ANY address it
+    resolves to) is a loopback/link-local/private/reserved/metadata address we
+    raise instead of letting the browser reach the cloud-metadata endpoint, the
+    internal ``api`` service, or a LAN host. Public destinations pass through.
+
+    Resolving the host (not just inspecting the literal) closes the DNS-rebinding
+    hole where a public name points at an internal IP. ``getaddrinfo`` of a numeric
+    literal or ``localhost`` needs no network, so the guard's logic stays testable.
+    """
+    raw = (url or "").strip()
+    parts = urlsplit(raw)
+    if not scheme_is_allowed(parts.scheme):
+        raise InvalidInput(
+            f"refusing to navigate non-http(s) URL (scheme {parts.scheme!r})."
+        )
+    host = (parts.hostname or "").strip()
+    if not host:
+        raise InvalidInput("refusing to navigate a URL with no host.")
+    port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise InvalidInput(
+            f"refusing to navigate {host!r}: DNS resolution failed."
+        ) from exc
+    for info in infos:
+        addr = info[4][0]
+        if ip_is_blocked(addr):
+            raise InvalidInput(
+                f"refusing to navigate {host!r}: resolves to non-public address "
+                f"{addr} (SSRF guard)."
+            )
 
 #: Characters allowed in a screenshot filename slug; everything else is replaced.
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -768,6 +811,10 @@ class PlaywrightPageSource:
         return False
 
     def open(self, url: str) -> None:  # pragma: no cover - integration-gated
+        # SSRF guard: ``url`` is an attacker-influenced scraped posting. Refuse to
+        # navigate it before the browser issues a request if it targets a non-public
+        # host (cloud metadata / internal ``api`` / LAN), per assert_navigable_url.
+        assert_navigable_url(url)
         # Remember the host we expected so an anomalous redirect is detectable.
         self._expected_host = url.split("//", 1)[-1].split("/", 1)[0] or None
         response = self._page.goto(url)

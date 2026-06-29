@@ -242,6 +242,11 @@ class Settings(BaseSettings):
     # apply-essentials. Default OFF so the hermetic lane is byte-identical (no behavior
     # change) until a deploy opts in.
     essentials_nudge_schedule: str = Field(default="off", alias="ESSENTIALS_NUDGE_SCHEDULE")
+    # Cadence of the proactive "here's where your campaigns stand" status update
+    # (sibling of the chatbot self-report). ``off`` (default) keeps it dormant; a
+    # periodic string (e.g. ``daily``) opts in. Read through Settings like its
+    # siblings rather than a raw ``os.getenv`` so the deploy surface stays uniform.
+    status_update_schedule: str = Field(default="off", alias="STATUS_UPDATE_SCHEDULE")
     # Model id for the (cheaper) background curation pass (FR-MIND-7/-13). Empty =>
     # reuse the main configured model.
     curation_model: str = Field(default="", alias="CURATION_MODEL")

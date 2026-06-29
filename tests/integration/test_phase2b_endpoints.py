@@ -35,7 +35,7 @@ def _open_gate(client):
 @pytest.mark.integration
 def test_manual_bank_then_list(client):
     _open_gate(client)
-    cid = new_id()
+    cid = client.post("/api/campaigns", json={"name": "Vault test"}).json()["id"]
     r = client.post(
         "/api/credentials",
         json={"campaign_id": cid, "tenant_key": "acme.workday", "username": "kev", "secret": "s"},
@@ -48,7 +48,7 @@ def test_manual_bank_then_list(client):
 @pytest.mark.integration
 def test_capture_hook(client):
     _open_gate(client)
-    cid = new_id()
+    cid = client.post("/api/campaigns", json={"name": "Vault test"}).json()["id"]
     r = client.post(
         "/api/credentials/capture",
         json={"campaign_id": cid, "tenant_key": "acme.workday", "username": "kev", "secret": "x"},
@@ -57,6 +57,18 @@ def test_capture_hook(client):
     # NFR-PRIV-1: the listing endpoint never returns the secret.
     body = client.get(f"/api/credentials/{cid}/tenants").json()
     assert "x" not in str(body)
+
+
+@pytest.mark.integration
+def test_bank_unknown_campaign_is_404(client):
+    """Banking under a campaign that doesn't exist is a clean 404, not a 500 —
+    credentials.campaign_id is a NOT-NULL FK to campaigns on a real DB."""
+    _open_gate(client)
+    r = client.post(
+        "/api/credentials",
+        json={"campaign_id": new_id(), "tenant_key": "x.workday", "username": "k", "secret": "s"},
+    )
+    assert r.status_code == 404
 
 
 @pytest.mark.integration
