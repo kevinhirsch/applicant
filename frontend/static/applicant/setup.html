@@ -91,14 +91,14 @@
                 </div>
                 <div class="admin-model-form">
                   <div class="admin-model-form-row">
-                    <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1" title="The address of a model server running on this machine or your network (for example Ollama at http://localhost:11434/v1).">
+                    <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1" title="The address of a model server running on this machine or your network (for example Ollama at http://localhost:11434/v1)." aria-label="Paste endpoint URL, e.g. http://localhost:11434/v1">
                     <select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;" title="What this endpoint provides: text models (LLM) or image models.">
                       <option value="llm">LLM</option>
                       <option value="image">Image</option>
                     </select>
                   </div>
                   <div class="admin-model-form-row">
-                    <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1" title="Only needed if your local server requires a key. Most local setups (like Ollama) need none.">
+                    <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1" title="Only needed if your local server requires a key. Most local setups (like Ollama) need none." aria-label="API key (optional — for protected local endpoints)">
                   </div>
                   <div class="admin-model-form-row">
                     <span style="flex:1"></span>
@@ -127,10 +127,10 @@
                       <option value="https://api.mistral.ai/v1">Mistral</option>
                       <option value="https://api.together.xyz/v1">Together AI</option>
                     </select>
-                    <input id="adm-epUrl" type="text" placeholder="Base URL, e.g. https://openrouter.ai/api/v1" autocomplete="off" style="flex:1" title="The base URL of the cloud provider's OpenAI-compatible API.">
+                    <input id="adm-epUrl" type="text" placeholder="Base URL, e.g. https://openrouter.ai/api/v1" autocomplete="off" style="flex:1" title="The base URL of the cloud provider's OpenAI-compatible API." aria-label="Base URL, e.g. https://openrouter.ai/api/v1">
                   </div>
                   <div class="admin-model-form-row">
-                    <input id="adm-epApiKey" type="password" placeholder="API key" style="flex:1" title="Your secret key for this provider. It is stored encrypted on the server and never shown again.">
+                    <input id="adm-epApiKey" type="password" placeholder="API key" style="flex:1" title="Your secret key for this provider. It is stored encrypted on the server and never shown again." aria-label="API key">
                     <select id="adm-epType" style="padding:5px;width:80px;" title="What this endpoint provides: text models (LLM) or image models.">
                       <option value="llm">LLM</option>
                       <option value="image">Image</option>
@@ -174,10 +174,10 @@
               <div class="admin-toggle-sub" style="margin-bottom:10px">Choose how Applicant reaches you. Discord is the quick option; email is a good backup.</div>
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <input id="notif-discord" type="text" placeholder="https://discord.com/api/webhooks/…" style="flex:1" title="A Discord webhook URL. Create one in a channel's Integrations settings, then paste it here.">
+                  <input id="notif-discord" type="text" placeholder="https://discord.com/api/webhooks/…" style="flex:1" title="A Discord webhook URL. Create one in a channel's Integrations settings, then paste it here." aria-label="https://discord.com/api/webhooks/…">
                 </div>
                 <div class="admin-model-form-row">
-                  <input id="notif-email" type="text" placeholder="mailto://user:pass@smtp.example.com" style="flex:1" title="An email destination in Apprise URL form, used as a backup channel.">
+                  <input id="notif-email" type="text" placeholder="mailto://user:pass@smtp.example.com" style="flex:1" title="An email destination in Apprise URL form, used as a backup channel." aria-label="mailto://user:pass@smtp.example.com">
                 </div>
                 <div class="admin-model-form-row">
                   <span style="flex:1"></span>

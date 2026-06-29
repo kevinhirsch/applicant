@@ -276,7 +276,7 @@
                 <button type="button" id="memory-select-btn" class="memory-toolbar-btn" title="Select multiple memories">Select</button>
                 <button type="button" id="memory-tidy-btn" class="memory-toolbar-btn" title="AI tidy: deduplicate and clean up memories"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</button>
               </div>
-              <input type="text" id="memory-search" placeholder="Search memories…" class="memory-search-input" />
+              <input type="text" id="memory-search" placeholder="Search memories…" class="memory-search-input"  aria-label="Search memories…">
               <div id="memory-category-filters" class="memory-category-filters">
                 <button type="button" class="memory-cat-chip active" data-cat="all">all</button>
               </div>
@@ -306,7 +306,7 @@
             </p>
             <div class="memory-add-row" style="margin-top:8px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
-                <input type="text" id="new-memory-input" placeholder=" " class="memory-add-input skill-hint-input" />
+                <input type="text" id="new-memory-input" placeholder=" " class="memory-add-input skill-hint-input"  aria-label=" ">
                 <span class="skill-rich-ph"><span class="k">Add a memory</span> &mdash; e.g. 'I prefer concise replies' <svg class="k" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:4px;" aria-hidden="true"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></span>
               </div>
             </div>
@@ -317,19 +317,19 @@
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Create a skill by hand — title, what it solves, and an approach.</p>
             <div class="skill-ph-wrap" style="margin-top:4px;margin-bottom:6px;">
-              <input type="text" id="new-skill-title" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-title" placeholder=" " class="memory-add-input skill-hint-input"  aria-label=" ">
               <span class="skill-rich-ph"><span class="k">Title</span> — short name, e.g. “build-vllm-wheel”</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:6px;">
-              <input type="text" id="new-skill-problem" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-problem" placeholder=" " class="memory-add-input skill-hint-input"  aria-label=" ">
               <span class="skill-rich-ph"><span class="k">When to use</span> — what problem does this skill solve?</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:6px;">
-              <textarea id="new-skill-solution" placeholder=" " class="memory-add-input skill-hint-input" rows="2" style="resize:vertical;"></textarea>
+              <textarea id="new-skill-solution" placeholder=" " class="memory-add-input skill-hint-input" rows="2" style="resize:vertical;" aria-label=" "></textarea>
               <span class="skill-rich-ph skill-rich-ph-top"><span class="k">How</span> — the approach, steps, commands, or rules to follow</span>
             </div>
             <div class="skill-ph-wrap" style="margin-bottom:8px;">
-              <input type="text" id="new-skill-tags" placeholder=" " class="memory-add-input skill-hint-input" />
+              <input type="text" id="new-skill-tags" placeholder=" " class="memory-add-input skill-hint-input"  aria-label=" ">
               <span class="skill-rich-ph"><span class="k">Tags</span> — comma-separated, e.g. python, build, vllm</span>
             </div>
             <div style="display:flex;justify-content:flex-end;">
@@ -370,7 +370,7 @@
                 <button type="button" id="skills-select-btn" class="memory-toolbar-btn" title="Select multiple skills">Select</button>
                 <button type="button" id="skills-audit-btn" class="memory-toolbar-btn" title="Test every skill, auto-fix the weak ones, flag what still fails"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Audit all</button>
               </div>
-              <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input" />
+              <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input"  aria-label="Search skills…">
             </div>
             <div id="skills-audit-panel" class="skills-audit-panel hidden"></div>
             <div id="skills-bulk-bar" class="memory-bulk-bar hidden">
@@ -390,7 +390,7 @@
           <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
             <div style="flex:1;min-width:140px">
               <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">New entity</label>
-              <input type="text" id="entity-new-name" placeholder="Ryne" style="width:100%">
+              <input type="text" id="entity-new-name" placeholder="Ryne" style="width:100%" aria-label="Ryne">
             </div>
             <select id="entity-new-type" style="min-width:110px">
               <option value="person">person</option>
@@ -427,23 +427,23 @@
               <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
                 <div>
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for">
+                  <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for" aria-label="Software Engineer, Backend Engineer">
                 </div>
                 <div>
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Locations <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles">
+                  <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles" aria-label="Remote, New York, London">
                 </div>
                 <div>
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site">
+                  <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site" aria-label="remote, hybrid, on-site">
                 </div>
                 <div>
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
-                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention">
+                  <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention" aria-label="Python, distributed systems">
                 </div>
                 <div style="max-width:240px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Lowest acceptable salary</label>
-                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)">
+                  <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)" aria-label="120000">
                 </div>
               </div>
               <div id="applicant-crit-learned" class="hidden" style="margin-top:10px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;background:rgba(127,127,127,0.06)">
@@ -471,11 +471,11 @@
               <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
                 <div style="flex:1;min-width:140px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Detail</label>
-                  <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'">
+                  <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'" aria-label="Phone number">
                 </div>
                 <div style="flex:1;min-width:140px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Value</label>
-                  <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail">
+                  <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail" aria-label="+1 555 0100">
                 </div>
                 <label style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed.">
                   <input type="checkbox" id="applicant-attr-sensitive"> Sensitive
@@ -515,7 +515,7 @@
                   <button type="button" id="applicant-banned-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
                 </div>
                 <p class="memory-desc" style="margin:0 0 6px;font-size:11px;opacity:0.7">These get removed from anything the assistant writes. One phrase per line.</p>
-                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text"></textarea>
+                <textarea id="applicant-banned-input" rows="4" style="width:100%;resize:vertical;font-size:12px" placeholder="e.g. delve into&#10;passionate about leveraging" title="Each line is a phrase that will be stripped from generated text" aria-label="e.g. delve into&#10;passionate about leveraging"></textarea>
                 <div id="applicant-banned-seed" style="font-size:11px;opacity:0.6;margin-top:6px"></div>
                 <div style="margin-top:6px">
                   <button type="button" id="applicant-banned-save-btn" class="admin-btn-add" title="Save your phrase list">Save phrases</button>
@@ -774,7 +774,7 @@
       <div class="admin-card" style="margin-top:8px;">
         <h2>Save / Share</h2>
         <div class="theme-save-row" id="theme-save-row">
-          <input type="text" id="theme-save-name" placeholder="Theme name..." maxlength="32">
+          <input type="text" id="theme-save-name" placeholder="Theme name..." maxlength="32" aria-label="Theme name...">
           <button type="button" id="theme-save-go">Save</button>
         </div>
         <div class="theme-save-error" id="theme-save-error"></div>
@@ -782,7 +782,7 @@
           <button type="button" id="theme-import-btn" class="theme-io-btn" title="Import a theme from JSON">&#x2912; Import</button>
           <button type="button" id="theme-export-btn" class="theme-io-btn" title="Export current colors as JSON">&#x2913; Export</button>
         </div>
-        <textarea id="theme-import-area" class="theme-import-area hidden" placeholder="Paste theme JSON here..." rows="3"></textarea>
+        <textarea id="theme-import-area" class="theme-import-area hidden" placeholder="Paste theme JSON here..." rows="3" aria-label="Paste theme JSON here..."></textarea>
         <div class="theme-import-actions hidden" id="theme-import-actions">
           <button type="button" id="theme-import-go" class="theme-io-btn">Apply</button>
           <button type="button" id="theme-import-cancel" class="theme-io-btn">Cancel</button>
@@ -1176,7 +1176,7 @@
           <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
             <div class="model-picker-search-row">
-              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off">
+              <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off" aria-label="Search models...">
               <button type="button" class="model-picker-action-btn primary" id="model-picker-add-models-btn" title="Add model endpoints" aria-label="Add model endpoints">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               </button>
@@ -1674,15 +1674,15 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Max Tokens</label>
-                <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;">
+                <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;" aria-label="8192 (default)">
               </div>
               <div class="settings-row">
                 <label class="settings-label">Extract Timeout</label>
-                <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:120px;">
+                <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:120px;" aria-label="90 sec">
               </div>
               <div class="settings-row">
                 <label class="settings-label">Extract Parallel</label>
-                <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;">
+                <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;" aria-label="3">
               </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
@@ -1693,7 +1693,7 @@
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">Tool call limit</label>
-                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
+                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;" aria-label="0 = unlimited">
               </div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
@@ -1743,7 +1743,7 @@
                   <option value="tts-1-hd">tts-1-hd (quality)</option>
                   <option value="gpt-4o-mini-tts">gpt-4o-mini-tts (steerable)</option>
                 </select>
-                <input id="set-ttsModelInput" type="text" placeholder="model name" style="flex:1;padding:5px;display:none;">
+                <input id="set-ttsModelInput" type="text" placeholder="model name" style="flex:1;padding:5px;display:none;" aria-label="model name">
               </div>
               <div id="set-ttsVoiceRow" style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Voice</label>
@@ -1758,7 +1758,7 @@
                   <option value="sage">Sage</option>
                   <option value="shimmer">Shimmer</option>
                 </select>
-                <input id="set-ttsVoiceInput" type="text" placeholder="af_heart" style="flex:1;padding:5px;display:none;">
+                <input id="set-ttsVoiceInput" type="text" placeholder="af_heart" style="flex:1;padding:5px;display:none;" aria-label="af_heart">
               </div>
               <div id="set-ttsSpeedRow" style="display:flex;align-items:center;gap:0.75rem;">
                 <label class="settings-label">Speed</label>
@@ -1832,15 +1832,15 @@
               </div>
               <div id="set-searchUrlRow" class="settings-row">
                 <label class="settings-label">URL</label>
-                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080" class="settings-select">
+                <input id="set-searchUrl" type="text" placeholder="http://localhost:8080" class="settings-select" aria-label="http://localhost:8080">
               </div>
               <div id="set-searchKeyRow" class="settings-row" style="display:none;">
                 <label class="settings-label">API Key</label>
-                <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select">
+                <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select" aria-label="API key">
               </div>
               <div id="set-searchCxRow" class="settings-row" style="display:none;">
                 <label class="settings-label">CX ID</label>
-                <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select">
+                <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select" aria-label="Google PSE engine ID">
               </div>
               <div class="settings-row">
                 <label class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
@@ -2071,9 +2071,9 @@
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Change Password</h2>
             <div class="settings-col">
-              <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
-              <input id="settings-pw-new" type="password" placeholder="New password (min 8)" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
-              <input id="settings-pw-confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;">
+              <input id="settings-pw-current" type="password" placeholder="Current password" autocomplete="current-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;" aria-label="Current password">
+              <input id="settings-pw-new" type="password" placeholder="New password (min 8)" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;" aria-label="New password (min 8)">
+              <input id="settings-pw-confirm" type="password" placeholder="Confirm new password" autocomplete="new-password" style="padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:12px;" aria-label="Confirm new password">
               <div class="settings-row" style="margin-top:2px;justify-content:flex-end;">
                 <span id="settings-pw-msg" style="font-size:11px;margin-right:auto;"></span>
                 <button type="button" class="admin-btn-add" id="settings-pw-save">Update Password</button>
@@ -2110,7 +2110,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">AI-extracted from your sent emails. Used when AI drafts replies.</div>
             <div class="settings-col">
-              <textarea id="set-email-style" rows="4" class="settings-select" style="font-family:inherit;resize:vertical" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
+              <textarea id="set-email-style" rows="4" class="settings-select" style="font-family:inherit;resize:vertical" placeholder="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..." aria-label="e.g. I write emails in this style. I don't use exclamation marks. I sign emails with: ..."></textarea>
               <div class="settings-row" style="margin-top:4px">
                 <span id="set-email-style-msg" style="font-size:11px;"></span>
                 <button type="button" class="admin-btn-add" id="set-email-style-extract" style="margin-left:auto;">Extract from Sent (15 emails)</button>
@@ -2140,11 +2140,11 @@
               </div>
               <div id="set-reminder-email-to-row" class="settings-row" style="display:none">
                 <label class="settings-label">Send to</label>
-                <input id="set-reminder-email-to" class="settings-select" type="email" placeholder="you@example.com" />
+                <input id="set-reminder-email-to" class="settings-select" type="email" placeholder="you@example.com"  aria-label="you@example.com">
               </div>
               <div id="set-reminder-ntfy-topic-row" class="settings-row" style="display:none">
                 <label class="settings-label">ntfy topic</label>
-                <input id="set-reminder-ntfy-topic" class="settings-select" type="text" placeholder="reminders" />
+                <input id="set-reminder-ntfy-topic" class="settings-select" type="text" placeholder="reminders"  aria-label="reminders">
               </div>
               <div id="set-reminder-channel-hint" style="font-size:11px;opacity:0.6;"></div>
               <div style="font-size:11px;opacity:0.6;margin-top:4px;">Configure email account, ntfy server, etc. in <a href="#" id="set-reminders-open-integrations" style="color:var(--accent, var(--red));text-decoration:none;font-weight:600;">Integrations</a>.</div>
@@ -2160,7 +2160,7 @@
             <div class="settings-col">
               <div class="settings-row">
                 <label class="settings-label">URL</label>
-                <input id="set-app-public-url" class="settings-select" type="url" placeholder="https://chat.example.com" style="flex:1;" />
+                <input id="set-app-public-url" class="settings-select" type="url" placeholder="https://chat.example.com" style="flex:1;"  aria-label="https://chat.example.com">
               </div>
               <div id="set-app-public-url-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
@@ -2240,8 +2240,8 @@
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>Add User</h2>
             <div class="admin-add-form">
-              <input id="adm-newUsername" type="text" placeholder="Username (email)">
-              <input id="adm-newPassword" type="password" placeholder="Password (min 8)">
+              <input id="adm-newUsername" type="text" placeholder="Username (email)" aria-label="Username (email)">
+              <input id="adm-newPassword" type="password" placeholder="Password (min 8)" aria-label="Password (min 8)">
               <div class="admin-switch-inline" title="Grant full admin access"><label class="admin-switch"><input type="checkbox" id="adm-newIsAdmin"><span class="admin-slider"></span></label> Admin</div>
             </div>
             <div class="settings-row" style="margin-top:6px;">
@@ -2271,7 +2271,7 @@
               </div>
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
+                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1" aria-label="Paste endpoint URL, e.g. http://localhost:11434/v1">
                   <select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
@@ -2311,7 +2311,7 @@
                      its value so the existing JS that reads adm-epProvider
                      keeps working unchanged. -->
                 <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker">
-                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off">
+                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" aria-label="Base URL or pick provider">
                   <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider">
                     <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
                     <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -2334,7 +2334,7 @@
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
                 </select>
                 <div class="admin-model-form-row">
-                  <input id="adm-epApiKey" type="password" placeholder="API key">
+                  <input id="adm-epApiKey" type="password" placeholder="API key" aria-label="API key">
                   <select id="adm-epType" style="padding:5px;width:80px;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
@@ -2484,7 +2484,7 @@
   <!-- Search overlay (Ctrl+K command palette) -->
   <div class="search-overlay hidden" id="search-overlay">
     <div class="search-popup">
-      <input type="text" id="search-input" placeholder="Search conversations..." autocomplete="off" />
+      <input type="text" id="search-input" placeholder="Search conversations..." autocomplete="off"  aria-label="Search conversations...">
       <div class="search-results" id="search-results"></div>
     </div>
   </div>
