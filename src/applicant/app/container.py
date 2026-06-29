@@ -65,7 +65,12 @@ from applicant.application.workflows import application_pipeline
 
 @dataclass
 class Container:
-    """Holds every adapter + service. Built once at startup, injected via deps."""
+    """Holds every adapter + service. Built once at startup, injected via deps.
+
+    FROZEN after construction: ``__init__`` builds it, and then
+    ``__setattr__`` prevents mutation so phase agents cannot accidentally
+    swap out services at runtime (defense-in-depth — the wiring contract).
+    """
 
     settings: Settings
 
@@ -162,6 +167,22 @@ class Container:
     # is configured (in-memory storage is thread-safe enough for the no-DB lane and is
     # shared). Each call returns a dict including ``_session`` to close in ``finally``.
     request_services_factory: Any = None
+
+    _frozen: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Freeze the container after construction."""
+        object.__setattr__(self, "_frozen", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Prevent mutation after the container is built (FROZEN enforcement)."""
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"Cannot set attribute {name!r} on frozen Container. "
+                "The container is built once at startup and must not be mutated "
+                "at runtime by phase agents."
+            )
+        object.__setattr__(self, name, value)
 
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
@@ -298,7 +319,12 @@ def _build_orchestrator(settings: Settings) -> Any:
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
 
-        return DbosOrchestrator(settings.database_url)
+        timeout_seconds = (
+            float(settings.approval_timeout_days * 86_400)
+            if settings.approval_timeout_days > 0
+            else 0.0
+        )
+        return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
@@ -741,7 +767,7 @@ def build_container(settings: Settings | None = None) -> Container:
     research_service = ResearchService(workspace=workspace)
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
-    from applicant.application.services.agent_loop import AgentLoop, ResumeLedger
+    from applicant.application.services.agent_loop import AgentLoop, DigestLedger, ResumeLedger
     from applicant.application.services.scheduler import Scheduler
 
     # ONE resume ledger for the whole process. The scheduler rebuilds a fresh
@@ -749,6 +775,10 @@ def build_container(settings: Settings | None = None) -> Container:
     # failure cap must live OUTSIDE the loop instance or they reset every tick and
     # never take effect. Injected into both the shared loop and each per-tick loop.
     resume_ledger = ResumeLedger()
+    # ONE digest ledger for the whole process (same reasoning: the per-tick rebuild
+    # would reset the "already delivered today" guard, re-sending the digest every
+    # tick). Injected into both the shared loop and each per-tick loop.
+    digest_ledger = DigestLedger()
 
     # FR-MIND: the agent-learning substrate. Build the curated-memory / skills / recall
     # adapter trio (default ``in_memory`` — hermetic, no deps; ``bridge`` reaches the
@@ -882,6 +912,7 @@ def build_container(settings: Settings | None = None) -> Container:
         setup_service=setup_service,
         research_service=research_service,
         resume_ledger=resume_ledger,
+        digest_ledger=digest_ledger,
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
     )
@@ -984,6 +1015,7 @@ def build_container(settings: Settings | None = None) -> Container:
             setup_service=setup_service,
             research_service=research_service,
             resume_ledger=resume_ledger,
+            digest_ledger=digest_ledger,
             llm=llm,
             # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.

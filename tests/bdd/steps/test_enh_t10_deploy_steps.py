@@ -165,7 +165,8 @@ def storage_db_unreachable(t10ctx, app_client):
         def dispose(self):
             pass
 
-    app_client.app.state.container.engine = _BoomEngine()
+    # Container is frozen after construction; bypass with object.__setattr__ for test.
+    object.__setattr__(app_client.app.state.container, "engine", _BoomEngine())
     t10ctx["client"] = app_client
 
 

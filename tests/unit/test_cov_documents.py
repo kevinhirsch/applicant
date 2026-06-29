@@ -259,6 +259,7 @@ def test_material_service_fallback_builds_from_container_adapters(app):
     # When a per-request material service IS present, the helper returns it as-is.
     assert _material_service(container) is container.material_service
 
-    container.material_service = None  # force the fallback construction branch.
+    # Container is frozen after construction; bypass with object.__setattr__ for test.
+    object.__setattr__(container, "material_service", None)  # force the fallback construction branch.
     svc = _material_service(container)
     assert isinstance(svc, MaterialService)

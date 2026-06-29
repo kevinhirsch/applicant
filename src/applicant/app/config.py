@@ -187,6 +187,13 @@ class Settings(BaseSettings):
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
     checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
 
+    # Durable approval-gate timeout (FR-DUR-3). How many days the engine waits for
+    # a human decision (final approval / account hand-off) before timing out the
+    # pending workflow. Default 30 days — long enough for a real vacation, short
+    # enough that a genuinely abandoned application is surfaced. Set 0 for no timeout
+    # (effectively forever, matching the old hardcoded ~10 years).
+    approval_timeout_days: int = Field(default=30, ge=0, alias="APPROVAL_TIMEOUT_DAYS")
+
     # Scheduler (FR-DIG-1, FR-NOTIF-2, NFR-247-1). OFF by default so the default
     # test lane / TestClient never spins a live background loop; prod compose sets
     # it True (zero-CLI via env). When True the lifespan starts the asyncio tick
