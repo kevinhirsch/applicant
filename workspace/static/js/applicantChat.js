@@ -83,6 +83,7 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
