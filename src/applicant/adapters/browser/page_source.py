@@ -903,7 +903,7 @@ class PlaywrightPageSource:
         try:
             self._page.wait_for_load_state("networkidle", timeout=timeout_ms)
         except Exception:
-            pass
+            log.warning("_settle(): wait_for_load_state timed out after %d ms", timeout_ms, exc_info=True)
 
     def _click_first(self, selectors) -> bool:  # pragma: no cover - integration-gated
         """Click the first present + enabled selector; return whether one was clicked."""
@@ -1569,7 +1569,7 @@ class PlaywrightPageSource:
                 try:
                     self._page.wait_for_load_state("networkidle", timeout=10_000)
                 except Exception:
-                    pass
+                    log.warning("advance(): wait_for_load_state timed out after 10 s", exc_info=True)
             except Exception:
                 continue
             # Detect end-of-flow: clicking did not move us anywhere new.
