@@ -166,6 +166,19 @@ switcher) are tracked below.
   [data-model.md](data-model.md)) and cross-campaign isolation is tested; the remaining
   work is the multi-campaign switcher UI binding in the front door.
 
+### Shared component-kit adoption (cross-cutting, `FR-UIKIT`)
+
+- **Surface:** *every* reachable surface in the table above, plus the present-but-disabled
+  Compare surface — re-rendered through one vendored component kit (window / notice /
+  gadget / decision / atomic elements / chat-hint + glass-token foundation).
+- **Requirement ID(s):** `FR-UIKIT-1..9` (see [spec/ui-kit-migration.md](spec/ui-kit-migration.md));
+  vendoring appendix [HARVEST-UIKIT-MAP.md](HARVEST-UIKIT-MAP.md).
+- **Wiring remaining:** vendor the kits (`appkit*`, white-label renamed), then map each
+  surface's chrome onto its kit (matrix §5), reconciling with `windowDrag.js` /
+  `modalManager.js` / `ui.js` `showToast` / the Portal — without regressing a11y
+  (#379–#394) or the progressive-activation gating. Tracked as the epic + per-surface
+  issues; BDD reds live in `tests/bdd/features/enhancements/uikit_*.feature`.
+
 ---
 
 **Process rule:** any new surface added to the front door that is not yet wired MUST be
