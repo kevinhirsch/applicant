@@ -384,6 +384,90 @@ def test_provider_context_error_climbs():
     assert res.tier == 2 and res.text == "ok"
 
 
+# --- #285: _is_context_error false-positive regression -------------------
+def test_is_context_error_real_overflow_detected():
+    """A genuine context_length_exceeded error must be detected."""
+    resp = httpx.Response(
+        400,
+        json={"error": {"code": "context_length_exceeded", "message": "maximum context length"}},
+    )
+    assert OpenAICompatibleLLM._is_context_error(resp) is True
+
+
+def test_is_context_error_content_filter_not_detected():
+    """A content-filter rejection that mentions 'context' must NOT trip the overflow handler."""
+    resp = httpx.Response(
+        400,
+        json={
+            "error": {
+                "code": "content_filter",
+                "message": "Your request was rejected in the context of the request policy.",
+            }
+        },
+    )
+    assert OpenAICompatibleLLM._is_context_error(resp) is False
+
+
+def test_is_context_error_normal_response_not_detected():
+    """A successful response whose text mentions 'context' must not trip the overflow handler."""
+    resp = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "content": "Here is the relevant context for your question."
+                    }
+                }
+            ]
+        },
+    )
+    assert OpenAICompatibleLLM._is_context_error(resp) is False
+
+
+def test_is_context_error_too_many_tokens_detected():
+    """An 'too many tokens' phrase in the error body must be detected as overflow."""
+    resp = httpx.Response(
+        413,
+        json={"error": {"message": "Request failed: too many tokens in the input."}},
+    )
+    assert OpenAICompatibleLLM._is_context_error(resp) is True
+
+
+def test_content_filter_does_not_escalate_tier():
+    """A content-filter rejection must NOT trigger a tier climb (#285 regression).
+
+    Before the fix, a 400 with "context" anywhere in the body climbed the ladder
+    instead of raising HTTPStatusError. After the fix it must surface as an error
+    (the ladder exhausts at one tier), not silently succeed on tier 2.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": "content_filter",
+                    "message": "Request blocked in the context of content policy.",
+                }
+            },
+        )
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(
+                provider="openai",
+                base_url="https://a/v1",
+                model="small",
+                context_window=100_000,
+            ),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    with pytest.raises((LLMLadderExhausted, httpx.HTTPStatusError)):
+        llm.complete([ChatMessage(role="user", content="q")])
+
+
 # --- FR-LLM-4a: robust JSON extraction ------------------------------------
 import pytest as _pytest  # noqa: E402
 
