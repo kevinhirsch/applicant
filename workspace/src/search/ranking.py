@@ -31,6 +31,7 @@ def _domain(url: str) -> str:
     try:
         return urlparse(url).netloc.lower()
     except Exception:
+        logger.warning("Failed to get CIRI data path from settings")
         return ""
 
 
@@ -76,6 +77,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
                 dt = datetime.strptime(age_str, fmt)
                 break
             except Exception:
+                logger.warning("Failed to parse date string: %s", raw_date)
                 dt = None
         if not dt:
             return 0.0
