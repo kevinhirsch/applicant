@@ -229,10 +229,20 @@ default until a phase proves out on the integration fixtures.
 
 ## 13. Reuse candidates (to be populated from the domain deep-research)
 
-The lift-and-shift principle (#1) says prefer adapting proven code over writing fresh.
-The companion deep-research report identifies specific OSS to borrow for: the a11y/DOM
-serializer, the act/extract/observe DSL shape, agent-memory backends, and eval harnesses.
-This section will be filled from that report's "top recommendations to adopt."
+Lift-and-shift (principle #1): adapt proven, **license-clean** code over writing fresh.
+From `docs/design/competitive-research.md` (MIT/Apache-2.0 only — Skyvern is AGPL, idea-only):
+
+- **DOM/a11y serializer (§2)** ← **browser-use** (MIT) — lift the DOM-snapshot-as-text serializer.
+- **The DSL shape (§1)** ← **Stagehand** (MIT) `act`/`extract`/`observe` — our typed-op surface, proven on Playwright.
+- **Planner/LLM adapter (§4)** ← **litellm** (MIT) — back the L1/L2 ladder with retries/fallbacks/cost-tracking + structured output.
+- **Self-correction (§5)** ← **Reflexion** (verbal reflection in episodic memory) pattern.
+- **Skills/learning feeding the planner (§9)** ← **AWM** (Apache-2.0: induce reusable per-ATS workflows from successful runs) + **ACE** (generation→reflection→curation playbook) + **Voyager/SkillWeaver** (skills-as-code). The "smarter every application" flywheel.
+- **Memory backend (§9)** ← **mem0 / Letta / Graphiti** (Apache-2.0) behind the memory port.
+- **Eval / A-B gate (§12)** ← **AgentLab + BrowserGym** (Apache-2.0).
+- **Integration surface** ← **fastapi_mcp** (MIT) to expose the engine as an MCP server; the MCP reference Memory / Sequential-Thinking / Fetch servers as drop-in tools.
+
+Competitive reference (study; verify license before any code reuse): **ApplyPilot**
+(near-twin pipeline; Workday-portal registry pattern).
 
 ## 14. Risks & open questions
 
