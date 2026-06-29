@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 from applicant.app.deps import (
@@ -66,6 +68,29 @@ def build_preview(
         "fidelity_ok": preview.fidelity_ok,
         "notes": preview.notes,
     }
+
+
+@router.get("/{campaign_id}/preview/download")
+def download_preview(
+    campaign_id: str,
+    svc=Depends(get_conversion_service),
+    onboarding=Depends(get_onboarding_service),
+) -> FileResponse:
+    """Download the compiled LaTeX conversion PDF preview (issue #178).
+
+    Returns the PDF when the real TeX engine produced output; 404 in stub mode.
+    """
+    from applicant.app.routers.ui import _static_dir
+    source = _base_source(campaign_id, onboarding)
+    preview = svc.build_preview(campaign_id, source)
+    if preview.storage_path:
+        p = Path(preview.storage_path)
+        if p.is_file():
+            return FileResponse(str(p), media_type="application/pdf", filename=p.name)
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Conversion preview PDF not available. Install a TeX engine and set RESUME_RENDER=auto.",
+    )
 
 
 @router.post("/{campaign_id}/accept")

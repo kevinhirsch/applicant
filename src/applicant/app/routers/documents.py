@@ -13,6 +13,8 @@ Gated behind the LLM-settings gate (FR-UI-5).
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 from applicant.app.container import Container
@@ -126,6 +128,35 @@ def _session_payload(session) -> dict:
         ],
         "redline_state": session.redline_state,
     }
+
+
+@router.get("/variants/{variant_id}/download")
+def download_artifact(variant_id: str, material=Depends(get_material_service)) -> FileResponse:
+    """Download the rendered PDF artifact for a resume variant (issue #178).
+
+    Serves the compiled PDF when the real render engine was available and produced
+    output. Returns 404 when the artifact does not exist (stub mode or compile
+    failure).
+    """
+    from applicant.adapters.resume_tailoring.latex_tailor import LatexTailor
+    from applicant.adapters.resume_tailoring.docx_tailor import DocxTailor
+
+    # Check LaTeX artifact path first, then docx.
+    artifact_dir = Path.cwd() / ".artifacts"
+    candidates = [
+        artifact_dir / "latex" / variant_id / "resume.pdf",
+        artifact_dir / "docx" / f"{variant_id}.pdf",
+        artifact_dir / "latex" / variant_id / "resume.tex",
+    ]
+    for p in candidates:
+        if p.is_file():
+            media_type = "application/pdf" if p.suffix == ".pdf" else "text/plain"
+            return FileResponse(str(p), media_type=media_type, filename=p.name)
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Rendered artifact not found. Enable the real render engine (RESUME_RENDER=on) to produce PDF output.",
+    )
 
 
 @router.get("")
