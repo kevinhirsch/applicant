@@ -127,9 +127,11 @@ six landed fixes beat zero.
 ## Talk-while-it-runs
 Steer the overseer like Claude Code: type plain English while a wave runs; it lands at the next
 `wait` return. No keywords. Loop after dispatch:
-1. **Escalating short `wait`s** — **first `wait` = 15s; hard-cap EVERY `wait` at 120s.** Then
-   15s→30s→60s→120s, reset to 15s on any change. A multi-minute `wait` is a bug: you learn of a
-   stall or a completion that late, and you can't be steered until it returns. Each return =
+1. **Short `wait`s — default 15s; NEVER exceed ~30s while the owner is in the loop.** Each `wait`
+   blocks the dialogue for its full length (queued owner input only lands when it returns), so a
+   120s wait = a 2-minute lockout = a bug. Ramp 15s→30s only while genuinely quiet; **reset to
+   15s on any change or any owner message.** The 120s figure is a worst-case ceiling for
+   *unattended* long-monitoring — NOT your working value; don't default to it. Each return =
    liveness + completion + steering boundary.
 2. **Read owner input first, act, ack in one line.** Map intent: "stop"→`Esc`/kill;
    "redirect #N"→`continue_from`; "add #N"→new agent; "skip #N"→drop + note in PR;
