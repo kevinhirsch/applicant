@@ -1,5 +1,5 @@
-# Applicant API image. python:3.11-slim + uv.
-FROM python:3.11-slim
+# Applicant API image. python:3.12-slim + uv.
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -111,10 +111,10 @@ RUN uv run --no-sync camoufox fetch
 COPY src ./src
 RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
-# App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
+# App code + workspace static + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
 COPY alembic.ini ./
-COPY frontend ./frontend
+COPY workspace/static ./workspace/static
 COPY templates ./templates
 COPY scripts ./scripts
 

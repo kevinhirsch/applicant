@@ -194,7 +194,7 @@ if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" &
   else
     CHANGED="$(git -C "${REPO_ROOT}" diff --name-only "${OLD_REV}" "${NEW_REV}" 2>/dev/null || true)"
     # Engine (api) image inputs — its source plus everything COPYed into its build.
-    grep -qE '^(src/|pyproject\.toml|uv\.lock|README\.md|alembic\.ini|frontend/|templates/|scripts/|docker/Dockerfile)' <<<"${CHANGED}" || REBUILD_API=0
+    grep -qE '^(src/|pyproject\.toml|uv\.lock|README\.md|alembic\.ini|workspace/|templates/|scripts/|docker/Dockerfile)' <<<"${CHANGED}" || REBUILD_API=0
     # Front-door (applicant-ui) image inputs — the vendored app + its Dockerfile/entrypoint.
     grep -qE '^workspace/' <<<"${CHANGED}" || REBUILD_UI=0
     # Migrations — only a change under the Alembic versions dir adds/removes a revision.
