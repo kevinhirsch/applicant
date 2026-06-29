@@ -11,7 +11,7 @@ core never imports SQLAlchemy.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from applicant.core.entities.agent_run import AgentRun
@@ -24,32 +24,31 @@ from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
 from applicant.core.entities.follow_up import FollowUp
-from applicant.core.entities.ghosting_signal import GhostingSignal
-from applicant.core.entities.portfolio_attachment import PortfolioAttachment
-from applicant.core.entities.rejection_signal import RejectionSignal
-from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.entities.generated_document import GeneratedDocument
+from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
+from applicant.core.entities.portfolio_attachment import PortfolioAttachment
+from applicant.core.entities.rejection_signal import RejectionSignal
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
+from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
-    FollowUpId,
-    PortfolioAttachmentId,
-    RejectionSignalId,
-    SubmissionSnapshotId,
     AgentRunId,
     ApplicationId,
     AttributeId,
     CampaignId,
     FieldMappingId,
+    FollowUpId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
+    PortfolioAttachmentId,
     ResumeVariantId,
     RevisionSessionId,
+    SubmissionSnapshotId,
 )
 from applicant.core.state_machine import ApplicationState
 

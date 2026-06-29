@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
 from applicant.core.ids import ApplicationId, CampaignId
+
 
 @dataclass(frozen=True)
 class GhostingSignal:

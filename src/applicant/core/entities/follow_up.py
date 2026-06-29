@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+
 from applicant.core.ids import ApplicationId, CampaignId, FollowUpId
+
 
 class FollowUpTemplate(str, Enum):
     THANK_YOU = "thank_you"
