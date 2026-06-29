@@ -32,11 +32,14 @@ tested; swapping in the real Playwright page-source is the only change to go liv
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 
 from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
+
+log = logging.getLogger(__name__)
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.pending_action import PendingAction
@@ -642,7 +645,7 @@ class PrefillService:
             if tenant_key:
                 store.capture(app.campaign_id, tenant_key, username, password)
         except Exception:  # pragma: no cover - defensive
-            pass
+            log.warning("Failed to capture credential for tenant", exc_info=True)
 
     def _two_factor_handoff(self, app, result) -> PrefillResult:
         """Google sign-in needs a second factor the engine cannot produce. Hold the
