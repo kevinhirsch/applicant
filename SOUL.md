@@ -51,8 +51,8 @@ subagents for file-disjoint issues, review their output, capture screenshots via
 | Capability | Tool | Notes |
 |---|---|---|
 | Parallel subagents | `parallel_tasks` | Context-isolated; **blocks the whole turn until all finish — owner can't steer mid-wave. NOT the overseer default** (see "Talk-while-it-runs") |
-| Background subagents | `task(run_in_background:true)` | Persists across turns; collect with `wait` |
-| Resume a subagent | `task(continue_from: "sa_...")` | Reasonix equivalent of SendMessage |
+| Background subagents | `task(run_in_background:true)` | ≈ Claude Code `Agent(run_in_background:true)` — async, notified/collected on completion. Persists across turns; collect with `wait`/`bash_output`. **Default dispatch in overseer mode.** |
+| Resume a subagent | `task(continue_from: "sa_...")` | ≈ Claude Code `SendMessage(agent_id)` — continue a spawned agent with its context intact (a fresh `task` starts cold). |
 | Background timers | `bash(run_in_background:true, "sleep N")` | Persists across turns; read with `bash_output` |
 | Merge PRs | `mcp__github__merge_pull_request` | Only when explicitly authorized |
 | Check CI | `mcp__github__get_pull_request_status` | Poll to watch CI |
@@ -126,13 +126,16 @@ often the owner is heard:
 - ✅ **Background dispatch + incremental poll** opens a turn boundary on every poll, so
   queued owner input is picked up mid-wave. This is the overseer default.
 
-### The loop (use this for every wave)
-1. **Fan out:** one `task(run_in_background:true)` per file-disjoint issue; record each `sa_` id.
-2. **Poll in SHORT increments:** a brief `wait` / `bash_output`, then **end the turn**. Never
-   one long blocking `wait` on all tasks — that recreates the `parallel_tasks` problem and
-   slams the channel shut for the whole wave.
-3. **Top of every poll turn: check for an owner message and reconcile BEFORE continuing** —
-   redirect a live subagent via `task(continue_from: "sa_...")`, cancel/re-scope, or note it.
+### The loop (use this for every wave) — same shape as Claude Code background agents
+1. **Fan out:** one `task(run_in_background:true)` per file-disjoint issue (≈ Claude Code
+   `Agent(run_in_background:true)`); record each `sa_` id.
+2. **End your turn after dispatching** — like Claude Code, an idle overseer is woken by an
+   owner message *or* a task-completion signal, so the channel stays open with no work. Do NOT
+   sit inside one long blocking `wait` on all tasks — that closes the channel for the whole
+   wave (the `parallel_tasks` failure). If Reasonix needs an explicit nudge to surface
+   completions, use SHORT `wait` / `bash_output` checks between turns, never a long one.
+3. **Top of every turn: check for an owner message and reconcile BEFORE continuing** — resume/
+   redirect a live subagent via `task(continue_from: "sa_...")` (≈ `SendMessage`), cancel, or note it.
 4. Repeat until all `sa_` ids report done, then run the gate set + open the PR as usual.
 
 **Trade-off (accepted by the owner):** more orchestration turns and a few prefix-cache
@@ -140,24 +143,26 @@ misses, in exchange for a steering channel that stays open the entire wave. Resp
 over raw throughput. Hard interrupt (`Esc` / `Ctrl+C`) stays available when something must
 stop NOW rather than at the next poll boundary.
 
-### Owner steering protocol (parse this at the top of every poll turn)
-Keywords are **case-insensitive, one directive per line**; more than one may arrive at once.
-Act on them BEFORE doing anything else in the turn, then acknowledge what you did in one line.
+### Owner steering (natural language — mirror Claude Code; no reserved keywords)
+Steer the overseer the way you steer Claude Code: **type a plain-English message while the
+wave runs.** It's queued and applied at the next poll boundary — no magic words, no syntax to
+memorize. At the top of each poll turn, read any owner message, infer intent, act, then
+acknowledge in one line. These are the common intents and the primitive each maps to (the
+mapping is for the overseer — the owner just speaks normally):
 
-| Directive | Overseer action |
+| Owner intent (said however) | Overseer maps to (Claude Code semantics) |
 |---|---|
-| `STATUS` | Report each live `sa_` id + a one-line progress note. Take no other action. |
-| `PAUSE` | Stop dispatching new work and do NOT advance to the next wave; let in-flight subagents finish. Hold until `RESUME`. |
-| `RESUME` (or `GO`) | Undo `PAUSE`; continue the loop. |
-| `STOP #NNN` / `STOP ALL` | Hard-cancel (`Esc`/`Ctrl+C`) that subagent (or all). Exclude cancelled work from the PR. |
-| `RESCOPE #NNN <text>` | Redirect that issue's live subagent via `task(continue_from:"sa_...")`, forwarding `<text>` as new guidance. If it already finished, re-dispatch with the amended brief. |
-| `DROP #NNN` | Abandon the issue: cancel its subagent, remove from the wave, record it as deferred in the PR body. |
-| `ADD #NNN <note>` | File-disjoint check, then dispatch a new background subagent for #NNN into the current wave. |
-| `HOLD PR` | Finish all work but do NOT open the PR; wait for `GO PR`. |
+| "stop" / "cancel that" / `Esc` | **Interrupt** — `Esc`/`Ctrl+C`, or stop the named/most-recent subagent (the TaskStop equivalent). |
+| "on #NNN, do X instead" / "redirect that one" | **Resume the subagent with new guidance** — `task(continue_from:"sa_...")`, the SendMessage equivalent. If it already finished, re-dispatch with the amended brief. |
+| "also do #NNN" / "add #NNN" | Dispatch a new background subagent (file-disjoint check first). |
+| "skip #NNN" / "drop it" | Abandon that subagent; note it deferred in the PR body. |
+| "don't open the PR yet" / "hold the PR" | Finish work, wait to open the PR until told. |
+| "what's the status?" | Report each live `sa_` id + a one-line progress note. |
+| "pause" / "hold" … "keep going" | Hold new dispatch and wave-advance / resume. |
 
-Anything **without** a keyword = freeform steering: apply it to the most relevant in-flight
-subagent (via `continue_from`) if it's unambiguous, otherwise hold it and ask the owner at
-the next poll rather than guessing. Never silently ignore owner input.
+Same rules as Claude Code: queued input lands at the next turn boundary (keep polls short —
+"Talk-while-it-runs" above); `Esc`/`Ctrl+C` is the immediate interrupt; ambiguous input → ask,
+don't guess; never silently ignore owner input.
 
 ## Dispatch loop (per issue cluster)
 1. Read map → read issue → read spec (feature + steps).
