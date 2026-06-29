@@ -196,6 +196,15 @@ class PageSource(Protocol):
         """True if the current page is a post-submission confirmation (FR-LOG-4)."""
         ...
 
+    def execute(self, plan: "Plan") -> list[dict]:
+        """Execute a Plan-as-Data typed-DSL plan against the current page.
+
+        Returns a list of per-op results ``[{"op": ..., "ok": bool, "detail": ...}]``.
+        The default implementation for in-memory fakes delegates to the existing
+        ``type_value`` / ``set_input_files`` / ``click`` methods.
+        """
+        ...
+
 
 # --- in-memory fake driver (DEFAULT, hermetic) -------------------------------
 class FakePageSource:
@@ -354,6 +363,42 @@ class FakePageSource:
         if url is not None:
             changes["url"] = url
         self._pages[self._index] = replace(page, **changes)
+
+    def execute(self, plan: "Plan") -> list[dict]:
+        """Execute a plan-as-data typed-DSL plan (fake: apply to in-memory pages)."""
+        from applicant.core.entities.plan import OpKind
+
+        results: list[dict] = []
+        for op in plan:
+            kind = op.kind
+            try:
+                if kind == OpKind.GOTO:
+                    self.open(op.url)
+                    results.append({"op": "goto", "ok": True, "detail": op.url})
+                elif kind == OpKind.FILL:
+                    self.type_value(op.ref, op.attribute_id)
+                    results.append({"op": "fill", "ok": True, "detail": op.ref})
+                elif kind == OpKind.SELECT:
+                    self.type_value(op.ref, op.attribute_id)
+                    results.append({"op": "select", "ok": True, "detail": op.ref})
+                elif kind == OpKind.CLICK:
+                    self.advance()
+                    results.append({"op": "click", "ok": True, "detail": op.ref})
+                elif kind == OpKind.UPLOAD:
+                    self.set_input_files(op.ref, op.document_id)
+                    results.append({"op": "upload", "ok": True, "detail": op.ref})
+                elif kind == OpKind.WAIT:
+                    results.append({"op": "wait", "ok": True, "detail": op.for_})
+                elif kind == OpKind.STOP:
+                    results.append({"op": "stop", "ok": True, "detail": op.reason})
+                elif kind == OpKind.GOTO:
+                    results.append({"op": "goto", "ok": True, "detail": op.url})
+                else:
+                    results.append({"op": kind.value, "ok": True, "detail": "stub"})
+            except Exception as exc:
+                results.append({"op": kind.value, "ok": False, "detail": str(exc)})
+                break
+        return results
 
     def simulate_confirmation(self, *, text: str = "Application submitted") -> None:
         """Seam/test helper: turn the current page into a confirmation page.
@@ -1680,6 +1725,54 @@ class PlaywrightPageSource:
         except Exception:
             body_text = ""
         return detect_confirmation(url=self._page.url, text=body_text)
+
+    def execute(self, plan: "Plan") -> list[dict]:  # pragma: no cover - integration-gated
+        """Execute a plan-as-data typed-DSL plan against the live Playwright page."""
+        from applicant.core.entities.plan import OpKind, FillOp, SelectOp, GotoOp
+
+        results: list[dict] = []
+        for op in plan:
+            kind = op.kind
+            try:
+                if kind == OpKind.GOTO:
+                    url = getattr(op, "url", "")
+                    assert_navigable_url(url)
+                    self._page.goto(url)
+                    self._page.wait_for_load_state("networkidle", timeout=10_000)
+                    results.append({"op": "goto", "ok": True, "detail": url})
+                elif kind == OpKind.FILL:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    val = getattr(op, "attribute_id", "")
+                    self.type_value(sel, val)
+                    results.append({"op": "fill", "ok": True, "detail": ref})
+                elif kind == OpKind.SELECT:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    val = getattr(op, "attribute_id", "")
+                    self._select_option(sel, val)
+                    results.append({"op": "select", "ok": True, "detail": ref})
+                elif kind == OpKind.CLICK:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    self._page.locator(sel).click()
+                    results.append({"op": "click", "ok": True, "detail": ref})
+                elif kind == OpKind.UPLOAD:
+                    ref = getattr(op, "ref", "")
+                    doc = getattr(op, "document_id", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    self.set_input_files(sel, doc)
+                    results.append({"op": "upload", "ok": True, "detail": ref})
+                elif kind == OpKind.WAIT:
+                    results.append({"op": "wait", "ok": True, "detail": "stub"})
+                elif kind == OpKind.STOP:
+                    results.append({"op": "stop", "ok": True, "detail": getattr(op, "reason", "")})
+                else:
+                    results.append({"op": kind.value, "ok": True, "detail": "stub"})
+            except Exception as exc:
+                results.append({"op": kind.value, "ok": False, "detail": str(exc)})
+                break
+        return results
 
     def close(self) -> None:  # pragma: no cover - integration-gated
         self._safe_teardown()
