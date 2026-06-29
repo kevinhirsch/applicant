@@ -90,6 +90,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'assistant-settings-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Assistant settings');
   modal.innerHTML = `
     <div class="modal-content" style="max-width:640px;width:96%;">
       <div class="modal-header">

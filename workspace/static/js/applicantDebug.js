@@ -96,6 +96,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-debug-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Applicant diagnostics');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:860px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">

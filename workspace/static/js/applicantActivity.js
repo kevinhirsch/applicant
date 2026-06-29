@@ -156,6 +156,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-activity-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Activity');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
