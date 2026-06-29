@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
@@ -138,6 +138,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Deployment mode (FR-DEPLOY). "" (default) = all integrations are hermetic/safe
+    # for tests and first-run; "production" = a single preset that flips every real
+    # integration on (live browser, live discovery, live notifications, durable
+    # orchestration, and the 24/7 scheduler) so a new deploy does real work immediately.
+    applicant_mode: str = Field(default="", alias="APPLICANT_MODE")
+
     # Storage (FR-CRIT-4, FR-DUR-3)
     database_url: str = Field(
         default="postgresql+psycopg://applicant:applicant@localhost:5432/applicant",
@@ -200,7 +206,7 @@ class Settings(BaseSettings):
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     # ge=1: a 0/negative cap would admit nothing; reject it at load.
     sandbox_concurrency: int = Field(default=3, ge=1, alias="SANDBOX_CONCURRENCY")
-    llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables
+    llm_rate_limit: int = Field(default=30, alias="LLM_RATE_LIMIT")  # 0 disables; default 30 req/min
     llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
 
     # Observability (FR-OBS-1)
@@ -445,6 +451,31 @@ class Settings(BaseSettings):
     proxmox_takeover_url_template: str = Field(
         default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
     )
+
+    @model_validator(mode='after')
+    def _apply_production_mode(self):
+        """When APPLICANT_MODE=production, flip every real integration on at once."""
+        if self.applicant_mode != "production":
+            return self
+        # Live integrations: real browser, live discovery, live notifications.
+        object.__setattr__(self, 'browser_real', True)
+        object.__setattr__(self, 'discovery_live', True)
+        object.__setattr__(self, 'notifications_live', True)
+        # Durable orchestration: switch from the in-process shim to DBOS.
+        object.__setattr__(self, 'orchestrator_backend', 'dbos')
+        # Scheduler: enable the 24/7 tick loop.
+        object.__setattr__(self, 'scheduler_enabled', True)
+        return self
+
+    @property
+    def scheduler_should_run(self) -> bool:
+        """True when the scheduler should be active: either explicitly enabled or in production mode."""
+        return self.scheduler_enabled or self.applicant_mode == "production"
+
+    @property
+    def deployment_profile(self) -> str:
+        """The deployment profile derived from applicant_mode (empty = hermetic)."""
+        return self.applicant_mode
 
     @field_validator("takeover_desktop")
     @classmethod
