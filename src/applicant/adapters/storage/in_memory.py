@@ -7,6 +7,7 @@ and contract tests run without Postgres.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from applicant.core.entities.agent_run import AgentRun
@@ -634,11 +635,47 @@ class _OnboardingProfileRepo:
             del self._ts[k]
         return len(stale)
 
+_MUTATING_PREFIXES = ("add", "update", "upsert", "delete", "resolve", "prune")
+
+
+class _StageProxy:
+    """Wraps a repo so mutating methods are staged instead of applied immediately.
+
+    ``commit()`` executes every staged action; ``rollback()`` clears them.
+    Read-only methods pass through unchanged.
+    """
+
+    def __init__(self, inner: object, staged: list[Callable[[], None]]) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_staged", staged)
+
+    def __getattr__(self, name: str):
+        inner = object.__getattribute__(self, "_inner")
+        staged = object.__getattribute__(self, "_staged")
+        attr = getattr(inner, name)
+        if not callable(attr):
+            return attr
+        if name.startswith(_MUTATING_PREFIXES):
+
+            def staged_call(*args, _orig=attr, **kwargs):
+                staged.append(lambda: _orig(*args, **kwargs))
+                return None
+
+            return staged_call
+        return attr
+
+
 
 class InMemoryStorage:
-    """In-memory ``StoragePort`` implementation."""
+    """In-memory ``StoragePort`` implementation.
+
+    Writes are STAGED and only applied on ``commit()``.
+    ``rollback()`` discards staged writes so tests that forget to commit
+    correctly observe no data was persisted (#241).
+    """
 
     def __init__(self) -> None:
+        self._staged: list[Callable[[], None]] = []
         self.campaigns = _CampaignRepo()
         self.attributes = _AttributeRepo()
         self.postings = _PostingRepo()
@@ -655,12 +692,37 @@ class InMemoryStorage:
         self.agent_runs = _AgentRunRepo()
         self.detection_events = _DetectionEventRepo(self.applications)
         self.onboarding_profiles = _OnboardingProfileRepo()
+        self._wrap_repos()
 
-    def commit(self) -> None:  # no-op; writes are immediate
-        pass
+    def _wrap_repos(self) -> None:
+        """Wrap every sub-repo with a _StageProxy so writes are staged."""
+        s = self._staged
+        self.campaigns = _StageProxy(self.campaigns, s)
+        self.attributes = _StageProxy(self.attributes, s)
+        self.postings = _StageProxy(self.postings, s)
+        self.applications = _StageProxy(self.applications, s)
+        self.resume_variants = _StageProxy(self.resume_variants, s)
+        self.documents = _StageProxy(self.documents, s)
+        self.revisions = _StageProxy(self.revisions, s)
+        self.decisions = _StageProxy(self.decisions, s)
+        self.outcomes = _StageProxy(self.outcomes, s)
+        self.screenshots = _StageProxy(self.screenshots, s)
+        self.pending_actions = _StageProxy(self.pending_actions, s)
+        self.field_mappings = _StageProxy(self.field_mappings, s)
+        self.discovery_sources = _StageProxy(self.discovery_sources, s)
+        self.agent_runs = _StageProxy(self.agent_runs, s)
+        self.detection_events = _StageProxy(self.detection_events, s)
+        self.onboarding_profiles = _StageProxy(self.onboarding_profiles, s)
+
+    def commit(self) -> None:
+        """Apply all staged writes (no-op when nothing is staged)."""
+        for action in self._staged:
+            action()
+        self._staged.clear()
 
     def rollback(self) -> None:
-        pass
+        """Discard all staged writes."""
+        self._staged.clear()
 
     def healthcheck(self) -> bool:
         return True
