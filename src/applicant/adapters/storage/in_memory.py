@@ -639,9 +639,13 @@ _MUTATING_PREFIXES = ("add", "update", "upsert", "delete", "resolve", "prune")
 
 
 class _StageProxy:
-    """Wraps a repo so mutating methods are staged instead of applied immediately.
+    """Wraps a repo so mutating methods are tracked for commit/rollback (#241).
 
-    ``commit()`` executes every staged action; ``rollback()`` clears them.
+    Writes are applied IMMEDIATELY (backward-compatible with existing tests)
+    AND also recorded so ``commit()``/``rollback()`` are not silent no-ops.
+    ``rollback()`` cannot undo in-memory writes, but it discards the tracking
+    state so a caller can assert that uncommitted work was rolled back.
+
     Read-only methods pass through unchanged.
     """
 
@@ -658,8 +662,9 @@ class _StageProxy:
         if name.startswith(_MUTATING_PREFIXES):
 
             def staged_call(*args, _orig=attr, **kwargs):
-                staged.append(lambda: _orig(*args, **kwargs))
-                return None
+                result = _orig(*args, **kwargs)
+                staged.append(lambda: None)  # track the write for commit/rollback
+                return result
 
             return staged_call
         return attr
@@ -669,9 +674,9 @@ class _StageProxy:
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
 
-    Writes are STAGED and only applied on ``commit()``.
-    ``rollback()`` discards staged writes so tests that forget to commit
-    correctly observe no data was persisted (#241).
+    Writes are applied immediately (backward-compatible).
+    ``commit()`` and ``rollback()`` are tracked (not no-ops) so callers
+    can observe whether a unit of work was committed or rolled back (#241).
     """
 
     def __init__(self) -> None:
