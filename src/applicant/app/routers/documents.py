@@ -308,7 +308,7 @@ def generate_deferred_essay(
 def set_aggressiveness(body: AggressivenessIn, material=Depends(get_material_service)) -> dict:
     """Set the truthful-framing dial (FR-RESUME-9). The UI control is grayed (FR-UI-2)."""
     value = material.set_aggressiveness(body.aggressiveness)
-    return {"aggressiveness": value}
+    return {"aggressiveness": value, "dormant_ui": True}
 
 
 # CRIT-profile: banned-phrase ("no-AI-look") list editor (FR-RESUME-5).

@@ -33,11 +33,11 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         surface_name="Resume aggressiveness / tuning control",
         requirement_ids=("FR-RESUME-9",),
         wiring_notes=(
-            "Wired to MaterialService via ConfigStore persistence; slider is live. "
-            "Clamped to range, persisted per deployment. (FR-RESUME-9)"
+            "Backend endpoint exists and clamps/persists the value (MaterialService), "
+            "but the slider control ships grayed per FR-UI-2. Activation tracked in #187."
         ),
         live_phase=3,
-        status=STATUS_LIVE,
+        status=STATUS_DORMANT,
     ),
     DormantSurface(
         key="digest_in_app",
