@@ -1131,8 +1131,9 @@ class PrefillService:
     def _is_screening_question(fld: DetectedField) -> bool:
         """A free-text answer field we draft for, vs a plain data field (name/email).
         A ``<textarea>`` is inherently a free-text prompt; a text input qualifies only
-        when its label READS like a question (ends with '?' or is a long-form prompt).
-        Never sensitive (FR-ATTR-6 — EEO is never AI-drafted)."""
+        when its label READS like a question (ends with '?' or uses question-like
+        phrasing such as "describe", "explain", "tell us about"). Never sensitive
+        (FR-ATTR-6 — EEO is never AI-drafted)."""
         if is_sensitive_field(fld.label):
             return False
         if fld.field_type == "textarea":
@@ -1140,7 +1141,23 @@ class PrefillService:
         if fld.field_type not in ("text", SCREENING_FACTUAL):
             return False
         label = (fld.label or "").strip()
-        return label.endswith("?") or len([w for w in label.split() if w]) >= 6
+        low = label.lower()
+        # Ends with '?' is a strong signal.
+        if label.endswith("?"):
+            return True
+        # Question-like phrasing beats simple word count.
+        _QUESTION_TRIGGERS = (
+            "describe", "explain", "tell us", "tell me", "how do you",
+            "how would you", "why do you", "what is your", "what are your",
+            "please describe", "please explain", "in detail", "elaborate",
+            "walk me through", "share your experience", "give an example",
+            "provide an example", "briefly describe",
+        )
+        if any(trigger in low for trigger in _QUESTION_TRIGGERS):
+            return True
+        # Free-text label with enough words to be a prompt (not name/email/phone).
+        words = [w for w in label.split() if w]
+        return len(words) >= 6
 
     def _generate_screening_answer(
         self, fld: DetectedField, attributes: list[Attribute]
