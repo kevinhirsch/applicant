@@ -61,6 +61,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # don't leave git creds on the self-hosted runner; no step pushes back (#167)
 
       # --- Python / engine --------------------------------------------------
       - name: Install uv (Python 3.11 toolchain)

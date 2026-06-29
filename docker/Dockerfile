@@ -1,13 +1,34 @@
 # Applicant API image. python:3.11-slim + uv.
-FROM python:3.11-slim
+#
+# Base images are pinned by immutable DIGEST, not a mutable tag (#160, #374): a tag
+# like `python:3.11-slim` can be repointed at a different image at any time, so an
+# unpinned build is not reproducible and is a supply-chain risk. The tag is kept in
+# the comment for human readability; bump the digest deliberately when upgrading.
+# Resolve a new digest with: docker buildx imagetools inspect python:3.11-slim
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_SYSTEM_PYTHON=1 \
     UV_COMPILE_BYTECODE=1
 
-# Install uv (the project toolchain).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Pin HOME + XDG cache/data dirs INSIDE the app tree (#161). The image drops to a
+# non-root user at the end (see USER below), but the build steps that download the
+# camoufox browser binary (`camoufox fetch`, which writes to the XDG data/cache dir)
+# and uv's caches run as root. Anchoring HOME/XDG under /app means everything those
+# steps write lands in the tree we chown to the runtime user — so the non-root
+# process can still find the camoufox binary and write its caches at runtime,
+# instead of them landing in an unreadable /root.
+ENV HOME=/app \
+    XDG_CACHE_HOME=/app/.cache \
+    XDG_DATA_HOME=/app/.local/share \
+    XDG_CONFIG_HOME=/app/.config
+
+# Install uv (the project toolchain). Pinned by digest (#160, #374) — `:latest` is
+# the worst-case mutable tag, so copy uv from an immutable image (tag in the comment
+# for readability). Resolve a bump with: docker buildx imagetools inspect ghcr.io/astral-sh/uv:latest
+# ghcr.io/astral-sh/uv:latest
+COPY --from=ghcr.io/astral-sh/uv@sha256:1e3808aa9023d0980e7c15b1fa7c1ac16ff35925780cf5c459858b2d693f01a9 /uv /uvx /bin/
 
 # System packages for the resume-render pipeline (FR-RESUME-3/4). The renderer
 # auto-detects these via shutil.which() and silently degrades (no real PDF) when
@@ -117,6 +138,18 @@ COPY alembic.ini ./
 COPY frontend ./frontend
 COPY templates ./templates
 COPY scripts ./scripts
+
+# --- Drop privileges (#161) ---------------------------------------------------
+# Run the API as a dedicated non-root user instead of root, so a compromised app
+# process has no root inside the container. Everything above ran as root (apt, the
+# camoufox fetch, uv sync into /app/.venv), so create the user LAST and hand it the
+# whole app tree — incl. the venv, the camoufox binary, and the XDG cache/data dirs
+# pinned under /app above, which the renderer/browser write to at runtime.
+RUN groupadd --system --gid 10001 applicant \
+    && useradd --system --uid 10001 --gid applicant --home-dir /app --shell /usr/sbin/nologin applicant \
+    && mkdir -p /app/.cache /app/.local/share /app/.config \
+    && chown -R applicant:applicant /app
+USER applicant
 
 EXPOSE 8000
 
