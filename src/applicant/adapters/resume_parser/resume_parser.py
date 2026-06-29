@@ -8,6 +8,9 @@ Extraction is heuristic and intentionally conservative: it never fabricates. Whe
 a field cannot be found it is left empty, and onboarding fills it from the
 interview. Font detection reuses the docx font table (docx) or fontspec directives
 (txt/tex) so the font subsystem can prompt for any missing families (FR-FONT-1).
+
+Phone number regex and date-range patterns are locale-aware via
+applicant.core.locale_config (issue #194).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import re
 import zipfile
 from pathlib import Path
 
+from applicant.core.locale_config import DEFAULT_LOCALE
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.resume_parser import (
     EducationEntry,
@@ -28,16 +32,19 @@ log = get_logger(__name__)
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PHONE_RE = re.compile(r"(?:\+?\(?\d[\d\s().-]{7,}\d)")
 # A dated work-history line: "Title, Company    Jan 2020 - Present"
+#: Date/month names are locale-aware (issue #194).
+_MONTH_NAMES = r"Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December"
+_PRESENT_KEYWORDS = r"Present|Current"
 _DATE_RANGE_RE = re.compile(
-    r"((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|"
-    r"April|May|June|July|August|September|October|November|December|\d{1,2})?\.?\s*\d{4})"
+    r"((?:" + _MONTH_NAMES + r"|\d{1,2})?\.?\s*\d{4})"
     r"\s*(?:-|–|—|to)\s*"
-    r"((?:Present|Current|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
-    r"January|February|March|April|May|June|July|August|September|October|November|"
-    r"December|\d{1,2})?\.?\s*\d{4}))",
+    r"((?:" + _PRESENT_KEYWORDS + r"|(?:" + _MONTH_NAMES + r"|\d{1,2})?\.?\s*\d{4}))",
     re.IGNORECASE,
 )
-_YEAR_RANGE_RE = re.compile(r"(\d{4})\s*(?:-|–|—|to)\s*(\d{4}|Present|Current)", re.IGNORECASE)
+_YEAR_RANGE_RE = re.compile(
+    r"(\d{4})\s*(?:-|–|—|to)\s*(\d{4}|" + _PRESENT_KEYWORDS + r")",
+    re.IGNORECASE,
+)
 _DEGREE_RE = re.compile(
     r"(B\.?S\.?|B\.?A\.?|M\.?S\.?|M\.?A\.?|MBA|Ph\.?D\.?|Bachelor|Master|Doctor|Associate)"
     r"[^,\n]*",

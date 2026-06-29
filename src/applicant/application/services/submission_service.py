@@ -45,7 +45,7 @@ def _verify_ats_parse(resume_text: str) -> tuple[bool, str]:
 
     Parses the text with ResumeParser and checks that identity, work history and
     skills are all present. Returns (ok, message). Best-effort: never blocks
-    submission — warns instead.
+    submission â€” warns instead.
     """
     try:
         from applicant.adapters.resume_parser.resume_parser import ResumeParser
@@ -180,7 +180,7 @@ class SubmissionService:
             return existing_event
         self.ensure_submittable(application.id)
         # ATS parse self-check: verify the generated resume parses correctly (issue #370).
-        # Best-effort — logs a warning but does not block submission.
+        # Best-effort â€” logs a warning but does not block submission.
         try:
             app = self._storage.applications.get(application.id)
             if app is not None and app.resume_variant_id is not None:
