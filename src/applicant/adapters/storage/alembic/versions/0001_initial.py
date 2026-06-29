@@ -12,19 +12,23 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0001_initial"
 down_revision = None
 branch_labels = None
 depends_on = None
 
+#: Mirror models.JSONType so the column type matches the ORM exactly (JSONB on
+#: Postgres, generic JSON elsewhere).
+_JSON = sa.JSON().with_variant(JSONB(), "postgresql")
 
 def upgrade() -> None:
     op.create_table(
         'app_config',
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('key', sa.String(length=128), nullable=False),
-        sa.Column('value', sa.JSON(), nullable=False),
+        sa.Column('value', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('key'),
     )
@@ -36,9 +40,9 @@ def upgrade() -> None:
         sa.Column('throughput_target', sa.Integer(), nullable=False),
         sa.Column('exploration_budget', sa.Float(), nullable=False),
         sa.Column('active', sa.Boolean(), nullable=False),
-        sa.Column('criteria', sa.JSON(), nullable=False),
-        sa.Column('schedule', sa.JSON(), nullable=False),
-        sa.Column('learning_state', sa.JSON(), nullable=False),
+        sa.Column('criteria', _JSON, nullable=False),
+        sa.Column('schedule', _JSON, nullable=False),
+        sa.Column('learning_state', _JSON, nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
@@ -46,9 +50,9 @@ def upgrade() -> None:
         'dormant_surface_backlog',
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('surface_name', sa.String(length=255), nullable=False),
-        sa.Column('requirement_ids', sa.JSON(), nullable=False),
+        sa.Column('requirement_ids', _JSON, nullable=False),
         sa.Column('status', sa.String(length=32), nullable=False),
-        sa.Column('wiring_notes', sa.JSON(), nullable=False),
+        sa.Column('wiring_notes', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_table(
@@ -57,7 +61,7 @@ def upgrade() -> None:
         sa.Column('name', sa.String(length=255), nullable=False),
         sa.Column('install_status', sa.String(length=32), nullable=False),
         sa.Column('environment', sa.String(length=64), nullable=False),
-        sa.Column('font_metadata', sa.JSON(), nullable=False),
+        sa.Column('font_metadata', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_table(
@@ -72,7 +76,8 @@ def upgrade() -> None:
         'agent_runs',
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('campaign_id', sa.String(length=64), nullable=False),
-        sa.Column('intent_sentence', sa.JSON(), nullable=False),
+        sa.Column('intent_sentence', _JSON, nullable=False),
+        sa.Column('seq', sa.Integer(), nullable=False, server_default=sa.text('0')),
         sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
@@ -86,7 +91,7 @@ def upgrade() -> None:
         sa.Column('value', sa.Text(), nullable=False),
         sa.Column('is_integral', sa.Boolean(), nullable=False),
         sa.Column('is_sensitive', sa.Boolean(), nullable=False),
-        sa.Column('aliases', sa.JSON(), nullable=False),
+        sa.Column('aliases', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
     )
@@ -97,9 +102,10 @@ def upgrade() -> None:
         sa.Column('campaign_id', sa.String(length=64), nullable=False),
         sa.Column('source_key', sa.String(length=128), nullable=False),
         sa.Column('enabled', sa.Boolean(), nullable=False),
-        sa.Column('yield_stats', sa.JSON(), nullable=False),
+        sa.Column('yield_stats', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
+        sa.UniqueConstraint('campaign_id', 'source_key', name='uq_discovery_sources_campaign_source'),
     )
     op.create_index(op.f('ix_discovery_sources_campaign_id'), 'discovery_sources', ['campaign_id'], unique=False)
     op.create_table(
@@ -114,8 +120,7 @@ def upgrade() -> None:
         sa.Column('source_url', sa.Text(), nullable=False),
         sa.Column('source_key', sa.String(length=128), nullable=True),
         sa.Column('viability_score', sa.Float(), nullable=True),
-        sa.Column('normalized', sa.JSON(), nullable=False),
-        sa.Column('rationale', sa.JSON(), nullable=False),
+        sa.Column('rationale', _JSON, nullable=False),
         sa.Column('description', sa.Text(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
@@ -126,10 +131,11 @@ def upgrade() -> None:
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('campaign_id', sa.String(length=64), nullable=False),
         sa.Column('completion_flag', sa.Boolean(), nullable=False),
-        sa.Column('wizard_state', sa.JSON(), nullable=False),
-        sa.Column('intake', sa.JSON(), nullable=False),
+        sa.Column('wizard_state', _JSON, nullable=False),
+        sa.Column('intake', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
+        sa.UniqueConstraint('campaign_id', name='uq_onboarding_profiles_campaign'),
     )
     op.create_index(op.f('ix_onboarding_profiles_campaign_id'), 'onboarding_profiles', ['campaign_id'], unique=False)
     op.create_table(
@@ -140,7 +146,7 @@ def upgrade() -> None:
         sa.Column('parent_id', sa.String(length=64), nullable=True),
         sa.Column('targeted_jd_signature', sa.Text(), nullable=True),
         sa.Column('approved', sa.Boolean(), nullable=False),
-        sa.Column('fit_scores', sa.JSON(), nullable=False),
+        sa.Column('fit_scores', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
         sa.ForeignKeyConstraint(['parent_id'], ['resume_variants.id']),
@@ -158,7 +164,7 @@ def upgrade() -> None:
         sa.Column('resume_variant_id', sa.String(length=64), nullable=True),
         sa.Column('status', sa.String(length=64), nullable=False),
         sa.Column('sandbox_session_url', sa.Text(), nullable=True),
-        sa.Column('attributes_used', sa.JSON(), nullable=False),
+        sa.Column('attributes_used', _JSON, nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id'),
@@ -175,7 +181,7 @@ def upgrade() -> None:
         sa.Column('attribute_id', sa.String(length=64), nullable=True),
         sa.Column('site_key', sa.String(length=255), nullable=False),
         sa.Column('field_selector', sa.Text(), nullable=False),
-        sa.Column('mapping_metadata', sa.JSON(), nullable=False),
+        sa.Column('mapping_metadata', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
         sa.ForeignKeyConstraint(['attribute_id'], ['attributes.id']),
@@ -197,7 +203,7 @@ def upgrade() -> None:
         sa.Column('application_id', sa.String(length=64), nullable=False),
         sa.Column('type', sa.String(length=16), nullable=False),
         sa.Column('feedback_text', sa.Text(), nullable=False),
-        sa.Column('criteria_delta', sa.JSON(), nullable=False),
+        sa.Column('criteria_delta', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['application_id'], ['applications.id']),
     )
@@ -207,7 +213,7 @@ def upgrade() -> None:
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('application_id', sa.String(length=64), nullable=False),
         sa.Column('signal_type', sa.String(length=64), nullable=False),
-        sa.Column('signal_detail', sa.JSON(), nullable=False),
+        sa.Column('signal_detail', _JSON, nullable=False),
         sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['application_id'], ['applications.id']),
@@ -222,7 +228,6 @@ def upgrade() -> None:
         sa.Column('content', sa.Text(), nullable=True),
         sa.Column('storage_path', sa.Text(), nullable=True),
         sa.Column('approved', sa.Boolean(), nullable=False),
-        sa.Column('redline_state', sa.JSON(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['campaign_id'], ['campaigns.id']),
         sa.ForeignKeyConstraint(['application_id'], ['applications.id']),
@@ -247,7 +252,7 @@ def upgrade() -> None:
         sa.Column('application_id', sa.String(length=64), nullable=True),
         sa.Column('kind', sa.String(length=64), nullable=False),
         sa.Column('title', sa.Text(), nullable=False),
-        sa.Column('payload', sa.JSON(), nullable=False),
+        sa.Column('payload', _JSON, nullable=False),
         sa.Column('resolved', sa.Boolean(), nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id'),
@@ -261,8 +266,8 @@ def upgrade() -> None:
         sa.Column('id', sa.String(length=64), nullable=False),
         sa.Column('material_id', sa.String(length=64), nullable=False),
         sa.Column('status', sa.String(length=32), nullable=False),
-        sa.Column('redline_state', sa.JSON(), nullable=False),
-        sa.Column('turns', sa.JSON(), nullable=False),
+        sa.Column('redline_state', _JSON, nullable=False),
+        sa.Column('turns', _JSON, nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['material_id'], ['generated_materials.id']),
     )
