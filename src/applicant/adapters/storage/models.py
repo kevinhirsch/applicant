@@ -399,7 +399,7 @@ class PortfolioAttachmentModel(Base):
     storage_path: Mapped[str] = mapped_column(Text, default="")
     display_name: Mapped[str] = mapped_column(String(512), default="")
     description: Mapped[str] = mapped_column(Text, default="")
-    metadata: Mapped[dict] = mapped_column(JSONType, default=dict)
+    attachment_metadata: Mapped[dict] = mapped_column("metadata", JSONType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
