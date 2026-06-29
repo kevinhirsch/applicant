@@ -133,6 +133,31 @@ _ROLE_STATEMENT = re.compile(
     r"scientist|lead|director|architect)\b",
     re.IGNORECASE,
 )
+#: "in <city>" / "near <city>" / "locations: <city>" — capture a user-stated location
+#: for their search criteria (integral, needs confirmation — FR-FB-3). Matches after a
+#: refocus lead or standalone location keywords so "I want to work in Austin" or
+#: "locations: New York, NY" are caught.
+_LOCATIONS = re.compile(
+    r"\b(?:in|near|around|based\s+(?:in|near|around)|located\s+(?:in|near)|"
+    r"location(?:s)?\s*[:=])\s*[A-Z][A-Za-z\s,.'-]{2,60}?"
+    r"(?:\s*(?:,|and|or)\s*[A-Z][A-Za-z\s,.'-]{2,60})?"
+    r"(?=\s*(?:,|\.|!|\?|\$|\s+(?:and|or|but|roles?|jobs?|work|only|remote|hybrid|on-?site)))",
+    re.IGNORECASE,
+)
+#: "skills in X" / "key skills: Y" / "with experience in Z" — capture user-stated
+#: key skills / keywords for the search criteria (non-integral, auto-applies). Picks
+#: up comma-separated skill tokens after a skill/experience lead.
+_KEYWORDS = re.compile(
+    r"\b(?:skill(?:s)?\s*(?:in|like|such as|including|are|[:=])|"
+    r"key\s+skill(?:s)?\s*[:=]|"
+    r"experience\s+(?:in|with|using)|"
+    r"proficient\s+(?:in|with)|"
+    r"knowledge\s+(?:of|in)|"
+    r"expertise\s+(?:in|with))\s+"
+    r"[A-Za-z#+.][A-Za-z0-9#+.\s,/-]{2,120}?"
+    r"(?=\s*(?:,|\.|!|\?|\$|\s+(?:and|or|but|for|roles?|jobs?|work)))",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -1181,6 +1206,71 @@ class ChatService:
                     ControlAction(kind="criteria", ok=False, applied=False),
                     "I couldn't capture your target roles just now.",
                 ))
+
+        # locations (integral -> needs confirmation, FR-FB-3). Capture any city/area
+        # the user names after a refocus lead ("focus on Austin", "target New York").
+        loc_match = _LOCATIONS.search(text)
+        if loc_match is not None:
+            loc_text = loc_match.group().strip()
+            # Strip the leading keyword (e.g. "location: Austin" -> "Austin")
+            for prefix in ("location:", "locations:", "location =", "locations =",
+                           "in ", "near ", "around ", "based in ", "based near ",
+                           "based around ", "located in ", "located near "):
+                if loc_text.lower().startswith(prefix):
+                    loc_text = loc_text[len(prefix):].strip()
+                    break
+            if loc_text:
+                out.append((
+                    ControlAction(
+                        kind="criteria",
+                        applied=False,
+                        requires_confirmation=True,
+                        detail={"locations": [loc_text]},
+                    ),
+                    (
+                        f"Setting a location to {loc_text} changes the scope of the search, "
+                        "so I'll hold off until you confirm. Want me to apply it?"
+                    ),
+                ))
+
+        # key skills / keywords (non-integral -> applies directly). Capture any
+        # skills the user names after a skill/experience lead ("skills in Python,
+        # Django" or "experience with React").
+        kw_match = _KEYWORDS.search(text)
+        if kw_match is not None:
+            kw_text = kw_match.group().strip()
+            # Strip the leading keyword prefix
+            for prefix in ("skills in ", "skills like ", "skills such as ",
+                           "skills including ", "skills are ", "skills:",
+                           "skills =", "key skills:", "key skills =",
+                           "experience in ", "experience with ", "experience using ",
+                           "proficient in ", "proficient with ",
+                           "knowledge of ", "knowledge in ",
+                           "expertise in ", "expertise with "):
+                if kw_text.lower().startswith(prefix):
+                    kw_text = kw_text[len(prefix):].strip()
+                    break
+            # Split on commas/and/or to get individual skill tokens
+            raw_tokens = re.split(r"\s*(?:,|\band\b|\bor\b)\s*", kw_text)
+            tokens = [t.strip() for t in raw_tokens if t.strip()]
+            if tokens:
+                try:
+                    self._criteria.edit_criteria(
+                        campaign_id, changes={"keywords": tokens}
+                    )
+                    label = ", ".join(tokens)
+                    out.append((
+                        ControlAction(
+                            kind="criteria", applied=True,
+                            detail={"keywords": tokens},
+                        ),
+                        f"I've captured your key skills: {label}.",
+                    ))
+                except Exception:
+                    out.append((
+                        ControlAction(kind="criteria", ok=False, applied=False),
+                        "I couldn't capture your key skills just now.",
+                    ))
 
         # salary floor (integral -> needs confirmation, FR-FB-3)
         floor = self._read_salary_floor(text)
