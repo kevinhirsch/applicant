@@ -129,6 +129,7 @@ RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browse
 # App code + workspace static + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
 COPY alembic.ini ./
+COPY frontend ./frontend
 COPY workspace/static ./workspace/static
 COPY templates ./templates
 COPY scripts ./scripts
