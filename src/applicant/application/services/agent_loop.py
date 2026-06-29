@@ -1138,13 +1138,23 @@ class AgentLoop:
         return updated
 
     def _force_status(self, app: Application, to: ApplicationState) -> Application:
-        """Set the status directly (only for states pre-fill already validated).
+        """Set the status with state-machine validation (defense-in-depth).
 
         Used by ``_sync_status`` to mirror the §7 state pre-fill itself walked through
-        legal transitions. NOT used to land the final-approval gate — that goes through
+        legal transitions. Validates the transition via ``can_transition`` so an
+        illegal pre-state can never be silently force-set — raises
+        ``IllegalStateTransition`` if the move is not permitted by §7.
+        NOT used to land the final-approval gate — that goes through
         ``_advance_to`` so an illegal pre-state can never be silently force-set (#2).
         """
-        updated = dataclasses.replace(app, status=to)
+        from applicant.core.state_machine import can_transition, IllegalStateTransition
+
+        current = self._storage.applications.get(app.id) or app
+        if current.status is to:
+            return current
+        if not can_transition(current.status, to):
+            raise IllegalStateTransition(current.status, to)
+        updated = dataclasses.replace(current, status=to)
         self._storage.applications.update(updated)
         self._storage.commit()
         return updated
