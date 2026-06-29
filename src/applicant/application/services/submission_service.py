@@ -18,10 +18,6 @@ Terminal state follows the §7 transitions: SUBMITTED_BY_USER (user submitted) o
 FINISHED_BY_ENGINE (friction-free, user-authorized).
 """
 
-import logging
-
-log = logging.getLogger(__name__)
-
 from __future__ import annotations
 
 from applicant.core.entities.application import Application

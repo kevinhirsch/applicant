@@ -22,15 +22,14 @@ Returns a list of dicts:
 where level 0 is the current reply, increasing levels = deeper in the chain.
 """
 
-import logging
-
-log = logging.getLogger(__name__)
-
 from __future__ import annotations
 
 import html as _html
+import logging
 import re
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 # Bump whenever the parser's output shape or splitting rules change. The
 # cache layer wraps turns as {"v": THREAD_PARSER_VERSION, "turns": [...]}

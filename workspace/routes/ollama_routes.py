@@ -5,12 +5,11 @@ A thin, admin-gated proxy to the Ollama instance Applicant is wired to (the
 Lets the UI install / list / remove local models without touching the command
 line. Pull progress is streamed back as Server-Sent Events.
 """
-import logging
 
-log = logging.getLogger(__name__)
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import httpx
@@ -18,6 +17,8 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import StreamingResponse
 
 from core.middleware import require_admin
+
+log = logging.getLogger(__name__)
 
 
 def _in_docker() -> bool:

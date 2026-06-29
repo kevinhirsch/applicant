@@ -21,12 +21,9 @@ deterministic reframing of the supplied true source so the engine never blocks a
 never fabricates.
 """
 
-import logging
-
-log = logging.getLogger(__name__)
-
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -81,6 +78,8 @@ from applicant.core.rules.truthfulness import (
     unsupported_prose_claims,
     voice_alignment,
 )
+
+log = logging.getLogger(__name__)
 
 #: FR-RESUME-7 default selection threshold (coverage as a 0-100 percentage).
 FIT_THRESHOLD = 70
