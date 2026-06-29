@@ -83,9 +83,21 @@ class WorkdayAts(AtsAdapter):
     personal-info / experience / screening-question / voluntary-EEO pages, then
     final submit. Fields include sensitive EEO fields and both screening-question
     kinds so the full pre-fill policy surface is exercised.
+
+    Pagination is configurable via page_overrides (issue #214): callers can
+    pass a custom list of :class:`FakePage` to override the default 6-page model,
+    supporting tenants with more, fewer, or different page layouts.
     """
 
     name = "workday"
+
+    def __init__(self, page_overrides: list[FakePage] | None = None) -> None:
+        """Optionally override the default page sequence with a custom list.
+
+        page_overrides — if provided, pages() returns this list instead of
+        the hard-coded 6-page default. None keeps the standard 6-page model.
+        """
+        self._page_overrides = page_overrides
 
     def matches(self, url: str) -> bool:
         low = url.lower()
@@ -96,6 +108,8 @@ class WorkdayAts(AtsAdapter):
         return f"workday:{host}"
 
     def pages(self, url: str) -> list[FakePage]:
+        if self._page_overrides is not None:
+            return self._page_overrides
         return [
             FakePage(
                 url=f"{url}/account/create",
