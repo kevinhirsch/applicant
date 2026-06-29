@@ -1,16 +1,16 @@
-"""Model-endpoint router â€” add a model source and auto-list its models.
+"""Model-endpoint router — add a model source and auto-list its models.
 
 Backs the setup page's "Add Models" section (ported from the Applicant settings flow):
 the user pastes a base URL (local Ollama or a cloud API) plus an optional key, and
 the server lists the models available at that address. The contract matches what the
 ported settings JS expects:
 
-  * ``GET    /api/model-endpoints``                 -> list (UI records, no keys)
-  * ``POST   /api/model-endpoints``                 -> add + live-list models (form data)
-  * ``POST   /api/model-endpoints/test``            -> probe without saving (form data)
-  * ``PATCH  /api/model-endpoints/{id}``            -> enable/disable toggle
-  * ``DELETE /api/model-endpoints/{id}``            -> remove
-  * ``GET    /api/model-endpoints/{id}/models``     -> live model list for one endpoint
+  * GET    /api/model-endpoints                 -> list (UI records, no keys)
+  * POST   /api/model-endpoints                 -> add + live-list models (form data)
+  * POST   /api/model-endpoints/test            -> probe without saving (form data)
+  * PATCH  /api/model-endpoints/{id}            -> enable/disable toggle
+  * DELETE /api/model-endpoints/{id}            -> remove
+  * GET    /api/model-endpoints/{id}/models     -> live model list for one endpoint
 
 The route is ungated (it is part of opening the setup gate). The server performs the
 live model fetch so the browser never holds the raw provider key.
@@ -18,11 +18,32 @@ live model fetch so the browser never holds the raw provider key.
 
 from __future__ import annotations
 
+from enum import Enum
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from applicant.app.deps import get_container
 from applicant.core.errors import InvalidInput
+
+
+class ModelType(str, Enum):
+    LLM = "llm"
+    EMBEDDING = "embedding"
+    IMAGE = "image"
+    RERANK = "rerank"
+    STT = "stt"
+    TTS = "tts"
+
+
+class EndpointConfig(BaseModel):
+    """Typed model for endpoint configuration."""
+    base_url: str = ""
+    api_key: str = ""
+    name: str = ""
+    model_type: ModelType = ModelType.LLM
+    skip_probe: bool = False
+
 
 router = APIRouter(prefix="/api/model-endpoints", tags=["model-endpoints"])
 
@@ -42,19 +63,26 @@ def add_endpoint(
     base_url: str = Form(""),
     api_key: str = Form(""),
     name: str = Form(""),
-    model_type: str = Form("llm"),
+    model_type: ModelType = Form(ModelType.LLM),
     skip_probe: str = Form("false"),
     container=Depends(get_container),
 ) -> JSONResponse:
     """Add an endpoint and live-list its models on save (the form's "Add")."""
-    probe = str(skip_probe).lower() not in ("true", "1", "yes")
+    # Build the typed model for validation
+    config = EndpointConfig(
+        base_url=base_url,
+        api_key=api_key,
+        name=name,
+        model_type=model_type,
+        skip_probe=str(skip_probe).lower() in ("true", "1", "yes"),
+    )
     try:
         result = _service(container).add_endpoint(
-            base_url=base_url,
-            api_key=api_key,
-            name=name,
-            model_type=model_type,
-            probe=probe,
+            base_url=config.base_url,
+            api_key=config.api_key,
+            name=config.name,
+            model_type=config.model_type.value,
+            probe=not config.skip_probe,
         )
     except InvalidInput as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
