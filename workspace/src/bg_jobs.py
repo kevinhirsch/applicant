@@ -21,11 +21,14 @@ in the caller (so this stays import-light and unit-testable).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import subprocess
 import time
 import uuid
+
+log = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -56,8 +59,8 @@ def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
             return json.loads(_STORE.read_text(encoding="utf-8")) or {}
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("Corrupted bg_jobs.json, starting fresh: %s", exc)
     return {}
 
 
@@ -158,6 +161,7 @@ def _read_output(rec: Dict[str, Any]) -> str:
     try:
         txt = Path(rec["log_path"]).read_text(encoding="utf-8", errors="replace")
     except Exception:
+        log.warning("Failed to read bg job output at %s", rec.get("log_path"))
         return ""
     if len(txt) > _MAX_OUTPUT_CHARS:
         # Keep head + tail — the interesting bits are usually at both ends.
@@ -179,6 +183,7 @@ def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
             try:
                 p.unlink()
             except Exception:
+                log.warning("Failed to unlink stale job file %s", p)
                 pass
     return bool(stale)
 
@@ -197,6 +202,7 @@ def refresh() -> Dict[str, Dict[str, Any]]:
             try:
                 code = int(exit_path.read_text().strip() or "1")
             except Exception:
+                log.warning("Failed to parse exit code from %s", exit_path)
                 code = 1
             rec["exit_code"] = code
             rec["status"] = "done" if code == 0 else "failed"
