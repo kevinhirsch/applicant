@@ -61,7 +61,8 @@ when authorized.
 
 ## Autonomy defaults
 User-global `~/.reasonix/config.toml` (Windows `%AppData%\reasonix\config.toml`). `max_steps` is
-user-global only — a project file can't override it.
+user-global only — a project file can't override it. **One-time setup; needs a relaunch to take
+effect, so it is NOT part of `/kickoff`** — don't re-apply it per wave.
 ```toml
 [agent]
 max_steps = 0            # no round cap (the 20-step default starved Wave 01 before any edit)
