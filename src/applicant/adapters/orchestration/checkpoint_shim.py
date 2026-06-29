@@ -109,9 +109,14 @@ class CheckpointShimOrchestrator:
         p = self._path(workflow_id)
         if p.exists():
             try:
-                return json.loads(p.read_text())
-            except json.JSONDecodeError:
-                return {"steps": {}}
+                raw = p.read_text()
+                return json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Corrupted checkpoint for workflow {workflow_id!r} at {p}: "
+                    f"JSON parse error — {exc}. The file may be truncated or "
+                    "contain invalid content. Remove the file or restore from backup."
+                ) from exc
         return {"steps": {}}
 
     def _save(self, workflow_id: str, state: dict[str, Any]) -> None:
