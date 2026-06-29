@@ -298,7 +298,12 @@ def _build_orchestrator(settings: Settings) -> Any:
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
 
-        return DbosOrchestrator(settings.database_url)
+        timeout_seconds = (
+            float(settings.approval_timeout_days * 86_400)
+            if settings.approval_timeout_days > 0
+            else 0.0
+        )
+        return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
