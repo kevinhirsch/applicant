@@ -873,6 +873,7 @@ def build_container(settings: Settings | None = None) -> Container:
         # G07: pre-submit safety parameters from settings.
         presubmit_safety_params={
             "max_age_days": settings.presubmit_max_listing_age_days,
+            "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
         },
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
@@ -981,6 +982,7 @@ def build_container(settings: Settings | None = None) -> Container:
             # G07: pre-submit safety parameters from settings.
             presubmit_safety_params={
                 "max_age_days": settings.presubmit_max_listing_age_days,
+                "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
             },
         )
         return {

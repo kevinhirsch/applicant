@@ -452,6 +452,11 @@ class Settings(BaseSettings):
     presubmit_max_listing_age_days: int = Field(
         default=90, ge=0, alias="PRESUBMIT_MAX_LISTING_AGE_DAYS"
     )
+    # Duplicate-application cooldown: how many days must pass before the same
+    # (company, role) pair may be applied to again.
+    presubmit_duplicate_cooldown_days: int = Field(
+        default=30, ge=0, alias="PRESUBMIT_DUPLICATE_COOLDOWN_DAYS"
+    )
 
     @field_validator("takeover_desktop")
     @classmethod

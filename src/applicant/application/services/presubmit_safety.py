@@ -1,4 +1,4 @@
-"""Pre-submit safety checks — scam/ghost-job detection.
+"""Pre-submit safety checks — scam/ghost-job detection, duplicate cooldown.
 
 Each check raises ``PresubmitBlock`` with a user-facing reason when the
 application should not proceed.
@@ -6,7 +6,7 @@ application should not proceed.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from applicant.observability.logging import get_logger
@@ -130,3 +130,86 @@ def check_scam_or_ghost_job(
             f"Company reputation signals indicate potential scam/ghost job: {detail}",
             check="company_reputation",
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #368 — Duplicate-application cooldown guard
+# ---------------------------------------------------------------------------
+
+#: Default window in days during which a repeat application to the same
+#: (company, role) is blocked.
+_DEFAULT_DUPLICATE_COOLDOWN_DAYS = 30
+
+
+def _normalized_title(title: str) -> str:
+    """Normalize a job title for fuzzy comparison.
+
+    Strips whitespace/punctuation and lowercases so minor variations
+    (e.g. "Software Engineer II" vs "Software Engineer 2") still match.
+    """
+    import re
+
+    t = title.strip().lower()
+    # Normalize roman numerals and common variations.
+    t = re.sub(r"\bii\b", "2", t)
+    t = re.sub(r"\biii\b", "3", t)
+    t = re.sub(r"\biv\b", "4", t)
+    t = re.sub(r"\bsr\b", "senior", t)
+    t = re.sub(r"\bjr\b", "junior", t)
+    t = re.sub(r"[^a-z0-9\s]", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def check_duplicate_application(
+    campaign_id: Any,
+    posting: Any,
+    storage: Any,
+    *,
+    cooldown_days: int = _DEFAULT_DUPLICATE_COOLDOWN_DAYS,
+    reference_date: date | None = None,
+) -> None:
+    """Raise ``PresubmitBlock`` if the same (company, role) was already applied
+    to within the cooldown window.
+
+    Scans existing applications for the campaign that share the same company
+    and a normalized role title. Terminal/completed applications count toward
+    the cooldown; in-flight applications do not (they are being worked on now).
+    """
+    ref = reference_date or datetime.now(UTC).date()
+    cutoff = ref - timedelta(days=cooldown_days)
+    company = (posting.company or "").strip().lower()
+    if not company:
+        return
+    new_title_norm = _normalized_title(posting.title or "")
+    if not new_title_norm:
+        return
+    from applicant.core.state_machine import ApplicationState
+
+    terminal_states = {
+        ApplicationState.SUBMITTED_BY_USER,
+        ApplicationState.FINISHED_BY_ENGINE,
+        ApplicationState.CONVERTED,
+    }
+    for app in storage.applications.list_for_campaign(campaign_id):
+        existing_posting = storage.postings.get(app.posting_id)
+        if existing_posting is None:
+            continue
+        if (existing_posting.company or "").strip().lower() != company:
+            continue
+        if _normalized_title(existing_posting.title or "") != new_title_norm:
+            continue
+        if app.status not in terminal_states:
+            continue
+        app_created = getattr(app, "created_at", None)
+        if app_created is None:
+            continue
+        if hasattr(app_created, "date"):
+            app_date = app_created.date()
+        else:
+            continue
+        if app_date >= cutoff:
+            raise PresubmitBlock(
+                f"Already applied to {existing_posting.company} for '{existing_posting.title}' "
+                f"within the last {cooldown_days} days (applied on {app_date}).",
+                check="duplicate_cooldown",
+            )

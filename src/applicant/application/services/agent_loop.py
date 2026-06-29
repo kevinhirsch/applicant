@@ -472,6 +472,7 @@ class AgentLoop:
                 if posting is not None:
                     from applicant.application.services.presubmit_safety import (
                         PresubmitBlock,
+                        check_duplicate_application,
                         check_scam_or_ghost_job,
                     )
 
@@ -480,6 +481,15 @@ class AgentLoop:
                             posting,
                             max_age_days=self._presubmit_safety_params.get(
                                 "max_age_days", 90
+                            ),
+                            reference_date=now.date(),
+                        )
+                        check_duplicate_application(
+                            campaign.id,
+                            posting,
+                            self._storage,
+                            cooldown_days=self._presubmit_safety_params.get(
+                                "duplicate_cooldown_days", 30
                             ),
                             reference_date=now.date(),
                         )
