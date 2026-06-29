@@ -162,10 +162,11 @@ class CheckpointShimOrchestrator:
         fn = self._workflows.get(name)
         if fn is None:
             raise KeyError(f"workflow not registered: {name}")
-        state = self._load(workflow_id)
-        state.setdefault("name", name)
-        state.setdefault("steps", {})
-        self._save(workflow_id, state)
+        with self._lock_for(workflow_id):
+            state = self._load(workflow_id)
+            state.setdefault("name", name)
+            state.setdefault("steps", {})
+            self._save(workflow_id, state)
         result = fn(self, workflow_id, *args, **kwargs)
         return _ShimHandle(workflow_id=workflow_id, _result=result)
 
