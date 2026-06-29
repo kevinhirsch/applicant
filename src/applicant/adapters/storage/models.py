@@ -69,6 +69,11 @@ class OnboardingProfileModel(Base):
     completion_flag: Mapped[bool] = mapped_column(Boolean, default=False)
     wizard_state: Mapped[dict] = mapped_column(JSONType, default=dict)
     intake: Mapped[dict] = mapped_column(JSONType, default=dict)
+    # PII retention (#363): when the intake (identity/EEO/history) was last recorded,
+    # so a retention sweep can prune profiles older than PII_RETENTION_DAYS.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 # 3 -------------------------------------------------------------------------
@@ -82,6 +87,11 @@ class AttributeModel(Base):
     is_integral: Mapped[bool] = mapped_column(Boolean, default=False)
     is_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
     aliases: Mapped[list] = mapped_column(JSONType, default=list)
+    # PII retention (#363): when this parsed PII / EEO value was recorded, so a
+    # retention sweep can prune attributes older than PII_RETENTION_DAYS.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
 
 
 # 4 -------------------------------------------------------------------------

@@ -122,3 +122,20 @@ def list_tenants(campaign_id: str, container: Container = Depends(get_container)
     """List tenant keys with stored credentials (no secrets returned) (NFR-PRIV-1)."""
     tenants = container.credentials.list_tenants(CampaignId(campaign_id))
     return {"campaign_id": campaign_id, "tenants": tenants}
+
+
+@router.post("/rotate-key")
+def rotate_master_key(container: Container = Depends(get_container)) -> dict:
+    """Rotate the vault master key — re-encrypt every secret under a NEW key (#361).
+
+    Mints a fresh master key, re-seals every stored credential under it, and persists
+    the re-sealed records, so the new key decrypts and the old key no longer does
+    (FR-VAULT-3). The key-file is rotated in place at the configured path. No secrets
+    are returned (NFR-PRIV-1) — only the count of records re-sealed.
+    """
+    store = container.credentials
+    if not hasattr(store, "rotate_master_key"):
+        raise HTTPException(status_code=501, detail="The vault does not support key rotation.")
+    keyfile = container.settings.credential_keyfile
+    rotated = store.rotate_master_key(keyfile)
+    return {"rotated": True, "records": rotated}

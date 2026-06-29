@@ -37,6 +37,7 @@ import os
 from nacl import exceptions as nacl_exc
 from nacl.secret import SecretBox
 
+from applicant.core.errors import CredentialDecryptError
 from applicant.core.ids import CampaignId
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.credential_store import (
@@ -81,19 +82,41 @@ def _load_or_create_master_key(keyfile: str) -> bytes:
     except OSError:  # pragma: no cover - platform/permission dependent
         pass
     key = os.urandom(SecretBox.KEY_SIZE)
+    _write_master_key(path, key)
+    return key
+
+
+def _write_master_key(keyfile: str, key: bytes) -> None:
+    """Write a master key to ``keyfile`` with strict ``0600`` perms (FR-VAULT-3).
+
+    Shared by initial key creation and master-key rotation (issue #361): a rotated
+    key MUST land with the same owner-only permissions as a freshly minted one, with
+    its containing dir created ``0700`` if absent.
+    """
+    if len(key) != SecretBox.KEY_SIZE:
+        raise ValueError(
+            f"master key is {len(key)} bytes; expected {SecretBox.KEY_SIZE}"
+        )
+    keydir = os.path.dirname(keyfile) or "."
+    os.makedirs(keydir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(keydir, 0o700)
+    except OSError:  # pragma: no cover - platform/permission dependent
+        pass
     # Write with 0600 so only the owner can read the master key (FR-VAULT-3).
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
         f.write(key)
-    return key
 
 
 class _SealingMixin:
     """Shared libsodium seal/unseal + key-file handling (the real crypto path)."""
 
     _box: SecretBox
+    _keyfile: str
 
     def _init_box(self, keyfile: str) -> None:
+        self._keyfile = keyfile
         self._box = SecretBox(_load_or_create_master_key(keyfile))
 
     # --- seal / unseal (libsodium SecretBox) -----------------------------
@@ -102,12 +125,43 @@ class _SealingMixin:
         sealed = self._box.encrypt(plaintext.encode("utf-8"))
         return base64.b64encode(bytes(sealed)).decode("ascii")
 
-    def _unseal(self, sealed: str) -> str:
+    def _unseal(self, sealed: str, *, box: SecretBox | None = None) -> str:
         raw = base64.b64decode(sealed)
         try:
-            return self._box.decrypt(raw).decode("utf-8")
-        except nacl_exc.CryptoError as exc:  # tamper / wrong key
-            raise ValueError("credential record failed authentication") from exc
+            return (box or self._box).decrypt(raw).decode("utf-8")
+        except nacl_exc.CryptoError as exc:  # tamper / wrong key (#361)
+            # A DISTINCT, contained decrypt-failure — NEVER a silent empty credential.
+            # Subclasses ValueError so the historic ``pytest.raises(ValueError)`` and
+            # callers catching ValueError keep working; new callers can catch the
+            # distinct type to surface a key-loss alert (FR-VAULT-3, NFR-PRIV-1).
+            raise CredentialDecryptError(
+                "credential record failed authentication"
+            ) from exc
+
+    # --- master-key rotation (#361, FR-VAULT-3) --------------------------
+    def _reseal_all(self, new_box: SecretBox) -> None:
+        """Re-encrypt every cached sealed record under ``new_box``.
+
+        Each record's username/secret are unsealed with the CURRENT box and re-sealed
+        with the new one, so the new key decrypts and the old key no longer does. The
+        in-memory ``_store`` cache is the source of truth for what to re-seal; the
+        persistent backends override :meth:`rotate_master_key` to hydrate the full row
+        set first and persist the re-sealed rows.
+        """
+        store: dict = getattr(self, "_store", {})
+        rotated: dict = {}
+        for key, rec in store.items():
+            rotated[key] = {
+                "username": base64.b64encode(
+                    bytes(new_box.encrypt(self._unseal(rec["username"]).encode("utf-8")))
+                ).decode("ascii"),
+                "secret": base64.b64encode(
+                    bytes(new_box.encrypt(self._unseal(rec["secret"]).encode("utf-8")))
+                ).decode("ascii"),
+                "source": rec.get("source", MODE_MANUAL),
+            }
+        store.clear()
+        store.update(rotated)
 
     def __repr__(self) -> str:  # never leak sealed/plaintext material in a repr
         return f"<{type(self).__name__} (sealed credential store)>"
@@ -169,6 +223,41 @@ class InMemoryCredentialStore(_SealingMixin):
 
     def list_tenants(self, campaign_id: CampaignId) -> list[str]:
         return [t for (c, t) in self._store if c == str(campaign_id)]
+
+    def delete(self, campaign_id: CampaignId, tenant_key: str) -> bool:
+        """Erase a single sealed credential set (#363). True if one was removed."""
+        return self._store.pop((str(campaign_id), tenant_key), None) is not None
+
+    def delete_campaign(self, campaign_id: CampaignId) -> int:
+        """Erase ALL sealed credentials for a campaign (#363). Returns the count.
+
+        Part of the campaign-delete purge cascade — banked credentials must be
+        verifiably absent after a campaign is deleted (FR-CRIT-4, NFR-PRIV-1).
+        """
+        keys = [k for k in self._store if k[0] == str(campaign_id)]
+        for k in keys:
+            del self._store[k]
+        if keys:
+            log.info(
+                "credentials_purged", campaign_id=str(campaign_id), count=len(keys)
+            )
+        return len(keys)
+
+    def rotate_master_key(self, new_keyfile: str) -> int:
+        """Rotate the master key: re-encrypt every secret under a NEW key (#361).
+
+        Writes a fresh 32-byte key to ``new_keyfile`` (``0600``), re-seals every cached
+        record under it, and swaps the live box. Afterwards the new key decrypts and the
+        old key no longer does (FR-VAULT-3). Returns the number of records re-sealed.
+        """
+        new_key = os.urandom(SecretBox.KEY_SIZE)
+        new_box = SecretBox(new_key)
+        self._reseal_all(new_box)
+        _write_master_key(new_keyfile, new_key)
+        self._box = new_box
+        self._keyfile = new_keyfile
+        log.info("vault_master_key_rotated", records=len(self._store))
+        return len(self._store)
 
 
 class PgCredentialStore(_SealingMixin):
@@ -275,6 +364,60 @@ class PgCredentialStore(_SealingMixin):
         finally:
             session.close()
 
+    def _delete_campaign_rows(self, campaign_id: str) -> int:
+        if self._session_factory is None:
+            return 0
+        from applicant.adapters.storage.models import CredentialModel
+
+        session = self._session_factory()
+        try:
+            n = (
+                session.query(CredentialModel)
+                .filter(CredentialModel.campaign_id == campaign_id)
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            return int(n or 0)
+        finally:
+            session.close()
+
+    def _delete_row(self, campaign_id: str, tenant_key: str) -> int:
+        if self._session_factory is None:
+            return 0
+        from applicant.adapters.storage.models import CredentialModel
+
+        session = self._session_factory()
+        try:
+            n = (
+                session.query(CredentialModel)
+                .filter(
+                    CredentialModel.campaign_id == campaign_id,
+                    CredentialModel.tenant_key == tenant_key,
+                )
+                .delete(synchronize_session=False)
+            )
+            session.commit()
+            return int(n or 0)
+        finally:
+            session.close()
+
+    def _hydrate_all_rows(self) -> None:
+        """Load EVERY persisted sealed row into the cache (rotation must touch all)."""
+        if self._session_factory is None:
+            return
+        from applicant.adapters.storage.models import CredentialModel
+
+        session = self._session_factory()
+        try:
+            for row in session.query(CredentialModel).all():
+                self._store[(row.campaign_id, row.tenant_key)] = {
+                    "username": row.sealed_username,
+                    "secret": row.sealed_secret,
+                    "source": row.source,
+                }
+        finally:
+            session.close()
+
     # --- CredentialStorePort ---------------------------------------------
     def store(self, campaign_id: CampaignId, credential: Credential) -> None:
         """Seal and persist a credential set for a campaign/tenant (FR-VAULT-1).
@@ -330,3 +473,46 @@ class PgCredentialStore(_SealingMixin):
         cached = {t for (c, t) in self._store if c == str(campaign_id)}
         cached.update(self._load_tenants(str(campaign_id)))
         return sorted(cached)
+
+    def delete(self, campaign_id: CampaignId, tenant_key: str) -> bool:
+        """Erase a single sealed credential set, cache + DB (#363)."""
+        in_cache = self._store.pop((str(campaign_id), tenant_key), None) is not None
+        in_db = self._delete_row(str(campaign_id), tenant_key) > 0
+        return in_cache or in_db
+
+    def delete_campaign(self, campaign_id: CampaignId) -> int:
+        """Erase ALL sealed credentials for a campaign, cache + DB (#363).
+
+        Part of the campaign-delete purge cascade — banked credentials must be
+        verifiably absent afterwards (FR-CRIT-4, NFR-PRIV-1).
+        """
+        cache_keys = [k for k in self._store if k[0] == str(campaign_id)]
+        for k in cache_keys:
+            del self._store[k]
+        n_db = self._delete_campaign_rows(str(campaign_id))
+        n = max(len(cache_keys), n_db)
+        if n:
+            log.info("credentials_purged", campaign_id=str(campaign_id), count=n)
+        return n
+
+    def rotate_master_key(self, new_keyfile: str) -> int:
+        """Rotate the master key: re-encrypt every secret under a NEW key (#361).
+
+        Hydrates the FULL persisted row set (so a fresh instance rotates everything,
+        not just what happens to be cached), re-seals every record under a fresh key
+        written to ``new_keyfile`` (``0600``), persists the re-sealed rows, and swaps the
+        live box. Afterwards the new key decrypts and the old key no longer does
+        (FR-VAULT-3). Returns the number of records re-sealed.
+        """
+        self._hydrate_all_rows()
+        new_key = os.urandom(SecretBox.KEY_SIZE)
+        new_box = SecretBox(new_key)
+        self._reseal_all(new_box)
+        _write_master_key(new_keyfile, new_key)
+        self._box = new_box
+        self._keyfile = new_keyfile
+        # Persist the re-sealed rows so the rotation survives a restart.
+        for (cid, tenant), rec in self._store.items():
+            self._persist_row(cid, tenant, rec)
+        log.info("vault_master_key_rotated", records=len(self._store))
+        return len(self._store)

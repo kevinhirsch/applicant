@@ -517,6 +517,15 @@ class GeneratedDocumentRepo:
         ).all()
         return [_document_to_entity(r) for r in rows]
 
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[GeneratedDocument]:
+        """All generated materials for a campaign (#363 purge verification parity)."""
+        rows = self._s.scalars(
+            select(m.GeneratedMaterialModel).where(
+                m.GeneratedMaterialModel.campaign_id == campaign_id
+            )
+        ).all()
+        return [_document_to_entity(r) for r in rows]
+
 
 class RevisionSessionRepo:
     """Durable interactive redline sessions (FR-RESUME-8): resumable across restarts."""
@@ -1048,6 +1057,124 @@ class SqlAlchemyStorage:
 
     def rollback(self) -> None:
         self._session.rollback()
+
+    def purge_campaign(self, cid: CampaignId) -> dict[str, int]:
+        """Cascade-delete every row belonging to ``cid`` (#363, FR-CRIT-4, NFR-PRIV-1).
+
+        Mirrors :meth:`InMemoryStorage.purge_campaign`: erases the PII-bearing +
+        derived rows (onboarding intake, attribute cloud, résumé variants, generated
+        materials, the application-scoped children, postings, per-campaign field
+        mappings, discovery sources, agent runs, pending actions) and finally the
+        campaign row, in FK-safe order (children before parents). Banked credentials
+        are purged separately via the credential store. Returns a per-table count so a
+        caller can verify a complete purge. The caller commits the unit of work.
+        """
+        s = self._session
+        scid = str(cid)
+
+        app_ids = [
+            r[0]
+            for r in s.query(m.ApplicationModel.id)
+            .filter(m.ApplicationModel.campaign_id == scid)
+            .all()
+        ]
+        material_ids = [
+            r[0]
+            for r in s.query(m.GeneratedMaterialModel.id)
+            .filter(m.GeneratedMaterialModel.campaign_id == scid)
+            .all()
+        ]
+
+        def _del(model, *crit) -> int:
+            if not crit:
+                return 0
+            return int(
+                s.query(model).filter(*crit).delete(synchronize_session=False) or 0
+            )
+
+        counts: dict[str, int] = {}
+        # Application-scoped children first (FK -> applications).
+        if app_ids:
+            counts["decisions"] = _del(
+                m.DecisionModel, m.DecisionModel.application_id.in_(app_ids)
+            )
+            counts["outcomes"] = _del(
+                m.OutcomeEventModel, m.OutcomeEventModel.application_id.in_(app_ids)
+            )
+            counts["screenshots"] = _del(
+                m.ApplicationScreenshotModel,
+                m.ApplicationScreenshotModel.application_id.in_(app_ids),
+            )
+            counts["detection_events"] = _del(
+                m.DetectionEventModel,
+                m.DetectionEventModel.application_id.in_(app_ids),
+            )
+        # Revision sessions (FK -> generated_materials) before the materials.
+        if material_ids:
+            counts["revisions"] = _del(
+                m.RevisionSessionModel,
+                m.RevisionSessionModel.material_id.in_(material_ids),
+            )
+        counts["documents"] = _del(
+            m.GeneratedMaterialModel, m.GeneratedMaterialModel.campaign_id == scid
+        )
+        # Applications reference resume_variants + postings, so delete them first.
+        counts["applications"] = _del(
+            m.ApplicationModel, m.ApplicationModel.campaign_id == scid
+        )
+        counts["resume_variants"] = _del(
+            m.ResumeVariantModel, m.ResumeVariantModel.campaign_id == scid
+        )
+        counts["postings"] = _del(
+            m.JobPostingModel, m.JobPostingModel.campaign_id == scid
+        )
+        counts["attributes"] = _del(
+            m.AttributeModel, m.AttributeModel.campaign_id == scid
+        )
+        counts["field_mappings"] = _del(
+            m.FieldMappingModel, m.FieldMappingModel.campaign_id == scid
+        )
+        counts["discovery_sources"] = _del(
+            m.DiscoverySourceModel, m.DiscoverySourceModel.campaign_id == scid
+        )
+        counts["agent_runs"] = _del(
+            m.AgentRunModel, m.AgentRunModel.campaign_id == scid
+        )
+        counts["pending_actions"] = _del(
+            m.PendingActionModel, m.PendingActionModel.campaign_id == scid
+        )
+        counts["onboarding_profiles"] = _del(
+            m.OnboardingProfileModel, m.OnboardingProfileModel.campaign_id == scid
+        )
+        # Credentials FK -> campaigns; purge any that the credential store missed so
+        # the campaign row can be deleted without a FK violation.
+        counts["credentials"] = _del(
+            m.CredentialModel, m.CredentialModel.campaign_id == scid
+        )
+        counts["campaigns"] = _del(m.CampaignModel, m.CampaignModel.id == scid)
+        return counts
+
+    def prune_pii_older_than(self, cutoff: datetime) -> dict[str, int]:
+        """Prune PII (attributes + onboarding intakes) recorded before ``cutoff`` (#363).
+
+        Mirrors :meth:`InMemoryStorage.prune_pii_older_than`: only the PII-bearing
+        tables are swept; in-window PII is retained. Returns a per-table count. The
+        caller commits the unit of work.
+        """
+        s = self._session
+        attrs = int(
+            s.query(m.AttributeModel)
+            .filter(m.AttributeModel.created_at < cutoff)
+            .delete(synchronize_session=False)
+            or 0
+        )
+        profiles = int(
+            s.query(m.OnboardingProfileModel)
+            .filter(m.OnboardingProfileModel.created_at < cutoff)
+            .delete(synchronize_session=False)
+            or 0
+        )
+        return {"attributes": attrs, "onboarding_profiles": profiles}
 
     def healthcheck(self) -> bool:
         from sqlalchemy import text

@@ -29,13 +29,18 @@ from pytest_bdd import given, scenarios, then, when
 
 from applicant.adapters.browser.ats import (
     ATS_REGISTRY,
+    GenericAts,
     GreenhouseAts,
     LeverAts,
     WorkdayAts,
     resolve_ats,
+    resolve_ats_strict,
 )
 from applicant.adapters.browser.page_source import PlaywrightPageSource
-from applicant.application.services.prefill_service import PrefillService
+from applicant.adapters.detection.detection_monitor import DetectionMonitor
+from applicant.adapters.sandbox.local_sandbox import LocalSandbox
+from applicant.adapters.storage.in_memory import InMemoryStorage
+from applicant.application.services.prefill_service import PrefillResult, PrefillService
 from applicant.core.entities.application import Application
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.errors import IllegalStateTransition, ReviewRequired
@@ -46,7 +51,7 @@ from applicant.core.state_machine import (
     allowed_transitions,
     is_terminal,
 )
-from applicant.ports.driven.browser_automation import DetectedField
+from applicant.ports.driven.browser_automation import DetectedField, PageState
 
 scenarios(
     "../features/enhancements/enh_171_greenhouse_lever_shells.feature",
@@ -165,7 +170,10 @@ def icims_dedicated(t03ctx):
 
 
 # ===========================================================================
-# #173 — Unknown ATS fallback (GREEN: defaults to Workday; PENDING: strict None)
+# #173 — Unknown ATS resolves to the GENERIC live-DOM driver (NOT Workday).
+# 1.0 commits to universal generic-driver coverage: a matched vendor URL keeps its
+# dedicated adapter; an unknown URL gets GenericAts (no fixed Workday page model);
+# the strict resolver returns None so an unrecognized ATS is still detectable.
 # ===========================================================================
 @when("a Workday posting URL is resolved")
 def resolve_workday(t03ctx):
@@ -182,66 +190,171 @@ def resolve_unknown(t03ctx):
     t03ctx["resolved"] = resolve_ats(UNKNOWN_URL)
 
 
-@then("the current code returns the Workday adapter as a fallback")
-def unknown_defaults_workday(t03ctx):
-    # GREEN regression: documents the CURRENT (problematic) fallback behaviour.
-    assert isinstance(t03ctx["resolved"], WorkdayAts)
-    assert t03ctx["resolved"].matches(UNKNOWN_URL) is False
+@then("the generic driver is selected and it does not impose the Workday page model")
+def unknown_resolves_generic(t03ctx):
+    # #173: an unknown ATS now resolves to the vendor-agnostic GENERIC live-DOM driver,
+    # NOT the Workday fallback — so the engine never mis-applies Workday's fixed
+    # six-page account→EEO→submit model to a form it does not recognize.
+    resolved = t03ctx["resolved"]
+    assert isinstance(resolved, GenericAts)
+    assert not isinstance(resolved, WorkdayAts)
+    assert resolved.matches(UNKNOWN_URL) is False  # it is the fallback, not a URL match
+    # It imposes NO fixed multi-page model: the generic shape is a single live-DOM page
+    # ending on the final submit, unlike Workday's six fixed pages.
+    generic_pages = resolved.pages(UNKNOWN_URL)
+    workday_pages = WorkdayAts().pages(UNKNOWN_URL)
+    assert len(generic_pages) == 1
+    assert len(generic_pages) != len(workday_pages)
+    assert generic_pages[-1].is_final_submit is True
+    # The generic page does NOT carry Workday's hard-coded account-create gate.
+    assert not any(p.is_account_create for p in generic_pages)
 
 
 @when("a URL for an unsupported ATS is resolved with strict matching")
 def resolve_unknown_strict(t03ctx):
-    # PENDING: a strict resolver that does not silently default to Workday.
-    resolver = _probe("applicant.adapters.browser.ats", "resolve_ats_strict")
-    t03ctx["resolved"] = resolver(UNKNOWN_URL)
+    # The strict resolver does NOT default to anything — an unknown ATS yields None.
+    t03ctx["resolved"] = resolve_ats_strict(UNKNOWN_URL)
 
 
 @then("no adapter is returned so the operator can be flagged")
 def strict_returns_none(t03ctx):
     assert t03ctx["resolved"] is None
+    # A recognized vendor URL still resolves under strict matching (only unknowns None).
+    assert isinstance(resolve_ats_strict(WORKDAY_URL), WorkdayAts)
 
 
 # ===========================================================================
-# #177 — field-match-rate detection (PENDING)
+# #177 — field-match-rate detection (GREEN): the maximal pre-fill loop tracks the
+# field-match rate (filled / detected) and FLAGS a near-empty / probable wrong-ATS
+# run for human review instead of offering garbage for submission. Exercised
+# hermetically through the real PrefillService over an in-memory fake page source —
+# no real browser.
 # ===========================================================================
+class _MismatchBrowser:
+    """An in-memory browser whose single generic form DETECTS fields but maps NONE.
+
+    Models a form the chosen page model does not line up with: every field is OPTIONAL
+    (the real DOM said so) so an unmappable field is skipped rather than blocking, the
+    page IS the final-submit page (universal single-page shape), and ``advance`` ends
+    the flow. The result: detected > 0, filled == 0 — exactly the wrong-ATS signal.
+    """
+
+    URL = "https://careers.unsupported-ats.example/apply/9"
+
+    def __init__(self, fields):
+        self._fields = list(fields)
+        self._shots = 0
+
+    def current_state(self, aid):  # noqa: ARG002
+        return PageState(url=self.URL, fields=tuple(self._fields))
+
+    def detect_fields(self, aid):  # noqa: ARG002
+        return list(self._fields)
+
+    def fill_field(self, *a, **k):  # pragma: no cover - unmapped optional fields skip
+        raise AssertionError("no field maps, so fill_field must never be called")
+
+    def is_account_create_page(self, aid):  # noqa: ARG002
+        return False
+
+    def is_final_submit_page(self, aid):  # noqa: ARG002
+        return True
+
+    def advance(self, aid):  # noqa: ARG002
+        return None
+
+    def screenshot(self, aid):  # noqa: ARG002
+        self._shots += 1
+        return f"screenshot://mismatch/{self._shots}"
+
+
+def _mismatch_service(browser):
+    return PrefillService(
+        storage=InMemoryStorage(),
+        browser=browser,
+        detection=DetectionMonitor(),
+        sandbox=LocalSandbox(),
+        credentials=None,
+        llm=None,
+    )
+
+
+def _mismatch_app():
+    return Application(
+        id=ApplicationId(new_id()),
+        campaign_id=CampaignId(new_id()),
+        posting_id=JobPostingId(new_id()),
+        status=ApplicationState.PREFILLING,
+    )
+
+
 @given("a pre-fill run over a form whose selectors do not match the chosen adapter")
 def prefill_mismatch(t03ctx):
-    t03ctx["detected"] = [
-        DetectedField("#totally-different-1", "Mystery Field 1", "text"),
-        DetectedField("#totally-different-2", "Mystery Field 2", "text"),
-    ]
+    # Two OPTIONAL fields the campaign attribute cloud has no answer for → detected but
+    # unfilled (the selectors "do not match" anything mappable).
+    t03ctx["browser"] = _MismatchBrowser(
+        [
+            DetectedField("#totally-different-1", "Mystery Field 1", "text", required=False),
+            DetectedField("#totally-different-2", "Mystery Field 2", "text", required=False),
+        ]
+    )
 
 
 @given("a pre-fill run that matched none of the detected fields")
 def prefill_no_match(t03ctx):
-    t03ctx["detected"] = [DetectedField("#x", "X", "text")]
-    t03ctx["matched"] = 0
+    t03ctx["browser"] = _MismatchBrowser(
+        [DetectedField("#x", "X", "text", required=False)]
+    )
 
 
 @when("the maximal pre-fill loop walks the page")
 def loop_walks_page(t03ctx):
-    # PENDING: there is no field-match-rate accounting on the pre-fill service.
-    t03ctx["rate_fn"] = _require_attr(
-        PrefillService, "field_match_rate", "PrefillService.field_match_rate"
-    )
+    svc = _mismatch_service(t03ctx["browser"])
+    app = _mismatch_app()
+    result = PrefillResult(application_id=app.id, state=app.status)
+    # Walk the page through the REAL maximal-pre-fill loop (fills nothing, finishes).
+    t03ctx["result"] = svc._continue_pages(app, [], result, cautious=False)
+    t03ctx["service"] = svc
 
 
 @then("the run records the field-match rate")
 def run_records_rate(t03ctx):
-    assert callable(t03ctx["rate_fn"])
+    result = t03ctx["result"]
+    # The run actually accounted for the fields: detected the two, filled none.
+    assert result.fields_detected == 2
+    assert result.fields_filled == 0
+    # The pure rate helper agrees and the run came in at 0.0 (a real number, computed).
+    rate = PrefillService.field_match_rate(result.fields_filled, result.fields_detected)
+    assert rate == 0.0
+    assert t03ctx["service"].field_match_rate(0, 2) == 0.0
 
 
 @when("the loop finishes the page")
 def loop_finishes_page(t03ctx):
-    # PENDING: no helper that flags a low-match run for operator review.
-    t03ctx["flag_fn"] = _require_attr(
-        PrefillService, "flag_probable_wrong_ats", "PrefillService.flag_probable_wrong_ats"
-    )
+    svc = _mismatch_service(t03ctx["browser"])
+    app = _mismatch_app()
+    result = PrefillResult(application_id=app.id, state=app.status)
+    t03ctx["result"] = svc._continue_pages(app, [], result, cautious=False)
+    t03ctx["service"] = svc
+    t03ctx["app"] = app
 
 
 @then("the application is flagged as a probable wrong-ATS run for operator review")
 def app_flagged_wrong_ats(t03ctx):
-    assert callable(t03ctx["flag_fn"])
+    result = t03ctx["result"]
+    # The near-empty run was FLAGGED, not advanced to the final-approval/submit gate.
+    assert result.wrong_ats_flagged is True
+    assert result.state is ApplicationState.EMERGENCY_DATA_HANDOFF
+    assert result.state is not ApplicationState.AWAITING_FINAL_APPROVAL
+    # A wrong-ATS pending action surfaced the low match rate for operator review.
+    pending = t03ctx["service"]._storage.pending_actions.list_open(
+        t03ctx["app"].campaign_id
+    )
+    flagged = [p for p in pending if p.kind == "wrong_ats"]
+    assert flagged, "a wrong_ats pending action was created for operator review"
+    assert flagged[0].payload["fields_detected"] == 1
+    assert flagged[0].payload["fields_filled"] == 0
+    assert flagged[0].payload["match_rate"] == 0.0
 
 
 # ===========================================================================

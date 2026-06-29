@@ -110,3 +110,31 @@ class InvalidInput(DomainError):
     Maps to HTTP 422 at the delivery edge. Raised in place of a plain
     ``ValueError`` for client-supplied bad input so it never leaks a 500.
     """
+
+
+class CredentialDecryptError(DomainError, ValueError):
+    """A sealed credential could not be unsealed (wrong master key / tamper).
+
+    Issue #361 (FR-VAULT-3, NFR-PRIV-1): the credential vault MUST surface a
+    *distinct, contained* error on a decrypt/key-loss failure rather than a silent
+    empty credential — a wrong master key (e.g. an unrotated record, a lost or
+    swapped key-file) must be loud, never read back as ``None`` or an empty secret.
+
+    Subclasses :class:`ValueError` as well so callers (and existing contract tests)
+    that catch the historic ``ValueError`` from a bad-key unseal keep working, while
+    new callers can catch this distinct type to handle key-loss explicitly. It carries
+    the campaign + tenant metadata (NEVER the plaintext) for an operator-facing alert.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        campaign_id: str | None = None,
+        tenant_key: str | None = None,
+    ) -> None:
+        super().__init__(
+            message or "A stored credential could not be decrypted (wrong master key)."
+        )
+        self.campaign_id = campaign_id
+        self.tenant_key = tenant_key

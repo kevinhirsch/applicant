@@ -48,6 +48,7 @@ from applicant.application.services.campaign_service import CampaignService
 from applicant.application.services.chat_service import ChatService
 from applicant.application.services.conversion_service import ConversionService
 from applicant.application.services.criteria_service import CriteriaService
+from applicant.application.services.data_lifecycle_service import DataLifecycleService
 from applicant.application.services.digest_service import DigestService
 from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.feedback_service import FeedbackService
@@ -117,6 +118,9 @@ class Container:
     feedback_service: Any
     chat_service: Any = None
     admin_query_service: Any = None
+    # #363: campaign-delete purge + PII retention cascade across the relational store
+    # and the sealed credential vault. Per-request rebuilt against the request session.
+    data_lifecycle_service: Any = None
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
@@ -568,6 +572,13 @@ def build_container(settings: Settings | None = None) -> Container:
     application_pipeline.register(orchestrator)
 
     campaign_service = CampaignService(storage)
+    # #363: campaign-delete purge + PII retention cascade. Cascades across the
+    # relational store and the sealed credential vault, bounded by PII_RETENTION_DAYS.
+    data_lifecycle_service = DataLifecycleService(
+        storage,
+        credentials,
+        pii_retention_days=settings.pii_retention_days,
+    )
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
     learning_service = LearningService(storage, embedding)
@@ -679,6 +690,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # so the upload path degrades exactly as before until a real driver is operable.
         computer_use=computer_use,
         allow_automated_accounts=settings.allow_automated_accounts,
+        # #177: flag a probable wrong-ATS / near-empty fill below this match-rate floor
+        # for human review rather than offering it for submission.
+        match_rate_floor=settings.ats_match_rate_floor,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
@@ -913,6 +927,8 @@ def build_container(settings: Settings | None = None) -> Container:
             # per tick) so the autonomous pre-fill loop can complete a native OS
             # file-picker the DOM can't satisfy. Defaults to noop → degrades as before.
             computer_use=computer_use,
+            # #177: flag a probable wrong-ATS / near-empty fill below this floor.
+            match_rate_floor=settings.ats_match_rate_floor,
         )
         mat = MaterialService(
             tick_storage,
@@ -1077,6 +1093,8 @@ def build_container(settings: Settings | None = None) -> Container:
             resume_provider=BaseResumeProvider(req_storage),
             # FR-CUA: same process-lived desktop-assist port (defaults to noop).
             computer_use=computer_use,
+            # #177: flag a probable wrong-ATS / near-empty fill below this floor.
+            match_rate_floor=settings.ats_match_rate_floor,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
@@ -1094,8 +1112,16 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         rs_campaign = CampaignService(req_storage)
         rs_campaign.set_criteria_service(rs_criteria)
+        # #363: request-scoped purge/retention so a campaign-delete cascades on THIS
+        # request's isolated Session (CONC-REQ-1). The credential store is process-lived.
+        rs_data_lifecycle = DataLifecycleService(
+            req_storage,
+            credentials,
+            pii_retention_days=settings.pii_retention_days,
+        )
         return {
             "storage": req_storage,
+            "data_lifecycle_service": rs_data_lifecycle,
             "pending_actions_service": rs_pas,
             "digest_service": rs_digest,
             "attribute_cloud_service": rs_attr,
@@ -1221,6 +1247,7 @@ def build_container(settings: Settings | None = None) -> Container:
         resume_parser=resume_parser,
         setup_service=setup_service,
         campaign_service=campaign_service,
+        data_lifecycle_service=data_lifecycle_service,
         onboarding_service=onboarding_service,
         font_service=font_service,
         conversion_service=conversion_service,
