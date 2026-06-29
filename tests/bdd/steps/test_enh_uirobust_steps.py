@@ -51,7 +51,6 @@ HTML = ROOT / "workspace" / "static" / "index.html"
 # The Applicant front-door panel modules that re-render on a selector/tab change.
 _PANEL_MODULES = (
     "applicantDebug.js",
-    "applicantPortal.js",
     "applicantRemote.js",
     "emailLibrary/applicantDigest.js",
 )

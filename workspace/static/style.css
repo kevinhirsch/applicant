@@ -4532,7 +4532,6 @@ body.bg-pattern-sparkles {
          viewport and sat shifted under the sidebar instead of in the chat
          area. (The onboarding wizard is deliberately NOT here: it is the one
          blocking, full-viewport modal — see #applicant-onboarding-overlay.) */
-      #applicant-portal-modal,
       #applicant-chat-modal,
       #applicant-vault-modal,
       #applicant-remote-modal {
@@ -5449,38 +5448,6 @@ body.bg-pattern-sparkles {
       text-align: center;
     }
 
-    /* Setup wizard */
-    .setup-wizard { padding: 16px; max-width: 500px; }
-    .setup-wizard .setup-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
-    .setup-wizard .setup-label { font-size: 0.85rem; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
-    .setup-wizard .setup-presets { display: flex; flex-wrap: wrap; gap: 8px; }
-    .setup-wizard .setup-preset-btn {
-      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
-      background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
-    }
-    .setup-wizard .setup-preset-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
-    .setup-wizard .setup-input {
-      display: block; width: 100%; padding: 8px 12px; margin-bottom: 8px;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 6px; color: var(--fg); font-size: 0.85rem; box-sizing: border-box;
-    }
-    .setup-wizard .setup-input:focus { border-color: var(--red); outline: none; }
-    .setup-wizard .setup-connect-btn {
-      padding: 8px 20px; background: var(--red); color: var(--bg);
-      border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 4px;
-    }
-    .setup-wizard .setup-connect-btn:hover { opacity: 0.9; }
-    .setup-wizard .setup-status { font-size: 0.8rem; margin-top: 8px; color: var(--fg); opacity: 0.7; }
-    .setup-wizard .setup-model-list { display: flex; flex-wrap: wrap; gap: 8px; }
-    .setup-wizard .setup-model-btn {
-      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
-      background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
-    }
-    .setup-wizard .setup-model-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
-    .setup-wizard .setup-step.hidden { display: none; }
-
     /* Dropdown menu styles */
     .dropdown {
       position: absolute;
@@ -5658,114 +5625,6 @@ body.bg-pattern-sparkles {
     }
 
 /* ── Voice, Search, Themes, Comparison, Censor, Print ── */
-
-    /* Voice recording styles */
-    #mic-btn {
-      color: var(--fg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      transition: all 0.2s ease;
-    }
-    
-    #mic-btn:hover {
-      background: color-mix(in srgb, var(--fg) 6%, transparent);
-      border-color: var(--fg);
-    }
-    
-    #mic-btn.recording {
-      background: var(--color-recording);
-      border-color: var(--color-recording);
-      animation: pulse 1.5s infinite;
-    }
-    
-    @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.7; }
-      100% { opacity: 1; }
-    }
-    
-    #recording-indicator {
-      position: fixed;
-      top: 10px;
-      left: 0;
-      right: 0;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(10px);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin: 10px;
-      z-index: 1000;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-    
-    #recording-indicator.hidden {
-      display: none !important;
-    }
-    
-    .recording-content {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      color: white;
-    }
-    
-    .recording-icon {
-      color: var(--color-recording);
-      font-size: 20px;
-      animation: pulse 1.5s infinite;
-    }
-    
-    .recording-text {
-      font-size: 16px;
-      font-weight: 500;
-    }
-    
-    #stop-recording {
-      background: var(--color-recording);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.2s ease;
-    }
-    
-    #stop-recording:hover {
-      background: var(--color-recording-hover);
-    }
-    
-    /* Error state for recording */
-    #recording-indicator.error {
-      background: rgba(173, 26, 26, 0.9);
-    }
-    
-    .recording-error {
-      color: var(--color-recording);
-      font-size: 14px;
-      margin-top: 4px;
-    }
-    
-    @media (max-width: 768px) {
-      #recording-indicator {
-        margin: 8px;
-        padding: 10px;
-      }
-      
-      .recording-text {
-        font-size: 14px;
-      }
-      
-      #stop-recording {
-        padding: 6px 10px;
-        font-size: 12px;
-      }
-    }
 /* SYNTAX HIGHLIGHTING — uses theme vars from style.css, no hardcoded overrides */
 .hljs { color: var(--hl-fg, #9cdef2); background: none !important; }
 pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
@@ -7572,165 +7431,6 @@ button.hamburger {
 /* Custom preset modal — inherits from .modal base class */
 
 /* Unified chat input area */
-.chat-input-area {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  margin-top: 12px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.chat-controls-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-controls-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-controls-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.control-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.control-label {
-  font-size: 11px;
-  color: var(--fg);
-  opacity: 0.8;
-}
-
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 30px;
-  height: 16px;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: color-mix(in srgb, var(--fg) 15%, transparent);
-  border-radius: 8px;
-  transition: background 0.08s;
-}
-
-.toggle-slider:before {
-  position: absolute;
-  content: "";
-  height: 12px;
-  width: 12px;
-  left: 2px;
-  top: 2px;
-  background-color: var(--panel);
-  border-radius: 50%;
-  transition: transform 0.08s;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--toggle-active, var(--red));
-}
-
-.toggle-switch input:checked + .toggle-slider:before {
-  transform: translateX(14px);
-}
-
-.preset-buttons-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.chat-input-form {
-  display: flex;
-  gap: 8px;
-  align-items: flex-end;
-}
-
-#message {
-  flex: 1;
-  min-height: 34px;
-  max-height: 120px;
-  resize: none;
-  font-size: 13px !important;
-  overflow-y: auto !important;
-  line-height: 1.4 !important;
-  font-family: inherit !important;
-}
-
-.action-button {
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  margin: 0;
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--fg);
-  transition: all 0.2s ease;
-}
-
-.action-button:hover {
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  border-color: var(--fg);
-}
-
-.action-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-button.recording {
-  background: var(--color-recording);
-  border-color: var(--color-recording);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
-}
-
-#stop-icon {
-  display: none;
-  width: 14px;
-  height: 14px;
-  background: var(--color-recording);
-  border-radius: 2px;
-}
-
 /* Attachment strip — centered + max-width to match the chat-input-bar below,
    otherwise the chip floats flush-left while the input is centered (visible on
    desktop where the chat area is wider than 800px). */
@@ -7903,72 +7603,6 @@ button.hamburger {
 .thumb-collapsed-x:hover { opacity: 1; }
 
 /* Recording indicator */
-#recording-indicator {
-  position: fixed;
-  top: 10px;
-  left: 0;
-  right: 0;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  margin: 10px;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-#recording-indicator.hidden {
-  display: none !important;
-}
-
-.recording-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: white;
-}
-
-.recording-icon {
-  color: var(--color-recording);
-  font-size: 20px;
-  animation: pulse 1.5s infinite;
-}
-
-.recording-text {
-  font-size: 16px;
-  font-weight: 500;
-}
-
-.stop-recording-btn {
-  background: var(--color-recording);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 12px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.stop-recording-btn:hover {
-  background: var(--color-recording-hover);
-}
-
-#recording-indicator.error {
-  background: rgba(173, 26, 26, 0.9);
-}
-
-.recording-error {
-  color: var(--color-recording);
-  font-size: 14px;
-  margin-top: 4px;
-}
-
 /* Mermaid diagram containers */
 .mermaid-container {
   margin: 12px 0;
@@ -13036,18 +12670,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-priv-panel [data-priv] {
   accent-color: var(--accent, var(--red));
 }
-/* Section headers */
-.admin-priv-section {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  opacity: 0.35;
-  font-weight: 600;
-  margin: 10px 0 4px;
-}
-.admin-priv-section:first-child {
-  margin-top: 0;
-}
 /* Model checkbox list */
 .priv-models-list {
   max-height: 150px;
@@ -13643,64 +13265,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   color: var(--accent-primary, var(--accent, var(--red)));
 }
 
-/* RAG upload zone */
-.admin-rag-upload-zone {
-  border: 2px dashed var(--border);
-  border-radius: 8px;
-  padding: 14px;
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-  margin-bottom: 8px;
-}
-.admin-rag-upload-zone:hover,
-.admin-rag-upload-zone.dragover {
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 7%, transparent);
-}
-.admin-rag-upload-zone p {
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
-  font-size: 11px;
-  margin-top: 4px;
-}
-.admin-rag-icon { font-size: 18px; }
-.admin-rag-dir-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.admin-rag-dir-row input {
-  flex: 1;
-  padding: 5px 8px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--fg);
-  font-size: 12px;
-}
-.admin-rag-dir-row input:focus { outline: none; border-color: var(--red); }
-.admin-rag-dir-row button {
-  padding: 5px 8px;
-  border: none;
-  border-radius: 6px;
-  background: var(--red);
-  color: #fff;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.admin-rag-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 6px;
-}
-.admin-rag-section-label {
-  font-size: 10px;
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 8px 0 4px;
-}
+/* RAG directory list items */
 .admin-rag-item {
   display: flex;
   justify-content: space-between;
@@ -13725,20 +13290,6 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   flex-shrink: 0;
 }
 .admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
-.admin-rag-status {
-  font-size: 11px;
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
-  margin-top: 6px;
-}
-
-/* Token reveal */
-.admin-token-reveal {
-  margin-top: 8px;
-  padding: 8px;
-  background: color-mix(in srgb, var(--red) 8%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--red) 25%, var(--border));
-  border-radius: 8px;
-}
 
 /* Selects in admin cards */
 .admin-card select {
@@ -34695,7 +34246,6 @@ body.theme-frosted .modal {
    use `flex-wrap:wrap`, so whole buttons wrap to the next line cleanly instead
    of the text clipping. Scoped to Applicant surfaces — the vendored app's own
    short-label `.cal-btn` usages are untouched. */
-#applicant-portal-modal .cal-btn,
 #applicant-chat-modal .cal-btn,
 #applicant-remote-modal .cal-btn,
 #applicant-vault-modal .cal-btn {
@@ -34714,32 +34264,4 @@ body.theme-frosted .modal {
 }
 @media (prefers-reduced-motion: reduce) {
   [style*="applicantPulse"] { animation: none !important; }
-}
-
-/* Update modal (#applicant-update-modal) live log tail: a monospace, scrollable
-   panel showing the updater's recent output while it runs. Reuses theme vars so
-   it tracks light/dark like every other panel. Matches the framing of the app's
-   other monospace log/output blocks. */
-.applicant-update-log {
-  margin: 0;
-  max-height: 220px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--font-family, 'Fira Code', 'Courier New', monospace);
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--fg);
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-}
-/* The "Update now" button is disabled while an update is running — give it a
-   clear inactive cue (the shared .cal-btn has no :disabled rule). Scoped to the
-   Update modal so other surfaces are untouched. */
-#applicant-update-modal .cal-btn[disabled] {
-  opacity: 0.55;
-  cursor: default;
-  pointer-events: none;
 }

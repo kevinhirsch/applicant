@@ -49,7 +49,7 @@ MIND_JS = JS_DIR / "applicantMind.js"
 
 # The overlay modules that the findings say lack focus / Escape / dialog-role handling.
 # (applicantDigest.js lives under emailLibrary/ and is the safe sibling, not in scope.)
-GAP_OVERLAYS = ("applicantPortal.js", "applicantRemote.js", "applicantVault.js")
+GAP_OVERLAYS = ("applicantRemote.js", "applicantVault.js")
 FOCUS_GAP_OVERLAYS = GAP_OVERLAYS + ("applicantMind.js",)
 
 

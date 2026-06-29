@@ -53,7 +53,7 @@ scenarios(
     "../features/p4_update_button.feature",
 )
 
-_FRONTEND = Path(__file__).resolve().parents[3] / "frontend" / "static" / "applicant"
+_FRONTEND = Path(__file__).resolve().parents[3] / "workspace" / "static"
 
 
 # --- phase-local fixtures --------------------------------------------------

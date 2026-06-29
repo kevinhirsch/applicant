@@ -111,10 +111,9 @@ RUN uv run --no-sync camoufox fetch
 COPY src ./src
 RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
-# App code + vendored frontend + LaTeX/docx templates (loaded at runtime as
+# App code + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
 COPY alembic.ini ./
-COPY frontend ./frontend
 COPY templates ./templates
 COPY scripts ./scripts
 
