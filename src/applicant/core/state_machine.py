@@ -48,7 +48,7 @@ S = ApplicationState
 
 #: Terminal states — no outgoing transitions (except none).
 TERMINAL_STATES: frozenset[ApplicationState] = frozenset(
-    {S.DECLINED, S.SUBMITTED_BY_USER, S.FINISHED_BY_ENGINE, S.FAILED, S.ARCHIVED}
+    {S.DECLINED, S.FAILED, S.ARCHIVED}
 )
 
 #: User-waiting states — each emits a notification + pending-action and pivots (§7).
@@ -116,7 +116,11 @@ _TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
 
 
 def is_terminal(state: ApplicationState) -> bool:
-    """True if ``state`` has no outgoing transitions."""
+    """True if ``state`` has no outgoing transitions.
+
+    Note: SUBMITTED_BY_USER and FINISHED_BY_ENGINE are NOT terminal -- they have
+    an outgoing transition to POST_SUBMISSION for the G16 post-submission lifecycle.
+    """
     return state in TERMINAL_STATES
 
 

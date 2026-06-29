@@ -373,10 +373,12 @@ def inspect_terminal_transitions(t03ctx):
 
 @then("each is terminal with no outgoing transitions")
 def each_terminal(t03ctx):
-    assert is_terminal(ApplicationState.SUBMITTED_BY_USER)
-    assert is_terminal(ApplicationState.FINISHED_BY_ENGINE)
-    assert t03ctx["submitted_out"] == frozenset()
-    assert t03ctx["finished_out"] == frozenset()
+    # G16: SUBMITTED_BY_USER and FINISHED_BY_ENGINE are no longer terminal --
+    # they have an outgoing transition to POST_SUBMISSION.
+    assert not is_terminal(ApplicationState.SUBMITTED_BY_USER)
+    assert not is_terminal(ApplicationState.FINISHED_BY_ENGINE)
+    assert ApplicationState.POST_SUBMISSION in t03ctx["submitted_out"]
+    assert ApplicationState.POST_SUBMISSION in t03ctx["finished_out"]
 
 
 @given("an application that has been recorded as submitted")
