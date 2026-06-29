@@ -103,6 +103,13 @@ async def lifespan(app: FastAPI):
             container.storage.commit()
         log.info("dormant_surfaces_seeded", count=count)
     except Exception as exc:  # pragma: no cover - defensive
+        # Roll back so a failed seed doesn't leave the shared boot Session in an
+        # aborted-transaction state that makes every later query (ensure_system_campaign,
+        # request handlers) fail with InFailedSqlTransaction on a real Postgres.
+        try:
+            container.storage.rollback()
+        except Exception:
+            pass
         log.warning("dormant_seed_failed", error=str(exc))
 
     # 3b) Seed the reserved system campaign so instance-level secrets (the LLM key,
