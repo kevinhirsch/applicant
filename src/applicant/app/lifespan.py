@@ -111,17 +111,10 @@ async def lifespan(app: FastAPI):
     #     and skipping keeps the hermetic test lane's campaign listings clean. Kept
     #     inactive so the scheduler never runs it; excluded from campaign listings.
     try:
-        if getattr(container.storage, "_session", None) is not None:
-            from applicant.core.entities.campaign import Campaign
-            from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
+        from applicant.app.container import ensure_system_campaign
 
-            sid = CampaignId(SYSTEM_CAMPAIGN_ID)
-            if container.storage.campaigns.get(sid) is None:
-                container.storage.campaigns.add(
-                    Campaign(id=sid, name="System (internal)", active=False)
-                )
-                container.storage.commit()
-                log.info("system_campaign_seeded")
+        if ensure_system_campaign(container.storage):
+            log.info("system_campaign_seeded")
     except Exception as exc:  # pragma: no cover - tolerate first-boot races
         log.warning("system_campaign_seed_failed", error=str(exc))
 
