@@ -519,6 +519,17 @@ class PrefillService:
             # Application" and skips the entire form (universal-ATS support, FR-PREFILL-2/3).
             blocked = self._fill_current_page(app, attributes, result)
             if blocked is not None:
+                # G11 #177: Log ATS type on prefill failure for diagnostics.
+                from applicant.adapters.browser.ats import resolve_ats
+                try:
+                    state = self._browser.current_state(aid)
+                    ats_type = type(resolve_ats(state.url)).__name__ if state and state.url else "unknown"
+                except Exception:
+                    ats_type = "unknown"
+                log.warning(
+                    "Prefill blocked on ATS %s — state=%s missing_attr=%s",
+                    ats_type, blocked.state, blocked.missing_attribute,
+                )
                 return blocked
             self._capture_screenshot(aid, result)
 
