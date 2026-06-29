@@ -23,7 +23,7 @@ const _vizCollapseIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="
 const _vizExpandIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 function _toggleSynapseMinimized() {
   _synapseMinimized = !_synapseMinimized;
-  try { localStorage.setItem(_SYNAPSE_MIN_KEY, _synapseMinimized ? '1' : '0'); } catch {}
+  try { localStorage.setItem(_SYNAPSE_MIN_KEY, _synapseMinimized ? '1' : '0'); } catch (e) { console.warn("localStorage access failed", e) }
   // Apply live to all rendered cards without forcing a full rebuild.
   document.querySelectorAll('.research-job-synapse-host')
     .forEach(h => h.classList.toggle('synapse-collapsed', _synapseMinimized));
@@ -45,7 +45,7 @@ let _settingsCollapsed = false;
 const _SETTINGS_KEY = 'applicant-research-settings';
 const _COLLAPSE_KEY = 'applicant-research-settings-collapsed';
 
-try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch {}
+try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch (e) { console.warn("localStorage access failed", e) }
 
 function _saveSettingsToStorage() {
   try {
@@ -57,7 +57,7 @@ function _saveSettingsToStorage() {
       model: document.getElementById('research-model')?.value || '',
       category: activeCat?.dataset.cat || '',
     }));
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/panel.js", e) }
 }
 
 function _loadSettingsFromStorage() {
@@ -173,7 +173,7 @@ async function _updateResearchCount() {
     const data = await res.json();
     const n = data.total || 0;
     el.textContent = n + (n === 1 ? ' research' : ' research');
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/panel.js", e) }
 }
 
 const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
@@ -280,7 +280,7 @@ export function openPanel(focusJobId) {
   _updateResearchCount();
 
   if ('Notification' in window && Notification.permission === 'default') {
-    try { Notification.requestPermission(); } catch {}
+    try { Notification.requestPermission(); } catch (e) { console.warn("Notification permission/display failed", e) }
   }
 
   if (focusJobId) _focusJob(focusJobId);
@@ -412,8 +412,8 @@ function _dismissKeyboard(input) {
     tmp.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;';
     document.body.appendChild(tmp);
     tmp.focus();
-    setTimeout(() => { try { tmp.blur(); tmp.remove(); } catch {} }, 60);
-  } catch {}
+    setTimeout(() => { try { tmp.blur(); tmp.remove(); } catch (e) { console.warn("element removal failed", e) } }, 60);
+  } catch (e) { console.warn("element removal failed", e) }
 }
 
 /** Reset the category selector back to "Auto" (called after each start). */
@@ -447,7 +447,7 @@ function _wireEvents(pane) {
     _settingsCollapsed = !_settingsCollapsed;
     body.style.display = _settingsCollapsed ? 'none' : '';
     btn.classList.toggle('collapsed', _settingsCollapsed);
-    try { localStorage.setItem('applicant-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch {}
+    try { localStorage.setItem('applicant-research-settings-collapsed', _settingsCollapsed ? '1' : '0'); } catch (e) { console.warn("localStorage access failed", e) }
   });
 
   const queryInput = pane.querySelector('#research-query');
@@ -553,7 +553,7 @@ async function _handleStart() {
         const _wp = spinnerModule.createWhirlpool(14);
         _wp.element.style.cssText += ';vertical-align:middle;margin-right:5px;position:relative;top:-1px;';
         startBtn.appendChild(_wp.element);
-      } catch {}
+      } catch (e) { console.warn("silent catch in research/panel.js", e) }
       startBtn.appendChild(document.createTextNode('Starting'));
       startBtn.classList.add('research-start-busy');
     } else {
@@ -628,7 +628,7 @@ async function _loadEndpoints() {
       opt.textContent = ep.name || ep.base_url;
       sel.appendChild(opt);
     });
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/panel.js", e) }
 }
 
 function _populateModels(endpointId) {
@@ -730,8 +730,8 @@ function _renderJobs() {
   const liveIds = new Set(allJobs.filter(j => j.status === 'running').map(j => j.id));
   for (const [jobId, entry] of _jobSynapses) {
     if (liveIds.has(jobId)) continue;
-    try { entry.synapse.complete(); } catch {}
-    setTimeout(() => { try { entry.synapse.destroy(); } catch {} }, 800);
+    try { entry.synapse.complete(); } catch (e) { console.warn("synapse operation failed", e) }
+    setTimeout(() => { try { entry.synapse.destroy(); } catch (e) { console.warn("synapse operation failed", e) } }, 800);
     _jobSynapses.delete(jobId);
   }
 
@@ -1026,7 +1026,7 @@ function _buildJobCard(job) {
         const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
         if (!ok) return;
       }
-      try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+      try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch (e) { console.warn("fetch request failed", e) }
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
     card.querySelector('[data-action="dismiss"]').addEventListener('click', (e) => {
@@ -1130,7 +1130,7 @@ async function _ensureResult(job) {
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/panel.js", e) }
 }
 
 async function _copyResult(job, btn) {
@@ -1152,7 +1152,7 @@ async function _copyResult(job, btn) {
       await navigator.clipboard.writeText(text);
       ok = true;
     }
-  } catch {}
+  } catch (e) { console.warn("silent catch in research/panel.js", e) }
   if (!ok) {
     // Fallback for non-secure contexts (HTTP self-host) where navigator.clipboard
     // is unavailable. The textarea must be in-viewport and focusable for Firefox
@@ -1165,7 +1165,7 @@ async function _copyResult(job, btn) {
     document.body.appendChild(ta);
     ta.focus();
     ta.select();
-    try { ta.setSelectionRange(0, text.length); } catch {}
+    try { ta.setSelectionRange(0, text.length); } catch (e) { console.warn("setSelectionRange failed", e) }
     try {
       const sel = window.getSelection();
       if (sel && (!sel.rangeCount || sel.isCollapsed)) {
@@ -1175,8 +1175,8 @@ async function _copyResult(job, btn) {
         sel.addRange(range);
         ta.setSelectionRange(0, text.length);
       }
-    } catch {}
-    try { ok = document.execCommand('copy'); } catch {}
+    } catch (e) { console.warn("element removal failed", e) }
+    try { ok = document.execCommand('copy'); } catch (e) { console.warn("element removal failed", e) }
     ta.remove();
   }
   if (btn) {
@@ -1204,7 +1204,7 @@ async function _chatAboutResearch(researchId, btn) {
     });
     if (!res.ok) {
       let detail = '';
-      try { detail = (await res.json()).detail || ''; } catch {}
+      try { detail = (await res.json()).detail || ''; } catch (e) { console.warn("silent catch in research/panel.js", e) }
       throw new Error(detail || `HTTP ${res.status}`);
     }
     const payload = await res.json();
