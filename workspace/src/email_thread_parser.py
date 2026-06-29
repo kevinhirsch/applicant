@@ -22,6 +22,10 @@ Returns a list of dicts:
 where level 0 is the current reply, increasing levels = deeper in the chain.
 """
 
+import logging
+
+log = logging.getLogger(__name__)
+
 from __future__ import annotations
 
 import html as _html
@@ -438,11 +442,13 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
     try:
         from bs4 import BeautifulSoup
     except Exception:
+        log.warning("BeautifulSoup import failed, returning None")
         return None  # bs4 not installed → caller falls back to plaintext / client parse
 
     try:
         soup = BeautifulSoup(html, "html.parser")
     except Exception:
+        log.warning("BeautifulSoup parsing failed, returning None")
         return None
 
     # Find all quote containers, then keep only the top-level ones (those
