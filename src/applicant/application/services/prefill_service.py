@@ -38,8 +38,6 @@ import time
 from dataclasses import dataclass, field
 
 from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
-
-log = logging.getLogger(__name__)
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute
 from applicant.core.entities.pending_action import PendingAction
@@ -53,6 +51,9 @@ from applicant.core.rules.ats_match_rate import (
 from applicant.core.rules.sensitive_fields import decide_sensitive_fill, is_sensitive_field
 from applicant.core.state_machine import ApplicationState
 from applicant.ports.driven.browser_automation import DetectedField
+
+log = logging.getLogger(__name__)
+
 
 #: Topic the durable orchestrator uses for the final-approval gate (FR-NOTIF-2).
 FINAL_APPROVAL_TOPIC = "final_approval"
@@ -1247,7 +1248,6 @@ class PrefillService:
         both happen to match the same label."""
         low_label = label.strip().lower()
         # Tier 1: exact name match (case-insensitive).
-        exact_non_sensitive = None
         exact_sensitive = None
         for attr in attributes:
             if attr.name.strip().lower() == low_label:
@@ -1257,7 +1257,6 @@ class PrefillService:
         if exact_sensitive is not None:
             return exact_sensitive
         # Tier 2: exact alias match.
-        alias_non_sensitive = None
         alias_sensitive = None
         for attr in attributes:
             if low_label in {a.lower() for a in attr.aliases}:
@@ -1267,7 +1266,6 @@ class PrefillService:
         if alias_sensitive is not None:
             return alias_sensitive
         # Tier 3: loose match (substring, token overlap, etc.).
-        loose_non_sensitive = None
         loose_sensitive = None
         for attr in attributes:
             if attr.matches(label) and attr.name.strip().lower() != low_label:

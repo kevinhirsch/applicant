@@ -21,13 +21,12 @@ This is the clearly-marked boundary the work package asks for: swapping
 
 from __future__ import annotations
 
+import logging
 import re
 import socket
 import time
 from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
-
-import logging
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
