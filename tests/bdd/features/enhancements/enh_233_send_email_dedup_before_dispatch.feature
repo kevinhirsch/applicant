@@ -12,7 +12,6 @@ Feature: A failed digest email send does not permanently consume its dedup key
     When the same digest email is sent twice with one dedup key
     Then the email channel dispatched exactly once
 
-  @pending
   Scenario: A digest email is not lost when the first SMTP dispatch fails
     Given a notifier with an email channel whose first dispatch fails
     When the digest email is sent, fails, and is then retried

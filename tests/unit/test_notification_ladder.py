@@ -285,6 +285,170 @@ def test_in_app_inbox_feeds_portal():
     assert any(c.title == "hi" for c in n.inbox())
 
 
+# === G15 regression suite ====================================================
+
+# --- #233: dedup key written AFTER dispatch, not before ----------------------
+def test_233_failed_send_does_not_consume_dedup_key():
+    """A failing first dispatch must not permanently suppress a retry."""
+    clock = _Clock()
+    n = AppriseNotifier(apprise_urls="mailto://u:p@smtp.test", clock=clock)
+    calls: list[int] = []
+    real_dispatch = n._dispatch
+
+    def flaky(channel, notification):
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            raise RuntimeError("SMTP error")
+        real_dispatch(channel, notification)
+
+    n._dispatch = flaky  # type: ignore[method-assign]
+    key = "digest_email:c1:2026-01-01"
+    try:
+        n.send_email(subject="S", html="H", dedup_key=key)
+    except RuntimeError:
+        pass
+    # retry must succeed (key not yet registered because first dispatch failed)
+    result = n.send_email(subject="S", html="H", dedup_key=key)
+    assert result is True
+    assert len([c for c in n.captured() if c.channel == "email"]) == 1
+
+
+def test_233_happy_path_idempotency_preserved():
+    """Successful first send still blocks a duplicate."""
+    clock = _Clock()
+    n = AppriseNotifier(apprise_urls="mailto://u:p@smtp.test", clock=clock)
+    key = "digest_email:c1:2026-01-01"
+    n.send_email(subject="S", html="H", dedup_key=key)
+    n.send_email(subject="S", html="H", dedup_key=key)
+    assert len([c for c in n.captured() if c.channel == "email"]) == 1
+
+
+# --- #234: per-channel failure isolation -------------------------------------
+def test_234_one_channel_failure_does_not_abort_others():
+    """A raising dispatch on one notification must not drop another's rung."""
+    clock = _Clock()
+    n = AppriseNotifier(discord_webhook_url="https://discord.test/wh", clock=clock)
+    real_dispatch = n._dispatch
+
+    def selective(channel, notification):
+        if notification.dedup_key == "bad":
+            raise RuntimeError("unreachable")
+        real_dispatch(channel, notification)
+
+    n._dispatch = selective  # type: ignore[method-assign]
+
+    n.notify(Notification(title="bad", body="x", dedup_key="bad"))
+    n.notify(Notification(title="good", body="y", dedup_key="good"))
+    clock.tick(30)
+    n.advance()  # must not raise
+    assert "discord" in n.sent_channels("good")
+
+
+# --- #235: _sent dict lock ---------------------------------------------------
+def test_235_sent_lock_exists():
+    """The notifier exposes _sent_lock (a threading.Lock) for safe concurrent access."""
+    import threading
+    n = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
+    assert hasattr(n, "_sent_lock")
+    assert isinstance(n._sent_lock, type(threading.Lock()))
+
+
+# --- #236: constructor floors email_timeout ----------------------------------
+def test_236_constructor_floors_zero_timeout():
+    """email_timeout_seconds=0 in the constructor is clamped to the 60s floor."""
+    clock = _Clock()
+    n = AppriseNotifier(
+        apprise_urls="mailto://u:p@smtp.test",
+        clock=clock,
+        email_timeout_seconds=0,
+    )
+    n.notify(Notification(title="A", body="b", dedup_key="f1", web_preemptable=True))
+    # in-app should have fired; email must NOT fire on the same tick
+    fired = [c.channel for c in n.captured()]
+    assert "in_app" in fired
+    assert "email" not in fired
+
+
+def test_236_constructor_preserves_valid_timeout():
+    """A valid (above-floor) timeout is not altered by the constructor."""
+    n = AppriseNotifier(
+        apprise_urls="mailto://u:p@smtp.test",
+        email_timeout_seconds=600,
+    )
+    assert n._email_timeout == 600
+
+
+# --- #172/#302: quiet hours (green regression) --------------------------------
+def test_172_quiet_hours_defer_normal_external_channels():
+    """NORMAL notifications defer Discord/email during quiet hours (#172 green)."""
+    clock = _Clock()
+    clock.now = datetime(2026, 1, 1, 3, 0, tzinfo=UTC)  # 03:00, inside 22:00–07:00
+    n = _notifier(clock, quiet_hours=(22, 7))
+    n.notify(Notification(title="A", body="b", dedup_key="qn"))
+    clock.tick(30 * 60)
+    n.advance()
+    assert "discord" not in n.sent_channels("qn")
+    assert "in_app" in n.sent_channels("qn")
+
+
+def test_302_hhmm_window_precision():
+    """HH:MM quiet window is evaluated to the minute, not just the hour (#302)."""
+    n = _notifier(_Clock(), quiet_hours=("22:30", "07:15"))
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 22, 45, tzinfo=UTC)) is True
+    assert n._in_quiet_hours(datetime(2026, 1, 1, 22, 15, tzinfo=UTC)) is False
+    assert n._in_quiet_hours(datetime(2026, 1, 2, 7, 14, tzinfo=UTC)) is True
+    assert n._in_quiet_hours(datetime(2026, 1, 2, 7, 15, tzinfo=UTC)) is False
+
+
+# --- #300: ntfy push channel -------------------------------------------------
+def test_300_ntfy_channel_in_enum():
+    """NotificationChannel exposes both NTFY and PUSH members (#300)."""
+    from applicant.ports.driven.notification import NotificationChannel
+    assert hasattr(NotificationChannel, "NTFY")
+    assert hasattr(NotificationChannel, "PUSH")
+    assert NotificationChannel.NTFY.value == "ntfy"
+
+
+def test_300_notifier_accepts_ntfy_url():
+    """AppriseNotifier accepts ntfy_url and includes ntfy in configured_channels."""
+    n = AppriseNotifier(
+        discord_webhook_url="https://discord.test/wh",
+        ntfy_url="https://ntfy.test/topic",
+    )
+    assert n.has_ntfy() is True
+    assert "ntfy" in n.configured_channels()
+
+
+def test_300_immediate_notification_dispatched_to_ntfy():
+    """An IMMEDIATE notification fans out to the ntfy channel."""
+    clock = _Clock()
+    n = AppriseNotifier(
+        discord_webhook_url="https://discord.test/wh",
+        ntfy_url="https://ntfy.test/topic",
+        clock=clock,
+    )
+    n.notify(
+        Notification(
+            title="Takeover needed",
+            body="CAPTCHA",
+            urgency=NotificationUrgency.IMMEDIATE,
+            deep_link="/takeover/session-1",
+            dedup_key="to1",
+        )
+    )
+    ntfy_sends = [c for c in n.captured() if c.channel == "ntfy"]
+    assert ntfy_sends
+    assert ntfy_sends[0].deep_link == "/takeover/session-1"
+
+
+def test_300_ntfy_configure_update():
+    """configure(ntfy_url=...) updates the ntfy channel on the live adapter."""
+    n = AppriseNotifier(discord_webhook_url="https://discord.test/wh")
+    assert not n.has_ntfy()
+    n.configure(ntfy_url="https://ntfy.test/topic")
+    assert n.has_ntfy() is True
+
+
 # === #15: digest-ready ping per-(campaign, UTC-day) idempotency ============
 def test_digest_ready_ping_once_per_day_across_fresh_loops():
     """#15: 3 same-day calls (as a fresh AgentLoop per tick would make) -> exactly 1

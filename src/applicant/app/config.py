@@ -219,6 +219,10 @@ class Settings(BaseSettings):
     # test lane never touches Discord/SMTP; flip on in a real deployment (zero-CLI).
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
+    # #300: ntfy push channel — opt-in, empty by default. Comma-separated ntfy:// URLs
+    # (e.g. ``ntfy://ntfy.sh/my-topic``). The ntfy service is already in the Compose
+    # stack; configure this to route urgent action alerts to push-notification clients.
+    ntfy_url: str = Field(default="", alias="NTFY_URL")
     notifications_live: bool = Field(default=False, alias="NOTIFICATIONS_LIVE")
 
     # Stage 2.5 — ENGINE -> WORKSPACE callback channel. The engine calls BACK into
