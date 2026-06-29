@@ -65,7 +65,39 @@ app = FastAPI(
 )
 
 # ========= CORS =========
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
+def parse_allowed_origins(raw: str | None = None) -> list[str]:
+    """Parse ALLOWED_ORIGINS env var with whitespace stripping, empty-entry
+    filtering, and basic URL validation. Trailing slashes are normalised away
+    so ``https://example.com/`` and ``https://example.com`` are treated as
+    equivalent.
+
+    Returns a list of well-formed origin strings suitable for
+    ``CORSMiddleware(allow_origins=...)``.
+    """
+    from urllib.parse import urlparse
+
+    if raw is None:
+        raw = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1")
+    origins: list[str] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        # Normalise trailing slash
+        part = part.rstrip("/")
+        # Basic URL validation: must have a scheme and netloc
+        parsed = urlparse(part)
+        if not parsed.scheme or not parsed.netloc:
+            # Accept bare hostnames like "localhost" or "127.0.0.1" by
+            # prepending "http://" for validation
+            test = urlparse("http://" + part)
+            if not test.netloc:
+                continue
+        origins.append(part)
+    return origins
+
+
+allowed_origins = parse_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,

@@ -14,6 +14,8 @@ from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
+#: Max upload size for PDF import (bytes). Prevents disk exhaustion.
+MAX_DOCUMENT_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 from routes.document_helpers import (

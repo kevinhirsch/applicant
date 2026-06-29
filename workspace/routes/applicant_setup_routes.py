@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 #: the other lanes; a restricted sub-user can't reconfigure the engine.
 _CONFIG_PRIV = "can_configure"
 
+#: Maximum file size for setup uploads (fonts, resume). Mirrors the engine caps.
+MAX_APPLICANT_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
 
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
@@ -433,6 +436,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Detect required/missing fonts for an uploaded resume."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or "resume", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
@@ -449,6 +457,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Install an uploaded missing font file."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or f"{name}.ttf", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
@@ -517,6 +530,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Upload the base resume; engine parses + reconciles the attribute cloud."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or "resume.txt", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
