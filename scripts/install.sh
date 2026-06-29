@@ -106,6 +106,37 @@ if [[ -f "${ENV_FILE}" ]]; then
   done <"${ENV_FILE}"
 fi
 
+# --- Credential-regeneration guard (issue #283) -----------------------------
+# Postgres bakes its superuser password into the data volume the first time it
+# initializes and NEVER changes it on later boots. If an operator deleted .env
+# (where we persisted that password) and re-ran the installer, we used to mint a
+# brand-new random password while the volume still carried the OLD one — so the
+# app could no longer authenticate ("password authentication failed").
+#
+# Guard it on the ACTUAL volume state, not just `! -f .env`: when we have no
+# password (none in the env, none persisted in .env) but a Postgres data volume
+# already exists, the database is already initialized — refuse to regenerate
+# credentials and tell the operator to restore .env (or opt in explicitly with
+# APPLICANT_FORCE_CRED_REGEN=1 after wiping the volume).
+if [[ -z "${POSTGRES_PASSWORD:-}" && "${APPLICANT_FORCE_CRED_REGEN:-0}" != "1" ]]; then
+  _pg_volume=""
+  if command -v docker >/dev/null 2>&1; then
+    # Match the project's pgdata volume (compose prefixes it with the project name).
+    _pg_volume="$(docker volume ls --quiet 2>/dev/null | grep -E '(^|_)pgdata$' | head -n1 || true)"
+  fi
+  if [[ -n "${_pg_volume}" ]]; then
+    echo "Refusing to regenerate database credentials: the Postgres data volume" >&2
+    echo "  '${_pg_volume}' already exists and is already initialized with a password" >&2
+    echo "we no longer have (no POSTGRES_PASSWORD in the environment and no ${ENV_FILE})." >&2
+    echo "Minting a new password here would break authentication against that volume." >&2
+    echo "Restore the original ${ENV_FILE} (or set POSTGRES_PASSWORD to the volume's" >&2
+    echo "password). To start over from a clean database, remove the volume and re-run:" >&2
+    echo "  docker volume rm ${_pg_volume}    # DESTROYS all data" >&2
+    echo "  APPLICANT_FORCE_CRED_REGEN=1 bash scripts/install.sh --apply   # explicit opt-in" >&2
+    exit 1
+  fi
+fi
+
 # --- Editable defaults (override via environment; FR-INSTALL-1) -------------
 export POSTGRES_USER="${POSTGRES_USER:-applicant}"
 # No weak default password. On first install (none provided and none persisted in
