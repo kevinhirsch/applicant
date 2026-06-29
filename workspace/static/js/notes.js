@@ -2328,11 +2328,10 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(e => {
-        console.error('Failed to delete note:', e);
+      _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(() => {
+        uiModule.showError('Failed to delete');
         _notes.splice(idx, 0, removed);
         _renderNotes();
-        uiModule.showError('Failed to delete');
       });
     });
   });

@@ -278,7 +278,7 @@ function _renderSettingsBody(body, data, tzList) {
     (async () => {
       try {
         const [presetsRaw, templates] = await Promise.all([
-          _fetchJSON('/api/presets').catch(e => { console.error('Failed to fetch presets:', e); return {}; }),
+          _fetchJSON('/api/presets').catch(() => ({})),
           _fetchJSON('/api/presets/templates').catch(e => { console.error('Failed to fetch presets templates:', e); return []; }),
         ]);
         // Presets API returns a dict keyed by preset ID, not an array
