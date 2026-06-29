@@ -17,6 +17,10 @@ from routes.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
+#: Max gallery upload size (bytes). Prevents disk exhaustion from oversized
+#: uploads (SECURITY DoS). Matches the common 10 MB default.
+MAX_GALLERY_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
 
@@ -34,7 +38,13 @@ def setup_gallery_routes() -> APIRouter:
 
         user = get_current_user(request)
         album_id = form.get("album_id") or None
+        # Reject oversized uploads before reading into memory (SECURITY DoS)
         content = await file.read()
+        if len(content) > MAX_GALLERY_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_GALLERY_UPLOAD_BYTES} bytes.",
+            )
 
         # Duplicate detection via SHA-256
         file_hash = hashlib.sha256(content).hexdigest()

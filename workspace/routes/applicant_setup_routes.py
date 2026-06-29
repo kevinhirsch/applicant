@@ -433,6 +433,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Detect required/missing fonts for an uploaded resume."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or "resume", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
@@ -449,6 +454,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Install an uploaded missing font file."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or f"{name}.ttf", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
@@ -517,6 +527,11 @@ def setup_applicant_setup_routes() -> APIRouter:
         """Upload the base resume; engine parses + reconciles the attribute cloud."""
         require_privilege(request, _CONFIG_PRIV)
         content = await file.read()
+        if len(content) > MAX_APPLICANT_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large: max {MAX_APPLICANT_UPLOAD_BYTES} bytes."
+            )
         files = {"file": (file.filename or "resume.txt", content, file.content_type)}
         try:
             async with ApplicantEngineClient() as engine:
