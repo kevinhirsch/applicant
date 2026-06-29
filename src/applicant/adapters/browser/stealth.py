@@ -24,6 +24,7 @@ What lives here (and the requirement each satisfies):
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import shutil
@@ -35,7 +36,8 @@ from dataclasses import dataclass, field
 #: cannot be probed (e.g. the hermetic test lane, no browser installed). The UA,
 #: the ``Sec-CH-UA`` header and the engine all derive from this single value so
 #: they NEVER disagree. Bump this when the bundled/installed Chrome is upgraded.
-PINNED_CHROME_MAJOR = 124
+#: May be overridden via the ``APPLICANT_CHROME_MAJOR`` environment variable.
+PINNED_CHROME_MAJOR = int(os.environ.get('APPLICANT_CHROME_MAJOR', '130'))
 
 #: OWNER DECISION (FR-STEALTH-1): present a COHERENT REAL Linux + Google Chrome
 #: identity, NOT a spoofed Windows persona. Real Google Chrome on Linux yields the
@@ -148,6 +150,29 @@ def detect_chrome_major(channel: str = "chrome") -> int | None:
     return None  # pragma: no cover - covered via monkeypatched PATH in tests
 
 
+def resolve_chrome_major(channel: str = "chrome") -> int:
+    """Resolve the Chrome major version: env override, then probe, then pinned default.
+
+    Priority:
+    1. ``APPLICANT_CHROME_MAJOR`` environment variable (container deploy override).
+    2. ``detect_chrome_major(channel)`` (the installed binary probe).
+    3. :data:`PINNED_CHROME_MAJOR` (the build-time fallback).
+
+    This lets operators pin the major in a container via env var rather than relying
+    on PATH probing, and keeps the UA <-> CH-UA <-> engine coherent (FR-STEALTH-1).
+    """
+    env_val = os.environ.get("APPLICANT_CHROME_MAJOR")
+    if env_val is not None:
+        try:
+            return int(env_val)
+        except (TypeError, ValueError):
+            pass
+    probed = detect_chrome_major(channel)
+    if probed is not None:
+        return probed
+    return PINNED_CHROME_MAJOR
+
+
 def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
     """The coherent real-Linux/Chrome fingerprint, version-pinned to installed Chrome.
 
@@ -155,7 +180,7 @@ def coherent_fingerprint(channel: str = "chrome") -> dict[str, str]:
     able (so the UA/CH-UA match the real browser the human will take over), else
     falls back to :data:`PINNED_CHROME_MAJOR`. Always internally coherent.
     """
-    major = detect_chrome_major(channel) or PINNED_CHROME_MAJOR
+    major = resolve_chrome_major(channel)
     return _build_fingerprint(major, channel=channel)
 
 #: FR-STEALTH-5: honest best-effort caveat surfaced in UX copy. Anti-detection is
