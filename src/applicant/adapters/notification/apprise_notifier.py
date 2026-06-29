@@ -28,6 +28,7 @@ network) so contract/unit/BDD tests assert ladder + idempotency semantics offlin
 from __future__ import annotations
 
 import itertools
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -168,6 +169,7 @@ class AppriseNotifier:
         *,
         discord_webhook_url: str = "",
         apprise_urls: str = "",
+        ntfy_url: str = "",
         in_app: bool = True,
         escalation_hold_seconds: int = _DISCORD_HOLD_SECONDS,
         email_timeout_seconds: int = _EMAIL_TIMEOUT_SECONDS,
@@ -175,14 +177,16 @@ class AppriseNotifier:
         presence: Callable[[], bool] | None = None,
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str = "",
+        quiet_hours_channels: dict[str, bool] | None = None,
         always_on: bool = False,
         send_real: bool = False,
     ) -> None:
         self._discord = discord_webhook_url
         self._apprise = apprise_urls  # email/SMTP/other Apprise URLs (comma-separated)
+        self._ntfy = ntfy_url  # ntfy push endpoint (FR-NOTIF-1, #300)
         self._in_app = in_app
         self._hold_seconds = escalation_hold_seconds
-        self._email_timeout = email_timeout_seconds
+        self._email_timeout = max(60, int(email_timeout_seconds))
         self._clock = clock or _default_clock
         # Presence signal (FR-NOTIF-2): True when the user is verifiably present in
         # the web UI (focused tab + recent input + open socket). Default: absent.
@@ -197,10 +201,12 @@ class AppriseNotifier:
         self._quiet_hours = _normalize_quiet_window(quiet_hours)
         # The timezone the window is interpreted in. Empty => UTC (the clock's tz).
         self._quiet_tz = quiet_tz or ""
+        self._quiet_hours_channels = quiet_hours_channels or {}
         self._always_on = always_on
         self._send_real = send_real
         # dedup_key -> active delivery (deactivated on expiry, FR-NOTIF-3)
         self._sent: dict[str, _Delivery] = {}
+        self._sent_lock = threading.Lock()
         self._counter = 0
         # In-app sink: notifications surfaced in the portal (FR-UI-3 feed).
         self._inbox: list[CapturedSend] = []
@@ -235,10 +241,12 @@ class AppriseNotifier:
             channels.append(NotificationChannel.IN_APP.value)
         if self._apprise:
             channels.append(NotificationChannel.EMAIL.value)
+        if self._ntfy:
+            channels.append(NotificationChannel.PUSH.value)
         return channels
 
     def is_configured(self) -> bool:
-        return bool(self._discord or self._apprise or self._in_app)
+        return bool(self._discord or self._apprise or self._in_app or self._ntfy)
 
     def has_discord(self) -> bool:
         return bool(self._discord)
@@ -251,8 +259,10 @@ class AppriseNotifier:
         *,
         discord_webhook_url: str | None = None,
         apprise_urls: str | None = None,
+        ntfy_url: str | None = None,
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str | None = None,
+        quiet_hours_channels: dict[str, bool] | None = None,
         always_on: bool | None = None,
         email_timeout_seconds: int | None = None,
     ) -> None:
@@ -268,10 +278,14 @@ class AppriseNotifier:
             self._discord = discord_webhook_url
         if apprise_urls is not None:
             self._apprise = apprise_urls
+        if ntfy_url is not None:
+            self._ntfy = ntfy_url
         if quiet_hours is not None:
             self._quiet_hours = _normalize_quiet_window(quiet_hours)
         if quiet_tz is not None:
             self._quiet_tz = quiet_tz or ""
+        if quiet_hours_channels is not None:
+            self._quiet_hours_channels = quiet_hours_channels
         if always_on is not None:
             self._always_on = always_on
         if email_timeout_seconds is not None:
@@ -288,7 +302,10 @@ class AppriseNotifier:
         now = self._now_secs()
         rungs: list[_Rung] = []
 
-        if notification.urgency is NotificationUrgency.IMMEDIATE:
+        if notification.urgency in (
+            NotificationUrgency.IMMEDIATE,
+            NotificationUrgency.CRITICAL,
+        ):
             # Errors fan out to every configured channel at once, any hour (FR-NOTIF-5).
             for ch in self.configured_channels():
                 rungs.append(_Rung(channel=ch, due_at=now))
@@ -368,7 +385,10 @@ class AppriseNotifier:
         key = notification.dedup_key or ""
         if notification.web_preemptable or key.startswith("decision:"):
             return "action"
-        if notification.urgency is NotificationUrgency.IMMEDIATE:
+        if notification.urgency in (
+            NotificationUrgency.IMMEDIATE,
+            NotificationUrgency.CRITICAL,
+        ):
             return "error"
         if key.startswith("digest:"):
             return "digest"
@@ -435,6 +455,9 @@ class AppriseNotifier:
         elif channel == NotificationChannel.EMAIL.value and self._apprise:
             for url in (u.strip() for u in self._apprise.split(",") if u.strip()):
                 client.add(url)
+        elif channel == NotificationChannel.PUSH.value and self._ntfy:
+            # ntfy push (FR-NOTIF-1, #300): Apprise supports ntfy:// URLs natively.
+            client.add(self._ntfy)
         body = notification.body
         if notification.deep_link:
             body = f"{body}\n{notification.deep_link}"
@@ -460,13 +483,15 @@ class AppriseNotifier:
         rungs = self._build_rungs(notification)
         delivery = _Delivery(handle=handle, notification=notification, rungs=rungs)
         key = notification.dedup_key or handle
-        self._sent[key] = delivery
+        with self._sent_lock:
+            self._sent[key] = delivery
         # Fire any rung already due (NORMAL in-app + Discord-now; IMMEDIATE all).
         self._fire_due(delivery, self._now_secs())
         # LEAK-NOTIF-1: opportunistically drop fully-fired, past-timeout deliveries
         # so apps that never call ``expire`` (abandon/complete off-path) do not leak
         # ``_sent`` entries forever.
-        self._prune_sent(self._now_secs())
+        with self._sent_lock:
+            self._prune_sent(self._now_secs())
         return handle
 
     def send_email(
@@ -507,6 +532,9 @@ class AppriseNotifier:
                 urgency=NotificationUrgency.NORMAL,
             ),
         )
+        if dedup_key is not None:
+            self._sent_emails.add(dedup_key)
+            self._prune_sent_emails()
         return True
 
     def _prune_sent_emails(self) -> None:
@@ -540,10 +568,34 @@ class AppriseNotifier:
         # tick are dropped (``advance`` stops rescanning dead entries) while a
         # delivery whose rungs fire on THIS tick survives for introspection until
         # the next tick.
-        self._prune_sent(ts)
+        with self._sent_lock:
+            self._prune_sent(ts)
+            deliveries = list(self._sent.values())
         fired: list[str] = []
-        for delivery in list(self._sent.values()):
+        for delivery in deliveries:
             fired.extend(self._fire_due(delivery, ts))
+        return fired
+
+    def deliver_now(self) -> list[str]:
+        """Force-flush notifications deferred by quiet hours (FR-NOTIF-5, #302)."""
+        ts = self._now_secs()
+        with self._sent_lock:
+            deliveries = list(self._sent.values())
+        fired: list[str] = []
+        for delivery in deliveries:
+            if not delivery.active:
+                continue
+            for rung in delivery.rungs:
+                if rung.fired:
+                    continue
+                try:
+                    self._dispatch(rung.channel, delivery.notification)
+                except Exception:
+                    log.warning("notification_deliver_now_failed", channel=rung.channel, dedup_key=delivery.notification.dedup_key)
+                    continue
+                rung.fired = True
+                delivery.sent_channels.append(rung.channel)
+                fired.append(rung.channel)
         return fired
 
     def _prune_sent(self, ts: float) -> None:
@@ -584,14 +636,20 @@ class AppriseNotifier:
                 rung.fired = True
                 continue
             # Quiet hours (FR-NOTIF-5): defer NORMAL hops to the next allowed hour;
-            # IMMEDIATE always fires. (Email/Discord deferral; in-app always surfaces.)
+            # IMMEDIATE and CRITICAL always fire. (Email/Discord deferral; in-app always surfaces.)
+            _channel_respects_quiet = self._quiet_hours_channels.get(rung.channel, True)
             if (
                 delivery.notification.urgency is NotificationUrgency.NORMAL
                 and rung.channel != NotificationChannel.IN_APP.value
+                and _channel_respects_quiet
                 and self._in_quiet_hours(when)
             ):
                 continue
-            self._dispatch(rung.channel, delivery.notification)
+            try:
+                self._dispatch(rung.channel, delivery.notification)
+            except Exception:
+                log.warning("notification_rung_dispatch_failed", channel=rung.channel, dedup_key=delivery.notification.dedup_key)
+                continue
             rung.fired = True
             delivery.sent_channels.append(rung.channel)
             fired.append(rung.channel)
@@ -604,12 +662,13 @@ class AppriseNotifier:
         action-required notification stops persisting once its underlying action
         is resolved (the notification center never double-tracks acted items).
         """
-        delivery = self._sent.get(dedup_key)
-        if delivery is not None:
-            delivery.active = False
-            for rung in delivery.rungs:
-                rung.fired = True  # cancel any not-yet-fired hops
-            self._sent.pop(dedup_key, None)
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
+            if delivery is not None:
+                delivery.active = False
+                for rung in delivery.rungs:
+                    rung.fired = True  # cancel any not-yet-fired hops
+                self._sent.pop(dedup_key, None)
         if dedup_key:
             self._inbox = [e for e in self._inbox if e.dedup_key != dedup_key]
 
@@ -672,15 +731,18 @@ class AppriseNotifier:
 
     # --- test/contract helpers -------------------------------------------
     def is_active(self, dedup_key: str) -> bool:
-        return dedup_key in self._sent
+        with self._sent_lock:
+            return dedup_key in self._sent
 
     def sent_channels(self, dedup_key: str) -> list[str]:
-        delivery = self._sent.get(dedup_key)
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
         return list(delivery.sent_channels) if delivery else []
 
     def pending_escalations(self, dedup_key: str) -> list[str]:
         """Ladder rungs not yet fired (the next hops the scheduler will fire)."""
-        delivery = self._sent.get(dedup_key)
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
         if not delivery:
             return []
         return [r.channel for r in delivery.rungs if not r.fired]

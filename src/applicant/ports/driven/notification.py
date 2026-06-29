@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 class NotificationUrgency(str, Enum):
     NORMAL = "normal"  # digests/approvals; may respect quiet hours
     IMMEDIATE = "immediate"  # errors surface any hour (FR-NOTIF-5)
+    CRITICAL = "critical"  # urgent user-action (e.g. captcha) overrides quiet hours
 
 
 class NotificationChannel(str, Enum):
@@ -26,6 +27,7 @@ class NotificationChannel(str, Enum):
     DISCORD = "discord"
     IN_APP = "in_app"
     EMAIL = "email"
+    PUSH = "push"  # device push via ntfy (FR-NOTIF-1, #300)
 
 
 @dataclass(frozen=True)
