@@ -145,6 +145,15 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    {
+        "key": "multi_campaign_switcher",
+        "lane": None,
+        "title": "Multi-campaign switcher",
+        "nav_ids": ["rail-campaigns", "tool-campaigns-btn"],
+        "dormant_keys": ["multi_campaign_switcher"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
     # Compare has NO Applicant engine backing. Per the brief it ships
     # present-but-DISABLED: visible in the nav, greyed, never wired.
     {
@@ -152,9 +161,9 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "lane": None,
         "title": "Compare",
         "nav_ids": ["rail-compare", "tool-compare-btn"],
-        "dormant_keys": [],
-        "requires": None,
-        "present_but_disabled": True,
+        "dormant_keys": ["compare_surface"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
     },
 )
 

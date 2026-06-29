@@ -238,7 +238,7 @@ class Settings(BaseSettings):
     # ``bridge`` reaches the front-door substrate (workspace/services/memory/) over
     # the engine->workspace callback channel (agent-intelligence.md §10 — recommended
     # placement). The bridge degrades to empty behavior when that channel is OFF.
-    mind_backend: str = Field(default="in_memory", alias="MIND_BACKEND")
+    mind_backend: str = Field(default="bridge", alias="MIND_BACKEND")
     # Stage agent self-writes for human review by default (FR-MIND-9). Memory MAY be
     # relaxed to auto-apply non-sensitive entries; skills/identity always require
     # approval regardless of these flags.
