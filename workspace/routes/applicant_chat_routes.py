@@ -83,15 +83,19 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
     """Translate a typed :class:`EngineError` into an HTTPException for a *write*.
 
     A transport-level failure (timeout / connection refused — no response) means
-    the engine is unreachable → 503. An engine HTTP error is forwarded with its
-    own status and the engine's own ``detail`` so the user sees the real reason
-    (e.g. a 409 review-required gate).
+    the engine is unreachable → 503. 4xx responses from the engine are forwarded
+    (client-correctable: 409 review-required gate, 422 validation). 5xx responses
+    are scrubbed — the raw detail may contain internal stack traces or state; we
+    log it server-side and return a generic message to the browser.
     """
     if exc.status is None:
         return HTTPException(
             status_code=503,
             detail="The Applicant engine is unavailable right now. Please try again shortly.",
         )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (chat): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
     detail = exc.detail if exc.detail not in (None, "") else exc.message
     return HTTPException(status_code=exc.status, detail=detail)
 
