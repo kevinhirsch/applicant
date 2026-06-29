@@ -97,11 +97,11 @@ def integrations_off(t05ctx):
     assert s.notifications_live is False
 
 
-@then("the orchestrator runs the in-process shim and the scheduler is idle")
-def shim_and_idle(t05ctx):
+@then("the orchestrator runs the in-process shim and the scheduler is enabled")
+def shim_and_scheduler_on(t05ctx):
     s = t05ctx["settings"]
     assert s.orchestrator_backend == "shim"
-    assert s.scheduler_enabled is False
+    assert s.scheduler_enabled is True
 
 
 @given("an operator wants the engine to do real work")
@@ -111,9 +111,8 @@ def operator_wants_real(t05ctx):
 
 @when("a combined production-mode preset is requested")
 def request_production_preset(t05ctx):
-    # Honest probe: a single combined preset that flips every real integration on does
-    # not exist yet. Construct settings asking for it; today nothing reads it, so the
-    # individual flags stay at their hermetic defaults (the genuine red below).
+    # APPLICANT_MODE=production now works: it sets all five real-integration flags
+    # via the _apply_production_mode model_validator in config.py (#174/#185).
     t05ctx["preset"] = _settings(APPLICANT_MODE="production")
 
 
@@ -123,8 +122,8 @@ def request_production_preset(t05ctx):
 )
 def preset_flips_everything(t05ctx):
     s = t05ctx["preset"]
-    # A real production preset would derive all five from APPLICANT_MODE. Until it
-    # lands, the defaults remain hermetic — a true failure for @pending.
+    # APPLICANT_MODE=production now correctly derives all five from the single flag
+    # via the model_validator. Individual overrides still win (#174).
     assert getattr(s, "applicant_mode", "") == "production"
     assert s.browser_real is True
     assert s.discovery_live is True
@@ -167,8 +166,9 @@ def reach_account_gate(t05ctx):
 )
 def per_tenant_allowance(t05ctx):
     cls = t05ctx["prefill_cls"]
-    # A per-tenant allowance seam (e.g. an instance method or ctor flag distinct from
-    # the global opt-in) does not exist yet — genuine red until it lands.
+    # allow_account_creation_for_tenant now exists on PrefillService (#175).
+    # It checks for stored credentials per-tenant, bypassing the global opt-in
+    # for returning users.
     assert hasattr(cls, "allow_account_creation_for_tenant")
 
 
@@ -221,8 +221,8 @@ def llm_queue_created(t05ctx):
     "the LLM rate limit defaults to a conservative positive value rather than disabled"
 )
 def llm_default_conservative(t05ctx):
-    # Today LLM_RATE_LIMIT defaults to 0 (disabled). A conservative non-zero default
-    # (e.g. 30 req/min) is the residual gap — genuine red for @pending.
+    # LLM_RATE_LIMIT now defaults to 30 (a conservative rate) rather than 0 (disabled).
+    # The default protects against runaway token spend out of the box (#186).
     assert t05ctx["settings"].llm_rate_limit > 0
 
 
