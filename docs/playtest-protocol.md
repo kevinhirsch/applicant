@@ -242,6 +242,77 @@ master-spec FR-ONBOARD/FR-OOBE). Verify each end-to-end:
   renders the recorded provenance (`GeneratedDocument.provenance`). Empty provenance should render an
   honest empty state, not a fabricated list.
 
+### 5e. The grounding oracle — anchor every claim to engine truth (anti-fabrication)
+Stop eyeballing fabrication. The engine is the source of truth; the chat, activity
+panel, digest, and notifications are read-replicas that **must agree with it**
+(NFR-TRUTH-1, FR-AGENT-7/FR-OBS-2). Verify it **mechanically**, every LLM-driven step.
+
+The two cardinal sins:
+1. **Invented entity** — a concrete fact in the rendered text (a company/role, an
+   application status, a "next run" time, a count, a document it claims to have
+   produced) that is NOT present in engine state.
+2. **State bypass** — the assistant narrates an outcome the engine never committed
+   ("I submitted to X", "I tailored your résumé") while the engine's status/history
+   did not move.
+
+**The before/after diff (the mechanical core):** snapshot the engine's closed-set
+read endpoints before a step (`GET /api/applicant/activity/snapshot`, run/ops
+status, application history, digest) and after; then assert (1) every concrete claim
+in the rendered text maps to a real value in the snapshot; (2) any asserted outcome
+is reflected by a real state change (a new run row, a status transition, a
+`GeneratedDocument`); (3) when there's nothing to report, the text says "nothing
+yet" rather than inventing. **Name-set check** for the digest: every company/role
+narrated must appear in the engine's discovered-roles payload.
+
+**False-positive discipline:** a sentence-initial capitalized word is not an invented
+company — reconcile candidates against the engine list first. A transient optimistic
+UI value that reconciles after the network settles is not a divergence — re-query
+before filing. Only an unbacked claim, an outcome with no state change, or a
+non-reconciling divergence is the bug. This is a first-class finding class alongside
+CSS/copy defects.
+
+### 5f. Two-window concurrency & parity (Applicant is multi-user — test it like one)
+The same campaign can be open in two tabs. The protocol already stands up a second
+front-door (§1.2) — use it to test **consistency**, not just to halve capture time.
+The engine is the oracle for every parity claim.
+
+1. **At-rest parity:** open the Portal, digest, and activity panel in both windows on
+   the same account; the engine-truth fields (pending-action set, application
+   statuses, "next run", digest contents) must be identical.
+2. **Reconcile-after-action:** resolve a pending action in window A; window B must
+   reconcile (the item disappears) within a bounded lag via the app's own refresh/
+   notification path, not only after a manual reload.
+3. **Concurrent-write race — and loop it (N≥10):** fire a state-mutating action in
+   both windows near-simultaneously, then compare. A single green pass proves nothing
+   about a race. Flag any iteration where engine state and the two UIs disagree, a
+   pending item is lost/duplicated, or a JS error fires. A confirmation-gated 409
+   with clean recovery is the guard working; a divergence without a 409 is the bug.
+4. **Transient vs persistent:** if two windows diverge, reload both. Reconciles on
+   reload ⇒ render-layer bug (scope the fix to the front-door); doesn't ⇒ data-layer
+   bug (worse). A legitimate per-viewer difference (each window's own in-flight
+   optimistic state) is not a defect; a lost/duplicated pending action or a
+   non-reconciling engine-truth divergence is.
+
+### 5g. The job-seeker persona & the "does this respect the applicant" rubric
+Make §5's role-play repeatable and domain-expert: adopt ONE stable persona and play
+it identically across runs so any behavior change is attributable to the product. The
+persona is a job-search expert with low tolerance for tooling that wastes their time,
+who files findings as "a real job application doesn't work like this." Keep the OOBE
+intake (target roles, work mode, locations, salary floor, key skills, résumé)
+identical across re-runs. For breadth, run 2–3 distinct personas in sequence (e.g. a
+high-volume applicant, a selective senior candidate, a career-changer with a thin-fit
+résumé) — each is this persona re-parameterized at intake.
+
+Score every step; a miss is a finding tagged **[CORRECTNESS]** or **[RESPECT]**:
+- *Correctness:* no fabrication ever (generated material states only what the user's
+  profile/résumé supports); review-before-submit is inviolable (no engine self-submit);
+  match quality is honest (surfaced roles fit the stated criteria); tailoring is real
+  and grounded with accurate "What I drew on" provenance; learning is real (a declined
+  role with a reason / a redline feeds curation, and only approving writes it).
+- *Respect:* no dead ends or lies about state; the agent has one honest first-person
+  identity ("nothing yet" over invention); approve/decline/redline moves something
+  real; plain language, no jargon/codenames/`FR-`/`NFR-` leaks (principle #3).
+
 ---
 
 ## 6. THE CONTRACT SWEEP (fastest bug-finder)
@@ -429,6 +500,34 @@ caller's inputs. Real bugs found this way (each shipped as a focused PR):
 
 ---
 
+## 8b. LLM TRANSPORT-CONFORMANCE AUDIT (static — the streaming error contract)
+
+§5a judges whether the model's *output* is good enough; this audits the *transport*,
+where a turn dies with no error surfaced. Locate the engine's single LLM HTTP
+boundary (the model client under `src/applicant/adapters/` that builds
+chat-completions requests and parses the streamed response) and score each item
+SUPPORTED / PARTIAL / MISSING:
+- **Mid-stream error chunk (`finish_reason:"error"`):** a provider can emit an
+  in-band error *after* streaming starts (overloaded, policy block, timeout). If the
+  client ignores it and treats the stream as a normal end, the user sees text stream
+  then disappear, or a blank turn, with no error — the likeliest cause of "it
+  generated then vanished." Confirm the client detects and surfaces it.
+- **`Retry-After` on 429/503:** a fixed backoff that ignores it re-hits the limit and
+  burns the retry budget on a transient one timed retry would survive.
+- **Typed errors not flattened:** moderation/content-policy/provider errors carry
+  structured metadata; flattening to "HTTP 4xx" makes an input-flagged failure
+  indistinguishable from a dead key — and for a résumé/cover generator, an
+  input-policy block must be legible.
+- **Empty-completion retry:** a streamed round yielding zero content should retry, not
+  surface as a blank document.
+- **(Lower priority) JSON-mode for constrained extraction** (discovery/criteria/
+  learning) hardens the parse against the model wrapping JSON in prose.
+
+These map directly to user-visible failures in the data-dependent states (digest,
+review, redline revision, chat, material generation).
+
+---
+
 ## 9. INITIALIZATION VECTOR (what a fresh agent does, in order)
 
 1. Acknowledge comprehension; obtain the **API key**.
@@ -448,3 +547,92 @@ caller's inputs. Real bugs found this way (each shipped as a focused PR):
 10. Confirm the **full-product green bar** (§6a): the crawl green AND every CI gate.
 11. Maintain a single PR; keep CI green; deliver before/after screenshots.
 12. Remind the user to **revoke the API key** when done.
+
+> The exit condition is no longer "0 issues" — it is **§10's ship gate**: no
+> launch-blocker open and the front-door-airtight bar proven (the looped §5f
+> harness), on top of the full-product green bar (§6a).
+
+---
+
+### 9a. Per-run plan & findings record (vs. this playbook)
+This file is the **stable, reusable playbook**. Each actual audit also produces two
+dated artifacts under `docs/audits/` (create it if absent), so runs are comparable
+and the playbook stays clean:
+- **A run plan** — what's specific to this run: persona(s), model/tier ladder,
+  DOC-ONLY vs fix-as-you-go, and the state ladder to walk: **S1** initial/zero-data →
+  **S2** onboarding (connect model → intake → résumé upload + conflict reconciliation
+  → conversion accept/reject) → **S3** core loop (Portal, digest, refresh, research,
+  the review→redline→approve loop, chat, settings) → **S4** resolution/edge
+  (final-submit / live-takeover, offline-degrade, multi-window §5f). Capture a
+  screenshot at each *distinct* UI state.
+- **A findings record** — dated `docs/audits/YYYY-MM-DD-playtest-*.md`: each finding
+  under the §4 lenses + the §5 functional/grounding checks, triaged **[Launch-Blocking]
+  vs [Polish]** against §10, each backed by a cited screenshot, with fixes at the §7
+  altitude. Keep secrets out (the key lives only in the git-ignored telemetry dir).
+
+---
+
+## 10. THE SHIP GATE (what actually blocks a release)
+
+"0 issues across every surface" (§6a) is the **quality** bar for a clean audit — not
+the **ship** bar; held literally, a cosmetic nit blocks release forever. This draws
+the hard line: a finite set of launch-blockers, everything else explicitly
+post-launch or parked. The reason blockers hide is that **every CI gate stubs the
+LLM** — the product's real behavior lives in the model↔engine seam (digest reasoning,
+tailoring, the truthful self-report), the one thing CI never exercises. So make the
+**real-model golden path** the acceptance bar.
+
+The golden path (real model wired, not a stubbed gate):
+
+| # | Gate | Pass criterion |
+|---|---|---|
+| G1 | Onboarding completes | model + profile → `automated_work_allowed: true`, `apply_ready: true`. |
+| G2 | Honest gate when incomplete | model-only setup leaves it false with a truthful "what's still needed" banner. |
+| G3 | Loop runs without a nudge | discovery → digest → review reach the user on schedule; "now/next/recent" matches the run log. |
+| G4 | Digest grounded | every surfaced role exists in engine discovery and fits criteria (§5e holds). |
+| G5 | Tailoring grounded & review-gated | generation/revision state only profile-supported facts; the fabrication guard fires on every material path incl. revision; non-AI-voice post-filter; provenance renders. |
+| G6 | No engine self-submit | a final submit fires only on an explicit user decision; the review gate holds. |
+| G7 | Truthful self-report | chat/activity match engine state; "nothing yet" when nothing happened (§5e holds). |
+| G8 | No machinery/leak in user text | no internal ids, reasoning tokens, secrets, codenames, or `FR-`/`NFR-` jargon; credentials stay sealed (§8a). |
+| G9 | Multi-user isolation | one owner never sees another's data; every proxy route auth-guarded; concurrency holds (§5f). |
+
+**The front-door-airtight bar** (gate separately — model-independent): the §5f
+two-window checks — no lost pending action, right control state, concurrent writes
+converge with zero loss, prompt reconcile — proven by the *looped* harness.
+
+**Triage rubric — bucket every open issue on sight:**
+- **LAUNCH-BLOCKER** — breaks G1–G9 on the real-model golden path or the airtight bar
+  (dead screen, fabrication, leaked secret/codename, self-submit, stuck loop,
+  cross-user violation, lost user action). Only these block ship.
+- **POST-LAUNCH** — real but doesn't break the golden path (secondary-surface polish,
+  reachable responsive nits, enhancements, calibration §11). Ship; fast-follow.
+- **PARKED** — needs a product decision or external input (deploy/host-dependent items
+  like the takeover-desktop sandbox). Surface to the maintainer; don't spend agents.
+
+A long bug list is **not** a launch backlog — it's overwhelmingly post-launch/parked.
+Where possible, make the golden path an automated gate (record one real run; replay it
+deterministically; nightly real-model smoke for prompt drift).
+
+---
+
+## 11. CALIBRATION DATA (when the question is "is this tuned right?", not "is this broken?")
+
+Some findings are **tuning**, not bugs: is the digest too aggressive/conservative? Is
+the match scoring surfacing the right roles? Is tier-escalation sending the right tasks
+to the stronger model (§5a)? Is the banned-phrase/aggressiveness setting producing
+material that's too bland or too padded? Don't tune on vibes — gather data with a
+controlled comparison and keep a dated record.
+
+**Method (controlled A/B, attributable):** hold the input fixed (same profile/criteria,
+same candidate role set) and vary ONE knob between two arms (e.g. aggressiveness low vs
+high; entry tier vs escalated) over the same inputs, so any difference is attributable
+to the knob. Measure the outcome that matters (roles surfaced and their real fit;
+tailoring quality by the §5g rubric; fabrication/leak rate; escalation correctness).
+
+**Deliverable:** a dated `docs/audits/YYYY-MM-DD-calibration-*.md` data record
+(DATA-ONLY — changing the knob is a separate, deliberate follow-up) with a ranked
+tuning menu (knob, direction, expected effect), ordered by impact-per-risk. After any
+change, re-run the same comparison and confirm the safety guards still hold — a
+calibration change that raises the fabrication or self-submit rate is a regression,
+full stop. (Applicant has no seeded deterministic engine to replay, so this is a
+fixed-input controlled comparison, not an N-seed simulation.)
