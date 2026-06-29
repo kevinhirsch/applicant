@@ -27,10 +27,14 @@ import time
 from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
+import logging
+
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
 from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+log = logging.getLogger(__name__)
 
 
 def url_safety_violation(url: str) -> str | None:
@@ -621,13 +625,15 @@ class PlaywrightPageSource:
                 browser.close()
             elif context is not None:
                 context.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Browser teardown (context/browser) failed", exc_info=exc)
+            raise
         try:
             if pw is not None:
                 pw.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Playwright stop failed", exc_info=exc)
+            raise
 
     @staticmethod
     def fingerprint_init_script(fingerprint: dict[str, str]) -> str:
