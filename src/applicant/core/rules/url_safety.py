@@ -62,3 +62,20 @@ def ip_is_blocked(ip_text: str) -> bool:
         or ip.is_reserved
         or ip.is_unspecified
     )
+
+
+def ip_chain_is_blocked(ips) -> bool:
+    """Return True if ANY address in ``ips`` is a destination an untrusted URL must
+    not reach.
+
+    A single host can resolve to several addresses, and a navigation can hop through
+    several hosts (redirects) or fan out to several subresources — the request must be
+    refused if *any* hop/address is non-public. This is the chain form of
+    :func:`ip_is_blocked` used by the browser adapter's per-request route guard so the
+    SSRF policy is identical on the entry URL, every redirect, and every subresource
+    (not just the first hop). An empty chain is treated as blocked (fail closed).
+    """
+    addrs = list(ips or [])
+    if not addrs:
+        return True
+    return any(ip_is_blocked(addr) for addr in addrs)
