@@ -637,7 +637,13 @@ class PrefillService:
         """Create an account from the predefined set if enabled (ADR-0004). Returns
         'ok' | 'email_verify' on a created account (credential banked), else ``None``
         (not enabled / no predefined set / stub browser / creation failed → hand off)."""
-        if not self._allow_automated_accounts:
+        # Per-tenant credential allowance (#175): if a stored credential already
+        # exists for this tenant, allow account creation without the global opt-in.
+        tenant_of = getattr(self._browser, "tenant_key", None)
+        tenant_key = tenant_of(app.id) if callable(tenant_of) else None
+        if not self._allow_automated_accounts and not (
+            tenant_key and self.allow_account_creation_for_tenant(app, tenant_key)
+        ):
             return None
         predefined = self._lookup_credential(app, tenant_key=PREDEFINED_CREDENTIAL_KEY)
         if predefined is None:
@@ -655,6 +661,26 @@ class PrefillService:
             self._capture_credential(app, username, password)
             return status
         return None
+
+    def allow_account_creation_for_tenant(self, app, tenant_domain: str) -> bool:
+        """Return True when account creation may proceed for a tenant even if the
+        global ALLOW_AUTOMATED_ACCOUNTS is off, because a stored (non-predefined)
+        credential already exists for that ATS. This is the per-tenant allowance that
+        lets returning users skip the manual hand-off for accounts they already banked
+        (ADR-0004 extension). The global flag still gates brand-new tenants."""
+        if self._allow_automated_accounts:
+            return True  # global opt-in covers all tenants
+        # Per-tenant allowance: a non-predefined credential is already stored for this
+        # tenant key in the campaign's credential vault -- the user already banked an
+        # account here, so account creation is implicitly allowed for this ATS.
+        store = self._credentials
+        if store is None:
+            return False
+        try:
+            cred = store.retrieve(app.campaign_id, tenant_domain)
+        except Exception:  # pragma: no cover - defensive
+            return False
+        return cred is not None and cred.tenant_key != PREDEFINED_CREDENTIAL_KEY
 
     def _capture_credential(self, app, username: str, password: str) -> None:
         """Bank a freshly-created account credential under the ATS tenant key so future
