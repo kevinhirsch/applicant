@@ -60,6 +60,7 @@ from applicant.core.rules.materials import (
     classify_screening_question,
     should_generate_cover_letter,
 )
+from applicant.core.rules.prompt_injection import neutralize_untrusted_text
 from applicant.core.rules.review_gate import ensure_submittable
 from applicant.core.rules.sensitive_fields import (
     DECLINE_TO_SELF_IDENTIFY,
@@ -1411,6 +1412,9 @@ class MaterialService:
         """
         # Default: nothing was drawn on (the deterministic fallback path).
         self._last_provenance = ()
+        # Neutralize untrusted scraped text before it enters the LLM prompt so an
+        # attacker-controlled posting cannot steer tailoring/screening answers.
+        safe_source = neutralize_untrusted_text(true_source)
         if self._llm is not None and getattr(self._llm, "is_configured", lambda: False)():
             try:
                 from applicant.ports.driven.llm import ChatMessage
@@ -1438,7 +1442,7 @@ class MaterialService:
                         ChatMessage(role="system", content=system),
                         ChatMessage(
                             role="user",
-                            content=f"[{kind}] Source:\n{true_source}\nEmphasize: {', '.join(terms)}",
+                            content=f"[{kind}] Source:\n{safe_source}\nEmphasize: {', '.join(terms)}",
                         ),
                     ],
                     # Heavy writing escalates straight to L2 (FR-LLM-3/4); it still
