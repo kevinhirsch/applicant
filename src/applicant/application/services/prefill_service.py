@@ -806,6 +806,9 @@ class PrefillService:
         """
         aid = app.id
         state = self._browser.current_state(aid)
+        if state is None:
+            log.warning("current_state() returned None for application %s", aid)
+            return result
         page_log: dict[str, str] = {}
         for fld in self._browser.detect_fields(aid):
             # #177: every fillable field DETECTED counts toward the run's match rate
@@ -1265,7 +1268,8 @@ class PrefillService:
         outcomes log endpoint) — not just held in the in-memory ``PrefillResult``.
         """
         ref = self._browser.screenshot(aid)
-        url = self._browser.current_state(aid).url
+        state = self._browser.current_state(aid)
+        url = state.url if state is not None else ""
         result.screenshots.append(ref)
         result.screenshot_pages.append(url)
         self._archive_screenshot(aid, ref, url)
@@ -1296,6 +1300,9 @@ class PrefillService:
         the explicitly-extracted signal tuple — not just ``signals`` (FR-PREFILL-6).
         """
         state = self._browser.current_state(aid)
+        if state is None:
+            log.warning("current_state() returned None in _check_detection for %s", aid)
+            return None
         page_signals: dict = {"signals": state.detection_signals}
         status = getattr(state, "status", None)
         if status is not None:
