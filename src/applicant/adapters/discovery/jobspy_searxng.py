@@ -21,6 +21,7 @@ a ``ProxyConfig`` seam threaded into every network client without committing to 
 
 from __future__ import annotations
 
+import time as _time
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -33,7 +34,6 @@ log = get_logger(__name__)
 
 
 # --- per-board rate limiter (FR-LEARN-6, #195) ----------------------------
-import time as _time
 
 
 @dataclass

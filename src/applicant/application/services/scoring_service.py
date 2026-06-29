@@ -28,7 +28,10 @@ from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
 from applicant.core.ids import JobPostingId
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
+from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import ChatMessage
+
+log = get_logger(__name__)
 
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
 DEFAULT_VIABILITY_THRESHOLD = 70

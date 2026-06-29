@@ -196,21 +196,20 @@ class AdvancedLearningService:
         signature = dict(model.converting_role_signature)
         for feature in self._role_features(application, posting=posting):
             signature[feature] = signature.get(feature, 0.0) + _CONVERSION_WEIGHT
-        # #238: revive the Phase-1 centroid path by calling the base
-        # ``record_converting_role`` so ``converting_alignment`` never stays 0.0.
-        # The centroid and the discrete features are complementary facets of the SAME
-        # conversion; both folded here. ``record_converting_role`` bumps
-        # ``converting_samples``; we subtract 1 so the discrete fold owns the increment.
-        title = application.job_title or application.role_name or ""
-        description = ""
-        if posting is not None:
-            title = title or posting.title
-            description = posting.description or ""
-        jd_text = f"{title} {description}".strip()
-        if jd_text:
-            model = self._base.record_converting_role(model, jd_text, title=title)
-            model = replace(model, converting_samples=model.converting_samples - 1)
-            signature = dict(model.converting_role_signature)
+        # #238: also fold the converting role's text into the Phase-1 embedding CENTROID
+        # (``converting_role_signature["vector"]``) so the live loop populates it — not
+        # just the discrete features. Previously ``record_converting_role`` (the only
+        # writer of the centroid vector) was never called by the live loop, so the
+        # Phase-1 ``converting_alignment`` stayed 0.0 forever. The centroid and the
+        # discrete features are complementary facets of the SAME conversion; folding
+        # both here keeps ``converting_samples`` a single source of truth (incremented
+        # once below) and feeds every reader (scoring/discovery/variant selection).
+        signature = self._fold_centroid_vector(
+            signature,
+            sample_count=model.converting_samples,
+            application=application,
+            posting=posting,
+        )
         return replace(
             model,
             converting_role_signature=signature,
@@ -233,10 +232,11 @@ class AdvancedLearningService:
         Requires an embedding (via the Phase-1 base); degrades to leaving the centroid
         untouched when no embedding/text is available, so the discrete fold still lands.
 
-        NOTE (#238): kept as a fallback for callers that don't need the discrete
-        feature fold; ``record_conversion`` now calls the base ``record_converting_role``
-        directly so the Phase-1 centroid is populated through the live path.
         """
+        embedding = getattr(self._base, "_embedding", None)
+        if embedding is None:
+            return signature
+        title = application.job_title or application.role_name or ""
         description = ""
         if posting is not None:
             title = title or posting.title
