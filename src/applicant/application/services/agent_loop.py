@@ -473,6 +473,7 @@ class AgentLoop:
                     from applicant.application.services.presubmit_safety import (
                         PresubmitBlock,
                         check_duplicate_application,
+                        check_eligibility,
                         check_per_company_volume_cap,
                         check_scam_or_ghost_job,
                     )
@@ -503,6 +504,14 @@ class AgentLoop:
                             ),
                             reference_date=now.date(),
                         )
+                        if self._presubmit_safety_params.get(
+                            "eligibility_enabled", True
+                        ):
+                            check_eligibility(
+                                campaign.id,
+                                posting,
+                                self._storage,
+                            )
                     except PresubmitBlock as exc:
                         log.info(
                             "presubmit_blocked",

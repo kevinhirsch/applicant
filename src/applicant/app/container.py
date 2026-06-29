@@ -875,6 +875,7 @@ def build_container(settings: Settings | None = None) -> Container:
             "max_age_days": settings.presubmit_max_listing_age_days,
             "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
             "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+            "eligibility_enabled": settings.presubmit_eligibility_enabled,
         },
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
@@ -985,6 +986,7 @@ def build_container(settings: Settings | None = None) -> Container:
                 "max_age_days": settings.presubmit_max_listing_age_days,
                 "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
                 "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+                "eligibility_enabled": settings.presubmit_eligibility_enabled,
             },
         )
         return {

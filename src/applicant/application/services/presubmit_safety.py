@@ -263,3 +263,151 @@ def check_per_company_volume_cap(
             f"({count} applied today, max {max_per_day}).",
             check="per_company_volume",
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #371 — Eligibility filter (work-authorization)
+# ---------------------------------------------------------------------------
+
+#: Keywords in job descriptions that indicate a requirement for visa
+#: sponsorship or security clearance.
+_SPONSORSHIP_KEYWORDS = (
+    "sponsorship",
+    "visa sponsorship",
+    "work authorization",
+    "must be authorized",
+    "green card",
+    "h1b",
+    "h-1b",
+    "work permit",
+    "must have permanent",
+    "no sponsorship",
+    "will not sponsor",
+    "unable to sponsor",
+    "must be a us person",
+    "must be a us citizen",
+    "must be a citizen",
+    "us citizenship",
+    "security clearance",
+    "top secret clearance",
+    "secret clearance",
+    "government clearance",
+    "clearance required",
+    "must hold clearance",
+    "eligible for clearance",
+    "itear",
+    "export control",
+    "itar",
+)
+
+
+def _extract_work_authorization(storage: Any, campaign_id: Any) -> dict[str, bool]:
+    """Extract work-authorization signals from the campaign's onboarding intake
+    and attribute cloud.
+
+    Returns a dict with keys like:
+      - ``needs_sponsorship``: True if the user needs visa sponsorship
+      - ``has_clearance``: True if the user holds a security clearance
+      - ``citizenship``: the user's stated citizenship if available
+    """
+    result: dict[str, bool] = {}
+    # Check the onboarding intake.
+    profile = storage.onboarding_profiles.get_for_campaign(campaign_id)
+    if profile is not None:
+        intake = profile.intake or {}
+        work_auth = intake.get("work_authorization") or {}
+        if isinstance(work_auth, dict):
+            result["needs_sponsorship"] = bool(
+                work_auth.get("needs_sponsorship", False)
+                or work_auth.get("requires_sponsorship", False)
+                or work_auth.get("visa_sponsorship_required", False)
+            )
+            result["has_clearance"] = bool(
+                work_auth.get("has_security_clearance", False)
+                or work_auth.get("security_clearance", False)
+            )
+            result["citizenship"] = str(
+                work_auth.get("citizenship")
+                or work_auth.get("work_authorization_status")
+                or ""
+            )
+    # Fall back to attributes.
+    if not result.get("citizenship"):
+        for attr in storage.attributes.list_for_campaign(campaign_id):
+            name_lower = (attr.name or "").lower()
+            if "citizenship" in name_lower or "work authorization" in name_lower:
+                result["citizenship"] = attr.value
+            if "sponsorship" in name_lower or "visa" in name_lower:
+                result["needs_sponsorship"] = (
+                    attr.value.strip().lower()
+                    in ("yes", "true", "required", "needed")
+                )
+            if "clearance" in name_lower or "security" in name_lower:
+                result["has_clearance"] = (
+                    attr.value.strip().lower()
+                    in ("yes", "true", "secret", "top secret")
+                )
+    return result
+
+
+def check_eligibility(
+    campaign_id: Any,
+    posting: Any,
+    storage: Any,
+) -> None:
+    """Raise ``PresubmitBlock`` if the posting has sponsorship or clearance
+    requirements that conflict with the user's stated work authorization.
+
+    Uses the onboarding intake and attribute cloud to determine the user's
+    work-authorization status, then scans the posting's description for
+    keywords indicating incompatible requirements.
+    """
+    work_auth = _extract_work_authorization(storage, campaign_id)
+    jd_lower = (posting.description or "").lower()
+    title_lower = (posting.title or "").lower()
+    combined = f"{title_lower} {jd_lower}"
+
+    # Check sponsorship requirements.
+    needs_sponsorship = work_auth.get("needs_sponsorship", False)
+    requires_sponsorship_phrase = any(
+        kw in combined for kw in _SPONSORSHIP_KEYWORDS
+    )
+    if requires_sponsorship_phrase and needs_sponsorship:
+        raise PresubmitBlock(
+            "Posting mentions sponsorship/work-authorization requirements "
+            "and your profile indicates you need visa sponsorship.",
+            check="eligibility_sponsorship",
+        )
+    # When the posting explicitly says "no sponsorship" and the user needs it,
+    # also block.
+    no_sponsorship_phrases = (
+        "no sponsorship",
+        "will not sponsor",
+        "unable to sponsor",
+        "must be a us person",
+        "must be a us citizen",
+        "must be a citizen",
+    )
+    if needs_sponsorship and any(p in combined for p in no_sponsorship_phrases):
+        raise PresubmitBlock(
+            "Posting explicitly states no visa sponsorship is available, "
+            "and your profile indicates you need sponsorship.",
+            check="eligibility_no_sponsorship",
+        )
+
+    # Check clearance requirements.
+    has_clearance = work_auth.get("has_clearance", False)
+    clearance_phrases = (
+        "security clearance",
+        "clearance required",
+        "must hold clearance",
+        "top secret",
+        "secret clearance",
+    )
+    clearance_required = any(p in combined for p in clearance_phrases)
+    if clearance_required and not has_clearance:
+        raise PresubmitBlock(
+            "Posting requires a security clearance, and your profile "
+            "does not indicate you hold one.",
+            check="eligibility_clearance",
+        )

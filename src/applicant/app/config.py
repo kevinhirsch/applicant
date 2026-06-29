@@ -461,6 +461,12 @@ class Settings(BaseSettings):
     presubmit_max_apps_per_company_per_day: int = Field(
         default=3, ge=0, alias="PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY"
     )
+    # Eligibility filter: when True, the engine checks work-authorization data
+    # from the onboarding intake against posting requirements (sponsorship/
+    # clearance) before starting the pipeline.
+    presubmit_eligibility_enabled: bool = Field(
+        default=True, alias="PRESUBMIT_ELIGIBILITY_ENABLED"
+    )
 
     @field_validator("takeover_desktop")
     @classmethod
