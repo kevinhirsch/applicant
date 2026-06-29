@@ -473,6 +473,7 @@ class AgentLoop:
                     from applicant.application.services.presubmit_safety import (
                         PresubmitBlock,
                         check_duplicate_application,
+                        check_per_company_volume_cap,
                         check_scam_or_ghost_job,
                     )
 
@@ -490,6 +491,15 @@ class AgentLoop:
                             self._storage,
                             cooldown_days=self._presubmit_safety_params.get(
                                 "duplicate_cooldown_days", 30
+                            ),
+                            reference_date=now.date(),
+                        )
+                        check_per_company_volume_cap(
+                            campaign.id,
+                            posting,
+                            self._storage,
+                            max_per_day=self._presubmit_safety_params.get(
+                                "max_apps_per_company_per_day", 3
                             ),
                             reference_date=now.date(),
                         )

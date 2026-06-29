@@ -457,6 +457,10 @@ class Settings(BaseSettings):
     presubmit_duplicate_cooldown_days: int = Field(
         default=30, ge=0, alias="PRESUBMIT_DUPLICATE_COOLDOWN_DAYS"
     )
+    # Per-company application volume cap: max applications per company per day.
+    presubmit_max_apps_per_company_per_day: int = Field(
+        default=3, ge=0, alias="PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY"
+    )
 
     @field_validator("takeover_desktop")
     @classmethod

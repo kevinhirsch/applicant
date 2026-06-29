@@ -213,3 +213,53 @@ def check_duplicate_application(
                 f"within the last {cooldown_days} days (applied on {app_date}).",
                 check="duplicate_cooldown",
             )
+
+
+# ---------------------------------------------------------------------------
+# Issue #369 — Per-company application volume cap
+# ---------------------------------------------------------------------------
+
+#: Default maximum number of applications per company per day.
+_DEFAULT_MAX_APPS_PER_COMPANY_PER_DAY = 3
+
+
+def check_per_company_volume_cap(
+    campaign_id: Any,
+    posting: Any,
+    storage: Any,
+    *,
+    max_per_day: int = _DEFAULT_MAX_APPS_PER_COMPANY_PER_DAY,
+    reference_date: date | None = None,
+) -> None:
+    """Raise ``PresubmitBlock`` if the daily per-company volume cap would be
+    exceeded by applying to this posting.
+
+    Counts all applications (any status) for the same company started on the
+    reference date. When adding this one would exceed ``max_per_day``, block.
+    """
+    ref = reference_date or datetime.now(UTC).date()
+    company = (posting.company or "").strip().lower()
+    if not company:
+        return
+    count = 0
+    for app in storage.applications.list_for_campaign(campaign_id):
+        existing_posting = storage.postings.get(app.posting_id)
+        if existing_posting is None:
+            continue
+        if (existing_posting.company or "").strip().lower() != company:
+            continue
+        app_created = getattr(app, "created_at", None)
+        if app_created is None:
+            continue
+        if hasattr(app_created, "date"):
+            app_date = app_created.date()
+        else:
+            continue
+        if app_date == ref:
+            count += 1
+    if count >= max_per_day:
+        raise PresubmitBlock(
+            f"Daily application cap for {posting.company} reached "
+            f"({count} applied today, max {max_per_day}).",
+            check="per_company_volume",
+        )
