@@ -144,6 +144,7 @@ class MemoryVectorStore:
         try:
             client.delete_collection(self.COLLECTION_NAME)
         except Exception:
+            logger.warning("Failed to delete existing memory collection %s", self.COLLECTION_NAME)
             pass
         self._collection = client.get_or_create_collection(
             name=self.COLLECTION_NAME,
