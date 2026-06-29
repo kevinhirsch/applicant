@@ -1,14 +1,14 @@
 # Enhancement BDD coverage — issue → feature map
 
-Every open tracker issue (and the deep-research / Skyvern-parity roadmap items)
-has a Gherkin acceptance spec here. Scenarios with no tag are GREEN regression
-coverage for behaviour that already ships; `@pending` scenarios are TDD red specs
-for designed-but-unbuilt behaviour (mapped to xfail by `tests/bdd/conftest.py`).
-Drop the `@pending` tag when the feature lands and it becomes a hard gate.
+Every open tracker issue has a Gherkin acceptance spec here (the acceptance criteria).
+Untagged scenarios are GREEN regression coverage for shipped behaviour; `@pending`
+scenarios are TDD red specs for the gap (mapped to xfail by `tests/bdd/conftest.py`).
+Each issue also carries a DeepSeek-ready work-order comment on GitHub (Requirement /
+Where / Acceptance criteria / Definition-of-done).
 
-**157 features** · binding step modules: `tests/bdd/steps/test_enh_*_steps.py`
+**200 features** · step modules `tests/bdd/steps/test_enh_*_steps.py`
 
-| Issue | Feature file | Scenarios | @pending |
+| Issue | Feature | Scenarios | @pending |
 |---|---|---|---|
 | #141 | `enh_141_loop_desktop_assist_upload.feature` | 5 | 2 |
 | #142 | `enh_142_cua_driver_tool_reconcile.feature` | 4 | 2 |
@@ -165,5 +165,48 @@ Drop the `@pending` tag when the feature lands and it becomes a hard gate.
 | #310 | `enh_310_ssrf_redirect.feature` | 4 | 3 |
 | #311 | `enh_311_require_privilege.feature` | 2 | 2 |
 | #312 | `enh_312_db_fallback_warning.feature` | 2 | 2 |
+| #313 | `enh_313_app_api_allowlist.feature` | 2 | 1 |
+| #314 | `enh_314_vault_get_masking.feature` | 2 | 1 |
+| #315 | `enh_315_manage_tokens_masking.feature` | 1 | 1 |
+| #316 | `enh_316_graceful_shutdown.feature` | 3 | 2 |
+| #317 | `enh_317_chat_scrub.feature` | 1 | 1 |
+| #318 | `enh_318_typed_intake.feature` | 2 | 1 |
+| #319 | `enh_319_endpoint_form_model.feature` | 2 | 1 |
+| #320 | `enh_320_path_param_validation.feature` | 2 | 1 |
+| #322 | `enh_322_upload_size_limit.feature` | 3 | 1 |
+| #323 | `enh_323_builtin_actions_silent_imap.feature` | 2 | 2 |
+| #324 | `enh_324_agent_loop_silent_prefs.feature` | 2 | 2 |
+| #325 | `enh_325_ai_interaction_silent_vector.feature` | 2 | 2 |
+| #326 | `enh_326_bg_jobs_corrupt_state.feature` | 2 | 2 |
+| #327 | `enh_327_chat_json_parse_guard.feature` | 3 | 1 |
+| #328 | `enh_328_notes_mutation_feedback.feature` | 2 | 1 |
+| #329 | `enh_329_emailinbox_import_feedback.feature` | 3 | 2 |
+| #330 | `enh_330_assistant_chat_import_feedback.feature` | 2 | 1 |
+| #331 | `enh_331_document_storage_guard.feature` | 2 | 1 |
+| #332 | `enh_332_routes_silent_excepts_umbrella.feature` | 2 | 2 |
+| #333 | `enh_333_source_silent_excepts_umbrella.feature` | 2 | 2 |
+| #334 | `enh_334_workspace_js_silent_catches.feature` | 3 | 2 |
+| #335 | `enh_335_page_source_teardown_silent.feature` | 2 | 2 |
+| #336 | `enh_336_browser_crash_recovery.feature` | 3 | 2 |
+| #337 | `enh_337_fake_page_source_parity.feature` | 6 | 4 |
+| #338 | `enh_338_swiftshader_flag_version_gate.feature` | 2 | 1 |
+| #339 | `enh_339_on_response_timestamp.feature` | 1 | 1 |
+| #340 | `enh_340_chrome_probe_container_paths.feature` | 2 | 1 |
+| #341 | `enh_341_spa_hydration_race.feature` | 1 | 1 |
+| #342 | `enh_342_dropdown_cleanup_detached.feature` | 1 | 1 |
+| #343 | `enh_343_filter_query_shared_prefix.feature` | 2 | 1 |
+| #344 | `enh_344_cold_start_viability_gate.feature` | 3 | 1 |
+| #345 | `enh_345_loose_json_no_score_log.feature` | 3 | 1 |
+| #346 | `enh_346_cors_origins_parse.feature` | 1 | 1 |
+| #347 | `enh_347_env_example_missing_docs.feature` | 4 | 3 |
+| #348 | `enh_348_python_version_pin.feature` | 2 | 1 |
+| #349 | `enh_349_alembic_placeholder.feature` | 1 | 1 |
 | #350 | `enh_350_captcha_solver_port.feature` | 7 | 6 |
 | #351 | `enh_351_skyvern_parity.feature` | 4 | 5 |
+| #352 | `enh_352_cookbook_shell_safety.feature` | 3 | 2 |
+| #353 | `enh_353_research_html_sanitize.feature` | 2 | 1 |
+| #354 | `enh_354_chat_render_xss.feature` | 3 | 1 |
+| #355 | `enh_355_dockerfile_python_mismatch.feature` | 2 | 1 |
+| #356 | `enh_356_webhook_token_encryption.feature` | 2 | 1 |
+| #357 | `enh_357_editor_js_audit_tracking.feature` | 3 | 1 |
+| #358 | `enh_358_master_audit_tracking.feature` | 3 | 1 |
