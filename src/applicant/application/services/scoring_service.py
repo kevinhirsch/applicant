@@ -32,6 +32,11 @@ from applicant.ports.driven.llm import ChatMessage
 
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
 DEFAULT_VIABILITY_THRESHOLD = 70
+#: Neutral-positive default score when no search criteria are set (#344).
+#: Configurable so operators can tune whether unscored postings are leaned
+#: toward inclusion (higher) or exclusion (lower). 0.5 = neutral, 0.75 = lean
+#: toward inclusion so nothing is silently dropped until criteria are stated.
+DEFAULT_NEUTRAL_SCORE = 0.75
 #: Max share of the score the converting-role signature can contribute (FR-LEARN-5).
 _SIGNATURE_WEIGHT = 0.2
 
@@ -44,6 +49,7 @@ class ScoringService:
         embedding,
         *,
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
+        neutral_score: float = DEFAULT_NEUTRAL_SCORE,
         learning=None,
         advanced_learning=None,
         tool_registry=None,
@@ -53,6 +59,7 @@ class ScoringService:
         self._llm = llm
         self._embedding = embedding
         self._threshold = threshold
+        self._neutral_score = neutral_score
         self._learning = learning
         # Optional AdvancedLearningService so scoring can bias toward the DISCRETE
         # converting signature that the live conversion loop actually writes (+ an
