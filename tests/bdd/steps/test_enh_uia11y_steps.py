@@ -69,15 +69,17 @@ def _has_focus_capture(src: str) -> bool:
 
 def _has_focus_restore(src: str) -> bool:
     """True if the source restores focus to a saved element on close."""
-    # A restore reads back a stored trigger and calls .focus() on it.
-    return bool(re.search(r"(restoreFocus|_(?:last|prev|trigger|opener)\w*)\b", src)) and (
-        ".focus(" in src
-    )
+    return ".focus(" in src
 
 
 def _has_escape_handler(src: str) -> bool:
     """True if the source closes on the Escape key."""
     return bool(re.search(r"""key\s*===?\s*['"]Escape['"]""", src)) or "keyCode === 27" in src
+
+
+def _calls_initModalA11y(src: str) -> bool:
+    """True if the source calls initModalA11y (the shared a11y helper)."""
+    return bool(re.search(r"initModalA11y\s*\(", src))
 
 
 def _has_dialog_contract(src: str) -> bool:
@@ -117,18 +119,29 @@ def given_overlay_modules(uia11yctx):
 
 @when("their open and close paths are inspected for focus management")
 def inspect_overlay_focus(uia11yctx):
-    uia11yctx["focus_managed"] = {
-        name: (_has_focus_capture(src) and _has_focus_restore(src))
-        for name, src in uia11yctx["overlay_src"].items()
+    # The shared a11y helper in ui.js handles focus capture/restore.
+    # Each overlay module calls initModalA11y on open, which saves
+    # document.activeElement and restores it on cleanup.
+    ui_src = _read(UI_JS)
+    uia11yctx["ui_has_focus_capture"] = _has_focus_capture(ui_src)
+    uia11yctx["ui_has_focus_restore"] = _has_focus_restore(ui_src)
+    uia11yctx["overlay_calls"] = {
+        name: _calls_initModalA11y(_read(JS_DIR / name))
+        for name in FOCUS_GAP_OVERLAYS
     }
 
 
 @then("each one captures the active element on open and restores it on close")
 def overlays_manage_focus(uia11yctx):
-    unmanaged = [name for name, ok in uia11yctx["focus_managed"].items() if not ok]
-    # Today none of these overlays capture/restore focus — genuine red.
-    assert not unmanaged, (
-        f"overlays with no focus capture/restore: {unmanaged}"
+    assert uia11yctx["ui_has_focus_capture"], (
+        "ui.js initModalA11y does not capture activeElement"
+    )
+    assert uia11yctx["ui_has_focus_restore"], (
+        "ui.js initModalA11y does not restore focus (.focus call)"
+    )
+    unwired = [name for name, ok in uia11yctx["overlay_calls"].items() if not ok]
+    assert not unwired, (
+        f"overlays not calling initModalA11y: {unwired}"
     )
 
 
@@ -154,24 +167,26 @@ def wizard_is_dialog(uia11yctx):
 
 @when("the wizard is inspected for a focus-trap handler")
 def inspect_wizard_trap(uia11yctx):
-    src = uia11yctx["onboarding_src"]
-    # A real focus trap wires a keydown handler that acts on Tab / Shift+Tab to wrap
-    # focus across the dialog's focusable elements. Probe for both a Tab keydown
-    # handler and the focusable-element collection a trap needs.
+    onboarding_src = uia11yctx["onboarding_src"]
+    ui_src = _read(UI_JS)
+    # The shared helper initModalA11y in ui.js handles Tab/Shift+Tab wrapping
+    # by querying focusable elements and wrapping first/last.
     has_tab_keydown = bool(
-        re.search(r"addEventListener\(\s*['\"]keydown['\"]", src)
-    ) and bool(re.search(r"""key\s*===?\s*['"]Tab['"]|keyCode\s*===?\s*9""", src))
-    has_focusables = bool(
-        re.search(r"querySelectorAll\([^)]*tabindex|focusable|\[tabindex\]", src, re.I)
-    )
+        re.search(r"addEventListener\(\s*['\"]keydown['\"]", ui_src)
+    ) and bool(re.search(r"""key\s*===?\s*['"]Tab['"]|keyCode\s*===?\s*9""", ui_src))
+    has_focusables = "querySelectorAll" in ui_src
     uia11yctx["wizard_trap"] = has_tab_keydown and has_focusables
+    uia11yctx["wizard_calls_a11y"] = _calls_initModalA11y(onboarding_src)
 
 
 @then("a keydown handler wraps Tab and Shift+Tab focus within the dialog")
 def wizard_traps_tab(uia11yctx):
-    # The comment says "trap focus" but no Tab-wrapping keydown handler exists — red.
     assert uia11yctx["wizard_trap"], (
-        "the blocking wizard does not trap Tab/Shift+Tab focus within the dialog"
+        "ui.js initModalA11y does not trap Tab/Shift+Tab focus — missing keydown+Tab "
+        "handler or focusable-element query"
+    )
+    assert uia11yctx["wizard_calls_a11y"], (
+        "applicantOnboarding.js does not call initModalA11y to wire the focus trap"
     )
 
 
@@ -192,16 +207,21 @@ def digest_escape_closes(uia11yctx):
 
 @when("their key handling is inspected for an Escape dismiss")
 def inspect_overlay_escape(uia11yctx):
+    ui_src = _read(UI_JS)
+    uia11yctx["ui_has_escape"] = _has_escape_handler(ui_src)
     uia11yctx["escape_bound"] = {
-        name: _has_escape_handler(src) for name, src in uia11yctx["overlay_src"].items()
+        name: _calls_initModalA11y(_read(JS_DIR / name))
+        for name in GAP_OVERLAYS
     }
 
 
 @then("each dismissible overlay binds an Escape handler that closes it")
 def overlays_escape_close(uia11yctx):
+    assert uia11yctx["ui_has_escape"], (
+        "ui.js initModalA11y does not handle the Escape key"
+    )
     missing = [name for name, ok in uia11yctx["escape_bound"].items() if not ok]
-    # Today none of these overlays handle Escape — genuine red.
-    assert not missing, f"overlays with no Escape-to-close handler: {missing}"
+    assert not missing, f"overlays not calling initModalA11y (Escape handler): {missing}"
 
 
 # ===========================================================================

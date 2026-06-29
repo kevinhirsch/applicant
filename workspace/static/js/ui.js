@@ -783,6 +783,61 @@ if (document.readyState === 'loading') {
 }
 
 /**
+ * Wire keyboard a11y into a modal overlay: focus-trap (Tab / Shift+Tab
+ * wraps within the dialog), Escape-to-close, and focus-restore on cleanup.
+ *
+ * Call when the modal opens.  The returned cleanup function removes the
+ * keydown listener and restores focus to the element that was active
+ * before the modal opened — call it right before hiding/tearing down
+ * the modal.
+ *
+ * @param {HTMLElement} modalEl  The modal root element.
+ * @param {Function}    closeFn  Called on Escape (should hide the modal).
+ * @returns {Function}  cleanup — call this when closing.
+ */
+export function initModalA11y(modalEl, closeFn) {
+  const savedFocus = document.activeElement;
+
+  function onKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFn();
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusable = modalEl.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  modalEl.addEventListener('keydown', onKeydown);
+
+  // Move focus into the dialog.
+  const first = modalEl.querySelector(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  );
+  if (first) first.focus();
+
+  return () => {
+    modalEl.removeEventListener('keydown', onKeydown);
+    if (savedFocus && typeof savedFocus.focus === 'function') {
+      try { savedFocus.focus(); } catch { /* disposed */ }
+    }
+  };
+}
+
+/**
  * Returns the SVG string for an empty-state icon. `kind` is one of
  * 'smiley' | 'sad' | 'neutral'. The returned <svg> has NO inline style —
  * callers wrap with `<span style="vertical-align:-3px;margin-left:6px;">…</span>`
@@ -822,6 +877,7 @@ const uiModule = {
   el,
   esc,
   isTouchInsideModal,
+  initModalA11y,
   emptyStateIcon
 };
 

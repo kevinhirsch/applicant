@@ -25,6 +25,7 @@ import uiModule from './ui.js';
 const API = '/api/applicant/vault';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _campaignId = '';
 let _busy = false;
 
@@ -69,6 +70,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-vault-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Saved sign-ins');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:90vh;">
       <div class="modal-header">
@@ -316,6 +320,8 @@ export async function openApplicantVault(campaignId, opts) {
   if (campaignId) _campaignId = String(campaignId);
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, closeApplicantVault);
   await _loadAccountStatus().catch(() => {});
   if (!_campaignId) await _resolveDefaultCampaign();
   await _loadTenants().catch(() => {});
@@ -335,6 +341,7 @@ export async function openApplicantVault(campaignId, opts) {
 }
 
 export function closeApplicantVault() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) _modalEl.classList.add('hidden');
 }
 

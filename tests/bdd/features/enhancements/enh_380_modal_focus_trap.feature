@@ -7,7 +7,6 @@ Feature: Applicant modal overlays trap keyboard focus within the dialog
     When the overlay markup is inspected
     Then it declares itself a modal dialog with an accessible name
 
-  @pending
   Scenario: The setup wizard keeps Tab focus inside the dialog
     Given the first-run setup wizard module
     When the wizard is inspected for a focus-trap handler

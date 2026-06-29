@@ -43,6 +43,7 @@ const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
 
 let _overlay = null;
+let _overlayA11yCleanup = null;
 let _campaignId = null;
 let _status = null;        // engine setup status
 let _onboarding = null;    // engine onboarding state
@@ -1451,6 +1452,8 @@ async function _finish() {
 }
 
 function _dismiss() {
+  // Tear down a11y bindings before removing the overlay from the DOM.
+  if (_overlayA11yCleanup) { _overlayA11yCleanup(); _overlayA11yCleanup = null; }
   // Hand the shared endpoint manager back to Settings before tearing down the
   // overlay, so it isn't removed from the DOM along with the overlay.
   _restoreEndpointManager();
@@ -1484,6 +1487,10 @@ export async function maybeLaunchOnboarding() {
 
   _overlay = _buildOverlay();
   document.body.appendChild(_overlay);
+  if (_overlayA11yCleanup) _overlayA11yCleanup();
+  _overlayA11yCleanup = window.uiModule && window.uiModule.initModalA11y
+    ? window.uiModule.initModalA11y(_overlay, _dismiss)
+    : null;
   _stepIndex = _firstIncompleteStep();
   // Pre-create the campaign once the LLM gate is open so onboarding resumes cleanly.
   if (status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
@@ -1497,6 +1504,10 @@ export async function launchOnboarding() {
   if (_overlay) return;
   _overlay = _buildOverlay();
   document.body.appendChild(_overlay);
+  if (_overlayA11yCleanup) _overlayA11yCleanup();
+  _overlayA11yCleanup = window.uiModule && window.uiModule.initModalA11y
+    ? window.uiModule.initModalA11y(_overlay, _dismiss)
+    : null;
   try { await _refreshStatus(); } catch { /* engine down — still show the wizard */ }
   if (_status && _status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }
   _stepIndex = 0;

@@ -7,7 +7,6 @@ Feature: Applicant overlays manage keyboard focus on open and close
     When the dialog open path is inspected
     Then it focuses a control inside the dialog on open
 
-  @pending
   Scenario: The Portal, Remote, Vault and Mind overlays restore focus to their trigger on close
     Given the Applicant overlay modules
     When their open and close paths are inspected for focus management
