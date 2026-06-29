@@ -163,13 +163,10 @@ class Settings(BaseSettings):
 
     # Context management (FR-MIND-8, FR-MIND-13). Token budget over which the LLM
     # adapter compresses/evicts MIDDLE turns (the system tier + most recent turns
-    # are always kept). 0 (default) DISABLES it — current behavior is byte-identical
-    # until an operator opts in. Prefix caching applies provider cache breakpoints
-    # on the stable prefix where the configured provider supports it: ``auto``
-    # (default) / ``on`` enable it for capability-advertising providers; ``off``
-    # never does. A clean no-op for local Ollama / OpenAI-compatible lanes.
+    # are always kept). 64000 (~250k chars) is a sensible default for multi-turn
+    # conversations; set 0 to disable compression.
     context_compress_threshold: int = Field(
-        default=0, ge=0, alias="CONTEXT_COMPRESS_THRESHOLD"
+        default=64000, ge=0, alias="CONTEXT_COMPRESS_THRESHOLD"
     )
     prefix_cache: str = Field(default="auto", alias="PREFIX_CACHE")
 
