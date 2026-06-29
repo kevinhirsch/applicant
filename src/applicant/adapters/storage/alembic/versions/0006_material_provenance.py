@@ -5,7 +5,7 @@ similar application recall) actually shaped a generated draft, so the review UI
 can surface a "What I drew on" panel. Advisory-only and additive: defaults to an
 empty list so existing rows and substrate-less drafts are unchanged.
 
-Revision ID: 0006_generated_material_provenance
+Revision ID: 0006_material_provenance
 Revises: 0005_job_postings_campaign_index
 Create Date: 2026-06-23
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0006_generated_material_provenance"
+revision = "0006_material_provenance"
 down_revision = "0005_job_postings_campaign_index"
 branch_labels = None
 depends_on = None
