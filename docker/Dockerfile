@@ -6,6 +6,18 @@ ENV PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=1 \
     UV_COMPILE_BYTECODE=1
 
+# Pin HOME + XDG cache/data dirs INSIDE the app tree (#161). The image drops to a
+# non-root user at the end (see USER below), but the build steps that download the
+# camoufox browser binary (`camoufox fetch`, which writes to the XDG data/cache dir)
+# and uv's caches run as root. Anchoring HOME/XDG under /app means everything those
+# steps write lands in the tree we chown to the runtime user — so the non-root
+# process can still find the camoufox binary and write its caches at runtime,
+# instead of them landing in an unreadable /root.
+ENV HOME=/app \
+    XDG_CACHE_HOME=/app/.cache \
+    XDG_DATA_HOME=/app/.local/share \
+    XDG_CONFIG_HOME=/app/.config
+
 # Install uv (the project toolchain).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -117,6 +129,18 @@ COPY alembic.ini ./
 COPY frontend ./frontend
 COPY templates ./templates
 COPY scripts ./scripts
+
+# --- Drop privileges (#161) ---------------------------------------------------
+# Run the API as a dedicated non-root user instead of root, so a compromised app
+# process has no root inside the container. Everything above ran as root (apt, the
+# camoufox fetch, uv sync into /app/.venv), so create the user LAST and hand it the
+# whole app tree — incl. the venv, the camoufox binary, and the XDG cache/data dirs
+# pinned under /app above, which the renderer/browser write to at runtime.
+RUN groupadd --system --gid 10001 applicant \
+    && useradd --system --uid 10001 --gid applicant --home-dir /app --shell /usr/sbin/nologin applicant \
+    && mkdir -p /app/.cache /app/.local/share /app/.config \
+    && chown -R applicant:applicant /app
+USER applicant
 
 EXPOSE 8000
 

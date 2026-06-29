@@ -43,5 +43,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 7000
 
+# Non-root runtime (#161): the app does NOT run as root, but the privilege drop
+# is done at RUNTIME by entrypoint.sh (the PUID/PGID + gosu pattern), not by a
+# build-time `USER` directive. The entrypoint MUST start as root so it can chown
+# the bind-mounted /app/data and /app/logs (and the in-image runtime caches under
+# /app) to the configured PUID:PGID before `exec gosu "$PUID:$PGID"` drops to that
+# unprivileged user — uvicorn then runs non-root. A static build-time `USER` here
+# would strip the root needed for that chown and break bind-mount ownership repair,
+# so the runtime drop is the correct mechanism (tune via PUID/PGID, default 1000).
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]

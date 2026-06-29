@@ -18,4 +18,13 @@ ENV BUILDKIT_PROGRESS=plain
 # only a sane default working dir.
 WORKDIR /repo
 
+# Privileged management sidecar — intentionally NOT dropped to a non-root USER (#161).
+# Unlike the api/front-door app images, this container's whole job is to drive the
+# HOST Docker daemon over the bind-mounted /var/run/docker.sock and run git/compose
+# against the bind-mounted host checkout at /repo (incl. reading .env). Both the
+# socket GID and the host-repo owner UID are host-specific and unknown at build time,
+# so a fixed build-time USER would either lose access to docker.sock (EACCES) or be
+# unable to write the repo. Harden this surface by limiting blast radius instead:
+# deploy it only when the in-app updater is enabled, and treat the socket grant —
+# not a container UID — as the real privilege boundary (see docker-compose.prod.yml).
 ENTRYPOINT ["/bin/bash", "/repo/scripts/updater-daemon.sh"]
