@@ -83,6 +83,21 @@ class ResumeLedger:
 
 
 @dataclass
+class DigestLedger:
+    """Cross-tick digest delivery guard that OUTLIVES a single AgentLoop instance.
+
+    The 24/7 scheduler rebuilds a fresh ``AgentLoop`` every tick, so the per-instance
+    ``_digest_sent`` dict resets each tick and the "already delivered today" guard is
+    lost — causing the digest email + ready-ping to re-send every ~60s. This ledger
+    persists the guard across rebuilds. The container creates ONE of these for the
+    process and injects it into every per-tick loop.
+    """
+
+    sent: dict[tuple[str, date], bool] = field(default_factory=dict)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
 class TickResult:
     """Structured outcome of one ``tick`` (introspection + tests)."""
 
@@ -121,6 +136,7 @@ class AgentLoop:
         setup_service=None,
         research_service=None,
         resume_ledger: ResumeLedger | None = None,
+        digest_ledger: DigestLedger | None = None,
         llm=None,
         loop_toolset_factory=None,
     ) -> None:
@@ -174,8 +190,14 @@ class AgentLoop:
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
         # Guards the loop's own delivery so a ~60s scheduler tick does not re-send the
-        # digest email + Discord ready-ping every tick.
-        self._digest_sent: dict[tuple[str, date], bool] = {}
+        # digest email + Discord ready-ping every tick. This guard lives in a
+        # DigestLedger that OUTLIVES this instance: the scheduler rebuilds the loop every
+        # tick, so a per-instance dict would reset and re-deliver every ~60s. The
+        # container creates ONE ledger for the process and injects it into every per-tick
+        # loop; when none is given (unit tests / direct use) a fresh per-instance one is
+        # used.
+        self._digest_ledger = digest_ledger if digest_ledger is not None else DigestLedger()
+        self._digest_sent = self._digest_ledger.sent
         #: minimum seconds between resume re-drives of the same parked app (#9).
         self._resume_backoff_seconds: float = 300.0
         # Resume bookkeeping (#9 backoff + the failure cap) lives in a ledger that
@@ -285,8 +307,11 @@ class AgentLoop:
     def _prune_daily(self, today: date) -> None:
         """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
         with self._state_lock:
-            self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
             self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
+        with self._digest_ledger.lock:
+            stale = [k for k in self._digest_sent if k[1] != today]
+            for k in stale:
+                self._digest_sent.pop(k, None)
 
     def _tick(self, campaign_id: CampaignId, now: datetime, force: bool = False) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
@@ -419,13 +444,13 @@ class AgentLoop:
             # ~60s scheduler cadence does not re-send the email + Discord ready-ping
             # on every tick.
             key = (str(campaign.id), now.date())
-            with self._state_lock:
+            with self._digest_ledger.lock:
                 already_sent = bool(self._digest_sent.get(key))
             if not already_sent:
                 try:
                     delivered = self._digest.deliver(campaign.id)
                     result.digest_rows = len(delivered.get("payload", {}).get("rows", []))
-                    with self._state_lock:
+                    with self._digest_ledger.lock:
                         self._digest_sent[key] = True
                 except Exception as exc:  # pragma: no cover - defensive
                     log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))

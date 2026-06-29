@@ -746,7 +746,7 @@ def build_container(settings: Settings | None = None) -> Container:
     research_service = ResearchService(workspace=workspace)
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
-    from applicant.application.services.agent_loop import AgentLoop, ResumeLedger
+    from applicant.application.services.agent_loop import AgentLoop, DigestLedger, ResumeLedger
     from applicant.application.services.scheduler import Scheduler
 
     # ONE resume ledger for the whole process. The scheduler rebuilds a fresh
@@ -754,6 +754,10 @@ def build_container(settings: Settings | None = None) -> Container:
     # failure cap must live OUTSIDE the loop instance or they reset every tick and
     # never take effect. Injected into both the shared loop and each per-tick loop.
     resume_ledger = ResumeLedger()
+    # ONE digest ledger for the whole process (same reasoning: the per-tick rebuild
+    # would reset the "already delivered today" guard, re-sending the digest every
+    # tick). Injected into both the shared loop and each per-tick loop.
+    digest_ledger = DigestLedger()
 
     # FR-MIND: the agent-learning substrate. Build the curated-memory / skills / recall
     # adapter trio (default ``in_memory`` — hermetic, no deps; ``bridge`` reaches the
@@ -887,6 +891,7 @@ def build_container(settings: Settings | None = None) -> Container:
         setup_service=setup_service,
         research_service=research_service,
         resume_ledger=resume_ledger,
+        digest_ledger=digest_ledger,
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
     )
@@ -989,6 +994,7 @@ def build_container(settings: Settings | None = None) -> Container:
             setup_service=setup_service,
             research_service=research_service,
             resume_ledger=resume_ledger,
+            digest_ledger=digest_ledger,
             llm=llm,
             # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
