@@ -25,6 +25,7 @@ import { openApplicantVault } from './applicantVault.js';
 const API = '/api/applicant/remote';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _activeSession = null;   // { session_id, application_id, view_url }
 let _busy = false;
 
@@ -71,6 +72,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-remote-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Live application session');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:980px;display:flex;flex-direction:column;max-height:92vh;">
       <div class="modal-header" style="gap:10px;">
@@ -528,6 +532,8 @@ async function _onAuthorizeFinish() {
 export async function openApplicantRemoteSession(applicationId, sessionUrl) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, closeRemoteSession);
 
   // If the caller handed us a URL, show it right away; the list refresh then
   // reconciles/identifies the session for the action buttons.
@@ -550,6 +556,7 @@ export async function openApplicantRemoteSession(applicationId, sessionUrl) {
 }
 
 export function closeRemoteSession() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   const frame = _modalEl.querySelector('#applicant-remote-frame');

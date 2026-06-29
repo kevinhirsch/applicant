@@ -7,7 +7,6 @@ Feature: Dismissible Applicant modals close on the Escape key
     When the dialog key handling is inspected
     Then pressing Escape dismisses the dialog
 
-  @pending
   Scenario: The Portal, Vault, Remote and Mind overlays close on the Escape key
     Given the Applicant overlay modules
     When their key handling is inspected for an Escape dismiss

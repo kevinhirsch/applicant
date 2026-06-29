@@ -18,6 +18,7 @@ import uiModule from './ui.js';
 const API = '/api/applicant/mind';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 
 function esc(s) {
   try {
@@ -74,6 +75,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) _modalEl.style.display = 'none';
 }
 
@@ -269,6 +271,8 @@ function _wireSkillRows() {
 export async function openApplicantMind() {
   const el = _ensureModalEl();
   el.style.display = 'flex';
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(el, _close);
   _body().innerHTML = '<div class="memory-empty" style="padding:18px;opacity:0.7;">Loading…</div>';
   try {
     const status = await _fetchJSON(`${API}/status`);

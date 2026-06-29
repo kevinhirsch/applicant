@@ -39,6 +39,7 @@ const BADGE_POLL_MS = 60000;
 const NOTIF_SEEN_KEY = 'applicant_notif_last_toast_ts';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _items = [];
 // Informational notifications (digest ready / submitted / errors) folded into
 // the queue alongside action-required rows. Action-required notifications are
@@ -272,6 +273,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-portal-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Pending');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
@@ -298,6 +302,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
@@ -1078,6 +1083,9 @@ export async function openApplicantPortal() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  // Keyboard a11y: trap focus, Escape to close, restore on close.
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   // Today's digest at the home base (C1) loads alongside the pending list; the
   // two are independent so a slow/offline digest never blocks the pending items.
   _loadDigest(true);
