@@ -362,7 +362,14 @@ def build_container(settings: Settings | None = None) -> Container:
     # "I can't start applying until I know: ..." with the real remaining items. Reads
     # real campaign data only; never fabricated.
     def _apply_readiness():
-        campaigns = list(storage.campaigns.list())
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+        # Exclude the reserved __system__ campaign (instance secrets only — it has no
+        # criteria/résumé). Including it made the "what's still missing" surface fall
+        # back to ITS emptiness (campaigns[0]) and report every essential missing —
+        # e.g. claiming a résumé is needed right after one was uploaded to the real
+        # campaign. Mirror campaign_service.list_campaigns(), which already excludes it.
+        campaigns = [c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID]
         for c in campaigns:
             r = onboarding_service.apply_readiness(str(c.id))
             if r.ready:
