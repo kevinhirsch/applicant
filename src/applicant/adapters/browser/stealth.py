@@ -29,6 +29,7 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 
 # --- FR-STEALTH-1: coherent, honest browser identity ------------------------
@@ -387,22 +388,27 @@ class ProfileStore:
         # NORMALIZED_FINGERPRINT; the adapter passes its tz/locale-pinned fingerprint
         # so every per-tenant profile is consistent with the residential egress.
         self._fingerprint = dict(fingerprint) if fingerprint else dict(NORMALIZED_FINGERPRINT)
+        # Thread-safety for concurrent for_tenant() calls (default sandbox concurrency
+        # of 3 can race on the read-modify-write of visit_count without a lock).
+        self._lock = threading.Lock()
 
     def for_tenant(self, tenant_key: str) -> BrowserProfile:
-        profile = self._profiles.get(tenant_key)
-        if profile is None:
-            profile = BrowserProfile(
-                tenant_key=tenant_key,
-                user_data_dir=f"{self._root}/{tenant_key}",
-                fingerprint=dict(self._fingerprint),
-            )
-            self._profiles[tenant_key] = profile
-        profile.visit_count += 1
-        return profile
+        with self._lock:
+            profile = self._profiles.get(tenant_key)
+            if profile is None:
+                profile = BrowserProfile(
+                    tenant_key=tenant_key,
+                    user_data_dir=f"{self._root}/{tenant_key}",
+                    fingerprint=dict(self._fingerprint),
+                )
+                self._profiles[tenant_key] = profile
+            profile.visit_count += 1
+            return profile
 
     def is_returning(self, tenant_key: str) -> bool:
-        profile = self._profiles.get(tenant_key)
-        return profile is not None and profile.visit_count > 1
+        with self._lock:
+            profile = self._profiles.get(tenant_key)
+            return profile is not None and profile.visit_count > 1
 
 
 # --- FR-STEALTH-4: residential egress (config seam + guardrail) --------------
