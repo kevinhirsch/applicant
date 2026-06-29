@@ -1,38 +1,34 @@
 # REASONIX.md — overseer always-on memory
 
-> Auto-loaded into the cache-stable prefix every session (the Claude-Code `CLAUDE.md`
-> equivalent). This is the always-on summary. **Read `SOUL.md` in full before dispatching** —
-> it is the complete operating manual and the source of truth.
+> Auto-loaded every session (the `CLAUDE.md` equivalent). Summary only — **read `SOUL.md` in full
+> before dispatching** (source of truth).
 
 ## First move
-Read `SOUL.md` (full manual) and `docs/deepseek-implementation-guide.md` §5 (priority order +
-already-done). Reconcile against `git log origin/main --oneline -20` + open PRs before fanning out.
+Read `SOUL.md` + `docs/deepseek-implementation-guide.md` §5 (priority + done) +
+`docs/deepseek-wave-plan.md` (waves). Reconcile against `git log origin/main --oneline -20` +
+open PRs before fanning out.
+
+## Dispatch
+- Background subagents (`task(run_in_background:true)`), `max_steps=0`. One per file-disjoint issue. `/wave <id>`.
+- **Worktree-or-serialize. Never concurrent writers on the shared tree** — changes interleave, unattributable. Read-only audits may fan out.
+- `continue_from` resumes a subagent with context; commit per issue so progress banks.
+
+## Monitor + steer (talk while it runs)
+- After dispatch, loop **escalating short `wait`s**. **First `wait` = 15s. Hard-cap EVERY `wait` at 120s.** Reset to 15s on any change. A multi-minute `wait` is a bug — blind and unsteerable until it returns.
+- Each return = liveness + completion + steering checkpoint. Read owner input first (plain English, no keywords), act, ack in one line. `Esc`/`Ctrl+C` = stop now.
+- Keep a `todo_write` entry per group; refresh each `wait`.
+
+## Oversight (classify each agent every `wait`)
+- **Alive** = tokens, output, OR new commits moved. **"No visible output" ≠ stuck** — DeepSeek reasons silently; the 15m warning means *inspect*, not kill. → let it run.
+- **Stuck** = no tokens AND no output AND no commits across the window. → work every angle (`continue_from`, kill→salvage→re-dispatch tighter/smaller, more context).
+- **Truly blocked** = every angle tried, still stuck, or needs an owner decision. → reach out with a diagnosis. Escalate rarely; over-escalating == silence == bad.
 
 ## Non-negotiables
-- Hexagonal purity (`lint-imports` enforces), white-label (no upstream codenames / FR-jargon in
-  user-facing strings), safety enforced server-side (never gate on caller input),
-  reachability = done (spec → engine → workspace proxy → JS → nav), green increments.
-- **Run the gate set yourself; never trust a subagent's "green."** Use `/gate`.
+- Run the gate set yourself (`/gate`); never trust a subagent's "green."
+- Hexagonal purity (`lint-imports`), white-label (no codenames / FR-jargon), safety server-side, reachability = done, green increments.
 - Branch `fix/<numbers>-<topic>` off `origin/main`. One cluster per PR. Owner merges.
 
-## Dispatch defaults (mirror Claude Code)
-- Background subagents (`task(run_in_background:true)`), `agent.max_steps = 0` — no round cap.
-- **Concurrent write agents are unsafe on the shared tree** even when file-disjoint: isolate
-  each in its own `git worktree`, or SERIALIZE. Read-only audits may fan out. Never `git stash`
-  concurrently. Use `/wave <id>`.
-- Steer in natural language while it runs; queued input lands at the next `wait` return.
-  After dispatch, run an **active supervision loop of escalating short `wait`s** (15s→120s, reset
-  to short on any change) — effectively a live monitor; each return is a steering + liveness +
-  completion checkpoint. `Esc`/`Ctrl+C` = stop now.
-- Maintain a `todo_write` entry per group; refresh every poll.
-- **Oversee actively (not dispatch-and-wait).** Every poll, check each agent for stall/error:
-  `kill_shell`+salvage+re-dispatch the stuck ones, `continue_from` to correct failing ones.
-  **If it's progressing, let it run** (long ≠ stuck — don't ping). **If stuck, work every angle**
-  (`continue_from`, re-dispatch tighter, smaller slice, more context, new approach). **Only when
-  truly blocked — every angle tried — reach out** with a clear diagnosis of what's blocking and
-  what you tried. Don't over-escalate, don't go silent. See SOUL.md "Oversight".
-
-## The gate set (or run `/gate`)
+## Gate set (or `/gate`) — all pass, no `-k` subset
 ```bash
 export DATABASE_URL='postgresql+psycopg://x:x@127.0.0.1:1/none'
 uv run pytest -q -m "not integration"
@@ -45,4 +41,3 @@ python -m compileall -q workspace/app.py workspace/routes workspace/src
 uv run pytest -q tests/architecture/test_reachability_contract.py
 # + node --check on every changed workspace/static/js/*.js
 ```
-No `-k` subsets. All must pass before a PR.
