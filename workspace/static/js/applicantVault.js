@@ -138,7 +138,7 @@ function _wire(modal) {
   on('applicant-vault-save', 'click', _onSave);
   on('applicant-vault-google-save', 'click', () => _onSaveAccount('google'));
   on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
-  on('applicant-vault-refresh', 'click', () => _loadTenants().catch(() => {}));
+  on('applicant-vault-refresh', 'click', () => _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e)));
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeApplicantVault();
   });
@@ -199,7 +199,7 @@ async function _save({ tenantKey, username, secret }) {
       secret,
     });
     _toast('Sign-in saved');
-    await _loadTenants().catch(() => {});
+    await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
     return true;
   } catch (e) {
     _toast(e.message || 'Could not save the sign-in');
@@ -261,7 +261,7 @@ async function _onSaveAccount(kind) {
     await _post(`${API}/account`, { kind, username, secret });
     _toast('Sign-in saved');
     if (secretEl) secretEl.value = ''; // clear the password from the DOM after save
-    await _loadAccountStatus().catch(() => {});
+    await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
   } catch (e) {
     _toast(e.message || 'Could not save the sign-in');
   } finally {
@@ -293,9 +293,9 @@ export async function openApplicantVault(campaignId, opts) {
   modal.classList.remove('hidden');
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, closeApplicantVault);
-  await _loadAccountStatus().catch(() => {});
+  await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
   if (!_campaignId) await _resolveDefaultCampaign();
-  await _loadTenants().catch(() => {});
+  await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
   // Pre-fill the "add a sign-in" form for a known site — e.g. opened right after
   // the user created an account during a live takeover (FR-VAULT-2), so they only
   // have to type the username + password they just chose.
@@ -352,7 +352,7 @@ export async function offerApplicantCredentialCapture(c) {
     });
     _toast('Sign-in saved');
     if (_modalEl && !_modalEl.classList.contains('hidden')) {
-      await _loadTenants().catch(() => {});
+      await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
     }
     return true;
   } catch (e) {

@@ -267,7 +267,7 @@ export function _wirePanelEvents(panel, model, backend) {
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: `tmux kill-session -t ${tmuxMatch[1]} 2>/dev/null` }),
-        }).catch(() => {});
+        }).catch(e => console.error('Silent catch in cookbookDownload:', e));
       }
       const wrap = panel.querySelector('.cookbook-output-wrap');
       if (wrap) wrap.classList.add('hidden');
