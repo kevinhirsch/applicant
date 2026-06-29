@@ -1209,6 +1209,75 @@ async function _renderIntakeSection() {
   };
 }
 
+// Inline font-install prompt surfaced in the resume upload step when the engine
+// reports missing fonts (FR-FONT-1).  Reuses the per-font picker + install
+// pattern from _renderFonts, but rendered inside the upload step rather than
+// as a separate wizard step.
+function _renderInlineFontPrompt(missing) {
+  const st = document.getElementById('ao-resume-status');
+  const prev = document.getElementById('ao-preview');
+  if (prev) prev.innerHTML = '';
+  st.innerHTML = `
+    <p style="color:var(--accent-warm, #d8a23a);font-size:0.86rem;margin:8px 0;">
+      Your resume uses fonts that aren't installed yet. Add them below so your
+      generated resume keeps its look.
+    </p>
+    <p style="font-size:0.82rem;opacity:0.7;">Missing: ${esc(missing.join(', '))}</p>
+    ${missing.map((m, i) => `
+      <div class="admin-card ao-font-install" data-font="${esc(m)}" data-i="${i}">
+        <label class="settings-label" style="min-width:0;">Upload font file for <strong>${esc(m)}</strong></label>
+        <div class="settings-row" style="margin-top:6px;">
+          <button type="button" class="cal-btn ao-font-pick" data-i="${i}">Choose font file…</button>
+          <input type="file" accept=".ttf,.otf" class="ao-font-file" data-i="${i}" style="display:none;" />
+        </div>
+        <div class="attach-strip ao-font-install-strip" id="ao-font-install-strip-${i}"></div>
+      </div>`).join('')}
+    <button class="cal-btn cal-btn-primary" id="ao-font-done" style="margin-top:10px;" disabled>Continue</button>
+  `;
+
+  let installedCount = 0;
+  st.querySelectorAll('.ao-font-install').forEach((wrap) => {
+    const name = wrap.getAttribute('data-font');
+    const input = wrap.querySelector('.ao-font-file');
+    const fontPicker = fileHandlerModule.createPicker({
+      inputEl: input,
+      stripEl: wrap.querySelector('.ao-font-install-strip'),
+      uploadUrl: `${SETUP}/fonts/install?name=${encodeURIComponent(name)}`,
+      fieldName: 'file',
+      maxFiles: 1,
+      onChange: async (p) => {
+        if (!p.getPendingCount()) return;
+        try {
+          await p.uploadPending();
+          installedCount++;
+          if (installedCount >= missing.length) {
+            document.getElementById('ao-font-done').disabled = false;
+          }
+        } catch (e) {
+          _toast(e.message || 'Could not install font.');
+        }
+      },
+    });
+    wrap.querySelector('.ao-font-pick').onclick = () => fontPicker.openPicker();
+    input.onchange = (ev) => {
+      if (ev.target.files && ev.target.files.length) fontPicker.addFiles(ev.target.files);
+      ev.target.value = '';
+    };
+  });
+
+  document.getElementById('ao-font-done').onclick = async () => {
+    st.innerHTML = '<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Fonts installed — continuing to preview.</p>';
+    // Refresh the font list so the engine cache is current.
+    try { await _fetchJSON(`${SETUP}/fonts`); } catch { /* best-effort */ }
+    try {
+      await _buildPreview();
+      document.getElementById('ao-resume-next').disabled = false;
+    } catch (e) {
+      st.innerHTML = _err(esc(e.message || 'Could not build preview.'));
+    }
+  };
+}
+
 // The resume upload LIFTS fileHandler.js's picker (chip preview + upload-progress
 // whirlpool), pointed at the existing /base-resume engine proxy.
 function _renderBaseResume(saved) {
@@ -1273,6 +1342,24 @@ function _renderBaseResume(saved) {
       } else {
         document.getElementById('ao-conflicts').innerHTML = '';
       }
+
+      // FR-FONT-1: detect required fonts and, if any are missing, surface an
+      // inline install prompt in the upload step (reusing the per-font picker
+      // pattern from _renderFonts).
+      try {
+        const fontRes = await _fetchJSON(`${SETUP}/fonts/detect`, {
+          method: 'POST',
+          body: (() => { const fd = new FormData(); fd.append('file', picker.getFiles()[0]); return fd; })(),
+        });
+        const missing = (fontRes && fontRes.missing) || [];
+        if (missing.length) {
+          _renderInlineFontPrompt(missing);
+          // Font prompt renders its own "Continue when fonts are installed" flow;
+          // skip the preview until fonts are resolved.
+          return;
+        }
+      } catch { /* font detection is best-effort; continue to preview */ }
+
       await _buildPreview();
       document.getElementById('ao-resume-next').disabled = false;
     } catch (e) {
