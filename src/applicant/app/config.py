@@ -401,6 +401,14 @@ class Settings(BaseSettings):
     computer_use_approvals: str = Field(default="manual", alias="COMPUTER_USE_APPROVALS")
     # Driver anonymous telemetry — OFF by default (upstream CUA_DRIVER_RS_TELEMETRY_ENABLED=0).
     cua_telemetry: bool = Field(default=False, alias="CUA_TELEMETRY")
+    # Override: force the driver to report as AVAILABLE even when ``shutil.which()``
+    # cannot find it on PATH. Use when the ``cua-driver`` binary is baked into the
+    # sandbox image at a non-standard location or is invoked via a custom launcher.
+    # Default False — the driver is detected via PATH probe. Set True to skip the
+    # PATH check and assume the driver is present (FR-CUA-12 gate override).
+    cua_driver_override_available: bool = Field(
+        default=False, alias="CUA_DRIVER_OVERRIDE_AVAILABLE"
+    )
 
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
     # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the

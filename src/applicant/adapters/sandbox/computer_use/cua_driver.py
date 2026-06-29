@@ -71,6 +71,7 @@ class CuaDriverComputerUse:
         telemetry: bool = False,
         engine_submit_authorized: bool = False,
         automated_accounts_enabled: bool = False,
+        force_available: bool = False,
     ) -> None:
         self._driver_cmd = (driver_cmd or _DEFAULT_DRIVER_CMD).strip() or _DEFAULT_DRIVER_CMD
         self._mode = (mode or "som").strip().lower()
@@ -78,6 +79,9 @@ class CuaDriverComputerUse:
         self._telemetry = bool(telemetry)
         self._engine_submit_authorized = engine_submit_authorized
         self._automated_accounts_enabled = automated_accounts_enabled
+        #: When True, skip the PATH probe and report the driver as available. Used when
+        #: the binary is baked into the sandbox image at a non-standard location.
+        self._force_available = bool(force_available)
         #: Resolved absolute driver path (lazy, cached); None until probed.
         self._resolved_cmd: str | None = None
         self._probed = False
@@ -96,18 +100,31 @@ class CuaDriverComputerUse:
 
     # --- driver detection (lazy) ----------------------------------------
     def _driver_path(self) -> str | None:
-        """Resolve the driver binary once (``shutil.which``); cache the result."""
+        """Resolve the driver binary once (``shutil.which``); cache the result.
+
+        When ``force_available`` is True, skip the PATH probe and return the configured
+        driver command as-is — the operator has declared the driver is baked into the
+        sandbox image even if ``shutil.which`` cannot resolve it (FR-CUA-12 gate override).
+        """
         if not self._probed:
             self._probed = True
-            self._resolved_cmd = shutil.which(self._driver_cmd)
-            if self._resolved_cmd is None:
-                # Loud, one-time warning: a missing driver is a deploy/image signal, not
-                # a silent degrade (FR-CUA-12). No upstream codename in any user copy.
-                logger.warning(
-                    "Desktop-assist driver not found on PATH (%r); the desktop backend "
-                    "is degraded to no-op until it is baked into the sandbox image.",
+            if self._force_available:
+                self._resolved_cmd = self._driver_cmd
+                logger.info(
+                    "Desktop-assist driver availability is FORCED via "
+                    "CUA_DRIVER_OVERRIDE_AVAILABLE; using %r as the driver path.",
                     self._driver_cmd,
                 )
+            else:
+                self._resolved_cmd = shutil.which(self._driver_cmd)
+                if self._resolved_cmd is None:
+                    # Loud, one-time warning: a missing driver is a deploy/image signal, not
+                    # a silent degrade (FR-CUA-12). No upstream codename in any user copy.
+                    logger.warning(
+                        "Desktop-assist driver not found on PATH (%r); the desktop backend "
+                        "is degraded to no-op until it is baked into the sandbox image.",
+                        self._driver_cmd,
+                    )
         return self._resolved_cmd
 
     @property
