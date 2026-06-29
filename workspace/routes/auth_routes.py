@@ -137,7 +137,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             key=SESSION_COOKIE,
             value=token,
             httponly=True,
-            samesite="lax",
+            samesite="strict",
             secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
             path="/",
         )

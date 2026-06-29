@@ -3,6 +3,7 @@
 
 import os
 import secrets
+from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -15,6 +16,38 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("APPLICANT_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Applicant-Internal-Token"
+
+
+def verify_origin(request: Request) -> bool:
+    """Return True when the request Origin/Referer matches the app's own origin.
+
+    CSRF guard for cookie-authenticated non-GET ``/api/*`` mutations: an
+    attacker page on a different origin cannot forge a request because the
+    browser sets ``Origin`` (and, as a fallback, ``Referer``) to the attacker's
+    origin.  This function extracts that header, parses its scheme+host+port,
+    and compares it against the request's own ``base_url``.
+
+    Callers should skip this check for ``/api/applicant/internal/*`` (token-
+    gated, not cookie-authed) and for safe methods (GET/HEAD/OPTIONS).
+    """
+    raw = (
+        request.headers.get("origin")
+        or request.headers.get("referer")
+    )
+    if not raw:
+        return False
+
+    parsed = urlparse(raw)
+    origin_netloc = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        origin_netloc += f":{parsed.port}"
+
+    base = request.base_url
+    app_origin = f"{base.scheme}://{base.hostname}"
+    if base.port:
+        app_origin += f":{base.port}"
+
+    return origin_netloc == app_origin
 
 
 def require_admin(request: Request):
@@ -52,6 +85,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Generate a per-request nonce for inline scripts
         nonce = secrets.token_hex(16)
         request.state.csp_nonce = nonce
+
+        # --- CSRF: refuse cross-origin state-changing /api/* requests ---
+        # Safe methods (GET/HEAD/OPTIONS) and the token-gated internal channel
+        # are exempt; everything else under /api/ that relies on the session
+        # cookie must pass a same-origin check.
+        path = request.url.path
+        if (
+            request.method not in ("GET", "HEAD", "OPTIONS")
+            and path.startswith("/api/")
+            and not path.startswith("/api/applicant/internal/")
+            and not verify_origin(request)
+        ):
+            return Response(
+                content='{"detail":"CSRF check failed"}',
+                status_code=403,
+                media_type="application/json",
+            )
 
         response = await call_next(request)
         path = request.url.path
