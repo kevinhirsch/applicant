@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -967,7 +968,9 @@ class AgentLoop:
 
         Resolves the app's session via ``sandbox.for_application`` and tears it down
         so the real browser context / Neko room (and its cookies/state) does not
-        persist across applications. Idempotent + defensive: a missing session or a
+        persist across applications. Retries up to 3 times on failure before giving
+        up, so a transient error (network blip, container busy) does not leak a
+        sandbox session. Idempotent + defensive: a missing session or a
         driver error never breaks the terminal path.
         """
         if self._sandbox is None:
@@ -975,12 +978,28 @@ class AgentLoop:
         resolver = getattr(self._sandbox, "for_application", None)
         if resolver is None:
             return
-        try:
-            session = resolver(application_id)
-            if session is not None:
-                self._sandbox.teardown(session.session_id)
-        except Exception:  # pragma: no cover - defensive: teardown must never raise
-            log.warning("sandbox_teardown_failed", application_id=str(application_id))
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                session = resolver(application_id)
+                if session is not None:
+                    self._sandbox.teardown(session.session_id)
+                return  # success
+            except Exception as exc:  # pragma: no cover - defensive: teardown must never raise
+                last_exc = exc
+                log.warning(
+                    "sandbox_teardown_failed",
+                    application_id=str(application_id),
+                    attempt=attempt + 1,
+                    error=str(exc),
+                )
+                if attempt < 2:
+                    time.sleep(1.0 * (2 ** attempt))  # exponential backoff: 1s, 2s
+        log.error(
+            "sandbox_teardown_gave_up",
+            application_id=str(application_id),
+            error=str(last_exc),
+        )
 
     def _workflow_id(self, application_id: ApplicationId) -> str:
         return f"application:{application_id}"
