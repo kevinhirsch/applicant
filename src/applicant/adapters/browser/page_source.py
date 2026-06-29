@@ -1465,7 +1465,7 @@ class PlaywrightPageSource:
             except Exception:
                 pass
             self._page.keyboard.type(self._filter_query(value), delay=15)
-            if self._pick_visible_option(value, 4.0, listbox_selector=listbox_sel):
+            if self._wait_for_option(value, 4.0, listbox_selector=listbox_sel):
                 return
             # Leave no half-typed filter string behind.
             try:
@@ -1497,6 +1497,32 @@ class PlaywrightPageSource:
         except Exception:
             pass
         return ""
+
+    def _wait_for_option(self, value: str, timeout_s: float, listbox_selector: str = "") -> bool:  # pragma: no cover
+        """Poll up to timeout_s for a [role=option] matching value to
+        appear in the DOM (async/paginated dropdown support, issue #227).
+
+        Unlike _pick_visible_option (which polls only already-visible options),
+        this waits for the option to EXIST in the DOM first, then clicks it.
+        This handles virtual/infinite-scroll lists where the target option is
+        loaded asynchronously after typing a filter query. Returns True iff
+        one was clicked. Falls back to _pick_visible_option when the option
+        exists but is not yet visible."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            candidates = (
+                self._page.query_selector_all(listbox_selector + " [role='option']")
+                if listbox_selector
+                else self._page.query_selector_all("[role='option']")
+            )
+            if not candidates:
+                time.sleep(0.15)
+                continue
+            # Found at least one option - delegate to visible-option picker
+            elapsed = time.monotonic() - (deadline - timeout_s)
+            remaining = timeout_s - elapsed
+            return self._pick_visible_option(value, max(remaining, 0.1), listbox_selector=listbox_selector)
+        return False
 
     @classmethod
     def _filter_query(cls, value: str) -> str:  # pragma: no cover
