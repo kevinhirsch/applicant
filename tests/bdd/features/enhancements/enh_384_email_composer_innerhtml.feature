@@ -8,7 +8,6 @@ Feature: Received-email HTML is sanitized before the composer renders it
     When the received-body render path is inspected
     Then it routes the body through the shared email sanitizer
 
-  @pending
   Scenario: The composer sanitizes the body before assigning it to innerHTML
     Given the document composer module
     When the rich-body render path is inspected
