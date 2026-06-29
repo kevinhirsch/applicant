@@ -107,6 +107,7 @@ markers = [
     "contract: adapter contract tests against a port",
     "integration: app-boot / cross-component integration tests",
     "bdd: pytest-bdd acceptance scenarios (master spec §10 anchors)",
+    "pending: enhancement BDD spec not yet implemented (tag mapped to xfail; TDD red)",
     "architecture: import-linter structural boundary tests (NFR-ARCH-1)",
 ]
 addopts = "-ra --strict-markers"
