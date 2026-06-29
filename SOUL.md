@@ -2,11 +2,17 @@
 
 > If you are a fresh Reasonix instance: read this, then act. The 5-line quick-start
 > below is enough to dispatch usefully. The rest is the full operating manual.
+>
+> **Auto-load:** `REASONIX.md` (repo root) is loaded into the cache-stable prefix every
+> session — the Claude-Code `CLAUDE.md` equivalent — and tells you to read this file in full.
+> `SOUL.md` is the manual; `REASONIX.md` is the always-on summary. Keep them in sync.
 
 ## Quick-start (5 bullets — enough for a fresh instance)
 1. **Read the map:** `docs/deepseek-implementation-guide.md` §5 for priority order + already-done.
 2. **Pick next cluster:** `docs/issue-acceptance-traceability.md` shows green vs pending.
-3. **Dispatch:** `parallel_tasks` for file-disjoint issues. Serialize if they touch the same file.
+3. **Dispatch:** background subagents (`task(run_in_background:true)`, `max_steps=0`) — one per
+   file-disjoint issue, each isolated in its own `git worktree` or run SERIALLY. Never run
+   concurrent writers on one tree (see Known limitations). Use `/wave`.
 4. **Gate before PR:** run the full block below — never a `-k` subset, never trust a subagent's word.
 5. **Open one focused PR** via `mcp__github__create_pull_request`. The owner merges.
 
@@ -59,11 +65,46 @@ subagents for file-disjoint issues, review their output, capture screenshots via
 | Screenshots | `npx playwright` (v1.61.1) | Capture before/after for UI changes |
 
 ## Known limitations
-- **No worktree isolation** — subagents share the filesystem. File-disjoint dispatch prevents
-  conflicts. Never `git stash` in concurrent subagents.
+- **Subagents share the filesystem — no built-in worktree isolation.** Concurrent WRITE agents
+  are unsafe *even when "file-disjoint"*: their uncommitted changes pile into one `git status`
+  with no way to attribute a hunk to a branch. (This is exactly how Wave 01 produced **148
+  uncommitted, zero-commit changes** that had to be untangled by hand.) Fix — the Claude-Code
+  `isolation:"worktree"` equivalent: give each parallel write-agent its own `git worktree`
+  (`git worktree add ../wt-<group> origin/main`) and run it there, so its edits and commits are
+  isolated. **If you can't give each agent a distinct working dir, SERIALIZE write agents**
+  (the proven Wave-01 recovery). Read-only audits (`read_only_task`) may still fan out freely.
+  Never `git stash` concurrently.
 - **No `CronCreate`** — background timers live only within the session. Re-arm on resume.
 - **Subagents are ephemeral** — they return one answer then vanish (unless resumed via
   `continue_from`). Evidence must be inline in the final report; a path alone dies.
+
+## Autonomy defaults (mirror Claude Code subagent behavior)
+Set these once so the overseer behaves like Claude Code out of the box:
+- **No round cap on write batches.** `agent.max_steps = 0` (or ≥250). Claude Code doesn't cap
+  subagent tool rounds; the 20-step default is what starved Wave 01 before any edit landed.
+- **Permission mode = Auto, with explicit `deny` for risky ops.** Auto-allows ordinary
+  edits/bash (like Claude Code's accept-edits flow); `deny` + plan-approval still gate the
+  dangerous stuff. Recommended rules:
+    - `allow`: `Bash(uv run *)`, `Bash(git *)`, `Edit(*)`, `Bash(node --check *)`
+    - `deny`: `Bash(git push --force*)`, `Bash(rm -rf *)`, anything reading/writing secrets/`.env`
+  Hard-to-reverse / outward-facing actions (push, PR, merge) stay owner-confirmed.
+- **Live todo per wave.** Use `todo_write` (`/todo`) — one entry per group in the wave, flipped
+  in_progress→done as agents land — so the owner sees progress, like Claude Code's TodoWrite.
+  Refresh it at every poll turn.
+
+## Reasonix self-extensions (Claude-Code-equivalent surfaces — build/keep these)
+Reasonix extends the same way Claude Code does — memory file, slash commands, hooks, skills —
+so the playbook is enforced by the harness, not by memory:
+- **Auto-loaded memory:** `REASONIX.md` (repo root) → the `CLAUDE.md` equivalent; carries the
+  non-negotiables + gate set + a pointer here. Keep always-on rules there.
+- **Slash commands** (`.reasonix/commands/`, Markdown templates, `$ARGUMENTS`/`$1…$N`):
+    - `/gate` → runs the full gate set below. Use it instead of trusting a subagent's green.
+    - `/wave <id>` → dispatch a wave with worktree-or-serialize isolation, the brief template
+      verbatim, and `max_steps=0`; one background subagent per file-disjoint issue.
+- **Hooks** (`/hooks`): a **session-start** hook that `export`s the hermetic `DATABASE_URL`
+  (kills the BDD hang, lesson 1), and a **stop / pre-PR** hook that runs `/gate` automatically
+  so "self-verified gates" is mechanical, not forgettable. Confirm the exact hook schema via
+  `/hooks` / `docs/SPEC.md` before wiring — the intent is fixed, the syntax may drift.
 
 ## Subagent brief format (battle-tested 2026-06-29)
 
@@ -168,8 +209,10 @@ don't guess; never silently ignore owner input.
 1. Read map → read issue → read spec (feature + steps).
 2. Reconcile with any parallel sessions: check `git log origin/main --oneline -20` and
    `mcp__github__list_pull_requests` for work already in flight.
-3. File-disjoint → **background dispatch + incremental poll** (`task(run_in_background:true)`),
-   NOT `parallel_tasks` — see "Talk-while-it-runs" below. Same file → serialize.
+3. **Background dispatch + incremental poll** (`task(run_in_background:true)`, `max_steps=0`),
+   NOT `parallel_tasks` — see "Talk-while-it-runs". Isolate each write agent in its own
+   `git worktree`, or SERIALIZE — never concurrent writers on the shared tree (Known
+   limitations). Read-only audits may fan out freely.
 4. Verify subagent output: `git diff --stat origin/main...HEAD` for true scope (3-dot,
    not 2-dot — 2-dot shows phantom "deletions" of newer main commits).
 5. Run the full gate set yourself (anti-pattern: trusting a subagent's "green").
@@ -214,8 +257,10 @@ don't guess; never silently ignore owner input.
    outside obvious keywords.
 
 ### Dispatch
-8. **Parallel subagents share filesystem** — file-disjoint only. Never `git stash`
-   concurrently. Verify scope with `git diff origin/main..HEAD --stat` (committed-only).
+8. **Parallel subagents share the filesystem — "file-disjoint" is NOT enough for writers.**
+   Wave 01 proved it: 3 concurrent write agents → 148 uncommitted, zero-commit changes nobody
+   could attribute to a branch. Isolate each writer in its own `git worktree` or SERIALIZE.
+   Never `git stash` concurrently. Verify scope with `git diff origin/main...HEAD --stat`.
 9. **Timers die with session** — re-arm on resume.
 10. **Playwright 1.61.1 for screenshots** — capture before/after for UI. Grep for
     `!important` overrides before declaring cause.
