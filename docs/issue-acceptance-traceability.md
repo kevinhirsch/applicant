@@ -1,12 +1,12 @@
 # Issue acceptance traceability — requirement ↔ acceptance ↔ code
 
 Every open tracker issue has an executable acceptance spec (Gherkin) + a DeepSeek-ready
-work-order comment on GitHub. Untagged scenarios = GREEN regression guards for shipped
-behaviour; `@pending` = TDD reds (xfail via `tests/bdd/conftest.py`). Definition of done
-per issue = its `@pending` scenarios pass + `ruff check .` + full hermetic suite green +
-single Alembic head.
+work-order comment. Untagged = GREEN regression guards; `@pending` = TDD reds (xfail via
+`tests/bdd/conftest.py`). FR-level acceptance specs for implemented-but-unspec'd requirements
+live as `spec_*.feature` (see docs/release-readiness-1.0.md §2c). Structural guards:
+`tests/architecture/test_reachability_contract.py` + `tests/e2e/test_pipeline_journey.py`.
 
-**233 issues** · 159 green · 425 pending.
+**240 issues** · 162 green · 433 pending.
 
 | Issue | Requirement / acceptance | Feature | Step module | green | pending |
 |---|---|---|---|---|---|
@@ -243,3 +243,10 @@ single Alembic head.
 | #397 | The front-door MUST wrap img.gps.lat / img.gps.lng in the escaping helper | `enh_397_gallery_gps_escape.feature` | `test_enh_uixss_steps.py` | 1 | 1 |
 | #398 | Critical above-the-fold CSS MUST be deliverable without blocking on the full ~1.1MB sheet, independent of any size reduction tracked by #265. | `enh_398_stylesheet_render_blocking.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
 | #399 | The live-session iframe MUST use a viewport-relative height that expands on small/handheld viewports rather than being capped at a fixed 480px. | `enh_399_remote_iframe_responsive_height.feature` | `test_enh_uirobust_steps.py` | 1 | 1 |
+| #400 | On base-résumé upload the front-door MUST detect required fonts and, when | `enh_400_font_prompt_on_upload.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #401 | The front-door MUST expose a "deliver/refresh digest now" control that | `enh_401_digest_deliver_now.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #402 | The front-door SHOULD offer a "preview the email as sent" view backed by | `enh_402_digest_html_preview.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #403 | A chat-proposed, confirmation-gated criteria change MUST be committable | `enh_403_chat_confirm_criteria.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #404 | If learned adjustments are operator-applicable from the UI, the front-door | `enh_404_criteria_learned_proxy.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
+| #405 | The review gate's submittability check is reachable from the front-door | `enh_405_ensure_submittable_proxy.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
+| #406 | The engine MUST proactively surface missing required-to-apply | `enh_406_chat_continued_onboarding.feature` | `test_enh_reachgaps_steps.py` | 0 | 2 |

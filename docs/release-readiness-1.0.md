@@ -41,12 +41,12 @@ it is "close a handful of named gaps + make two product decisions + add two stru
 | **FR-LEARN-5 dead biasing legs**: Phase-1 centroid + `feature_stats` never read; digest cache ignores learning | A MUST claims learning biases discovery/scoring; today two legs are dead code | #238, #237, #239 |
 | **NFR-TRUTH-1 fail-closed verification** | Confirm the material service emits NOTHING if the fabrication post-check is skipped by an earlier LLM/parse exception | (verify; file if not fail-closed) |
 
-### 2b. PRODUCT DECISIONS (owner's call — gate the 1.0 claim)
+### 2b. PRODUCT DECISIONS — RESOLVED (owner, this pass)
 
-| Decision | Options | Tracked |
-|---|---|---|
-| **FR-PREFILL-2a — universal/generic ATS scope** | (a) *Universal coverage* = land the generic-first driver as default (`resolve_ats()` returns generic, not Workday, for unknown URLs) + the field-match-rate wrong-ATS flag; or (b) *Scope 1.0 to "Workday + generic best-effort"* and document the limit. Either way land the match-rate flag so silent wrong-fill becomes operator-visible. | #173, #177, #171, #214, #305 |
-| **FR-OOBE-2 — wizard 3-step vs spec's 4-step** | The shipped wizard is intentionally slimmed (LLM → profile); channels/fonts/sandbox moved to Settings. Reconcile the spec/README text to match (or restore the step). | #271 |
+| Decision | Resolution | 1.0 action | Tracked |
+|---|---|---|---|
+| **FR-PREFILL-2a — universal/generic ATS scope** | **Universal generic-driver coverage.** 1.0 commits to filling *any* ATS via the generic live-DOM driver. | `resolve_ats()` (`ats.py:285`) MUST return the generic driver for unknown ATSes (not `WorkdayAts()`); land the field-match-rate wrong-ATS flag. **1.0-blocking.** | #173, #177 (+#171/#214/#305) |
+| **FR-OOBE-2 — wizard 3-step vs spec's 4-step** | **Divergence APPROVED.** The wizard stays minimal (connect model → profile); onboarding continues conversationally — the engine proactively probes for any required-to-apply data not prefilled and collects it in chat ("invisible onboarding continues"). | Enable the proactive essentials probe by default in prod + close the nudge→chat loop + reconcile README/spec to the minimal-wizard model. **1.0-blocking** (enablement). | #406 (reframes #271) |
 
 ### 2c. NO-SPEC — implemented + unit/contract-tested but missing a *Gherkin* acceptance scenario
 
@@ -84,12 +84,18 @@ in this readiness pass:
 
 ## 4. Proposed 1.0 scope cut
 
-**1.0 = all MUSTs green + §2a closed + §2b decided + the §2c safety-critical Gherkin authored + §3 guards
-built.** Everything in §2d ships post-1.0. Concretely, the 1.0-blocking issue set is:
+**1.0 = all MUSTs green + §2a closed + §2b decisions implemented + the §2c safety-critical Gherkin
+authored + §3 guards built.** Everything in §2d ships post-1.0. Concretely, the 1.0-blocking issue set is:
 
-`#381, #384, #389, #379, #380, #382, #363, #361, #362, #400, #238, #237, #239` + the NFR-TRUTH-1
-fail-closed verification + the two §2b product decisions (#173/#177 and #271) + the §3 guards (#364 +
-the new reachability test). That is the finite, documented path from here to a perfectly functional 1.0.
+`#381, #384, #389, #379, #380, #382, #363, #361, #362, #400, #238, #237, #239` (§2a) + `#173, #177`
+(universal ATS coverage) + `#406` (chat-continued onboarding enablement) + the NFR-TRUTH-1 fail-closed
+verification + the §3 guards (#364 + the reachability contract test — **both now built and green**).
+That is the finite, documented path from here to a perfectly functional 1.0.
+
+**Status of the guards (§3):** ✅ built this pass — `tests/architecture/test_reachability_contract.py`
+(144 proxy paths enforced, known-gap allowlist, negative-tested) and `tests/e2e/test_pipeline_journey.py`
+(seeded campaign → digest → approve → pre-fill → stop-boundary, no auto-submit). The §2c NO-SPEC Gherkin
+is authored (GREEN) and the §2a/§2b acceptance specs are filed as `@pending`.
 
 ---
 
