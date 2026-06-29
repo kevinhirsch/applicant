@@ -1,5 +1,11 @@
 # Applicant API image. python:3.11-slim + uv.
-FROM python:3.11-slim
+#
+# Base images are pinned by immutable DIGEST, not a mutable tag (#160, #374): a tag
+# like `python:3.11-slim` can be repointed at a different image at any time, so an
+# unpinned build is not reproducible and is a supply-chain risk. The tag is kept in
+# the comment for human readability; bump the digest deliberately when upgrading.
+# Resolve a new digest with: docker buildx imagetools inspect python:3.11-slim
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -18,8 +24,11 @@ ENV HOME=/app \
     XDG_DATA_HOME=/app/.local/share \
     XDG_CONFIG_HOME=/app/.config
 
-# Install uv (the project toolchain).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Install uv (the project toolchain). Pinned by digest (#160, #374) — `:latest` is
+# the worst-case mutable tag, so copy uv from an immutable image (tag in the comment
+# for readability). Resolve a bump with: docker buildx imagetools inspect ghcr.io/astral-sh/uv:latest
+# ghcr.io/astral-sh/uv:latest
+COPY --from=ghcr.io/astral-sh/uv@sha256:1e3808aa9023d0980e7c15b1fa7c1ac16ff35925780cf5c459858b2d693f01a9 /uv /uvx /bin/
 
 # System packages for the resume-render pipeline (FR-RESUME-3/4). The renderer
 # auto-detects these via shutil.which() and silently degrades (no real PDF) when

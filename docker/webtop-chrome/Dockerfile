@@ -26,6 +26,28 @@
 # Wayland — the web-streaming layer (KasmVNC) and the automation/handoff path are
 # X11-native. Chrome runs headful on that X server (NOT --headless).
 
+# SUPPLY-CHAIN PINNING (#160, #374): base images SHOULD be pinned to an immutable
+# digest (`...webtop:ubuntu-xfce@sha256:<digest>`) rather than a mutable LinuxServer
+# rolling tag, which is rebuilt frequently and is a moving target. The DE base is a
+# build ARG (so the same Dockerfile builds every DE variant), so the digest cannot be
+# baked into a single `FROM` line — pin it at build time by passing the resolved
+# digest into BASE, e.g.:
+#     docker build --build-arg BASE=lscr.io/linuxserver/webtop:ubuntu-xfce@sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d docker/webtop-chrome
+# Resolve a current digest with:
+#     docker buildx imagetools inspect lscr.io/linuxserver/webtop:ubuntu-xfce
+#
+# TODO(pin-digest): the historical default `:ubuntu-cinnamon` rolling tag no longer
+# resolves upstream (ghcr.io returns 404 for linuxserver/webtop:ubuntu-cinnamon), so
+# no real digest can be pinned for it here — DO NOT invent one. The known-good
+# digests at the time of writing (resolved from ghcr.io/linuxserver/webtop) are:
+#     ubuntu-xfce  -> sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d
+#     ubuntu-kde   -> sha256:32fb57cb5a97314faf690935b1b973562982afb5463a35764e3a57e7bcd40476
+# The ARG default is left UNCHANGED at the historical `:ubuntu-cinnamon` tag to
+# preserve existing build behavior (the production builds pass BASE explicitly via
+# --build-arg per the BUILD examples above and docker-compose.prod.yml, so this
+# default is only a fallback). Override BASE with a digest-pinned reference for
+# reproducible/audited builds. NOTE: the cinnamon rolling tag's upstream availability
+# is itself unstable (see TODO above) — prefer xfce/kde, which still resolve.
 ARG BASE=lscr.io/linuxserver/webtop:ubuntu-cinnamon
 FROM ${BASE}
 

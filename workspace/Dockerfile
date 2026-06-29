@@ -1,4 +1,9 @@
-FROM python:3.12-slim
+# Base image pinned by immutable DIGEST, not the mutable `python:3.12-slim` tag
+# (#160, #374) — a tag can be repointed upstream, so pinning keeps the build
+# reproducible and closes the supply-chain risk. Tag kept in the comment for
+# readability. Resolve a bump with: docker buildx imagetools inspect python:3.12-slim
+# python:3.12-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,

@@ -26,7 +26,14 @@
 
 # Base on the LinuxServer KasmVNC runtime so we inherit the browser web-stream layer
 # (KasmVNC + the /kasmweb entrypoint) and only need to add the Pantheon shell on X11.
-FROM lscr.io/linuxserver/webtop:ubuntu-kde
+#
+# Pinned by immutable DIGEST, not the mutable `:ubuntu-kde` tag (#160, #374): the
+# LinuxServer rolling tag is rebuilt frequently, so an unpinned build is a moving
+# supply-chain target. Tag kept in the comment for readability; bump the digest
+# deliberately. Resolve a new one with:
+#   docker buildx imagetools inspect lscr.io/linuxserver/webtop:ubuntu-kde
+# lscr.io/linuxserver/webtop:ubuntu-kde
+FROM lscr.io/linuxserver/webtop:ubuntu-kde@sha256:32fb57cb5a97314faf690935b1b973562982afb5463a35764e3a57e7bcd40476
 
 LABEL org.opencontainers.image.title="applicant-webtop-pantheon" \
       org.opencontainers.image.description="Ubuntu + Pantheon (Gala/Wingpanel/Plank) on Xorg/X11, web-streamed (KasmVNC) takeover desktop" \
