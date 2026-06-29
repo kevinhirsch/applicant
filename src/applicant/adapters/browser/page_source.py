@@ -1583,6 +1583,8 @@ class PlaywrightPageSource:
         # Real multi-page navigation: a "Next"/"Continue" control is a benign
         # navigation (not an irreducible human step). Click the first matching
         # enabled control; if none exists we are at the end of the flow -> None.
+        # SPA hydration race (issue #341): after clicking Next, wait for the DOM
+        # to settle, then re-check before declaring end-of-flow.
         for sel in self._NEXT_SELECTORS:
             try:
                 locator = self._page.locator(sel).first
@@ -1604,6 +1606,17 @@ class PlaywrightPageSource:
                 continue
             # Detect end-of-flow: clicking did not move us anywhere new.
             if self._page.url == before and not self._dom_changed():
+                # SPA hydration race: the new DOM may not have hydrated yet.
+                # Retry after a short settle to give the SPA time to render
+                # (issue #341). If the DOM still hasn't changed after retry,
+                # we are truly at the end.
+                for attempt in range(3):
+                    try:
+                        self._page.wait_for_timeout(500)
+                    except Exception:
+                        pass
+                    if self._dom_changed():
+                        return self.current()
                 continue
             return self.current()
         return None
