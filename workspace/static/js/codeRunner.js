@@ -356,7 +356,7 @@ export async function runServer(code, panel, lang) {
 export function runHTML(code, panel) {
   panel.innerHTML = '';
 
-  const win = window.open('', '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
+  const win = window.open('', '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no,noopener=yes');
   if (!win) {
     showOutput(panel, 'Popup blocked — please allow popups for this site.', true);
     addCloseBtn(panel);

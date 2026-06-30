@@ -143,8 +143,8 @@ export const ERROR_PATTERNS = [
       { label: 'Request access on HF', action: (panel, _text) => {
         const m = _text && (_text.match(/Access to model\s+(\S+)\s+is restricted/i) || _text.match(/huggingface\.co\/([^\s/]+\/[^\s/]+)/i));
         const repo = m && (m[1] || m[2]);
-        if (repo) window.open('https://huggingface.co/' + repo, '_blank');
-        else window.open('https://huggingface.co/settings/gated-repos', '_blank');
+        if (repo) window.open('https://huggingface.co/' + repo, '_blank', 'noopener');
+        else window.open('https://huggingface.co/settings/gated-repos', '_blank', 'noopener');
       }},
       { label: 'Check HF Token', action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
@@ -162,8 +162,8 @@ export const ERROR_PATTERNS = [
         const base = _text && _text.match(/config=([^\s,)]+)/i);
         const model = _text && _text.match(/load model from\s+(\S+)/i);
         const repo = (gated && gated[1]) || (base && base[1]) || _inferBaseRepo(_text);
-        if (repo) window.open('https://huggingface.co/' + repo, '_blank');
-        else if (model && model[1]) window.open('https://huggingface.co/' + model[1].replace(/[.]$/, ''), '_blank');
+        if (repo) window.open('https://huggingface.co/' + repo, '_blank', 'noopener');
+        else if (model && model[1]) window.open('https://huggingface.co/' + model[1].replace(/[.]$/, ''), '_blank', 'noopener');
       }},
       { label: 'Check HF Token', action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');
@@ -178,8 +178,8 @@ export const ERROR_PATTERNS = [
       { label: 'Request access to base model', action: (panel, _text) => {
         const gated = _text && _text.match(/Access to model\s+(\S+)\s+is restricted/i);
         const repo = (gated && gated[1]) || _inferBaseRepo(_text);
-        if (repo) window.open('https://huggingface.co/' + repo, '_blank');
-        else window.open('https://huggingface.co/settings/gated-repos', '_blank');
+        if (repo) window.open('https://huggingface.co/' + repo, '_blank', 'noopener');
+        else window.open('https://huggingface.co/settings/gated-repos', '_blank', 'noopener');
       }},
       { label: 'Check HF Token', action: (panel) => {
         const el = panel.querySelector('[data-field="hf_token"]');

@@ -2539,7 +2539,7 @@ async function _showCalSettings() {
   // Export chips — one per calendar; downloads that calendar's .ics.
   overlay.querySelectorAll('.cal-s-export-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      window.open(`${API_BASE}/api/calendar/export/${chip.dataset.id}`, '_blank');
+      window.open(`${API_BASE}/api/calendar/export/${chip.dataset.id}`, '_blank', 'noopener');
     });
   });
 

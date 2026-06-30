@@ -171,7 +171,7 @@ function buildAttachCards(attachments) {
           // PDFs & text/code/markdown → open in the Documents viewer
           // (others fall back to the raw file).
           if (window.chatModule?.openAttachment) window.chatModule.openAttachment(att, false);
-          else window.open(`/api/upload/${att.id}`, '_blank');
+          else window.open(`/api/upload/${att.id}`, '_blank', 'noopener');
         });
       }
       const icon = _attachIcon(att.mime || att.name);
@@ -900,7 +900,7 @@ function _appendReportButton(container, sessionId) {
 
   var reportUrl = apiBase + '/api/research/report/' + sessionId;
   btn.addEventListener('click', function() {
-    window.open(reportUrl, '_blank');
+    window.open(reportUrl, '_blank', 'noopener');
   });
   wrap.appendChild(btn);
 
@@ -1059,7 +1059,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
   img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.addEventListener('click', () => { window.open(img.src, '_blank', 'noopener'); });
   body.appendChild(img);
 
   if (prompt) {

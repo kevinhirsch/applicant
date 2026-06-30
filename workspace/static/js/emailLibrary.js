@@ -3403,7 +3403,7 @@ function _wireAttachmentHandlers(reader, folder) {
       if (!uid || index == null) return;
       const url = `${API_BASE}/api/email/attachment/${encodeURIComponent(uid)}/${encodeURIComponent(index)}?folder=${encodeURIComponent(useFolder)}${_acct()}`;
       if (_isMobileUA) {
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener');
         return;
       }
       const orig = chip.style.opacity;

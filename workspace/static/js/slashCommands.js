@@ -1068,7 +1068,7 @@ async function _cmdSessionExport(args, ctx) {
   }
   const params = new URLSearchParams({ fmt });
   if (filename) params.set('filename', filename);
-  window.open(`${API_BASE}/api/session/${ctx.sid}/export?${params}`, '_blank');
+  window.open(`${API_BASE}/api/session/${ctx.sid}/export?${params}`, '_blank', 'noopener');
   slashReply(`Exporting as .${fmt}${filename ? ' → ' + filename : ''}...`);
   return true;
 }

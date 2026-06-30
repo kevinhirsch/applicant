@@ -2819,14 +2819,14 @@ async function _renderLibResearch(grid) {
       if (metaEl) metaEl.textContent = metaEl.textContent.replace(/\d+ msgs?/, (item.source_count || 0) + ' sources');
       card.addEventListener('click', (e) => {
         if (e.target.closest('.archive-menu-btn') || e.target.closest('.memory-select-cb')) return;
-        window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank');
+        window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank', 'noopener');
       });
       const menuBtn = card.querySelector('.archive-menu-btn');
       if (menuBtn) {
         menuBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           _showDropdown(e.currentTarget, [
-            { label: 'Open Report', action: () => window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank') },
+            { label: 'Open Report', action: () => window.open(`${API_BASE}/api/research/report/${item.id}`, '_blank', 'noopener') },
             { label: 'Re-run', action: () => {
               const modal = document.getElementById('library-modal');
               if (modal) modal.style.display = 'none';

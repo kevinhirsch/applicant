@@ -2470,7 +2470,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
                   await loadDocument(data.doc_id);
                 } else if (uiModule) {
                   uiModule.showError(data.error || 'Failed to open PDF');
-                  window.open(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`, '_blank');
+                  window.open(`${API_BASE}/api/email/attachment/${encodeURIComponent(fields.sourceUid)}/${att.index}?folder=${folderQs}`, '_blank', 'noopener');
                 }
               } catch (e) {
                 console.error('Open PDF attachment failed:', e);

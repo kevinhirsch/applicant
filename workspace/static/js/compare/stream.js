@@ -365,7 +365,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               img.src = json.image_url;
               img.alt = json.image_prompt || '';
               img.title = json.image_prompt || '';
-              img.addEventListener('click', () => window.open(img.src, '_blank'));
+              img.addEventListener('click', () => window.open(img.src, '_blank', 'noopener'));
               aiBody.appendChild(img);
               if (json.image_prompt) {
                 const caption = document.createElement('div');
