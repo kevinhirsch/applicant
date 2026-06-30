@@ -1609,6 +1609,17 @@ class PrefillService:
         )
         if any(trigger in low for trigger in _QUESTION_TRIGGERS):
             return True
+        # #209: a long-but-factual data field ("Current Home Street Address Line 2"
+        # is six words) must NOT be misclassified as an essay prompt by raw word
+        # count. Known plain-data label patterns are excluded before the fallback.
+        _DATA_FIELD_MARKERS = (
+            "address", "street", "city", "state", "province", "zip", "postal",
+            "country", "phone", "email", "name", "linkedin", "github", "portfolio",
+            "website", "url", "date of birth", "birth", "ssn", "social security",
+            "license", "salary", "compensation", "wage", "number", "code",
+        )
+        if any(marker in low for marker in _DATA_FIELD_MARKERS):
+            return False
         # Free-text label with enough words to be a prompt (not name/email/phone).
         words = [w for w in label.split() if w]
         return len(words) >= 6

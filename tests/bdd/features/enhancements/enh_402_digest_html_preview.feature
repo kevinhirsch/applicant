@@ -9,7 +9,6 @@ Feature: The digest email can be previewed as it will be sent
     Then the engine client exposes a digest-email method
     And the email proxy module routes a digest-email path
 
-  @pending
   Scenario: A front-door view renders the digest email preview
     Given the digest surface in the front-door
     When the email-preview view is wired

@@ -24,7 +24,6 @@ Feature: Greenhouse and Lever ATS adapters model the same breadth of real applic
     When the Greenhouse flow is walked for field-modeling parity with Workday
     Then it models the same breadth of real application fields as Workday
 
-  @pending
   Scenario: A major ATS beyond the three shipped ones has its own adapter
     Given the ATS registry
     When an iCIMS posting URL is resolved

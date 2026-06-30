@@ -253,6 +253,36 @@ class FakePageSource:
         # (the real driver applies it) and ignored here.
         self._page.filled[selector] = value
 
+    def select_dropdown(
+        self, selector: str, value: str, *, options: tuple[str, ...]
+    ) -> str:
+        """Select ``value`` against a real ``options`` set, like the live driver (#225).
+
+        Unlike :meth:`type_value` (which blindly records whatever it is given), this
+        VERIFIES the value matched a real option using the same synonym-aware matcher
+        the real :class:`PlaywrightPageSource` uses (exact, loose subset, or decline
+        synonym). It records the matched OPTION text (what the real ``<select>`` would
+        land on) and returns it. An unmatched value raises ``ValueError`` rather than
+        silently "succeeding" — so the fake exercises the real dropdown-validation
+        seam in CI (the option matcher), not just value recording.
+        """
+        matched: str | None = None
+        fallback: str | None = None
+        for opt in options:
+            m = PlaywrightPageSource._option_match(value, opt)
+            if m == "exact":
+                matched = opt
+                break
+            if m == "loose" and fallback is None:
+                fallback = opt
+        matched = matched or fallback
+        if matched is None:
+            raise ValueError(
+                f"no option matching {value!r} in {options!r}"
+            )
+        self._page.filled[selector] = matched
+        return matched
+
     def set_input_files(self, selector: str, file_path: str) -> None:
         # The fake model records the uploaded path (the real driver attaches it via
         # Playwright's set_input_files); kept separate from typed ``filled`` values.
@@ -1747,6 +1777,87 @@ class PlaywrightPageSource:
                 return True
             time.sleep(0.1)
         return False
+
+    def _pick_visible_option_in_listbox(
+        self, value: str, listbox_id: str, timeout_s: float = 1.5
+    ) -> bool:  # pragma: no cover - integration-gated
+        """Scoped variant of :meth:`_pick_visible_option` (#226).
+
+        ``_pick_visible_option`` polls EVERY ``[role=option]`` on the page, so a
+        stale, still-in-DOM option from a DIFFERENT (closed) dropdown could match and
+        be clicked. When the opened dropdown advertises its listbox via an
+        ``aria-controls`` / ``aria-owns`` relationship, this restricts the search to
+        options OWNED by that listbox (descendants of ``#{listbox_id}``, or options
+        whose ``aria-owns``/id ties them to it), eliminating cross-dropdown bleed.
+
+        Returns True iff an option owned by ``listbox_id`` was clicked.
+        """
+        if not listbox_id:
+            return self._pick_visible_option(value, timeout_s)
+        # CSS-escape the id for the descendant selector; iCIMS/Workday ids are simple.
+        scope = f"#{listbox_id} [role='option'], [aria-owns~='{listbox_id}'] [role='option']"
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            fallback = None
+            try:
+                candidates = self._page.query_selector_all(scope)
+            except Exception:
+                candidates = []
+            for opt in candidates:
+                try:
+                    if not opt.is_visible():
+                        continue
+                    txt = (
+                        opt.get_attribute("data-automation-label") or opt.inner_text() or ""
+                    ).strip()
+                except Exception:
+                    continue
+                if not txt:
+                    continue
+                m = self._option_match(value, txt)
+                if m == "exact":
+                    opt.click()
+                    return True
+                if m == "loose" and fallback is None:
+                    fallback = opt
+            if fallback is not None:
+                fallback.click()
+                return True
+            time.sleep(0.1)
+        return False
+
+    def _pick_option_loading_async(
+        self,
+        trigger,
+        value: str,
+        *,
+        listbox_id: str = "",
+        timeout_s: float = 4.0,
+    ) -> bool:  # pragma: no cover - integration-gated
+        """Type the filter and WAIT for an async/paginated option to load (#227).
+
+        ``_pick_visible_option`` assumes every option is already in the DOM, so a
+        virtual / infinite-scroll combobox whose target option (e.g. "Zimbabwe") only
+        renders after the user types a filter never matches — and the resulting
+        ``ValueError`` falsely implies the option does not exist. This helper types a
+        short filter query into ``trigger`` and then polls (up to ``timeout_s``) for
+        the option to appear before giving up, so an asynchronously-loaded option is
+        fetched rather than declared missing.
+
+        Scopes to ``listbox_id`` when provided (#226) so the async-loaded option is
+        matched only within the opened dropdown's own listbox.
+        """
+        try:
+            trigger.fill("")
+        except Exception:
+            pass
+        try:
+            self._page.keyboard.type(self._filter_query(value), delay=15)
+        except Exception:
+            pass
+        if listbox_id:
+            return self._pick_visible_option_in_listbox(value, listbox_id, timeout_s)
+        return self._pick_visible_option(value, timeout_s)
 
     def screenshot(self) -> str:  # pragma: no cover - integration-gated
         # Slugify the URL tail: a raw ``url[-12:]`` can contain ``/ ? :`` which are
