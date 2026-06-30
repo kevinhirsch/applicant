@@ -109,6 +109,17 @@ EGRESS_MODE_DIRECT = "direct"
 EGRESS_MODE_RESIDENTIAL_PROXY = "residential-proxy"
 EGRESS_MODES = (EGRESS_MODE_DIRECT, EGRESS_MODE_RESIDENTIAL_PROXY)
 
+#: CAPTCHA handling strategies (issue #350). ``human`` (default) reproduces today's
+#: behavior — every captcha hands off to the operator. ``avoid``/``service`` are opt-in.
+CAPTCHA_STRATEGY_HUMAN = "human"
+CAPTCHA_STRATEGY_AVOID = "avoid"
+CAPTCHA_STRATEGY_SERVICE = "service"
+CAPTCHA_STRATEGIES = (
+    CAPTCHA_STRATEGY_HUMAN,
+    CAPTCHA_STRATEGY_AVOID,
+    CAPTCHA_STRATEGY_SERVICE,
+)
+
 #: Prefix-cache posture (FR-MIND-8). ``auto``/``on`` apply provider cache
 #: breakpoints where the provider advertises support; ``off`` never does.
 PREFIX_CACHE_AUTO = "auto"
@@ -373,6 +384,28 @@ class Settings(BaseSettings):
     # verification + final-submit remain irreducible regardless.
     allow_automated_accounts: bool = Field(default=False, alias="ALLOW_AUTOMATED_ACCOUNTS")
 
+    # --- CAPTCHA handling (issue #350, opt-in, safe-by-default) ---------------
+    # A driven solver port sits in FRONT of the existing captcha human-handoff. ALL
+    # defaults reproduce today's behavior (the run pauses and hands off to the operator):
+    #   ``human``   (default) — every captcha hands off to the operator + backstop.
+    #   ``avoid``   — score/behavioral families (reCAPTCHA v3, Turnstile) proceed via
+    #                 the shipped stealth layer; interactive challenges still hand off.
+    #   ``service`` — interactive challenges (reCAPTCHA v2, hCaptcha) are solved by token
+    #                 injection via the third-party service; score/behavioral still avoid;
+    #                 any failure or unconfigured key degrades to the hand-off.
+    # NOTHING here lets the engine self-authorize past account-create / final-submit —
+    # those stay irreducible human steps. This only removes the *captcha* manual step
+    # when the operator explicitly opts in.
+    captcha_strategy: str = Field(default="human", alias="CAPTCHA_STRATEGY")  # human|avoid|service
+    # The third-party solving service used by the ``service`` strategy.
+    captcha_service: str = Field(default="capsolver", alias="CAPTCHA_SERVICE")
+    # The solver-service API key. Sealed via the credential vault on seed (never logged);
+    # empty (default) ⇒ the ``service`` strategy has no key and cleanly degrades to hand-off.
+    captcha_api_key: str = Field(default="", alias="CAPTCHA_API_KEY")
+    # Optional egress proxy threaded into the solver-service call (keeps the solve on the
+    # same residential exit as the browser). Empty (default) ⇒ direct.
+    egress_proxy: str = Field(default="", alias="EGRESS_PROXY")
+
     # --- Computer use / desktop control (FR-CUA, docs/spec/computer-use.md) ---
     # Background desktop control (click/type/scroll/drag over the OS accessibility
     # tree) confined to the sandbox/takeover surface, complementing the browser path.
@@ -577,6 +610,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"EGRESS_MODE={v!r} is invalid; choose one of {EGRESS_MODES} "
                 "(default 'direct')."
+            )
+        return norm
+
+    @field_validator("captcha_strategy")
+    @classmethod
+    def _validate_captcha_strategy(cls, v: str) -> str:
+        # Reject a typo at load instead of silently coercing — a wrong value must not
+        # change the safe default behavior. ``human`` is the safe path.
+        norm = (v or "").strip().lower()
+        if norm not in CAPTCHA_STRATEGIES:
+            raise ValueError(
+                f"CAPTCHA_STRATEGY={v!r} is invalid; choose one of {CAPTCHA_STRATEGIES} "
+                "(default 'human' — hand off to the operator)."
             )
         return norm
 

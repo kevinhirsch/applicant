@@ -269,6 +269,58 @@ def _build_remote_view(settings: Settings) -> Any:
     )
 
 
+def _build_captcha_solver(settings: Settings) -> Any:
+    """Build the opt-in captcha solver port (issue #350), or ``None`` for the default.
+
+    Returns ``None`` for the shipped ``CAPTCHA_STRATEGY=human`` so the pre-fill loop is
+    byte-for-byte identical to today (every captcha → existing hand-off). For ``avoid``
+    it wires only the stealth-backed avoidance leg; for ``service`` it also wires the
+    third-party solver scaffold from the sealed ``CAPTCHA_API_KEY`` (never logged) — an
+    empty key cleanly degrades that strategy back to the hand-off.
+    """
+    from applicant.app.config import (
+        CAPTCHA_STRATEGY_HUMAN,
+        CAPTCHA_STRATEGY_SERVICE,
+    )
+
+    strategy = settings.captcha_strategy
+    if strategy == CAPTCHA_STRATEGY_HUMAN:
+        return None
+
+    from applicant.adapters.captcha import (
+        BehavioralAvoidanceStrategy,
+        CaptchaSolver,
+        HumanHandoffAdapter,
+        SolverServiceAdapter,
+    )
+
+    service: Any = None
+    if strategy == CAPTCHA_STRATEGY_SERVICE:
+        from applicant.adapters.captcha.solver_service import HttpTokenSolver
+
+        # The key is held only inside the solver (redacted from repr, never logged).
+        solver_call = (
+            HttpTokenSolver(
+                api_key=settings.captcha_api_key,
+                service=settings.captcha_service,
+                egress_proxy=settings.egress_proxy,
+            )
+            if settings.captcha_api_key
+            else None
+        )
+        service = SolverServiceAdapter(
+            solver=solver_call,
+            api_key=settings.captcha_api_key,
+        )
+
+    return CaptchaSolver(
+        strategy=strategy,
+        avoidance=BehavioralAvoidanceStrategy(),
+        service=service,
+        handoff=HumanHandoffAdapter(),
+    )
+
+
 def _build_sandbox(settings: Settings, setup_service: Any) -> Any:
     """Pick the sandbox backend by SANDBOX_BACKEND (FR-SANDBOX-1, FR-STEALTH-1).
 
@@ -755,6 +807,11 @@ def build_container(settings: Settings | None = None) -> Container:
         from applicant.adapters.planner.llm_planner import LLMPlanner
         _prefill_planner = LLMPlanner(llm=llm)
 
+    # #350 CaptchaSolverPort: build the opt-in solver ONLY for a non-default strategy.
+    # The shipped default (CAPTCHA_STRATEGY=human) leaves ``captcha_solver=None`` so the
+    # pre-fill loop behaves byte-for-byte as today (every captcha → existing hand-off).
+    captcha_solver = _build_captcha_solver(settings)
+
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -763,6 +820,7 @@ def build_container(settings: Settings | None = None) -> Container:
         credentials=credentials,
         notification=notification,
         llm=llm,
+        captcha_solver=captcha_solver,
         resume_provider=BaseResumeProvider(storage),
         # FR-CUA: the desktop-assist port, used ONLY to complete a native OS file-picker
         # the DOM can't satisfy during résumé attachment. Defaults to the noop backend,
@@ -1030,6 +1088,8 @@ def build_container(settings: Settings | None = None) -> Container:
             # #305 Plan-as-Data: reuse the same planner as the main prefill_service.
             planner=_prefill_planner,
             use_planner=settings.prefill_use_planner,
+            # #350: process-lived opt-in captcha solver (None for the default hand-off).
+            captcha_solver=captcha_solver,
         )
         mat = MaterialService(
             tick_storage,
@@ -1211,6 +1271,8 @@ def build_container(settings: Settings | None = None) -> Container:
             # #305 Plan-as-Data: reuse the same planner as the main prefill_service.
             planner=_prefill_planner,
             use_planner=settings.prefill_use_planner,
+            # #350: process-lived opt-in captcha solver (None for the default hand-off).
+            captcha_solver=captcha_solver,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
