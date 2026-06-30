@@ -17,13 +17,11 @@ Feature: Captured work-authorization filters out ineligible postings
     When a sponsorship-requirement phrase is checked against it
     Then the phrase is recognized by the lexicon
 
-  @pending
   Scenario: A sponsorship-required posting is excluded for a user who can't be sponsored
     Given a user whose captured work-authorization does not allow sponsorship
     When a posting requiring visa sponsorship is scored against that work-authorization
     Then the eligibility filter excludes or flags it and surfaces the reason
 
-  @pending
   Scenario: An eligible posting is unaffected by the eligibility filter
     Given a user whose captured work-authorization needs no sponsorship
     When a posting with no sponsorship requirement is scored against that work-authorization

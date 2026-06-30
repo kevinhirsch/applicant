@@ -28,7 +28,6 @@ from applicant.app.routers import (
     feedback,
     fonts,
     gallery,
-    mcp,
     model_endpoints,
     notifications,
     onboarding,
@@ -73,4 +72,5 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(audit.router)
     app.include_router(gallery.router)
     app.include_router(update.router)
-    app.include_router(mcp.router)
+    # The MCP surface is mounted by ``mount_mcp(app)`` (app/main.py) so the native
+    # tool routes appear as flat /mcp APIRoutes (#308); not included here.

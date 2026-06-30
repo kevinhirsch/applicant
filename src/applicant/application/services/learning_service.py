@@ -99,10 +99,23 @@ def _campaign_lock(campaign_id: CampaignId) -> threading.Lock:
         return _CAMPAIGN_LOCKS[str(campaign_id)]
 
 
+@dataclass(frozen=True)
+class FailureLesson:
+    """A verbal self-reflection on a failed step, stored for later recall (#306)."""
+
+    ats: str
+    step: str
+    lesson: str
+
+
 class LearningService:
-    def __init__(self, storage, embedding) -> None:
+    def __init__(self, storage, embedding, *, memory_store=None) -> None:
         self._storage = storage
         self._embedding = embedding
+        # Episodic memory for verbal lessons (Reflexion). Prefer a wired curated
+        # MemoryStore; fall back to an in-process map so recall works hermetically.
+        self._memory_store = memory_store
+        self._episodic_lessons: dict[str, list[FailureLesson]] = {}
 
     def model_for(self, campaign_id: CampaignId) -> LearningModel:
         return LearningModel(campaign_id=campaign_id)
@@ -559,3 +572,46 @@ class LearningService:
         if routine_store is None or not domain or not steps:
             return None
         return routine_store.induce(domain, tuple(steps))
+
+    # --- self-reflection on failure (Reflexion, #306) ---------------------
+    def reflect_on_failure(self, failure: dict) -> FailureLesson:
+        """Write a verbal lesson from a failed step to episodic memory (Reflexion, #306).
+
+        ``failure`` carries the ATS, the failing ``step``, and an ``error``
+        description. A short natural-language lesson is distilled and stored
+        (curated MemoryStore when wired, else an in-process episodic map) so it
+        can be recalled on the next similar attempt via :meth:`recall_lessons`.
+        """
+        ats = str(failure.get("ats") or failure.get("source_key") or "unknown")
+        step = str(failure.get("step", "")).strip()
+        error = str(failure.get("error", "")).strip()
+        lesson_text = (
+            f"On {ats}, the step '{step}' failed ({error}); "
+            "try an alternate selector or pause for confirmation next time."
+            if error
+            else f"On {ats}, the step '{step}' failed; proceed cautiously next time."
+        )
+        lesson = FailureLesson(ats=ats, step=step, lesson=lesson_text)
+        self._episodic_lessons.setdefault(ats, []).append(lesson)
+
+        store = self._memory_store
+        if store is not None:
+            try:
+                from applicant.ports.driven.memory_store import (
+                    KIND_ENVIRONMENT,
+                    SCOPE_GLOBAL,
+                    MemoryEntry,
+                )
+
+                store.add(
+                    MemoryEntry(
+                        text=lesson_text, kind=KIND_ENVIRONMENT, scope=SCOPE_GLOBAL
+                    )
+                )
+            except Exception:  # pragma: no cover - advisory write must never break the loop
+                pass
+        return lesson
+
+    def recall_lessons(self, ats: str) -> list[FailureLesson]:
+        """Recall verbal lessons for an ATS on the next similar attempt (#306)."""
+        return list(self._episodic_lessons.get(str(ats), []))
