@@ -150,7 +150,7 @@ export function wireKeyboardShortcuts(deps) {
             if (blob && navigator.clipboard?.write) {
               navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => {
                 uiModule.showToast(isCut ? 'Cut to clipboard' : 'Copied to clipboard');
-              }).catch(() => uiModule.showToast(isCut ? 'Cut (editor only)' : 'Copied (editor only)'));
+              }).catch(e => { console.error('Clipboard write failed:', e); uiModule.showToast(isCut ? 'Cut (editor only)' : 'Copied (editor only)'); });
             }
           }, 'image/png');
           if (isCut) {
@@ -193,7 +193,7 @@ export function wireKeyboardShortcuts(deps) {
           if (blob && navigator.clipboard?.write) {
             navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => {
               uiModule.showToast(isCut ? 'Cut to clipboard' : 'Copied to clipboard');
-            }).catch(() => uiModule.showToast(isCut ? 'Cut (editor only)' : 'Copied (editor only)'));
+            }).catch(e => { console.error('Clipboard write failed:', e); uiModule.showToast(isCut ? 'Cut (editor only)' : 'Copied (editor only)'); });
           }
         }, 'image/png');
         if (e.key === 'x') {
@@ -218,7 +218,7 @@ export function wireKeyboardShortcuts(deps) {
             if (blob && navigator.clipboard?.write) {
               navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
                 .then(() => uiModule.showToast('Layer copied to clipboard'))
-                .catch(() => uiModule.showToast('Copy failed (clipboard permission denied?)'));
+                .catch(e => { console.error('Clipboard write failed:', e); uiModule.showToast('Copy failed (clipboard permission denied?)'); });
             }
           }, 'image/png');
           return;

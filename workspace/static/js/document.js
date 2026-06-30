@@ -9189,9 +9189,9 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     return parts.join('<br>');
   }
   function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
-
   /** Load version history list */
   async function loadVersionHistory() {
     if (!activeDocId) return;
