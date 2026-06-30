@@ -1004,7 +1004,7 @@ function _buildJobCard(job) {
     // stopPropagation) opens the visual report — same as the Visual Report btn.
     card.style.cursor = 'pointer';
     card.addEventListener('click', () => {
-      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
+      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank', 'noopener');
     });
     card.querySelector('[data-action="copy"]').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1014,7 +1014,7 @@ function _buildJobCard(job) {
     });
     card.querySelector('[data-action="report"]').addEventListener('click', (e) => {
       e.stopPropagation();
-      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
+      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank', 'noopener');
     });
     card.querySelector('[data-action="chat"]').addEventListener('click', (e) => {
       e.stopPropagation();

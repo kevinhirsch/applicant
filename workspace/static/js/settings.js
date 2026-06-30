@@ -4204,7 +4204,7 @@ async function initUnifiedIntegrations() {
               <span style="font-size:11px;opacity:0.7">${statusText}</span>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none">Authorize</a>` : ''}
+              ${srv.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${srv.id}" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none">Authorize</a>` : ''}
               <button class="admin-btn-sm" id="uf-mcp-reconnect">Reconnect</button>
               <button class="admin-btn-sm" id="uf-mcp-toggle">${srv.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Close</button>

@@ -1086,7 +1086,7 @@ function _exportPrint() {
   if (!md) return;
   // Render the markdown as a quick HTML view in a new window and trigger
   // the system print dialog — user can pick "Save as PDF" from there.
-  const w = window.open('', '_blank');
+  const w = window.open('', '_blank', 'noopener');
   if (!w) return;
   const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = '<!doctype html><meta charset="utf-8"><title>Compare export</title>' +

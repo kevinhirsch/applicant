@@ -1999,7 +1999,7 @@ function _wireActivityRows(list) {
       e.stopPropagation();
       const idx = parseInt(row.dataset.entryIdx, 10);
       const entry = _activityEntries[idx];
-      if (entry?.researchId) window.open(`${API_BASE}/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank');
+      if (entry?.researchId) window.open(`${API_BASE}/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank', 'noopener');
     });
     row.querySelector('.task-log-force-run')?.addEventListener('click', (e) => {
       e.stopPropagation();

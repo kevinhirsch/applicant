@@ -1796,7 +1796,7 @@ import createResearchSynapse from './researchSynapse.js';
                         _iw.className = 'attach-image-preview';
                         _iw.dataset.fileId = _att.id;
                         _iw.style.cursor = 'pointer';
-                        _iw.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank');
+                        _iw.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank', 'noopener');
                         const _im = document.createElement('img');
                         _im.src = API_BASE + '/api/upload/' + _att.id;
                         _im.alt = _att.name || 'Image';
@@ -1820,7 +1820,7 @@ import createResearchSynapse from './researchSynapse.js';
                         if (_card && _att.id) {
                           _card.dataset.fileId = _att.id;
                           _card.style.cursor = 'pointer';
-                          _card.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank');
+                          _card.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank', 'noopener');
                         }
                       }
                     }
@@ -4384,14 +4384,14 @@ import createResearchSynapse from './researchSynapse.js';
         const gx = await import('./galleryEditor.js');
         if (gx.openEditor) { gx.openEditor(url, id, null, name); return; }
       } catch (e) { console.warn('gallery open failed', e); }
-      window.open(url, '_blank');
+      window.open(url, '_blank', 'noopener');
       return;
     }
 
     const isPdf = mime === 'application/pdf' || /\.pdf$/i.test(name);
     const TEXT_EXT = /\.(txt|md|markdown|js|ts|jsx|tsx|py|rb|go|rs|java|c|cpp|h|hpp|cs|php|html?|css|scss|sass|less|json|ya?ml|toml|ini|conf|env|sh|bash|sql|csv|tsv|xml|log|vue|svelte)$/i;
     const isTextDoc = TEXT_EXT.test(name) || /^text\//.test(mime);
-    if (!isPdf && !isTextDoc) { window.open(url, '_blank'); return; }  // binary/unknown → raw
+    if (!isPdf && !isTextDoc) { window.open(url, '_blank', 'noopener'); return; }  // binary/unknown → raw
 
     // Reuse the doc we already imported for this upload, if it still loads.
     const cached = _attachDocCache.get(id);
@@ -4445,7 +4445,7 @@ import createResearchSynapse from './researchSynapse.js';
     } catch (e) {
       console.error('open attachment as document failed', e);
       import('./ui.js').then(m => m.showError && m.showError('Could not open attachment')).catch(e => console.error('Failed to show attachment error:', e));
-      window.open(url, '_blank');  // fallback so the file is still reachable
+      window.open(url, '_blank', 'noopener');  // fallback so the file is still reachable
     }
   }
 
