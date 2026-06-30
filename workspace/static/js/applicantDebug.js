@@ -81,6 +81,7 @@ function _ensureModalEl() {
           <select id="applicant-debug-campaign" class="settings-select" style="min-width:180px;"></select>
         </label>
         <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
+        <button class="cal-btn" id="applicant-debug-download-log" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
         <button class="cal-btn" id="applicant-debug-chat" title="Open the assistant beside this so you can ask about what the agent is doing" style="margin-left:auto;">Ask the assistant</button>
       </div>
       <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
@@ -108,6 +109,10 @@ function _ensureModalEl() {
     _campaignId = e.target.value || null;
     _renderTab();
   });
+  // Download activity log (JSON) — one-click export of the full action trail.
+  const downloadBtn = modal.querySelector('#applicant-debug-download-log');
+  if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadAuditLog());
+
   // Dual view: open the Job Assistant beside this window (both are scrim-less,
   // draggable tool windows, so they sit side by side) — watch the agent on one
   // side, ask it questions on the other.
@@ -192,6 +197,35 @@ function _needCampaign() {
     return false;
   }
   return true;
+}
+
+// ── Audit-log export ─────────────────────────────────────────────────────────
+
+async function _downloadAuditLog() {
+  if (!_campaignId) {
+    _toast('Pick a job search above first.');
+    return;
+  }
+  try {
+    const resp = await fetch(`${ADMIN}/audit-log/${encodeURIComponent(_campaignId)}/export.json`, { credentials: 'same-origin' });
+    if (!resp.ok) {
+      if (resp.status === 403) { _toast('This is available to admins only.'); return; }
+      const detail = await resp.text().catch(() => '');
+      throw new Error(detail || `Unexpected response (${resp.status})`);
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-log-${_campaignId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    _toast('Downloaded.');
+  } catch (e) {
+    _toast(e.message || 'Could not download the activity log right now.');
+  }
 }
 
 async function _renderActivity() {

@@ -1,11 +1,15 @@
-"""Domain events (pure dataclasses).
+"""Domain events (pure dataclasses) + a lightweight in-process event bus.
 
 Events are emitted by the core to describe things that happened, decoupled from
 how adapters react (notify, persist, learn). They carry no behavior.
+
+The ``DomainEventBus`` is a simple subscribe/emit channel that lets adapters
+(e.g. the audit log) react to every domain event without the core importing them.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -19,6 +23,50 @@ from applicant.core.ids import (
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# ---------------------------------------------------------------------------
+# Event bus
+# ---------------------------------------------------------------------------
+
+
+class DomainEventBus:
+    """In-process publish/subscribe for domain events.
+
+    Singleton-per-process.  Adapters subscribe with ``on(EventType, handler)``
+    and the core (or services that emit) call ``emit(event)``.  Handlers are
+    called synchronously in the emitting thread; any exception in a handler is
+    swallowed after logging so one faulty subscriber never breaks the emitter.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: dict[type, list[Callable[[DomainEvent], None]]] = {}
+
+    def on(self, event_type: type, handler: Callable[[DomainEvent], None]) -> None:
+        """Register ``handler`` to be called for every ``event_type`` (or its subclasses)."""
+        self._handlers.setdefault(event_type, []).append(handler)
+
+    def emit(self, event: DomainEvent) -> None:
+        """Fire the event to every matching subscriber."""
+        import logging as _logging
+
+        _log = _logging.getLogger("applicant.events")
+        for etype, handlers in self._handlers.items():
+            if isinstance(event, etype):
+                for h in handlers:
+                    try:
+                        h(event)
+                    except Exception:
+                        _log.exception("Event handler %r failed for %r", h, event)
+
+
+#: The process-lived event bus.  Built once; shared across services.
+event_bus = DomainEventBus()
+
+
+# ---------------------------------------------------------------------------
+# Domain events
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -47,6 +95,7 @@ class ApplicationStateChanged(DomainEvent):
     application_id: ApplicationId = field(default=None)  # type: ignore[assignment]
     from_state: str = ""
     to_state: str = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,6 +104,7 @@ class PendingActionRaised(DomainEvent):
 
     application_id: ApplicationId = field(default=None)  # type: ignore[assignment]
     action_kind: str = ""
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,3 +121,4 @@ class OutcomeRecorded(DomainEvent):
     application_id: ApplicationId = field(default=None)  # type: ignore[assignment]
     outcome_type: str = ""
     source: str = ""
+    reason: str = ""

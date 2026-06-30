@@ -508,6 +508,24 @@ class ApplicantEngineClient:
     # (routers/admin.py, outcomes.py, update.py, agent_runs.py, discovery_sources.py)
     # surfaced by the workspace Activity/Update/Run-controls proxies. Append-only.
 
+    # -- audit log export (engine routers/audit.py) -------------------------
+
+    async def audit_log_campaign_export(self, campaign_id: str) -> Any:
+        """Download the full action trail for a campaign (Content-Disposition: attachment)."""
+        return await self._request(
+            "GET",
+            f"/api/admin/audit-log/{campaign_id}/export.json",
+            expect_json=False,  # raw Response for the attachment
+        )
+
+    async def audit_log_application_export(self, application_id: str) -> Any:
+        """Download the full action trail for one application."""
+        return await self._request(
+            "GET",
+            f"/api/admin/audit-log/application/{application_id}/export.json",
+            expect_json=False,
+        )
+
     # -- debug/observability surface (engine routers/admin.py, outcomes.py) --
 
     async def admin_application_history(self, campaign_id: str, limit: int = 200) -> Any:

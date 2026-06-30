@@ -15,6 +15,7 @@ from applicant.app.routers import (
     agent_runs,
     agent_status,
     attributes,
+    audit,
     campaigns,
     chat,
     compare,
@@ -69,6 +70,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(notifications.router)
     app.include_router(research.router)
     app.include_router(admin.router)
+    app.include_router(audit.router)
     app.include_router(gallery.router)
     app.include_router(update.router)
     app.include_router(mcp.router)

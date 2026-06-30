@@ -818,6 +818,37 @@ class _PortfolioAttachmentRepo:
     def delete_for_application(self, aid): return sum(1 for k in list(self._d.keys()) if self._d[k].application_id == aid and self._d.pop(k, None) or 0)
     def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
 
+
+class _ActionEventRepo:
+    def __init__(self) -> None:
+        self._d: dict = {}
+
+    def add(self, event) -> None:
+        self._d[str(event.id)] = event
+
+    def list_for_campaign(self, campaign_id, *, limit=None, offset=0):
+        from applicant.core.ids import CampaignId as _Cid
+
+        matches = [
+            e
+            for e in self._d.values()
+            if e.campaign_id == _Cid(str(campaign_id))
+        ]
+        matches.sort(key=lambda e: (e.occurred_at, e.id), reverse=True)
+        return matches[offset : offset + limit] if limit else matches[offset:]
+
+    def list_for_application(self, application_id):
+        from applicant.core.ids import ApplicationId as _Aid
+
+        matches = [
+            e
+            for e in self._d.values()
+            if e.application_id == _Aid(str(application_id))
+        ]
+        matches.sort(key=lambda e: (e.occurred_at, e.id), reverse=True)
+        return matches
+
+
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
 
@@ -850,6 +881,7 @@ class InMemoryStorage:
         self.ghosting_signals = _GhostingSignalRepo(self.applications)
         self.follow_ups = _FollowUpRepo(self.applications)
         self.portfolio_attachments = _PortfolioAttachmentRepo(self.applications)
+        self.action_events = _ActionEventRepo()
         self._wrap_repos()
 
     def _wrap_repos(self) -> None:
@@ -876,6 +908,7 @@ class InMemoryStorage:
         self.ghosting_signals = _StageProxy(self.ghosting_signals, s)
         self.follow_ups = _StageProxy(self.follow_ups, s)
         self.portfolio_attachments = _StageProxy(self.portfolio_attachments, s)
+        self.action_events = _StageProxy(self.action_events, s)
 
     def commit(self) -> None:
         """Finalize pending changes by discarding the undo log."""

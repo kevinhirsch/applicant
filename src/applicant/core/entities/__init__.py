@@ -4,6 +4,7 @@ One module per entity. These hold state and (where applicable) defer rule
 enforcement to ``applicant.core.rules`` / ``applicant.core.state_machine``.
 """
 
+from applicant.core.entities.action_event import ActionEvent
 from applicant.core.entities.agent_intent import AgentIntent
 from applicant.core.entities.application import Application
 from applicant.core.entities.attribute import Attribute, AttributeStore
@@ -25,6 +26,7 @@ from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
 
 __all__ = [
+    "ActionEvent",
     "AgentIntent",
     "Application",
     "Attribute",

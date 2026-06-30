@@ -35,6 +35,8 @@ SubmissionSnapshotId = NewType("SubmissionSnapshotId", str)
 FollowUpId = NewType("FollowUpId", str)
 PortfolioAttachmentId = NewType("PortfolioAttachmentId", str)
 RejectionSignalId = NewType("RejectionSignalId", str)
+# Audit log: append-only action trail.
+ActionEventId = NewType("ActionEventId", str)
 
 
 #: Reserved sentinel campaign that scopes instance-level secrets (LLM keys, sandbox

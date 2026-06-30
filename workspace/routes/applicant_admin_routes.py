@@ -269,6 +269,40 @@ def setup_applicant_admin_routes() -> APIRouter:
                 {"application_id": application_id},
             )
 
+    # -- audit log export (downloadable JSON) -------------------------------
+
+    @router.get("/audit-log/{campaign_id}/export.json")
+    async def export_campaign_audit_log(campaign_id: str, request: Request):
+        """Download the full action trail for a campaign as a JSON file."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            resp = await engine.audit_log_campaign_export(campaign_id)
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.text if hasattr(resp, "text") else resp.content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit-log-{campaign_id}.json"
+            },
+        )
+
+    @router.get("/audit-log/application/{application_id}/export.json")
+    async def export_application_audit_log(application_id: str, request: Request):
+        """Download the full action trail for one application as a JSON file."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            resp = await engine.audit_log_application_export(application_id)
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.text if hasattr(resp, "text") else resp.content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit-log-{application_id}.json"
+            },
+        )
+
     # -- close the loop: mark submitted / re-detect (writes) --------------
 
     @router.post("/applications/{application_id}/mark-submitted")
