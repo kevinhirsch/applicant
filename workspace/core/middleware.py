@@ -139,11 +139,16 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
+            # CDN scripts (KaTeX, Mermaid) are SRI-pinned via integrity
+            # hashes on the <script> tags and CSP hash sources below, so
+            # cdn.jsdelivr.net is removed from script-src.
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
-                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "font-src 'self' https://cdn.jsdelivr.net; "
+                f"script-src 'self' 'nonce-{nonce}' "
+                "'sha256-6NiFUFlJ86X0q91d0NU2lr0Tca0m/79PMQ3Nd8jNrok=' "
+                "'sha256-dNfEbavKMowilHM5EKiqHtDDdFF3bo1Sldo4ordY+5s='; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self'; "
                 "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
