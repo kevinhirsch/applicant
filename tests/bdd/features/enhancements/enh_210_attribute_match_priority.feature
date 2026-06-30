@@ -1,8 +1,6 @@
 # Issue #210 — attribute lookup priority / application/services/prefill_service.py:_lookup
-# _lookup returns the FIRST attribute matching a label — no priority. When two attributes
-# match (e.g. "Phone" matches both `phone` and a `phone_alternate` alias), iteration order
-# wins arbitrarily. GREEN: the current first-match behaviour is deterministic. @pending: an
-# exact name match is preferred over an aliased alternate.
+# _lookup now uses priority tiers: exact name match > alias match > loose/fuzzy match.
+# The @pending scenario below is active and asserts exact-name priority.
 
 Feature: Attribute lookup prefers the best match, not merely the first
 
@@ -11,7 +9,6 @@ Feature: Attribute lookup prefers the best match, not merely the first
     When the engine looks up a value for that label
     Then a matching value is returned deterministically by list order
 
-  @pending
   Scenario: An exact name match wins over a merely-aliased alternate
     Given a field labelled "Phone" with both a primary phone and an aliased alternate
     When the engine looks up a value for that label

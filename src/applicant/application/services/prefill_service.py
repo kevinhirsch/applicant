@@ -1244,16 +1244,30 @@ class PrefillService:
 
     @staticmethod
     def _lookup(label: str, attributes: list[Attribute]) -> str | None:
-        """Return the value of the first attribute that matches ``label``.
+        """Return the value of the BEST-MATCHING attribute for ``label`` (issue #210).
 
-        Matching is by exact name or alias (case-insensitive), delegated to
-        ``Attribute.matches()``. List order is deterministic: whichever attribute
-        appears first in ``attributes`` wins. A priority-ordering upgrade (exact
-        name > alias > loose) is tracked in issue #210 and governed by the
-        ``@pending`` BDD scenario in enh_210_attribute_match_priority.feature.
+        Priority tiers (descending):
+          1. **Exact name** — ``label`` matches ``attr.name`` case-insensitively.
+          2. **Alias** — ``label`` matches one of ``attr.aliases`` case-insensitively.
+          3. **Loose/fuzzy** — the normalised label or name is a substring of the other.
+
+        Within each tier, the *first* attribute in list order wins, so the user
+        can still control tie-breaking by ordering attributes.
         """
+        label_low = label.strip().lower()
+        # Tier 1: exact name match
         for attr in attributes:
-            if attr.matches(label):
+            if label_low == attr.name.strip().lower():
+                return attr.value
+        # Tier 2: alias match
+        for attr in attributes:
+            low_aliases = {a.strip().lower() for a in attr.aliases}
+            if label_low in low_aliases:
+                return attr.value
+        # Tier 3: loose / fuzzy (substring containment)
+        for attr in attributes:
+            name_low = attr.name.strip().lower()
+            if label_low in name_low or name_low in label_low:
                 return attr.value
         return None
 
