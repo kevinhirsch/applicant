@@ -11,13 +11,11 @@ Feature: Applications to one employer are capped per time window
     When the throughput is clamped
     Then the applied value never exceeds the campaign hard cap
 
-  @pending
   Scenario: Applications to one company beyond the cap in a window are held
     Given a per-company application cap for a window
     When more applications to the same company are attempted than the cap allows
     Then the overflow applications are held rather than sent
 
-  @pending
   Scenario: The per-company cap resets per window
     Given a company that hit its per-company cap in the previous window
     When a new window begins

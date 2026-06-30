@@ -10,7 +10,6 @@ Feature: Engine warns when it falls back to in-memory storage at boot
     When the storage layer is built
     Then an in-memory storage is returned so the app can boot
 
-  @pending
   Scenario: Falling back on a configured database emits an operator warning
     Given a configured (non-default) database URL that cannot be reached
     When the storage layer falls back to in-memory

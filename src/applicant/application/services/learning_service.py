@@ -99,10 +99,40 @@ def _campaign_lock(campaign_id: CampaignId) -> threading.Lock:
         return _CAMPAIGN_LOCKS[str(campaign_id)]
 
 
+@dataclass(frozen=True)
+class InducedWorkflow:
+    """A parameterized, reusable workflow induced from a successful trajectory (#306).
+
+    AWM (Agent Workflow Memory): the ordered, abstracted steps that worked for an
+    ATS, with the concrete values lifted out into ``parameters`` so the workflow
+    can be replayed as a planner *prior* on the next application to that ATS —
+    never as an authorization, only as advisory scaffolding.
+    """
+
+    ats: str
+    steps: tuple[str, ...] = ()
+    parameters: tuple[str, ...] = ()
+    sample_count: int = 1
+
+
+@dataclass(frozen=True)
+class FailureLesson:
+    """A verbal self-reflection on a failed step, stored for later recall (#306)."""
+
+    ats: str
+    step: str
+    lesson: str
+
+
 class LearningService:
-    def __init__(self, storage, embedding) -> None:
+    def __init__(self, storage, embedding, *, memory_store=None) -> None:
         self._storage = storage
         self._embedding = embedding
+        # Episodic memory for verbal lessons (Reflexion). Prefer a wired curated
+        # MemoryStore; fall back to an in-process map so recall works hermetically.
+        self._memory_store = memory_store
+        self._episodic_lessons: dict[str, list[FailureLesson]] = {}
+        self._induced_workflows: dict[str, InducedWorkflow] = {}
 
     def model_for(self, campaign_id: CampaignId) -> LearningModel:
         return LearningModel(campaign_id=campaign_id)
@@ -539,3 +569,90 @@ class LearningService:
             slot[label] = slot.get(label, 0) + 1
         # #12: bound the blob at fold time so it never grows unbounded across decisions.
         return replace(model, feature_stats=cap_feature_stats(stats))
+
+    # --- self-improvement flywheel: AWM + Reflexion (#306) ----------------
+    def induce_workflow(self, trajectory: dict) -> InducedWorkflow:
+        """Induce a reusable per-ATS workflow from a successful trajectory (AWM, #306).
+
+        ``trajectory`` carries the ATS key and the ordered steps that were taken
+        on a successful pre-fill (each a mapping with an ``action`` and the
+        ``field``/``attribute`` it touched). The concrete values are abstracted
+        out into ``parameters`` so the workflow is reusable across applications;
+        the induced workflow is stored as a planner prior keyed by ATS, folding
+        into any prior induced from earlier trajectories.
+        """
+        ats = str(trajectory.get("ats") or trajectory.get("source_key") or "unknown")
+        steps: list[str] = []
+        parameters: list[str] = []
+        for step in trajectory.get("steps", []) or []:
+            action = str(step.get("action", "")).strip()
+            field_ref = str(step.get("field") or step.get("attribute") or "").strip()
+            if action:
+                steps.append(f"{action}:{field_ref}" if field_ref else action)
+            if field_ref:
+                parameters.append(field_ref)
+
+        prior = self._induced_workflows.get(ats)
+        sample_count = (prior.sample_count + 1) if prior else 1
+        # Union the parameter set so a recurring ATS accumulates its fillable surface.
+        merged_params = tuple(
+            dict.fromkeys((prior.parameters if prior else ()) + tuple(parameters))
+        )
+        workflow = InducedWorkflow(
+            ats=ats,
+            steps=tuple(steps),
+            parameters=merged_params,
+            sample_count=sample_count,
+        )
+        self._induced_workflows[ats] = workflow
+        return workflow
+
+    def workflow_prior_for(self, ats: str) -> InducedWorkflow | None:
+        """Retrieve a previously induced workflow to offer the planner (#306).
+
+        Called before planning from scratch so the planner can be seeded with the
+        steps that worked last time for this ATS.
+        """
+        return self._induced_workflows.get(str(ats))
+
+    def reflect_on_failure(self, failure: dict) -> FailureLesson:
+        """Write a verbal lesson from a failed step to episodic memory (Reflexion, #306).
+
+        ``failure`` carries the ATS, the failing ``step``, and an ``error``
+        description. A short natural-language lesson is distilled and stored
+        (curated MemoryStore when wired, else an in-process episodic map) so it
+        can be recalled on the next similar attempt via :meth:`recall_lessons`.
+        """
+        ats = str(failure.get("ats") or failure.get("source_key") or "unknown")
+        step = str(failure.get("step", "")).strip()
+        error = str(failure.get("error", "")).strip()
+        lesson_text = (
+            f"On {ats}, the step '{step}' failed ({error}); "
+            "try an alternate selector or pause for confirmation next time."
+            if error
+            else f"On {ats}, the step '{step}' failed; proceed cautiously next time."
+        )
+        lesson = FailureLesson(ats=ats, step=step, lesson=lesson_text)
+        self._episodic_lessons.setdefault(ats, []).append(lesson)
+
+        store = self._memory_store
+        if store is not None:
+            try:
+                from applicant.ports.driven.memory_store import (
+                    KIND_ENVIRONMENT,
+                    SCOPE_GLOBAL,
+                    MemoryEntry,
+                )
+
+                store.add(
+                    MemoryEntry(
+                        text=lesson_text, kind=KIND_ENVIRONMENT, scope=SCOPE_GLOBAL
+                    )
+                )
+            except Exception:  # pragma: no cover - advisory write must never break the loop
+                pass
+        return lesson
+
+    def recall_lessons(self, ats: str) -> list[FailureLesson]:
+        """Recall verbal lessons for an ATS on the next similar attempt (#306)."""
+        return list(self._episodic_lessons.get(str(ats), []))

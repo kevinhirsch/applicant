@@ -45,11 +45,13 @@ MIND_BACKEND_IN_MEMORY = "in_memory"
 MIND_BACKEND_BRIDGE = "bridge"
 MIND_BACKEND_MEM0 = "mem0"
 MIND_BACKEND_LETTA = "letta"
+MIND_BACKEND_TEMPORAL = "temporal"
 MIND_BACKENDS = (
     MIND_BACKEND_IN_MEMORY,
     MIND_BACKEND_BRIDGE,
     MIND_BACKEND_MEM0,
     MIND_BACKEND_LETTA,
+    MIND_BACKEND_TEMPORAL,
 )
 
 
@@ -95,6 +97,16 @@ def build_agent_memory(settings: Any, workspace_port: Any = None) -> AgentMemory
             skills=LettaSkillStore(),
             recall=LettaRecallIndex(),
             backend=MIND_BACKEND_LETTA,
+        )
+
+    if backend == MIND_BACKEND_TEMPORAL:
+        from applicant.adapters.memory.temporal_backend import TemporalMemoryStore
+
+        return AgentMemory(
+            memory=TemporalMemoryStore(),
+            skills=InMemorySkillStore(),
+            recall=InMemoryRecallIndex(),
+            backend=MIND_BACKEND_TEMPORAL,
         )
 
     # Default / unknown -> hermetic in-memory.

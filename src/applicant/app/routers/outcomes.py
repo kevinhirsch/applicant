@@ -96,6 +96,32 @@ def get_log(application_id: str, submission=Depends(get_submission_service)) -> 
     return submission.get_log(application_id)  # type: ignore[arg-type]
 
 
+@router.get("/applications/{application_id}/snapshot")
+def get_snapshot(application_id: str, storage=Depends(get_storage)) -> dict:
+    """Retrieve the immutable submission snapshot for an application (#372).
+
+    Returns the exact answers, material versions, posting, and timestamp that
+    were recorded at the stop-boundary — the durable evidence of what was
+    submitted. 404 when no snapshot has been recorded for the application.
+    """
+    snap = storage.submission_snapshots.get_for_application(
+        ApplicationId(application_id)
+    )
+    if snap is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No submission snapshot recorded for this application.",
+        )
+    return {
+        "application_id": str(snap.application_id),
+        "answers": dict(snap.answers or {}),
+        "material_versions": dict(getattr(snap, "material_versions", {}) or {}),
+        "materials": list(snap.materials or []),
+        "posting_url": getattr(snap, "posting_url", "") or "",
+        "timestamp": snap.captured_at.isoformat() if snap.captured_at else None,
+    }
+
+
 def _load_or_stub(storage, application_id: str) -> Application:
     """Load the application for a terminal submission, enforcing the §7 gate.
 

@@ -269,6 +269,21 @@ def setup_applicant_admin_routes() -> APIRouter:
                 {"application_id": application_id},
             )
 
+    @router.get("/snapshot/{application_id}")
+    async def submission_snapshot(application_id: str, request: Request) -> dict:
+        """The immutable submission snapshot recorded at the stop-boundary (#372).
+
+        Surfaces the exact answers, material versions, posting, and timestamp that
+        were submitted for this application — the durable record of what went out.
+        Soft-degrades to an empty/offline body when no snapshot exists yet.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.submission_snapshot(application_id),
+                {"application_id": application_id, "has_snapshot": False},
+            )
+
     # -- audit log export (downloadable JSON) -------------------------------
 
     @router.get("/audit-log/{campaign_id}/export.json")
