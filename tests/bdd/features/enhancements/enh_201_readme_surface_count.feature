@@ -9,7 +9,8 @@ Feature: README front-door surface claims match the section wiring
     When the section entries are counted
     Then exactly eight sections are wired into the gating map
 
-  @pending
+  # Implemented in #201: update/takeover/vault README surfaces now have real section
+  # defs, so the section count (12) is >= the README's reachable-surface count. GREEN.
   Scenario: Every README front-door surface maps to a gated section
     Given the README front-door surface list and the section map
     When the listed surfaces are matched to gated sections

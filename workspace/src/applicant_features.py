@@ -124,11 +124,57 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "lane": None,
         "title": "Activity / debug",
         "nav_ids": ["tool-debug-btn"],
-        "dormant_keys": [],
+        # #199: gate the launcher off the live operator surfaces it exposes — the
+        # read-only observability (debug_surface) AND the tool-toggle registry whose
+        # controls live inside this same Activity/debug panel. Both report ``live`` in
+        # the engine registry, so the section stays active once a model is configured.
+        "dormant_keys": ["debug_surface", "tool_toggle_registry"],
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
     # end CRIT-ops
+    # #199/#201 — Update surface: the in-rail one-click Update button
+    # (#rail-update -> applicantUpdate.js _wireLauncher). Backed by the engine's
+    # ``update_button`` live surface (UpdateTrigger port + update script). Greys via
+    # the shared nav-gating in app.js refreshApplicantFeatures until the engine is
+    # reachable and the surface reports live.
+    {
+        "key": "update",
+        "lane": None,
+        "title": "Update Applicant",
+        "nav_ids": ["rail-update"],
+        "dormant_keys": ["update_button"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
+    # #199/#201 — Live remote view / takeover: the "Open live session" launcher in
+    # Settings (#settings-open-remote -> settings.js -> window.openApplicantRemoteSession
+    # -> applicantRemote.js). Backed by the engine's ``remote_takeover`` live surface
+    # (RemoteSessionControl + Sandbox/RemoteView). Gated off that key so the control
+    # greys until the sandbox/remote backing is live.
+    {
+        "key": "takeover",
+        "lane": None,
+        "title": "Live remote view / takeover",
+        "nav_ids": ["settings-open-remote"],
+        "dormant_keys": ["remote_takeover"],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
+    # #201 — Credential vault: the "Manage saved sign-ins" launcher in Settings
+    # (#settings-open-vault -> settings.js -> window.openApplicantVault ->
+    # applicantVault.js). The engine seals credentials at rest; there is no separate
+    # dormant-surface key for the vault, so it gates on the onboarding gate alone
+    # (a configured profile) and activates with the rest of the front door.
+    {
+        "key": "vault",
+        "lane": None,
+        "title": "Credential vault",
+        "nav_ids": ["settings-open-vault"],
+        "dormant_keys": [],
+        "requires": "onboarding_complete",
+        "present_but_disabled": False,
+    },
     # Desktop help (FR-CUA) — the opt-in "let the assistant help on the desktop"
     # control lives inside the live-session surface + the Automation settings card.
     # It STAYS locked until the desktop helper is baked into the sandbox image and
