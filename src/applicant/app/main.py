@@ -17,7 +17,7 @@ from applicant.app.config import Settings, get_settings
 from applicant.app.container import build_container
 from applicant.app.lifespan import lifespan
 from applicant.app.routers import register_routers
-from applicant.app.static import mount_static
+from applicant.app.routers.mcp import mount_mcp
 from applicant.core.errors import (
     ConfirmationRequired,
     DomainError,
@@ -83,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     mount_static(app, settings.app_static_dir)
     register_routers(app)
     register_exception_handlers(app)
+    mount_mcp(app)
 
     @app.get("/healthz", tags=["ops"])
     def healthz() -> JSONResponse:
