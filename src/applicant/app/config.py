@@ -250,8 +250,13 @@ class Settings(BaseSettings):
     # company-specific detail. Budget-aware (reuses the ResearchService per-campaign
     # cap) and degrades silently when research is unavailable / the budget is spent —
     # so flipping this off (or the channel being down) is byte-identical to before.
+    # Default OFF (opt-in): it widens the truthfulness ground truth to include the
+    # researched company facts (so a real research fact is not flagged as a
+    # fabrication), and consumes research budget per cover letter — the applicant's
+    # own resume claims stay checked against the resume regardless. Set
+    # MATERIAL_RESEARCH_ENABLED=true to enrich cover letters with company research.
     material_research_enabled: bool = Field(
-        default=True, alias="MATERIAL_RESEARCH_ENABLED"
+        default=False, alias="MATERIAL_RESEARCH_ENABLED"
     )
 
     # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
