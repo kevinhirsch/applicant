@@ -31,8 +31,8 @@ from routes.shell_routes import TMUX_LOG_DIR
 
 logger = logging.getLogger(__name__)
 
-from routes.cookbook_helpers import
-from core.safe_path import safe_join (
+from core.safe_path import safe_join
+from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,

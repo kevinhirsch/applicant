@@ -267,8 +267,8 @@ def request_safe_join(t01ctx):
 def safe_join_available(t01ctx):
     helper = t01ctx["safe_join"]
     assert callable(helper), "no shared safe_join helper exists in src.app_helpers"
-    # It must REJECT a traversal by raising rather than joining blindly.
-    with pytest.raises(Exception):
+    # It must REJECT a traversal by raising (UnsafePathError subclasses ValueError).
+    with pytest.raises(ValueError):
         helper(str(WORKSPACE), "../etc/passwd")
 
 
