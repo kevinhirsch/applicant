@@ -808,6 +808,13 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.application.services.research_service import ResearchService
 
     research_service = ResearchService(workspace=workspace)
+    # #299: feed the SAME capped/deduped/cached research tool into the material-gen
+    # path so on-demand cover-letter generation can fold in company research (config-
+    # gated, budget-aware, best-effort). Wired additively (material_service is built
+    # above, before research_service); the per-tick/per-request copies receive it at
+    # construction in their factories below.
+    material_service._research = research_service
+    material_service._research_enabled = settings.material_research_enabled
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
     from applicant.application.services.agent_loop import AgentLoop, DigestLedger, ResumeLedger
@@ -1044,6 +1051,8 @@ def build_container(settings: Settings | None = None) -> Container:
             learning=ls,
             advanced_learning=adv,
             agent_memory=agent_memory,
+            research_service=research_service,
+            research_enabled=settings.material_research_enabled,
         )
         # FR-MIND-10: rebuild the per-tick CurationService but share the SAME
         # process-lived CurationLedger + agent-memory adapters (+ recall + summarizer)
@@ -1226,6 +1235,8 @@ def build_container(settings: Settings | None = None) -> Container:
             learning=rs_ls,
             advanced_learning=rs_adv,
             agent_memory=agent_memory,
+            research_service=research_service,
+            research_enabled=settings.material_research_enabled,
         )
         rs_campaign = CampaignService(req_storage)
         rs_campaign.set_criteria_service(rs_criteria)

@@ -243,6 +243,17 @@ class Settings(BaseSettings):
     workspace_url: str = Field(default="http://applicant-ui:7000", alias="WORKSPACE_URL")
     applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
 
+    # --- Pre-application research feed (#299) --------------------------------
+    # When enabled, on-demand cover-letter generation may best-effort pull the
+    # capped/deduped/cached company research (over the engine->workspace deep-research
+    # channel) and fold it into the generation context so the letter can reference
+    # company-specific detail. Budget-aware (reuses the ResearchService per-campaign
+    # cap) and degrades silently when research is unavailable / the budget is spent —
+    # so flipping this off (or the channel being down) is byte-identical to before.
+    material_research_enabled: bool = Field(
+        default=True, alias="MATERIAL_RESEARCH_ENABLED"
+    )
+
     # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
     # Backend for the curated-memory / skills / recall stores. ``in_memory``
     # (default) is the hermetic in-process trio (no deps; boot-/test-safe);
