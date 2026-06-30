@@ -826,8 +826,9 @@ class InMemoryStorage:
     ``rollback()`` discards uncommitted changes by replaying undos.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, is_fallback: bool = False) -> None:
         self._staged: list[Callable[[], None]] = []
+        self._is_fallback = is_fallback
         self.campaigns = _CampaignRepo()
         self.attributes = _AttributeRepo()
         self.postings = _PostingRepo()
@@ -887,7 +888,8 @@ class InMemoryStorage:
         self._staged.clear()
 
     def healthcheck(self) -> bool:
-        return True
+        """``False`` when this instance was created as a DB-failure fallback."""
+        return not self._is_fallback
 
     def purge_campaign(self, cid: CampaignId) -> dict[str, int]:
         """Cascade-delete every row belonging to ``cid`` (#363, FR-CRIT-4, NFR-PRIV-1).
