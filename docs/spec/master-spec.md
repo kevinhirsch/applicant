@@ -223,6 +223,14 @@ A self-hosted engine that runs 24/7 on a Proxmox VM and conducts ongoing, per-ca
 - **FR-UI-4 (MUST):** Many agent tools, **toggled on/off in the UI** (Applicant per-tool pattern). Initial registry: Discovery, Scoring, Pre-fill, Account-Creation, Web-Research, Resume-Tailoring, Cover-Letter-Generation, Screening-Answer-Generation, Chat, Notifications.
 - **FR-UI-5 (MUST):** First UI deliverable = the **setup wizard** beginning with the **LLM-settings gate** (`FR-OOBE`, `FR-LLM-2`), gating features until configured.
 - **FR-UI-6 (MUST):** UI exposes criteria editing, the attribute-cloud editor, application history retrieval, the resume variant library + redline review/revision surface, the debug surface, the chatbot, the onboarding wizard, and the in-settings Update button.
+- **FR-UIKIT (MUST — shared component kit across every surface):** The front door adopts a single
+  vendored **component kit** (window, notice, gadget, decision, atomic elements, chat-hint, glass/token
+  foundation) and **maps it, drop-in, to every visible surface**, so window/notification/decision
+  affordances are consistent and accessible across the whole product. Vendor each usable kit verbatim
+  then adapt (principle #1), reconcile with the existing workspace primitives rather than duplicating
+  them (principle #4), preserve the a11y and progressive-activation guarantees, and stay white-label /
+  denylist clean. Full requirement set + surface→kit matrix + BDD acceptance:
+  [`ui-kit-migration.md`](ui-kit-migration.md); vendoring appendix: [`../HARVEST-UIKIT-MAP.md`](../HARVEST-UIKIT-MAP.md).
 
 ### 3.20 Chatbot — `FR-CHAT`
 - **FR-CHAT-1 (MUST):** A dynamic chatbot assists input and dynamically identifies gaps; can update attributes and criteria (subject to `FR-FB-3`).

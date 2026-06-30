@@ -249,3 +249,40 @@ Structural guards: `tests/architecture/test_reachability_contract.py` + `tests/e
 | #404 | If learned adjustments are operator-applicable from the UI, the front-door | `enh_404_criteria_learned_proxy.feature` | `test_enh_reachgaps_steps.py` | 0 | 1 |
 | #405 | The review gate's submittability check is reachable from the front-door | `enh_405_ensure_submittable_proxy.feature` | `test_enh_reachgaps_steps.py` | 1 | 1 |
 | #406 | The engine MUST proactively surface missing required-to-apply | `enh_406_chat_continued_onboarding.feature` | `test_enh_reachgaps_steps.py` | 2 | 0 |
+
+## FR-UIKIT component-kit migration (epic #458)
+
+Vendor the upstream window kit's component kits and map them onto every visible surface.
+Each row: one un-tagged GREEN baseline (ships today) + one `@pending` kit-adoption red.
+
+| Issue | Requirement / acceptance | Feature | Step module | green | pending |
+|---|---|---|---|---|---|
+| #458 | Epic — FR-UIKIT: map every visible surface onto the vendored kits | (tracking) | — | — | — |
+| #459 | FR-UIKIT-1/4 (F1) — Vendor the kit Foundation (glass + tokens + house themes + slots) into the front door | `uikit_F1.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #460 | FR-UIKIT-1 (F2) — Vendor the atomic Elements kit (.ow-btn/field/check/radio/switch/select/slider) | `uikit_F2.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #461 | FR-UIKIT-1/3/5 (F3) — Vendor the Window kit (.ow-window) and reconcile it with windowDrag/modalManager | `uikit_F3.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #462 | FR-UIKIT-1/3 (F4) — Vendor the Notice kit (.on-card) and re-back ui.js showToast through it | `uikit_F4.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #463 | FR-UIKIT-1 (F5) — Vendor the Gadget kit (.og-card + gadget rail) | `uikit_F5.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #464 | FR-UIKIT-1 (F6) — Vendor the Decision kit (.odec-* prompt -> options -> confirm, risk variant) | `uikit_F6.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #465 | FR-UIKIT-1 (F7) — Vendor the Chat Hint kit (above-composer guide tip) | `uikit_F7.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #466 | FR-UIKIT-4 (X1) — White-label the vendored kit — rename upstream codenamed modules to appkit*, keep the CI denylist green | `uikit_X1.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #467 | FR-UIKIT-5 (X2) — Kit components preserve the a11y affordances won in #379-#394 | `uikit_X2.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #468 | FR-UIKIT-7 (X3) — Vendored kit modules pass node --check with no bundler and respect the style.css budget | `uikit_X3.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #469 | FR-UIKIT-8 (X4) — Expose the kit house themes (theme-frosted / glass-full) in Settings via mountSettingsStep | `uikit_X4.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #470 | FR-UIKIT-2 (S1) — Map the global shell (nav / sidebar / rail / modals / toasts) onto Foundation + Window + Notice | `uikit_S1.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #471 | FR-UIKIT-2 (S2) — Map the OOBE onboarding wizard onto Window (modal) + Elements + Slots + Decision | `uikit_S2.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #472 | FR-UIKIT-2 (S3) — Map the Pending-Actions Portal + notification center onto Gadget + Notice + Decision | `uikit_S3.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #473 | FR-UIKIT-2 (S4) — Map the Documents / resume redline review onto Window + Elements + Decision | `uikit_S4.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #474 | FR-UIKIT-2 (S5) — Map the criteria editor onto Elements + Gadget | `uikit_S5.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #475 | FR-UIKIT-2 (S6) — Map the attribute-cloud editor onto Elements + Gadget | `uikit_S6.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #476 | FR-UIKIT-2 (S7) — Map the Chat / assistant surface onto Chat Hint + Elements | `uikit_S7.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #477 | FR-UIKIT-2 (S8) — Map the Mind surface (remembers / playbooks / curation) onto Gadget + Decision | `uikit_S8.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #478 | FR-UIKIT-2/9 (S9) — Map the in-app Email / digest panel onto Notice + Gadget (the digest email stays exempt) | `uikit_S9.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #479 | FR-UIKIT-2 (S10) — Map the Activity + Debug surface onto Gadget + Window | `uikit_S10.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #480 | FR-UIKIT-2 (S11) — Map the Run controls / ops / Update surface onto Decision + Elements | `uikit_S11.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #481 | FR-UIKIT-2 (S12) — Map the Live remote view / takeover onto Window + Decision | `uikit_S12.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #482 | FR-UIKIT-2 (S13) — Map the Credential vault onto Elements + Window | `uikit_S13.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #483 | FR-UIKIT-2 (S14) — Map the Settings surface onto Elements + Window (reusing mountSettingsStep) | `uikit_S14.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #484 | FR-UIKIT-2 (S15) — Map the Connect-a-model / model ladder onto Elements + Gadget | `uikit_S15.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #485 | FR-UIKIT-2 (S16) — Map the Research surface onto the Gadget kit | `uikit_S16.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
+| #486 | FR-UIKIT-2/6 (S17) — Map the Compare surface onto Elements in its themed-but-disabled state | `uikit_S17.feature` | `test_enh_t13_uikit_steps.py` | 1 | 1 |
