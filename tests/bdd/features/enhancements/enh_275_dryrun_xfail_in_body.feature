@@ -5,7 +5,6 @@ Feature: The live ATS dry-run fails on a browser fault instead of silently passi
   # browser fails, or the page is behind an auth gate. The zero-field branch must become a
   # real failure (or a declarative, condition-scoped expected-fail), not a runtime xfail.
 
-  @pending
   Scenario: A zero-field detection result is a real failure, not a runtime xfail
     Given the live ATS dry-run test source
     When the zero-fields-detected branch is inspected

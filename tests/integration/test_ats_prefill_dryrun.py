@@ -123,14 +123,17 @@ def test_ats_prefill_dryrun_stops_at_review_boundary():
     assert state_trace, "state trace empty — browser never started"
 
     # If the ATS page was reached and we found fields, this is a full NFR-OPS-1 proof.
-    # If fields == 0, the ATS may require auth beyond a dry-run reach — that is still
-    # a valid "wired" result; the reviewer can inspect the screenshot artifact.
-    if len(fields) == 0:
-        pytest.xfail(
-            f"Browser reached {_ATS_URL!r} but detected 0 fillable fields — "
-            "ATS may require auth or the form is behind a gate. "
-            "Inspect the screenshot artifact. Stop boundary still respected."
-        )
+    # If fields == 0 the ATS requires auth or the form is behind a gate — that is a
+    # genuine detection failure (the browser stack did not demonstrate field detection),
+    # so we raise a hard assertion rather than silently xfail-ing, which would mask a
+    # real browser or page-structure regression.
+    assert len(fields) > 0, (
+        f"Browser reached {_ATS_URL!r} but detected 0 fillable fields — "
+        "ATS may require auth or the form is behind a gate. "
+        f"State trace: {state_trace}. "
+        "Inspect the screenshot artifact. Stop boundary was respected but "
+        "field detection did not succeed (NFR-OPS-1 not fully demonstrated)."
+    )
 
 
 @pytest.mark.integration
