@@ -643,23 +643,28 @@ def _load_search_content_for_test(monkeypatch, name="services.search.content_und
     import importlib.util
     import types as _types
 
-    services_pkg = _types.ModuleType("services")
-    services_pkg.__path__ = []
-    search_pkg = _types.ModuleType("services.search")
+    # content.py imports its analytics/cache helpers from the canonical
+    # src.search.* package (the #253 redirect). Stub that whole chain with
+    # lightweight fakes so the module loads in isolation, without dragging in
+    # the real search stack (httpx, providers, …) just to exercise the
+    # SSRF/private-URL guards below.
+    src_pkg = _types.ModuleType("src")
+    src_pkg.__path__ = []
+    search_pkg = _types.ModuleType("src.search")
     search_pkg.__path__ = []
-    analytics = _types.ModuleType("services.search.analytics")
+    analytics = _types.ModuleType("src.search.analytics")
     analytics.RateLimitError = RuntimeError
     analytics.error_logger = _types.SimpleNamespace(error=lambda *a, **k: None)
-    cache = _types.ModuleType("services.search.cache")
+    cache = _types.ModuleType("src.search.cache")
     cache.CONTENT_CACHE_DIR = Path("/tmp/applicant-test-content-cache")
     cache.content_cache_index = {}
     cache.generate_cache_key = lambda url: "test-cache-key"
     cache.cleanup_cache = lambda: None
 
-    monkeypatch.setitem(sys.modules, "services", services_pkg)
-    monkeypatch.setitem(sys.modules, "services.search", search_pkg)
-    monkeypatch.setitem(sys.modules, "services.search.analytics", analytics)
-    monkeypatch.setitem(sys.modules, "services.search.cache", cache)
+    monkeypatch.setitem(sys.modules, "src", src_pkg)
+    monkeypatch.setitem(sys.modules, "src.search", search_pkg)
+    monkeypatch.setitem(sys.modules, "src.search.analytics", analytics)
+    monkeypatch.setitem(sys.modules, "src.search.cache", cache)
 
     spec = importlib.util.spec_from_file_location(
         name,

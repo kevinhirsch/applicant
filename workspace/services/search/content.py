@@ -8,15 +8,14 @@ import re
 import logging
 import socket
 from datetime import datetime, timedelta
-from typing import
-from core.safe_path import safe_join List
+from typing import List
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
-from .analytics import RateLimitError, error_logger
-from .cache import (
+from src.search.analytics import RateLimitError, error_logger
+from src.search.cache import (
     CONTENT_CACHE_DIR,
     content_cache_index,
     generate_cache_key,
