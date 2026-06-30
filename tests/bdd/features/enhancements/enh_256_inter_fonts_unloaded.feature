@@ -3,8 +3,8 @@
 # workspace shell (static/index.html) declares @font-face for the 'Inter' family that
 # the CSS font stacks reference, so the browser fetches them. They are NOT dead.
 # What IS dead is static/fonts/custom/GohuFont.ttf, which has zero references anywhere.
-# GREEN: the Inter faces are declared in the served shell. @pending: the genuinely
-# unreferenced GohuFont file has been removed.
+# GREEN: the Inter faces are declared in the served shell, and the genuinely
+# unreferenced GohuFont bitmap file has now been removed.
 
 Feature: Shipped font files are actually loaded by the served shell
 
@@ -13,7 +13,6 @@ Feature: Shipped font files are actually loaded by the served shell
     Then the Inter font family is declared with a face for each shipped Inter file
     And the Inter family is named in the CSS font stacks
 
-  @pending
   Scenario: The unreferenced bitmap font file has been removed
     Given the workspace font directory
     Then the unreferenced bitmap font file no longer exists

@@ -10,7 +10,7 @@ forks** of the Applicant design system:
 
 - **applicant** — base of the vendored set (`style.css`, `app.js`, `index.html`,
   `login.html`, `manifest.json`, `sw.js`, the `js/` shell + design-system
-  modules, `lib/`, `fonts/` incl. `fonts/custom/GohuFont.ttf`, `css/`, icons).
+  modules, `lib/`, `fonts/`, `css/`, icons).
   Licensed **MIT**, Copyright (c) 2026 kevinhirsch.
 - **applicant** — additional MIT-licensed design-system modules from the same UI
   family, available to draw on where applicant trims something the app shell or our

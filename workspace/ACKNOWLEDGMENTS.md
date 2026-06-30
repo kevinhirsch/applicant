@@ -85,7 +85,6 @@ Bundled in `static/fonts/`:
 |---|---|---|
 | [Fira Code](https://github.com/tonsky/FiraCode) | SIL Open Font License 1.1 | Nikita Prokopov & contributors |
 | [Inter](https://github.com/rsms/inter) | SIL Open Font License 1.1 | Rasmus Andersson |
-| [GohuFont](https://font.gohu.org/) (`fonts/custom/GohuFont.ttf`) | WTFPL | Hugo Chargois |
 
 ## Python dependencies
 
