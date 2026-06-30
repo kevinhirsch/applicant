@@ -142,13 +142,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # CDN scripts (KaTeX, Mermaid) are SRI-pinned via integrity
             # hashes on the <script> tags and CSP hash sources below, so
             # cdn.jsdelivr.net is removed from script-src.
+            # NOTE: cdn.jsdelivr.net IS still required in style-src and
+            # font-src — index.html loads katex.min.css (and KaTeX's
+            # @font-face math fonts) from the CDN. SRI/integrity does not
+            # exempt a resource from CSP, so dropping the origin here blocks
+            # the stylesheet and fonts and breaks math rendering.
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 f"script-src 'self' 'nonce-{nonce}' "
                 "'sha256-6NiFUFlJ86X0q91d0NU2lr0Tca0m/79PMQ3Nd8jNrok=' "
                 "'sha256-dNfEbavKMowilHM5EKiqHtDDdFF3bo1Sldo4ordY+5s='; "
-                "style-src 'self' 'unsafe-inline'; "
-                "font-src 'self'; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
