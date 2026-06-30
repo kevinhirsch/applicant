@@ -9,13 +9,14 @@ Feature: Two-layer feature gating for live dormant surfaces
     When the debug, tool-toggle, update and remote-takeover surfaces are read
     Then each one reports a live status
 
-  @pending
+  # Implemented in #199: the debug section now references the debug_surface key. GREEN.
   Scenario: The front door gates the live debug surface off its registry key
     Given the workspace Applicant section map
     When the debug surface key is looked up in the section gating
     Then a section depends on the debug surface registry key
 
-  @pending
+  # Implemented in #199: tool_toggle_registry (debug section), update_button (update
+  # section) and remote_takeover (takeover section) are now all referenced. GREEN.
   Scenario: The front door gates the live operator surfaces off their registry keys
     Given the workspace Applicant section map
     When the tool-toggle, update and remote-takeover keys are looked up in the section gating
