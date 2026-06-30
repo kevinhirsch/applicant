@@ -110,7 +110,7 @@ def _reviewable_materials_for(storage, application_id) -> list[ReviewableMateria
 
 
 class SubmissionService:
-    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None) -> None:
+    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None, post_submission=None) -> None:
         self._storage = storage
         self._browser = browser
         # Optional LearningService so a real submission records the SUBMISSIONS leg of
@@ -121,6 +121,7 @@ class SubmissionService:
         # converting-role signature once a real conversion lands (FR-LEARN-2). Moving
         # this here means the remote path no longer silently skips conversion learning.
         self._advanced_learning = advanced_learning
+        self._post_submission = post_submission
 
     # --- detection (FR-LOG-4) ---------------------------------------------
     def detect_submission(self, application_id: ApplicationId) -> bool:
@@ -228,6 +229,11 @@ class SubmissionService:
         )
         # keep the logged app available to callers
         self._last_logged = logged
+        # Post-submission lifecycle (POST_SUBMISSION -> AWAITING_RESPONSE) is driven
+        # by the lifecycle tracker/scheduler as a SEPARATE step.  We do NOT call
+        # enter_post_submission() here: doing so would advance the state away from
+        # SUBMITTED_BY_USER / FINISHED_BY_ENGINE synchronously, breaking the
+        # mark-submitted contract (test: test_mark_submitted_then_retrieve_log).
         return event
 
     def mark_submitted(

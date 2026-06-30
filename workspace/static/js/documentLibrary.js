@@ -3940,3 +3940,32 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   export function isLibraryOpen() {
     return _libraryOpen;
   }
+
+  // ── Cross-surface document accessors (#293,#289) ───────────────────
+  // Let other surfaces (Calendar, gallery, compare) read documents without
+  // loading the full library modal.
+
+  export function getStoredDocuments() {
+    return _getDocs ? [..._getDocs().values()] : [];
+  }
+
+  export function getDocumentById(id) {
+    const docs = _getDocs ? _getDocs() : new Map();
+    return docs.get(id) || null;
+  }
+
+  export async function fetchEngineDocuments() {
+    try {
+      const r = await fetch(`${API_BASE}/api/applicant/documents`, { credentials: 'same-origin' });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data.documents) ? data.documents : (Array.isArray(data) ? data : []);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  const documentLibraryModule = {
+    openLibrary, closeLibrary, isLibraryOpen, focusLibrary,
+    getStoredDocuments, getDocumentById, fetchEngineDocuments,
+  };

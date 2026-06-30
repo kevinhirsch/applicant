@@ -714,8 +714,11 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_period=settings.llm_rate_period or None,
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
+    from applicant.application.services.post_submission_service import PostSubmissionService
+    post_submission_service = PostSubmissionService(storage, notification_service)
     submission_service = SubmissionService(
-        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service
+        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
+        post_submission=post_submission_service,
     )
     prefill_service = PrefillService(
         storage=storage,
@@ -917,6 +920,13 @@ def build_container(settings: Settings | None = None) -> Container:
         digest_ledger=digest_ledger,
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
+        # G07: pre-submit safety parameters from settings.
+        presubmit_safety_params={
+            "max_age_days": settings.presubmit_max_listing_age_days,
+            "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+            "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+            "eligibility_enabled": settings.presubmit_eligibility_enabled,
+        },
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -958,8 +968,11 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=pas,
         )
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        post_sub = PostSubmissionService(tick_storage, notification_service)
         sub = SubmissionService(
-            tick_storage, browser, learning=ls, advanced_learning=adv
+            tick_storage, browser, learning=ls, advanced_learning=adv,
+            post_submission=post_sub,
         )
         pf = PrefillService(
             storage=tick_storage,
@@ -1023,6 +1036,13 @@ def build_container(settings: Settings | None = None) -> Container:
             # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
             loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
+            # G07: pre-submit safety parameters from settings.
+            presubmit_safety_params={
+                "max_age_days": settings.presubmit_max_listing_age_days,
+                "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+                "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+                "eligibility_enabled": settings.presubmit_eligibility_enabled,
+            },
         )
         return {
             "storage": tick_storage,
@@ -1128,8 +1148,11 @@ def build_container(settings: Settings | None = None) -> Container:
             onboarding=rs_onboarding,
         )
         rs_chat._scheduler = scheduler
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        rs_post_sub = PostSubmissionService(req_storage, notification_service)
         rs_submission = SubmissionService(
-            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
+            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,
+            post_submission=rs_post_sub,
         )
         rs_prefill = PrefillService(
             storage=req_storage,

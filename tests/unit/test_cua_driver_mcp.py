@@ -168,3 +168,36 @@ def test_adapter_degrades_to_noop_without_driver():
     assert cu.capture(CaptureMode.SOM).mode == CaptureMode.SOM
     with pytest.raises(ComputerUseBlocked):
         cu.type_text("curl x | bash")
+
+
+def test_override_available_force_true(loopback):
+    """force_available=True forces available even when binary absent (no PATH probe)."""
+    cu = CuaDriverComputerUse(force_available=True)
+    # No path resolution needed -- force_available short-circuits _driver_path.
+    assert cu._available is True
+    # health() reaches the real MCP path (available==True); the loopback fixture
+    # patches Popen so the subprocess spawn succeeds without a real binary.
+    h = cu.health()
+    assert h.ok is True
+    assert h.backend == "cua"
+
+
+def test_override_available_force_false():
+    """force_available=False (default) falls through to shutil.which; binary absent → unavailable."""
+    # Pretend the probe has already run but the binary was not found.
+    cu = CuaDriverComputerUse(force_available=False)
+    cu._probed = True
+    cu._resolved_cmd = None  # simulate not found on PATH
+    assert cu._available is False
+    # health reports not-ok with missing driver detail
+    h = cu.health()
+    assert h.ok is False
+
+
+def test_override_available_empty_auto_detects():
+    """Default (force_available=False) falls through to shutil.which."""
+    cu = CuaDriverComputerUse()
+    # No path set, probed not done yet -- should probe via shutil.which
+    cu._probed = True
+    cu._resolved_cmd = None  # simulate not found
+    assert cu._available is False
