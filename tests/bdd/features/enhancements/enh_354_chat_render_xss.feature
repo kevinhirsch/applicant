@@ -14,7 +14,6 @@ Feature: LLM/agent output rendered in chat is sanitized against HTML/script inje
     When a link whose href is a javascript: URL is sanitized
     Then the dangerous href is stripped
 
-  @pending
   Scenario: Every chat innerHTML seam routes through one shared sanitizer
     Given the chat renderer module
     When it is inspected for a single shared sanitize call guarding raw-string innerHTML

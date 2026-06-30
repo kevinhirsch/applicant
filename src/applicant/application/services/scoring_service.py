@@ -34,6 +34,14 @@ from applicant.ports.driven.llm import ChatMessage
 
 log = get_logger(__name__)
 
+#: Stdlib logger for the operational degrade-to-embeddings warning (#345). structlog
+#: here renders through its own PrintLogger and does not propagate to the stdlib root,
+#: so a score-less-reply warning must go through stdlib logging to be observable by
+#: log handlers (and capturable in tests). Kept alongside the structured ``log``.
+import logging as _logging  # noqa: E402
+
+_std_log = _logging.getLogger(__name__)
+
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
 DEFAULT_VIABILITY_THRESHOLD = 70
 #: Neutral-positive default score when no search criteria are set (#344).
@@ -100,6 +108,7 @@ class ScoringService:
             ViabilityScored(
                 posting_id=posting_id,
                 score=scoring.score,
+                campaign_id=posting.campaign_id,
             )
         )
         return scoring
@@ -306,8 +315,18 @@ class ScoringService:
         if llm is not None and getattr(llm, "is_configured", lambda: False)():
             try:
                 return self._llm_base(posting, criteria)
-            except Exception:
-                pass  # degrade to the local signal below
+            except Exception as exc:  # noqa: BLE001 - any model/parse failure degrades
+                # #345: do NOT swallow the failure silently. A model reply that parses
+                # but carries no ``score`` key (or any other model/parse error) must be
+                # surfaced — naming the missing score — BEFORE we degrade to the local
+                # embedding signal, so an operator can see a model is misbehaving rather
+                # than only noticing a quietly-worse score.
+                _std_log.warning(
+                    "viability model returned no usable score (%s); degrading to the "
+                    "local embedding signal for posting %s",
+                    exc,
+                    getattr(posting, "id", "?"),
+                )
         base = self._embedding.similarity(criteria_text, jd_text)
         return base, (
             f"Match {base * 100:.0f}/100 from overlap between the role and your "

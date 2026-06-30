@@ -10,7 +10,6 @@
 
 Feature: SPA hydration does not cause advance() to skip or double-click a page
 
-  @pending
   Scenario: An un-hydrated SPA page is re-checked before declaring end of flow
     Given a page driver advancing through a single-URL SPA flow
     When advance detects no DOM change immediately after clicking Next

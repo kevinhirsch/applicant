@@ -138,10 +138,21 @@ def test_non_admin_is_rejected(monkeypatch):
 
 
 def test_single_user_mode_allows_lone_owner(monkeypatch):
-    # Unconfigured auth manager -> no admin distinction; the lone owner is allowed.
+    # Unconfigured auth manager -> no admin distinction; the lone owner is allowed
+    # from the box itself. Single-user mode means the operator on localhost, so the
+    # caller is loopback (the remote-refusal hardening for #228 is asserted by the
+    # BDD acceptance spec / test_single_user_mode_refuses_remote below).
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
-    c = TestClient(_make_app(user="", configured=False, admins=()))
+    c = TestClient(_make_app(user="", configured=False, admins=()), client=("127.0.0.1", 51000))
     assert c.get("/api/applicant/admin/logs").status_code == 200
+
+
+def test_single_user_mode_refuses_remote(monkeypatch):
+    # #228: an unconfigured + unauthenticated caller from a remote address must NOT
+    # pass the operator-grade admin gate during setup.
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="", configured=False, admins=()), client=("203.0.113.9", 40000))
+    assert c.get("/api/applicant/admin/logs").status_code == 401
 
 
 def test_configured_unauthenticated_is_rejected(monkeypatch):

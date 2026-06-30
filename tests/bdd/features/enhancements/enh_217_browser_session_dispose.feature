@@ -11,7 +11,6 @@ Feature: Browser sessions are disposed so the adapter does not leak
     When the application's session is looked up
     Then the session is found
 
-  @pending
   Scenario: Closing a session evicts it from the adapter
     Given a browser adapter with one opened application session
     When the application's session is closed

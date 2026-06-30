@@ -154,3 +154,23 @@ def transition(frm: ApplicationState, to: ApplicationState) -> ApplicationState:
     if not can_transition(frm, to):
         raise IllegalStateTransition(frm, to)
     return to
+
+
+def force_status_checked(application, to: ApplicationState):
+    """Force an application's status while STILL validating §7 (#198).
+
+    The engine's sync/force path historically used ``dataclasses.replace`` to set a
+    status directly (e.g. when the ATS reports a terminal state), which bypasses
+    :meth:`Application.with_status` and so could silently land an illegal jump
+    (DISCOVERED → SUBMITTED_BY_USER). This helper is the *validated* force path: it
+    checks the transition against the legal table first and raises
+    :class:`IllegalStateTransition` rather than silently forcing it, then returns a
+    new application with the updated status.
+
+    Used by the status-sync path so no caller can jump straight to a terminal state
+    without §7 approving the move.
+    """
+    import dataclasses
+
+    transition(application.status, to)  # raises IllegalStateTransition if illegal
+    return dataclasses.replace(application, status=to)

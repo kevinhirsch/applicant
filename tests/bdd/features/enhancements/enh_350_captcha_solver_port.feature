@@ -17,31 +17,26 @@ Feature: CaptchaSolverPort — opt-in, safe-by-default CAPTCHA handling
     When a value is typed through the human-cadence planner
     Then each keystroke carries a positive human-like dwell and the logical clock advances
 
-  @pending
   Scenario: The solver port classifies a CAPTCHA as score-based or challenge-based
     Given a CAPTCHA detected on a page
     When the solver port inspects it
     Then it is classified as score-based (avoid) or challenge-based (solve)
 
-  @pending
   Scenario: A challenge CAPTCHA is solved by token injection via the solver service
     Given a challenge-based CAPTCHA with a site key
     When the solver-service adapter resolves it
     Then a response token is injected into the hidden field and the form can proceed
 
-  @pending
   Scenario: The solver API secret is never written to a log
     Given a configured solver-service adapter holding an API key
     When the adapter runs and logs its activity
     Then the API key never appears in any log line
 
-  @pending
   Scenario: With the solver off, a CAPTCHA falls back to human hand-off
     Given the CAPTCHA strategy is set to the default human hand-off
     When a CAPTCHA is encountered
     Then the run pauses and hands off to the operator rather than auto-solving
 
-  @pending
   Scenario: Solving never bypasses the final-submit stop-boundary
     Given a solved CAPTCHA mid-application
     When the plan continues past the CAPTCHA step

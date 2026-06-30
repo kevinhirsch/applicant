@@ -20,7 +20,6 @@
     When pending-workflow recovery runs
     Then the completed workflow is not listed for re-drive
 
-  @pending
   Scenario: A crash between teardown and its checkpoint cannot double-release the sandbox
     Given a pipeline whose teardown succeeded but crashed before checkpointing
     When the workflow is recovered and teardown is re-driven

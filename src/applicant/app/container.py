@@ -399,11 +399,17 @@ def _build_orchestrator(settings: Settings) -> Any:
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
 
-        timeout_seconds = (
-            float(settings.approval_timeout_days * 86_400)
-            if settings.approval_timeout_days > 0
-            else 0.0
-        )
+        # #189: the per-second override wins when set, so a deployment can tune the
+        # approval-gate wait precisely instead of only in whole days; otherwise fall
+        # back to the days-based setting. 0 (either knob) means "no timeout / forever".
+        if settings.approval_wait_seconds is not None:
+            timeout_seconds = float(settings.approval_wait_seconds)
+        else:
+            timeout_seconds = (
+                float(settings.approval_timeout_days * 86_400)
+                if settings.approval_timeout_days > 0
+                else 0.0
+            )
         return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 

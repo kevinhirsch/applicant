@@ -11,7 +11,6 @@ Feature: A browser crash in the pre-fill loop yields a structured failure
     When the engine runs the pre-fill loop
     Then a structured pre-fill result is returned
 
-  @pending
   Scenario: A browser crash mid-loop returns a failed result, not a raw exception
     Given a browser that crashes partway through the page walk
     When the engine runs the pre-fill loop

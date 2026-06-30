@@ -65,8 +65,18 @@ def _require_admin(request: Request) -> str:
     configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
 
     if not configured:
-        # Single-user / first-run: no admin distinction; allow the lone owner.
-        return owner or ""
+        # Single-user / first-run: no admin distinction — but the operator-grade
+        # surface must still be reachable only from the box itself, not from the
+        # network (#228). Unlike require_user, the old gate returned "" for ANY
+        # host, so a remote unauthenticated caller passed during setup. Allow the
+        # lone owner only from loopback; refuse a remote unauthenticated caller.
+        if owner:
+            return owner
+        client = getattr(request, "client", None)
+        host = (getattr(client, "host", "") if client else "") or ""
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return ""
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     if not owner:
         raise HTTPException(status_code=401, detail="Not authenticated")

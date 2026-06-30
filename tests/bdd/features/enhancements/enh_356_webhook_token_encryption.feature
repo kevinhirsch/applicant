@@ -9,7 +9,6 @@ Feature: webhook_token is stored encrypted/hashed, consistent with other credent
     When a webhook token value is encrypted then decrypted
     Then the stored form is not the plaintext and it decrypts back to the original
 
-  @pending
   Scenario: The webhook_token column does not store plaintext
     Given the scheduled-task model column for the webhook token
     When the column type is inspected

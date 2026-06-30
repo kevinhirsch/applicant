@@ -19,6 +19,30 @@ from starlette.responses import Response
 INTERNAL_TOOL_TOKEN: str = (os.environ.get("APPLICANT_INTERNAL_TOKEN") or "").strip()
 INTERNAL_TOOL_HEADER = "X-Applicant-Internal-Token"
 
+# Explicit kill switch for the internal-tool loopback bypass (#266). Operators
+# can hard-disable the path even when a token is configured by setting
+# APPLICANT_INTERNAL_TOOL=off (or false/0/disabled). Otherwise the bypass is
+# active only when a token is actually configured — it never auto-generates, so
+# an unconfigured deployment has it OFF by default. ``require_admin`` /
+# ``verify_internal_tool`` consult this flag, so flipping it off closes the path
+# regardless of whether a token happens to be present.
+INTERNAL_TOOL_ENABLED: bool = bool(INTERNAL_TOOL_TOKEN) and (
+    (os.environ.get("APPLICANT_INTERNAL_TOOL") or "on").strip().lower()
+    not in ("off", "false", "0", "no", "disabled")
+)
+
+
+def internal_tool_active(token_header: str | None) -> bool:
+    """True only when the internal-tool bypass is enabled AND the header matches.
+
+    Single chokepoint for the loopback bypass: it short-circuits to ``False`` when
+    the path is disabled (no token configured, or the explicit kill switch is set),
+    so a single flag flip closes the bypass everywhere it is consulted.
+    """
+    if not INTERNAL_TOOL_ENABLED or not token_header:
+        return False
+    return secrets.compare_digest(token_header, INTERNAL_TOOL_TOKEN)
+
 
 def verify_origin(request: Request) -> bool:
     """Return True when the request Origin/Referer matches the app's own origin.
@@ -63,7 +87,7 @@ def require_admin(request: Request):
     #     request.state.current_user = "internal-tool".
     try:
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+        if internal_tool_active(hdr):
             return
         if getattr(request.state, "current_user", None) == "internal-tool":
             return

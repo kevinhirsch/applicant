@@ -100,22 +100,6 @@ def _campaign_lock(campaign_id: CampaignId) -> threading.Lock:
 
 
 @dataclass(frozen=True)
-class InducedWorkflow:
-    """A parameterized, reusable workflow induced from a successful trajectory (#306).
-
-    AWM (Agent Workflow Memory): the ordered, abstracted steps that worked for an
-    ATS, with the concrete values lifted out into ``parameters`` so the workflow
-    can be replayed as a planner *prior* on the next application to that ATS —
-    never as an authorization, only as advisory scaffolding.
-    """
-
-    ats: str
-    steps: tuple[str, ...] = ()
-    parameters: tuple[str, ...] = ()
-    sample_count: int = 1
-
-
-@dataclass(frozen=True)
 class FailureLesson:
     """A verbal self-reflection on a failed step, stored for later recall (#306)."""
 
@@ -132,7 +116,6 @@ class LearningService:
         # MemoryStore; fall back to an in-process map so recall works hermetically.
         self._memory_store = memory_store
         self._episodic_lessons: dict[str, list[FailureLesson]] = {}
-        self._induced_workflows: dict[str, InducedWorkflow] = {}
 
     def model_for(self, campaign_id: CampaignId) -> LearningModel:
         return LearningModel(campaign_id=campaign_id)
@@ -570,51 +553,27 @@ class LearningService:
         # #12: bound the blob at fold time so it never grows unbounded across decisions.
         return replace(model, feature_stats=cap_feature_stats(stats))
 
-    # --- self-improvement flywheel: AWM + Reflexion (#306) ----------------
-    def induce_workflow(self, trajectory: dict) -> InducedWorkflow:
-        """Induce a reusable per-ATS workflow from a successful trajectory (AWM, #306).
+    # --- AWM workflow induction (#306 / Skyvern parity #351) ----------------
+    def induce_workflow(self, routine_store, domain: str, steps):
+        """Induce a reusable per-ATS routine from a successful pre-fill (#351, #306).
 
-        ``trajectory`` carries the ATS key and the ordered steps that were taken
-        on a successful pre-fill (each a mapping with an ``action`` and the
-        ``field``/``attribute`` it touched). The concrete values are abstracted
-        out into ``parameters`` so the workflow is reusable across applications;
-        the induced workflow is stored as a planner prior keyed by ATS, folding
-        into any prior induced from earlier trajectories.
+        Skyvern parity: after a successful pre-fill on a given ATS the engine learns a
+        reusable *routine* (the compact op-sequence that worked, keyed by domain) so
+        the next application to that ATS is guided by the induced routine rather than
+        re-derived cold. This is the learning-side entry point that folds a working
+        trace into the process-lived :class:`~applicant.ports.driven.routine_store.RoutineStore`
+        (AWM workflow-induction), returning the stored :class:`Routine` (or ``None``
+        when there is nothing to induce or no store is wired).
+
+        The routine is **data, not free text** — fill/select/upload steps reference the
+        attribute cloud / document library by id, never a literal value, so an induced
+        routine can never smuggle a fabricated answer into a form (NFR-TRUTH-1).
         """
-        ats = str(trajectory.get("ats") or trajectory.get("source_key") or "unknown")
-        steps: list[str] = []
-        parameters: list[str] = []
-        for step in trajectory.get("steps", []) or []:
-            action = str(step.get("action", "")).strip()
-            field_ref = str(step.get("field") or step.get("attribute") or "").strip()
-            if action:
-                steps.append(f"{action}:{field_ref}" if field_ref else action)
-            if field_ref:
-                parameters.append(field_ref)
+        if routine_store is None or not domain or not steps:
+            return None
+        return routine_store.induce(domain, tuple(steps))
 
-        prior = self._induced_workflows.get(ats)
-        sample_count = (prior.sample_count + 1) if prior else 1
-        # Union the parameter set so a recurring ATS accumulates its fillable surface.
-        merged_params = tuple(
-            dict.fromkeys((prior.parameters if prior else ()) + tuple(parameters))
-        )
-        workflow = InducedWorkflow(
-            ats=ats,
-            steps=tuple(steps),
-            parameters=merged_params,
-            sample_count=sample_count,
-        )
-        self._induced_workflows[ats] = workflow
-        return workflow
-
-    def workflow_prior_for(self, ats: str) -> InducedWorkflow | None:
-        """Retrieve a previously induced workflow to offer the planner (#306).
-
-        Called before planning from scratch so the planner can be seeded with the
-        steps that worked last time for this ATS.
-        """
-        return self._induced_workflows.get(str(ats))
-
+    # --- self-reflection on failure (Reflexion, #306) ---------------------
     def reflect_on_failure(self, failure: dict) -> FailureLesson:
         """Write a verbal lesson from a failed step to episodic memory (Reflexion, #306).
 

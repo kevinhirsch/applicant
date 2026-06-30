@@ -53,12 +53,21 @@ class SqlAlchemyAppConfigStore:
         return dict(row.value) if row is not None and row.value is not None else None
 
     def set(self, key: str, value: dict[str, Any]) -> None:
+        # ``set`` IS the conflict-safe upsert, so same-key writes never race (#169).
+        self.upsert(key, value)
+
+    def upsert(self, key: str, value: dict[str, Any]) -> None:
+        """Conflict-safe single-statement write of ``key`` -> ``value`` (#169).
+
+        Uses Postgres ``INSERT ... ON CONFLICT DO UPDATE`` so two writers racing the
+        FIRST write of the same key both succeed (one inserts, the other updates) instead
+        of the loser raising ``UniqueViolation`` — the bare ``select -> add -> commit`` it
+        replaces had a check-then-act window that did exactly that.
+        """
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         from applicant.adapters.storage import models as m
 
-        # Upsert to avoid the select-then-insert race (#169): concurrent callers
-        # both see no row, both insert, and the second raises UniqueViolation.
         stmt = pg_insert(m.AppConfigModel).values(
             id=key, key=key, value=dict(value)
         ).on_conflict_do_update(

@@ -9,13 +9,11 @@ Feature: CI checkout steps do not persist Git credentials on the runner
     When the checkout options are inspected
     Then credential persistence is disabled on that checkout
 
-  @pending
   Scenario: The integration CI checkout disables credential persistence
     Given the integration CI workflow checkout step
     When the checkout options are inspected
     Then credential persistence is disabled on the integration checkout
 
-  @pending
   Scenario: The front-door CI checkout disables credential persistence
     Given the front-door CI workflow checkout step
     When the checkout options are inspected

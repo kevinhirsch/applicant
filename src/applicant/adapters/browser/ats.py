@@ -383,6 +383,35 @@ class WorkdayAts(AtsAdapter):
 
         ]
 
+    def pages_for_tenant(
+        self, url: str, *, tenant_profile: dict | None = None
+    ) -> list[FakePage]:
+        """Model a Workday tenant whose page set differs from the fixed six (#214).
+
+        Real Workday tenants vary: some omit the voluntary-disclosures (EEO) page,
+        some add qualifications or multi-part screening pages. Rather than assuming
+        the fixed six-page structure, this returns the default flow filtered/extended
+        by a ``tenant_profile`` of feature flags. Supported keys:
+
+        * ``voluntary_disclosures`` (default ``True``) — when ``False`` the EEO
+          self-identification page is omitted (the tenant does not collect it).
+        * ``extra_pages`` — an optional list of additional :class:`FakePage` the
+          tenant inserts before the final-submit page (e.g. qualifications).
+
+        The account-create-first / final-submit-last boundary invariants are always
+        preserved so the maximal-pre-fill loop's stop boundaries still hold.
+        """
+        profile = tenant_profile or {}
+        pages = self.pages(url)
+        if profile.get("voluntary_disclosures", True) is False:
+            pages = [p for p in pages if "voluntary-disclosures" not in p.url]
+        extra = profile.get("extra_pages") or []
+        if extra:
+            # Insert extra tenant pages just before the final-submit page.
+            final = pages[-1]
+            pages = pages[:-1] + list(extra) + [final]
+        return pages
+
 
 
 
@@ -622,6 +651,137 @@ class LeverAts(AtsAdapter):
             FakePage(url=f"{url}/apply/review", is_final_submit=True, fields=()),
         ]
 
+class IcimsAts(AtsAdapter):
+    """iCIMS ATS adapter with a full real-application field map (#171, NFR-EXT-1).
+
+    iCIMS' hosted apply flow (``careers-<tenant>.icims.com/jobs/<id>/apply`` or
+    ``<tenant>.icims.com/...``) is a multi-page flow: an account gate, a personal-
+    info page, an experience/education page, in-form screening questions, a
+    voluntary EEO self-identification page, then a review/submit page. The field
+    map below covers the same breadth as the Workday/Greenhouse/Lever adapters.
+
+    Added purely by SUBCLASSING + a registry entry — NO core or port change is
+    required (FR-PREFILL-2 / NFR-EXT-1). Before this adapter, an iCIMS URL fell
+    through to the generic fallback; now it has a dedicated modeled flow.
+    """
+
+    name = "icims"
+
+    def matches(self, url: str) -> bool:
+        return "icims.com" in url.lower()
+
+    def tenant_key(self, url: str) -> str:
+        # careers-<tenant>.icims.com — the tenant is the host subdomain.
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        sub = host.split(".icims.com", 1)[0]
+        tenant = sub.replace("careers-", "").replace("careers", "") or host
+        return f"icims:{tenant}"
+
+    def pages(self, url: str) -> list[FakePage]:
+        return [
+            FakePage(
+                url=f"{url}/account",
+                is_account_create=True,
+                fields=(
+                    DetectedField("#username", "Email Address", "text"),
+                    DetectedField("#password", "Password", "password"),
+                    DetectedField("#confirmPassword", "Confirm Password", "password"),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/personal",
+                fields=(
+                    DetectedField("#firstName", "First Name", "text"),
+                    DetectedField("#lastName", "Last Name", "text"),
+                    DetectedField("#email", "Email", "text"),
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("#addressLine1", "Address Line 1", "text"),
+                    DetectedField("#city", "City", "text"),
+                    DetectedField("#state", "State", "text"),
+                    DetectedField("#zip", "Zip/Postal Code", "text"),
+                    DetectedField("#resume", "Resume/CV", "file"),
+                    DetectedField("#coverLetter", "Cover Letter", "file"),
+                    DetectedField("#linkedin", "LinkedIn URL", "text"),
+                    DetectedField("#website", "Website/Portfolio", "text"),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/experience",
+                fields=(
+                    DetectedField("#currentEmployer", "Current Employer", "text"),
+                    DetectedField("#currentTitle", "Current Job Title", "text"),
+                    DetectedField("#yearsExperience", "Years of Experience", "text"),
+                    DetectedField("#school", "School", "text"),
+                    DetectedField("#degree", "Degree", "text"),
+                    DetectedField("#fieldOfStudy", "Field of Study", "text"),
+                    DetectedField(
+                        "#workAuth",
+                        "Are you legally authorized to work?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#sponsorship",
+                        "Will you now or in the future require sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/questions",
+                fields=(
+                    DetectedField(
+                        "#q-relocate",
+                        "Are you willing to relocate?",
+                        SCREENING_FACTUAL,
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#q-start",
+                        "Earliest available start date",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "#q-why",
+                        "Why do you want to work here?",
+                        SCREENING_ESSAY,
+                    ),
+                ),
+            ),
+            FakePage(
+                url=f"{url}/eeo",
+                fields=(
+                    DetectedField(
+                        "#gender",
+                        "Gender",
+                        "select",
+                        options=("Male", "Female", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#race",
+                        "Race/Ethnicity",
+                        "select",
+                        options=("...", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#veteran",
+                        "Protected Veteran Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#disability",
+                        "Disability Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                ),
+            ),
+            FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
+        ]
+
+
 class GenericAts(AtsAdapter):
 
     """The vendor-agnostic GENERIC live-DOM driver (issue #173, FR-PREFILL-2).
@@ -727,6 +887,8 @@ ATS_REGISTRY: dict[str, type[AtsAdapter]] = {
     GreenhouseAts.name: GreenhouseAts,
 
     LeverAts.name: LeverAts,
+
+    IcimsAts.name: IcimsAts,
 
 }
 

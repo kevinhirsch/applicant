@@ -11,7 +11,6 @@ Feature: Email inbox surfaces dynamic UI-module load failures
     When the unread-dot last-seen read is inspected
     Then the localStorage access is wrapped in a try block
 
-  @pending
   Scenario: A failed ui.js import for an inbox toast is not swallowed silently
     Given the email inbox browser module
     When the lazy ui.js imports are scanned

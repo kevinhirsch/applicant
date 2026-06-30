@@ -29,7 +29,6 @@ Feature: The autonomous loop clears native file-upload dialogs with desktop assi
     When a résumé attach step opens a native file-open dialog
     Then the loop does not attempt any desktop action and leaves the step for a human
 
-  @pending
   Scenario: The loop clears a non-file off-page dialog with desktop assist
     Given a pre-fill loop with an operable desktop-assist backend
     When the page opens an "open with" / print-to-PDF dialog the browser cannot reach

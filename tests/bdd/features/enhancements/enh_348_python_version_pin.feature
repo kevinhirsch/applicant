@@ -11,7 +11,6 @@ Feature: Python version constraint is widened or justified
     Then it requires at least Python 3.11
 
   # PENDING — the residual gap: 3.12 is excluded with no recorded reason.
-  @pending
   Scenario: Python 3.12 is admitted or the exclusion is justified
     Given the project manifest
     When its python upper bound is inspected

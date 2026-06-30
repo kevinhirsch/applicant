@@ -11,7 +11,6 @@ Feature: A page-settle timeout is surfaced instead of yielding an empty form
     When the engine detects fields on the page
     Then the expected fields are returned
 
-  @pending
   Scenario: A settle timeout reports the stall rather than passing silently
     Given a page whose load-state wait times out
     When the engine settles the page before inspecting it

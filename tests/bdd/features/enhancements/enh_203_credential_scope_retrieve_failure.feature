@@ -11,7 +11,6 @@ Feature: A failing credential vault is surfaced rather than silently skipped
     When the engine looks up a shared credential across scopes
     Then the working scope's credential is still returned
 
-  @pending
   Scenario: An all-scopes vault failure raises a diagnostic instead of looking empty
     Given a credential vault that raises for every scope
     When the engine looks up a stored credential across scopes

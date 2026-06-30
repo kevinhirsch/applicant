@@ -7,7 +7,6 @@ Feature: The main stylesheet does not block first paint
     When the KaTeX stylesheet link is inspected
     Then it is loaded with media print so it does not block first paint
 
-  @pending
   Scenario: The main stylesheet is not loaded render-blocking in the head
     Given the front-door index page
     When the main stylesheet link is inspected

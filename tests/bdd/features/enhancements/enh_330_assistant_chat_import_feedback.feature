@@ -11,7 +11,6 @@ Feature: Assistant surfaces a broken applicant-chat module load
     When the presets fetch fallback is inspected
     Then the fetch failure falls back to an empty value rather than throwing
 
-  @pending
   Scenario: A failed applicant-chat import shows the user an error
     Given the assistant browser module
     When the applicant-chat dynamic import is inspected

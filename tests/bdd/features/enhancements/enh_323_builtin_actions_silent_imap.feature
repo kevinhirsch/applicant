@@ -13,7 +13,6 @@ Feature: IMAP logout failures in the front-door surface a diagnostic, not silenc
     When an IMAP connection logout raises during cleanup
     Then the surrounding task continues rather than crashing
 
-  @pending
   Scenario: A failing IMAP logout is logged as a warning rather than swallowed
     Given the front-door builtin email actions module
     When an IMAP connection logout raises during cleanup

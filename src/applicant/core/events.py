@@ -86,6 +86,7 @@ class JobDiscovered(DomainEvent):
 class ViabilityScored(DomainEvent):
     posting_id: JobPostingId = field(default=None)  # type: ignore[assignment]
     score: float = 0.0
+    campaign_id: CampaignId = field(default=None)  # type: ignore[assignment]
 
 
 @dataclass(frozen=True)

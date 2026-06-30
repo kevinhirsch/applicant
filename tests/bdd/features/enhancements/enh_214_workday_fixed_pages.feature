@@ -10,7 +10,6 @@ Feature: The Workday model handles tenant forms that vary from the fixed six pag
     When its modeled pages are listed
     Then there are exactly six pages with account-create first and final-submit last
 
-  @pending
   Scenario: A Workday tenant without a voluntary-disclosures page is supported
     Given a Workday tenant flow that omits the voluntary-disclosures page
     When the pre-fill loop walks the varied tenant flow
