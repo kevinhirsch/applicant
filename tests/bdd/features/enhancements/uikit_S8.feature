@@ -8,7 +8,6 @@ Feature: Map the Mind surface (remembers / playbooks / curation) onto Gadget + D
     Given the UI-kit migration item "S8"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S8 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S8"
     Then its post-migration kit target is satisfied

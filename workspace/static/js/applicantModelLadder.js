@@ -91,7 +91,7 @@ function _tierRowHTML(t, i) {
     ? '<span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:2px;">A key is saved — leave blank to keep it.</span>'
     : '';
   return `
-    <div class="admin-card" data-tier-row="${i}" style="margin-bottom:10px;">
+    <div class="admin-card og-card" data-tier-row="${i}" style="margin-bottom:10px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
         <div style="font-weight:600;">Level ${i + 1}${i === 0 ? ' · entry model' : ''}</div>
         <div style="display:flex;gap:4px;">

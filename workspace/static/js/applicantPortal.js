@@ -336,7 +336,7 @@ function _rowShell(item, inner) {
     ? `<button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>`
     : '';
   return `
-    <div class="admin-card applicant-portal-row" data-action-id="${esc(item.id)}">
+    <div class="admin-card og-card applicant-portal-row" data-action-id="${esc(item.id)}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(title)}</div>
@@ -540,7 +540,7 @@ function _renderNotifRow(n) {
   const tag = _NOTIF_KIND_LABEL[n.kind] || 'Update';
   const body = (n.body && n.body !== n.title) ? `<div style="opacity:0.7;font-size:11px;margin-top:2px;word-break:break-word;">${esc(n.body)}</div>` : '';
   return `
-    <div class="admin-card applicant-portal-notif" data-notif-id="${esc(n.id)}" style="border-left:2px solid ${accent};">
+    <div class="admin-card og-card applicant-portal-notif" data-notif-id="${esc(n.id)}" style="border-left:2px solid ${accent};">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(n.title || tag)}</div>
