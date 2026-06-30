@@ -5,7 +5,7 @@ A live UI audit found vendored-workspace bleed in the white-labeled front door:
 sidebar list-items for tools that are NOT Applicant surfaces (Calendar,
 Cookbook, Deep Research, a duplicate image Gallery, Notes, Tasks, Theme), an
 off-product roleplay persona system (presets.js / the Character modal tab), an
-Odysseus "king of Ithaca" persona string, and vendored AI-media Settings cards
+upstream "king of Ithaca" persona string, and vendored AI-media Settings cards
 (Vision, Teacher Model, Image Generation, Text-to-Speech) that aren't part of
 the job-application product.
 
@@ -222,7 +222,7 @@ def test_vendored_settings_cards_are_hidden():
         )
 
 
-def test_no_ithaca_or_odysseus_persona_leak():
+def test_no_upstream_ithaca_persona_leak():
     for path in (_PRESETS, _CALENDAR):
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"ithaca", text, re.IGNORECASE), (
