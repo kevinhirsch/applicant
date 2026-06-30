@@ -4,7 +4,6 @@ Feature: Application container images declare a non-root runtime user
   # root, widening the blast radius of a compromise. A dedicated USER line before the
   # entrypoint is not present yet → @pending probes per image.
 
-  @pending
   Scenario: The engine image drops to an unprivileged user
     Given the engine application Dockerfile
     When its runtime user is inspected

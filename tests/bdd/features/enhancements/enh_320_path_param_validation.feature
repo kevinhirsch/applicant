@@ -9,7 +9,6 @@ Feature: Resource-id path parameters are format-validated before the service lay
     When a campaign id type is constructed from a string
     Then it behaves as a plain string at runtime
 
-  @pending
   Scenario: A traversal-shaped id is rejected by a shared validator
     Given a shared id-format validator
     When an id containing path-traversal or a NUL byte is validated

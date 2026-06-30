@@ -18,12 +18,10 @@
     Then the credentials model is unique per campaign and tenant
     And the tool-settings and app-config keys are unique
 
-  @pending
   Scenario: The discovery-source model is unique per campaign and source key
     Given the SQL models
     Then the discovery-source model declares a campaign-and-source unique constraint
 
-  @pending
   Scenario: The onboarding-profile model is unique per campaign
     Given the SQL models
     Then the onboarding-profile model declares a per-campaign unique constraint

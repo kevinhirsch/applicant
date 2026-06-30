@@ -12,7 +12,6 @@ Feature: A failed field fill leaves an audit trail
     When the engine fills the page
     Then an error pending action names the failed field and the run continues
 
-  @pending
   Scenario: A failed sensitive field is still recorded in the page log
     Given a page where a sensitive field fill raises an error
     When the engine fills the page

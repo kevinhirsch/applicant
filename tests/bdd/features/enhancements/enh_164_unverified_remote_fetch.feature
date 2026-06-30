@@ -4,13 +4,11 @@ Feature: Build-time remote fetches are integrity verified
   # checksum, and the apt source line uses plaintext http://. Neither a checksum-verify step nor
   # an https:// source line is present yet → @pending probes on the Dockerfile build step.
 
-  @pending
   Scenario: The Chrome apt source uses HTTPS
     Given the takeover desktop Dockerfile build step
     When the Google Chrome apt source line is inspected
     Then the apt source URL uses HTTPS
 
-  @pending
   Scenario: The fetched signing key is integrity verified
     Given the takeover desktop Dockerfile build step
     When the Google signing-key fetch is inspected

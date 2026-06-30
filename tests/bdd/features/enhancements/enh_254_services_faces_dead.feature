@@ -4,7 +4,6 @@
 
 Feature: The unused face-detection package is not shipped
 
-  @pending
   Scenario: Nothing in the workspace imports the face package
     Given the workspace source tree
     When every Python file is scanned for an import of the face package

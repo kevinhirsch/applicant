@@ -5,7 +5,6 @@
 
 Feature: The shared MCP helper module is actually used or removed
 
-  @pending
   Scenario: No MCP server imports the shared helper module
     Given the built-in MCP servers
     When each server module is scanned for an import of the shared helper

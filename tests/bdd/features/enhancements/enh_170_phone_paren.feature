@@ -12,7 +12,6 @@ Feature: Résumé parser preserves parenthesized contact and history fields
     When the résumé is parsed
     Then the company name carries no leftover opening bracket
 
-  @pending
   Scenario: A parenthesized phone number keeps its opening bracket
     Given a résumé whose contact line shows a parenthesized phone number
     When the résumé is parsed

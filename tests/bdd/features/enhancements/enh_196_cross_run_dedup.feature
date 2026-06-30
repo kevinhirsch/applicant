@@ -11,7 +11,6 @@ Feature: Discovery dedups within a run but not across runs
     When the run deduplicates its results
     Then only one of the near-identical postings survives
 
-  @pending
   Scenario: The same posting surfaced in a later run is deduplicated against the earlier one
     Given a posting was kept in an earlier discovery run
     When a later run surfaces the same role with a different URL

@@ -10,7 +10,6 @@ Feature: Note mutations report failures instead of pretending to succeed
     When the single-card delete handler is inspected
     Then a failed delete shows an error message to the user
 
-  @pending
   Scenario: No note mutation discards its failure silently
     Given the notes browser module
     When the note mutation calls are scanned

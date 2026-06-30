@@ -7,7 +7,6 @@ Feature: Mark-submitted disables its button until the record is saved
     When the Update click handler is inspected
     Then it disables its button before awaiting the request
 
-  @pending
   Scenario: The same manual submission cannot be recorded twice
     Given the Activity/Debug browser module
     When the mark-submitted handler is inspected

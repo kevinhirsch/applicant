@@ -9,7 +9,6 @@ Feature: A "deliver digest now" control sends the digest on demand
     Then the engine client exposes a deliver-digest method
     And the email proxy module routes a deliver path
 
-  @pending
   Scenario: A front-door control invokes deliver-now
     Given the digest surface in the front-door
     When the deliver-now control is wired

@@ -11,7 +11,6 @@ Feature: Per-tenant profile visit counting is correct under concurrency
     When the same tenant is visited twice in sequence
     Then the second visit marks the tenant as returning
 
-  @pending
   Scenario: Concurrent visits do not lose a profile increment
     Given a fresh profile store
     When the same tenant is visited from many threads at once
