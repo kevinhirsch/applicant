@@ -472,6 +472,21 @@ class Settings(BaseSettings):
     # byte-identical to today until an operator opts in.
     prefill_use_planner: bool = Field(default=False, alias="PREFILL_USE_PLANNER")
 
+    # --- Smart LLM routing (#298) -------------------------------------------
+    # When ON, a SmartLlmRouter inspects the configured model endpoints
+    # (ModelEndpointService) and REORDERS the tier ladder so a router-preferred
+    # endpoint (e.g. a local Ollama/OpenAI-compatible model under the
+    # local-preference policy) is walked first by OpenAICompatibleLLM. The
+    # existing context-window tier-walk/fallback is preserved within that order.
+    # Default OFF: behaviour is byte-identical to today (ladder built straight
+    # from setup_service.build_ladder()) until an operator opts in.
+    llm_smart_routing: bool = Field(default=False, alias="LLM_SMART_ROUTING")
+    # Prefer a local model when smart routing is ON and a local endpoint is
+    # configured and online (keeps tokens free/on-box, FR-LLM-5/NFR-TOKEN-1).
+    llm_smart_routing_prefer_local: bool = Field(
+        default=True, alias="LLM_SMART_ROUTING_PREFER_LOCAL"
+    )
+
     # --- Pre-submit safety (G07) --------------------------------------------
     # Scam/ghost-job detection: maximum allowed age (in days) for a listing.
     # Postings older than this are blocked before the pipeline starts.

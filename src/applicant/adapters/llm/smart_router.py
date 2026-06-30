@@ -7,7 +7,7 @@ and cost preferences (issue #298).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm_router import (
@@ -15,6 +15,9 @@ from applicant.ports.driven.llm_router import (
     CostTier,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from applicant.ports.driven.llm import TierLadder
 
 log = get_logger(__name__)
 
@@ -134,6 +137,72 @@ class SmartLlmRouter:
             "cloud_available": len(cloud),
             "has_local_fallback": len(local) > 0,
         }
+
+
+def _norm_base(url: str) -> str:
+    """Normalize a base URL for tier<->endpoint matching (lowercased, no trailing /)."""
+    return (url or "").strip().lower().rstrip("/")
+
+
+def order_ladder_by_router(
+    ladder: TierLadder | None,
+    router: SmartLlmRouter,
+    *,
+    task: TaskType = TaskType.CHAT,
+    cost_tier: CostTier = CostTier.BALANCED,
+    prefer_local: bool = False,
+) -> TierLadder | None:
+    """Reorder ``ladder`` so the router-preferred endpoint's tier is walked first.
+
+    Additive and reversible: this NEVER drops a tier and NEVER rewrites a tier's
+    config — it only REORDERS the existing :class:`TierLadder`, putting the tier
+    whose ``base_url`` matches the router-selected endpoint at the front so the
+    existing context-window fallback in ``OpenAICompatibleLLM`` still walks every
+    remaining tier in its original relative order. When the router cannot pick an
+    endpoint, or no tier matches the selected endpoint's URL, the ladder is
+    returned unchanged — so a misconfigured router can never strand the engine.
+
+    Because the LLM adapter dispatches local vs. cloud purely on the active
+    tier's provider/``base_url`` (``_call_ollama`` vs. ``_call_openai``), moving a
+    LOCAL endpoint's tier to the front is exactly what makes the engine CALL the
+    local model: routing reaches the live path through tier order.
+    """
+    if ladder is None or not ladder.tiers:
+        return ladder
+    try:
+        selected = router.select_endpoint(
+            task, cost_tier=cost_tier, prefer_local=prefer_local
+        )
+    except Exception:  # pragma: no cover - defensive: never break LLM construction
+        log.warning("llm_router_select_failed", exc_info=True)
+        return ladder
+    if not selected:
+        return ladder
+
+    target = _norm_base(selected.get("base_url", ""))
+    if not target:
+        return ladder
+
+    tiers = list(ladder.tiers)
+    preferred_idx = next(
+        (i for i, t in enumerate(tiers) if _norm_base(t.base_url) == target),
+        None,
+    )
+    if preferred_idx is None or preferred_idx == 0:
+        # Selected endpoint isn't (or is already) the first configured tier.
+        return ladder
+
+    from applicant.ports.driven.llm import TierLadder as _TierLadder
+
+    reordered = [tiers[preferred_idx]] + [
+        t for i, t in enumerate(tiers) if i != preferred_idx
+    ]
+    log.info(
+        "llm_router_ladder_reordered",
+        moved_to_front=selected.get("name", target),
+        provider=tiers[preferred_idx].provider,
+    )
+    return _TierLadder(tiers=reordered)
 
 
 def _capabilities_for(ep: dict[str, Any]) -> set[Capability]:
