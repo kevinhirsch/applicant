@@ -3969,6 +3969,6 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   }
 
   const documentLibraryModule = {
-    openLibrary, closeLibrary, isLibraryOpen, focusLibrary,
+    openLibrary, closeLibrary, isLibraryOpen,
     getStoredDocuments, getDocumentById, fetchEngineDocuments,
   };

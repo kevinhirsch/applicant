@@ -179,7 +179,12 @@ if AUTH_ENABLED:
         "/api/auth/logout",
         "/api/auth/status",
         "/api/auth/features",
-        "/api/applicant/features",
+        # NOTE: /api/applicant/features is intentionally NOT exempt. Its handler
+        # calls require_user() (it reveals engine setup state), so exempting it
+        # left request.state.current_user unset and the route 401'd for every
+        # browser session. The app-shell fetch wrapper redirects to /login on any
+        # 401, so that 401 aborted the whole boot (loader stuck, no nav). Let it
+        # authenticate normally like the sibling owner-scoped proxy routes.
         "/api/auth/settings",
         "/api/auth/integrations/presets",
         "/api/health",
