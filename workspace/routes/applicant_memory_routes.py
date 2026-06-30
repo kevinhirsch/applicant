@@ -114,12 +114,16 @@ def _raise_engine_http(exc: EngineError) -> None:
     """Translate an :class:`EngineError` into an HTTPException for the front-end.
 
     * a timeout / connection failure (no ``status``) -> 503 (engine offline);
-    * an engine HTTP status is forwarded verbatim so the UI can react to the
-      engine's own gates — notably 409 (confirmation required, FR-FB-3) and 422
-      (sensitive-field violation, FR-ATTR-6).
+    * 4xx responses are forwarded (client-correctable: 409 confirmation
+      required, 422 sensitive-field violation);
+    * 5xx responses are scrubbed — raw detail may contain internal stack traces
+      or state; we log server-side and return a generic message to the browser.
     """
     if exc.status is None:
         raise HTTPException(503, "The Applicant engine is unavailable right now.") from exc
+    if exc.status >= 500:
+        logger.warning("engine 5xx (memory): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        raise HTTPException(502, "The Applicant engine returned an error.") from exc
     detail = exc.detail if exc.detail is not None else exc.message
     raise HTTPException(exc.status, detail) from exc
 

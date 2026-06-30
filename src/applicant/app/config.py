@@ -474,6 +474,28 @@ class Settings(BaseSettings):
         default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
     )
 
+    # --- Pre-submit safety (G07) --------------------------------------------
+    # Scam/ghost-job detection: maximum allowed age (in days) for a listing.
+    # Postings older than this are blocked before the pipeline starts.
+    presubmit_max_listing_age_days: int = Field(
+        default=90, ge=0, alias="PRESUBMIT_MAX_LISTING_AGE_DAYS"
+    )
+    # Duplicate-application cooldown: how many days must pass before the same
+    # (company, role) pair may be applied to again.
+    presubmit_duplicate_cooldown_days: int = Field(
+        default=30, ge=0, alias="PRESUBMIT_DUPLICATE_COOLDOWN_DAYS"
+    )
+    # Per-company application volume cap: max applications per company per day.
+    presubmit_max_apps_per_company_per_day: int = Field(
+        default=3, ge=0, alias="PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY"
+    )
+    # Eligibility filter: when True, the engine checks work-authorization data
+    # from the onboarding intake against posting requirements (sponsorship/
+    # clearance) before starting the pipeline.
+    presubmit_eligibility_enabled: bool = Field(
+        default=True, alias="PRESUBMIT_ELIGIBILITY_ENABLED"
+    )
+
     @model_validator(mode="after")
     def _apply_production_mode(self) -> Self:
         """Apply the production preset when APPLICANT_MODE=production.
@@ -507,7 +529,6 @@ class Settings(BaseSettings):
     def deployment_profile(self) -> str:
         """The deployment profile derived from applicant_mode (empty = hermetic)."""
         return self.applicant_mode
-
 
     @field_validator("takeover_desktop")
     @classmethod

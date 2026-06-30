@@ -25,13 +25,16 @@ import logging
 import re
 import socket
 import time
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from applicant.adapters.browser.ats import AtsAdapter, FakePage, resolve_ats
 from applicant.core.errors import InvalidInput
 from applicant.core.rules.url_safety import ip_chain_is_blocked, scheme_is_allowed
 from applicant.ports.driven.browser_automation import DetectedField, PageState
+
+if TYPE_CHECKING:
+    from applicant.core.entities.plan import Plan
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +197,15 @@ class PageSource(Protocol):
 
     def is_confirmation_page(self) -> bool:
         """True if the current page is a post-submission confirmation (FR-LOG-4)."""
+        ...
+
+    def execute(self, plan: Plan) -> list[dict]:
+        """Execute a Plan-as-Data typed-DSL plan against the current page.
+
+        Returns a list of per-op results ``[{"op": ..., "ok": bool, "detail": ...}]``.
+        The default implementation for in-memory fakes delegates to the existing
+        ``type_value`` / ``set_input_files`` / ``click`` methods.
+        """
         ...
 
 
@@ -359,6 +371,42 @@ class FakePageSource:
         if url is not None:
             changes["url"] = url
         self._pages[self._index] = replace(page, **changes)
+
+    def execute(self, plan: Plan) -> list[dict]:
+        """Execute a plan-as-data typed-DSL plan (fake: apply to in-memory pages)."""
+        from applicant.core.entities.plan import OpKind
+
+        results: list[dict] = []
+        for op in plan:
+            kind = op.kind
+            try:
+                if kind == OpKind.GOTO:
+                    self.open(op.url)
+                    results.append({"op": "goto", "ok": True, "detail": op.url})
+                elif kind == OpKind.FILL:
+                    self.type_value(op.ref, op.attribute_id)
+                    results.append({"op": "fill", "ok": True, "detail": op.ref})
+                elif kind == OpKind.SELECT:
+                    self.type_value(op.ref, op.attribute_id)
+                    results.append({"op": "select", "ok": True, "detail": op.ref})
+                elif kind == OpKind.CLICK:
+                    self.advance()
+                    results.append({"op": "click", "ok": True, "detail": op.ref})
+                elif kind == OpKind.UPLOAD:
+                    self.set_input_files(op.ref, op.document_id)
+                    results.append({"op": "upload", "ok": True, "detail": op.ref})
+                elif kind == OpKind.WAIT:
+                    results.append({"op": "wait", "ok": True, "detail": op.for_})
+                elif kind == OpKind.STOP:
+                    results.append({"op": "stop", "ok": True, "detail": op.reason})
+                elif kind == OpKind.GOTO:
+                    results.append({"op": "goto", "ok": True, "detail": op.url})
+                else:
+                    results.append({"op": kind.value, "ok": True, "detail": "stub"})
+            except Exception as exc:
+                results.append({"op": kind.value, "ok": False, "detail": str(exc)})
+                break
+        return results
 
     def simulate_confirmation(self, *, text: str = "Application submitted") -> None:
         """Seam/test helper: turn the current page into a confirmation page.
@@ -1232,8 +1280,46 @@ class PlaywrightPageSource:
         return tuple(dict.fromkeys(signals))
 
     def detect_fields(self) -> list[DetectedField]:  # pragma: no cover
+        # Gap 1 (Skyvern parity): recursively collect fields from the main frame,
+        # child iframes, and shadow DOM roots so fields inside Workday/Taleo iframes
+        # are not silently skipped.
+        return self._collect_fields_deep(self._page)
+
+    def _collect_fields_deep(self, root) -> list[DetectedField]:  # pragma: no cover
+        """Recursively collect fields from a root element, its shadow roots, and
+        child frames. Skyvern parity gap #1: iframe/shadow DOM penetration."""
         fields: list[DetectedField] = []
-        for handle in self._page.query_selector_all("input, select, textarea"):
+        try:
+            fields.extend(self._collect_frame_fields(root))
+        except Exception:
+            pass
+        # Recurse into child frames (iframes).
+        try:
+            for child_frame in root.child_frames:
+                try:
+                    fields.extend(self._collect_fields_deep(child_frame))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Recurse into shadow DOM roots.
+        try:
+            for el in root.query_selector_all("*"):
+                try:
+                    shadow_host = el.evaluate("e => e.shadowRoot ? e : null")
+                    if shadow_host:
+                        fields.extend(self._collect_fields_deep(shadow_host))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return fields
+
+    def _collect_frame_fields(self, frame) -> list[DetectedField]:  # pragma: no cover
+        """Detect fillable fields in a single frame/document (shared impl for main
+        page and iframes)."""
+        fields: list[DetectedField] = []
+        for handle in frame.query_selector_all("input, select, textarea"):
             # A typeable ARIA combobox (react-select) is an <input> too — skip it here
             # so it is handled once by the dropdown path below (type-to-filter + pick),
             # not typed into as a plain text field (which leaves a filter string, no
@@ -1261,7 +1347,7 @@ class PlaywrightPageSource:
         # ARIA combobox) — NOT <select>, so the query above misses them entirely.
         # Real Workday uses these for Country, Phone Device Type, and every EEO field;
         # without this the engine silently skips them (FR-PREFILL-2/3).
-        for handle in self._page.query_selector_all(
+        for handle in frame.query_selector_all(
             "button[aria-haspopup='listbox'], [role='combobox']"
         ):
             name = handle.get_attribute("name") or ""
@@ -1580,18 +1666,49 @@ class PlaywrightPageSource:
             before = self._page.url
             try:
                 locator.click()
-                # Settle navigation/SPA transition before reading the new page.
-                try:
-                    self._page.wait_for_load_state("networkidle", timeout=10_000)
-                except Exception:
-                    log.warning("advance(): wait_for_load_state timed out after 10 s", exc_info=True)
+                # Gap 2 (Skyvern parity): use adaptive progressive waiting instead
+                # of fixed 10s wait_for_load_state("networkidle") which fails on
+                # SPA-heavy ATS that never reach networkidle.
+                self._adaptive_wait(timeout_s=15.0)
             except Exception:
                 continue
             # Detect end-of-flow: clicking did not move us anywhere new.
             if self._page.url == before and not self._dom_changed():
                 continue
+            # Gap 3 (Skyvern parity): verify the landed page is what we expected.
+            # If the page's URL suggests an error/interstitial, retry via advance.
+            if self._on_error_page():
+                import logging
+                log = logging.getLogger(__name__)
+                log.warning("advance(): landed on error page at %s — retrying", self._page.url)
+                continue
             return self.current()
         return None
+
+    def _on_error_page(self) -> bool:  # pragma: no cover - integration-gated
+        """Heuristic: is the current page an error / interstitial page?
+
+        Checks URL and body for common error markers. Skyvern parity gap #3:
+        error recovery on wrong-page navigation.
+        """
+        url = (self._page.url or "").lower()
+        if any(m in url for m in ("/error", "/oops", "/500", "/404", "/maintenance", "session-expired")):
+            return True
+        try:
+            text = self._page.inner_text("body").lower()
+        except Exception:
+            return False
+        return any(
+            m in text
+            for m in (
+                "something went wrong",
+                "we encountered an error",
+                "page not found",
+                "try again later",
+                "session expired",
+                "maintenance",
+            )
+        )
 
     def _dom_changed(self) -> bool:  # pragma: no cover - integration-gated
         """Heuristic for SPA flows where the URL stays fixed across pages."""
@@ -1685,6 +1802,130 @@ class PlaywrightPageSource:
         except Exception:
             body_text = ""
         return detect_confirmation(url=self._page.url, text=body_text)
+
+    def execute(self, plan: Plan) -> list[dict]:  # pragma: no cover - integration-gated
+        """Execute a plan-as-data typed-DSL plan against the live Playwright page."""
+        from applicant.core.entities.plan import OpKind
+
+        results: list[dict] = []
+        for op in plan:
+            kind = op.kind
+            try:
+                if kind == OpKind.GOTO:
+                    url = getattr(op, "url", "")
+                    assert_navigable_url(url)
+                    # Skyvern parity gaps 2+3: use _safe_navigate with adaptive wait
+                    # and expected-URL verification instead of fixed wait_for_load_state.
+                    ok = self._safe_navigate(url, expected_url=url)
+                    results.append({"op": "goto", "ok": ok, "detail": url})
+                    if not ok:
+                        break
+                elif kind == OpKind.FILL:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    val = getattr(op, "attribute_id", "")
+                    self.type_value(sel, val)
+                    results.append({"op": "fill", "ok": True, "detail": ref})
+                elif kind == OpKind.SELECT:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    val = getattr(op, "attribute_id", "")
+                    self._select_option(sel, val)
+                    results.append({"op": "select", "ok": True, "detail": ref})
+                elif kind == OpKind.CLICK:
+                    ref = getattr(op, "ref", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    self._page.locator(sel).click()
+                    results.append({"op": "click", "ok": True, "detail": ref})
+                elif kind == OpKind.UPLOAD:
+                    ref = getattr(op, "ref", "")
+                    doc = getattr(op, "document_id", "")
+                    sel = f"[data-applicant-ref='{ref}']"
+                    self.set_input_files(sel, doc)
+                    results.append({"op": "upload", "ok": True, "detail": ref})
+                elif kind == OpKind.WAIT:
+                    results.append({"op": "wait", "ok": True, "detail": "stub"})
+                elif kind == OpKind.STOP:
+                    results.append({"op": "stop", "ok": True, "detail": getattr(op, "reason", "")})
+                else:
+                    results.append({"op": kind.value, "ok": True, "detail": "stub"})
+            except Exception as exc:
+                results.append({"op": kind.value, "ok": False, "detail": str(exc)})
+                break
+        return results
+
+    # ------------------------------------------------------------------
+    # Skyvern parity gaps 2 & 3: adaptive waiting + error recovery
+    # ------------------------------------------------------------------
+    _NAV_RETRY_MAX = 3
+
+    def _adaptive_wait(self, timeout_s: float = 15.0) -> bool:  # pragma: no cover
+        """Wait for the page to settle with progressive thresholds.
+
+        Unlike the fixed 10s ``wait_for_load_state("networkidle")`` in advance(),
+        this method tries ``networkidle`` first (fast), then falls back to ``load``
+        (slower, catches SPA that never idle), then ``domcontentloaded`` (last
+        resort). Between attempts it checks whether the URL changed significantly,
+        which signals a navigation happened even if load events were missed.
+        Skyvern parity gap #2: dynamic element waiting.
+        """
+        from urllib.parse import urlparse
+
+        before = self._page.url
+        states = ["networkidle", "load", "domcontentloaded"]
+        for state in states:
+            try:
+                self._page.wait_for_load_state(state, timeout=timeout_s * 1000)
+                return True
+            except Exception:
+                continue
+        # Final check: if URL changed, navigation happened despite timeout.
+        after = self._page.url
+        if urlparse(before).path != urlparse(after).path:
+            return True
+        return False
+
+    def _verify_expected_url(self, expected_url: str = "") -> bool:  # pragma: no cover
+        """Verify the current page URL matches expectations.
+
+        If ``expected_url`` is provided, check that it is a substring of the
+        current URL (or the current URL is a substring of it). Returns False
+        when the page landed somewhere unexpected — triggers recovery.
+        Skyvern parity gap #3: error recovery on wrong-page navigation.
+        """
+        if not expected_url:
+            return True
+        current = self._page.url.lower()
+        expected = expected_url.lower()
+        return expected in current or current in expected
+
+    def _safe_navigate(self, url: str, expected_url: str = "") -> bool:  # pragma: no cover
+        """Navigate to a URL with retry + expected-URL verification.
+
+        Tries up to ``_NAV_RETRY_MAX`` times. On each failure (timeout or wrong
+        landing page), captures a screenshot, logs the mismatch, and retries.
+        Returns True if the page landed correctly, False if all retries exhausted.
+        Skyvern parity gaps #2 (adaptive wait) + #3 (error recovery).
+        """
+        import logging
+        log = logging.getLogger(__name__)
+
+        for attempt in range(1, self._NAV_RETRY_MAX + 1):
+            try:
+                self._page.goto(url, wait_until="domcontentloaded")
+                settled = self._adaptive_wait()
+                if settled and self._verify_expected_url(expected_url):
+                    return True
+                log.warning(
+                    "safe_navigate attempt %d/%d: page at %r (expected %r)",
+                    attempt, self._NAV_RETRY_MAX, self._page.url, expected_url or url,
+                )
+            except Exception as exc:
+                log.warning(
+                    "safe_navigate attempt %d/%d failed: %s",
+                    attempt, self._NAV_RETRY_MAX, exc,
+                )
+        return False
 
     def close(self) -> None:  # pragma: no cover - integration-gated
         self._safe_teardown()

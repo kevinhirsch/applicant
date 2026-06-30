@@ -117,6 +117,19 @@ def internal_owner(request: Request) -> str:
     return (request.headers.get(INTERNAL_OWNER_HEADER) or "").strip()
 
 
+def require_internal_owner(request: Request) -> str:
+    """Require a non-empty owner attribution for data-accessing endpoints.
+
+    Raises 400 when no ``X-Applicant-Owner`` is set. This prevents the
+    'internal-engine' sentinel from accessing data without an explicit scope
+    (unauthenticated engine calls must not silently read all-user data).
+    """
+    owner = internal_owner(request)
+    if not owner:
+        raise HTTPException(status_code=400, detail="Owner attribution required")
+    return owner
+
+
 # ======================================================================== #
 # LANE A — calendar interview detection (self-contained; merge-trivial).    #
 # Everything below this banner up to the matching banner is lane A's only.  #
@@ -720,13 +733,75 @@ def setup_applicant_internal_routes() -> APIRouter:
         hiccup degrades to an empty list rather than 500ing the engine.
         """
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         try:
             raw = _read_owner_calendar_events(owner)
         except Exception as exc:  # never 500 the engine's callback
             logger.warning("calendar_interviews read failed: %s", exc)
             return {"interviews": []}
         return {"interviews": detect_interviews(raw)}
+
+    @router.post("/calendar/events")
+    async def calendar_create_event(request: Request):
+        """LANE A — create a calendar event on behalf of the owner.
+
+        The engine calls this to schedule interview events or reminders in the
+        workspace calendar. Body: ``{title, start, end?, notes?, location?}``.
+        Returns the created event's id. Degrades to 502 on DB failure.
+        """
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Body must be a JSON object")
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="'title' is required")
+        start = (body.get("start") or "").strip()
+        if not start:
+            raise HTTPException(status_code=400, detail="'start' is required")
+        try:
+            from datetime import datetime
+            dt_start = datetime.fromisoformat(start)
+            dt_end = None
+            if body.get("end"):
+                dt_end = datetime.fromisoformat(str(body["end"]).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid datetime: {exc}") from exc
+        try:
+            from core.database import CalendarCal, CalendarEvent, SessionLocal
+            db = SessionLocal()
+            try:
+                cal = db.query(CalendarCal).filter(
+                    CalendarCal.owner == owner if owner else True
+                ).first()
+                if not cal:
+                    cal = CalendarCal(owner=owner or "", name="Applicant")
+                    db.add(cal)
+                    db.flush()
+                event = CalendarEvent(
+                    calendar_id=cal.id,
+                    title=title,
+                    dtstart=dt_start,
+                    dtend=dt_end,
+                    description=body.get("notes") or "",
+                    location=body.get("location") or "",
+                    owner=owner or "",
+                )
+                db.add(event)
+                db.commit()
+                return {"id": str(event.id), "ok": True}
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("calendar_create_event failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Failed to create event") from exc
 
     @router.post("/research")
     async def research(request: Request):
@@ -747,7 +822,7 @@ def setup_applicant_internal_routes() -> APIRouter:
         "owner", "truncated": bool}``.
         """
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
 
         try:
             body = await request.json()
@@ -877,7 +952,7 @@ def setup_applicant_internal_routes() -> APIRouter:
         error rather than 500ing the engine.
         """
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         try:
             env, usr = _memory_snapshot(request, owner)
         except Exception as exc:  # never 500 the engine's callback
@@ -889,7 +964,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def memory_add(request: Request):
         """Append one curated memory line for the owner."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         text = (body.get("text") or "").strip()
         if not text:
@@ -906,7 +981,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def memory_replace(request: Request):
         """Replace the first memory whose text contains ``find`` (substring)."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         find = (body.get("find") or "").strip()
         entry = body.get("entry") if isinstance(body.get("entry"), dict) else {}
@@ -925,7 +1000,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def memory_remove(request: Request):
         """Remove every memory whose text contains ``find`` (substring)."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         find = (body.get("find") or "").strip()
         if not find:
@@ -941,7 +1016,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skills_list(request: Request):
         """L0 saved-playbook metadata for the owner (no bodies)."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         try:
             items = _skills_index(request, owner)
         except Exception as exc:
@@ -953,7 +1028,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skill_load(request: Request, name: str):
         """L1 full body for one saved playbook."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         try:
             skill = _skill_get(request, owner, name)
         except Exception as exc:
@@ -967,7 +1042,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skill_create(request: Request):
         """Author a new saved playbook for the owner."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         try:
             created = _skill_create(request, owner, body)
@@ -980,7 +1055,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skill_patch(request: Request, name: str):
         """Targeted update of named fields on a saved playbook."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         try:
             updated = _skill_update(request, owner, name, body)
@@ -995,7 +1070,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skill_edit(request: Request, name: str):
         """Full rewrite of a saved playbook."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         body = await _json(request)
         try:
             updated = _skill_update(request, owner, name, body)
@@ -1010,7 +1085,7 @@ def setup_applicant_internal_routes() -> APIRouter:
     async def skill_delete(request: Request, name: str):
         """Delete a saved playbook."""
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         try:
             deleted = _skill_delete(request, owner, name)
         except Exception as exc:
@@ -1026,7 +1101,7 @@ def setup_applicant_internal_routes() -> APIRouter:
         is introduced). Returns ``{"hits": [{run_id,text,score,campaign_id}]}``.
         """
         verify_internal_token(request)
-        owner = internal_owner(request)
+        owner = require_internal_owner(request)
         q = (request.query_params.get("q") or "").strip()
         try:
             limit = int(request.query_params.get("limit") or 5)

@@ -262,12 +262,21 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Applicant-Owner, attribute the request to that user only
-                    # if they exist. Authorization checks remain separate; this
-                    # is just owner attribution for notes/calendar/etc.
+                    # X-Applicant-Owner, attribute the request to that user only if
+                    # auth is configured (user store is initialised) AND the user
+                    # is a known registered user. Requiring auth.is_configured means
+                    # impersonation is only honoured when the workspace has a properly
+                    # set-up identity store — it cannot silently activate on an
+                    # unconfigured deployment. The caller is already verified as an
+                    # authorized in-process agent via INTERNAL_TOOL_TOKEN + loopback.
                     _impersonate = (request.headers.get("X-Applicant-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
-                    if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
+                    _can_impersonate = (
+                        _impersonate
+                        and getattr(_auth_mgr, "is_configured", False)
+                        and _impersonate in getattr(_auth_mgr, "users", {})
+                    )
+                    if _can_impersonate:
                         request.state.current_user = _impersonate
                     else:
                         request.state.current_user = "internal-tool"

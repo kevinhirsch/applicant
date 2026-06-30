@@ -109,8 +109,10 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
 
     * timeout / connection failure (``status is None``) -> 502 Bad Gateway:
       the engine is down/unreachable, not a client mistake.
-    * the engine answered with an HTTP error -> pass that status through (e.g.
-      404 unknown document, 409 review-required) so the UI can react precisely.
+    * 4xx responses from the engine are forwarded (client-correctable: 404
+      unknown document, 409 review-required) so the UI can react precisely.
+    * 5xx responses are scrubbed: the raw detail may contain internal stack
+      traces or state; we log it server-side and return a generic message.
     """
     if exc.status is None:
         status_code = 502
@@ -119,14 +121,22 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
             if exc.is_timeout
             else "The application engine is unavailable."
         )
-    else:
-        status_code = exc.status
-        message = "The application engine reported an error."
+        return JSONResponse(
+            status_code=status_code,
+            content={"error": "engine_error", "message": message, "engine_status": None},
+        )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (documents): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
+        )
+    # 4xx: pass detail through (client-correctable: 404 not found, 409 review-required).
     return JSONResponse(
-        status_code=status_code,
+        status_code=exc.status,
         content={
             "error": "engine_error",
-            "message": message,
+            "message": "The application engine reported an error.",
             "engine_status": exc.status,
             "detail": exc.detail,
         },
