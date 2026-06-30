@@ -840,6 +840,14 @@ app.include_router(setup_applicant_activity_routes())
 from routes.applicant_research_routes import setup_applicant_research_routes
 app.include_router(setup_applicant_research_routes())
 
+# Compare — owner-scoped proxy over the engine's cross-entity comparison
+# (/api/applicant/compare/*, #297/#184/#486). Compares two or more applications or
+# postings side-by-side and returns a dimension table. Distinct from the vendored
+# model arena's own /api/compare. The engine route is itself llm-configured-gated;
+# this layer forwards that gate verbatim. Auth-protected, owner-scoped.
+from routes.applicant_compare_routes import setup_applicant_compare_routes
+app.include_router(setup_applicant_compare_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

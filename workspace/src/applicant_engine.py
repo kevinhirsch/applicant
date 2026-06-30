@@ -747,6 +747,32 @@ class ApplicantEngineClient:
             "POST", f"/api/criteria/{campaign_id}/learned", json=body
         )
 
+    # -- compare: cross-entity diffs (engine routers/compare.py, #297) -------
+    # Real cross-entity comparison. The engine's CompareService returns a
+    # dimension table (entity_ids / entity_labels / dimensions[].values+diff /
+    # summary) for applications or postings, optionally campaign-scoped (FR-CRIT-4).
+    # The engine route POSTs a bare list body of ids + a ``campaign_id`` query
+    # param, so these pass the ids as the JSON body and the campaign id as a query
+    # param to match its signature 1:1.
+
+    async def compare_applications(
+        self, application_ids: list[str], campaign_id: str | None = None
+    ) -> Any:
+        """Compare >=2 applications side-by-side (status / job-title diffs)."""
+        params = {"campaign_id": campaign_id} if campaign_id else None
+        return await self._request(
+            "POST", "/api/compare/applications", json=application_ids, params=params
+        )
+
+    async def compare_postings(
+        self, posting_ids: list[str], campaign_id: str | None = None
+    ) -> Any:
+        """Compare >=2 postings side-by-side (title / company / location diffs)."""
+        params = {"campaign_id": campaign_id} if campaign_id else None
+        return await self._request(
+            "POST", "/api/compare/postings", json=posting_ids, params=params
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

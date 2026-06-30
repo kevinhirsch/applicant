@@ -99,8 +99,9 @@ backed by an engine router under `src/applicant/app/routers/`:
 
 Engine-side adjacencies (**Calendar**, **Deep-Research**, **Cookbook**) reach the
 engine via the internal callback channel rather than as separate Applicant surfaces.
-**Compare** ships **present-but-disabled** — visible in the nav, greyed, never wired
-to the engine.
+**Compare** is engine-backed — put two or more applications (or postings) side-by-side
+to see exactly where they differ, optionally scoped to one campaign. It lights up in
+the nav once a model is connected.
 
 ## Documentation
 

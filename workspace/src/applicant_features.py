@@ -51,7 +51,7 @@ STATE_DISABLED = "disabled"  # present-but-disabled (no Applicant backing)
 
 
 #: The Applicant section map. One entry per workspace surface that Stage 2 wires
-#: to the engine, plus the present-but-disabled Compare surface. Each entry:
+#: to the engine. Each entry:
 #:
 #:   key            stable id used by the frontend + the contract doc.
 #:   lane           which Stage-2 lane owns the wiring (A/B/C/D, or None).
@@ -61,7 +61,8 @@ STATE_DISABLED = "disabled"  # present-but-disabled (no Applicant backing)
 #:   dormant_keys   engine dormant-surface keys whose status backs this section.
 #:   requires       gate predicate name evaluated against the engine setup status
 #:                  (see ``_requirement_met``); None = no extra gate.
-#:   present_but_disabled  True -> always reported ``disabled`` (Compare).
+#:   present_but_disabled  True -> always reported ``disabled`` (no surface uses
+#:                  this today; the machinery stays for any future stopgap surface).
 APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
     {
         "key": "documents",
@@ -200,16 +201,18 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
-    # Compare has NO Applicant engine backing. Per the brief it ships
-    # present-but-DISABLED: visible in the nav, greyed, never wired.
+    # Compare is engine-backed (#297): the engine's CompareService diffs two or
+    # more applications/postings side-by-side (engine /api/compare → the
+    # /api/applicant/compare proxy → applicantCompare.js). It lights up once a model
+    # is configured, exactly like the other engine-backed surfaces.
     {
         "key": "compare",
         "lane": None,
         "title": "Compare",
         "nav_ids": ["rail-compare", "tool-compare-btn"],
         "dormant_keys": [],
-        "requires": None,
-        "present_but_disabled": True,
+        "requires": "llm_configured",
+        "present_but_disabled": False,
     },
 )
 
