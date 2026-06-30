@@ -11,7 +11,7 @@ core never imports SQLAlchemy.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from applicant.core.entities.agent_run import AgentRun
@@ -23,24 +23,32 @@ from applicant.core.entities.decision import Decision
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
+from applicant.core.entities.follow_up import FollowUp
 from applicant.core.entities.generated_document import GeneratedDocument
+from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
+from applicant.core.entities.portfolio_attachment import PortfolioAttachment
+from applicant.core.entities.rejection_signal import RejectionSignal
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
+from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
     AttributeId,
     CampaignId,
     FieldMappingId,
+    FollowUpId,
     GeneratedDocumentId,
     JobPostingId,
     PendingActionId,
+    PortfolioAttachmentId,
     ResumeVariantId,
     RevisionSessionId,
+    SubmissionSnapshotId,
 )
 from applicant.core.state_machine import ApplicationState
 
@@ -168,6 +176,43 @@ class DetectionEventRepository(Protocol):
 
 
 @runtime_checkable
+class SubmissionSnapshotRepository(Protocol):
+    def add(self, snapshot: SubmissionSnapshot) -> None: ...
+    def get(self, snapshot_id: SubmissionSnapshotId) -> SubmissionSnapshot | None: ...
+    def get_for_application(self, application_id: ApplicationId) -> SubmissionSnapshot | None: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[SubmissionSnapshot]: ...
+    def delete_for_application(self, application_id: ApplicationId) -> bool: ...
+
+
+class RejectionSignalRepository(Protocol):
+    def add(self, signal: RejectionSignal) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[RejectionSignal]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[RejectionSignal]: ...
+
+
+class GhostingSignalRepository(Protocol):
+    def add(self, signal: GhostingSignal) -> None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[GhostingSignal]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[GhostingSignal]: ...
+
+
+class FollowUpRepository(Protocol):
+    def add(self, follow_up: FollowUp) -> None: ...
+    def get(self, follow_up_id: FollowUpId) -> FollowUp | None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[FollowUp]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[FollowUp]: ...
+    def list_due(self, now: datetime) -> list[FollowUp]: ...
+
+
+class PortfolioAttachmentRepository(Protocol):
+    def add(self, attachment: PortfolioAttachment) -> None: ...
+    def get(self, attachment_id: PortfolioAttachmentId) -> PortfolioAttachment | None: ...
+    def list_for_application(self, application_id: ApplicationId) -> list[PortfolioAttachment]: ...
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[PortfolioAttachment]: ...
+    def delete(self, attachment_id: PortfolioAttachmentId) -> bool: ...
+    def delete_for_application(self, application_id: ApplicationId) -> int: ...
+
+
 class OnboardingProfileRepository(Protocol):
     """Resumable onboarding intake + completion record (FR-ONBOARD-2)."""
 
@@ -271,6 +316,11 @@ class StoragePort(Protocol):
     agent_runs: AgentRunRepository
     detection_events: DetectionEventRepository
     onboarding_profiles: OnboardingProfileRepository
+    submission_snapshots: SubmissionSnapshotRepository
+    rejection_signals: RejectionSignalRepository
+    ghosting_signals: GhostingSignalRepository
+    follow_ups: FollowUpRepository
+    portfolio_attachments: PortfolioAttachmentRepository
 
     def commit(self) -> None: ...
     def rollback(self) -> None: ...

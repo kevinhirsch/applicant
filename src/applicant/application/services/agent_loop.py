@@ -139,6 +139,10 @@ class AgentLoop:
         digest_ledger: DigestLedger | None = None,
         llm=None,
         loop_toolset_factory=None,
+        # G07 pre-submit safety: optional dict of parameters.
+        # When set, the loop runs scam/ghost-job detection before each pipeline.
+        # ``None`` (default) skips all checks — byte-identical to before.
+        presubmit_safety_params: dict | None = None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -224,6 +228,10 @@ class AgentLoop:
                 application_pipeline.register(self._orch)
             except Exception:  # pragma: no cover - idempotent re-register tolerated
                 pass
+        # G07: pre-submit safety parameters. When non-None, the loop runs safety
+        # checks before starting each pipeline. ``None`` (default) skips all checks
+        # so existing callers are byte-identical.
+        self._presubmit_safety_params = presubmit_safety_params
 
     # --- daily throughput ledger (FR-AGENT-1) -----------------------------
     def acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
@@ -482,6 +490,63 @@ class AgentLoop:
             # Only act on applications that have not yet started the pipeline.
             if app.status is not ApplicationState.APPROVED:
                 continue
+            # G07: run pre-submit safety checks before starting the pipeline.
+            # When a check blocks, log it and skip — the posting remains APPROVED
+            # and a future re-drive with updated settings may pass.
+            if self._presubmit_safety_params is not None:
+                posting = self._storage.postings.get(posting_id)
+                if posting is not None:
+                    from applicant.application.services.presubmit_safety import (
+                        PresubmitBlock,
+                        check_duplicate_application,
+                        check_eligibility,
+                        check_per_company_volume_cap,
+                        check_scam_or_ghost_job,
+                    )
+
+                    try:
+                        check_scam_or_ghost_job(
+                            posting,
+                            max_age_days=self._presubmit_safety_params.get(
+                                "max_age_days", 90
+                            ),
+                            reference_date=now.date(),
+                        )
+                        check_duplicate_application(
+                            campaign.id,
+                            posting,
+                            self._storage,
+                            cooldown_days=self._presubmit_safety_params.get(
+                                "duplicate_cooldown_days", 30
+                            ),
+                            reference_date=now.date(),
+                        )
+                        check_per_company_volume_cap(
+                            campaign.id,
+                            posting,
+                            self._storage,
+                            max_per_day=self._presubmit_safety_params.get(
+                                "max_apps_per_company_per_day", 3
+                            ),
+                            reference_date=now.date(),
+                        )
+                        if self._presubmit_safety_params.get(
+                            "eligibility_enabled", True
+                        ):
+                            check_eligibility(
+                                campaign.id,
+                                posting,
+                                self._storage,
+                            )
+                    except PresubmitBlock as exc:
+                        log.info(
+                            "presubmit_blocked",
+                            application_id=str(app.id),
+                            posting_id=str(posting_id),
+                            check=exc.check,
+                            reason=exc.reason,
+                        )
+                        continue
             # #9: record the daily-acted budget ONLY after the pipeline actually
             # started. _start_pipeline returns False when admission is deferred (full
             # sandbox capacity); counting before would burn budget for work that never

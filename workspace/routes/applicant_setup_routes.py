@@ -57,24 +57,34 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
     * timeout / connection failure (``status is None``) -> 502 Bad Gateway.
-    * the engine answered with an HTTP error -> pass that status through (e.g.
-      400 bad LLM settings, 409 onboarding incomplete) so the wizard can react.
+    * 4xx: passed through (client-correctable: 400 bad LLM settings, 409
+      onboarding incomplete) so the wizard can react.
+    * 5xx: scrubbed — raw detail may contain internal stack traces or state;
+      logged server-side and a generic message returned to the browser.
     """
     if exc.status is None:
-        status_code = 502
         message = (
             "The application engine timed out."
             if exc.is_timeout
             else "The application engine is unavailable."
         )
-    else:
-        status_code = exc.status
-        message = "The application engine reported an error."
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": message, "engine_status": None},
+        )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (setup): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": "The application engine reported an error.", "engine_status": exc.status},
+        )
+    # 4xx: pass the engine's detail through so the wizard can react precisely
+    # (e.g. 400 bad LLM settings, 409 onboarding incomplete with section list).
     return JSONResponse(
-        status_code=status_code,
+        status_code=exc.status,
         content={
             "error": "engine_error",
-            "message": message,
+            "message": "The application engine reported an error.",
             "engine_status": exc.status,
             "detail": exc.detail,
         },

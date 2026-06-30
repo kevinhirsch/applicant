@@ -19,6 +19,7 @@ from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
+from applicant.core.entities.follow_up import FollowUpStatus
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
@@ -761,6 +762,64 @@ class _StageProxy:
 
 
 
+class _SubmissionSnapshotRepo:
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
+    def add(self, s): self._d[str(s.id)] = s
+    def get(self, sid): return self._d.get(str(sid))
+    def get_for_application(self, aid): return next((s for s in self._d.values() if s.application_id == aid), None)
+    def list_for_campaign(self, cid): return [s for s in self._d.values() if (a := self._applications.get(s.application_id)) and a.campaign_id == cid]
+    def delete_for_application(self, aid): return bool(sum(1 for k in list(self._d.keys()) if self._d[k].application_id == aid and self._d.pop(k, None) or 0))
+    def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
+
+class _RejectionSignalRepo:
+    def __init__(self, applications):
+        self._l = []
+        self._applications = applications
+    def add(self, s): self._l.append(s)
+    def list_for_application(self, aid): return sorted([s for s in self._l if s.application_id == aid], key=lambda s: s.detected_at)
+    def list_for_campaign(self, cid): return sorted([s for s in self._l if (a := self._applications.get(s.application_id)) and a.campaign_id == cid], key=lambda s: s.detected_at)
+    def delete_for_applications(self, aids):
+        n = len(self._l)
+        self._l = [s for s in self._l if str(s.application_id) not in aids]
+        return n - len(self._l)
+
+class _GhostingSignalRepo:
+    def __init__(self, applications):
+        self._l = []
+        self._applications = applications
+    def add(self, s): self._l.append(s)
+    def list_for_application(self, aid): return sorted([s for s in self._l if s.application_id == aid], key=lambda s: s.detected_at)
+    def list_for_campaign(self, cid): return sorted([s for s in self._l if s.campaign_id == cid], key=lambda s: s.detected_at)
+    def delete_for_applications(self, aids):
+        n = len(self._l)
+        self._l = [s for s in self._l if str(s.application_id) not in aids]
+        return n - len(self._l)
+
+class _FollowUpRepo:
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
+    def add(self, f): self._d[str(f.id)] = f
+    def get(self, fid): return self._d.get(str(fid))
+    def list_for_application(self, aid): return sorted([f for f in self._d.values() if f.application_id == aid], key=lambda f: f.created_at)
+    def list_for_campaign(self, cid): return sorted([f for f in self._d.values() if (a := self._applications.get(f.application_id)) and a.campaign_id == cid], key=lambda f: f.created_at)
+    def list_due(self, now): return sorted([f for f in self._d.values() if f.scheduled_at and f.scheduled_at <= now and f.status == FollowUpStatus.SCHEDULED], key=lambda f: f.scheduled_at)
+    def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
+
+class _PortfolioAttachmentRepo:
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
+    def add(self, a): self._d[str(a.id)] = a
+    def get(self, aid): return self._d.get(str(aid))
+    def list_for_application(self, aid): return sorted([a for a in self._d.values() if a.application_id == aid], key=lambda a: a.created_at)
+    def list_for_campaign(self, cid): return sorted([a for a in self._d.values() if a.application_id and (app := self._applications.get(a.application_id)) and app.campaign_id == cid], key=lambda a: a.created_at)
+    def delete(self, aid): return self._d.pop(str(aid), None) is not None
+    def delete_for_application(self, aid): return sum(1 for k in list(self._d.keys()) if self._d[k].application_id == aid and self._d.pop(k, None) or 0)
+    def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
+
 class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
 
@@ -787,6 +846,11 @@ class InMemoryStorage:
         self.agent_runs = _AgentRunRepo()
         self.detection_events = _DetectionEventRepo(self.applications)
         self.onboarding_profiles = _OnboardingProfileRepo()
+        self.submission_snapshots = _SubmissionSnapshotRepo(self.applications)
+        self.rejection_signals = _RejectionSignalRepo(self.applications)
+        self.ghosting_signals = _GhostingSignalRepo(self.applications)
+        self.follow_ups = _FollowUpRepo(self.applications)
+        self.portfolio_attachments = _PortfolioAttachmentRepo(self.applications)
         self._wrap_repos()
 
     def _wrap_repos(self) -> None:
@@ -808,6 +872,11 @@ class InMemoryStorage:
         self.agent_runs = _StageProxy(self.agent_runs, s)
         self.detection_events = _StageProxy(self.detection_events, s)
         self.onboarding_profiles = _StageProxy(self.onboarding_profiles, s)
+        self.submission_snapshots = _StageProxy(self.submission_snapshots, s)
+        self.rejection_signals = _StageProxy(self.rejection_signals, s)
+        self.ghosting_signals = _StageProxy(self.ghosting_signals, s)
+        self.follow_ups = _StageProxy(self.follow_ups, s)
+        self.portfolio_attachments = _StageProxy(self.portfolio_attachments, s)
 
     def commit(self) -> None:
         """Finalize pending changes by discarding the undo log."""
@@ -846,6 +915,11 @@ class InMemoryStorage:
             "outcomes": self.outcomes.delete_for_applications(app_ids),
             "screenshots": self.screenshots.delete_for_applications(app_ids),
             "detection_events": self.detection_events.delete_for_applications(app_ids),
+            "submission_snapshots": self.submission_snapshots.delete_for_applications(app_ids),
+            "rejection_signals": self.rejection_signals.delete_for_applications(app_ids),
+            "ghosting_signals": self.ghosting_signals.delete_for_applications(app_ids),
+            "follow_ups": self.follow_ups.delete_for_applications(app_ids),
+            "portfolio_attachments": self.portfolio_attachments.delete_for_applications(app_ids),
             "applications": self.applications.delete_for_campaign(cid),
             "postings": self.postings.delete_for_campaign(cid),
             "field_mappings": self.field_mappings.delete_for_campaign(cid),

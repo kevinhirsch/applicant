@@ -89,17 +89,53 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
     """Translate a typed :class:`EngineError` into an HTTPException for a *write*.
 
     A transport-level failure (timeout / connection refused — no response) means
-    the engine is unreachable → 503. An engine HTTP error is forwarded with its
-    own status and the engine's own ``detail`` so the user sees the real reason
-    (e.g. a 409 review-required gate).
+    the engine is unreachable → 503. 4xx responses from the engine are forwarded
+    (client-correctable: 409 review-required gate, 422 validation). 5xx responses
+    are scrubbed — the raw detail may contain internal stack traces or state; we
+    log it server-side and return a generic message to the browser.
     """
     if exc.status is None:
         return HTTPException(
             status_code=503,
             detail="The Applicant engine is unavailable right now. Please try again shortly.",
         )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (chat): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
     detail = exc.detail if exc.detail not in (None, "") else exc.message
     return HTTPException(status_code=exc.status, detail=detail)
+
+
+_SAFE_CHANGE_KEYS = frozenset(
+    {"kind", "name", "value", "is_integral", "is_sensitive", "requires_confirmation", "applied"}
+)
+
+
+def _scrub_chat_reply(raw: dict) -> dict:
+    """Whitelist the engine's chat reply to only user-facing fields.
+
+    The engine may include ``control_actions`` (internal agent-loop orchestration
+    state that can carry run IDs and internal session handles) and other fields
+    that are not needed by and must not be forwarded to the browser.
+    """
+    changes = []
+    for c in raw.get("proposed_changes") or []:
+        if isinstance(c, dict):
+            changes.append({k: v for k, v in c.items() if k in _SAFE_CHANGE_KEYS})
+    return {
+        "message": raw.get("message") or "",
+        "gaps": [g for g in (raw.get("gaps") or []) if isinstance(g, str)],
+        "proposed_changes": changes,
+    }
+
+
+def _scrub_confirm_reply(raw: dict) -> dict:
+    """Whitelist the engine's confirm reply to only user-facing fields."""
+    return {
+        "committed": bool(raw.get("committed")),
+        "name": raw.get("name") or "",
+        "value": raw.get("value") or "",
+    }
 
 
 def setup_applicant_chat_routes() -> APIRouter:
@@ -173,7 +209,7 @@ def setup_applicant_chat_routes() -> APIRouter:
                 )
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return result or {}
+        return _scrub_chat_reply(result or {})
 
     @router.post("/confirm")
     async def confirm_change(body: ConfirmIn, request: Request) -> dict:
@@ -190,7 +226,7 @@ def setup_applicant_chat_routes() -> APIRouter:
                 )
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return result or {}
+        return _scrub_confirm_reply(result or {})
 
     @router.post("/confirm-criteria")
     async def confirm_criteria(body: ConfirmCriteriaIn, request: Request) -> dict:

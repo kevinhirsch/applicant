@@ -7,6 +7,7 @@ validated by ``applicant.core.state_machine``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 
 from applicant.core.ids import (
     ApplicationId,
@@ -32,6 +33,7 @@ class Application:
     resume_variant_id: ResumeVariantId | None = None
     sandbox_session_url: str | None = None
     attributes_used: dict = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def with_status(self, to: ApplicationState) -> Application:
         """Return a copy advanced to ``to``, validating the transition (§7).
