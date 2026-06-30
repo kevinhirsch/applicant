@@ -4,8 +4,8 @@ Single source of "done" truth: a per-phase delivery summary for Applicant.
 **All phases are merged to `main`:** engine phases 0–4, a production-hardening remediation
 pass that followed an honest re-audit, and the **front-door (Phase 5)** lift-and-shift of
 the operator UI onto the white-labeled workspace app plus a reachability re-audit. The
-engine's hermetic default test lane is green — `uv run pytest -q` reports **613 passed**
-with 14 integration-gated skips.
+engine's hermetic default test lane is green — `uv run pytest -q` reports **2436 passed**
+with 24 integration-gated skips.
 
 > **Done means reachable.** A requirement is delivered only when it is reachable/operable
 > in the white-labeled workspace **front door** (`workspace/`), not merely when the engine
@@ -30,16 +30,16 @@ for the phase plan and exit criteria.
 | Phase 3b (durable revision sessions) | 480 |
 | Phase 4 | 539 |
 | Production-hardening remediation | 594 |
-| Production-hardening re-audit (current) | **613** |
+| Production-hardening re-audit (current) | **2436** |
 
-(14 integration tests skip by default — they require live external boundaries.)
+(24 integration tests skip by default — they require live external boundaries.)
 
 ## What is and isn't proven by the test suite
 
-The **613 hermetic tests prove the logic** of every requirement against fakes / in-memory
+The **2436 hermetic tests prove the logic** of every requirement against fakes / in-memory
 adapters — gates, state transitions, learning math, escalation cadence, sealing/unsealing,
 conversion rendering, etc. They do **not** exercise the real external boundaries end-to-end;
-the **14 integration-gated skips** cover those and run only on a live deployment with the
+the **24 integration-gated skips** cover those and run only on a live deployment with the
 matching toolchain/service present (live Postgres/DBOS, a real browser + chromium binary,
 live job boards, real TeX/LibreOffice, a live Neko session, live Discord/SMTP). The
 production code paths for those boundaries exist and are wired — only their live execution is
@@ -225,7 +225,7 @@ each against the actual `src/` code (file:line in [traceability.md](traceability
 
 ## Boundaries that require a live deployment
 
-The 14 default skips are not gaps — they exercise real external systems behind
+The 24 default skips are not gaps — they exercise real external systems behind
 integration-gated boundaries: DBOS/Postgres durable execution, real browser
 (patchright/playwright), live job boards, real TeX (lualatex/xelatex) + LibreOffice docx
 conversion, a live Neko remote session, and live Discord/SMTP delivery. The hermetic lane

@@ -111,7 +111,7 @@ jobs:
         run: uv run pytest -q workspace/tests/test_applicant_*.py
 
       - name: Workspace Python compiles
-        run: python -m compileall -q workspace/app.py workspace/routes workspace/src workspace/core
+        run: uv run python -m compileall -q workspace/app.py workspace/routes workspace/src workspace/core
 
       # --- Front-end JS syntax --------------------------------------------------
       - name: Install Node
