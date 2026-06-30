@@ -20,6 +20,8 @@ FINISHED_BY_ENGINE (friction-free, user-authorized).
 
 from __future__ import annotations
 
+import logging
+
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
@@ -35,6 +37,10 @@ from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
+# Stdlib logger for diagnostics that must be capturable by standard log handlers /
+# pytest ``caplog`` (structlog's PrintLogger renders straight to stdout and bypasses the
+# stdlib propagation chain). Used for the warn-on-loss conversion diagnostic (#240).
+_std_log = logging.getLogger(__name__)
 
 # ATS parse self-check: minimum field count for a parsable generated resume.
 _ATS_PARSE_MIN_FIELDS = 3
@@ -345,7 +351,19 @@ class SubmissionService:
         recorded submission. Moved here from the outcomes router so the remote
         terminal path (and any future submit path) also closes the loop (#2).
         """
-        if self._advanced_learning is None or not application.campaign_id:
+        if not application.campaign_id:
+            return
+        if self._advanced_learning is None:
+            # A conversion happened but no learning service is wired to fold it. The
+            # submission itself is still recorded; only the learning signal is lost.
+            # Surface a warning rather than vanishing silently (#240) so the lost
+            # conversion is at least visible in the logs / observability trail.
+            msg = (
+                "conversion could not be recorded: no learning service available "
+                "for campaign %s (submission still recorded)"
+            )
+            log.warning(msg, application.campaign_id)
+            _std_log.warning(msg, application.campaign_id)
             return
         posting = None
         if application.posting_id:

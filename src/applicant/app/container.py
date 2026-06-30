@@ -751,6 +751,27 @@ def build_container(settings: Settings | None = None) -> Container:
     learning_service = LearningService(storage, embedding)
     # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
     advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
+
+    # Surface engine-proposed attributes on the setup-status payload (#273) so the
+    # front-door "suggested attribute" approval card has a data source. Mirrors the
+    # apply-readiness reporter: reads the FIRST real campaign's stored inputs only, never
+    # fabricated. A reporter hiccup degrades to an empty list (status never breaks).
+    def _suggested_attributes() -> list[dict]:
+        from applicant.core.ids import SYSTEM_CAMPAIGN_ID
+
+        campaigns = [
+            c for c in storage.campaigns.list() if str(c.id) != SYSTEM_CAMPAIGN_ID
+        ]
+        if not campaigns:
+            return []
+        proposals = advanced_learning_service.suggest_attributes(campaigns[0].id)
+        return [
+            {"name": p.name, "value": p.value, "source": p.source}
+            for p in proposals
+        ]
+
+    setup_service.set_suggested_attributes_reporter(_suggested_attributes)
+
     discovery_service = DiscoveryService(
         storage,
         discovery,

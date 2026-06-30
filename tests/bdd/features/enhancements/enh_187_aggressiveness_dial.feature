@@ -22,7 +22,6 @@ Feature: Résumé aggressiveness dial is wired backend-side and never relaxes tr
     When the operator sets an above-maximum aggressiveness
     Then the service reports the clamped maximum
 
-  @pending
   Scenario: The chosen dial value persists per job search across requests
     Given a material service with a chosen aggressiveness for a job search
     When a fresh service is built for the same job search

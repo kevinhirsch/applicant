@@ -220,6 +220,29 @@ class SetupService:
             log.warning("apply_readiness_report_failed")
             return None
 
+    def set_suggested_attributes_reporter(
+        self, reporter: Callable[[], list[dict]]
+    ) -> None:
+        """Inject the engine-proposed-attribute reporter (composition root, #273).
+
+        Additive + optional: surfaces the attribute suggestions the learning layer
+        derives from the candidate's stored inputs so the front-door "suggested
+        attribute" approval card has a data source. When unset the status payload still
+        carries an empty ``suggested_attributes`` list (a stable contract, never noise).
+        """
+        self._suggested_attributes_reporter = reporter
+
+    def suggested_attributes(self) -> list[dict]:
+        """Return engine-proposed attributes awaiting operator approval (#273)."""
+        reporter = getattr(self, "_suggested_attributes_reporter", None)
+        if reporter is None:
+            return []
+        try:
+            return list(reporter() or [])
+        except Exception:  # pragma: no cover - a reporter hiccup never breaks status
+            log.warning("suggested_attributes_report_failed")
+            return []
+
     @property
     def sandbox_backend(self) -> str:
         """The selected sandbox backend (``local`` | ``proxmox-windows``)."""

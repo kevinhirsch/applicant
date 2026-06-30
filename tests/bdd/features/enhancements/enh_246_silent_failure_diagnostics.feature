@@ -18,7 +18,6 @@ Feature: Material generation enforces truthfulness and surfaces silent degradati
     When a variant is generated from a truthful source toward a job description
     Then the generated body adds no claim absent from the source
 
-  @pending
   Scenario: Repeated silent degradation surfaces a diagnostic instead of vanishing
     Given a material service that counts silent degradations
     When silent failures cross the diagnostic threshold

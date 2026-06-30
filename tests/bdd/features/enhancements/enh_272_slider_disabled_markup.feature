@@ -13,7 +13,6 @@ Feature: Aggressiveness slider operability follows the dormant registry, not har
     When the résumé-aggressiveness surface is looked up
     Then it is recorded as a live surface
 
-  @pending
   Scenario: The slider's operability follows the registry status, not hardcoded markup
     Given the résumé-aggressiveness control markup
     When the surface is read for a hardcoded disabled state

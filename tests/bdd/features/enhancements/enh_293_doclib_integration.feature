@@ -12,13 +12,11 @@ Feature: Applicant materials as first-class documents in the library
     When the lineage chain is walked
     Then the parent appears in the variant's lineage
 
-  @pending
   Scenario: A document-library résumé can be promoted to the new base résumé
     Given a stored résumé variant in the document library
     When the operator promotes it to the new base résumé
     Then the engine adopts it as the base it tailors from
 
-  @pending
   Scenario: A cover-letter template with merge fields is filled per application
     Given a cover-letter template with merge fields
     When the engine fills the template for an application

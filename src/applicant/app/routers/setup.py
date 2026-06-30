@@ -105,6 +105,10 @@ def _status_dict(svc) -> dict:
         "steps_complete": s.steps_complete,
         "gate_open": svc.is_setup_gate_open(),
         "automated_work_allowed": svc.is_automated_work_allowed(),
+        # Engine-proposed attributes awaiting operator approval (#273). Always present
+        # (empty by default) so the front-door "suggested attribute" card has a stable
+        # data source it can reveal when suggestions exist.
+        "suggested_attributes": svc.suggested_attributes(),
     }
     # Surface WHY applying is still blocked: the required-to-apply essentials that are
     # still missing + a plain reason, computed from real campaign data. Lets the front

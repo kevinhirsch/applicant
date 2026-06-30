@@ -831,6 +831,41 @@ class _PortfolioAttachmentRepo:
     def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
 
 
+class _CampaignAttachmentRepo:
+    """Campaign-scoped managed-attachment store (#197).
+
+    Unlike ``_PortfolioAttachmentRepo`` (which hangs attachments off a specific
+    application), this keys directly on the campaign so reference lists, transcripts and
+    other materials can be banked once per job search and reused across applications.
+    Retrieval is by campaign; entities are the shared ``PortfolioAttachment`` (which
+    already carries ``campaign_id``).
+    """
+
+    def __init__(self):
+        self._d = {}
+
+    def add(self, a):
+        self._d[str(a.id)] = a
+
+    def get(self, aid):
+        return self._d.get(str(aid))
+
+    def list_for_campaign(self, cid):
+        return sorted(
+            [a for a in self._d.values() if a.campaign_id == cid],
+            key=lambda a: a.created_at,
+        )
+
+    def delete(self, aid):
+        return self._d.pop(str(aid), None) is not None
+
+    def delete_for_campaign(self, cid):
+        stale = [k for k, a in self._d.items() if a.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
+
 class _ActionEventRepo:
     def __init__(self) -> None:
         self._d: dict = {}
@@ -893,6 +928,7 @@ class InMemoryStorage:
         self.ghosting_signals = _GhostingSignalRepo(self.applications)
         self.follow_ups = _FollowUpRepo(self.applications)
         self.portfolio_attachments = _PortfolioAttachmentRepo(self.applications)
+        self.campaign_attachments = _CampaignAttachmentRepo()
         self.action_events = _ActionEventRepo()
         self._wrap_repos()
 
@@ -920,6 +956,7 @@ class InMemoryStorage:
         self.ghosting_signals = _StageProxy(self.ghosting_signals, s)
         self.follow_ups = _StageProxy(self.follow_ups, s)
         self.portfolio_attachments = _StageProxy(self.portfolio_attachments, s)
+        self.campaign_attachments = _StageProxy(self.campaign_attachments, s)
         self.action_events = _StageProxy(self.action_events, s)
 
     def commit(self) -> None:

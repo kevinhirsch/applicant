@@ -12,7 +12,6 @@ Feature: A failed conversion never breaks a submission but is lost without a log
     When an approved application is submitted
     Then the submission is still recorded with an outcome event
 
-  @pending
   Scenario: A conversion with no learning service available is logged
     Given a submission service wired with no conversion learning
     When an approved application is submitted
