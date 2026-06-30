@@ -43,6 +43,8 @@ from applicant.core.entities.revision_session import (
     RevisionTurn,
 )
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
+from applicant.core.events import ApplicationStateChanged as _AppStateChanged
+from applicant.core.events import event_bus
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -424,7 +426,19 @@ class ApplicationRepo:
         self._s.merge(self._to_model(application))
 
     def update(self, application: Application) -> None:
+        old_row = self._s.get(m.ApplicationModel, application.id)
+        old_status = old_row.status if old_row is not None else None
         self._s.merge(self._to_model(application))
+        # Emit when status actually changes (the central chokepoint for all
+        # application state transitions).
+        if old_status is not None and old_status != application.status.value:
+            event_bus.emit(
+                _AppStateChanged(
+                    application_id=application.id,
+                    from_state=old_status,
+                    to_state=application.status.value,
+                )
+            )
 
     def get(self, application_id: ApplicationId) -> Application | None:
         row = self._s.get(m.ApplicationModel, application_id)
@@ -1217,6 +1231,60 @@ class PortfolioAttachmentRepo:
             .delete(synchronize_session=False) or 0
         )
 
+class ActionEventRepo:
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def add(self, event):
+        self._s.merge(
+            m.ActionEventModel(
+                id=event.id,
+                occurred_at=event.occurred_at,
+                application_id=event.application_id,
+                campaign_id=event.campaign_id,
+                actor=event.actor,
+                action=event.action,
+                reason=event.reason,
+                context=event.context,
+            )
+        )
+
+    def list_for_campaign(self, campaign_id, *, limit=None, offset=0):
+        stmt = (
+            select(m.ActionEventModel)
+            .where(m.ActionEventModel.campaign_id == campaign_id)
+            .order_by(m.ActionEventModel.occurred_at.desc(), m.ActionEventModel.id.desc())
+            .offset(offset)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = self._s.scalars(stmt).all()
+        return [_action_event_to_entity(r) for r in rows]
+
+    def list_for_application(self, application_id):
+        rows = self._s.scalars(
+            select(m.ActionEventModel)
+            .where(m.ActionEventModel.application_id == application_id)
+            .order_by(m.ActionEventModel.occurred_at.desc(), m.ActionEventModel.id.desc())
+        ).all()
+        return [_action_event_to_entity(r) for r in rows]
+
+
+def _action_event_to_entity(row):
+    from applicant.core.entities.action_event import ActionEvent as _AE
+
+    return _AE(
+        id=row.id,
+        occurred_at=row.occurred_at,
+        application_id=ApplicationId(row.application_id) if row.application_id else None,
+        campaign_id=CampaignId(row.campaign_id) if row.campaign_id else None,
+        actor=row.actor,
+        action=row.action,
+        reason=row.reason,
+        context=dict(row.context or {}),
+    )
+
+
 class OnboardingProfileRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1267,6 +1335,7 @@ class SqlAlchemyStorage:
         self.ghosting_signals = GhostingSignalRepo(session)
         self.follow_ups = FollowUpRepo(session)
         self.portfolio_attachments = PortfolioAttachmentRepo(session)
+        self.action_events = ActionEventRepo(session)
 
     def commit(self) -> None:
         self._session.commit()

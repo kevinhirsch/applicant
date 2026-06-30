@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
+from applicant.core.entities.action_event import ActionEvent
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
@@ -204,6 +205,7 @@ class FollowUpRepository(Protocol):
     def list_due(self, now: datetime) -> list[FollowUp]: ...
 
 
+@runtime_checkable
 class PortfolioAttachmentRepository(Protocol):
     def add(self, attachment: PortfolioAttachment) -> None: ...
     def get(self, attachment_id: PortfolioAttachmentId) -> PortfolioAttachment | None: ...
@@ -211,6 +213,23 @@ class PortfolioAttachmentRepository(Protocol):
     def list_for_campaign(self, campaign_id: CampaignId) -> list[PortfolioAttachment]: ...
     def delete(self, attachment_id: PortfolioAttachmentId) -> bool: ...
     def delete_for_application(self, application_id: ApplicationId) -> int: ...
+
+
+@runtime_checkable
+class ActionEventRepository(Protocol):
+    """Append-only audit trail (FR-LOG-4, FR-OBS-2)."""
+
+    def add(self, event: ActionEvent) -> None: ...
+    def list_for_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ActionEvent]: ...
+    def list_for_application(
+        self, application_id: ApplicationId
+    ) -> list[ActionEvent]: ...
 
 
 class OnboardingProfileRepository(Protocol):
@@ -321,6 +340,7 @@ class StoragePort(Protocol):
     ghosting_signals: GhostingSignalRepository
     follow_ups: FollowUpRepository
     portfolio_attachments: PortfolioAttachmentRepository
+    action_events: ActionEventRepository
 
     def commit(self) -> None: ...
     def rollback(self) -> None: ...

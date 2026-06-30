@@ -17,6 +17,7 @@ from __future__ import annotations
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
+from applicant.core.events import JobDiscovered, event_bus
 from applicant.core.ids import CampaignId, DiscoverySourceId, new_id
 
 #: Cosine similarity above which two postings are treated as duplicates.
@@ -117,6 +118,12 @@ class DiscoveryService:
         kept = self._dedup(raw, existing=existing)
         for posting in kept:
             self._storage.postings.add(posting)
+            event_bus.emit(
+                JobDiscovered(
+                    campaign_id=campaign_id,
+                    posting_id=posting.id,
+                )
+            )
         self._storage.commit()
         self._record_yield(campaign_id, kept)
         return kept

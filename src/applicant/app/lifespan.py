@@ -232,7 +232,23 @@ async def lifespan(app: FastAPI):
             pass
         log.warning("dormant_seed_failed", error=str(exc))
 
-    # 3b) Seed the reserved system campaign so instance-level secrets (the LLM key,
+    # 3b) Start the audit-log service — subscribes to the domain event bus and
+    #     persists one ActionEvent per emission (FR-LOG-4, FR-OBS-2). Process-lived;
+    #     each handler opens its own DB session so the audit trail survives rollbacks.
+    try:
+        from applicant.application.services.audit_log_service import AuditLogService
+
+        session_factory = getattr(container, "session_factory", None)
+        audit_log = AuditLogService(
+            storage=container.storage,
+            session_factory=session_factory,
+        )
+        audit_log.start()
+        log.info("audit_log_started", session_isolated=session_factory is not None)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("audit_log_start_failed", error=str(exc))
+
+    # 3c) Seed the reserved system campaign so instance-level secrets (the LLM key,
     #     sandbox tokens) can be sealed in the credential store, whose campaign_id is
     #     a non-null FK to campaigns. Only on a real DB — in-memory storage has no FK,
     #     and skipping keeps the hermetic test lane's campaign listings clean. Kept

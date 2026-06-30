@@ -408,6 +408,29 @@ class PortfolioAttachmentModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
+# 20 -------------------------------------------------------------------------
+class ActionEventModel(Base):
+    """Append-only action trail (FR-LOG-4, FR-OBS-2).
+
+    One row per action the engine takes, in sequence, with the why.
+    """
+
+    __tablename__ = "action_events"
+    __table_args__ = (
+        Index("ix_action_events_campaign_occurred", "campaign_id", "occurred_at"),
+        Index("ix_action_events_application", "application_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    application_id: Mapped[str | None] = mapped_column(ForeignKey("applications.id"), nullable=True, index=True)
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True, index=True)
+    actor: Mapped[str] = mapped_column(String(16), default="engine")
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    context: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+
 # derived -------------------------------------------------------------------
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
@@ -452,6 +475,7 @@ ALL_TABLES = [
     DormantSurfaceBacklogModel,
     AppConfigModel,
     CredentialModel,
+    ActionEventModel,
     PendingActionModel,
     # G16: Post-submission lifecycle tables.
     SubmissionSnapshotModel,

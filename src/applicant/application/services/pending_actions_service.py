@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 
 from applicant.core import task_metadata
 from applicant.core.entities.pending_action import PendingAction
+from applicant.core.events import PendingActionRaised, event_bus
 from applicant.core.ids import ApplicationId, CampaignId, PendingActionId, new_id
 
 KIND_DIGEST_APPROVAL = "digest_approval"
@@ -70,6 +71,13 @@ class PendingActionsService:
         )
         self._storage.pending_actions.add(action)
         self._storage.commit()
+        event_bus.emit(
+            PendingActionRaised(
+                application_id=application_id,
+                action_kind=kind,
+                reason=title,
+            )
+        )
         return action
 
     # --- convenience constructors -----------------------------------------

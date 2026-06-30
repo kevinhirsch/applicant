@@ -44,6 +44,7 @@ from applicant.core.errors import (
     ReviewRequired,
     TruthfulnessViolation,
 )
+from applicant.core.events import MaterialApproved, event_bus
 from applicant.core.ids import (
     ApplicationId,
     CampaignId,
@@ -1133,6 +1134,7 @@ class MaterialService:
         )
         self._storage.documents.add(approved)
         self._storage.commit()
+        event_bus.emit(MaterialApproved(document_id=document_id))
         session = self._storage.revisions.get_for_material(document_id)
         if session is not None:
             self._save_session(
