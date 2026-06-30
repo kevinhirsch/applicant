@@ -840,6 +840,12 @@ app.include_router(setup_applicant_activity_routes())
 from routes.applicant_gallery_routes import setup_applicant_gallery_routes
 app.include_router(setup_applicant_gallery_routes())
 
+# Campaign + discovery-source settings (#301) — owner-scoped proxy over the
+# engine's campaign config (rename/archive/run-mode/throughput/budget) and
+# per-campaign discovery-source toggles (Settings → Campaign tab).
+from routes.applicant_campaigns_routes import setup_applicant_campaigns_routes
+app.include_router(setup_applicant_campaigns_routes())
+
 # Manual deep-research trigger — owner-scoped proxy over the engine's manual
 # research run + budget (/api/applicant/research/*). The agent auto-escalates to
 # research already; this gives the user a front-door "Research this" affordance

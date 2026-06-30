@@ -52,6 +52,19 @@ const RELOCATED_SETUP_STEPS = {
 };
 
 function mountRelocatedSetupStep(tab) {
+  // The Campaign tab (#301) hosts the campaign config + discovery-source toggles,
+  // a self-contained module that mounts into its own host card.
+  if (tab === 'campaign') {
+    const campaignHost = document.getElementById('ao-settings-campaign');
+    const mountCampaigns = window.mountApplicantCampaignSettings;
+    if (campaignHost && typeof mountCampaigns === 'function') {
+      campaignHost.innerHTML = '';
+      Promise.resolve(mountCampaigns(campaignHost)).catch(e => {
+        console.error('Failed to mount campaign settings:', e);
+        campaignHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load campaign settings.</p>';
+      });
+    }
+  }
   // The AI tab also hosts the model escalation ladder editor (FR-LLM-3), a
   // self-contained module mounted into its own host card.
   if (tab === 'ai') {

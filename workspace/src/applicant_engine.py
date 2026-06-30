@@ -294,6 +294,24 @@ class ApplicantEngineClient:
     async def create_campaign(self, name: str) -> Any:
         return await self._request("POST", "/api/campaigns", json={"name": name})
 
+    async def update_campaign(self, campaign_id: str, body: dict) -> Any:
+        """Rename / archive / re-tune a campaign's run config (#301, FR-CRIT-4)."""
+        return await self._request("PATCH", f"/api/campaigns/{campaign_id}", json=body)
+
+    # -- discovery sources (#301, FR-DISC-2/5) ---------------------------
+
+    async def list_discovery_sources(self, campaign_id: str) -> Any:
+        return await self._request("GET", f"/api/discovery-sources/{campaign_id}")
+
+    async def toggle_discovery_source(
+        self, campaign_id: str, source_key: str, enabled: bool
+    ) -> Any:
+        return await self._request(
+            "PUT",
+            f"/api/discovery-sources/{campaign_id}/{source_key}",
+            json={"enabled": enabled},
+        )
+
     # -- documents / variants (Lane A) -----------------------------------
 
     async def list_documents(self) -> Any:
