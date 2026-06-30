@@ -41,10 +41,23 @@ class CompareService:
     def compare_applications(
         self, application_ids: list[str], campaign_id: str | None = None
     ) -> ComparisonResult:
+        # Campaign scoping (FR-CRIT-4): when a campaign is given, only the requested
+        # ids that actually belong to that campaign are eligible — an id from another
+        # campaign is excluded so a caller cannot compare across campaigns.
+        allowed: set[str] | None = None
+        if campaign_id is not None:
+            allowed = {
+                str(a.id)
+                for a in self._storage.applications.list_for_campaign(campaign_id)
+            }
         apps: list[Any] = []
         for aid in application_ids:
+            if allowed is not None and str(aid) not in allowed:
+                continue
             app = self._storage.applications.get(aid)
-            if app is not None:
+            if app is not None and (
+                campaign_id is None or str(getattr(app, "campaign_id", "")) == str(campaign_id)
+            ):
                 apps.append(app)
 
         result = ComparisonResult(
@@ -74,10 +87,22 @@ class CompareService:
     def compare_postings(
         self, posting_ids: list[str], campaign_id: str | None = None
     ) -> ComparisonResult:
+        # Campaign scoping (FR-CRIT-4): same guard as applications — a posting id
+        # from another campaign is excluded from the comparison set.
+        allowed: set[str] | None = None
+        if campaign_id is not None:
+            allowed = {
+                str(p.id)
+                for p in self._storage.postings.list_for_campaign(campaign_id)
+            }
         postings: list[Any] = []
         for pid in posting_ids:
+            if allowed is not None and str(pid) not in allowed:
+                continue
             p = self._storage.postings.get(pid)
-            if p is not None:
+            if p is not None and (
+                campaign_id is None or str(getattr(p, "campaign_id", "")) == str(campaign_id)
+            ):
                 postings.append(p)
 
         result = ComparisonResult(

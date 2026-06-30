@@ -10,21 +10,21 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
+from applicant.app.deps import get_compare_service, require_llm_configured
 from applicant.application.services.compare_service import CompareService
 
-router = APIRouter(prefix="/api/compare", tags=["compare"])
-
-
-def _get_service(request: Any) -> CompareService:
-    container = request.app.state.container
-    return container.compare_service
+router = APIRouter(
+    prefix="/api/compare",
+    tags=["compare"],
+    dependencies=[Depends(require_llm_configured)],
+)
 
 
 @router.post("/applications")
 def compare_applications(
     application_ids: list[str],
     campaign_id: str | None = None,
-    svc: CompareService = Depends(_get_service),
+    svc: CompareService = Depends(get_compare_service),
 ) -> dict[str, Any]:
     result = svc.compare_applications(application_ids, campaign_id)
     return {
@@ -42,7 +42,7 @@ def compare_applications(
 def compare_postings(
     posting_ids: list[str],
     campaign_id: str | None = None,
-    svc: CompareService = Depends(_get_service),
+    svc: CompareService = Depends(get_compare_service),
 ) -> dict[str, Any]:
     result = svc.compare_postings(posting_ids, campaign_id)
     return {
