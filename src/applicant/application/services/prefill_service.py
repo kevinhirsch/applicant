@@ -166,6 +166,7 @@ class PrefillService:
         match_rate_floor: float = DEFAULT_MATCH_RATE_FLOOR,
         planner=None,
         use_planner: bool = False,
+        captcha_solver=None,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -205,6 +206,14 @@ class PrefillService:
         # behaviour changes; flip PREFILL_USE_PLANNER=true to opt in.
         self._planner = planner
         self._use_planner = bool(use_planner) and (planner is not None)
+        # #350 CaptchaSolverPort: an opt-in driven port placed in FRONT of the existing
+        # captcha stop-boundary hand-off. Optional/defaulted: absent (or the default
+        # ``human`` strategy) means EVERY captcha still routes to the existing hand-off,
+        # so behavior is byte-for-byte identical to today. Score/behavioral captchas may
+        # be avoided via stealth and interactive challenges solved by token injection
+        # ONLY when the operator explicitly opts in; any failure degrades to the hand-off.
+        # It never bypasses the account-create / final-submit stop-boundary.
+        self._captcha_solver = captcha_solver
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -714,6 +723,13 @@ class PrefillService:
                 elif reason in ("account_create", "email_verify", "two_factor", "sms_verify"):
                     return self._account_handoff(app, result, result.sandbox_session_url)
                 elif reason in ("captcha", "oauth"):
+                    # #350: route a captcha through the opt-in solver port FIRST. With the
+                    # default config (no solver / ``human`` strategy) this is a no-op and we
+                    # fall straight through to the existing hand-off below — byte-for-byte
+                    # today's behavior. Only an explicitly opted-in avoid/solve can continue
+                    # the page; a failed/disabled solve falls back to the same hand-off.
+                    if reason == "captcha" and self._try_solve_captcha(app, state):
+                        continue
                     # Emit a detection-style blocked state.
                     from applicant.core.entities.pending_action import PendingAction
                     from applicant.core.ids import PendingActionId
@@ -750,6 +766,45 @@ class PrefillService:
             result.filled_by_page[state.url] = page_log
 
         return None
+
+    def _try_solve_captcha(self, app, state) -> bool:
+        """#350: route a detected captcha through the opt-in solver port.
+
+        Returns True ONLY when the captcha was resolved (avoided via stealth, or solved
+        by token injection) so the caller may CONTINUE the page. Returns False — with no
+        side effects — when there is no solver, the strategy is the default hand-off, the
+        captcha is unsupported, or the solve failed; the caller then runs the EXISTING
+        stop-boundary hand-off. So with the shipped defaults this always returns False
+        and behavior is byte-for-byte identical to today.
+
+        This never advances past the account-create / final-submit boundary — those are
+        separate stop reasons handled above; this only ever resolves the captcha gate.
+        """
+        solver = self._captcha_solver
+        if solver is None:
+            return False
+        try:
+            from applicant.adapters.captcha.context import build_captcha_context
+            from applicant.ports.driven.captcha import CaptchaDisposition
+
+            context = build_captcha_context(state)
+            outcome = solver.resolve(context)
+        except Exception:  # noqa: BLE001 — a solver failure must degrade to the hand-off
+            log.warning(
+                "captcha solver raised for application %s — falling back to hand-off",
+                app.id,
+                exc_info=True,
+            )
+            return False
+        if outcome.disposition in (CaptchaDisposition.AVOID,) and not outcome.solved:
+            # Score/behavioral: proceed without a token (stealth already minimizes risk).
+            log.info("captcha avoided for application %s: %s", app.id, outcome.detail)
+            return True
+        if outcome.solved:
+            log.info("captcha solved for application %s: %s", app.id, outcome.detail)
+            return True
+        # HANDOFF (or any unsolved outcome): defer to the existing stop-boundary.
+        return False
 
     def _lookup_credential(self, app, *, tenant_key: str | None = None):
         """Retrieve a stored credential, or ``None``. Defaults to the application's ATS
