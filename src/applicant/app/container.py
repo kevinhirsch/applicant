@@ -212,8 +212,10 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
             "Data will NOT be persisted across restarts.",
             exc,
         )
-    # No reachable DB (tests / first boot) — use in-memory storage.
-    return None, None, InMemoryStorage()
+    # No reachable DB — degrade to in-memory storage, but mark this instance as a
+    # fallback so its healthcheck() reports unhealthy (#312): the engine must fail
+    # LOUD about running without a persistent DB, not silently pretend it is healthy.
+    return None, None, InMemoryStorage(is_fallback=True)
 
 
 def ensure_system_campaign(storage: Any) -> bool:

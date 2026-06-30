@@ -201,7 +201,17 @@ async def lifespan(app: FastAPI):
     # 2) Verify DB connectivity (tolerate no-DB in tests).
     try:
         healthy = container.storage.healthcheck()
-        log.info("db_healthcheck", healthy=healthy)
+        if healthy:
+            log.info("db_healthcheck", healthy=healthy)
+        else:
+            # #312 — fail LOUD: the storage layer degraded to non-persistent
+            # in-memory mode because the database was unreachable. This is NOT a
+            # silent fallback; surface it so operators (and /healthz) see degraded.
+            log.warning(
+                "db_healthcheck",
+                healthy=healthy,
+                degraded="database unreachable — running on non-persistent in-memory storage; data will NOT survive restart",
+            )
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("db_healthcheck_failed", error=str(exc))
 
