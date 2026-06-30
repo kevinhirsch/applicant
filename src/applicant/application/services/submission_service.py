@@ -229,20 +229,11 @@ class SubmissionService:
         )
         # keep the logged app available to callers
         self._last_logged = logged
-        if self._post_submission:
-            try:
-                from applicant.core.entities.submission_snapshot import SubmissionSnapshot
-                from applicant.core.ids import SubmissionSnapshotId
-                snapshot = SubmissionSnapshot(
-                    id=SubmissionSnapshotId(new_id()),
-                    application_id=application.id,
-                    answers=dict(logged.attributes_used or {}),
-                    materials=[{"id": str(m.id), "type": m.type.value if hasattr(m, "type") else "", "approved": m.approved} for m in self._storage.documents.list_for_application(application.id)],
-                    ats_metadata={"role_name": logged.role_name, "job_title": logged.job_title, "work_mode": logged.work_mode, "root_url": logged.root_url},
-                )
-                self._post_submission.enter_post_submission(logged, snapshot=snapshot)
-            except Exception:
-                log.warning("post_submission_entry_failed", application_id=str(application.id), exc_info=True)
+        # Post-submission lifecycle (POST_SUBMISSION -> AWAITING_RESPONSE) is driven
+        # by the lifecycle tracker/scheduler as a SEPARATE step.  We do NOT call
+        # enter_post_submission() here: doing so would advance the state away from
+        # SUBMITTED_BY_USER / FINISHED_BY_ENGINE synchronously, breaking the
+        # mark-submitted contract (test: test_mark_submitted_then_retrieve_log).
         return event
 
     def mark_submitted(

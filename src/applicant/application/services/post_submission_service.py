@@ -28,11 +28,17 @@ class PostSubmissionService:
         self._notification = notification_service
 
     def enter_post_submission(self, application, *, snapshot=None):
+        """Transition the application to POST_SUBMISSION.
+
+        The subsequent move to AWAITING_RESPONSE is a SEPARATE lifecycle step
+        driven by the tracker/scheduler (advance_to_awaiting_response), NOT
+        applied synchronously here.  Doing so synchronously would skip
+        SUBMITTED_BY_USER, breaking the mark-submitted contract.
+        """
         app = application.with_status(ApplicationState.POST_SUBMISSION)
         self._storage.applications.update(app)
         if snapshot:
             self._storage.submission_snapshots.add(snapshot)
-        app = self.advance_to_awaiting_response(app)
         self._storage.commit()
         return app
 
