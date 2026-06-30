@@ -473,7 +473,7 @@ export function prewarmEmailLibrary({ delay = 2500 } = {}) {
   _libPrewarmTimer = setTimeout(() => {
     _libPrewarmTimer = null;
     _libPrewarmPromise = _prewarmDefaultEmailView()
-      .catch(() => {})
+      .catch(e => console.error('Silent catch in emailLibrary:', e))
       .finally(() => { _libPrewarmPromise = null; });
   }, Math.max(0, Number(delay) || 0));
 }
@@ -1912,7 +1912,7 @@ function _prefetchAdjacentEmails(card, count = 3) {
     if (_emailReadPrefetching.has(key)) continue;
     _emailReadPrefetching.add(key);
     fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uid)}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&mark_seen=false`)
-      .catch(() => {})
+      .catch(e => console.error('Silent catch in emailLibrary:', e))
       .finally(() => _emailReadPrefetching.delete(key));
   }
 }
@@ -4263,7 +4263,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       action: async () => {
         const email = (em.from_address || em.from || '').trim();
         if (!email) {
-          import('./ui.js').then(m => m.showError && m.showError('No sender address')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError('No sender address')).catch(e => console.error('Silent catch in emailLibrary:', e));
           return;
         }
         const name = (em.from_name || '').trim() || email.split('@')[0];
@@ -4279,9 +4279,9 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
             if (d.success && d.message === 'Already exists') m.showToast('Already in contacts');
             else if (d.success) m.showToast('Saved to contacts');
             else m.showError && m.showError('Failed to save contact');
-          }).catch(() => {});
+          }).catch(e => console.error('Silent catch in emailLibrary:', e));
         } catch (_) {
-          import('./ui.js').then(m => m.showError && m.showError('Failed to save contact')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError('Failed to save contact')).catch(e => console.error('Silent catch in emailLibrary:', e));
         }
       },
     },

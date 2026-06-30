@@ -236,6 +236,7 @@ def dist_status(ds):
         try:
             out[d] = md.version(d)
         except Exception:
+            logger.warning("Bare exception in shell_routes.py")
             pass
     return out
 
@@ -568,6 +569,7 @@ async def _generate_tmux(cmd: str, request: Request):
     try:
         log_path.unlink(missing_ok=True)
     except Exception:
+        logger.warning("Bare exception in shell_routes.py")
         pass
 
 
@@ -646,6 +648,7 @@ async def _generate_win_detached(cmd: str, request: Request):
                     lines_sent = len(lines)
                 exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
             except Exception:
+                logger.warning("Bare exception in shell_routes.py")
                 exit_code = 0
             break
         await asyncio.sleep(1.0)
@@ -655,6 +658,7 @@ async def _generate_win_detached(cmd: str, request: Request):
         try:
             p.unlink(missing_ok=True)
         except Exception:
+            logger.warning("Bare exception in shell_routes.py")
             pass
 
 
@@ -860,6 +864,7 @@ def setup_shell_routes() -> APIRouter:
             except ValueError as e:
                 raise HTTPException(400, str(e))
             except Exception:
+                logger.warning("Bare exception in shell_routes.py")
                 remote_status = {}
         if host and remote_system_names:
             try:
@@ -881,6 +886,7 @@ def setup_shell_routes() -> APIRouter:
             except ValueError as e:
                 raise HTTPException(400, str(e))
             except Exception:
+                logger.warning("Bare exception in shell_routes.py")
                 pass
 
         for pkg in packages:

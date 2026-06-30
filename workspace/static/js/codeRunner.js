@@ -69,7 +69,7 @@ function showOutput(panel, text, isError) {
           if (uiModule.showToast) uiModule.showToast('Copied');
           cbtn.textContent = 'Copied!';
           setTimeout(() => { cbtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy'; }, 1500);
-        }).catch(() => { if (uiModule.showToast) uiModule.showToast('Copy failed'); });
+        }).catch(e => { console.error('Copy failed:', e); if (uiModule.showToast) uiModule.showToast('Copy failed'); });
         return;
       }
       if (uiModule.showToast) uiModule.showToast(ok ? 'Copied' : 'Copy failed');

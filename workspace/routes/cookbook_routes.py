@@ -223,6 +223,7 @@ def setup_cookbook_routes() -> APIRouter:
             env = state.get("env") if isinstance(state, dict) else {}
             return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             return ""
 
     def _cookbook_ssh_dir() -> Path:
@@ -321,6 +322,7 @@ def setup_cookbook_routes() -> APIRouter:
             await asyncio.wait_for(proc.communicate(), timeout=10)
             return proc.returncode == 0
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             return False
 
     async def _binary_available(binary: str, remote: str | None, ssh_port: str | None, *, windows: bool = False) -> bool:
@@ -631,6 +633,7 @@ def setup_cookbook_routes() -> APIRouter:
                 category="Download",
             )
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             pass
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local"}
@@ -1097,6 +1100,7 @@ def setup_cookbook_routes() -> APIRouter:
                 category="Serve",
             )
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             pass
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local",
@@ -1140,6 +1144,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
                 platform = stdout2.decode().strip()
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             platform = "linux"
 
         if platform == "windows":
@@ -1419,6 +1424,7 @@ def setup_cookbook_routes() -> APIRouter:
                         "pid": pid, "name": pname, "used_mb": pmem,
                     })
         except Exception:
+            logger.warning("Bare exception in cookbook_routes.py")
             pass
 
         if gpus:
@@ -1519,6 +1525,7 @@ def setup_cookbook_routes() -> APIRouter:
             try:
                 return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
             except Exception:
+                logger.warning("Bare exception in cookbook_routes.py")
                 return {}
         return {}
 
@@ -1550,6 +1557,7 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     on_disk = {}
             except Exception:
+                logger.warning("Bare exception in cookbook_routes.py")
                 on_disk = {}
             # Anti-wipe guard for env servers. The UI debounces a
             # sync of whatever is in memory; if it fires before the state has
@@ -1733,6 +1741,7 @@ def setup_cookbook_routes() -> APIRouter:
                 elif isinstance(saved_tasks, dict):
                     tasks = list(saved_tasks.values())
             except Exception:
+                logger.warning("Bare exception in cookbook_routes.py")
                 pass
 
         results = []
@@ -1818,6 +1827,7 @@ def setup_cookbook_routes() -> APIRouter:
                 try:
                     task_pid = int(pid_path.read_text(encoding="utf-8").strip())
                 except Exception:
+                    logger.warning("Bare exception in cookbook_routes.py")
                     task_pid = None
                 is_alive = pid_alive(task_pid)
                 try:
@@ -1832,12 +1842,14 @@ def setup_cookbook_routes() -> APIRouter:
                         elif lines:
                             progress_text = lines[-1]
                 except Exception:
+                    logger.warning("Bare exception in cookbook_routes.py")
                     pass
             else:
                 try:
                     alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
                     is_alive = alive.returncode == 0
                 except Exception:
+                    logger.warning("Bare exception in cookbook_routes.py")
                     is_alive = False
 
                 # Capture last lines for progress. Prefer the "Downloading" line
@@ -1855,6 +1867,7 @@ def setup_cookbook_routes() -> APIRouter:
                             elif lines:
                                 progress_text = lines[-1]
                     except Exception:
+                        logger.warning("Bare exception in cookbook_routes.py")
                         pass
 
             # Determine status. For the local-Windows detached model the log file

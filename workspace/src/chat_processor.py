@@ -97,6 +97,7 @@ def _fetch_onboarding_gap_note(owner: Optional[str]) -> Optional[str]:
                     if isinstance(status, dict) and status.get("onboarding_complete"):
                         return None
                 except Exception:
+                    logger.warning("setup_status check failed, falling through to per-campaign check")
                     # setup_status is a best-effort fast-path; fall through to the
                     # per-campaign check rather than failing the whole note.
                     pass

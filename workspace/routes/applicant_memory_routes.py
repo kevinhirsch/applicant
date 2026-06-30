@@ -98,6 +98,13 @@ class EditCriteriaIn(BaseModel):
     campaign_id: Optional[str] = None
 
 
+class LearnedIn(BaseModel):
+    """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3)."""
+    adjustment: dict
+    rationale: str = ""
+    campaign_id: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Error translation
 # ---------------------------------------------------------------------------
@@ -383,6 +390,23 @@ def setup_applicant_memory_routes() -> APIRouter:
             cid = await _resolve_campaign(engine, campaign_id)
             try:
                 return await _signature_get(engine, cid)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
+    @router.post("/criteria/learned")
+    async def apply_learned(request: Request, body: LearnedIn) -> dict:
+        """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3).
+
+        Returns the updated criteria with the learned adjustment applied.
+        """
+        require_privilege(request, "can_manage_memory")
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, body.campaign_id)
+            try:
+                return await engine.criteria_apply_learned(cid, {
+                    "adjustment": body.adjustment,
+                    "rationale": body.rationale,
+                })
             except EngineError as exc:
                 _raise_engine_http(exc)
 

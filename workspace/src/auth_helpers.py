@@ -1,7 +1,10 @@
 """Shared auth helpers used by all route files."""
 
+import logging
 from typing import Optional
 from fastapi import Request, HTTPException
+
+log = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request) -> Optional[str]:
@@ -60,7 +63,8 @@ def require_privilege(request: Request, key: str) -> str:
     try:
         privs = auth_mgr.get_privileges(user) or {}
     except Exception:
-        # If we can't read privileges, fail closed.
+        # Log the failure, then fail closed — we cannot verify permissions.
+        log.warning("get_privileges failed for user %s", user)
         raise HTTPException(403, "Unable to verify permissions.")
     # Fail closed: missing key = denied. Only an explicit truthy value permits.
     if not privs.get(key, False):

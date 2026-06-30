@@ -807,7 +807,7 @@ function _wireRows(host) {
       const line = data && (data.caveat || data.egress_caveat);
       if (!line) return;
       caveatSlots.forEach((slot) => { slot.textContent = String(line); });
-    }).catch(() => { /* silent */ });
+    }).catch(e => console.error('Failed:', e));
   }
 
   // Missing detail → acquire + resume.

@@ -59,7 +59,8 @@ function mountRelocatedSetupStep(tab) {
     const mountLadder = window.mountApplicantModelLadder;
     if (ladderHost && typeof mountLadder === 'function') {
       ladderHost.innerHTML = '';
-      Promise.resolve(mountLadder(ladderHost)).catch(() => {
+      Promise.resolve(mountLadder(ladderHost)).catch(e => {
+        console.error('Failed to mount model ladder:', e);
         ladderHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load the model ladder.</p>';
       });
     }
@@ -75,7 +76,8 @@ function mountRelocatedSetupStep(tab) {
   }
   // Re-render fresh each open so the form reflects the latest saved state.
   host.innerHTML = '';
-  Promise.resolve(mount(cfg.step, host)).catch(() => {
+  Promise.resolve(mount(cfg.step, host)).catch(e => {
+    console.error('Failed to mount settings step:', e);
     host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load this section.</p>';
   });
 }
@@ -1969,7 +1971,7 @@ function initAccount() {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
       }
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in settings:', e));
 
   // Change password
   const saveBtn = el('settings-pw-save');

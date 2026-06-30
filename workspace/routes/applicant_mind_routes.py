@@ -130,6 +130,7 @@ def setup_applicant_mind_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in applicant_mind_routes.py")
             body = {}
         if not isinstance(body, dict):
             body = {}

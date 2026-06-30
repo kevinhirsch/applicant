@@ -381,6 +381,7 @@ def get_builtin_overrides() -> dict:
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
     except Exception:
+        logger.warning("Failed to get builtin overrides, returning empty")
         return {}
 
 
@@ -567,6 +568,7 @@ def _build_system_prompt(
         import hashlib as _hl, json as _json
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
+        logger.warning("Failed to compute override signature")
         _ov_sig = ""
     cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
@@ -614,6 +616,7 @@ def _build_system_prompt(
             f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
         ) + agent_prompt
     except Exception:
+        logger.warning("Failed to append agent prompt suffix")
         pass
 
     # Document context is kept as a SEPARATE message (not merged into the tool
@@ -652,6 +655,7 @@ def _build_system_prompt(
                 from src.pdf_form_doc import find_source_upload_id
                 _is_form_backed = bool(find_source_upload_id(active_document.current_content or ""))
             except Exception:
+                logger.warning("Failed to check if document is form-backed")
                 pass
 
             if _is_form_backed:
@@ -779,6 +783,7 @@ def _build_system_prompt(
                     "If the saved style specifies Best/newline/name, use that sign-off when a sign-off is natural."
                 )
         except Exception:
+            logger.warning("Failed to build system prompt for doc context")
             pass
 
     # When creating email documents, instruct the AI on the format
@@ -813,6 +818,7 @@ def _build_system_prompt(
             _prefs = _load_prefs(owner) or {}
             _skills_on = _prefs.get("skills_enabled", True)
         except Exception:
+            logger.warning("Failed to load preferences for skills check")
             pass
         if last_user and _skills_on:
             from services.memory.skills import SkillsManager
@@ -853,6 +859,7 @@ def _build_system_prompt(
                     try:
                         sm.record_use(_sk.get('name', ''))
                     except Exception:
+                        logger.warning("Failed to record skill use")
                         pass
                 lines = ["", "## Relevant skills for this request",
                          "These skills are matched to your current request. Each is a "
@@ -1555,6 +1562,7 @@ async def stream_agent_loop(
                                 try:
                                     title = json.loads('"' + tm.group(1) + '"')
                                 except Exception:
+                                    logger.warning("Failed to JSON-decode document title, using raw")
                                     title = tm.group(1)
                                 lm = re.search(r'"language"\s*:\s*"((?:[^"\\]|\\.)*)"', _doc_acc)
                                 lang = ""
@@ -1562,6 +1570,7 @@ async def stream_agent_loop(
                                     try:
                                         lang = json.loads('"' + lm.group(1) + '"')
                                     except Exception:
+                                        logger.warning("Failed to JSON-decode document language, using raw")
                                         lang = lm.group(1)
                                 logger.info(f"Doc streaming: open title={title!r} lang={lang!r}")
                                 yield f'data: {json.dumps({"type": "doc_stream_open", "title": title, "language": lang})}\n\n'
@@ -1573,9 +1582,11 @@ async def stream_agent_loop(
                                 try:
                                     decoded = json.loads('"' + raw + '"')
                                 except Exception:
+                                    logger.warning("Failed to JSON-decode raw text, trying with stripped backslash")
                                     try:
                                         decoded = json.loads('"' + raw.rstrip('\\') + '"')
                                     except Exception:
+                                        logger.warning("Failed to JSON-decode stripped text, using raw replacement")
                                         decoded = raw.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
                                 if len(decoded) > _doc_last_len:
                                     _doc_last_len = len(decoded)

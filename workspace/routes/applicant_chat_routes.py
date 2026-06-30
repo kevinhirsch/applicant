@@ -68,6 +68,12 @@ class CreateCampaignIn(BaseModel):
     name: str
 
 
+class ConfirmCriteriaIn(BaseModel):
+    """Commit a confirmation-gated criteria refocus (FR-FB-3 / FR-CRIT)."""
+    campaign_id: str
+    changes: dict
+
+
 # --- helpers ----------------------------------------------------------------
 
 
@@ -221,6 +227,23 @@ def setup_applicant_chat_routes() -> APIRouter:
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
         return _scrub_confirm_reply(result or {})
+
+    @router.post("/confirm-criteria")
+    async def confirm_criteria(body: ConfirmCriteriaIn, request: Request) -> dict:
+        """Commit a confirmation-gated criteria refocus the user approved
+        (FR-FB-3, FR-CRIT)."""
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.chat_confirm_criteria(
+                    {
+                        "campaign_id": body.campaign_id,
+                        "changes": body.changes,
+                    }
+                )
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
 
     # -- pending job actions ----------------------------------------------
 

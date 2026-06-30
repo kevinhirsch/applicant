@@ -168,6 +168,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             if u:
                 result["privileges"] = auth_manager.get_privileges(u)
         except Exception:
+            logger.warning("Bare exception in auth_routes.py")
             pass
         return result
 
@@ -309,6 +310,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     )
                 db.commit()
             except Exception:
+                logger.warning("Bare exception in auth_routes.py")
                 db.rollback()
                 raise
             finally:

@@ -63,6 +63,7 @@ def _load_config() -> dict:
         try:
             return json.loads(VAULT_FILE.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in vault_routes.py")
             pass
     return {}
 
@@ -226,4 +227,5 @@ async def _check_bw_installed() -> bool:
         await proc.communicate()
         return proc.returncode == 0
     except Exception:
+        logger.warning("Bare exception in vault_routes.py")
         return False

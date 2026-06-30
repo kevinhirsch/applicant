@@ -1128,7 +1128,14 @@ class PrefillService:
             return None
         from applicant.ports.driven.llm import ChatMessage
 
-        names = ", ".join(a.name for a in attributes)
+        # Only expose non-sensitive attribute NAMES to the LLM (#222, FR-ATTR-6).
+        # Sensitive attribute names (SSN, DOB, EEO fields, etc.) must not appear
+        # in the prompt — even the name itself is information the model should
+        # not see. The result is still validated against `is_sensitive` below.
+        non_sensitive_attrs = [a for a in attributes if not is_sensitive_field(a.name)]
+        if not non_sensitive_attrs:
+            return None
+        names = ", ".join(a.name for a in non_sensitive_attrs)
         prompt = (
             "You map a web-form field to ONE stored attribute. "
             f"Field label: {fld.label!r}. Stored attributes: {names}. "

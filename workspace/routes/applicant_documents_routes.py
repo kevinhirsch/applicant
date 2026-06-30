@@ -329,4 +329,20 @@ def setup_applicant_documents_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    # ── review gate: ensure-submittable (FR-RESUME-8) ───────────────────
+
+    @router.post("/applications/{application_id}/ensure-submittable")
+    async def ensure_submittable(application_id: str, request: Request) -> JSONResponse:
+        """Enforce the review gate before submission (engine
+        POST /api/documents/applications/{id}/ensure-submittable). Returns 409
+        when the application has unapproved materials."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.ensure_submittable(application_id)
+        except EngineError as exc:
+            logger.info("applicant ensure-submittable failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
     return router

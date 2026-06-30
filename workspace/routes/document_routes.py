@@ -188,6 +188,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
         except Exception:
+            logger.warning("Bare exception in document_routes.py")
             body_text = None
 
         is_form = False
@@ -463,6 +464,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             data = await request.json()
         except Exception:
+            logger.warning("Bare exception in document_routes.py")
             data = {}
         ids = data.get("ids") or []
         if not ids:
@@ -1207,6 +1209,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         h = float(item.get("h", 0))
                         value = str(item.get("value", "") or "")
                     except Exception:
+                        logger.warning("Bare exception in document_routes.py")
                         continue
                     # Clamp + reject zero-size entries
                     if w <= 0.5 or h <= 0.3:
@@ -1540,6 +1543,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     try:
                         stamps[fname] = base64.b64decode(s.data_png)
                     except Exception:
+                        logger.warning("Bare exception in document_routes.py")
                         pass
 
             import os
@@ -1579,6 +1583,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         try:
                             ann_signature_pngs[s.id] = base64.b64decode(s.data_png)
                         except Exception:
+                            logger.warning("Bare exception in document_routes.py")
                             pass
                 annotated_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
                 _to_unlink.append(annotated_path)
@@ -1609,6 +1614,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             try:
                 from routes.email_routes import _imap, _decode_header
             except Exception:
+                logger.warning("Bare exception in document_routes.py")
                 _imap = None
                 _decode_header = lambda x: x or ""
 

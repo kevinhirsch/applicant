@@ -287,7 +287,7 @@ function _renderSettingsBody(body, data, tzList) {
       try {
         const [presetsRaw, templates] = await Promise.all([
           _fetchJSON('/api/presets').catch(() => ({})),
-          _fetchJSON('/api/presets/templates').catch(() => []),
+          _fetchJSON('/api/presets/templates').catch(e => { console.error('Failed to fetch presets templates:', e); return []; }),
         ]);
         // Presets API returns a dict keyed by preset ID, not an array
         const allPresets = [];
@@ -471,7 +471,7 @@ function _boot() {
   // wires its own rail-assistant launcher). Additive; the native personal
   // assistant above is unaffected. Lazy + best-effort so a load failure here
   // never blocks the native assistant.
-  import('./applicantChat.js').catch(() => {});
+  import('./applicantChat.js').catch(e => console.error('Failed to load applicantChat.js:', e));
 }
 
 if (document.readyState === 'loading') {

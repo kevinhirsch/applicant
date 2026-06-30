@@ -148,7 +148,7 @@ function _wire(modal) {
   on('applicant-remote-close', 'click', closeRemoteSession);
   on('applicant-remote-takeover', 'click', _onTakeover);
   on('applicant-remote-open-tab', 'click', _onOpenTab);
-  on('applicant-remote-refresh', 'click', () => _loadSessions().catch(() => {}));
+  on('applicant-remote-refresh', 'click', () => _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e)));
   on('applicant-remote-resume-account', 'click', () => _resume('resume-account-step'));
   on('applicant-remote-resume-detection', 'click', () => _resume('resume-detection-step'));
   on('applicant-remote-submit-self', 'click', _onSubmitSelf);
@@ -190,7 +190,7 @@ function _setActiveSession(session) {
   const picker = _modalEl && _modalEl.querySelector('#applicant-remote-picker');
   if (picker && session) picker.value = session.session_id;
   // Desktop-assist opt-in is per-session — refresh it whenever the session changes.
-  _loadDesktopAssist().catch(() => {});
+  _loadDesktopAssist().catch(e => console.error('Silent catch in applicantRemote:', e));
 }
 
 // ── desktop assist (opt-in, per-session; ships dormant/grayed) ───────────────
@@ -341,7 +341,7 @@ async function _onTakeover() {
   try {
     await _post(`${API}/sessions/${encodeURIComponent(_activeSession.session_id)}/takeover`);
     _toast('You now have control of the session');
-    _loadSessions().catch(() => {});
+    _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e));
   } catch (e) {
     _toast(e.message || 'Could not take control');
   } finally {
@@ -516,8 +516,8 @@ export async function openApplicantRemoteSession(applicationId, sessionUrl) {
     });
   }
 
-  _loadCaveat().catch(() => {});
-  await _loadSessions().catch(() => {});
+  _loadCaveat().catch(e => console.error('Silent catch in applicantRemote:', e));
+  await _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e));
 
   // Prefer the session that matches the requested application, if any.
   if (applicationId) {

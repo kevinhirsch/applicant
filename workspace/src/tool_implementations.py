@@ -15,6 +15,39 @@ MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
 
+# ---------------------------------------------------------------------------
+# Secret-masking helpers (#314, #315)
+# These helpers ensure plaintext credentials NEVER flow back to the LLM
+# context. The real credential fill happens via the non-LLM browser path.
+# ---------------------------------------------------------------------------
+
+def _mask_vault_secret(value: str) -> str:
+    """Return a masked representation of a vault password or TOTP secret.
+
+    The actual value is never sent to the model. The non-LLM browser-fill path
+    resolves the real value directly from the vault session out-of-band.
+    """
+    if not value:
+        return "(none)"
+    # Show only the first character followed by redaction markers so the model
+    # knows a value is set without seeing the plaintext.
+    return value[0] + "****"
+
+
+def _mask_api_token(raw_token: str) -> str:
+    """Return a masked representation of an API bearer token.
+
+    The first 8 characters (the visible prefix stored on the ApiToken model)
+    are retained so the user can identify which token was created; the rest is
+    redacted. The raw token should be copied by the user from a secure channel,
+    not retrieved from the model context.
+    """
+    if not raw_token:
+        return "****"
+    visible = raw_token[:8]
+    return visible + "****"
+
+
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
@@ -140,6 +173,7 @@ def _sniff_doc_language(text: str) -> str:
             _json.loads(s)
             return "json"
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     # Shebang
     first = s.split("\n", 1)[0].strip().lower()
@@ -1172,6 +1206,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     await mcp.disconnect_server(sid)
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     pass
             db.delete(srv)
             db.commit()
@@ -1332,7 +1367,17 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
                          created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(t)
             db.commit()
-            return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
+            # Mask the raw token so it never enters the LLM context (#315).
+            # The user must retrieve the token from the API Tokens panel in
+            # Settings — it cannot be recovered from here after creation.
+            return {
+                "response": (
+                    f"Created token '{name}' (prefix: {_mask_api_token(raw_token)}). "
+                    "Copy your token from the API Tokens panel — it will not be shown again."
+                ),
+                "token_prefix": raw_token[:8],
+                "exit_code": 0,
+            }
 
         elif action == "delete":
             tid = args.get("token_id", "")
@@ -1382,6 +1427,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
             diff = (now - ts).total_seconds()
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             return 'unknown'
         if diff < 60: return 'just now'
         if diff < 3600: return f'{int(diff / 60)}m ago'
@@ -1572,6 +1618,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     raw_models = _json.loads(ep.cached_models or "[]") or []
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     raw_models = []
                 # If cache is empty, still allow matching against endpoint name
                 # for callers using model@endpoint elsewhere later.
@@ -1869,6 +1916,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                     from routes.calendar_routes import parse_due_for_user as _pdt_user
                     due_iso = _pdt_user(due_raw)
                 except Exception:
+                    logger.warning("Bare exception in tool_implementations.py")
                     due_iso = due_raw  # fall through; trust the model
             if due_iso and title:
                 # Calendar event reminders are represented as Notes. If the
@@ -2427,6 +2475,7 @@ async def _cookbook_servers() -> Dict[str, Any]:
             r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         return {"default_host": "", "hosts": []}
     env = (state or {}).get("env") or {}
     if not isinstance(env, dict):
@@ -2612,6 +2661,33 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/backup/restore", # destructive restore
 )
 
+# Explicit ALLOWLIST of path prefixes the app_api loopback is permitted to
+# reach (#313). Converting to an allowlist means NEW endpoints are NOT
+# reachable by the LLM by default — they must be explicitly added here.
+# Only add prefixes whose full surface has been audited for agent-safe
+# access (no destructive whole-file overwrites, no PII leakage, etc.).
+# The per-method blocklist (_APP_API_BLOCKLIST_METHOD_PATH) continues to
+# fence off specific write operations even within allowlisted prefixes.
+_APP_API_ALLOWLIST_PREFIXES = (
+    "/api/cookbook/",      # cookbook GPU/preset/status (read-mostly)
+    "/api/research/",      # research list / status (start is method-blocked)
+    "/api/sessions/",      # session list / management
+    "/api/documents/",     # document CRUD
+    "/api/memory/",        # memory entries
+    "/api/skills/",        # skill CRUD
+    "/api/gallery/",       # image gallery
+    "/api/calendar/",      # calendar (event writes are method-blocked)
+    "/api/notes/",         # notes (writes are method-blocked)
+    "/api/model/",         # model list / status (download/serve are blocked)
+    "/api/email/",         # email list / read (account list is method-blocked)
+    "/api/webhooks/",      # webhook config (agent-managed)
+    "/api/tasks/",         # task CRUD (agent-managed)
+    "/api/crew/",          # crew member management
+    "/api/search/",        # search
+    "/api/v1/",            # versioned public API
+    "/api/applicant/",     # applicant engine proxy endpoints
+)
+
 # (method, prefix) pairs to refuse specifically. Used for endpoints
 # where GET is fine but writes are destructive — saw the agent wipe
 # cookbook_state.json (presets + tasks) by POSTing {"tasks": []} to
@@ -2720,6 +2796,17 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
         return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+    # Allowlist check (#313): only explicitly permitted path prefixes are reachable.
+    # New endpoints are NOT auto-exposed — they must be added to _APP_API_ALLOWLIST_PREFIXES.
+    if not any(path.startswith(p) for p in _APP_API_ALLOWLIST_PREFIXES):
+        return {
+            "error": (
+                f"Path not on the app_api allowlist: {path}. "
+                "Only explicitly permitted API paths are reachable. "
+                "Use action='endpoints' to see what is available."
+            ),
+            "exit_code": 1,
+        }
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -2761,6 +2848,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             if len(preview) > 4000:
                 preview = preview[:4000] + "\n... (truncated)"
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             payload = None
             preview = (resp.text or "")[:4000]
         if resp.status_code >= 400:
@@ -3127,6 +3215,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         try:
             data = resp.json()
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             data = {}
         kill_failed = isinstance(data, dict) and data.get("exit_code") not in (None, 0)
         kill_err = ((data.get("stderr") or data.get("error") or "").strip() if isinstance(data, dict) else "")
@@ -3313,6 +3402,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
             body = (r.json() or {}).get("stdout", "") if r.headers.get("content-type", "").startswith("application/json") else ""
             server_up = '"data"' in body or '"object"' in body
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     # Read+modify+write cookbook state. APPEND a task entry; do NOT
@@ -3369,6 +3459,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         try:
             from src.tool_implementations import do_manage_endpoints  # avoid forward ref issues
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             do_manage_endpoints = None
         if do_manage_endpoints is not None:
             try:
@@ -3586,6 +3677,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     if repo and repo not in downloaded:
                         downloaded.append(repo)
             except Exception:
+                logger.warning("Bare exception in tool_implementations.py")
                 downloaded = []
             if downloaded:
                 host_str = f" on {raw_host or host}" if (raw_host or host) else ""
@@ -3666,6 +3758,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         try:
             return _json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             return None
 
     if action in ("read", "open", "view", "get"):
@@ -3797,6 +3890,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -3809,6 +3903,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                     if email and email not in contacts:
                         contacts[email] = {"name": c.get("name") or email, "source": "email history"}
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
 
     if not contacts:
@@ -3901,6 +3996,7 @@ def _load_vault_config() -> Dict:
         try:
             return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     return {}
 
@@ -4010,15 +4106,22 @@ async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
                 category="Vault",
             )
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
+
+    # Mask secret values — passwords and TOTP seeds must never reach the LLM
+    # context (#314). The non-LLM browser-fill path resolves values directly
+    # from the vault session (via bw get item) out-of-band, not through here.
+    raw_password = login.get("password") or ""
+    raw_totp = login.get("totp") or ""
 
     output = [
         f"Vault item: {name}",
         f"Username: {login.get('username', '(none)')}",
-        f"Password: {login.get('password', '(none)')}",
+        f"Password: {_mask_vault_secret(raw_password)} (credential ready for browser fill)",
     ]
-    if login.get("totp"):
-        output.append(f"TOTP secret: {login['totp']}")
+    if raw_totp:
+        output.append(f"TOTP secret: {_mask_vault_secret(raw_totp)} (TOTP ready for browser fill)")
     uris = login.get("uris") or []
     if uris:
         output.append("URLs: " + ", ".join(u.get("uri", "") for u in uris))
@@ -4054,6 +4157,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         try:
             cfg = json.loads(p.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("Bare exception in tool_implementations.py")
             pass
     cfg["session"] = session
     from datetime import datetime as _dt
@@ -4063,6 +4167,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         import os as _os
         _os.chmod(str(p), 0o600)
     except Exception:
+        logger.warning("Bare exception in tool_implementations.py")
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}

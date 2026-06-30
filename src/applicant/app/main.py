@@ -116,6 +116,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_routers(app)
     register_exception_handlers(app)
 
+    # G24-308: mount the MCP server endpoint (fastapi_mcp, /mcp SSE).
+    # Exposes engine capabilities as MCP tools discoverable by Claude Desktop,
+    # VS Code, and other MCP clients.
+    from applicant.app.mcp_server import register_mcp_server
+
+    register_mcp_server(app)
+
     @app.get("/healthz", tags=["ops"])
     def healthz() -> JSONResponse:
         """Readiness probe used by the prod healthcheck + install/update heartbeat.

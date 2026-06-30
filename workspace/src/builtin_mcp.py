@@ -217,6 +217,7 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             proc.kill()
             await proc.wait()
         except Exception:
+            logger.warning("Failed to kill timed-out MCP process")
             pass
         return False
     return proc.returncode == 0 and bool(stdout.strip())

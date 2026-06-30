@@ -208,7 +208,8 @@ export function mountModelLadder(host) {
   _host = host;
   _tiers = [];
   _host.innerHTML = '<div class="hwfit-loading">Loading…</div>';
-  _load().catch(() => {
+  _load().catch(e => {
+    console.error('Failed to load model ladder:', e);
     if (_host) _host.innerHTML = '<div class="admin-card"><p class="admin-toggle-sub" style="opacity:0.7;margin:0;">Could not load the model ladder. Reload to try again.</p></div>';
   });
   return true;

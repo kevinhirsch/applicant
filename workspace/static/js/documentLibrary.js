@@ -2039,7 +2039,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             : 'Enter an application ID above to see its tailored resume and cover letter.';
           if (_applicantLastAppId) _loadApplicantMaterials(_applicantLastAppId, results);
         })
-        .catch(() => { note.textContent = 'Could not reach the application engine. Try again shortly.'; });
+        .catch(e => { console.error('Failed to load:', e); note.textContent = 'Could not reach the application engine. Try again shortly.'; });
     }
 
     // Fetch + render the resume-variant library (lineage / fit / approval) for a
@@ -2430,7 +2430,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _chatsSessions = raw.filter(s => !s.archived);
         _renderChatsGrid();
         _renderChatsChips();
-      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
+      }).catch(e => { console.error('Failed to load library:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
     }
 
     // Tap a chat row to expand inline: fetches the recent messages and
@@ -2863,7 +2863,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _arcResearch = (r.research || []).map(x => ({ ...x, archived: true }));
         _renderArcGrid();
         _renderArcChips();
-      }).catch(() => { grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
+      }).catch(e => { console.error('Failed to load library:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load</div>'; });
     }
 
     // Inline expand/collapse for an archived DOCUMENT card (chat-style). Loads
@@ -3309,7 +3309,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (!res.ok) { let d = ''; try { d = (await res.json()).detail || ''; } catch {} throw new Error(d || ('HTTP ' + res.status)); }
           const payload = await res.json();
           if (window.sessionModule && payload.session_id) {
-            await window.sessionModule.loadSessions().catch(() => {});
+            await window.sessionModule.loadSessions().catch(e => console.error('Silent catch in documentLibrary:', e));
             await window.sessionModule.selectSession(payload.session_id);
           }
           closeLibrary();
@@ -3578,7 +3578,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           if (uiModule) uiModule.showToast('Nothing to tidy');
           return;
         }
-        await Promise.all(candidates.map(r => fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})));
+        await Promise.all(candidates.map(r => fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }).catch(e => console.error('Silent catch in documentLibrary:', e))));
         const ids = new Set(candidates.map(r => r.id));
         _researchItems = _researchItems.filter(r => !ids.has(r.id));
         _renderResearchGrid();

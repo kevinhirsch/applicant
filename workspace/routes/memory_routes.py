@@ -271,6 +271,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                             if models:
                                 model = models[0]
                         except Exception:
+                            logger.warning("Bare exception in memory_routes.py")
                             pass
                     if ep.api_key:
                         headers = {"Authorization": f"Bearer {ep.api_key}"}

@@ -370,7 +370,8 @@ function _openVisionEditor(att, userMsgEl) {
       regenBtn.disabled = !userMsgEl;
       ta.focus();
     })
-    .catch(() => {
+    .catch(e => {
+      console.error('Failed to load OCR text:', e);
       ta.value = '';
       ta.placeholder = 'Could not load OCR text — type your correction and save.';
       ta.disabled = false;
@@ -603,7 +604,7 @@ export function applyModelColor(roleEl, modelName) {
                 }
               }
             }
-          }).catch(() => {});
+          }).catch(e => console.error('Silent catch in chatRenderer:', e));
         }
       }
       // Show configured max tokens if set
@@ -921,7 +922,7 @@ function _appendReportButton(container, sessionId) {
       }
       var payload = await res.json();
       if (window.sessionModule && payload.session_id) {
-        await window.sessionModule.loadSessions().catch(() => {});
+        await window.sessionModule.loadSessions().catch(e => console.error('Silent catch in chatRenderer:', e));
         await window.sessionModule.selectSession(payload.session_id);
       }
     } catch (e) {
@@ -997,43 +998,43 @@ document.addEventListener('click', function(e) {
         || mod.openDocument
         || (mod.default && (mod.default.loadDocument || mod.default.openDocument));
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'note') {
     import('./notes.js').then(mod => {
       const open = mod.openNote || (mod.default && mod.default.openNote);
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'image') {
     import('./gallery.js').then(mod => {
       const open = mod.openGalleryImage || (mod.default && mod.default.openGalleryImage);
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'email') {
     import('./emailLibrary.js').then(mod => {
       const open = mod.openEmailLibrary || (mod.default && mod.default.openEmailLibrary);
       if (open) open({ uid: id });
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'event') {
     import('./calendar.js').then(mod => {
       const open = mod.openCalendarTo || (mod.default && mod.default.openCalendarTo);
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'task') {
     import('./tasks.js').then(mod => {
       const open = mod.openTasks || (mod.default && mod.default.openTasks);
       if (open) open(id);
       else { const b = document.getElementById('tasks-btn'); if (b) b.click(); }
-    }).catch(() => { const b = document.getElementById('tasks-btn'); if (b) b.click(); });
+    }).catch(e => { console.error('Failed to click tasks button:', e); const b = document.getElementById('tasks-btn'); if (b) b.click(); });
   } else if (kind === 'skill') {
     import('./skills.js').then(mod => {
       const open = mod.openSkill || (mod.default && mod.default.openSkill);
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   } else if (kind === 'research') {
     import('./research/panel.js').then(mod => {
       const open = mod.openPanel || (mod.default && mod.default.openPanel);
       if (open) open(id);
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in chatRenderer:', e));
   }
 });
 

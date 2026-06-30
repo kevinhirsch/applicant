@@ -1,9 +1,6 @@
 # Issue #285 — _is_context_error false positives (adapters/llm/openai_compatible.py) — FR-MIND
-# GREEN: regression proving the CURRENT substring heuristic — any error envelope whose
-#        text merely contains the word "context" trips context-overflow handling, even a
-#        content-filter rejection that mentions "context of the request".
-# PENDING: the fix — match specific error codes ("context_length_exceeded",
-#          "maximum context length") instead of the bare substring "context".
+# GREEN: the fix — match specific error codes ("context_length_exceeded",
+#        "maximum context length") instead of the bare substring "context".
 
 Feature: Context-overflow detection matches the real error, not the word context
 

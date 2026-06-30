@@ -2229,7 +2229,7 @@ export function openGallery() {
           const gz = gm ? (parseInt(getComputedStyle(gm).zIndex) || 0) : 0;
           sm.style.setProperty('z-index', String(Math.max(gz + 1, 10050)), 'important');
         }
-      }).catch(() => {});
+      }).catch(e => console.error('Silent catch in gallery:', e));
     });
   }
 

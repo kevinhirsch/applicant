@@ -281,6 +281,7 @@ def setup_applicant_portal_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in applicant_portal_routes.py")
             body = None
         if not isinstance(body, dict):
             body = None
