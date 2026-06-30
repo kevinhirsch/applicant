@@ -4,11 +4,16 @@ Tests cover:
 - Suite execution and metric reporting
 - A/B gating with regression detection
 - Material quality judging (LLM-as-judge)
+- BrowserGymEvalHarness import-guard and degradation behavior
 """
 
 from __future__ import annotations
 
+import pytest
+
 from applicant.evaluation import (
+    BrowserGymEvalHarness,
+    EvalRunMetrics,
     EvalTask,
     InMemoryEvalHarness,
     SuiteResult,
@@ -366,3 +371,157 @@ class TestMaterialQualityScore:
             profile_facts={"name": "Jane Doe"},
         )
         assert 1 <= score.score <= 5
+
+
+# ── InMemoryEvalHarness custom runner ───────────────────────────────────────
+
+
+class TestInMemoryCustomRunner:
+    """InMemoryEvalHarness accepts a custom task_runner for injection."""
+
+    def test_custom_runner_is_called(self):
+        """A custom task_runner is invoked instead of the default."""
+        called_with: list[EvalTask] = []
+
+        def custom_runner(task: EvalTask, planner) -> EvalRunMetrics:
+            called_with.append(task)
+            return EvalRunMetrics(
+                task_id=task.task_id,
+                success=True,
+                step_count=3,
+                cost=0.001,
+                duration_s=0.1,
+            )
+
+        harness = InMemoryEvalHarness(task_runner=custom_runner)
+        task = EvalTask(task_id="custom-1", url="https://x.com", description="custom")
+        result = harness.run_suite([task], planner=None)
+
+        assert len(called_with) == 1
+        assert called_with[0].task_id == "custom-1"
+        assert result.success_rate == 1.0
+
+    def test_parallel_flag_falls_back_gracefully(self):
+        """parallel=True is accepted but runs sequentially with a warning."""
+        harness = InMemoryEvalHarness()
+        tasks = [
+            EvalTask(task_id="p1", url="https://a.com", description="a"),
+            EvalTask(task_id="p2", url="https://b.com", description="b"),
+        ]
+
+        def ok_planner(attrs):
+            return {"steps": 1, "cost": 0.0}
+
+        result = harness.run_suite(tasks, ok_planner, parallel=True)
+        assert result.task_count == 2
+        assert result.success_rate == 1.0
+
+
+# ── BrowserGymEvalHarness optional-extra guard ──────────────────────────────
+
+
+class TestBrowserGymEvalHarness:
+    """BrowserGymEvalHarness degrades cleanly when the eval extra is absent."""
+
+    def test_harness_importable(self):
+        """BrowserGymEvalHarness is importable without the eval extra."""
+        from applicant.evaluation import BrowserGymEvalHarness
+        assert BrowserGymEvalHarness is not None
+
+    def test_bg_available_reflects_install(self):
+        """_bg_available is True only when browsergym is installed."""
+        try:
+            import browsergym  # noqa: F401
+            bg_installed = True
+        except ImportError:
+            bg_installed = False
+
+        harness = BrowserGymEvalHarness()
+        assert harness._bg_available == bg_installed
+
+    def test_list_available_tasks_without_browsergym(self):
+        """list_available_tasks returns [] when BrowserGym is not installed."""
+        try:
+            import browsergym  # noqa: F401
+            pytest.skip("browsergym installed, cannot test absent branch")
+        except ImportError:
+            pass
+
+        harness = BrowserGymEvalHarness()
+        tasks = harness.list_available_tasks()
+        assert tasks == []
+
+    def test_create_task_returns_none_without_browsergym(self):
+        """create_task_from_browsergym returns None when BrowserGym is absent."""
+        try:
+            import browsergym  # noqa: F401
+            pytest.skip("browsergym installed, cannot test absent branch")
+        except ImportError:
+            pass
+
+        harness = BrowserGymEvalHarness()
+        task = harness.create_task_from_browsergym("jobapp.Workday")
+        assert task is None
+
+    def test_list_available_tasks_with_browsergym(self):
+        """list_available_tasks returns known tasks when BrowserGym is installed."""
+        try:
+            import browsergym  # noqa: F401
+        except ImportError:
+            pytest.skip("browsergym not installed (install with uv sync --extra eval)")
+
+        harness = BrowserGymEvalHarness()
+        tasks = harness.list_available_tasks()
+        assert len(tasks) > 0
+        assert all("task_id" in t and "description" in t for t in tasks)
+
+    def test_create_task_workday_with_browsergym(self):
+        """create_task_from_browsergym returns an EvalTask for known IDs."""
+        try:
+            import browsergym  # noqa: F401
+        except ImportError:
+            pytest.skip("browsergym not installed (install with uv sync --extra eval)")
+
+        harness = BrowserGymEvalHarness()
+        task = harness.create_task_from_browsergym("jobapp.Workday")
+        assert task is not None
+        assert task.task_id == "jobapp.Workday"
+        assert task.url != ""
+
+
+# ── EvalRunMetrics dataclass ─────────────────────────────────────────────────
+
+
+class TestEvalRunMetrics:
+    """EvalRunMetrics captures per-run data correctly."""
+
+    def test_basic_metrics(self):
+        """EvalRunMetrics holds expected fields."""
+        m = EvalRunMetrics(
+            task_id="t1",
+            success=True,
+            step_count=7,
+            cost=0.03,
+            duration_s=5.2,
+            fields_detected=4,
+            fields_filled=4,
+        )
+        assert m.task_id == "t1"
+        assert m.success is True
+        assert m.step_count == 7
+        assert m.fields_detected == 4
+        assert m.fields_filled == 4
+
+    def test_errors_default_empty(self):
+        """errors defaults to an empty tuple."""
+        m = EvalRunMetrics(
+            task_id="t2", success=False, step_count=0, cost=0.0, duration_s=0.1
+        )
+        assert m.errors == ()
+
+    def test_details_default_empty(self):
+        """details defaults to an empty dict."""
+        m = EvalRunMetrics(
+            task_id="t3", success=True, step_count=1, cost=0.0, duration_s=0.05
+        )
+        assert m.details == {}

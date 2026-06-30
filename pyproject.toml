@@ -41,9 +41,6 @@ dependencies = [
     # parsed base resume is rendered into a real moderncv ".tex" source via the
     # vendored templates/latex/moderncv/main.tex.j2 template. Pure-python, no I/O.
     "jinja2>=3.1.6",
-    "fastapi-mcp>=0.4.0",
-    "agentlab>=0.4.2",
-    "browsergym>=0.14.2",
 ]
 
 [project.optional-dependencies]
@@ -73,9 +70,20 @@ durable-orchestration = [
 # MCP (Model Context Protocol) server surface (Issue #308). Exposes the engine
 # as an MCP server via fastapi_mcp so external agents can discover and invoke
 # the same guarded application services through the MCP tool protocol.
-# Install with uv sync --extra mcp.
+# Install with `uv sync --extra mcp`. The engine mounts the MCP surface only
+# when this extra is installed; the import guard in app/routers/mcp.py means
+# the default lane is unaffected (no fastapi_mcp → log + skip).
 mcp = [
-    "fastapi-mcp",
+    "fastapi-mcp>=0.4.0",
+]
+# Browser-agent eval harness (Issue #309). AgentLab + BrowserGym as the A/B
+# regression gate for the pre-fill planner. Kept OPTIONAL so the default
+# hermetic lane (InMemoryEvalHarness) needs no heavy browser/gymnasium deps.
+# Install with `uv sync --extra eval`, then supply a real browser + LLM
+# endpoint to run the live BrowserGym integration tasks.
+eval = [
+    "agentlab>=0.4.2",
+    "browsergym>=0.14.2",
 ]
 dev = [
     "pytest",
