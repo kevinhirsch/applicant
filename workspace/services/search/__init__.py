@@ -9,7 +9,7 @@ from .core import (
 )
 from .content import fetch_webpage_content
 from .providers import searxng_search, searxng_search_api, PROVIDER_INFO
-from .analytics import get_search_stats, SearchEngineError, NetworkError, ParseError, RateLimitError
+from src.search.analytics import get_search_stats, SearchEngineError, NetworkError, ParseError, RateLimitError
 from .service import SearchService, SearchResult, SearchResponse
 
 __all__ = [

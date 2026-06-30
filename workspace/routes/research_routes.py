@@ -13,8 +13,23 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import get_current_user
+from core.safe_path import UnsafePathError, safe_join
 
 logger = logging.getLogger(__name__)
+
+_RESEARCH_DATA_DIR = "data/deep_research"
+
+
+def _safe_research_path(session_id: str) -> Optional[Path]:
+    """Resolve the on-disk JSON path for a request-supplied ``session_id``, contained
+    to the research data dir. ``session_id`` is a URL path param (untrusted), so a
+    value like ``../../etc/passwd`` must not traverse out of the data dir before the
+    owner check reads it. Returns ``None`` for an unsafe id so callers 404."""
+    try:
+        return Path(safe_join(_RESEARCH_DATA_DIR, f"{session_id}.json"))
+    except UnsafePathError:
+        logger.warning("rejecting unsafe research session id: %r", session_id)
+        return None
 
 # Model-name substrings that are NOT chat/generation models — research must
 # never pick these as its model. An OpenAI-style endpoint often lists
@@ -65,12 +80,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if entry is not None:
             return entry.get("owner", "") == user
         # Task no longer in memory — check the persisted JSON.
-        path = Path("data/deep_research") / f"{session_id}.json"
-        if not path.exists():
+        path = _safe_research_path(session_id)
+        if path is None or not path.exists():
             return False
         try:
             return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
         except Exception:
+            logger.warning("Bare exception in research_routes.py")
             return False
 
     @router.get("/api/research/active")
@@ -126,12 +142,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
         Use BEFORE returning any data or mutating the file."""
-        path = Path("data/deep_research") / f"{session_id}.json"
-        if not path.exists():
+        path = _safe_research_path(session_id)
+        if path is None or not path.exists():
             raise HTTPException(404, "Research not found")
         try:
             owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
+            logger.warning("Bare exception in research_routes.py")
             raise HTTPException(404, "Research not found")
         if owner != user:
             raise HTTPException(404, "Research not found")
@@ -216,6 +233,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "archived": bool(d.get("archived")),
                 })
             except Exception:
+                logger.warning("Bare exception in research_routes.py")
                 continue
 
         # Sort
@@ -235,8 +253,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Return the full JSON for a single research result — sources,
         summary, stats — used by the Library preview panel."""
         user = _require_user(request)
-        path = Path("data/deep_research") / f"{session_id}.json"
-        if not path.exists():
+        path = _safe_research_path(session_id)
+        if path is None or not path.exists():
             raise HTTPException(404, "Research not found")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -251,8 +269,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_archive(session_id: str, request: Request, archived: bool = Query(True)):
         """Soft-archive / restore a research report (sets `archived` in its JSON)."""
         user = _require_user(request)
-        path = Path("data/deep_research") / f"{session_id}.json"
-        if not path.exists():
+        path = _safe_research_path(session_id)
+        if path is None or not path.exists():
             raise HTTPException(404, "Research not found")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -270,10 +288,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_delete(session_id: str, request: Request):
         """Delete a research result from disk."""
         user = _require_user(request)
-        data_dir = Path("data/deep_research")
-        json_path = data_dir / f"{session_id}.json"
+        json_path = _safe_research_path(session_id)
         deleted = False
-        if json_path.exists():
+        if json_path is not None and json_path.exists():
             # SECURITY: verify ownership before letting the caller delete it.
             try:
                 data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -282,6 +299,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             except HTTPException:
                 raise
             except Exception:
+                logger.warning("Bare exception in research_routes.py")
                 raise HTTPException(404, "Research not found")
             json_path.unlink()
             deleted = True
@@ -320,6 +338,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     except HTTPException:
                         raise
                     except Exception:
+                        logger.warning("Bare exception in research_routes.py")
                         pass
                 user = tool_owner
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
@@ -347,6 +366,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         if models:
                             ep_model = _first_chat_model(models)
                     except Exception:
+                        logger.warning("Bare exception in research_routes.py")
                         pass
             finally:
                 db.close()
@@ -383,6 +403,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                                 if models:
                                     ep_model = _first_chat_model(models)
                             except Exception:
+                                logger.warning("Bare exception in research_routes.py")
                                 pass
                 finally:
                     db.close()
@@ -450,8 +471,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(404, "No research found for this session")
         result = research_handler.get_result(session_id)
         if result is None:
-            p = Path("data/deep_research") / f"{session_id}.json"
-            if p.exists():
+            p = _safe_research_path(session_id)
+            if p is not None and p.exists():
                 d = json.loads(p.read_text(encoding="utf-8"))
                 return {
                     "result": d.get("result", ""),
@@ -483,8 +504,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         sources = research_handler.get_sources(session_id) or []
         query = ""
 
-        path = Path("data/deep_research") / f"{session_id}.json"
-        if path.exists():
+        path = _safe_research_path(session_id)
+        if path is not None and path.exists():
             try:
                 disk = json.loads(path.read_text(encoding="utf-8"))
                 if not result:
@@ -545,6 +566,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                             if models:
                                 fallback_model = models[0]
                         except Exception:
+                            logger.warning("Bare exception in research_routes.py")
                             pass
                     _merge(fallback_url, fallback_model, fallback_headers)
             finally:

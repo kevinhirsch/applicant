@@ -291,34 +291,32 @@ class PgCredentialStore(_SealingMixin):
     ) -> None:
         if self._session_factory is None:
             return
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         from applicant.adapters.storage.models import CredentialModel
         from applicant.core.ids import new_id
 
         session = self._session_factory()
         try:
-            existing = (
-                session.query(CredentialModel)
-                .filter(
-                    CredentialModel.campaign_id == campaign_id,
-                    CredentialModel.tenant_key == tenant_key,
-                )
-                .one_or_none()
+            # Upsert to avoid the select-then-insert race (#169): concurrent
+            # callers both see no row, both insert, and the second raises
+            # UniqueViolation on uq_credentials_campaign_tenant.
+            stmt = pg_insert(CredentialModel).values(
+                id=new_id(),
+                campaign_id=campaign_id,
+                tenant_key=tenant_key,
+                sealed_username=rec["username"],
+                sealed_secret=rec["secret"],
+                source=rec.get("source", MODE_MANUAL),
+            ).on_conflict_do_update(
+                index_elements=["campaign_id", "tenant_key"],
+                set_={
+                    "sealed_username": rec["username"],
+                    "sealed_secret": rec["secret"],
+                    "source": rec.get("source", MODE_MANUAL),
+                },
             )
-            if existing is None:
-                session.add(
-                    CredentialModel(
-                        id=new_id(),
-                        campaign_id=campaign_id,
-                        tenant_key=tenant_key,
-                        sealed_username=rec["username"],
-                        sealed_secret=rec["secret"],
-                        source=rec.get("source", MODE_MANUAL),
-                    )
-                )
-            else:
-                existing.sealed_username = rec["username"]
-                existing.sealed_secret = rec["secret"]
-                existing.source = rec.get("source", MODE_MANUAL)
+            session.execute(stmt)
             session.commit()
         finally:
             session.close()

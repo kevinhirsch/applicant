@@ -15,47 +15,22 @@ import re
 from dataclasses import dataclass
 
 from applicant.core.errors import SensitiveFieldViolation
+from applicant.core.locale_config import DEFAULT_LOCALE, LocaleConfig
+
+#: Active locale configuration. Replace to adapt EEO labels for non-US locales.
+_LOCALE: LocaleConfig = DEFAULT_LOCALE
 
 #: The canonical default when the user has no explicit stored answer (FR-ATTR-6).
-DECLINE_TO_SELF_IDENTIFY = "decline to self-identify"
+DECLINE_TO_SELF_IDENTIFY: str = DEFAULT_LOCALE.decline_to_self_identify
 
 #: Unambiguous multi-character substrings that mark a field as sensitive/EEO.
 #: These are distinctive enough that raw substring matching does not misfire.
-_SENSITIVE_SUBSTRING_MARKERS: tuple[str, ...] = (
-    "ethnicity",
-    "ethnic",
-    "gender",
-    "disability",
-    "disabilities",
-    "veteran",
-    "protected veteran",
-    "sexual orientation",
-    "lgbt",
-    "pregnan",
-    "religion",
-    "national origin",
-    "marital",
-    "date of birth",
-    "self-identification",
-    "self identify",
-    "self-identify",
-    "diversity",
-    "hispanic",
-    "latino",
-    "latinx",
-    "military",
-)
+_SENSITIVE_SUBSTRING_MARKERS: tuple[str, ...] = DEFAULT_LOCALE.sensitive_eeo_markers
 
 #: Short / ambiguous markers that appear inside ordinary words (e.g. "age" in
 #: "Manager"/"Message", "sex" in "unisex", "race" in "embrace"). These must be
 #: matched on WORD BOUNDARIES so they only fire on the real EEO field (FR-ATTR-6).
-_SENSITIVE_WORD_MARKERS: tuple[str, ...] = (
-    "race",
-    "sex",
-    "age",
-    "dob",
-    "eeo",
-)
+_SENSITIVE_WORD_MARKERS: tuple[str, ...] = DEFAULT_LOCALE.sensitive_word_markers
 
 #: Pre-compiled word-boundary patterns for the ambiguous short markers.
 _SENSITIVE_WORD_RE = re.compile(

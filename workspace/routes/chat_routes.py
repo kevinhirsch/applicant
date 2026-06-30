@@ -90,6 +90,7 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         sess.headers = {}
         return True
     except Exception:
+        logger.warning("Bare exception in chat_routes.py")
         db.rollback()
         return False
     finally:
@@ -220,6 +221,7 @@ def setup_chat_routes(
                 from routes.calendar_routes import set_user_tz_offset
                 set_user_tz_offset(_tz_hdr)
         except Exception:
+            logger.warning("Bare exception in chat_routes.py")
             pass
 
         form_data = await request.form()
@@ -308,6 +310,7 @@ def setup_chat_routes(
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
             except Exception:
+                logger.warning("Bare exception in chat_routes.py")
                 pass
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
@@ -608,6 +611,7 @@ def setup_chat_routes(
                 from src.endpoint_resolver import resolve_chat_fallback_candidates
                 _fallback_candidates = resolve_chat_fallback_candidates()
             except Exception:
+                logger.warning("Bare exception in chat_routes.py")
                 _fallback_candidates = []
 
             # Send model name early so the frontend can show it during streaming
@@ -638,6 +642,7 @@ def setup_chat_routes(
                     finally:
                         _db.close()
                 except Exception:
+                    logger.warning("Bare exception in chat_routes.py")
                     pass
 
             if _is_image_model:
@@ -989,6 +994,7 @@ def setup_chat_routes(
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in chat_routes.py")
             raise HTTPException(400, "Invalid JSON")
 
         session_id = body.get("session_id")

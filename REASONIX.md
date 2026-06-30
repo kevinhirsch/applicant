@@ -15,7 +15,7 @@ open PRs before fanning out.
 - **Models:** flash = default (mechanical/localized/audits); pro = hard reasoning (refactors, architecture, safety-critical, ambiguous, planning, review/security). **Both at `effort="max"`.** Escalate flash→pro when flash stalls/fails. Config in SOUL.md "Model routing".
 
 ## Monitor + steer (talk while it runs)
-- After dispatch, loop **escalating short `wait`s**. **First `wait` = 15s. Hard-cap EVERY `wait` at 120s.** Reset to 15s on any change. A multi-minute `wait` is a bug — blind and unsteerable until it returns.
+- After dispatch, loop **short `wait`s — default 15s, NEVER >30s while the owner's engaged** (each wait blocks dialogue for its full length; a 120s wait = a 2-min lockout = a bug). Ramp 15→30 only while quiet; reset to 15s on any change or owner message. The 120s ceiling is for *unattended* long-monitoring only — don't default to it.
 - Each return = liveness + completion + steering checkpoint. Read owner input first (plain English, no keywords), act, ack in one line. `Esc`/`Ctrl+C` = stop now.
 - Keep a `todo_write` entry per group; refresh each `wait`.
 

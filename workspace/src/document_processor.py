@@ -41,6 +41,7 @@ def _process_text_file(path: str) -> str:
         from src.personal_docs import read_text_file
         content = read_text_file(path)
     except Exception:
+        logger.warning("read_text_file failed for %s", path)
         try:
             with open(path, "rb") as f:
                 raw_data = f.read()
@@ -121,6 +122,7 @@ def _process_pdf(path: str) -> str:
             try:
                 images = list(page.images)
             except Exception:
+                logger.warning("Failed to list page images")
                 images = []
             if images and len(page_text) < 50:
                 for img_index, img in enumerate(images[:3]):  # cap at 3 images per page
@@ -158,6 +160,7 @@ def _load_vl_settings() -> dict:
         from src.settings import load_settings
         return load_settings()
     except Exception:
+        logger.warning("load_settings failed, returning empty")
         return {}
 
 
@@ -225,6 +228,7 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
             from src.endpoint_resolver import resolve_vision_fallback_candidates
             _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates()
         except Exception:
+            logger.warning("resolve_vision_fallback_candidates failed")
             _vl_candidates = [(url, model_id, headers)]
 
         last_err = None
@@ -344,6 +348,7 @@ def build_user_content(
                                 "\n[PDF content]:"
                             ).strip()
                         except Exception:
+                            logger.warning("Failed to process PDF")
                             pdf_body_text = None
 
                         is_form = False

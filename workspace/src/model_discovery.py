@@ -114,6 +114,7 @@ class ModelDiscovery:
                 parsed = urlparse(raw if "://" in raw else "http://" + raw)
                 _append_host(hosts, parsed.hostname or "")
             except Exception:
+                logger.warning("Failed to parse host URL: %s", raw)
                 pass
         return hosts
 
@@ -135,6 +136,7 @@ class ModelDiscovery:
                     "models_display": [i.lstrip("/") for i in ids]
                 }
         except Exception:
+            logger.warning("Failed to query model endpoint at %s:%s", host, port)
             pass
         return None
 

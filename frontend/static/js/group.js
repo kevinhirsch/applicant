@@ -73,7 +73,7 @@ function _initGroupTab() {
           <span style="font-size:12px;font-weight:500;">${uiModule.esc(label)}</span>
           ${sublabel && sublabel !== label ? '<span style="font-size:10px;opacity:0.35;margin-left:4px;">' + uiModule.esc(sublabel) + '</span>' : ''}
         </span>
-        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove">&times;</button>
+        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove" aria-label="Remove participant">&times;</button>
       `;
       row.querySelector('button').addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
       participantsEl.appendChild(row);
@@ -339,6 +339,7 @@ export async function showModelPicker() {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'close-btn';
     closeBtn.innerHTML = '&#x2716;';
+    closeBtn.setAttribute('aria-label', 'Close group chat');
     closeBtn.addEventListener('click', () => { overlay.remove(); resolve(null); });
     header.appendChild(closeBtn);
 

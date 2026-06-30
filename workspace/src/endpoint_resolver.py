@@ -12,6 +12,9 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from src.database import SessionLocal, ModelEndpoint
+
+log = logging.getLogger(__name__)
+
 from src.llm_core import _detect_provider
 
 logger = logging.getLogger(__name__)
@@ -194,6 +197,7 @@ def resolve_endpoint(
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
     except Exception:
+        log.warning("load_settings failed in _resolve_endpoint_url")
         return fallback_url, fallback_model, fallback_headers
 
     ep_id = (get_user_setting(f"{setting_prefix}_endpoint_id", owner or "", settings.get(f"{setting_prefix}_endpoint_id", "")) or "").strip()
@@ -243,6 +247,7 @@ def resolve_endpoint(
                 if models:
                     model = _first_chat_model(models)
             except Exception:
+                log.warning("Failed to get first chat model")
                 pass
 
         return chat_url, model or fallback_model, headers
@@ -281,6 +286,7 @@ def resolve_endpoint_by_id(
                 if models:
                     m = _first_chat_model(models) or ""
             except Exception:
+                log.warning("Failed to get first chat model in fallback")
                 pass
         if not m:
             return None
@@ -310,6 +316,7 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
         if not (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip():
             return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
     except Exception:
+        log.warning("load_settings failed in resolve_utility_endpoint")
         pass
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
@@ -326,6 +333,7 @@ def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) 
         settings = load_settings()
         chain = get_user_setting(setting_key, owner or "", settings.get(setting_key) or []) or []
     except Exception:
+        log.warning("load_settings failed in _resolve_fallback_candidates")
         return out
     for entry in chain:
         if not isinstance(entry, dict):

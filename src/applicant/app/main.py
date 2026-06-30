@@ -8,6 +8,7 @@ hexagon.
 from __future__ import annotations
 
 import os
+import traceback
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -30,8 +31,11 @@ from applicant.core.errors import (
     SensitiveFieldViolation,
     TruthfulnessViolation,
 )
-from applicant.observability.logging import configure_logging
+from applicant.observability.capabilities import capability_status
+from applicant.observability.logging import configure_logging, get_logger
 from applicant.version import __version__
+
+log = get_logger(__name__)
 
 #: Canonical HTTP status for each mapped domain error. The catch-all
 #: :class:`DomainError` falls through to 400 so a rule violation never leaks a 500
@@ -60,6 +64,11 @@ def _status_for(exc: DomainError) -> int:
 def register_exception_handlers(app: FastAPI) -> None:
     """Map domain errors to canonical 4xx with a clean ``{"detail": ...}`` body.
 
+    Also installs a global catch-all for unhandled exceptions that logs the full
+    context server-side (path, request-id, traceback) while returning a generic
+    500 to the client — so crashes never leak internal detail/tracebacks to the
+    browser (security) and are never opaque to operators (observability).
+
     Registered globally so any domain/rule violation that a specific route forgot
     to catch still returns the right status instead of a 500 with a leaked
     traceback. Per-route handling can stay; this is the safety net.
@@ -68,6 +77,29 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
         return JSONResponse(status_code=_status_for(exc), content={"detail": str(exc)})
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Catch-all for any exception not handled by a more specific handler.
+
+        Logs the path, optional request-id header, exception type and full
+        traceback server-side so the cause is always diagnosable. Returns a
+        generic 500 to the client — never a raw traceback or internal detail
+        (security: no information leakage to untrusted callers).
+        """
+        request_id = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
+        log.error(
+            "unhandled_exception",
+            path=request.url.path,
+            method=request.method,
+            request_id=request_id,
+            exc_type=type(exc).__name__,
+            detail=traceback.format_exc(),
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "An unexpected error occurred. Please try again later."},
+        )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -83,6 +115,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     mount_static(app, settings.app_static_dir)
     register_routers(app)
     register_exception_handlers(app)
+
+    # G24-308: mount the MCP server endpoint (fastapi_mcp, /mcp SSE).
+    # Exposes engine capabilities as MCP tools discoverable by Claude Desktop,
+    # VS Code, and other MCP clients.
+    from applicant.app.mcp_server import register_mcp_server
+
+    register_mcp_server(app)
 
     @app.get("/healthz", tags=["ops"])
     def healthz() -> JSONResponse:
@@ -128,6 +167,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             ok = False
             checks["credential_keydir"] = "not-writable"
+
+        # 3) Optional-capability status (informational — does not affect ok/degraded).
+        #    Reports which optional binaries/services are REAL vs stub so operators
+        #    can confirm the deployed image has all expected capabilities without
+        #    needing to grep logs or trigger a silent failure first.
+        caps = capability_status(
+            browser_real=getattr(container.settings, "browser_real", False),
+            postgres_engine=engine,
+        )
+        checks["capabilities"] = caps
 
         if ok:
             return JSONResponse(

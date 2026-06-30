@@ -60,7 +60,8 @@ function _loadState() {
       // Start observer after loading state
       _startObserver();
     })
-    .catch(() => {
+    .catch(e => {
+      console.error('Failed to load censor state:', e);
       // Default: enabled
       _enabled = _prefEnabled();
       _startObserver();

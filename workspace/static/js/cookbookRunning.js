@@ -237,7 +237,7 @@ async function _startQueuedDownload(task) {
       body: JSON.stringify(task.payload),
     });
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
+      const errText = await res.text().catch(e => { console.error('Failed to read error response:', e); return ''; });
       _updateTask(task.sessionId, { status: 'error', output: `HTTP ${res.status}: ${errText.slice(0, 200)}` });
       _renderRunningTab();
       return;
@@ -1636,10 +1636,10 @@ export function _renderRunningTab() {
                 _refreshModelsAfterEndpointChange();
                 // Added with skip_probe → probe until the (possibly still
                 // warming) server answers, so it flips online on its own.
-                const _ep = await res.json().catch(() => ({}));
+                const _ep = await res.json().catch(e => { console.error('Failed to parse endpoint response:', e); return {}; });
                 if (_ep && _ep.id) _probeEndpointUntilOnline(_ep.id, host, port);
               } else {
-                const body = await res.text().catch(() => '');
+                const body = await res.text().catch(e => { console.error('Failed to read register response:', e); return ''; });
                 uiModule.showError(`Register failed: ${res.status} ${body.slice(0, 140)}`);
               }
             } catch (e) {
@@ -1802,7 +1802,7 @@ export function _renderRunningTab() {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-      }).catch(() => {});
+      }).catch(e => console.error('Failed to kill task:', e));
       if (task.type === 'serve' && task.payload) {
         const rawHost = task.remoteHost || 'localhost';
         const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
@@ -1816,7 +1816,7 @@ export function _renderRunningTab() {
             .then(eps => {
               const ep = eps.find(e => e.name === modelName || (e.base_url && e.base_url.includes(':' + port)));
               if (ep) fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' }).then(() => _refreshModelsAfterEndpointChange());
-            }).catch(() => {});
+            }).catch(e => console.error('Failed to remove endpoint:', e));
         }
       }
       _animateOutThenRemove(el, task.sessionId);
@@ -2152,7 +2152,7 @@ async function _reconnectTask(el, task) {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-              }).catch(() => {});
+              }).catch(e => console.error('Failed to kill session:', e));
               _processQueue();
               break;
             }
@@ -2261,7 +2261,7 @@ async function _reconnectTask(el, task) {
                 uiModule.showToast(`Model endpoint added: ${host}:${port}`);
                 // Retry-probe until the warming server answers, so it
                 // flips online without a manual enable/disable toggle.
-                const _epData = await res.json().catch(() => ({}));
+                const _epData = await res.json().catch(e => { console.error('Failed to parse endpoint data:', e); return {}; });
                 if (_epData && _epData.id && !(_epData.models || []).length) {
                   _probeEndpointUntilOnline(_epData.id, host, port);
                 }
@@ -2287,7 +2287,7 @@ async function _reconnectTask(el, task) {
                 };
                 setTimeout(() => _trySelectModel(0), 1000);
               } else if (res && !res.ok) {
-                const body = await res.text().catch(() => '');
+                const body = await res.text().catch(e => { console.error('Failed to read register response:', e); return ''; });
                 console.warn('Endpoint auto-add failed', res.status, body);
                 uiModule.showError(`Auto-register endpoint failed (${res.status}). Use ⋮ → Register endpoint to retry.`);
               }
@@ -2347,8 +2347,8 @@ async function _checkServeReachability() {
   let eps = [], probe = {};
   try {
     [eps, probe] = await Promise.all([
-      fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []),
-      fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+      fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(e => { console.error('Failed to fetch endpoints:', e); return []; }),
+      fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).then(r => r.json()).catch(e => { console.error('Failed to fetch probe data:', e); return {}; }),
     ]);
   } catch { return; }
   for (const task of serveTasks) {
@@ -2498,8 +2498,8 @@ async function _probeEndpointUntilOnline(epId, host, port) {
     try {
       // Hit the probe endpoint — it re-probes server-side and updates
       // cached_models. We consume (and discard) the SSE stream.
-      await fetch(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }).then(r => r.text()).catch(() => {});
-      const eps = await fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []);
+      await fetch(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }).then(r => r.text()).catch(e => console.error('Failed to probe endpoint:', e));
+      const eps = await fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(e => { console.error('Failed to fetch endpoints:', e); return []; });
       const ep = (eps || []).find(e => e.id === epId);
       if (ep && (ep.models || []).length) {
         if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true);
@@ -2601,7 +2601,7 @@ async function _pollBackgroundStatus() {
         .then(async (res) => {
           if (res && res.ok) {
             uiModule.showToast(`Model endpoint added: ${host}:${port}`);
-            const data = await res.json().catch(() => ({}));
+            const data = await res.json().catch(e => { console.error('Failed to parse add-endpoint response:', e); return {}; });
             // A just-started server often can't answer the 1s add-time
             // probe, so it lands "offline". Retry-probe in the background
             // until /v1/models responds — no manual enable/disable needed.
@@ -2610,7 +2610,7 @@ async function _pollBackgroundStatus() {
             if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
           }
         })
-        .catch(() => {});
+        .catch(e => console.error('Failed to add endpoint:', e));
     }
 
     if (errorTasks.length > 0) {

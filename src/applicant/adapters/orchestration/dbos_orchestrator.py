@@ -51,8 +51,12 @@ class _DbosHandle:
 class DbosOrchestrator:
     """DurableOrchestrationPort backed by DBOS Transact."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, approval_timeout_seconds: float = 2_592_000.0) -> None:
         self._database_url = database_url
+        #: How long the engine waits for a human decision (FR-DUR-3). Default 30
+        #: days (2,592,000 seconds); 0 means effectively forever (fallback to the
+        #: old hardcoded ~10-year constant).
+        self._approval_timeout_seconds = approval_timeout_seconds
         self._configured = False
         self._launched = False
         self._dbos: Any = None
@@ -174,7 +178,11 @@ class DbosOrchestrator:
         self._ensure_launched()
         DBOS = self._dbos
 
-        timeout_seconds = timeout if timeout is not None else _INDEFINITE_WAIT_SECONDS
+        timeout_seconds = (
+            timeout if timeout is not None
+            else (self._approval_timeout_seconds if self._approval_timeout_seconds > 0
+                  else _INDEFINITE_WAIT_SECONDS)
+        )
         return DBOS.recv(topic=topic, timeout_seconds=timeout_seconds)
 
     def recover_pending(self) -> list[str]:

@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
+
 
 @dataclass
 class _ShimHandle:
@@ -109,19 +113,48 @@ class CheckpointShimOrchestrator:
         p = self._path(workflow_id)
         if p.exists():
             try:
-                return json.loads(p.read_text())
+                raw = p.read_text()
+                return json.loads(raw)
             except json.JSONDecodeError:
+                # Corrupted checkpoint: log and treat as "no checkpoint" so the step
+                # re-executes from scratch (transparent recovery, #218). Raising here
+                # would prevent any recovery; returning empty state lets the workflow
+                # restart cleanly. The warning surfaces the event for operators.
+                log.warning(
+                    "checkpoint_corrupted_treating_as_empty",
+                    workflow_id=workflow_id,
+                    path=str(p),
+                )
                 return {"steps": {}}
+            except OSError as exc:
+                raise OSError(
+                    f"Failed to read checkpoint for workflow {workflow_id!r} from {p}: {exc}. "
+                    "The disk may have failed or the file may be inaccessible."
+                ) from exc
         return {"steps": {}}
 
     def _save(self, workflow_id: str, state: dict[str, Any]) -> None:
         p = self._path(workflow_id)
-        # Atomic write so a crash mid-write never corrupts the checkpoint.
-        fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        # Atomically write so a crash mid-write never corrupts the checkpoint.
+        # Check for disk-full / write failure before writing the final checkpoint.
+        try:
+            fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        except OSError as exc:
+            raise OSError(
+                f"Cannot create temporary checkpoint file for workflow {workflow_id!r} "
+                f"in {self._dir}: {exc}. Check disk space and permissions."
+            ) from exc
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(state, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, p)
+        except OSError as exc:
+            raise OSError(
+                f"Failed to write checkpoint for workflow {workflow_id!r} to {p}: {exc}. "
+                "The disk may be full or the filesystem is read-only."
+            ) from exc
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -134,10 +167,11 @@ class CheckpointShimOrchestrator:
         fn = self._workflows.get(name)
         if fn is None:
             raise KeyError(f"workflow not registered: {name}")
-        state = self._load(workflow_id)
-        state.setdefault("name", name)
-        state.setdefault("steps", {})
-        self._save(workflow_id, state)
+        with self._lock_for(workflow_id):
+            state = self._load(workflow_id)
+            state.setdefault("name", name)
+            state.setdefault("steps", {})
+            self._save(workflow_id, state)
         result = fn(self, workflow_id, *args, **kwargs)
         return _ShimHandle(workflow_id=workflow_id, _result=result)
 
@@ -216,7 +250,20 @@ class CheckpointShimOrchestrator:
             wf_id = p.stem.replace(".checkpoint", "")
             try:
                 state = json.loads(p.read_text())
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError:
+                log.warning(
+                    "checkpoint_corrupted_skipped",
+                    workflow_id=wf_id,
+                    path=str(p),
+                )
+                continue
+            except OSError as exc:
+                log.warning(
+                    "checkpoint_read_failed_skipped",
+                    workflow_id=wf_id,
+                    path=str(p),
+                    error=str(exc),
+                )
                 continue
             steps = state.get("steps", {})
             if self._TERMINAL_STEP in steps or state.get("terminal"):
@@ -316,11 +363,24 @@ class CheckpointShimOrchestrator:
                 "waiting": list(queue.waiting),
             }
         p = self._queues_path()
-        fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        try:
+            fd, tmp = tempfile.mkstemp(dir=str(self._dir))
+        except OSError as exc:
+            raise OSError(
+                f"Cannot create temporary queue file in {self._dir}: {exc}. "
+                "Check disk space and permissions."
+            ) from exc
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, p)
+        except OSError as exc:
+            raise OSError(
+                f"Failed to write queue state to {p}: {exc}. "
+                "The disk may be full or the filesystem is read-only."
+            ) from exc
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)

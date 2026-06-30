@@ -1,4 +1,8 @@
 # src/research_utils.py
+import logging
+
+log = logging.getLogger(__name__)
+
 """Shared utilities for the deep research system.
 
 Centralizes text cleaning, quality filtering, and other logic
@@ -60,4 +64,5 @@ def is_low_quality(summary: str) -> bool:
         low = summary.lower()
         return any(marker in low for marker in LOW_QUALITY_MARKERS)
     except Exception:
+        log.warning("is_low_quality check failed, failing open")
         return False  # fail open

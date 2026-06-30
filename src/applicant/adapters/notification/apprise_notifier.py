@@ -28,6 +28,7 @@ network) so contract/unit/BDD tests assert ladder + idempotency semantics offlin
 from __future__ import annotations
 
 import itertools
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -168,6 +169,7 @@ class AppriseNotifier:
         *,
         discord_webhook_url: str = "",
         apprise_urls: str = "",
+        ntfy_url: str = "",
         in_app: bool = True,
         escalation_hold_seconds: int = _DISCORD_HOLD_SECONDS,
         email_timeout_seconds: int = _EMAIL_TIMEOUT_SECONDS,
@@ -180,9 +182,15 @@ class AppriseNotifier:
     ) -> None:
         self._discord = discord_webhook_url
         self._apprise = apprise_urls  # email/SMTP/other Apprise URLs (comma-separated)
+        # #300: ntfy push channel — a plain ntfy topic URL (e.g. ``ntfy://ntfy.sh/topic``).
+        # Opt-in, exactly like Discord/email. When configured, urgent action alerts are
+        # delivered here in addition to Discord/email (always-immediate, no escalation hold).
+        self._ntfy = ntfy_url
         self._in_app = in_app
         self._hold_seconds = escalation_hold_seconds
-        self._email_timeout = email_timeout_seconds
+        # #236: enforce the same floor in the constructor that configure() enforces,
+        # so a 0-second value passed at construction time cannot bypass the guard.
+        self._email_timeout = max(60, int(email_timeout_seconds))
         self._clock = clock or _default_clock
         # Presence signal (FR-NOTIF-2): True when the user is verifiably present in
         # the web UI (focused tab + recent input + open socket). Default: absent.
@@ -199,6 +207,12 @@ class AppriseNotifier:
         self._quiet_tz = quiet_tz or ""
         self._always_on = always_on
         self._send_real = send_real
+        # #235: guard _sent (and _sent_emails) against concurrent access from the
+        # scheduler-advance path and the API expire path, which run on different threads
+        # (the scheduler tick runs in an asyncio worker thread; API handlers are sync
+        # threads in FastAPI's threadpool). A single lock covers both dicts so the
+        # advance-vs-expire race cannot corrupt the dedup ledger.
+        self._sent_lock = threading.Lock()
         # dedup_key -> active delivery (deactivated on expiry, FR-NOTIF-3)
         self._sent: dict[str, _Delivery] = {}
         self._counter = 0
@@ -235,10 +249,12 @@ class AppriseNotifier:
             channels.append(NotificationChannel.IN_APP.value)
         if self._apprise:
             channels.append(NotificationChannel.EMAIL.value)
+        if self._ntfy:
+            channels.append(NotificationChannel.NTFY.value)
         return channels
 
     def is_configured(self) -> bool:
-        return bool(self._discord or self._apprise or self._in_app)
+        return bool(self._discord or self._apprise or self._in_app or self._ntfy)
 
     def has_discord(self) -> bool:
         return bool(self._discord)
@@ -246,11 +262,15 @@ class AppriseNotifier:
     def has_email(self) -> bool:
         return bool(self._apprise)
 
+    def has_ntfy(self) -> bool:
+        return bool(self._ntfy)
+
     def configure(
         self,
         *,
         discord_webhook_url: str | None = None,
         apprise_urls: str | None = None,
+        ntfy_url: str | None = None,
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str | None = None,
         always_on: bool | None = None,
@@ -268,6 +288,8 @@ class AppriseNotifier:
             self._discord = discord_webhook_url
         if apprise_urls is not None:
             self._apprise = apprise_urls
+        if ntfy_url is not None:
+            self._ntfy = ntfy_url
         if quiet_hours is not None:
             self._quiet_hours = _normalize_quiet_window(quiet_hours)
         if quiet_tz is not None:
@@ -312,6 +334,15 @@ class AppriseNotifier:
         if self._apprise:
             rungs.append(
                 _Rung(channel=NotificationChannel.EMAIL.value, due_at=now + self._email_timeout)
+            )
+
+        # #300: ntfy fires only for urgent action alerts (web-preemptable decisions) —
+        # alongside Discord, not instead of it. Deep links are included so the push
+        # notification leads directly to the Portal action.
+        if self._ntfy and notification.web_preemptable:
+            ntfy_delay = self._hold_seconds if notification.web_preemptable else 0
+            rungs.append(
+                _Rung(channel=NotificationChannel.NTFY.value, due_at=now + ntfy_delay)
             )
 
         if not rungs:
@@ -423,7 +454,7 @@ class AppriseNotifier:
         """REAL network boundary (FR-NOTIF-1) — integration-gated only.
 
         Builds an Apprise client for the channel and sends. The in-app channel is
-        local (no network); Discord + email go over the wire via Apprise URLs.
+        local (no network); Discord + email + ntfy go over the wire via Apprise URLs.
         """
         if channel == NotificationChannel.IN_APP.value:
             return  # local sink, no network
@@ -434,6 +465,10 @@ class AppriseNotifier:
             client.add(self._discord)
         elif channel == NotificationChannel.EMAIL.value and self._apprise:
             for url in (u.strip() for u in self._apprise.split(",") if u.strip()):
+                client.add(url)
+        elif channel == NotificationChannel.NTFY.value and self._ntfy:
+            # #300: ntfy push channel. Apprise supports ntfy:// URLs natively.
+            for url in (u.strip() for u in self._ntfy.split(",") if u.strip()):
                 client.add(url)
         body = notification.body
         if notification.deep_link:
@@ -455,13 +490,18 @@ class AppriseNotifier:
 
     # --- public API -------------------------------------------------------
     def notify(self, notification: Notification) -> str:
-        self._counter += 1
-        handle = f"notif-{self._counter}"
+        with self._sent_lock:
+            self._counter += 1
+            handle = f"notif-{self._counter}"
         rungs = self._build_rungs(notification)
         delivery = _Delivery(handle=handle, notification=notification, rungs=rungs)
         key = notification.dedup_key or handle
-        self._sent[key] = delivery
+        with self._sent_lock:
+            self._sent[key] = delivery
         # Fire any rung already due (NORMAL in-app + Discord-now; IMMEDIATE all).
+        # _fire_due mutates only the local delivery object (not _sent) so it can run
+        # outside the lock; the dispatch itself is deliberately lock-free (no IO under
+        # a lock).
         self._fire_due(delivery, self._now_secs())
         # LEAK-NOTIF-1: opportunistically drop fully-fired, past-timeout deliveries
         # so apps that never call ``expire`` (abandon/complete off-path) do not leak
@@ -488,16 +528,19 @@ class AppriseNotifier:
         IDEM-1: when ``dedup_key`` is supplied, a second send with the same key is a
         no-op (returns True without re-dispatching) so a re-driven daily digest never
         sends two emails for the same campaign+day.
+
+        #233: the dedup key is written to ``_sent_emails`` AFTER a confirmed successful
+        dispatch so a failed SMTP send does not permanently lose the digest email (the
+        caller can retry and the dedup guard will not block it).
         """
         if not self._apprise:
             return False
         if dedup_key is not None:
-            if dedup_key in self._sent_emails:
-                return True  # already sent this campaign+day — idempotent no-op
-            self._sent_emails.add(dedup_key)
-            # LEAK-NOTIF-1: prune to a rolling recent-days window so the dedup set
-            # does not grow one key per campaign+day forever.
-            self._prune_sent_emails()
+            with self._sent_lock:
+                if dedup_key in self._sent_emails:
+                    return True  # already sent this campaign+day — idempotent no-op
+        # Dispatch FIRST (#233); only register the dedup key after a confirmed send so
+        # a failed SMTP delivery does not permanently suppress a retry.
         self._dispatch(
             NotificationChannel.EMAIL.value,
             Notification(
@@ -507,6 +550,12 @@ class AppriseNotifier:
                 urgency=NotificationUrgency.NORMAL,
             ),
         )
+        if dedup_key is not None:
+            with self._sent_lock:
+                self._sent_emails.add(dedup_key)
+                # LEAK-NOTIF-1: prune to a rolling recent-days window so the dedup set
+                # does not grow one key per campaign+day forever.
+            self._prune_sent_emails()
         return True
 
     def _prune_sent_emails(self) -> None:
@@ -541,8 +590,12 @@ class AppriseNotifier:
         # delivery whose rungs fire on THIS tick survives for introspection until
         # the next tick.
         self._prune_sent(ts)
+        # Take a snapshot of current deliveries under the lock; fire outside the lock
+        # so no IO is held under the mutex (#235).
+        with self._sent_lock:
+            snapshot = list(self._sent.values())
         fired: list[str] = []
-        for delivery in list(self._sent.values()):
+        for delivery in snapshot:
             fired.extend(self._fire_due(delivery, ts))
         return fired
 
@@ -556,15 +609,18 @@ class AppriseNotifier:
         that never call ``acted`` (LEAK-NOTIF-1).
         """
         cutoff = ts - self._email_timeout
-        for key in list(self._sent.keys()):
-            delivery = self._sent[key]
-            if not delivery.active:
-                self._sent.pop(key, None)
-                continue
-            all_fired = all(r.fired for r in delivery.rungs)
-            last_due = max((r.due_at for r in delivery.rungs), default=0.0)
-            if all_fired and last_due <= cutoff:
-                self._sent.pop(key, None)
+        # #235: lock the dict for the duration of the prune so a concurrent expire()
+        # call on the API path does not observe a half-pruned _sent dict.
+        with self._sent_lock:
+            for key in list(self._sent.keys()):
+                delivery = self._sent[key]
+                if not delivery.active:
+                    self._sent.pop(key, None)
+                    continue
+                all_fired = all(r.fired for r in delivery.rungs)
+                last_due = max((r.due_at for r in delivery.rungs), default=0.0)
+                if all_fired and last_due <= cutoff:
+                    self._sent.pop(key, None)
 
     def _fire_due(self, delivery: _Delivery, ts: float) -> list[str]:
         if not delivery.active:
@@ -591,7 +647,19 @@ class AppriseNotifier:
                 and self._in_quiet_hours(when)
             ):
                 continue
-            self._dispatch(rung.channel, delivery.notification)
+            # #234: isolate per-channel failures so one bad channel (e.g. Discord
+            # webhook unreachable, SMTP misconfigured) never crashes the whole scheduler
+            # tick or prevents the remaining ladder rungs from firing. A delivery error
+            # is logged and the rung is marked fired so it does not retry endlessly.
+            try:
+                self._dispatch(rung.channel, delivery.notification)
+            except Exception as exc:
+                log.error(
+                    "notification_channel_failed",
+                    channel=rung.channel,
+                    dedup_key=delivery.notification.dedup_key,
+                    error=str(exc),
+                )
             rung.fired = True
             delivery.sent_channels.append(rung.channel)
             fired.append(rung.channel)
@@ -604,12 +672,15 @@ class AppriseNotifier:
         action-required notification stops persisting once its underlying action
         is resolved (the notification center never double-tracks acted items).
         """
-        delivery = self._sent.get(dedup_key)
-        if delivery is not None:
-            delivery.active = False
-            for rung in delivery.rungs:
-                rung.fired = True  # cancel any not-yet-fired hops
-            self._sent.pop(dedup_key, None)
+        # #235: lock around _sent mutation to prevent the API expire path from racing
+        # the scheduler advance path (which reads _sent on a different thread).
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
+            if delivery is not None:
+                delivery.active = False
+                for rung in delivery.rungs:
+                    rung.fired = True  # cancel any not-yet-fired hops
+                self._sent.pop(dedup_key, None)
         if dedup_key:
             self._inbox = [e for e in self._inbox if e.dedup_key != dedup_key]
 
@@ -672,18 +743,21 @@ class AppriseNotifier:
 
     # --- test/contract helpers -------------------------------------------
     def is_active(self, dedup_key: str) -> bool:
-        return dedup_key in self._sent
+        with self._sent_lock:
+            return dedup_key in self._sent
 
     def sent_channels(self, dedup_key: str) -> list[str]:
-        delivery = self._sent.get(dedup_key)
-        return list(delivery.sent_channels) if delivery else []
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
+            return list(delivery.sent_channels) if delivery else []
 
     def pending_escalations(self, dedup_key: str) -> list[str]:
         """Ladder rungs not yet fired (the next hops the scheduler will fire)."""
-        delivery = self._sent.get(dedup_key)
-        if not delivery:
-            return []
-        return [r.channel for r in delivery.rungs if not r.fired]
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
+            if not delivery:
+                return []
+            return [r.channel for r in delivery.rungs if not r.fired]
 
     def captured(self) -> list[CapturedSend]:
         """Every offline-captured dispatch (introspection for tests)."""

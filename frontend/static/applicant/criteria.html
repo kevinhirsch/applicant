@@ -23,14 +23,14 @@
         some changes ask for your confirmation before saving.
       </p>
       <form id="criteria-form" class="applicant-form">
-        <label>Plain-language summary
+        <label for="c-human">Plain-language summary
           <textarea id="c-human" rows="2" placeholder="e.g. Senior backend roles, remote, $180k+"></textarea>
         </label>
-        <label>Titles (comma-separated)<input id="c-titles" type="text" /></label>
-        <label>Locations (comma-separated)<input id="c-locations" type="text" /></label>
-        <label>Work modes (comma-separated)<input id="c-modes" type="text" /></label>
-        <label>Keywords (comma-separated)<input id="c-keywords" type="text" /></label>
-        <label>Salary floor<input id="c-salary" type="number" min="0" /></label>
+        <label for="c-titles">Titles (comma-separated)<input id="c-titles" type="text" /></label>
+        <label for="c-locations">Locations (comma-separated)<input id="c-locations" type="text" /></label>
+        <label for="c-modes">Work modes (comma-separated)<input id="c-modes" type="text" /></label>
+        <label for="c-keywords">Keywords (comma-separated)<input id="c-keywords" type="text" /></label>
+        <label for="c-salary">Salary floor<input id="c-salary" type="number" min="0" /></label>
         <button class="admin-btn" id="c-save" type="submit">Save criteria</button>
       </form>
       <p class="admin-empty applicant-note" id="criteria-status" hidden></p>

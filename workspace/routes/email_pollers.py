@@ -107,6 +107,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             finally:
                 db.close()
         except Exception:
+            logger.warning("Bare exception in email_pollers.py")
             ids = []
             names = {}
         if len(ids) <= 1:
@@ -157,6 +158,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         finally:
             _dbo.close()
     except Exception:
+        logger.warning("Bare exception in email_pollers.py")
         _acct_owner = None
 
     try:
@@ -177,6 +179,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         folders_to_scan.append(sent_name)
                         break
                 except Exception:
+                    logger.warning("Bare exception in email_pollers.py")
                     continue
         for folder in folders_to_scan:
             try:
@@ -227,6 +230,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         try:
             _self_self_addr = (_get_email_config(account_id).get("from_address") or "").strip().lower()
         except Exception:
+            logger.warning("Bare exception in email_pollers.py")
             _self_self_addr = ""
 
         spam_folder = _detect_spam_folder(conn) if auto_spam else None
@@ -297,6 +301,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 try:
                     _, _from_addr_only = email.utils.parseaddr(_from_raw)
                 except Exception:
+                    logger.warning("Bare exception in email_pollers.py")
                     _from_addr_only = ""
                 _is_self_mail = bool(_self_self_addr) and _from_addr_only.lower() == _self_self_addr
                 need_urgent = (auto_urgent and message_id not in _urgent_existing
@@ -555,6 +560,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                     _start_dt = datetime.fromisoformat(op["date"].replace("Z", ""))
                                                     _dtend = (_start_dt + _td3(hours=1)).isoformat()
                                                 except Exception:
+                                                    logger.warning("Bare exception in email_pollers.py")
                                                     _dtend = op["date"]
                                             # Heuristic fallback: extract common details even if the LLM missed them
                                             _loc = (op.get("location") or "").strip()
@@ -609,6 +615,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                 for _lnk in _track_links:
                                                     _desc_parts.append(_lnk)
                                             except Exception:
+                                                logger.warning("Bare exception in email_pollers.py")
                                                 pass
                                             cal_args = json.dumps({
                                                 "action": "create_event",
@@ -824,6 +831,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 try:
                                     parsed = json.loads(jm.group(0))
                                 except Exception:
+                                    logger.warning("Bare exception in email_pollers.py")
                                     parsed = None
                             if parsed is not None:
                                 _ALLOWED_TAGS = {"work","personal","finance","bills","receipt","travel",

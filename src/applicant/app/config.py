@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5) -------------------------
@@ -138,6 +139,13 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # Deployment mode (FR-DEPLOY). "" (default) = every integration ships
+    # hermetic/safe; "production" = ONE preset that turns on live browser, live
+    # discovery, live notifications, durable orchestration (DBOS), and the 24/7
+    # scheduler at once - the engine does real work out of the box. You can still
+    # override any individual flag after the mode is applied.
+    applicant_mode: str = Field(default="", alias="APPLICANT_MODE")
+
     # Storage (FR-CRIT-4, FR-DUR-3)
     database_url: str = Field(
         default="postgresql+psycopg://applicant:applicant@localhost:5432/applicant",
@@ -155,13 +163,10 @@ class Settings(BaseSettings):
 
     # Context management (FR-MIND-8, FR-MIND-13). Token budget over which the LLM
     # adapter compresses/evicts MIDDLE turns (the system tier + most recent turns
-    # are always kept). 0 (default) DISABLES it — current behavior is byte-identical
-    # until an operator opts in. Prefix caching applies provider cache breakpoints
-    # on the stable prefix where the configured provider supports it: ``auto``
-    # (default) / ``on`` enable it for capability-advertising providers; ``off``
-    # never does. A clean no-op for local Ollama / OpenAI-compatible lanes.
+    # are always kept). 64000 (~250k chars) is a sensible default for multi-turn
+    # conversations; set 0 to disable compression.
     context_compress_threshold: int = Field(
-        default=0, ge=0, alias="CONTEXT_COMPRESS_THRESHOLD"
+        default=64000, ge=0, alias="CONTEXT_COMPRESS_THRESHOLD"
     )
     prefix_cache: str = Field(default="auto", alias="PREFIX_CACHE")
 
@@ -174,16 +179,27 @@ class Settings(BaseSettings):
     # time-based prune) — byte-identical to today until an operator opts in. ge=0 so a
     # negative window is rejected at load rather than silently disabling retention.
     pii_retention_days: int = Field(default=0, ge=0, alias="PII_RETENTION_DAYS")
+    # PII retention sweep schedule (#363). ``off`` (default) keeps it dormant; ``daily``
+    # opts in to a once-per-UTC-day sweep. Mirrors the curation/status-update/essentials
+    # nudge schedule pattern so the deploy surface stays uniform.
+    pii_retention_schedule: str = Field(default="off", alias="PII_RETENTION_SCHEDULE")
 
     # Durable orchestration (FR-DUR-3). "shim" (default, no PG) or "dbos".
     orchestrator_backend: str = Field(default="shim", alias="ORCHESTRATOR_BACKEND")
     checkpoint_dir: str = Field(default=".applicant_checkpoints", alias="CHECKPOINT_DIR")
 
+    # Durable approval-gate timeout (FR-DUR-3). How many days the engine waits for
+    # a human decision (final approval / account hand-off) before timing out the
+    # pending workflow. Default 30 days — long enough for a real vacation, short
+    # enough that a genuinely abandoned application is surfaced. Set 0 for no timeout
+    # (effectively forever, matching the old hardcoded ~10 years).
+    approval_timeout_days: int = Field(default=30, ge=0, alias="APPROVAL_TIMEOUT_DAYS")
+
     # Scheduler (FR-DIG-1, FR-NOTIF-2, NFR-247-1). OFF by default so the default
     # test lane / TestClient never spins a live background loop; prod compose sets
     # it True (zero-CLI via env). When True the lifespan starts the asyncio tick
     # loop on the shim, or DBOS @scheduled drives it on the DBOS path.
-    scheduler_enabled: bool = Field(default=False, alias="SCHEDULER_ENABLED")
+    scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
     scheduler_interval_seconds: float = Field(
         default=60.0, alias="SCHEDULER_INTERVAL_SECONDS"
     )
@@ -200,7 +216,7 @@ class Settings(BaseSettings):
     # Durable queues (FR-DUR-2): sandbox concurrency cap + per-provider LLM rate.
     # ge=1: a 0/negative cap would admit nothing; reject it at load.
     sandbox_concurrency: int = Field(default=3, ge=1, alias="SANDBOX_CONCURRENCY")
-    llm_rate_limit: int = Field(default=0, alias="LLM_RATE_LIMIT")  # 0 disables
+    llm_rate_limit: int = Field(default=30, alias="LLM_RATE_LIMIT")  # 0 disables; default 30 req/min
     llm_rate_period: float = Field(default=60.0, alias="LLM_RATE_PERIOD")
 
     # Observability (FR-OBS-1)
@@ -211,6 +227,10 @@ class Settings(BaseSettings):
     # test lane never touches Discord/SMTP; flip on in a real deployment (zero-CLI).
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     apprise_urls: str = Field(default="", alias="APPRISE_URLS")
+    # #300: ntfy push channel — opt-in, empty by default. Comma-separated ntfy:// URLs
+    # (e.g. ``ntfy://ntfy.sh/my-topic``). The ntfy service is already in the Compose
+    # stack; configure this to route urgent action alerts to push-notification clients.
+    ntfy_url: str = Field(default="", alias="NTFY_URL")
     notifications_live: bool = Field(default=False, alias="NOTIFICATIONS_LIVE")
 
     # Stage 2.5 — ENGINE -> WORKSPACE callback channel. The engine calls BACK into
@@ -257,7 +277,7 @@ class Settings(BaseSettings):
     # (e.g. ``daily``) opts in to a once-per-(campaign, UTC day) push naming the missing
     # apply-essentials. Default OFF so the hermetic lane is byte-identical (no behavior
     # change) until a deploy opts in.
-    essentials_nudge_schedule: str = Field(default="off", alias="ESSENTIALS_NUDGE_SCHEDULE")
+    essentials_nudge_schedule: str = Field(default="daily", alias="ESSENTIALS_NUDGE_SCHEDULE")
     # Cadence of the proactive "here's where your campaigns stand" status update
     # (sibling of the chatbot self-report). ``off`` (default) keeps it dormant; a
     # periodic string (e.g. ``daily``) opts in. Read through Settings like its
@@ -382,6 +402,14 @@ class Settings(BaseSettings):
     computer_use_approvals: str = Field(default="manual", alias="COMPUTER_USE_APPROVALS")
     # Driver anonymous telemetry — OFF by default (upstream CUA_DRIVER_RS_TELEMETRY_ENABLED=0).
     cua_telemetry: bool = Field(default=False, alias="CUA_TELEMETRY")
+    # Override: force the driver to report as AVAILABLE even when ``shutil.which()``
+    # cannot find it on PATH. Use when the ``cua-driver`` binary is baked into the
+    # sandbox image at a non-standard location or is invoked via a custom launcher.
+    # Default False — the driver is detected via PATH probe. Set True to skip the
+    # PATH check and assume the driver is present (FR-CUA-12 gate override).
+    cua_driver_override_available: bool = Field(
+        default=False, alias="CUA_DRIVER_OVERRIDE_AVAILABLE"
+    )
 
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1
     # <-> FR-STEALTH-4) so tz/locale <-> IP are consistent. Derive these from the
@@ -467,6 +495,39 @@ class Settings(BaseSettings):
     presubmit_eligibility_enabled: bool = Field(
         default=True, alias="PRESUBMIT_ELIGIBILITY_ENABLED"
     )
+    @model_validator(mode="after")
+    def _apply_production_mode(self) -> Self:
+        """Apply the production preset when APPLICANT_MODE=production.
+
+        Sets the five real-integration flags to their production defaults.
+        Individual env overrides still win because this runs after model
+        construction - any explicit env var already landed on the field and is
+        left untouched when the preset disagrees with the default.
+        """
+        if (self.applicant_mode or "").strip().lower() != "production":
+            return self
+        explicit = self.model_fields_set
+        if "browser_real" not in explicit:
+            object.__setattr__(self, "browser_real", True)
+        if "discovery_live" not in explicit:
+            object.__setattr__(self, "discovery_live", True)
+        if "notifications_live" not in explicit:
+            object.__setattr__(self, "notifications_live", True)
+        if "orchestrator_backend" not in explicit:
+            object.__setattr__(self, "orchestrator_backend", "dbos")
+        if "scheduler_enabled" not in explicit:
+            object.__setattr__(self, "scheduler_enabled", True)
+        return self
+
+    @property
+    def scheduler_should_run(self) -> bool:
+        """True when the scheduler should be active: either explicitly enabled or in production mode."""
+        return self.scheduler_enabled or (self.applicant_mode or "").strip().lower() == "production"
+
+    @property
+    def deployment_profile(self) -> str:
+        """The deployment profile derived from applicant_mode (empty = hermetic)."""
+        return self.applicant_mode
 
     @field_validator("takeover_desktop")
     @classmethod

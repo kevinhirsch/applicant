@@ -118,15 +118,19 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
 
   function _markDocVisibleState(sessionId, state) {
     if (!sessionId) return;
-    if (state === 'open') {
-      localStorage.setItem(_docOpenKey(sessionId), '1');
-      localStorage.removeItem(_docMinimizedKey(sessionId));
-    } else if (state === 'minimized') {
-      localStorage.removeItem(_docOpenKey(sessionId));
-      localStorage.setItem(_docMinimizedKey(sessionId), '1');
-    } else {
-      localStorage.removeItem(_docOpenKey(sessionId));
-      localStorage.removeItem(_docMinimizedKey(sessionId));
+    try {
+      if (state === 'open') {
+        localStorage.setItem(_docOpenKey(sessionId), '1');
+        localStorage.removeItem(_docMinimizedKey(sessionId));
+      } else if (state === 'minimized') {
+        localStorage.removeItem(_docOpenKey(sessionId));
+        localStorage.setItem(_docMinimizedKey(sessionId), '1');
+      } else {
+        localStorage.removeItem(_docOpenKey(sessionId));
+        localStorage.removeItem(_docMinimizedKey(sessionId));
+      }
+    } catch (e) {
+      console.error('Failed to persist doc visibility state:', e);
     }
   }
 
@@ -281,8 +285,8 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         ? langIcon(doc.language, 12, { style: 'opacity:0.65;flex-shrink:0;color:currentColor;margin-right:4px;' })
         : '';
       const langChip = `<span class="doc-tab-lang">${lic}</span>`;
-      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${title}">
-        ${verChip}${langChip}<span class="doc-tab-title">${shortTitle}</span>
+      html += `<div class="doc-tab${isActive ? ' active' : ''}" draggable="true" data-doc-id="${id}" title="${_escHtml(title)}">
+        ${verChip}${langChip}<span class="doc-tab-title">${_escHtml(shortTitle)}</span>
         <button class="doc-tab-close" data-doc-id="${id}" title="Unlink from chat (kept in the Library)">&times;</button>
       </div>`;
     }
@@ -1108,7 +1112,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
   }
 
   async function _pdfResponseErrorMessage(res) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(e => { console.error('Failed to read response text:', e); return ''; });
     try {
       const data = JSON.parse(text);
       if (typeof data?.detail === 'string') return data.detail;
@@ -1765,7 +1769,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         body: JSON.stringify({ instruction: instruction.trim() }),
       });
       if (!res.ok) {
-        const t = await res.text().catch(() => res.statusText);
+        const t = await res.text().catch(e => { console.error('Failed to read error response:', e); return res.statusText; });
         throw new Error(t || res.statusText);
       }
       const data = await res.json();
@@ -1800,7 +1804,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         body: JSON.stringify({ content: newMd }),
       });
       if (!r2.ok) {
-        const t = await r2.text().catch(() => r2.statusText);
+        const t = await r2.text().catch(e => { console.error('Failed to read error response:', e); return r2.statusText; });
         throw new Error(t || r2.statusText);
       }
       _setPdfSaveStatus('saved');
@@ -1920,7 +1924,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         keepalive: !!opts.keepalive,
       });
       if (!res.ok) {
-        const t = await res.text().catch(() => res.statusText);
+        const t = await res.text().catch(e => { console.error('Failed to read error response:', e); return res.statusText; });
         _setPdfSaveStatus('error', `Save failed: ${res.status}`);
         console.warn('PDF-pane save HTTP error:', res.status, t);
         return false;
@@ -2928,7 +2932,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
                   folder: data.sent_folder || 'Sent',
                   uid: data.sent_uid || null,
                 });
-              }).catch(() => {});
+              }).catch(e => console.error('Failed to open email library:', e));
             },
           });
         }
@@ -2949,11 +2953,11 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name, email }),
-          }).catch(() => {});
+          }).catch(e => console.error('Failed to save contact:', e));
         }
         // Mark the source email as answered if this was a reply
         if (sourceUid) {
-          fetch(`${API_BASE}/api/email/mark-answered/${sourceUid}?folder=${encodeURIComponent(sourceFolder)}`, { method: 'POST' }).catch(() => {});
+          fetch(`${API_BASE}/api/email/mark-answered/${sourceUid}?folder=${encodeURIComponent(sourceFolder)}`, { method: 'POST' }).catch(e => console.error('Failed to mark email answered:', e));
           // Tell the inbox to refresh so the answered state shows
           window.dispatchEvent(new CustomEvent('email-answered', { detail: { uid: sourceUid } }));
         }
@@ -2961,7 +2965,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         // already detached from the visible tabs so sending can finish in the
         // background while the user continues in the next tab.
         if (sendDocId) {
-          fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(() => {});
+          fetch(`${API_BASE}/api/document/${sendDocId}`, { method: 'DELETE' }).catch(e => console.error('Failed to delete send doc:', e));
           const wasActiveSentDoc = activeDocId === sendDocId;
           docs.delete(sendDocId);
           if (wasActiveSentDoc) {
@@ -3061,7 +3065,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     saveCurrentToMap();
     const doc = docs.get(docId);
     const snapshot = { id: docId, doc: { ...doc } };
-    saveDocument({ silent: true }).catch(() => {});
+    saveDocument({ silent: true }).catch(e => console.error('Failed to save document:', e));
 
     const visibleBefore = _visibleDocIdsForCurrentSession();
     const idx = visibleBefore.indexOf(docId);
@@ -3091,12 +3095,12 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
   function _closeWithoutDeleting(deleteDoc = false) {
     if (!activeDocId) return;
     if (deleteDoc) {
-      fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`${API_BASE}/api/document/${activeDocId}`, { method: 'DELETE' }).catch(e => console.error('Failed to delete doc:', e));
     }
     // Save the current state to the doc first so it persists in the library
     saveCurrentToMap();
     if (!deleteDoc) {
-      saveDocument({ silent: true }).catch(() => {});
+      saveDocument({ silent: true }).catch(e => console.error('Failed to save document:', e));
     }
     docs.delete(activeDocId);
     const remaining = Array.from(docs.keys());
@@ -3358,7 +3362,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     if (prevId && prevId !== docId && docs.has(prevId)) {
       const prev = docs.get(prevId);
       if (!(prev.content || '').trim() && !(prev.title || '').trim()) {
-        fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(() => {});
+        fetch(`${API_BASE}/api/document/${prevId}`, { method: 'DELETE' }).catch(e => console.error('Failed to delete empty doc:', e));
         docs.delete(prevId);
         _syncDocIndicator();
       }
@@ -3413,7 +3417,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         try {
           const r = await fetch(`${API_BASE}/api/document/${docId}/extract-pdf-text`, { method: 'POST', credentials: 'same-origin' });
           if (!r.ok) return;
-          const j = await r.json().catch(() => ({}));
+          const j = await r.json().catch(e => { console.error('Failed to parse OCR result:', e); return {}; });
           if (j && j.extracted) {
             // Pull the fresh content into the local cache so subsequent AI
             // turns and the source view both reflect the extraction.
@@ -3498,9 +3502,9 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         body: JSON.stringify({ session_id: '' }),
       }).then(() => {
         if (toast && uiModule) uiModule.showToast('Document unlinked from session');
-      }).catch(() => {});
+      }).catch(e => console.error('Failed to unlink document:', e));
     } else {
-      fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`${API_BASE}/api/document/${docId}`, { method: 'DELETE' }).catch(e => console.error('Failed to delete detached doc:', e));
     }
     docs.delete(docId);
     _syncDocIndicator();
@@ -4426,7 +4430,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     const editorWrap = document.getElementById('doc-editor-wrap');
     const _fontSizes = ['s', 'm', 'l'];
     const _iconSizes = [12, 14, 16];
-    let _fontIdx = parseInt(localStorage.getItem('applicant-doc-fontsize') || '0', 10);
+    let _fontIdx = (() => { try { return parseInt(localStorage.getItem('applicant-doc-fontsize') || '0', 10); } catch (e) { console.error('Failed to read font size:', e); return 0; } })();
     if (!(_fontIdx >= 0 && _fontIdx < 3)) _fontIdx = 0;
     function _applyDocFont() {
       const richEmailBody = document.getElementById('doc-email-richbody');
@@ -4446,7 +4450,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
           el.style.display = active ? '' : 'none';
         });
       }
-      localStorage.setItem('applicant-doc-fontsize', _fontIdx);
+      try { localStorage.setItem('applicant-doc-fontsize', _fontIdx); } catch (e) { console.error('Failed to persist font size:', e); }
     }
     _applyDocFont();
     // Click cycles through the sizes (S → M → L → S).
@@ -5365,10 +5369,14 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     try { return JSON.parse(localStorage.getItem(_DOC_RECENTS_KEY) || '[]'); } catch { return []; }
   }
   function _trackDocAction(id) {
-    let recent = _getDocRecent().filter(x => x !== id);
-    recent.unshift(id);
-    if (recent.length > 10) recent.length = 10;
-    localStorage.setItem(_DOC_RECENTS_KEY, JSON.stringify(recent));
+    try {
+      let recent = _getDocRecent().filter(x => x !== id);
+      recent.unshift(id);
+      if (recent.length > 10) recent.length = 10;
+      localStorage.setItem(_DOC_RECENTS_KEY, JSON.stringify(recent));
+    } catch (e) {
+      console.error('Failed to track doc action:', e);
+    }
   }
 
   function initActionOverflow() {
@@ -5875,8 +5883,13 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
   export async function loadSessionDocs(sessionId, opts = {}) {
     _lastSessionId = sessionId;
     const restoreMode = !!opts.restoreMode;
-    const shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
-    const shouldRestoreMinimized = localStorage.getItem(_docMinimizedKey(sessionId)) === '1';
+    let shouldRestoreOpen = false, shouldRestoreMinimized = false;
+    try {
+      shouldRestoreOpen = localStorage.getItem(_docOpenKey(sessionId)) === '1';
+      shouldRestoreMinimized = localStorage.getItem(_docMinimizedKey(sessionId)) === '1';
+    } catch (e) {
+      console.error('Failed to read doc restore state:', e);
+    }
     // Clear docs from other sessions so tabs are per-session,
     // but keep session-less docs (e.g. email compose) — they're independent
     for (const [id, doc] of [...docs]) {
@@ -6649,11 +6662,15 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
   /** Persist suggestions to localStorage for the active doc */
   function _saveSuggestionsToStorage() {
     if (!activeDocId) return;
-    const data = _activeSuggestions.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason }));
-    if (data.length) {
-      localStorage.setItem('applicant-suggestions-' + activeDocId, JSON.stringify(data));
-    } else {
-      localStorage.removeItem('applicant-suggestions-' + activeDocId);
+    try {
+      const data = _activeSuggestions.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason }));
+      if (data.length) {
+        localStorage.setItem('applicant-suggestions-' + activeDocId, JSON.stringify(data));
+      } else {
+        localStorage.removeItem('applicant-suggestions-' + activeDocId);
+      }
+    } catch (e) {
+      console.error('Failed to persist suggestions:', e);
     }
   }
 
@@ -7716,7 +7733,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         method: 'POST',
         credentials: 'same-origin',
       });
-      result = await res.json().catch(() => ({}));
+      result = await res.json().catch(e => { console.error('Failed to parse prepare-signed-reply response:', e); return {}; });
       if (!res.ok || !result.ok) {
         const msg = (result && result.error) || `HTTP ${res.status}`;
         if (uiModule) uiModule.showError(`Couldn't prepare signed reply: ${msg}`);
@@ -9172,7 +9189,7 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
     return parts.join('<br>');
   }
   function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   /** Load version history list */
@@ -9199,9 +9216,9 @@ import { _sanitizeHtml } from './emailLibrary/utils.js';
         <div class="doc-version-item" data-version="${v.version_number}">
           <div class="doc-version-info">
             <span class="doc-version-num">v${v.version_number}</span>
-            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${v.source}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
+            ${i === 0 ? '<span class="doc-version-latest">latest</span>' : `<span class="doc-version-source">${_escHtml(v.source)}</span><span class="doc-version-time">${v.created_at ? new Date(v.created_at).toLocaleString() : ''}</span>`}
           </div>
-          ${v.summary ? `<div class="doc-version-summary">${v.summary}</div>` : ''}
+          ${v.summary ? `<div class="doc-version-summary">${_escHtml(v.summary)}</div>` : ''}
           ${diffs[i] ? `<div class="doc-version-diff">${diffs[i]}</div>` : ''}
           ${i > 0 ? `<button class="doc-version-restore" data-version="${v.version_number}">Restore</button>` : ''}
         </div>

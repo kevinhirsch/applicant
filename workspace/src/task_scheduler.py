@@ -95,6 +95,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             tz = None
 
     # "now" used for comparisons. When tz is set we work entirely in local tz
@@ -186,6 +187,7 @@ def _resolve_task_timezone(db, task) -> str | None:
         if cm and cm.timezone:
             return cm.timezone
     except Exception:
+        logger.warning("Bare exception in task_scheduler.py")
         pass
     return None
 
@@ -482,6 +484,7 @@ class TaskScheduler:
                     owners.add(r[0])
             return sorted(owners)
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             return []
         finally:
             db.close()
@@ -511,6 +514,7 @@ class TaskScheduler:
                 finally:
                     _db.close()
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
             await asyncio.sleep(sleep_for)
 
@@ -768,6 +772,7 @@ class TaskScheduler:
                 _t = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
                 _owner = _t.owner if _t else None
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
             _should_notify_error = False
             try:
@@ -778,6 +783,7 @@ class TaskScheduler:
                     and getattr(_t_for_notify, "notifications_enabled", True)
                 )
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 _should_notify_error = False
             if _should_notify_error:
                 self.add_notification(f"Task {task_id}", "error", task_id, owner=_owner)
@@ -803,6 +809,7 @@ class TaskScheduler:
                             tz_name=_resolve_task_timezone(db, task_obj),
                         )
                     except Exception:
+                        logger.warning("Bare exception in task_scheduler.py")
                         pass
                 try:
                     db.commit()
@@ -815,6 +822,7 @@ class TaskScheduler:
                     try:
                         db.rollback()
                     except Exception:
+                        logger.warning("Bare exception in task_scheduler.py")
                         pass
                     from datetime import timedelta as _td
                     _recover_db = SessionLocal()
@@ -1012,6 +1020,7 @@ class TaskScheduler:
                 now = datetime.utcnow()
             time_str = now.strftime("%A, %B %d %Y, %H:%M")
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             from datetime import timedelta
             now = datetime.utcnow()
             time_str = now.strftime("%H:%M UTC")
@@ -1155,6 +1164,7 @@ class TaskScheduler:
                         if content.strip():
                             raw[label] = content[:3000]
                     except Exception:
+                        logger.warning("Bare exception in task_scheduler.py")
                         pass
 
         # Build the data dump and hand it to the LLM
@@ -1193,6 +1203,7 @@ class TaskScheduler:
             try:
                 crew = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 crew = None
 
         # Determine endpoint + model
@@ -1230,6 +1241,7 @@ class TaskScheduler:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
                 except Exception:
+                    logger.warning("Bare exception in task_scheduler.py")
                     pass
 
         # For assistant check-ins: call each tool directly and post results
@@ -1255,6 +1267,7 @@ class TaskScheduler:
             else:
                 time_str = datetime.utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             time_str = datetime.utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
@@ -1268,6 +1281,7 @@ class TaskScheduler:
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
                     disabled_tools = all_tools - set(enabled)
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
 
         # RAG-select relevant tools for this prompt + always-available assistant tools.
@@ -1309,6 +1323,7 @@ class TaskScheduler:
             from src.text_helpers import strip_think
             result = strip_think(result or "", prose=True, prompt_echo=True).strip() or result
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             pass
 
         return result
@@ -1341,6 +1356,7 @@ class TaskScheduler:
             try:
                 crew = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 crew = None
         if (not endpoint_url or not model_name) and crew:
             endpoint_url = endpoint_url or crew.endpoint_url
@@ -1351,6 +1367,7 @@ class TaskScheduler:
                 endpoint_url = endpoint_url or resolved_url
                 model_name = model_name or resolved_model
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
 
         session_id = task.session_id
@@ -1372,6 +1389,7 @@ class TaskScheduler:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
                 except Exception:
+                    logger.warning("Bare exception in task_scheduler.py")
                     pass
 
         meta = {}
@@ -1408,6 +1426,7 @@ class TaskScheduler:
                 sess_obj.history.append(MemMsg(role="user", content=user_msg.content, metadata=meta))
                 sess_obj.history.append(MemMsg(role="assistant", content=assistant_msg.content, metadata=meta))
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
 
     @staticmethod
@@ -1489,6 +1508,7 @@ class TaskScheduler:
             finally:
                 db2.close()
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             pass
         full_text = ""
         tool_results = []
@@ -1504,6 +1524,7 @@ class TaskScheduler:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
             _task_fallbacks = resolve_utility_fallback_candidates()
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
             endpoint_url=endpoint_url,
@@ -1586,6 +1607,7 @@ class TaskScheduler:
                 endpoint_url = ep_url or endpoint_url
                 model = ep_model or model
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
 
         if not endpoint_url or not model:
@@ -1607,6 +1629,7 @@ class TaskScheduler:
                     headers = build_headers(ep.api_key, normalize_base(ep.base_url))
                     break
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             pass
 
         max_tokens = int(get_setting("research_max_tokens", 8192))
@@ -1630,6 +1653,7 @@ class TaskScheduler:
         try:
             stats = researcher.get_stats() or {}
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             stats = {}
 
         # Ensure a session exists for output
@@ -1652,6 +1676,7 @@ class TaskScheduler:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
                 except Exception:
+                    logger.warning("Bare exception in task_scheduler.py")
                     pass
 
         # Persist scheduled research in the same on-disk shape used by the
@@ -1723,6 +1748,7 @@ class TaskScheduler:
             if recent:
                 return recent.endpoint_url, recent.model
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             pass
         return None, None
 
@@ -1850,6 +1876,7 @@ class TaskScheduler:
             from routes.prefs_routes import _load_for_user
             _prefs = _load_for_user(owner) or {}
         except Exception:
+            logger.warning("Bare exception in task_scheduler.py")
             _prefs = {}
         tasks_enabled = bool(_prefs.get("tasks_enabled"))
         tasks_opened = bool(_prefs.get("tasks_opened"))
@@ -2180,6 +2207,7 @@ class TaskScheduler:
             try:
                 db.rollback()
             except Exception:
+                logger.warning("Bare exception in task_scheduler.py")
                 pass
         finally:
             db.close()

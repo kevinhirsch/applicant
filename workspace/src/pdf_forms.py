@@ -132,6 +132,7 @@ def _widget_on_state(w) -> str:
     try:
         return w.on_state() or ""
     except Exception:
+        logger.warning("Failed to get widget on_state")
         return ""
 
 

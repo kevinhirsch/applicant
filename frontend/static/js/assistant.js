@@ -90,6 +90,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'assistant-settings-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Assistant settings');
   modal.innerHTML = `
     <div class="modal-content" style="max-width:640px;width:96%;">
       <div class="modal-header">
@@ -97,13 +100,32 @@ function _ensureModalEl() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
           Assistant settings
         </h4>
-        <button class="close-btn" id="assistant-settings-close">✖</button>
+        <button class="close-btn" id="assistant-settings-close" aria-label="Close assistant settings">✖</button>
       </div>
       <div class="modal-body" id="assistant-settings-body">
         <div class="hwfit-loading">Loading…</div>
       </div>
     </div>`;
   document.body.appendChild(modal);
+  modal.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') _closeModal();
+    // Focus trapping: Tab wraps inside the modal
+    if (e.key === 'Tab') {
+      const focusable = modal.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
   modal.querySelector('#assistant-settings-close').addEventListener('click', _closeModal);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _closeModal();

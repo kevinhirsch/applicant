@@ -1794,7 +1794,7 @@ export async function materializePendingSession() {
 
   // Reload sidebar to show the new session — await it so the session
   // is fully registered before the caller proceeds (prevents race conditions)
-  await loadSessions().catch(() => {});
+  await loadSessions().catch(e => console.error('Silent catch in sessions:', e));
   return true;
 }
 

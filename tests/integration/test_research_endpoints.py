@@ -52,8 +52,11 @@ def _open_gate(client):
 
 
 def _set_research(client, workspace, *, max_calls=3):
-    client.app.state.container.research_service = ResearchService(
-        workspace=workspace, max_calls=max_calls
+    # Container is frozen after construction (#183); bypass with object.__setattr__ for test.
+    object.__setattr__(
+        client.app.state.container,
+        "research_service",
+        ResearchService(workspace=workspace, max_calls=max_calls),
     )
 
 

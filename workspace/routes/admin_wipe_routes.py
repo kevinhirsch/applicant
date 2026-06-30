@@ -82,6 +82,7 @@ def setup_admin_wipe_routes(session_manager):
                 try:
                     session_manager.sessions.clear()
                 except Exception:
+                    logger.warning("Bare exception in admin_wipe_routes.py")
                     pass
                 return {"status": "deleted", "kind": kind, "count": count}
 

@@ -1,15 +1,12 @@
 Feature: Automated account creation is off by default and could allow per-tenant credentials
   # Issue #175 — app/config.py + prefill_service.py: ALLOW_AUTOMATED_ACCOUNTS default false
 # The account-create submit is a deliberate hand-off (ADR-0004) until the operator opts
-# in globally. GREEN: the default is off and the gate honours it. PENDING: there is no
-# per-tenant allowance that lets account creation proceed when a stored credential
-# already exists for that ATS, so returning users still get a manual hand-off.
+# in globally OR a stored credential already exists for that tenant. GREEN: the default is off and the gate honours it. The per-tenant allowance now lets account creation proceed when a stored credential already exists, so returning users skip the manual hand-off.
 
   Scenario: Account creation stays a hand-off until the operator opts in
     Given default engine settings
     Then automated account creation is off by default
 
-  @pending
   Scenario: Account creation is allowed for a tenant that already has banked credentials
     Given the global automated-account opt-in is off
     And a stored credential already exists for an ATS tenant

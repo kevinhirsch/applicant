@@ -6,6 +6,8 @@ Selects the ``MemoryStore`` / ``SkillStore`` / ``RecallIndex`` trio by the
 * ``in_memory`` (DEFAULT) — the hermetic in-process adapters; import-safe, no deps.
 * ``bridge`` — the workspace-bridge skeleton adapters (recommended placement, §10);
   they degrade to empty behavior when the engine->workspace channel is OFF.
+* ``mem0`` — evaluation adapter for mem0 (https://github.com/mem0ai/mem0, #307).
+* ``letta`` — evaluation adapter for Letta (https://letta.com, #307).
 
 The default keeps boot + the test lane hermetic. The factory returns a small
 ``AgentMemory`` bundle the container injects into the curation service / loop.
@@ -21,6 +23,14 @@ from applicant.adapters.memory.bridge import (
     WorkspaceBridgeRecallIndex,
     WorkspaceBridgeSkillStore,
 )
+from applicant.adapters.memory.evaluation import (
+    LettaMemoryStore,
+    LettaRecallIndex,
+    LettaSkillStore,
+    Mem0MemoryStore,
+    Mem0RecallIndex,
+    Mem0SkillStore,
+)
 from applicant.adapters.memory.in_memory import (
     InMemoryMemoryStore,
     InMemoryRecallIndex,
@@ -30,10 +40,17 @@ from applicant.ports.driven.memory_store import MemoryStore
 from applicant.ports.driven.recall_index import RecallIndex
 from applicant.ports.driven.skill_store import SkillStore
 
-#: Backend identifiers for ``MIND_BACKEND`` (FR-MIND, §10).
+#: Backend identifiers for ``MIND_BACKEND`` (FR-MIND, §10, #307).
 MIND_BACKEND_IN_MEMORY = "in_memory"
 MIND_BACKEND_BRIDGE = "bridge"
-MIND_BACKENDS = (MIND_BACKEND_IN_MEMORY, MIND_BACKEND_BRIDGE)
+MIND_BACKEND_MEM0 = "mem0"
+MIND_BACKEND_LETTA = "letta"
+MIND_BACKENDS = (
+    MIND_BACKEND_IN_MEMORY,
+    MIND_BACKEND_BRIDGE,
+    MIND_BACKEND_MEM0,
+    MIND_BACKEND_LETTA,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +79,22 @@ def build_agent_memory(settings: Any, workspace_port: Any = None) -> AgentMemory
             skills=WorkspaceBridgeSkillStore(workspace_port),
             recall=WorkspaceBridgeRecallIndex(workspace_port),
             backend=MIND_BACKEND_BRIDGE,
+        )
+
+    if backend == MIND_BACKEND_MEM0:
+        return AgentMemory(
+            memory=Mem0MemoryStore(),
+            skills=Mem0SkillStore(),
+            recall=Mem0RecallIndex(),
+            backend=MIND_BACKEND_MEM0,
+        )
+
+    if backend == MIND_BACKEND_LETTA:
+        return AgentMemory(
+            memory=LettaMemoryStore(),
+            skills=LettaSkillStore(),
+            recall=LettaRecallIndex(),
+            backend=MIND_BACKEND_LETTA,
         )
 
     # Default / unknown -> hermetic in-memory.

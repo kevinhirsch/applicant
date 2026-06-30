@@ -2955,6 +2955,7 @@ function initializeEventListeners() {
       closeX.className = 'modal-dock-close';
       closeX.textContent = '×';
       closeX.title = 'Close';
+      closeX.setAttribute('aria-label', 'Close');
       closeX.addEventListener('click', (e) => {
         e.stopPropagation();
         modal.classList.remove('minimized');

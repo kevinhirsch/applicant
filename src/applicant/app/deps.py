@@ -12,6 +12,21 @@ from collections.abc import Iterator
 from fastapi import Depends, HTTPException, Request, status
 
 from applicant.app.container import Container
+from applicant.core.ids import validate_id as _validate_id
+
+
+def ValidatedPathParam(value: str) -> str:
+    """FastAPI dependency that validates a path parameter.
+
+    Usage::
+
+        @router.get("/{campaign_id}")
+        def get(campaign_id: str = Depends(ValidatedPathParam)):
+            ...
+
+    Rejects empty, NUL-byte, and path-traversal values before they reach the handler.
+    """
+    return _validate_id(value)
 
 
 def get_container(request: Request) -> Container:
