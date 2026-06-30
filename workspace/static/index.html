@@ -438,23 +438,23 @@
               </div>
               <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The kinds of roles the assistant searches and applies to for you. Edit any field below — these stay plain and under your control.</p>
               <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
-                <div>
+                <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for" aria-label="Software Engineer, Backend Engineer">
                 </div>
-                <div>
+                <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Locations <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles" aria-label="Remote, New York, London">
                 </div>
-                <div>
+                <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site" aria-label="remote, hybrid, on-site">
                 </div>
-                <div>
+                <div class="ow-field">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention" aria-label="Python, distributed systems">
                 </div>
-                <div style="max-width:240px">
+                <div class="ow-field" style="max-width:240px">
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Lowest acceptable salary</label>
                   <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)" aria-label="120000">
                 </div>
@@ -490,8 +490,8 @@
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Value</label>
                   <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail" aria-label="+1 555 0100">
                 </div>
-                <label style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed.">
-                  <input type="checkbox" id="applicant-attr-sensitive"> Sensitive
+                <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed.">
+                  <input type="checkbox" id="applicant-attr-sensitive" role="switch"><span class="ow-switch-track" aria-hidden="true"></span><span class="ow-switch-label">Sensitive</span>
                 </label>
                 <button type="button" id="applicant-attr-add-btn" class="admin-btn-add" style="white-space:nowrap">+ Add</button>
               </div>
