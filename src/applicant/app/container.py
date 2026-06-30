@@ -812,6 +812,16 @@ def build_container(settings: Settings | None = None) -> Container:
     # pre-fill loop behaves byte-for-byte as today (every captcha → existing hand-off).
     captcha_solver = _build_captcha_solver(settings)
 
+    # #306 self-improvement flywheel: ONE process-lived RoutineStore for the whole
+    # process. The scheduler rebuilds a fresh AgentLoop (and its PrefillService) every
+    # tick, so the induced per-ATS routines (AWM workflow-induction) + their ACE
+    # success/failure counters MUST live OUTSIDE the per-tick instance or they silently
+    # reset each tick — exactly like ``resume_ledger`` / ``curation_ledger``. Injected
+    # into the main prefill_service AND every per-tick / per-request copy below. It only
+    # influences PLANNING priors + reflective re-plan; the STOP boundary is untouched.
+    from applicant.adapters.routine import InMemoryRoutineStore
+    routine_store = InMemoryRoutineStore()
+
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -833,6 +843,8 @@ def build_container(settings: Settings | None = None) -> Container:
         # #305 Plan-as-Data: opt-in, default OFF (PREFILL_USE_PLANNER env).
         planner=_prefill_planner,
         use_planner=settings.prefill_use_planner,
+        # #306 self-improvement flywheel: the process-lived RoutineStore (AWM + ACE).
+        routine_store=routine_store,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
@@ -1097,6 +1109,9 @@ def build_container(settings: Settings | None = None) -> Container:
             use_planner=settings.prefill_use_planner,
             # #350: process-lived opt-in captcha solver (None for the default hand-off).
             captcha_solver=captcha_solver,
+            # #306: share the ONE process-lived RoutineStore (NOT a per-tick instance),
+            # so induced routines + ACE counters survive the per-tick loop rebuild.
+            routine_store=routine_store,
         )
         mat = MaterialService(
             tick_storage,
@@ -1282,6 +1297,8 @@ def build_container(settings: Settings | None = None) -> Container:
             use_planner=settings.prefill_use_planner,
             # #350: process-lived opt-in captcha solver (None for the default hand-off).
             captcha_solver=captcha_solver,
+            # #306: share the ONE process-lived RoutineStore across request scopes too.
+            routine_store=routine_store,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(

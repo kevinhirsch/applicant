@@ -167,6 +167,8 @@ class PrefillService:
         planner=None,
         use_planner: bool = False,
         captcha_solver=None,
+        routine_store=None,
+        max_replans: int = 2,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -214,6 +216,18 @@ class PrefillService:
         # ONLY when the operator explicitly opts in; any failure degrades to the hand-off.
         # It never bypasses the account-create / final-submit stop-boundary.
         self._captcha_solver = captcha_solver
+        # #306 self-improvement flywheel: the process-lived RoutineStore (AWM
+        # workflow-induction + ACE curation). Optional/defaulted: absent → the planner
+        # path behaves exactly as #305 (no priors, single-shot). MUST be the SAME
+        # process-lived instance across ticks (injected from container.py like the
+        # resume/curation ledgers), never a per-tick instance, or induced routines
+        # silently reset every tick. It influences PLANNING priors + reflective re-plan
+        # ONLY — the STOP boundary / review-before-submit gates are untouched.
+        self._routine_store = routine_store
+        # Reflexion self-healing: how many reflective re-plans to attempt on a failed
+        # op (a broken selector) before giving up to the normal fill path. Bounded so a
+        # persistently-broken page never loops forever.
+        self._max_replans = max(0, int(max_replans))
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -571,11 +585,34 @@ class PrefillService:
             if self._browser.advance(aid) is None:
                 return self._reach_final_approval(app, result)
 
-    def _execute_plan_for_page(self, app, attributes, result) -> PrefillResult | None:
-        """#305 Plan-as-Data: emit and execute a typed Plan for the current page.
+    @staticmethod
+    def _routine_domain(url: str) -> str:
+        """Derive the routine key (ATS tenant / host) from a page URL (#306).
 
-        Builds an attribute-cloud dict from ``attributes``, asks the planner for a
-        Plan, validates it, then executes each op through the existing guarded actions.
+        Keyed by the registrable host so routines learned on one tenant's pages are
+        reused across that tenant's pages. Best-effort: a bare/relative URL falls back
+        to the raw string so the key is at least stable.
+        """
+        from urllib.parse import urlparse
+
+        try:
+            host = urlparse(url).netloc
+        except Exception:  # noqa: BLE001 — never crash deriving a key
+            host = ""
+        return (host or url or "").lower()
+
+    def _execute_plan_for_page(self, app, attributes, result) -> PrefillResult | None:
+        """#305 Plan-as-Data + #306 flywheel: emit, ground, and execute a typed Plan.
+
+        Builds the attribute cloud, asks the planner for a Plan — **injecting any
+        stored routine for this domain as an AWM prior** (#306) — validates it, then
+        executes each op through the existing guarded actions. On a broken op (a
+        broken selector) it captures a short **reflection** and runs a bounded
+        **reflective re-plan** (Reflexion) so a broken selector re-plans rather than
+        dead-stops. On a clean success it **induces** a reusable routine for the
+        domain (AWM) and up-weights it (ACE); on a re-plan it down-weights the prior
+        (ACE), pruning a stale routine that stops working.
+
         Stop ops (account_create, captcha, final_submit, ...) are routed through the
         same hand-off paths as the non-planner loop so the STOP boundary is intact.
 
@@ -605,52 +642,106 @@ class PrefillService:
                 attribute_cloud[attr.name] = str(attr.value)
         known_ids = frozenset(attribute_cloud.keys())
 
-        # Build a lightweight observation for the planner.
+        # #306 AWM prior-injection: render the routine that worked on this domain
+        # before (if any) as a planning prior. Data only (op kinds + ids/locators),
+        # never a literal value — it cannot leak a fabricated answer into the plan.
+        domain = self._routine_domain(state.url)
+        prior_routine = self._prior_routine_text(domain)
+
         observation = PlannerObservation(
             url=state.url,
             html_summary=state.body or "",
             snapshot_tokens=len(state.body or "") // 4,
         )
-        planner_input = PlannerInput(
-            goal="fill all form fields on this page",
-            observation=observation,
-            facts={k: k for k in known_ids},  # id -> label (planner uses labels)
+
+        # Reflexion re-plan loop: first pass injects the prior; subsequent passes
+        # carry the reflection captured from the failed op. Bounded by ``max_replans``.
+        reflection: str | None = None
+        for attempt in range(1 + self._max_replans):
+            planner_input = PlannerInput(
+                goal="fill all form fields on this page",
+                observation=observation,
+                facts={k: k for k in known_ids},  # id -> label (planner uses labels)
+                prior_routine=prior_routine if attempt == 0 else None,
+                reflection=reflection,
+                failure_reason=reflection,  # keep the existing single-line path populated too
+            )
+
+            try:
+                plan = self._planner.plan(planner_input)
+            except Exception:
+                log.warning(
+                    "PlannerPath: planner.plan() raised for application %s — "
+                    "falling back to non-planner fill",
+                    aid,
+                    exc_info=True,
+                )
+                return self._fill_current_page(app, attributes, result)
+
+            # An empty plan falls back to the non-planner loop (planner couldn't help).
+            if not plan or len(plan) == 0:
+                log.debug(
+                    "PlannerPath: empty plan for application %s page %s — "
+                    "falling back to non-planner fill",
+                    aid, state.url,
+                )
+                return self._fill_current_page(app, attributes, result)
+
+            # Validate before any execution (NFR-TRUTH-1, FR-PREFILL-4).
+            errors = validate_plan(plan, known_ids)
+            if errors:
+                log.warning(
+                    "PlannerPath: invalid plan for application %s page %s (%d error(s)) — "
+                    "falling back to non-planner fill: %s",
+                    aid, state.url, len(errors), errors[0],
+                )
+                return self._fill_current_page(app, attributes, result)
+
+            fill_values = resolve_fill_values(plan, attribute_cloud)
+            terminal, reflection, induced_steps = self._run_plan_ops(
+                app, state, plan, fill_values, result
+            )
+            if reflection is None:
+                # Clean execution (whether the page ended naturally or at a benign
+                # final_submit / hand-off StopOp) — #306 AWM induction: store the
+                # op-sequence that worked, keyed by domain, and ACE-up-weight a reused
+                # routine. The STOP boundary is untouched: this only records what to
+                # PLAN next time; the terminal hand-off below is returned unchanged.
+                self._induce_routine(domain, induced_steps, reused=prior_routine is not None)
+                return terminal  # terminal (final_submit / hand-off) or None (page done)
+            # A broken op produced a reflection. ACE: down-weight (and maybe prune) the
+            # prior routine that mis-grounded, then reflectively re-plan if budget remains.
+            if prior_routine is not None and self._routine_store is not None:
+                try:
+                    self._routine_store.record_failure(domain)
+                except Exception:  # noqa: BLE001 — curation must never crash the loop
+                    log.debug("RoutineStore.record_failure failed", exc_info=True)
+                prior_routine = None  # don't re-inject a prior that just mis-grounded
+            log.info(
+                "PlannerPath: reflective re-plan %d/%d for application %s: %s",
+                attempt + 1, self._max_replans, aid, reflection,
+            )
+
+        # Exhausted the re-plan budget — fall back to the deterministic fill path so
+        # the page still gets a best-effort pass (never a silent dead stop).
+        log.warning(
+            "PlannerPath: re-plan budget exhausted for application %s page %s — "
+            "falling back to non-planner fill",
+            aid, state.url,
         )
+        return self._fill_current_page(app, attributes, result)
 
-        try:
-            plan = self._planner.plan(planner_input)
-        except Exception:
-            log.warning(
-                "PlannerPath: planner.plan() raised for application %s — "
-                "falling back to non-planner fill",
-                aid,
-                exc_info=True,
-            )
-            return self._fill_current_page(app, attributes, result)
+    def _run_plan_ops(self, app, state, plan, fill_values, result):
+        """Execute one plan's ops, honouring the STOP boundary.
 
-        # An empty plan falls back to the non-planner loop (planner couldn't help).
-        if not plan or len(plan) == 0:
-            log.debug(
-                "PlannerPath: empty plan for application %s page %s — "
-                "falling back to non-planner fill",
-                aid, state.url,
-            )
-            return self._fill_current_page(app, attributes, result)
-
-        # Validate before any execution (NFR-TRUTH-1, FR-PREFILL-4).
-        errors = validate_plan(plan, known_ids)
-        if errors:
-            log.warning(
-                "PlannerPath: invalid plan for application %s page %s (%d error(s)) — "
-                "falling back to non-planner fill: %s",
-                aid, state.url, len(errors), errors[0],
-            )
-            return self._fill_current_page(app, attributes, result)
-
-        # Resolve fill values from the attribute cloud (never literal LLM values).
-        fill_values = resolve_fill_values(plan, attribute_cloud)
-
-        page_log: dict[str, str] = {}
+        Returns ``(terminal, reflection, steps)``:
+        * ``terminal`` — a terminated :class:`PrefillResult` (stop/handoff) or ``None``.
+        * ``reflection`` — a short Reflexion note when an op (a broken selector) failed,
+          else ``None`` (clean execution). A non-None reflection signals the caller to
+          reflectively re-plan.
+        * ``steps`` — the :class:`RoutineStep` sequence that executed cleanly, for AWM
+          induction (only meaningful when ``reflection`` is ``None``).
+        """
         from applicant.core.entities.plan import (
             ClickOp,
             FillOp,
@@ -658,6 +749,11 @@ class PrefillService:
             SelectOp,
             StopOp,
         )
+        from applicant.ports.driven.routine_store import RoutineStep
+
+        aid = app.id
+        page_log: dict[str, str] = {}
+        steps: list[RoutineStep] = []
 
         for op in plan:
             kind = op.kind
@@ -670,6 +766,9 @@ class PrefillService:
                     self._browser.fill_field(aid, op.ref, value)
                     page_log[op.ref] = value
                     result.fields_filled += 1
+                    steps.append(RoutineStep(
+                        kind=OpKind.FILL.value, ref=op.ref, attribute_id=op.attribute_id
+                    ))
                 except Exception as exc:  # noqa: BLE001
                     self._emit_error(
                         app,
@@ -684,6 +783,15 @@ class PrefillService:
                         "url": state.url,
                         "error": str(exc),
                     })
+                    # #306 Reflexion: a broken selector → reflect + signal re-plan.
+                    reflection = (
+                        f"fill on ref={op.ref!r} (attribute_id={op.attribute_id!r}) "
+                        f"failed: {exc}. The locator is likely broken/stale — try a "
+                        f"different way to find this field on the current DOM."
+                    )
+                    if page_log:
+                        result.filled_by_page[state.url] = page_log
+                    return None, reflection, ()
 
             elif kind == OpKind.SELECT and isinstance(op, SelectOp):
                 value = fill_values.get(op.ref)
@@ -693,6 +801,9 @@ class PrefillService:
                     self._browser.fill_field(aid, op.ref, value)
                     page_log[op.ref] = value
                     result.fields_filled += 1
+                    steps.append(RoutineStep(
+                        kind=OpKind.SELECT.value, ref=op.ref, attribute_id=op.attribute_id
+                    ))
                 except Exception as exc:  # noqa: BLE001
                     self._emit_error(
                         app,
@@ -700,6 +811,14 @@ class PrefillService:
                         detail=str(exc),
                         selector=op.ref,
                     )
+                    reflection = (
+                        f"select on ref={op.ref!r} (attribute_id={op.attribute_id!r}) "
+                        f"failed: {exc}. The locator is likely broken/stale — try a "
+                        f"different way to find this control on the current DOM."
+                    )
+                    if page_log:
+                        result.filled_by_page[state.url] = page_log
+                    return None, reflection, ()
 
             elif kind == OpKind.CLICK and isinstance(op, ClickOp):
                 # Clicks are allowed for navigation (e.g. "Next" buttons).
@@ -710,6 +829,7 @@ class PrefillService:
                 # checks in the outer _continue_pages loop.
                 try:
                     self._browser.click(aid, op.ref)
+                    steps.append(RoutineStep(kind=OpKind.CLICK.value, ref=op.ref))
                 except Exception as exc:  # noqa: BLE001
                     log.debug(
                         "PlannerPath: click ref=%r failed: %s", op.ref, exc
@@ -719,9 +839,9 @@ class PrefillService:
                 # The planner emitted a stop — honour the STOP boundary.
                 reason = op.reason
                 if reason in ("final_submit",):
-                    return self._reach_final_approval(app, result)
+                    return self._reach_final_approval(app, result), None, tuple(steps)
                 elif reason in ("account_create", "email_verify", "two_factor", "sms_verify"):
-                    return self._account_handoff(app, result, result.sandbox_session_url)
+                    return self._account_handoff(app, result, result.sandbox_session_url), None, tuple(steps)
                 elif reason in ("captcha", "oauth"):
                     # #350: route a captcha through the opt-in solver port FIRST. With the
                     # default config (no solver / ``human`` strategy) this is a no-op and we
@@ -748,7 +868,7 @@ class PrefillService:
                             pass
                     result.pending_action_id = pending_action.id
                     result.state = ApplicationState.BLOCKED_DETECTION
-                    return result
+                    return result, None, tuple(steps)
                 else:
                     # Unknown stop reason — treat as a generic block.
                     log.warning(
@@ -756,7 +876,7 @@ class PrefillService:
                         reason, aid,
                     )
                     result.state = ApplicationState.AWAITING_HUMAN_PREFILL
-                    return result
+                    return result, None, tuple(steps)
 
             # GOTO, FIND, EXTRACT, ASSERT, WAIT — informational / navigation;
             # executed as no-ops here (the real browser path handles navigation
@@ -765,7 +885,41 @@ class PrefillService:
         if page_log:
             result.filled_by_page[state.url] = page_log
 
-        return None
+        return None, None, tuple(steps)
+
+    def _prior_routine_text(self, domain: str) -> str | None:
+        """Return the AWM prior-routine prompt text for ``domain``, or ``None``.
+
+        Defensive: no store wired / no live routine / any error → ``None`` so the
+        planner cleanly falls back to a cold plan. A pruned routine returns ``None``
+        (the store dropped it), so a stale routine is never injected (ACE).
+        """
+        store = self._routine_store
+        if store is None or not domain:
+            return None
+        try:
+            routine = store.get(domain)
+        except Exception:  # noqa: BLE001 — priors must never crash the loop
+            log.debug("RoutineStore.get failed for %s", domain, exc_info=True)
+            return None
+        if routine is None or not routine.steps:
+            return None
+        return routine.as_prior_text()
+
+    def _induce_routine(self, domain: str, steps, *, reused: bool) -> None:
+        """#306 AWM workflow-induction: store the op-sequence that worked for ``domain``.
+
+        Best-effort + defensive: no store / empty trace / any error → no-op. When the
+        page was filled by REUSING an injected prior, up-weight that routine (ACE) AND
+        refresh it with the latest working trace (``induce`` counts a success).
+        """
+        store = self._routine_store
+        if store is None or not domain or not steps:
+            return
+        try:
+            store.induce(domain, tuple(steps))
+        except Exception:  # noqa: BLE001 — induction must never crash the loop
+            log.debug("RoutineStore.induce failed for %s", domain, exc_info=True)
 
     def _try_solve_captcha(self, app, state) -> bool:
         """#350: route a detected captcha through the opt-in solver port.

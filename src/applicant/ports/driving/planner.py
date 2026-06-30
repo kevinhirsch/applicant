@@ -41,6 +41,16 @@ class PlannerInput:
     constraints: dict[str, str] | None = None
     previous_plan_id: str | None = None
     failure_reason: str | None = None  # set on replan (self-correction loop)
+    #: #306 AWM prior-injection: a compact, data-only summary of a routine that
+    #: worked on this domain before (rendered by ``Routine.as_prior_text``). When
+    #: present the planner injects it as a planning prior so coverage grows itself.
+    #: It carries only op kinds + ids/locators — never a literal value — so it
+    #: cannot leak a fabricated answer into the plan.
+    prior_routine: str | None = None
+    #: #306 Reflexion: a short reflection on the previous attempt's failure (what
+    #: broke + why, e.g. a broken selector), richer than the bare ``failure_reason``,
+    #: fed back into a reflective re-plan so a broken selector re-plans, not dead-stops.
+    reflection: str | None = None
 
 
 @runtime_checkable
