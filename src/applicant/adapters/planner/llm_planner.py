@@ -116,8 +116,24 @@ class LLMPlanner:
         if input_.constraints:
             for k, v in input_.constraints.items():
                 parts.append(f"\nCONSTRAINT {k}: {v}")
+        # #306 AWM prior-injection: a routine that worked on this domain before is
+        # offered to the planner as a prior (data only — op kinds + ids/locators,
+        # never a literal value), so coverage grows itself across encounters.
+        if input_.prior_routine:
+            parts.append(
+                "\nA ROUTINE THAT WORKED HERE BEFORE (use as a prior; re-ground "
+                "the refs against the CURRENT DOM, keep the same fields/ids):\n"
+                f"{input_.prior_routine}"
+            )
         if input_.failure_reason:
             parts.append(f"\nPREVIOUS ATTEMPT FAILED: {input_.failure_reason}")
+        # #306 Reflexion: a richer reflection (what broke + why) steers the re-plan
+        # away from the failed approach (e.g. a broken selector) rather than dead-stopping.
+        if input_.reflection:
+            parts.append(
+                "\nREFLECTION ON THE LAST FAILURE (avoid repeating it; try a different "
+                f"locator/approach for the broken step):\n{input_.reflection}"
+            )
         parts.append("\n\nRespond with ONLY a JSON array of operation objects. No explanation.")
         return "\n".join(parts)
 
