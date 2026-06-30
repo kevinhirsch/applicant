@@ -8,7 +8,6 @@ Feature: Map the Chat / assistant surface onto Chat Hint + Elements
     Given the UI-kit migration item "S7"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S7 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S7"
     Then its post-migration kit target is satisfied

@@ -16,8 +16,30 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+// Chat Hint kit (FR-UIKIT-2): the ONE above-composer guidance affordance. The
+// assistant's "ask me what needs your attention" guardrail tip is routed through
+// the kit instead of being hand-rolled, so it shares the kit's chrome/anchor and
+// per-user dismiss persistence. It mounts above the composer's `.chat-input-bar`
+// (the composer carries that hook class) via the AppkitNotice kit.
+import appkitChatHint from './appkitChatHint.js';
 
 const API = '/api/applicant/chat';
+
+// The single guardrail/guidance hint for the Job Assistant composer. Registered
+// once with the Chat Hint kit; `gameBuildOnly:false` so it is eligible here (this
+// is not the game build), `persistDismiss:true` (the default) so a user's "Got
+// it" sticks per-user across reloads.
+const CHAT_HINT_KEY = 'applicant-assistant-guardrail';
+let _chatHintRegistered = false;
+function _ensureChatHintRegistered() {
+  if (_chatHintRegistered || !appkitChatHint || typeof appkitChatHint.register !== 'function') return;
+  appkitChatHint.register(CHAT_HINT_KEY, {
+    html: 'Ask me what needs your attention, or tell me about your preferences and ' +
+      "I'll keep them up to date. I never submit an application without your OK.",
+    gameBuildOnly: false,
+  });
+  _chatHintRegistered = true;
+}
 
 let _modalEl = null;
 let _renderSeq = 0; // monotonic - guards stale async renders on fast campaign switches
@@ -194,7 +216,7 @@ function _renderConversation() {
     <div id="applicant-suggested-card" style="margin-bottom:10px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:none;"></div>
     <div id="applicant-pending" style="margin-bottom:12px;"></div>
     <div id="applicant-thread" class="chat-history" style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
-    <div id="applicant-composer" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
+    <div id="applicant-composer" class="chat-input-bar" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
                 style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
       <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send to the assistant">Send</button>
@@ -221,6 +243,12 @@ function _renderConversation() {
   _renderThreadIntro();
   _loadPending();
   input.focus();
+
+  // Mount the above-composer guardrail tip through the Chat Hint kit. The kit
+  // anchors it above the composer's `.chat-input-bar` and owns its dismiss/
+  // persistence; show() is idempotent and a no-op once the user dismissed it.
+  _ensureChatHintRegistered();
+  try { appkitChatHint.show(CHAT_HINT_KEY); } catch { /* kit unavailable — no-op */ }
 }
 
 function _renderThreadIntro(seq) {

@@ -94,16 +94,16 @@ function _ensureModalEl() {
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <h3 style="margin:0;font-size:0.95em;">A specific site sign-in</h3>
-          <label style="font-size:12px;opacity:0.8;">Site / employer
+          <label class="ow-field" style="font-size:12px;opacity:0.8;">Site / employer
             <input id="applicant-vault-tenant" class="settings-select" type="text" placeholder="acme.workday.com"
                    title="The job site or employer tenant this sign-in is for"
                    style="width:100%;margin-top:4px;">
           </label>
-          <label style="font-size:12px;opacity:0.8;">Username or email
+          <label class="ow-field" style="font-size:12px;opacity:0.8;">Username or email
             <input id="applicant-vault-username" class="settings-select" type="text" autocomplete="off"
                    placeholder="you@example.com" style="width:100%;margin-top:4px;">
           </label>
-          <label style="font-size:12px;opacity:0.8;">Password
+          <label class="ow-field" style="font-size:12px;opacity:0.8;">Password
             <input id="applicant-vault-secret" class="settings-select" type="password" autocomplete="new-password"
                    placeholder="••••••••" style="width:100%;margin-top:4px;">
           </label>

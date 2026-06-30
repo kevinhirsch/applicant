@@ -1629,7 +1629,10 @@ function _renderGrid() {
 
 function _createCard(em) {
   const card = document.createElement('div');
-  let cls = 'doclib-card memory-item';
+  // Notice kit: compose the kit's .on-card chrome onto the email/digest card so
+  // every notice-style card shares one surface language; the existing
+  // doclib-card / memory-item / email-card-* hooks are preserved for behavior.
+  let cls = 'on-card doclib-card memory-item';
   if (em.is_answered) cls += ' email-card-answered';
   else if (!em.is_read) cls += ' email-card-unread';
   card.className = cls;

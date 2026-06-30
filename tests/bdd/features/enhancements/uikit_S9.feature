@@ -8,7 +8,6 @@ Feature: Map the in-app Email / digest panel onto Notice + Gadget (the digest em
     Given the UI-kit migration item "S9"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S9 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S9"
     Then its post-migration kit target is satisfied
