@@ -27,6 +27,7 @@ const API_BASE = window.location.origin;
 const LAST_CAMPAIGN_KEY = 'applicant-digest-last-campaign';
 
 let _featurePromise = null;
+let _busyFeedback = false; // re-entry guard for feedback/survey actions
 
 // --- small DOM helpers -----------------------------------------------------
 
@@ -550,6 +551,7 @@ function _showReport(report, { company = '', role = '' } = {}) {
 }
 
 async function _onFeedback(panel, campaignId) {
+  if (_busyFeedback) return;
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   const text = await styledPrompt(
     'Tell the assistant anything about its suggestions — what to show more or less of.',
@@ -563,6 +565,7 @@ async function _onFeedback(panel, campaignId) {
   );
   if (text == null) return;
   if (!text.trim()) { showToast('Nothing to send.'); return; }
+  _busyFeedback = true;
   try {
     await _api('/feedback/freetext', {
       method: 'POST',
@@ -571,6 +574,8 @@ async function _onFeedback(panel, campaignId) {
     showToast('Thanks — feedback sent.');
   } catch (e) {
     showToast(e.message || 'Could not send feedback right now.');
+  } finally {
+    _busyFeedback = false;
   }
 }
 
@@ -724,6 +729,7 @@ function _askSurvey() {
 }
 
 async function _onSurvey(panel, campaignId) {
+  if (_busyFeedback) return;
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   const answers = await _askSurvey();
   if (answers == null) return;                       // cancelled
@@ -731,6 +737,7 @@ async function _onSurvey(panel, campaignId) {
     showToast('Pick at least one answer, or use Send feedback for a free note.');
     return;
   }
+  _busyFeedback = true;
   try {
     const res = await _api('/feedback/survey', {
       method: 'POST',
@@ -746,6 +753,8 @@ async function _onSurvey(panel, campaignId) {
     }
   } catch (e) {
     showToast(e.message || 'Could not send the survey right now.');
+  } finally {
+    _busyFeedback = false;
   }
 }
 

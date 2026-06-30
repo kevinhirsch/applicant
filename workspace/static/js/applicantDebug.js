@@ -37,6 +37,8 @@ let _modalEl = null;
 let _modalA11yCleanup = null;
 let _activeTab = 'activity';
 let _campaignId = null;
+let _busySave = false; // re-entry guard for save-run-settings
+let _busySubmit = false; // re-entry guard for mark-submitted
 
 
 
@@ -150,7 +152,7 @@ async function _loadCampaigns() {
     data = { engine_available: false, campaigns: [] };
   }
   const sel = _modalEl.querySelector('#applicant-debug-campaign');
-  const campaigns = (data && data.campaigns) || [];
+  const campaigns = Array.isArray(data && data.campaigns) ? data.campaigns : [];
   sel.innerHTML = campaigns.length
     ? campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')
     : '<option value="">No job searches yet</option>';
@@ -265,7 +267,8 @@ async function _confirm(message, opts) {
 }
 
 async function _markSubmitted(appId) {
-  if (!appId) return;
+  if (!appId || _busySubmit) return;
+  _busySubmit = true;
   const ok = await _confirm(
     'Record that you submitted this application yourself? This helps the system learn which details convert.',
     { confirmText: 'Record it', cancelText: 'Cancel' });
@@ -276,6 +279,8 @@ async function _markSubmitted(appId) {
     _renderActivity();
   } catch (e) {
     _toast(e.message || 'Could not record that right now.');
+  } finally {
+    _busySubmit = false;
   }
 }
 
@@ -467,6 +472,8 @@ async function _renderRun() {
       <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
     </div>`;
   _body().querySelector('#applicant-run-save').addEventListener('click', async () => {
+    if (_busySave) return;
+    _busySave = true;
     const mode = _body().querySelector('#applicant-run-mode').value;
     const tRaw = _body().querySelector('#applicant-run-target').value;
     const body = { run_mode: mode };
@@ -477,6 +484,8 @@ async function _renderRun() {
       _renderRun();
     } catch (e) {
       _toast(e.message || 'Could not save run settings.');
+    } finally {
+      _busySave = false;
     }
   });
   const runNowBtn = _body().querySelector('#applicant-run-now');
