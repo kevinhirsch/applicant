@@ -164,6 +164,8 @@ class PrefillService:
         required_field_types: frozenset[str] | None = None,
         allow_automated_accounts: bool = False,
         match_rate_floor: float = DEFAULT_MATCH_RATE_FLOOR,
+        planner=None,
+        use_planner: bool = False,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -194,6 +196,15 @@ class PrefillService:
         # it (with at least one field detected) the run is flagged as a probable
         # wrong-ATS / near-empty fill for human review rather than offered for submission.
         self._match_rate_floor = float(match_rate_floor)
+        # #305 Plan-as-Data: optional PlannerPort driving adapter. When ``use_planner``
+        # is True AND a planner is present, each page produces a typed Plan before any
+        # browser action runs. The plan is validated (validate_plan) and then executed
+        # op-by-op through the existing guarded actions — the STOP boundary is still
+        # enforced (consequential stop ops route through _account_handoff /
+        # _reach_final_approval, never auto-submitted). Default OFF so no existing
+        # behaviour changes; flip PREFILL_USE_PLANNER=true to opt in.
+        self._planner = planner
+        self._use_planner = bool(use_planner) and (planner is not None)
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -513,25 +524,35 @@ class PrefillService:
                 self._capture_screenshot(aid, result)
                 return self._account_handoff(app, result, result.sandbox_session_url)
 
-            # Pre-fill every fillable field on this page FIRST (maximal pre-fill).
-            # A SINGLE-PAGE application (Greenhouse / Lever / Ashby) has the whole form
-            # AND the Submit button on one page, so filling must happen BEFORE we decide
-            # the page is the final-submit page — otherwise the engine sees "Submit
-            # Application" and skips the entire form (universal-ATS support, FR-PREFILL-2/3).
-            blocked = self._fill_current_page(app, attributes, result)
-            if blocked is not None:
-                # G11 #177: Log ATS type on prefill failure for diagnostics.
-                from applicant.adapters.browser.ats import resolve_ats
-                try:
-                    state = self._browser.current_state(aid)
-                    ats_type = type(resolve_ats(state.url)).__name__ if state and state.url else "unknown"
-                except Exception:
-                    ats_type = "unknown"
-                log.warning(
-                    "Prefill blocked on ATS %s — state=%s missing_attr=%s",
-                    ats_type, blocked.state, blocked.missing_attribute,
-                )
-                return blocked
+            # #305 Plan-as-Data: when a planner is configured and enabled (OFF by
+            # default), emit a typed plan for this page and execute each op through
+            # the existing guarded actions. Stop ops are routed through the same
+            # hand-off paths as the non-planner loop — the STOP boundary is intact.
+            if self._use_planner:
+                planner_result = self._execute_plan_for_page(app, attributes, result)
+                if planner_result is not None:
+                    return planner_result
+            else:
+                # Pre-fill every fillable field on this page FIRST (maximal pre-fill).
+                # A SINGLE-PAGE application (Greenhouse / Lever / Ashby) has the whole
+                # form AND the Submit button on one page, so filling must happen BEFORE
+                # we decide the page is the final-submit page — otherwise the engine
+                # sees "Submit Application" and skips the entire form (universal-ATS
+                # support, FR-PREFILL-2/3).
+                blocked = self._fill_current_page(app, attributes, result)
+                if blocked is not None:
+                    # G11 #177: Log ATS type on prefill failure for diagnostics.
+                    from applicant.adapters.browser.ats import resolve_ats
+                    try:
+                        state = self._browser.current_state(aid)
+                        ats_type = type(resolve_ats(state.url)).__name__ if state and state.url else "unknown"
+                    except Exception:
+                        ats_type = "unknown"
+                    log.warning(
+                        "Prefill blocked on ATS %s — state=%s missing_attr=%s",
+                        ats_type, blocked.state, blocked.missing_attribute,
+                    )
+                    return blocked
             self._capture_screenshot(aid, result)
 
             # Now stop at the final review/submit page (the engine never clicks the
@@ -540,6 +561,196 @@ class PrefillService:
                 return self._reach_final_approval(app, result)
             if self._browser.advance(aid) is None:
                 return self._reach_final_approval(app, result)
+
+    def _execute_plan_for_page(self, app, attributes, result) -> PrefillResult | None:
+        """#305 Plan-as-Data: emit and execute a typed Plan for the current page.
+
+        Builds an attribute-cloud dict from ``attributes``, asks the planner for a
+        Plan, validates it, then executes each op through the existing guarded actions.
+        Stop ops (account_create, captcha, final_submit, ...) are routed through the
+        same hand-off paths as the non-planner loop so the STOP boundary is intact.
+
+        Returns ``None`` when the page was filled successfully (caller proceeds to
+        advance), or a terminated :class:`PrefillResult` on a stop/block.
+        """
+        from applicant.core.rules.plan import (
+            resolve_fill_values,
+            validate_plan,
+        )
+        from applicant.ports.driving.planner import PlannerInput, PlannerObservation
+
+        aid = app.id
+        state = self._browser.current_state(aid)
+        if state is None:
+            log.warning(
+                "PlannerPath: current_state() returned None for application %s — "
+                "falling back to non-planner fill",
+                aid,
+            )
+            return self._fill_current_page(app, attributes, result)
+
+        # Build the attribute cloud (attribute_id -> value) for validation + resolution.
+        attribute_cloud: dict[str, str] = {}
+        for attr in (attributes or []):
+            if attr.name and attr.value is not None:
+                attribute_cloud[attr.name] = str(attr.value)
+        known_ids = frozenset(attribute_cloud.keys())
+
+        # Build a lightweight observation for the planner.
+        observation = PlannerObservation(
+            url=state.url,
+            html_summary=state.body or "",
+            snapshot_tokens=len(state.body or "") // 4,
+        )
+        planner_input = PlannerInput(
+            goal="fill all form fields on this page",
+            observation=observation,
+            facts={k: k for k in known_ids},  # id -> label (planner uses labels)
+        )
+
+        try:
+            plan = self._planner.plan(planner_input)
+        except Exception:
+            log.warning(
+                "PlannerPath: planner.plan() raised for application %s — "
+                "falling back to non-planner fill",
+                aid,
+                exc_info=True,
+            )
+            return self._fill_current_page(app, attributes, result)
+
+        # An empty plan falls back to the non-planner loop (planner couldn't help).
+        if not plan or len(plan) == 0:
+            log.debug(
+                "PlannerPath: empty plan for application %s page %s — "
+                "falling back to non-planner fill",
+                aid, state.url,
+            )
+            return self._fill_current_page(app, attributes, result)
+
+        # Validate before any execution (NFR-TRUTH-1, FR-PREFILL-4).
+        errors = validate_plan(plan, known_ids)
+        if errors:
+            log.warning(
+                "PlannerPath: invalid plan for application %s page %s (%d error(s)) — "
+                "falling back to non-planner fill: %s",
+                aid, state.url, len(errors), errors[0],
+            )
+            return self._fill_current_page(app, attributes, result)
+
+        # Resolve fill values from the attribute cloud (never literal LLM values).
+        fill_values = resolve_fill_values(plan, attribute_cloud)
+
+        page_log: dict[str, str] = {}
+        from applicant.core.entities.plan import (
+            ClickOp,
+            FillOp,
+            OpKind,
+            SelectOp,
+            StopOp,
+        )
+
+        for op in plan:
+            kind = op.kind
+
+            if kind == OpKind.FILL and isinstance(op, FillOp):
+                value = fill_values.get(op.ref)
+                if value is None:
+                    continue  # attribute not resolvable; skip this op
+                try:
+                    self._browser.fill_field(aid, op.ref, value)
+                    page_log[op.ref] = value
+                    result.fields_filled += 1
+                except Exception as exc:  # noqa: BLE001
+                    self._emit_error(
+                        app,
+                        title=f"Planner: could not fill field ref={op.ref!r}",
+                        detail=str(exc),
+                        selector=op.ref,
+                    )
+                    page_log[op.ref] = f"__FAILED__:{exc}"
+                    result.fields_failed.append({
+                        "selector": op.ref,
+                        "label": op.attribute_id,
+                        "url": state.url,
+                        "error": str(exc),
+                    })
+
+            elif kind == OpKind.SELECT and isinstance(op, SelectOp):
+                value = fill_values.get(op.ref)
+                if value is None:
+                    continue
+                try:
+                    self._browser.fill_field(aid, op.ref, value)
+                    page_log[op.ref] = value
+                    result.fields_filled += 1
+                except Exception as exc:  # noqa: BLE001
+                    self._emit_error(
+                        app,
+                        title=f"Planner: could not select field ref={op.ref!r}",
+                        detail=str(exc),
+                        selector=op.ref,
+                    )
+
+            elif kind == OpKind.CLICK and isinstance(op, ClickOp):
+                # Clicks are allowed for navigation (e.g. "Next" buttons).
+                # The STOP boundary: if this click would submit the application,
+                # the planner should have emitted a StopOp instead — but for
+                # defence in depth, any click on a final-submit/account-create
+                # element is blocked by is_final_submit_page / is_account_create_page
+                # checks in the outer _continue_pages loop.
+                try:
+                    self._browser.click(aid, op.ref)
+                except Exception as exc:  # noqa: BLE001
+                    log.debug(
+                        "PlannerPath: click ref=%r failed: %s", op.ref, exc
+                    )
+
+            elif kind == OpKind.STOP and isinstance(op, StopOp):
+                # The planner emitted a stop — honour the STOP boundary.
+                reason = op.reason
+                if reason in ("final_submit",):
+                    return self._reach_final_approval(app, result)
+                elif reason in ("account_create", "email_verify", "two_factor", "sms_verify"):
+                    return self._account_handoff(app, result, result.sandbox_session_url)
+                elif reason in ("captcha", "oauth"):
+                    # Emit a detection-style blocked state.
+                    from applicant.core.entities.pending_action import PendingAction
+                    from applicant.core.ids import PendingActionId
+                    result.detection_signal = reason
+                    pending_action = PendingAction(
+                        id=PendingActionId(new_id()),
+                        campaign_id=app.campaign_id,
+                        application_id=app.id,
+                        kind="blocked_detection",
+                        data={"signal_type": reason, "url": state.url},
+                    )
+                    if self._notification:
+                        try:
+                            self._notification.notify_pending(pending_action)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    result.pending_action_id = pending_action.id
+                    result.state = ApplicationState.BLOCKED_DETECTION
+                    return result
+                else:
+                    # Unknown stop reason — treat as a generic block.
+                    log.warning(
+                        "PlannerPath: unrecognised stop reason %r for application %s",
+                        reason, aid,
+                    )
+                    result.state = ApplicationState.AWAITING_HUMAN_PREFILL
+                    return result
+
+            # GOTO, FIND, EXTRACT, ASSERT, WAIT — informational / navigation;
+            # executed as no-ops here (the real browser path handles navigation
+            # through the PageSource interface, not via raw goto ops).
+
+        if page_log:
+            result.filled_by_page[state.url] = page_log
+
+        return None
+
     def _lookup_credential(self, app, *, tenant_key: str | None = None):
         """Retrieve a stored credential, or ``None``. Defaults to the application's ATS
         tenant; pass ``tenant_key`` (e.g. ``GOOGLE_CREDENTIAL_KEY``) for a shared one.

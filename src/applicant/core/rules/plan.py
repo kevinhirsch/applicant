@@ -8,10 +8,23 @@ Validates a :class:`~applicant.core.entities.plan.Plan` before execution:
 * Reject ``click``/``stop`` that would cross the stop-boundary without authorization.
 * Reject any op that is not a member of the closed set.
 
+Also provides:
+
+* :func:`resolve_fill_values` — resolves each ``fill``/``select`` op's
+  ``attribute_id`` to the stored attribute value from the attribute cloud,
+  returning a mapping of ``ref -> value``.  Values ALWAYS come from the stored
+  attribute cloud; the planner can never inject a literal value (NFR-TRUTH-1).
+
+* :class:`ReadOnlyScrapePlan` — a typed wrapper that constrains a
+  :class:`~applicant.core.entities.plan.Plan` to the read-only extract/assert/wait
+  ops only, for the network-less JS scrape lane.
+
 All pure — no I/O, no framework imports — so the validator is hermetically testable.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from applicant.core.entities.plan import (
     ClickOp,
@@ -132,3 +145,76 @@ def validate_op_sequence(plan: Plan) -> list[str]:
             errors.append(f"op[{i}]: stop must be the last op in the plan")
 
     return errors
+
+
+def resolve_fill_values(
+    plan: Plan,
+    attribute_cloud: dict[str, str],
+) -> dict[str, str]:
+    """Resolve each fill/select op to its stored attribute value.
+
+    Returns a mapping of ``ref -> resolved_value`` for every ``fill`` and
+    ``select`` op in the plan.  Values come exclusively from ``attribute_cloud``
+    (a ``attribute_id -> value`` mapping previously loaded from the credential /
+    attribute store) — the planner can never inject a literal value, satisfying
+    NFR-TRUTH-1 by construction.
+
+    Ops whose ``attribute_id`` is absent from the cloud are silently skipped
+    (the validator already rejects such plans before execution, so this is a
+    best-effort defensive pass for callers that pre-validated the plan).
+
+    Args:
+        plan: A validated :class:`~applicant.core.entities.plan.Plan`.
+        attribute_cloud: Mapping from attribute id to stored value.
+
+    Returns:
+        ``{ref: value}`` for every resolvable fill/select op in the plan.
+    """
+    resolved: dict[str, str] = {}
+    for op in plan:
+        if isinstance(op, (FillOp, SelectOp)):
+            value = attribute_cloud.get(op.attribute_id)
+            if value is not None:
+                resolved[op.ref] = value
+    return resolved
+
+
+#: Op kinds allowed in a read-only scrape plan (no mutations, no navigation).
+_READ_ONLY_KINDS = frozenset({
+    OpKind.EXTRACT,
+    OpKind.ASSERT,
+    OpKind.WAIT,
+})
+
+
+@dataclass(frozen=True)
+class ReadOnlyScrapePlan:
+    """A plan constrained to read-only ops (extract/assert/wait).
+
+    The network-less JS scrape lane only needs to read structured data from
+    a semantic DOM snapshot — it must never issue fill/click/navigate ops.
+    Wrapping a :class:`~applicant.core.entities.plan.Plan` in this class
+    enforces the constraint before execution.
+
+    Raises:
+        ValueError: If the underlying plan contains any non-read-only op.
+    """
+
+    plan: Plan
+
+    def __post_init__(self) -> None:
+        bad_ops = [
+            (i, op.kind)
+            for i, op in enumerate(self.plan)
+            if op.kind not in _READ_ONLY_KINDS
+        ]
+        if bad_ops:
+            desc = ", ".join(f"op[{i}]={k.value}" for i, k in bad_ops)
+            raise ValueError(
+                f"ReadOnlyScrapePlan contains mutating op(s): {desc}. "
+                "Only extract/assert/wait ops are allowed in the scrape lane."
+            )
+
+    def ops(self) -> tuple[Op, ...]:
+        """Return the validated read-only ops."""
+        return self.plan.ops

@@ -420,6 +420,112 @@ class FakePageSource:
         self._pages[self._index] = replace(page, is_confirmation=True, text=text)
 
 
+# --- Skyvern-parity fake penetrable page (#351) ----------------------------
+
+
+class _FakeElement:
+    """Minimal in-memory stand-in for a Playwright element handle.
+
+    Exposes ``get_attribute`` so :func:`~applicant.adapters.browser.skyvern_enhancements.penetrate_iframes`
+    and :func:`~applicant.adapters.browser.skyvern_enhancements.penetrate_shadow_dom`
+    can read field metadata without a real browser.
+    """
+
+    def __init__(self, attrs: dict[str, str]) -> None:
+        self._attrs = attrs
+
+    def get_attribute(self, name: str) -> str | None:
+        return self._attrs.get(name)
+
+    def is_visible(self) -> bool:
+        return True
+
+    def evaluate(self, _script: str) -> object:  # noqa: ANN001
+        return 1  # stable attribute count for the 'stable' wait condition
+
+
+class _FakeFrame:
+    """In-memory stand-in for a Playwright frame, modelling same-origin iframes.
+
+    Used by :class:`FakePenetrablePageSource` to exercise
+    :func:`~applicant.adapters.browser.skyvern_enhancements.penetrate_iframes`
+    hermetically (no real browser, no network).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        fields: list[dict[str, str]] | None = None,
+        child_frames: list[_FakeFrame] | None = None,
+    ) -> None:
+        self.name = name
+        self._fields = fields or []
+        self.child_frames = child_frames or []
+
+    def query_selector_all(self, _selector: str) -> list[_FakeElement]:
+        """Return fake elements for each field definition."""
+        return [_FakeElement(f) for f in self._fields]
+
+
+class FakePenetrablePageSource:
+    """Fake page model that also exposes a ``child_frames`` tree so
+    :func:`~applicant.adapters.browser.skyvern_enhancements.penetrate_iframes`
+    can be exercised in CI without a real browser (#351).
+
+    Usage::
+
+        iframe_fields = [
+            {"name": "email", "id": "email_id", "type": "email",
+             "aria-label": "Email", "required": ""},
+        ]
+        nested_iframe = _FakeFrame("inner", fields=[...])
+        outer_iframe = _FakeFrame("outer", fields=iframe_fields, child_frames=[nested_iframe])
+        page = FakePenetrablePageSource(
+            main_fields=[...],
+            child_frames=[outer_iframe],
+        )
+        found = penetrate_iframes(page)
+    """
+
+    def __init__(
+        self,
+        main_fields: list[dict[str, str]] | None = None,
+        child_frames: list[_FakeFrame] | None = None,
+        shadow_dom_results: list[dict] | None = None,
+    ) -> None:
+        """
+        Args:
+            main_fields: Field attribute dicts for the main document.
+            child_frames: :class:`_FakeFrame` objects representing iframes.
+            shadow_dom_results: Pre-cooked JS-evaluation result for shadow DOM.
+        """
+        self.name = ""
+        self._main_fields = main_fields or []
+        self.child_frames = child_frames or []
+        self._shadow_dom_results = shadow_dom_results
+
+    def query_selector_all(self, _selector: str) -> list[_FakeElement]:
+        """Main-document field elements."""
+        return [_FakeElement(f) for f in self._main_fields]
+
+    def query_selector(self, _selector: str) -> _FakeElement | None:
+        """Single-element lookup (used by adaptive_wait_for_element)."""
+        if self._main_fields:
+            return _FakeElement(self._main_fields[0])
+        return None
+
+    def evaluate(self, _script: str, *_args) -> object:
+        """Simulate shadow DOM JS evaluation.
+
+        Returns ``self._shadow_dom_results`` when set, else an empty list —
+        allowing :func:`~applicant.adapters.browser.skyvern_enhancements.penetrate_shadow_dom`
+        to be exercised with a canned payload.
+        """
+        if self._shadow_dom_results is not None:
+            return self._shadow_dom_results
+        return []
+
+
 # --- real browser driver (REAL, integration-gated) --------------------------
 class PlaywrightPageSource:
     """REAL :class:`PageSource` driven over the Playwright API (FR-PREFILL-1).
