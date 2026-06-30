@@ -5,7 +5,6 @@ Feature: The workspace compile check runs under the project interpreter
   # imports fail, so third-party import syntax errors slip through. The step should invoke
   # `uv run python -m compileall ...` so it runs inside the synced project environment.
 
-  @pending
   Scenario: The compileall step runs inside the project environment
     Given the continuous-integration workflow
     When the workspace compileall step is inspected
