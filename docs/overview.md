@@ -390,25 +390,28 @@ progressively as setup completes.
 
 ### 1. First-run setup wizard
 
-A resumable, multi-step wizard (FR-OOBE, FR-UI-5) auto-launches on first run as a
-blocking overlay. Steps gate in order and the engine will not start automated work
-until they're complete:
+A resumable, slimmed wizard (FR-OOBE, FR-UI-5) auto-launches on first run as a
+blocking overlay. It is deliberately reduced to the **only** setup that gates automated
+work — fonts, the automation sandbox, and notification channels all moved into
+**Settings** (which re-uses the exact wizard renderers). The three steps gate in order and
+the engine will not start automated work until they're complete:
 
-1. **LLM settings (gate).** Connect a provider/model — a cloud OpenAI-compatible API
+1. **Welcome.** A short orientation that frames what the assistant will and won't do
+   (review-before-submit safety, the daily digest) before any configuration.
+2. **Connect a model (gate).** Connect a provider/model — a cloud OpenAI-compatible API
    (paste an OpenRouter key) or a local Ollama URL (fully local). This step **reuses
    the workspace's existing Local/Remote model-endpoint manager** over
    `/api/model-endpoints`, not a new form. Optionally arrange a capability-ranked
    **tier ladder**. Nothing downstream unlocks until this is set.
-2. **Notification channels.** Connect Discord and/or email (Apprise) — a gating step;
-   the engine won't run unattended until you can be reached.
-3. **Fonts.** Upload your résumé; the engine detects required fonts and prompts for any
-   missing ones, installing them into the render environment.
-4. **Onboarding intake.** A Workday-ready interview (identity, work authorization,
+3. **Your profile.** A Workday-ready interview (identity, work authorization,
    location/remote prefs, target roles, salary floor, full work history, education,
    references, key attributes, EEO — defaulting to "decline to self-identify", never
    AI-guessed). Your base résumé is parsed to bootstrap the **attribute cloud**;
    conflicts ask for confirmation. Finally you **accept or reject** the LaTeX
    conversion preview (accept → LaTeX-primary engine; reject → docx fallback).
+
+Notification channels, fonts, and the automation sandbox are configured in **Settings**
+afterwards (the wizard is re-launchable from there); they are not first-run gates.
 
 ### 2. The daily digest (approve / decline)
 

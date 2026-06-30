@@ -3853,6 +3853,10 @@ function startApplicantApp() {
     sessionModule.loadSessions()
       .catch(e => console.warn('loadSessions error:', e))
       .finally(() => {
+        // Mark init complete so the loading overlay is torn down by THIS signal
+        // (not a blind fixed timer) and the "taking longer" fallback never fires
+        // once the critical path has resolved.
+        window._applicantInitDone = true;
         const loader = document.getElementById('app-loader');
         if (loader) { loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
         // Fire any URL route opener now that sessions + module wiring are

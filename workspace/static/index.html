@@ -245,12 +245,23 @@
     if(!el)return;
     var frames=['▁▂▃','▂▃▄','▃▄▅','▄▅▆','▅▆▅','▆▅▄','▅▄▃','▄▃▂','▃▂▁'];
     var i=0;
+    // Drive the wave AND the "taking longer" fallback from the SAME init-state
+    // poll: the fallback is shown only if initialization has NOT completed
+    // (window._applicantInitDone is still falsy) after a grace period, never by
+    // a blind fixed timer that fires regardless of whether the app is ready.
+    var graceTicks=Math.round(5000/150); // grace period expressed in poll ticks
     var iv=setInterval(function(){
-      if(!document.getElementById('app-loader')){clearInterval(iv);return}
+      var l=document.getElementById('app-loader');
+      if(!l){clearInterval(iv);return}
       el.textContent=frames[i%frames.length];
       i++;
+      if(i>graceTicks && !window._applicantInitDone){
+        var w=l.querySelector('#loader-wave');
+        var e=l.querySelector('#loader-error');
+        if(w)w.style.display='none';
+        if(e)e.style.display='';
+      }
     },150);
-    setTimeout(function(){var l=document.getElementById('app-loader');if(!l)return;var w=l.querySelector('#loader-wave');var e=l.querySelector('#loader-error');if(w)w.style.display='none';if(e)e.style.display=''},5000);
   })();
   </script>
   <!-- Memory Management Modal -->
@@ -275,7 +286,7 @@
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
               <h2 style="display:flex;align-items:center;gap:6px;margin:0;padding:0;line-height:1;">Memories <span id="memory-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
-              <label class="admin-switch" title="Include memories in chat context"><input type="checkbox" id="memory-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" title="Include memories in chat context" for="memory-enabled-header-toggle"><input type="checkbox" id="memory-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Long-term facts the AI remembers across chats — recall, edit, or curate.</p>
             <div class="memory-toolbar">
@@ -295,7 +306,7 @@
               </div>
             </div>
             <div id="memory-bulk-bar" class="memory-bulk-bar hidden">
-              <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="memory-select-all" /> All</label>
+              <label class="memory-bulk-check-all" style="position:relative;top:0px;" for="memory-select-all"><input type="checkbox" id="memory-select-all" /> All</label>
               <span id="memory-selected-count">0 Selected</span>
               <button type="button" id="memory-bulk-delete" class="memory-toolbar-btn danger" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
               <button type="button" id="memory-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -356,7 +367,7 @@
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
               <h2 style="margin:0;padding:0;line-height:1;">Skills <span id="skills-count-h2" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <span style="flex:1"></span>
-              <label class="admin-switch" title="Inject relevant skills into chat context"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" title="Inject relevant skills into chat context" for="skills-enabled-header-toggle"><input type="checkbox" id="skills-enabled-header-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:6px;">Reusable procedures the AI can call via /skill — sort by confidence to surface the proven ones.</p>
             <div class="memory-toolbar">
@@ -387,7 +398,7 @@
             </div>
             <div id="skills-audit-panel" class="skills-audit-panel hidden"></div>
             <div id="skills-bulk-bar" class="memory-bulk-bar hidden">
-              <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="skills-select-all" /> All</label>
+              <label class="memory-bulk-check-all" style="position:relative;top:0px;" for="skills-select-all"><input type="checkbox" id="skills-select-all" /> All</label>
               <span id="skills-selected-count">0 Selected</span>
               <button type="button" id="skills-bulk-publish" class="memory-toolbar-btn" disabled title="Publish selected drafts" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"/></svg>Approve</button>
               <button type="button" id="skills-bulk-audit" class="memory-toolbar-btn" disabled title="Audit selected draft skills"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Audit</button>
@@ -402,7 +413,7 @@
         <div class="memory-tab-panel hidden" data-memory-panel="entities">
           <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
             <div style="flex:1;min-width:140px">
-              <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">New entity</label>
+              <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="entity-new-name">New entity</label>
               <input type="text" id="entity-new-name" placeholder="Ryne" style="width:100%" aria-label="Ryne">
             </div>
             <select id="entity-new-type" style="min-width:110px">
@@ -421,7 +432,7 @@
         <!-- ── Profile tab (job-application attribute cloud + what the assistant learned) ── -->
         <div class="memory-tab-panel hidden" data-memory-panel="applicant-profile">
           <div class="admin-card">
-            <h2 style="margin:0 0 6px;display:flex;align-items:center;gap:6px;">Application profile</h2>
+            <h2 style="margin:0 0 6px;display:flex;align-items:center;gap:6px;" data-i18n="applicant.profile.title">Application profile</h2>
             <p class="memory-desc doclib-desc" style="margin:0 0 4px;">The details the assistant reuses to fill out job applications for you — name, contact, work eligibility, and so on. Add one below, or let the assistant suggest them; you stay in control of every value.</p>
           </div>
           <!-- engine-not-ready note: shown until the assistant's application engine is set up -->
@@ -432,30 +443,30 @@
             <!-- CRIT-profile: what-roles-to-target editor (criteria) -->
             <div class="admin-card" id="applicant-criteria-card">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <h2 style="margin:0;font-size:1em;">What jobs to look for</h2>
+                <h2 style="margin:0;font-size:1em;" data-i18n="applicant.criteria.title">What jobs to look for</h2>
                 <span style="flex:1"></span>
                 <button type="button" id="applicant-criteria-refresh-btn" class="memory-toolbar-btn" title="Reload from the assistant">Refresh</button>
               </div>
               <p class="memory-desc doclib-desc" style="margin:0 0 8px;">The kinds of roles the assistant searches and applies to for you. Edit any field below — these stay plain and under your control.</p>
               <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
                 <div class="ow-field">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-titles">Job titles <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-titles" placeholder="Software Engineer, Backend Engineer" style="width:100%" title="The job titles to search for" aria-label="Software Engineer, Backend Engineer">
                 </div>
                 <div class="ow-field">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Locations <span style="opacity:0.6">(comma-separated)</span></label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-locations">Locations <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-locations" placeholder="Remote, New York, London" style="width:100%" title="Where to look for roles" aria-label="Remote, New York, London">
                 </div>
                 <div class="ow-field">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-workmodes">Ways of working <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-workmodes" placeholder="remote, hybrid, on-site" style="width:100%" title="Remote, hybrid, or on-site" aria-label="remote, hybrid, on-site">
                 </div>
                 <div class="ow-field">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-keywords">Keywords <span style="opacity:0.6">(comma-separated)</span></label>
                   <input type="text" id="applicant-crit-keywords" placeholder="Python, distributed systems" style="width:100%" title="Skills or terms a role should mention" aria-label="Python, distributed systems">
                 </div>
                 <div class="ow-field" style="max-width:240px">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Lowest acceptable salary</label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-crit-salary">Lowest acceptable salary</label>
                   <input type="number" id="applicant-crit-salary" placeholder="120000" min="0" step="1000" style="width:100%" title="Roles below this pay are skipped (leave blank for no floor)" aria-label="120000">
                 </div>
               </div>
@@ -483,14 +494,14 @@
             <div class="admin-card">
               <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
                 <div style="flex:1;min-width:140px">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Detail</label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-attr-name">Detail</label>
                   <input type="text" id="applicant-attr-name" placeholder="Phone number" style="width:100%" title="What the detail is called, e.g. 'Phone number' or 'Work authorization'" aria-label="Phone number">
                 </div>
                 <div style="flex:1;min-width:140px">
-                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px">Value</label>
+                  <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-attr-value">Value</label>
                   <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail" aria-label="+1 555 0100">
                 </div>
-                <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed.">
+                <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed." for="applicant-attr-sensitive">
                   <input type="checkbox" id="applicant-attr-sensitive" role="switch"><span class="ow-switch-track" aria-hidden="true"></span><span class="ow-switch-label">Sensitive</span>
                 </label>
                 <button type="button" id="applicant-attr-add-btn" class="admin-btn-add" style="white-space:nowrap">+ Add</button>
@@ -498,7 +509,7 @@
             </div>
             <div class="admin-card" style="display:flex;flex-direction:column;min-height:0;">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                <h2 style="margin:0;font-size:1em;">Saved details <span id="applicant-attr-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal"></span></h2>
+                <h2 style="margin:0;font-size:1em;" data-i18n="applicant.attr.title">Saved details <span id="applicant-attr-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal"></span></h2>
                 <span style="flex:1"></span>
                 <button type="button" id="applicant-attr-refresh-btn" class="memory-toolbar-btn" title="Reload from the assistant">Refresh</button>
               </div>
@@ -518,12 +529,12 @@
 
             <!-- CRIT-profile: writing-style controls — banned phrases (FR-RESUME-5) + aggressiveness dial (FR-RESUME-9) -->
             <div class="admin-card" id="applicant-style-card">
-              <h2 style="margin:0 0 4px;font-size:1em;">Writing style</h2>
+              <h2 style="margin:0 0 4px;font-size:1em;" data-i18n="applicant.style.title">Writing style</h2>
               <p class="memory-desc doclib-desc" style="margin:0 0 8px;">Keep your resumes and letters sounding like you — not like a robot.</p>
 
               <div style="margin-bottom:12px">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                  <label style="font-size:12px;font-weight:600">Phrases to never use</label>
+                  <span style="font-size:12px;font-weight:600">Phrases to never use</span>
                   <span style="flex:1"></span>
                   <button type="button" id="applicant-banned-refresh-btn" class="memory-toolbar-btn" title="Reload">Refresh</button>
                 </div>
@@ -557,14 +568,14 @@
           <div class="admin-card">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <h2 style="margin:0">Auto-extract memories</h2>
-              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-memory-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" style="flex-shrink:0" for="auto-memory-toggle"><input type="checkbox" id="auto-memory-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px">Automatically extract memories from conversations.</span>
           </div>
           <div class="admin-card">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <h2 style="margin:0">Auto-extract skills</h2>
-              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-skills-toggle" /><span class="admin-slider"></span></label>
+              <label class="admin-switch" style="flex-shrink:0" for="auto-skills-toggle"><input type="checkbox" id="auto-skills-toggle" /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Automatically draft reusable skills from your workflows. Audit all can publish passing skills using the threshold below.</span>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">The library can grow; cleanup retires weak/duplicate skills only after review.</span>
@@ -583,7 +594,7 @@
           <div class="admin-card">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
               <h2 style="margin:0">Auto-approve skills</h2>
-              <label class="admin-switch" style="flex-shrink:0"><input type="checkbox" id="auto-approve-skills-toggle" checked /><span class="admin-slider"></span></label>
+              <label class="admin-switch" style="flex-shrink:0" for="auto-approve-skills-toggle"><input type="checkbox" id="auto-approve-skills-toggle" checked /><span class="admin-slider"></span></label>
             </div>
             <span class="admin-toggle-sub" style="display:block;margin-top:6px;opacity:0.6">Audit all publishes passing, necessary skills at or above this confidence. Off = keep audit results as drafts unless manually approved.</span>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px">
@@ -633,12 +644,12 @@
       <div class="admin-card">
         <h2>Colors</h2>
         <div class="theme-custom" id="themeCustom">
-          <div class="color-row"><label>Background</label><input type="color" id="clr-bg"><button type="button" class="color-reset-btn" data-reset="bg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Text</label><input type="color" id="clr-fg"><button type="button" class="color-reset-btn" data-reset="fg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Panel</label><input type="color" id="clr-panel"><button type="button" class="color-reset-btn" data-reset="panel" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Sidebar</label><input type="color" id="adv-sidebarBg"><button type="button" class="color-reset-btn" data-reset-adv="sidebarBg" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Border</label><input type="color" id="clr-border"><button type="button" class="color-reset-btn" data-reset="border" title="Reset this color">&#x21BA;</button></div>
-          <div class="color-row"><label>Accent</label><input type="color" id="clr-red"><button type="button" class="color-reset-btn" data-reset="red" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="clr-bg">Background</label><input type="color" id="clr-bg"><button type="button" class="color-reset-btn" data-reset="bg" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="clr-fg">Text</label><input type="color" id="clr-fg"><button type="button" class="color-reset-btn" data-reset="fg" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="clr-panel">Panel</label><input type="color" id="clr-panel"><button type="button" class="color-reset-btn" data-reset="panel" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="adv-sidebarBg">Sidebar</label><input type="color" id="adv-sidebarBg"><button type="button" class="color-reset-btn" data-reset-adv="sidebarBg" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="clr-border">Border</label><input type="color" id="clr-border"><button type="button" class="color-reset-btn" data-reset="border" title="Reset this color">&#x21BA;</button></div>
+          <div class="color-row"><label for="clr-red">Accent</label><input type="color" id="clr-red"><button type="button" class="color-reset-btn" data-reset="red" title="Reset this color">&#x21BA;</button></div>
         </div>
       </div>
       <div class="theme-adv-toggle" id="theme-adv-toggle">
@@ -648,38 +659,38 @@
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Chat Bubbles</div>
           <div class="theme-custom">
-            <div class="color-row"><label>User Chat Bubble</label><input type="color" id="adv-userBubbleBg"><button type="button" class="color-reset-btn" data-reset-adv="userBubbleBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>AI Chat Bubble</label><input type="color" id="adv-aiBubbleBg"><button type="button" class="color-reset-btn" data-reset-adv="aiBubbleBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Border Chat Bubble</label><input type="color" id="adv-bubbleBorder"><button type="button" class="color-reset-btn" data-reset-adv="bubbleBorder" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-userBubbleBg">User Chat Bubble</label><input type="color" id="adv-userBubbleBg"><button type="button" class="color-reset-btn" data-reset-adv="userBubbleBg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-aiBubbleBg">AI Chat Bubble</label><input type="color" id="adv-aiBubbleBg"><button type="button" class="color-reset-btn" data-reset-adv="aiBubbleBg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-bubbleBorder">Border Chat Bubble</label><input type="color" id="adv-bubbleBorder"><button type="button" class="color-reset-btn" data-reset-adv="bubbleBorder" title="Reset this color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Sidebar</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Applicant Logo</label><input type="color" id="adv-brandColor"><button type="button" class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label title="Hamburger menu"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></label><input type="color" id="adv-hamburgerColor"><button type="button" class="color-reset-btn" data-reset-adv="hamburgerColor" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-brandColor">Applicant Logo</label><input type="color" id="adv-brandColor"><button type="button" class="color-reset-btn" data-reset-adv="brandColor" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label title="Hamburger menu" for="adv-hamburgerColor"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></label><input type="color" id="adv-hamburgerColor"><button type="button" class="color-reset-btn" data-reset-adv="hamburgerColor" title="Reset this color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Chat Input / Prompt Area</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Input Bg</label><input type="color" id="adv-inputBg"><button type="button" class="color-reset-btn" data-reset-adv="inputBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Input Border</label><input type="color" id="adv-inputBorder"><button type="button" class="color-reset-btn" data-reset-adv="inputBorder" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Send Btn</label><input type="color" id="adv-sendBtnBg"><button type="button" class="color-reset-btn" data-reset-adv="sendBtnBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Send Hover</label><input type="color" id="adv-sendBtnHover"><button type="button" class="color-reset-btn" data-reset-adv="sendBtnHover" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-inputBg">Input Bg</label><input type="color" id="adv-inputBg"><button type="button" class="color-reset-btn" data-reset-adv="inputBg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-inputBorder">Input Border</label><input type="color" id="adv-inputBorder"><button type="button" class="color-reset-btn" data-reset-adv="inputBorder" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-sendBtnBg">Send Btn</label><input type="color" id="adv-sendBtnBg"><button type="button" class="color-reset-btn" data-reset-adv="sendBtnBg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-sendBtnHover">Send Hover</label><input type="color" id="adv-sendBtnHover"><button type="button" class="color-reset-btn" data-reset-adv="sendBtnHover" title="Reset this color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Code Blocks</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Code Bg</label><input type="color" id="adv-codeBg"><button type="button" class="color-reset-btn" data-reset-adv="codeBg" title="Reset this color">&#x21BA;</button></div>
-            <div class="color-row"><label>Code Text</label><input type="color" id="adv-codeFg"><button type="button" class="color-reset-btn" data-reset-adv="codeFg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-codeBg">Code Bg</label><input type="color" id="adv-codeBg"><button type="button" class="color-reset-btn" data-reset-adv="codeBg" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-codeFg">Code Text</label><input type="color" id="adv-codeFg"><button type="button" class="color-reset-btn" data-reset-adv="codeFg" title="Reset this color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
           <div class="theme-adv-group-label">Controls</div>
           <div class="theme-custom">
-            <div class="color-row"><label>Toggle On</label><input type="color" id="adv-toggleActive"><button type="button" class="color-reset-btn" data-reset-adv="toggleActive" title="Reset this color">&#x21BA;</button></div>
+            <div class="color-row"><label for="adv-toggleActive">Toggle On</label><input type="color" id="adv-toggleActive"><button type="button" class="color-reset-btn" data-reset-adv="toggleActive" title="Reset this color">&#x21BA;</button></div>
           </div>
         </div>
         <div class="theme-adv-group">
@@ -693,14 +704,14 @@
         <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="10" cy="20" r="2.5"/></svg>Color Harmony</h2>
         <div class="theme-harmony-row">
           <div class="theme-fd-group">
-            <label class="theme-fd-label">Accent Color</label>
+            <label class="theme-fd-label" for="harmony-accent">Accent Color</label>
             <div class="color-row" style="justify-content:flex-start;gap:8px;">
               <input type="color" id="harmony-accent" value="#e06c75">
               <span id="harmony-accent-hex" style="font-size:11px;opacity:0.65;font-family:ui-monospace,monospace;letter-spacing:0.02em;">#e06c75</span>
             </div>
           </div>
           <div class="theme-fd-group">
-            <label class="theme-fd-label">Harmony</label>
+            <label class="theme-fd-label" for="harmony-type">Harmony</label>
             <select id="harmony-type" class="theme-fd-select">
               <option value="complementary">Complementary</option>
               <option value="analogous">Analogous</option>
@@ -711,7 +722,7 @@
         </div>
         <div class="theme-harmony-row" style="margin-top:6px;">
           <div class="theme-fd-group">
-            <label class="theme-fd-label">Mode</label>
+            <label class="theme-fd-label" for="harmony-mode">Mode</label>
             <select id="harmony-mode" class="theme-fd-select">
               <option value="dark">Dark</option>
               <option value="light">Light</option>
@@ -727,7 +738,7 @@
         <h2>Font & Layout</h2>
         <div class="theme-fd-row">
           <div class="theme-fd-group">
-            <label class="theme-fd-label">Font</label>
+            <label class="theme-fd-label" for="theme-font-select">Font</label>
             <select id="theme-font-select" class="theme-fd-select">
               <option value="mono">Monospace</option>
               <option value="sans">Sans-serif</option>
@@ -735,7 +746,7 @@
             </select>
           </div>
           <div class="theme-fd-group">
-            <label class="theme-fd-label">Density</label>
+            <label class="theme-fd-label" for="theme-density-select">Density</label>
             <select id="theme-density-select" class="theme-fd-select">
               <option value="compact">Compact</option>
               <option value="comfortable">Comfortable</option>
@@ -744,7 +755,7 @@
           </div>
           <div class="theme-fd-group" id="theme-frosted-group">
             <label class="theme-fd-label" for="theme-frosted-toggle">Frosted</label>
-            <label class="admin-switch" style="margin-top:4px;">
+            <label class="admin-switch" style="margin-top:4px;" for="theme-frosted-toggle">
               <input type="checkbox" id="theme-frosted-toggle">
               <span class="admin-slider"></span>
             </label>
@@ -760,7 +771,7 @@
         </div>
         <div class="theme-fd-row">
           <div class="theme-fd-group" style="flex:1 1 0;">
-            <label class="theme-fd-label">Background / Effect</label>
+            <label class="theme-fd-label" for="theme-bg-pattern-select">Background / Effect</label>
             <select id="theme-bg-pattern-select" class="theme-fd-select">
               <option value="none">Solid</option>
               <option value="dots">Dots</option>
@@ -774,7 +785,7 @@
             </select>
           </div>
           <div class="theme-fd-group" style="flex:0 0 auto;align-items:center;">
-            <label class="theme-fd-label">&nbsp;</label>
+            <label class="theme-fd-label" for="theme-bg-effect-color">&nbsp;</label>
             <div class="color-row" style="margin:0;padding:0;">
               <input type="color" id="theme-bg-effect-color" value="#9cdef2" title="Effect color">
               <button type="button" class="color-reset-btn" data-reset-effect title="Reset to text color">&#x21BA;</button>
@@ -783,11 +794,11 @@
         </div>
         <div class="theme-fd-row">
           <div class="theme-fd-group" id="theme-bg-intensity-group" style="flex:1 1 0;">
-            <label class="theme-fd-label">Intensity</label>
+            <label class="theme-fd-label" for="theme-bg-intensity">Intensity</label>
             <input type="range" id="theme-bg-intensity" class="theme-fd-range" min="0" max="100" step="5" value="100">
           </div>
           <div class="theme-fd-group" id="theme-bg-size-group" style="flex:1 1 0;">
-            <label class="theme-fd-label">Size</label>
+            <label class="theme-fd-label" for="theme-bg-size">Size</label>
             <input type="range" id="theme-bg-size" class="theme-fd-range" min="30" max="250" step="10" value="100">
           </div>
         </div>
@@ -1382,7 +1393,7 @@
               <label for="inject-suffix">Suffix</label>
               <textarea id="inject-suffix" rows="2" placeholder="Added after your message" style="margin-bottom:12px"></textarea>
               <div class="preset-slider-row">
-                <label>Temperature <span class="preset-hint-icon" title="Controls randomness. Lower values give focused, deterministic answers (good for code). Higher values give more creative, varied responses.">?</span></label>
+                <label for="custom-temperature">Temperature <span class="preset-hint-icon" title="Controls randomness. Lower values give focused, deterministic answers (good for code). Higher values give more creative, varied responses.">?</span></label>
                 <span class="preset-slider-value" id="temp-value">1.0</span>
               </div>
               <input type="range" class="preset-range" id="custom-temperature" min="0" max="2" step="0.1" value="1.0">
@@ -1392,14 +1403,14 @@
                 <span>Creative</span>
               </div>
               <div class="preset-slider-row">
-                <label>Max Tokens <span class="preset-hint-icon" title="Maximum length of the AI response. 'No limit' lets the model decide when to stop.">?</span></label>
+                <label for="custom-max-tokens">Max Tokens <span class="preset-hint-icon" title="Maximum length of the AI response. 'No limit' lets the model decide when to stop.">?</span></label>
                 <span class="preset-slider-value" id="tokens-value">No limit</span>
               </div>
               <input type="range" class="preset-range" id="custom-max-tokens" min="256" max="8448" step="256" value="8448">
             </div>
             <!-- Prompt (character/persona) tab -->
             <div class="preset-chartab" data-chartab-panel="character" style="display:none">
-              <label>Character</label>
+              <label for="char-template-select">Character</label>
               <div class="char-name-combo">
                 <select id="char-template-select" class="char-template-select">
                   <option value="">Select character...</option>
@@ -1679,11 +1690,11 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">The model used when creating a new chat session.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Endpoint</label>
+                <label class="settings-label" for="set-defaultEpSelect">Endpoint</label>
                 <select id="set-defaultEpSelect" class="settings-select"></select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-defaultModelSelect">Model</label>
                 <select id="set-defaultModelSelect" class="settings-select"></select>
               </div>
               <div id="set-defaultFallbacks" class="settings-fallbacks"></div>
@@ -1696,11 +1707,11 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Runs background tasks (compaction, cleanup, auto-naming, retrieving memories from files) on a small/local model instead of your chat model. Leave blank to use the chat model.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Endpoint</label>
+                <label class="settings-label" for="set-utilityEpSelect">Endpoint</label>
                 <select id="set-utilityEpSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-utilityModelSelect">Model</label>
                 <select id="set-utilityModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div id="set-utilityFallbacks" class="settings-fallbacks"></div>
@@ -1713,11 +1724,11 @@
                (hidden) so the JS that wires set-vlModelSelect / vision fallbacks
                doesn't throw on missing nodes. -->
           <div class="admin-card" hidden style="display:none">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model" for="set-visionEnabledToggle"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Analyze images with a vision-capable model.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-vlModelSelect">Model</label>
                 <select id="set-vlModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
               <div id="set-visionFallbacks" class="settings-fallbacks"></div>
@@ -1730,19 +1741,19 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Model used for Deep Research. Falls back to the default chat model if not set.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Endpoint</label>
+                <label class="settings-label" for="set-researchEndpoint">Endpoint</label>
                 <select id="set-researchEndpoint" class="settings-select">
                   <option value="">Same as chat</option>
                 </select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-researchModel">Model</label>
                 <select id="set-researchModel" class="settings-select">
                   <option value="">Same as chat</option>
                 </select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Search</label>
+                <label class="settings-label" for="set-researchSearch">Search</label>
                 <select id="set-researchSearch" class="settings-select">
                   <option value="">Same as web search</option>
                   <option value="searxng">SearXNG</option>
@@ -1754,15 +1765,15 @@
                 </select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Max Tokens</label>
+                <label class="settings-label" for="set-researchMaxTokens">Max Tokens</label>
                 <input id="set-researchMaxTokens" type="text" inputmode="numeric" placeholder="8192 (default)" class="settings-select" style="width:120px;" aria-label="8192 (default)">
               </div>
               <div class="settings-row">
-                <label class="settings-label">Extract Timeout</label>
+                <label class="settings-label" for="set-researchExtractTimeout">Extract Timeout</label>
                 <input id="set-researchExtractTimeout" type="text" inputmode="numeric" placeholder="90 sec" class="settings-select" style="width:120px;" aria-label="90 sec">
               </div>
               <div class="settings-row">
-                <label class="settings-label">Extract Parallel</label>
+                <label class="settings-label" for="set-researchExtractConcurrency">Extract Parallel</label>
                 <input id="set-researchExtractConcurrency" type="text" inputmode="numeric" placeholder="3" class="settings-select" style="width:120px;" aria-label="3">
               </div>
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
@@ -1773,7 +1784,7 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Controls for the agent tool loop.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Tool call limit</label>
+                <label class="settings-label" for="set-agentMaxTools">Tool call limit</label>
                 <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;" aria-label="0 = unlimited">
               </div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
@@ -1784,15 +1795,15 @@
                Keeping the DOM (hidden) so JS wiring against the inputs
                doesn't throw. -->
           <div class="admin-card" hidden style="display:none">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-imgEnabledToggle" checked><span class="admin-slider"></span></label></h2>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Image Generation<span style="flex:1"></span><label class="admin-switch" for="set-imgEnabledToggle"><input type="checkbox" id="set-imgEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure which model to use for image generation.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-imgModelSelect">Model</label>
                 <select id="set-imgModelSelect" class="settings-select"><option value="">Auto-detect</option></select>
               </div>
               <div style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Quality</label>
+                <label class="settings-label" for="set-imgQualitySelect">Quality</label>
                 <select id="set-imgQualitySelect" class="settings-select">
                   <option value="low">Low (fastest, cheapest)</option>
                   <option value="medium">Medium (default)</option>
@@ -1806,11 +1817,11 @@
                in DOM so the JS that wires set-ttsProviderSelect etc. doesn't
                throw on missing nodes; not visible to anyone. -->
           <div class="admin-card" hidden style="display:none">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>Text to Speech<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-ttsEnabledToggle" checked><span class="admin-slider"></span></label></h2>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>Text to Speech<span style="flex:1"></span><label class="admin-switch" for="set-ttsEnabledToggle"><input type="checkbox" id="set-ttsEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Configure TTS provider for assistant message read-aloud.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
               <div style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Provider</label>
+                <label class="settings-label" for="set-ttsProviderSelect">Provider</label>
                 <select id="set-ttsProviderSelect" class="settings-select">
                   <option value="disabled">Disabled</option>
                   <option value="browser">Browser (built-in)</option>
@@ -1818,7 +1829,7 @@
                 </select>
               </div>
               <div id="set-ttsModelRow" style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-ttsModelSelect">Model</label>
                 <select id="set-ttsModelSelect" class="settings-select">
                   <option value="tts-1">tts-1 (fast)</option>
                   <option value="tts-1-hd">tts-1-hd (quality)</option>
@@ -1827,7 +1838,7 @@
                 <input id="set-ttsModelInput" type="text" placeholder="model name" style="flex:1;padding:5px;display:none;" aria-label="model name">
               </div>
               <div id="set-ttsVoiceRow" style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Voice</label>
+                <label class="settings-label" for="set-ttsVoiceSelect">Voice</label>
                 <select id="set-ttsVoiceSelect" class="settings-select">
                   <option value="alloy">Alloy</option>
                   <option value="ash">Ash</option>
@@ -1842,7 +1853,7 @@
                 <input id="set-ttsVoiceInput" type="text" placeholder="af_heart" style="flex:1;padding:5px;display:none;" aria-label="af_heart">
               </div>
               <div id="set-ttsSpeedRow" style="display:flex;align-items:center;gap:0.75rem;">
-                <label class="settings-label">Speed</label>
+                <label class="settings-label" for="set-ttsSpeedSelect">Speed</label>
                 <select id="set-ttsSpeedSelect" class="settings-select">
                   <option value="0.5">0.5x</option>
                   <option value="0.75">0.75x</option>
@@ -1861,15 +1872,15 @@
                not part of the job-application product. Kept in DOM (hidden) so
                the JS that wires set-teacher* doesn't throw on missing nodes. -->
           <div class="admin-card" hidden style="display:none">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>Teacher Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Experimental)</span><span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-teacherEnabledToggle"><span class="admin-slider"></span></label></h2>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>Teacher Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Experimental)</span><span style="flex:1"></span><label class="admin-switch" for="set-teacherEnabledToggle"><input type="checkbox" id="set-teacherEnabledToggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Endpoint</label>
+                <label class="settings-label" for="set-teacherEpSelect">Endpoint</label>
                 <select id="set-teacherEpSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Model</label>
+                <label class="settings-label" for="set-teacherModelSelect">Model</label>
                 <select id="set-teacherModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div id="set-teacherChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
@@ -1884,7 +1895,7 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Search API used for web search and deep research.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Provider</label>
+                <label class="settings-label" for="set-searchProvider">Provider</label>
                 <!-- Custom picker (with logos). Hidden native <select> mirrors
                      its value so the existing JS that reads
                      set-searchProvider keeps working unchanged. -->
@@ -1907,7 +1918,7 @@
                 <button type="button" class="admin-btn-sm" id="set-searchTestBtn" title="Run a test query against the configured provider" style="margin-left:6px;flex-shrink:0;position:relative;top:2px;">Test</button>
               </div>
               <div class="settings-row">
-                <label class="settings-label">Results</label>
+                <label class="settings-label" for="set-searchResultCount">Results</label>
                 <select id="set-searchResultCount" class="settings-select">
                   <option value="3">3</option>
                   <option value="5" selected>5</option>
@@ -1916,19 +1927,19 @@
                 </select>
               </div>
               <div id="set-searchUrlRow" class="settings-row">
-                <label class="settings-label">URL</label>
+                <label class="settings-label" for="set-searchUrl">URL</label>
                 <input id="set-searchUrl" type="text" placeholder="http://localhost:8080" class="settings-select" aria-label="http://localhost:8080">
               </div>
               <div id="set-searchKeyRow" class="settings-row" style="display:none;">
-                <label class="settings-label">API Key</label>
+                <label class="settings-label" for="set-searchApiKey">API Key</label>
                 <input id="set-searchApiKey" type="password" placeholder="API key" class="settings-select" aria-label="API key">
               </div>
               <div id="set-searchCxRow" class="settings-row" style="display:none;">
-                <label class="settings-label">CX ID</label>
+                <label class="settings-label" for="set-searchCx">CX ID</label>
                 <input id="set-searchCx" type="text" placeholder="Google PSE engine ID" class="settings-select" aria-label="Google PSE engine ID">
               </div>
               <div class="settings-row">
-                <label class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
+                <span class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</span>
                 <div class="search-fallback-chain" id="set-searchFallbackChain"></div>
               </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
@@ -1942,139 +1953,139 @@
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
             <div class="vis-toggles">
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sidebar-brand">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg></span>
                 <span class="vis-label">Applicant <span class="vis-hint">Brand name</span></span>
-                <input type="checkbox" checked data-ui-key="sidebar-brand"><span class="vis-switch"></span>
+                <input id="vis-sidebar-brand" type="checkbox" checked data-ui-key="sidebar-brand"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sidebar-search">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg></span>
                 <span class="vis-label">Search</span>
-                <input type="checkbox" checked data-ui-key="sidebar-search"><span class="vis-switch"></span>
+                <input id="vis-sidebar-search" type="checkbox" checked data-ui-key="sidebar-search"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sidebar-new-chat">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
                 <span class="vis-label">New Chat</span>
-                <input type="checkbox" checked data-ui-key="sidebar-new-chat"><span class="vis-switch"></span>
+                <input id="vis-sidebar-new-chat" type="checkbox" checked data-ui-key="sidebar-new-chat"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sessions-section">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
                 <span class="vis-label">Chats <span class="vis-hint">Chat history list</span></span>
-                <input type="checkbox" checked data-ui-key="sessions-section"><span class="vis-switch"></span>
+                <input id="vis-sessions-section" type="checkbox" checked data-ui-key="sessions-section"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-email-section">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
                 <span class="vis-label">Email</span>
-                <input type="checkbox" checked data-ui-key="email-section"><span class="vis-switch"></span>
+                <input id="vis-email-section" type="checkbox" checked data-ui-key="email-section"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-models-section">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
                 <span class="vis-label">Models <span class="vis-hint">Model selector &amp; quick-chat</span></span>
-                <input type="checkbox" checked data-ui-key="models-section"><span class="vis-switch"></span>
+                <input id="vis-models-section" type="checkbox" checked data-ui-key="models-section"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-tools-section">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
                 <span class="vis-label">Tools <span class="vis-hint">Whole section (header + all tools)</span></span>
-                <input type="checkbox" checked data-ui-key="tools-section"><span class="vis-switch"></span>
+                <input id="vis-tools-section" type="checkbox" checked data-ui-key="tools-section"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-tool-memory">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></span>
                 <span class="vis-label">Brain</span>
-                <input type="checkbox" checked data-ui-key="tool-memory"><span class="vis-switch"></span>
+                <input id="vis-tool-memory" type="checkbox" checked data-ui-key="tool-memory"><span class="vis-switch"></span>
               </label>
               <!-- White-label: the off-product vendored tool toggles (Calendar,
                    Cookbook, Deep Research, the duplicate Gallery, Notes, Tasks,
                    Theme) are removed so a user cannot re-enable a surface that is
                    not part of Applicant. Only legitimate Applicant surfaces below. -->
-              <label class="vis-row">
+              <label class="vis-row" for="vis-tool-compare">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg></span>
                 <span class="vis-label">Compare</span>
-                <input type="checkbox" checked data-ui-key="tool-compare"><span class="vis-switch"></span>
+                <input id="vis-tool-compare" type="checkbox" checked data-ui-key="tool-compare"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-tool-library">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
                 <span class="vis-label">Library</span>
-                <input type="checkbox" checked data-ui-key="tool-library"><span class="vis-switch"></span>
+                <input id="vis-tool-library" type="checkbox" checked data-ui-key="tool-library"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-user-bar">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
                 <span class="vis-label">User <span class="vis-hint">Avatar &amp; name</span></span>
-                <input type="checkbox" checked data-ui-key="user-bar"><span class="vis-switch"></span>
+                <input id="vis-user-bar" type="checkbox" checked data-ui-key="user-bar"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sidebar-settings-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
                 <span class="vis-label">Settings Button <span class="vis-hint">Cog next to user — re-open with <code>/settings</code></span></span>
-                <input type="checkbox" checked data-ui-key="sidebar-settings-btn"><span class="vis-switch"></span>
+                <input id="vis-sidebar-settings-btn" type="checkbox" checked data-ui-key="sidebar-settings-btn"><span class="vis-switch"></span>
               </label>
             </div>
           </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Chat Area</h2>
             <div class="vis-toggles">
-              <label class="vis-row">
+              <label class="vis-row" for="vis-chat-meta">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 10h8"/></svg></span>
                 <span class="vis-label">Session Header <span class="vis-hint">Model name &amp; export above chat</span></span>
-                <input type="checkbox" checked data-ui-key="chat-meta"><span class="vis-switch"></span>
+                <input id="vis-chat-meta" type="checkbox" checked data-ui-key="chat-meta"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-welcome-text">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v2m0 14v2m-7-9H3m18 0h-2m-1.5-6.5L16 7m-8-1.5L6.5 7m11 11l-1.5-1.5M8 18l-1.5 1.5"/><circle cx="12" cy="12" r="4"/></svg></span>
                 <span class="vis-label">Welcome Message <span class="vis-hint">Logo &amp; tips on empty chat</span></span>
-                <input type="checkbox" checked data-ui-key="welcome-text"><span class="vis-switch"></span>
+                <input id="vis-welcome-text" type="checkbox" checked data-ui-key="welcome-text"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-text-emojis">
                 <span class="vis-icon" style="font-size:13px;line-height:14px;">Aa</span>
                 <span class="vis-label">Text-only Emojis <span class="vis-hint">Strip emojis from AI replies</span></span>
-                <input type="checkbox" data-ui-key="text-emojis"><span class="vis-switch"></span>
+                <input id="vis-text-emojis" type="checkbox" data-ui-key="text-emojis"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-show-thinking">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4.5 7.5.7.6 1.2 1.3 1.5 2h2c.3-.7.8-1.4 1.5-2C17 14.5 19 12 19 9a7 7 0 0 0-7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg></span>
                 <span class="vis-label">Thinking Process <span class="vis-hint">Show &lt;think&gt; collapsible bars</span></span>
-                <input type="checkbox" checked data-ui-key="show-thinking"><span class="vis-switch"></span>
+                <input id="vis-show-thinking" type="checkbox" checked data-ui-key="show-thinking"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-sensitive-blur">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/></svg></span>
                 <span class="vis-label">Sensitive Blur <span class="vis-hint">Blur emails, tokens, and secrets in AI output</span></span>
-                <input type="checkbox" data-privacy-key="sensitive-blur"><span class="vis-switch"></span>
+                <input id="vis-sensitive-blur" type="checkbox" data-privacy-key="sensitive-blur"><span class="vis-switch"></span>
               </label>
             </div>
           </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>Chat Bar</h2>
             <div class="vis-toggles">
-              <label class="vis-row">
+              <label class="vis-row" for="vis-web-toggle-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                 <span class="vis-label">Web Search</span>
-                <input type="checkbox" checked data-ui-key="web-toggle-btn"><span class="vis-switch"></span>
+                <input id="vis-web-toggle-btn" type="checkbox" checked data-ui-key="web-toggle-btn"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-doc-toggle-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
                 <span class="vis-label">Document Editor</span>
-                <input type="checkbox" checked data-ui-key="doc-toggle-btn"><span class="vis-switch"></span>
+                <input id="vis-doc-toggle-btn" type="checkbox" checked data-ui-key="doc-toggle-btn"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-bash-toggle-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
                 <span class="vis-label">Shell</span>
-                <input type="checkbox" checked data-ui-key="bash-toggle-btn"><span class="vis-switch"></span>
+                <input id="vis-bash-toggle-btn" type="checkbox" checked data-ui-key="bash-toggle-btn"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-overflow-plus-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
                 <span class="vis-label">More Tools <span class="vis-hint">Overflow menu</span></span>
-                <input type="checkbox" checked data-ui-key="overflow-plus-btn"><span class="vis-switch"></span>
+                <input id="vis-overflow-plus-btn" type="checkbox" checked data-ui-key="overflow-plus-btn"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-mode-toggle">
                 <span class="vis-icon vis-icon-text">A|C</span>
                 <span class="vis-label">Agent / Chat <span class="vis-hint">Mode switcher</span></span>
-                <input type="checkbox" checked data-ui-key="mode-toggle"><span class="vis-switch"></span>
+                <input id="vis-mode-toggle" type="checkbox" checked data-ui-key="mode-toggle"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-attach-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
                 <span class="vis-label">Attach Files</span>
-                <input type="checkbox" checked data-ui-key="attach-btn"><span class="vis-switch"></span>
+                <input id="vis-attach-btn" type="checkbox" checked data-ui-key="attach-btn"><span class="vis-switch"></span>
               </label>
-              <label class="vis-row">
+              <label class="vis-row" for="vis-research-btn">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></span>
                 <span class="vis-label">Deep Research</span>
-                <input type="checkbox" checked data-ui-key="research-btn"><span class="vis-switch"></span>
+                <input id="vis-research-btn" type="checkbox" checked data-ui-key="research-btn"><span class="vis-switch"></span>
               </label>
             </div>
           </div>
@@ -2176,7 +2187,7 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Controls how fired note reminders are delivered.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Channel</label>
+                <label class="settings-label" for="set-reminder-channel">Channel</label>
                 <select id="set-reminder-channel" class="settings-select">
                   <option value="browser">Browser notification (default)</option>
                   <option value="email" id="set-reminder-channel-email-opt">Email</option>
@@ -2184,15 +2195,15 @@
                 </select>
               </div>
               <div id="set-reminder-email-from-row" class="settings-row" style="display:none">
-                <label class="settings-label">Send from</label>
+                <label class="settings-label" for="set-reminder-email-account">Send from</label>
                 <select id="set-reminder-email-account" class="settings-select"></select>
               </div>
               <div id="set-reminder-email-to-row" class="settings-row" style="display:none">
-                <label class="settings-label">Send to</label>
+                <label class="settings-label" for="set-reminder-email-to">Send to</label>
                 <input id="set-reminder-email-to" class="settings-select" type="email" placeholder="you@example.com"  aria-label="you@example.com">
               </div>
               <div id="set-reminder-ntfy-topic-row" class="settings-row" style="display:none">
-                <label class="settings-label">ntfy topic</label>
+                <label class="settings-label" for="set-reminder-ntfy-topic">ntfy topic</label>
                 <input id="set-reminder-ntfy-topic" class="settings-select" type="text" placeholder="reminders"  aria-label="reminders">
               </div>
               <div id="set-reminder-channel-hint" style="font-size:11px;opacity:0.6;"></div>
@@ -2200,7 +2211,7 @@
             </div>
           </div>
           <div class="admin-card">
-            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Synthesis<span style="flex:1"></span><label class="admin-switch" title="Use the utility model to write reminder messages"><input type="checkbox" id="set-reminder-llm-toggle"><span class="admin-slider"></span></label></h2>
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Synthesis<span style="flex:1"></span><label class="admin-switch" title="Use the utility model to write reminder messages" for="set-reminder-llm-toggle"><input type="checkbox" id="set-reminder-llm-toggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">When on, the utility model writes a short, warm one-line reminder for browser, email, AND ntfy reminders instead of just the raw note content.</div>
           </div>
           <div class="admin-card">
@@ -2208,7 +2219,7 @@
             <div class="admin-toggle-sub" style="margin-bottom:8px">Used to build clickable links back to Applicant inside outgoing reminder / urgent-email emails (e.g. <code>https://chat.yourdomain.com</code>). Leave blank to omit links.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">URL</label>
+                <label class="settings-label" for="set-app-public-url">URL</label>
                 <input id="set-app-public-url" class="settings-select" type="url" placeholder="https://chat.example.com" style="flex:1;"  aria-label="https://chat.example.com">
               </div>
               <div id="set-app-public-url-msg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
@@ -2279,7 +2290,7 @@
                 <div class="admin-toggle-label">Open signup</div>
                 <div class="admin-toggle-sub">Allow anyone to create an account from the login page</div>
               </div>
-              <label class="admin-switch"><input type="checkbox" id="adm-signupToggle"><span class="admin-slider"></span></label>
+              <label class="admin-switch" for="adm-signupToggle"><input type="checkbox" id="adm-signupToggle"><span class="admin-slider"></span></label>
             </div>
           </div>
           <div class="admin-card">
@@ -2291,7 +2302,7 @@
             <div class="admin-add-form">
               <input id="adm-newUsername" type="text" placeholder="Username (email)" aria-label="Username (email)">
               <input id="adm-newPassword" type="password" placeholder="Password (min 8)" aria-label="Password (min 8)">
-              <div class="admin-switch-inline" title="Grant full admin access"><label class="admin-switch"><input type="checkbox" id="adm-newIsAdmin"><span class="admin-slider"></span></label> Admin</div>
+              <div class="admin-switch-inline" title="Grant full admin access"><label class="admin-switch" for="adm-newIsAdmin"><input type="checkbox" id="adm-newIsAdmin"><span class="admin-slider"></span></label> Admin</div>
             </div>
             <div class="settings-row" style="margin-top:6px;">
               <button type="button" class="admin-btn-add" id="adm-addBtn">Add User</button>
@@ -2546,6 +2557,7 @@
 <!-- Load modules in this order -->
 <script type="module" src="/static/js/storage.js"></script>
 <script type="module" src="/static/js/ui.js"></script>
+<script type="module" src="/static/js/i18n.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
 <script type="module" src="/static/js/dragSort.js"></script>
 <script type="module" src="/static/js/sessions.js"></script>

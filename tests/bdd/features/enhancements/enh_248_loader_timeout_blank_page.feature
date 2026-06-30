@@ -9,7 +9,6 @@ Feature: Loading overlay removal tied to app initialization
     When the loading overlay is looked for
     Then a loading overlay element is present
 
-  @pending
   Scenario: The loader is removed on initialization, not by a fixed timer
     Given the front-door page markup
     When the loader-removal logic is inspected

@@ -769,6 +769,9 @@ def build_container(settings: Settings | None = None) -> Container:
     chat_service = ChatService(
         attribute_service=attribute_cloud_service,
         criteria_service=criteria_service,
+        # FR-DIGEST: route a chat "approve all today's roles" directive through the
+        # same gated digest-approval path the digest/Portal uses.
+        digest_service=digest_service,
         llm=llm,
         learning=learning_service,
         storage=storage,
@@ -1261,6 +1264,9 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_chat = ChatService(
             attribute_service=rs_attr,
             criteria_service=rs_criteria,
+            # FR-DIGEST: request-scoped digest service so a chat bulk-approve persists
+            # on this request's session (mirrors the main ChatService build).
+            digest_service=rs_digest,
             llm=llm,
             learning=rs_ls,
             storage=req_storage,

@@ -283,7 +283,7 @@ function _ensureModalEl() {
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="cal-btn" id="applicant-portal-refresh" title="Refresh the list">Refresh</button>
-          <button class="close-btn" id="applicant-portal-close" title="Close">✖</button>
+          <button class="close-btn" id="applicant-portal-close" aria-label="Close" title="Close">✖</button>
         </div>
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">

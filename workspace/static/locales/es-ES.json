@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "locale": "es-ES",
+    "name": "Español (España)",
+    "comment": "Example non-source locale proving the data-i18n pipeline localizes the UI. Add keys here to translate the matching strings; missing keys fall back to en-US."
+  },
+  "applicant.profile.title": "Perfil de solicitud",
+  "applicant.criteria.title": "Qué empleos buscar",
+  "applicant.attr.title": "Datos guardados",
+  "applicant.style.title": "Estilo de redacción"
+}

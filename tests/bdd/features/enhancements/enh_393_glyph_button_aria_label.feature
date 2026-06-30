@@ -7,7 +7,6 @@ Feature: Glyph-only buttons carry an explicit accessible name
     When the dismiss button is inspected
     Then it sets an explicit aria-label rather than relying on a tooltip
 
-  @pending
   Scenario: The overlay glyph-only close buttons have an explicit accessible name
     Given the memory dialog module
     When its close button is inspected

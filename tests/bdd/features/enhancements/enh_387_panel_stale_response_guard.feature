@@ -7,7 +7,6 @@ Feature: Panels discard stale responses on a fast campaign/tab switch
     When the Run-now and Pause click handlers are inspected
     Then each disables its button while the request is in flight and re-enables it afterwards
 
-  @pending
   Scenario: A late response for a deselected campaign cannot overwrite the current view
     Given the Applicant panel browser modules
     When the re-render paths are scanned for a stale-response guard

@@ -14,7 +14,6 @@ Feature: Chat-driven steering of the autonomous loop
     When the supported control kinds are listed
     Then pause, resume, throughput and criteria refocus are all steerable
 
-  @pending
   Scenario: Chat can approve all of today's digest items
     Given the chat control-action contract
     When the user asks to approve all of today's digest items through chat

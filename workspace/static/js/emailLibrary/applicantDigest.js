@@ -550,23 +550,27 @@ function _showReport(report, { company = '', role = '' } = {}) {
   closeBtn.focus();
 }
 
-async function _onFeedback(panel, campaignId) {
+async function _onFeedback(panel, campaignId, btn) {
+  // Re-entry guard: hold the flag AND disable the triggering toolbar button for
+  // the whole prompt + submit window, so a second click while the prompt is open
+  // (or the POST is in flight) cannot fire a duplicate feedback note.
   if (_busyFeedback) return;
   if (!campaignId) { showToast('Pick a job search first.'); return; }
-  const text = await styledPrompt(
-    'Tell the assistant anything about its suggestions — what to show more or less of.',
-    {
-      title: 'Send feedback',
-      placeholder: 'e.g. more remote roles, fewer recruiter agencies',
-      confirmText: 'Send',
-      cancelText: 'Cancel',
-      maxLength: 500,
-    },
-  );
-  if (text == null) return;
-  if (!text.trim()) { showToast('Nothing to send.'); return; }
   _busyFeedback = true;
+  if (btn) btn.disabled = true;
   try {
+    const text = await styledPrompt(
+      'Tell the assistant anything about its suggestions — what to show more or less of.',
+      {
+        title: 'Send feedback',
+        placeholder: 'e.g. more remote roles, fewer recruiter agencies',
+        confirmText: 'Send',
+        cancelText: 'Cancel',
+        maxLength: 500,
+      },
+    );
+    if (text == null) return;
+    if (!text.trim()) { showToast('Nothing to send.'); return; }
     await _api('/feedback/freetext', {
       method: 'POST',
       body: { campaign_id: campaignId, text: text.trim(), criteria_delta: {} },
@@ -576,6 +580,7 @@ async function _onFeedback(panel, campaignId) {
     showToast(e.message || 'Could not send feedback right now.');
   } finally {
     _busyFeedback = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -728,17 +733,21 @@ function _askSurvey() {
   });
 }
 
-async function _onSurvey(panel, campaignId) {
+async function _onSurvey(panel, campaignId, btn) {
+  // Re-entry guard: hold the flag AND disable the triggering toolbar button for
+  // the whole survey + submit window, so a second click while the survey modal is
+  // open (or the POST is in flight) cannot fire a duplicate survey submission.
   if (_busyFeedback) return;
   if (!campaignId) { showToast('Pick a job search first.'); return; }
-  const answers = await _askSurvey();
-  if (answers == null) return;                       // cancelled
-  if (!Object.keys(answers).length) {
-    showToast('Pick at least one answer, or use Send feedback for a free note.');
-    return;
-  }
   _busyFeedback = true;
+  if (btn) btn.disabled = true;
   try {
+    const answers = await _askSurvey();
+    if (answers == null) return;                       // cancelled
+    if (!Object.keys(answers).length) {
+      showToast('Pick at least one answer, or use Send feedback for a free note.');
+      return;
+    }
     const res = await _api('/feedback/survey', {
       method: 'POST',
       body: { campaign_id: campaignId, answers },
@@ -755,6 +764,7 @@ async function _onSurvey(panel, campaignId) {
     showToast(e.message || 'Could not send the survey right now.');
   } finally {
     _busyFeedback = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -828,9 +838,9 @@ function _wire(panel) {
   const refresh = panel.querySelector('#applicant-digest-refresh');
   if (refresh) refresh.addEventListener('click', () => _loadDigest(panel, _currentCampaign(panel)));
   const fb = panel.querySelector('#applicant-digest-feedback');
-  if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel)));
+  if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel), fb));
   const survey = panel.querySelector('#applicant-digest-survey');
-  if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel)));
+  if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel), survey));
 }
 
 // Web-presence heartbeat (FR-NOTIF-2). Tells the engine the user is verifiably
