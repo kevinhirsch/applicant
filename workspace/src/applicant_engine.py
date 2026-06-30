@@ -429,6 +429,22 @@ class ApplicantEngineClient:
             "POST", f"/api/pending-actions/{action_id}/resolve", json=body or None
         )
 
+    async def resolve_pending_actions_bulk(self, campaign_id: str, action_ids: list) -> Any:
+        # Resolve a batch in one call — "approve all N digest items" (#295). The
+        # engine campaign-scopes the ids so a stray id can't clear another campaign.
+        return await self._request(
+            "POST",
+            f"/api/pending-actions/{campaign_id}/resolve-bulk",
+            json={"action_ids": list(action_ids)},
+        )
+
+    async def snooze_pending_action(self, action_id: str, body: Any | None = None) -> Any:
+        # Reschedule an action — "remind me tomorrow" (#295). ``body`` may carry
+        # ``until`` (ISO) or ``hours``; omitted snoozes ~24h by default.
+        return await self._request(
+            "POST", f"/api/pending-actions/{action_id}/snooze", json=body or None
+        )
+
     # -- notification center (in-app inbox) ------------------------------
 
     async def list_notifications(self) -> Any:

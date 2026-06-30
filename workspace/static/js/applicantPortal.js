@@ -237,6 +237,33 @@ function _roleCompany(item) {
   return role || company || item.title || '';
 }
 
+// ── Task metadata (aging + urgency) ───────────────────────────────────────────
+//
+// The engine now returns derived task metadata on each item (#295): age_label,
+// urgency ('normal' | 'due_soon' | 'overdue'), and priority. We surface aging +
+// an urgency badge inline. Items already arrive sorted highest-priority-first.
+
+function _urgencyBadge(item) {
+  const u = item && item.urgency;
+  if (u === 'overdue') {
+    return ` <span class="applicant-portal-badge" style="background:var(--color-danger,#e06c6c);color:#fff;font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle;">Overdue</span>`;
+  }
+  if (u === 'due_soon') {
+    return ` <span class="applicant-portal-badge" style="background:var(--color-warning,#e0a96c);color:#000;font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle;">Due soon</span>`;
+  }
+  return '';
+}
+
+function _ageLabel(item) {
+  const a = item && item.age_label;
+  return a ? `<span style="opacity:0.7;">· ${esc(a)}</span>` : '';
+}
+
+// Digest-approval rows that can be cleared in one "approve all" batch.
+function _digestApprovalItems() {
+  return (_items || []).filter((it) => it && it.kind === 'digest_approval');
+}
+
 // ── Modal scaffold ────────────────────────────────────────────────────────────
 
 function _ensureModalEl() {
@@ -332,6 +359,12 @@ function _rowShell(item, inner) {
   // itself when the profile is complete, so it carries no "Done" affordance — its
   // only control is "Finish your profile".
   const resolvable = meta.affordance !== 'complete';
+  // Snooze ("remind me tomorrow") is offered on every real (resolvable) row so the
+  // user can defer anything off the home base until tomorrow. The synthetic
+  // onboarding-gap row is not snoozable (it clears itself when the profile is done).
+  const snoozeBtn = resolvable
+    ? `<button type="button" class="cal-btn applicant-portal-snooze" data-action-id="${esc(item.id)}" title="Hide this until tomorrow morning" style="flex-shrink:0;">Snooze</button>`
+    : '';
   const doneBtn = resolvable
     ? `<button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>`
     : '';
@@ -339,10 +372,10 @@ function _rowShell(item, inner) {
     <div class="admin-card og-card applicant-portal-row" data-action-id="${esc(item.id)}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
-          <div style="font-weight:600;word-break:break-word;">${esc(title)}</div>
-          <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${where}</div>
+          <div style="font-weight:600;word-break:break-word;">${esc(title)}${_urgencyBadge(item)}</div>
+          <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${_ageLabel(item)} ${where}</div>
         </div>
-        ${doneBtn}
+        <div style="display:flex;gap:6px;flex-shrink:0;">${snoozeBtn}${doneBtn}</div>
       </div>
       <div class="applicant-portal-row-body" style="margin-top:8px;">${inner}</div>
     </div>`;
@@ -561,8 +594,17 @@ function _renderList(body) {
   if (!_items.length && !infos.length) { _renderEmpty(body); return; }
   const actionRows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
   const notifRows = infos.map((n) => _renderNotifRow(n)).join('');
+  // "Approve all N" appears only when there are 2+ digest-approval rows to clear
+  // in one batch (#295 bulk action). It resolves exactly those rows server-side.
+  const bulkN = _digestApprovalItems().length;
+  const bulkBtn = bulkN > 1
+    ? `<button type="button" class="cal-btn cal-btn-primary applicant-portal-approve-all" title="Approve and clear all matched-role items at once" style="font-size:11px;padding:2px 8px;">Approve all ${bulkN}</button>`
+    : '';
   const actionHdr = _items.length
-    ? `<div style="font-size:11px;opacity:0.7;margin:2px 2px 2px;">${_items.length} item${_items.length === 1 ? '' : 's'} need${_items.length === 1 ? 's' : ''} your attention</div>`
+    ? `<div style="display:flex;align-items:center;gap:8px;margin:2px 2px 2px;">
+         <span style="font-size:11px;opacity:0.7;">${_items.length} item${_items.length === 1 ? '' : 's'} need${_items.length === 1 ? 's' : ''} your attention</span>
+         ${bulkBtn ? `<span style="margin-left:auto;">${bulkBtn}</span>` : ''}
+       </div>`
     : '';
   const notifHdr = infos.length
     ? `<div style="font-size:11px;opacity:0.7;margin:10px 2px 2px;">Recent updates</div>`
@@ -642,6 +684,58 @@ function _wireRows(host) {
         btn.disabled = false;
         btn.textContent = orig;
         _toast(e.message || 'Could not update that');
+      }
+    });
+  });
+
+  // Snooze → "remind me tomorrow": defer the item off the home base until due.
+  host.querySelectorAll('.applicant-portal-snooze').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.actionId;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '…';
+      try {
+        await _post(`${API}/actions/${encodeURIComponent(id)}/snooze`, {});
+        _removeRow(host, id);
+        _toast('Snoozed — we’ll remind you tomorrow');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not snooze that');
+      }
+    });
+  });
+
+  // Approve all N → bulk-resolve every matched-role (digest_approval) row at once.
+  host.querySelectorAll('.applicant-portal-approve-all').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const targets = _digestApprovalItems();
+      if (!targets.length) return;
+      // Group by campaign (the engine batch is campaign-scoped) and clear each.
+      const byCampaign = {};
+      for (const it of targets) {
+        const cid = it.campaign_id || '';
+        if (!cid) continue;
+        (byCampaign[cid] = byCampaign[cid] || []).push(String(it.id));
+      }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Approving…';
+      let cleared = 0;
+      try {
+        for (const cid of Object.keys(byCampaign)) {
+          const data = await _post(`${API}/actions/resolve-bulk`, {
+            campaign_id: cid, action_ids: byCampaign[cid],
+          });
+          const resolved = (data && data.resolved) || [];
+          for (const rid of resolved) { _removeRow(host, rid); cleared += 1; }
+        }
+        _toast(cleared ? `Approved ${cleared} item${cleared === 1 ? '' : 's'}` : 'Nothing to approve');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not approve all of those');
       }
     });
   });

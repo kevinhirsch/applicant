@@ -71,6 +71,24 @@ class MissingAttributeIn(BaseModel):
     confirm: bool = False
 
 
+class BulkResolveIn(BaseModel):
+    """Resolve a batch of pending actions — "approve all N items" (#295)."""
+
+    campaign_id: str
+    action_ids: list[str]
+
+
+class SnoozeIn(BaseModel):
+    """Reschedule a pending action — "remind me later" (#295).
+
+    ``until`` is an explicit ISO wake time; otherwise ``hours`` (default ~24, i.e.
+    "remind me tomorrow") sets it relative to now.
+    """
+
+    until: Optional[str] = None
+    hours: Optional[float] = None
+
+
 # --- helpers ----------------------------------------------------------------
 
 
@@ -291,6 +309,62 @@ def setup_applicant_portal_routes() -> APIRouter:
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
         return {"resolved": True, "action_id": action_id}
+
+    # -- bulk resolve ("approve all N") -----------------------------------
+
+    @router.post("/actions/resolve-bulk")
+    async def resolve_actions_bulk(body: BulkResolveIn, request: Request) -> dict:
+        """Resolve many pending actions in one call — "approve all N items" (#295).
+
+        Thin proxy over the engine's batch resolve, which campaign-scopes the ids
+        (anything not belonging to ``campaign_id`` is skipped). Returns the ids
+        actually cleared so the UI can drop exactly those rows.
+        """
+        _require_user(request)
+        cid = (body.campaign_id or "").strip()
+        if not cid:
+            raise HTTPException(400, "A job-search workspace id is required")
+        ids = [i for i in (body.action_ids or []) if i]
+        if not ids:
+            return {"resolved": [], "skipped": [], "resolved_count": 0}
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.resolve_pending_actions_bulk(cid, ids)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        data = data if isinstance(data, dict) else {}
+        return {
+            "resolved": data.get("resolved", []),
+            "skipped": data.get("skipped", []),
+            "resolved_count": data.get("resolved_count", len(data.get("resolved", []))),
+        }
+
+    # -- snooze ("remind me later") ---------------------------------------
+
+    @router.post("/actions/{action_id}/snooze")
+    async def snooze_action(action_id: str, body: SnoozeIn, request: Request) -> dict:
+        """Reschedule a pending action so it drops off the home base until due (#295).
+
+        Forwards an optional wake time (``until`` ISO or ``hours``) to the engine; a
+        bare call defers ~24h ("remind me tomorrow"). A 404 (already resolved/gone)
+        is forwarded so the UI can drop the row.
+        """
+        _require_user(request)
+        payload: dict = {}
+        if body.until:
+            payload["until"] = body.until
+        if body.hours is not None:
+            payload["hours"] = body.hours
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.snooze_pending_action(action_id, payload or None)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        data = data if isinstance(data, dict) else {}
+        return {
+            "action_id": action_id,
+            "snoozed_until": data.get("snoozed_until"),
+        }
 
     # -- notification center (in-app inbox) -------------------------------
 
