@@ -19,6 +19,7 @@
 // section as "active"); until then it stays hidden so there is no dead UI.
 
 import { showToast, styledPrompt, styledConfirm } from '../ui.js';
+import { showDigestEmailPreview } from './digestEmailPreview.js';
 
 const API_BASE = window.location.origin;
 
@@ -168,6 +169,9 @@ function _ensurePanel(modal) {
               style="margin-left:auto;">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
         Refresh
+      </button>
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-preview" title="Preview the digest exactly as it will be emailed to you">
+        Preview email
       </button>
       <button type="button" class="memory-toolbar-btn" id="applicant-digest-feedback" title="Send the assistant a quick note about its suggestions">
         Send feedback
@@ -584,6 +588,14 @@ async function _onFeedback(panel, campaignId, btn) {
   }
 }
 
+// --- email preview (#402: render the digest exactly as it will be emailed) ---
+// Delegates to the dedicated digestEmailPreview module, which fetches the engine-
+// rendered digest-email HTML through /api/applicant/email/digest/{id}/email and
+// shows it in a sandboxed iframe (the email "as sent").
+async function _onPreviewEmail(panel, campaignId) {
+  return showDigestEmailPreview(campaignId);
+}
+
 // --- guided survey (a few structured questions) ----------------------------
 //
 // A short, optional survey that complements the free-text note above: instead
@@ -837,6 +849,8 @@ function _wire(panel) {
   }
   const refresh = panel.querySelector('#applicant-digest-refresh');
   if (refresh) refresh.addEventListener('click', () => _loadDigest(panel, _currentCampaign(panel)));
+  const preview = panel.querySelector('#applicant-digest-preview');
+  if (preview) preview.addEventListener('click', () => _onPreviewEmail(panel, _currentCampaign(panel)));
   const fb = panel.querySelector('#applicant-digest-feedback');
   if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel), fb));
   const survey = panel.querySelector('#applicant-digest-survey');

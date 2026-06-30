@@ -11,13 +11,11 @@ Feature: The agent never re-applies to the same company+role within a cooldown
     When the discovery results are deduplicated
     Then only one of the near-identical listings survives
 
-  @pending
   Scenario: A posting matching a prior application within cooldown is not re-applied
     Given the user already applied to a company and role
     When the same company and role is considered again within the cooldown window
     Then the application-history guard skips or holds it instead of re-applying
 
-  @pending
   Scenario: The same role after the cooldown is eligible again
     Given the user applied to a company and role long enough ago to clear the cooldown
     When the same company and role is considered again after the cooldown window

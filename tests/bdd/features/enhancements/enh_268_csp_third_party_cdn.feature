@@ -4,7 +4,6 @@ Feature: The content-security policy does not trust a third-party CDN for script
   # surface for a privacy-first self-hosted product. Self-hosting these assets (removing the CDN
   # from script-src) is not done yet → @pending probe on the emitted CSP header.
 
-  @pending
   Scenario: No third-party CDN is allowed in the script-src directive
     Given the security-headers middleware
     When the content-security policy for a normal page is produced

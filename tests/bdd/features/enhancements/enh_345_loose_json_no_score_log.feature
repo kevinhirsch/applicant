@@ -17,7 +17,6 @@ Feature: Loose-JSON parse without a score is observable
     Then the parsed dictionary carries the score key
 
   # PENDING — the residual gap: a score-less reply must be logged, not silently dropped.
-  @pending
   Scenario: A parsed reply that lacks a score is logged before the fallback
     Given a scoring service whose model returns JSON without a score key
     When the model-backed base score is attempted

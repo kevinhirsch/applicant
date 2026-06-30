@@ -15,7 +15,6 @@ Feature: The SwiftShader launch flag is version-gated for newer Chrome
     When the browser launch kwargs are built
     Then the launch args carry the automation-control stealth flag
 
-  @pending
   Scenario: The SwiftShader flag is omitted for Chrome 125 and newer
     Given a deployment whose installed Chrome major is 125 or newer
     When the browser launch args are built for that Chrome

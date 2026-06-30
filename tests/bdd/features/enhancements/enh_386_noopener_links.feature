@@ -12,19 +12,16 @@ Feature: New-tab links are protected against reverse tabnabbing
     When its new-tab anchors are inspected
     Then every new-tab anchor in that module carries a noopener relationship
 
-  @pending
   Scenario: The admin OAuth-authorize links guard the opener reference
     Given the admin console module
     When its new-tab anchors are inspected
     Then every new-tab anchor in that module carries a noopener relationship
 
-  @pending
   Scenario: The settings OAuth-authorize link guards the opener reference
     Given the settings module OAuth-authorize new-tab link
     When that new-tab anchor is inspected
     Then that new-tab anchor carries a noopener relationship
 
-  @pending
   Scenario: The landing-page external links guard the opener reference
     Given the landing page
     When its new-tab anchors are inspected

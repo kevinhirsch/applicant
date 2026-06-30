@@ -740,6 +740,67 @@ class AdvancedLearningService:
                 result.pending.append(proposal)
         return store, result
 
+    # === proposed-attribute suggestions for operator approval (#273) =======
+    def suggest_attributes(self, campaign_id) -> list[AttributeProposal]:
+        """Derive attribute suggestions awaiting operator approval (#273, FR-LEARN-4).
+
+        Cross-references the candidate's stored inputs (the uploaded base résumé text)
+        against the cheap skill lexicon and proposes any recognised skill NOT already in
+        the attribute cloud. These are returned as ``AttributeProposal``s the front-door
+        "suggested attribute" card can display for one-tap confirm/dismiss — never
+        auto-applied, never sensitive (EEO skipped by the lexicon), so the operator stays
+        in control. Best-effort + cheap (no LLM): an absent input / no storage yields an
+        empty list.
+        """
+        if self._storage is None:
+            return []
+        try:
+            existing = {
+                (a.name or "").strip().lower()
+                for a in self._storage.attributes.list_for_campaign(campaign_id)
+            }
+            existing |= {
+                (a.value or "").strip().lower()
+                for a in self._storage.attributes.list_for_campaign(campaign_id)
+            }
+        except Exception:  # pragma: no cover - defensive
+            existing = set()
+        text = self._stored_input_text(campaign_id).lower()
+        if not text:
+            return []
+        import re
+
+        tokens = set(re.findall(r"[a-z0-9+#.]+", text))
+        proposals: list[AttributeProposal] = []
+        seen: set[str] = set()
+        for skill in _SKILL_LEXICON:
+            if skill in tokens and skill not in existing and skill not in seen:
+                seen.add(skill)
+                proposals.append(
+                    AttributeProposal(
+                        name="skill",
+                        value=skill,
+                        source="resume",
+                        is_integral=False,
+                        applied=False,
+                        needs_confirmation=True,
+                    )
+                )
+        return proposals
+
+    def _stored_input_text(self, campaign_id) -> str:
+        """The candidate's stored free-text inputs to mine for suggestions (#273)."""
+        repo = getattr(self._storage, "onboarding_profiles", None)
+        if repo is None:
+            return ""
+        try:
+            profile = repo.get_for_campaign(campaign_id)
+            intake = getattr(profile, "intake", None) or {}
+            base = intake.get("base_resume", {}) if isinstance(intake, dict) else {}
+            return str(base.get("raw_text", "") or "")
+        except Exception:  # pragma: no cover - defensive
+            return ""
+
 
 def _synth_attribute_id():
     from applicant.core.ids import AttributeId, new_id

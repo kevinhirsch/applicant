@@ -9,7 +9,6 @@ Feature: Multi-campaign switcher front-door wiring
     When the multi-campaign switcher entry is read
     Then it reports a dormant status so no live switcher is implied
 
-  @pending
   Scenario: The front door exposes a campaign switcher section
     Given the workspace Applicant section map
     When the sections are inspected for a multi-campaign switcher

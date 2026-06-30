@@ -20,6 +20,8 @@ FINISHED_BY_ENGINE (friction-free, user-authorized).
 
 from __future__ import annotations
 
+import logging
+
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
@@ -35,6 +37,10 @@ from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
+# Stdlib logger for diagnostics that must be capturable by standard log handlers /
+# pytest ``caplog`` (structlog's PrintLogger renders straight to stdout and bypasses the
+# stdlib propagation chain). Used for the warn-on-loss conversion diagnostic (#240).
+_std_log = logging.getLogger(__name__)
 
 # ATS parse self-check: minimum field count for a parsable generated resume.
 _ATS_PARSE_MIN_FIELDS = 3
@@ -49,6 +55,14 @@ def _verify_ats_parse(resume_text: str) -> tuple[bool, str]:
     submission — warns instead.
     """
     try:
+        # First, the pure render-parseability self-check (#370): a render with no
+        # recoverable text layer / no contact / no section headers is not ATS-safe.
+        from applicant.core.rules.ats_parseability import check_render_parseability
+
+        report = check_render_parseability(resume_text)
+        if not report.parseable:
+            return False, f"ATS parse self-check: {report.reason}"
+
         from applicant.adapters.resume_parser.resume_parser import ResumeParser
         parser = ResumeParser()
         import os
@@ -215,6 +229,14 @@ class SubmissionService:
             source=source,
         )
         self._storage.outcomes.add(event)
+        # Durable, immutable submission snapshot (#372): persist the exact answers,
+        # material versions, posting, and timestamp at the stop-boundary so the
+        # front-door can retrieve what was actually submitted. Best-effort — a
+        # snapshot failure must never block recording the submission itself.
+        try:
+            self._record_submission_snapshot(application, attributes_used)
+        except Exception:  # pragma: no cover - snapshot is advisory evidence
+            log.warning("submission_snapshot_record_failed", application_id=str(application.id))
         self._storage.commit()
         event_bus.emit(
             OutcomeRecorded(
@@ -251,6 +273,40 @@ class SubmissionService:
         """One-tap mark-submitted fallback when auto-detection cannot confirm (FR-LOG-4)."""
         return self.record_submission(
             application, source=OutcomeSource.MANUAL, attributes_used=attributes_used
+        )
+
+    def _record_submission_snapshot(
+        self, application: Application, attributes_used: dict | None
+    ) -> None:
+        """Persist an immutable per-application submission snapshot (#372).
+
+        Captures the exact answers (the attributes used to fill the application),
+        the material versions (the approved résumé variant), and the posting at
+        the stop-boundary. Idempotent: skips if a snapshot already exists.
+        """
+        from applicant.core.entities.submission_snapshot import SubmissionSnapshot
+        from applicant.core.ids import SubmissionSnapshotId
+
+        repo = getattr(self._storage, "submission_snapshots", None)
+        if repo is None:
+            return
+        if repo.get_for_application(application.id) is not None:
+            return
+
+        app = self._storage.applications.get(application.id) or application
+        material_versions: dict = {}
+        if getattr(app, "resume_variant_id", None):
+            material_versions["resume"] = str(app.resume_variant_id)
+        posting_url = getattr(app, "root_url", "") or ""
+
+        repo.add(
+            SubmissionSnapshot(
+                id=SubmissionSnapshotId(new_id()),
+                application_id=application.id,
+                answers=dict(attributes_used or {}),
+                material_versions=material_versions,
+                posting_url=posting_url,
+            )
         )
 
     # --- retrieval (FR-LOG-3 surface, minimal) ----------------------------
@@ -295,7 +351,19 @@ class SubmissionService:
         recorded submission. Moved here from the outcomes router so the remote
         terminal path (and any future submit path) also closes the loop (#2).
         """
-        if self._advanced_learning is None or not application.campaign_id:
+        if not application.campaign_id:
+            return
+        if self._advanced_learning is None:
+            # A conversion happened but no learning service is wired to fold it. The
+            # submission itself is still recorded; only the learning signal is lost.
+            # Surface a warning rather than vanishing silently (#240) so the lost
+            # conversion is at least visible in the logs / observability trail.
+            msg = (
+                "conversion could not be recorded: no learning service available "
+                "for campaign %s (submission still recorded)"
+            )
+            log.warning(msg, application.campaign_id)
+            _std_log.warning(msg, application.campaign_id)
             return
         posting = None
         if application.posting_id:

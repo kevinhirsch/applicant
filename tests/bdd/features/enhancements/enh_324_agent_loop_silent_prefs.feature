@@ -14,7 +14,6 @@ Feature: Agent-loop degradation surfaces a diagnostic instead of running blind
     When loading a user's preferences raises
     Then prompt assembly continues with a safe default rather than crashing
 
-  @pending
   Scenario: A preference-load failure is logged as a warning rather than swallowed
     Given the front-door agent loop preference loader
     When loading a user's preferences raises

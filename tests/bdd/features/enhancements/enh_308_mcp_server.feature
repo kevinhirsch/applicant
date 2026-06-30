@@ -4,13 +4,11 @@ Feature: Expose the engine as an MCP server
   # server with near-zero glue — an instant integration surface for external agents.
   # All @pending: no MCP surface is mounted yet.
 
-  @pending
   Scenario: The engine mounts an MCP server surface
     Given a freshly booted Applicant engine
     When an MCP client lists the available tools
     Then the engine advertises its capabilities as MCP tools
 
-  @pending
   Scenario: MCP tool calls reuse the same guarded application services
     Given the engine exposed as an MCP server
     When an MCP tool invokes a consequential action

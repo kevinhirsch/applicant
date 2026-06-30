@@ -65,9 +65,6 @@ KNOWN_UNWIRED: dict[str, str] = {
     # selling point (docs/release-readiness-1.0.md §2d note on #403).
     "GET /api/applicant/chat/pending-actions/{campaign_id}": "release-readiness §2d (#403)",
     "POST /api/applicant/chat/pending-actions/{action_id}/resolve": "release-readiness §2d (#403)",
-    # #405 — résumé aggressiveness dial is wired backend-side but the front-door
-    # control is intentionally dormant (docs/dormant-surfaces.md #1, FR-RESUME-9 / #187).
-    "POST /api/applicant/documents/aggressiveness": "release-readiness §2d (#187 / FR-RESUME-9 dormant)",
     # #404-adjacent — debug-only engine reads not surfaced in the front-door:
     # the detection monitor (FR-PREFILL-6) and the stealth-profile readout are
     # operator/diagnostic reads, not user surfaces.

@@ -419,6 +419,19 @@ async function saveBannedPhrases() {
   showError((res.data && res.data.message) || 'Could not save the phrase list');
 }
 
+// Truthful-framing dial (#272 / #187): the slider is now live and persists the chosen
+// tone through the documents proxy. The dial only biases framing — it never relaxes the
+// truthfulness guardrail (enforced server-side).
+async function saveAggressiveness(value) {
+  const res = await _docsFetch('/aggressiveness', {
+    method: 'POST',
+    body: JSON.stringify({ aggressiveness: Number(value) }),
+  });
+  if (res.ok) { showToast('Tone updated'); return; }
+  if (res.status === 403) { showError('You do not have permission to change this.'); return; }
+  showError((res.data && res.data.message) || 'Could not update the tone');
+}
+
 async function loadProfileAttributes() {
   const list = el('applicant-attr-list');
   const empty = el('applicant-attr-empty');
@@ -723,7 +736,11 @@ export function initApplicantProfile() {
   const banRefresh = el('applicant-banned-refresh-btn'); if (banRefresh) banRefresh.addEventListener('click', loadBannedPhrases);
   const aggr = el('applicant-aggr-slider');
   const aggrVal = el('applicant-aggr-value');
-  if (aggr && aggrVal) aggr.addEventListener('input', () => { aggrVal.textContent = aggr.value; });
+  if (aggr && aggrVal) {
+    aggr.addEventListener('input', () => { aggrVal.textContent = aggr.value; });
+    // Persist on release (change) so the chosen tone survives across requests (#187).
+    aggr.addEventListener('change', () => { saveAggressiveness(aggr.value); });
+  }
 }
 
 const entitiesModule = {

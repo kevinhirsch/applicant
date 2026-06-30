@@ -5,7 +5,6 @@
 
 Feature: Option picking is scoped to the dropdown that was just opened
 
-  @pending
   Scenario: Only options belonging to the opened listbox are considered
     Given an opened dropdown whose listbox is identified by an aria-controls relationship
     When the picker selects an option for that dropdown

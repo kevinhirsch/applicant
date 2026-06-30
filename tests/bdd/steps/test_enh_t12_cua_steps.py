@@ -201,6 +201,28 @@ def picker_degrades(t12ctx):
     assert t12ctx["cu"].calls == []
 
 
+@when('the page opens an "open with" / print-to-PDF dialog the browser cannot reach')
+def open_non_file_dialog(t12ctx):
+    # The loop's generalised seam for clearing a NON-file off-page OS dialog (an
+    # "open with" handler chooser / a print-to-PDF dialog) the DOM cannot reach.
+    t12ctx["dialog_ok"] = t12ctx["prefill"]._complete_native_dialog(
+        app=None, intent="print-to-pdf"
+    )
+
+
+@then("the loop delegates that off-page step to desktop assist as well")
+def non_file_dialog_delegated(t12ctx):
+    # Desktop assist was used to clear the off-page dialog (it did not silently skip).
+    assert t12ctx["dialog_ok"] is True
+    actions = [c.action for c in t12ctx["cu"].calls]
+    assert actions, "the loop never delegated the off-page dialog to desktop assist"
+    # Bounded vocabulary only: focus (background) then a single key — never a click /
+    # account-create / submit, which stay human hand-off (the FR-CUA stop-boundary).
+    assert DesktopAction.FOCUS_APP in actions
+    assert DesktopAction.KEY in actions
+    assert DesktopAction.CLICK not in actions
+
+
 # ===========================================================================
 # GREEN — #142 cua-driver tool-name registry + reconciliation seam
 # ===========================================================================

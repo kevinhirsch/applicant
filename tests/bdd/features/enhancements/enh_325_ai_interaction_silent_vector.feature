@@ -15,7 +15,6 @@ Feature: Memory vector-store failures surface a diagnostic instead of silence
     When the vector index add raises
     Then the memory is still persisted to the canonical store rather than lost
 
-  @pending
   Scenario: A vector-store add failure is logged as a warning rather than swallowed
     Given the front-door memory action over a healthy canonical store
     When the vector index add raises

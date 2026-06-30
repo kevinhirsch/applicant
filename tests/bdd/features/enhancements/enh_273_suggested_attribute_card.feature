@@ -13,7 +13,6 @@ Feature: AI-suggested attribute card is fed by engine-surfaced proposals
     When an attribute value is cross-referenced from inputs
     Then a proposed attribute suggestion type exists to carry it
 
-  @pending
   Scenario: The engine surfaces proposed attributes for operator approval
     Given the engine setup/profile status surface
     When the status payload is inspected for pending attribute suggestions

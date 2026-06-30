@@ -12,7 +12,6 @@ Feature: The Chrome major can be pinned to the installed browser to stay coheren
     When the fingerprint is checked for internal consistency
     Then the user-agent, platform and client hints all agree
 
-  @pending
   Scenario: An environment override pins the Chrome major in a container
     Given a deployment where Chrome is not probeable on PATH
     When the Chrome major is resolved with an environment override set

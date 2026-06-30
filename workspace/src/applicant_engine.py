@@ -627,6 +627,12 @@ class ApplicantEngineClient:
             "POST", f"/api/outcomes/applications/{application_id}/detect"
         )
 
+    async def submission_snapshot(self, application_id: str) -> Any:
+        """The immutable submission snapshot for an application (#372)."""
+        return await self._request(
+            "GET", f"/api/outcomes/applications/{application_id}/snapshot"
+        )
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:

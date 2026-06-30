@@ -15,7 +15,6 @@ Feature: The session cookie can be marked Secure for TLS deployments
     When the cookie secure flag is resolved from configuration
     Then the resolved cookie secure flag is false
 
-  @pending
   Scenario: A forwarded HTTPS scheme auto-marks the cookie Secure
     Given a request forwarded over HTTPS by a reverse proxy
     When the cookie secure flag is resolved from the request scheme

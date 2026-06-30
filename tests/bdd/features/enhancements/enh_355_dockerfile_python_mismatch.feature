@@ -11,7 +11,6 @@ Feature: Engine and workspace images agree on the Python version
     Then each pins a slim Python base image
 
   # PENDING — the residual gap: the two pins differ (3.11 vs 3.12).
-  @pending
   Scenario: The two images pin the same Python minor version
     Given the engine and workspace Dockerfiles
     When their Python minor versions are compared

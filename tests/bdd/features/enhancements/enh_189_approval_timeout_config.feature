@@ -14,7 +14,6 @@
     Given a durable pipeline context with no approval-wait timeout set
     Then the recv gate is asked to wait indefinitely
 
-  @pending
   Scenario: The indefinite-wait duration is tunable through settings
     Given the engine settings
     Then an approval-wait timeout setting can be configured

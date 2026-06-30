@@ -12,7 +12,6 @@ Feature: Externally-loaded scripts carry integrity protection and styles are pol
     When the content-security policy for a normal page is produced
     Then the script policy is nonce-based and does not allow inline scripts
 
-  @pending
   Scenario: Every external script declares an integrity hash
     Given the front-door application HTML shell
     When its externally-loaded script tags are inspected

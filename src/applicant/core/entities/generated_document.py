@@ -9,11 +9,25 @@ from applicant.core.ids import ApplicationId, CampaignId, GeneratedDocumentId
 
 
 class DocumentType(str, Enum):
-    """Kind of generated artifact."""
+    """Kind of generated artifact.
+
+    Beyond the three core generated kinds, the model also recognises **managed
+    attachments** (#197): a ``PORTFOLIO`` and a generic ``ATTACHMENT`` kind cover the
+    application materials a posting may demand that the engine does not itself author —
+    portfolios, reference lists, transcripts, writing samples, certifications — so they
+    can be carried per-campaign as first-class library documents.
+    """
 
     RESUME = "resume"
     COVER_LETTER = "cover_letter"
     SCREENING_ANSWER = "screening_answer"
+    PORTFOLIO = "portfolio"
+    ATTACHMENT = "attachment"
+
+    @property
+    def is_attachment(self) -> bool:
+        """True for operator-supplied managed attachments (not engine-generated)."""
+        return self in (DocumentType.PORTFOLIO, DocumentType.ATTACHMENT)
 
 
 @dataclass(frozen=True)

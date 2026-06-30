@@ -13,13 +13,11 @@ Feature: Every submission persists an immutable per-application snapshot
     When values are recorded for a page during pre-fill
     Then the per-page fill log carries the recorded values
 
-  @pending
   Scenario: Submitting an application persists a snapshot of the exact answers and material versions
     Given an application about to be submitted with exact answers and material versions
     When the submission is recorded at the stop-boundary
     Then an immutable per-application snapshot of the answers, materials, posting, and timestamp is persisted
 
-  @pending
   Scenario: The persisted snapshot is retrievable per application and immutable
     Given a persisted submission snapshot for an application
     When the snapshot is retrieved for that application

@@ -99,10 +99,23 @@ def _campaign_lock(campaign_id: CampaignId) -> threading.Lock:
         return _CAMPAIGN_LOCKS[str(campaign_id)]
 
 
+@dataclass(frozen=True)
+class FailureLesson:
+    """A verbal self-reflection on a failed step, stored for later recall (#306)."""
+
+    ats: str
+    step: str
+    lesson: str
+
+
 class LearningService:
-    def __init__(self, storage, embedding) -> None:
+    def __init__(self, storage, embedding, *, memory_store=None) -> None:
         self._storage = storage
         self._embedding = embedding
+        # Episodic memory for verbal lessons (Reflexion). Prefer a wired curated
+        # MemoryStore; fall back to an in-process map so recall works hermetically.
+        self._memory_store = memory_store
+        self._episodic_lessons: dict[str, list[FailureLesson]] = {}
 
     def model_for(self, campaign_id: CampaignId) -> LearningModel:
         return LearningModel(campaign_id=campaign_id)
@@ -539,3 +552,66 @@ class LearningService:
             slot[label] = slot.get(label, 0) + 1
         # #12: bound the blob at fold time so it never grows unbounded across decisions.
         return replace(model, feature_stats=cap_feature_stats(stats))
+
+    # --- AWM workflow induction (#306 / Skyvern parity #351) ----------------
+    def induce_workflow(self, routine_store, domain: str, steps):
+        """Induce a reusable per-ATS routine from a successful pre-fill (#351, #306).
+
+        Skyvern parity: after a successful pre-fill on a given ATS the engine learns a
+        reusable *routine* (the compact op-sequence that worked, keyed by domain) so
+        the next application to that ATS is guided by the induced routine rather than
+        re-derived cold. This is the learning-side entry point that folds a working
+        trace into the process-lived :class:`~applicant.ports.driven.routine_store.RoutineStore`
+        (AWM workflow-induction), returning the stored :class:`Routine` (or ``None``
+        when there is nothing to induce or no store is wired).
+
+        The routine is **data, not free text** — fill/select/upload steps reference the
+        attribute cloud / document library by id, never a literal value, so an induced
+        routine can never smuggle a fabricated answer into a form (NFR-TRUTH-1).
+        """
+        if routine_store is None or not domain or not steps:
+            return None
+        return routine_store.induce(domain, tuple(steps))
+
+    # --- self-reflection on failure (Reflexion, #306) ---------------------
+    def reflect_on_failure(self, failure: dict) -> FailureLesson:
+        """Write a verbal lesson from a failed step to episodic memory (Reflexion, #306).
+
+        ``failure`` carries the ATS, the failing ``step``, and an ``error``
+        description. A short natural-language lesson is distilled and stored
+        (curated MemoryStore when wired, else an in-process episodic map) so it
+        can be recalled on the next similar attempt via :meth:`recall_lessons`.
+        """
+        ats = str(failure.get("ats") or failure.get("source_key") or "unknown")
+        step = str(failure.get("step", "")).strip()
+        error = str(failure.get("error", "")).strip()
+        lesson_text = (
+            f"On {ats}, the step '{step}' failed ({error}); "
+            "try an alternate selector or pause for confirmation next time."
+            if error
+            else f"On {ats}, the step '{step}' failed; proceed cautiously next time."
+        )
+        lesson = FailureLesson(ats=ats, step=step, lesson=lesson_text)
+        self._episodic_lessons.setdefault(ats, []).append(lesson)
+
+        store = self._memory_store
+        if store is not None:
+            try:
+                from applicant.ports.driven.memory_store import (
+                    KIND_ENVIRONMENT,
+                    SCOPE_GLOBAL,
+                    MemoryEntry,
+                )
+
+                store.add(
+                    MemoryEntry(
+                        text=lesson_text, kind=KIND_ENVIRONMENT, scope=SCOPE_GLOBAL
+                    )
+                )
+            except Exception:  # pragma: no cover - advisory write must never break the loop
+                pass
+        return lesson
+
+    def recall_lessons(self, ats: str) -> list[FailureLesson]:
+        """Recall verbal lessons for an ATS on the next similar attempt (#306)."""
+        return list(self._episodic_lessons.get(str(ats), []))

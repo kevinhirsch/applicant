@@ -12,13 +12,11 @@ Feature: Document library has cross-surface visibility into résumé variant out
     When the fit coverage is computed
     Then the variant records a coverage score for that posting
 
-  @pending
   Scenario: A résumé variant exposes which job it was submitted to
     Given a résumé variant stored for a campaign
     When the variant is inspected for its submission target
     Then it records which job posting it was submitted to
 
-  @pending
   Scenario: A résumé variant exposes a conversion-rate signal
     Given a résumé variant with submissions and outcomes
     When the variant is inspected for its conversion rate

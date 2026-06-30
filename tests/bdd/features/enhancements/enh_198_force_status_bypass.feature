@@ -16,7 +16,6 @@ Feature: Forcing an application status still honors the legal transition table
     When its status is set with a raw dataclass replace to a terminal state
     Then the status changed with no transition validation
 
-  @pending
   Scenario: The status-sync path validates the transition before persisting
     Given an application in the discovered state
     When the engine syncs it to a terminal state through a validated force path

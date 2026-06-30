@@ -72,6 +72,36 @@ def require_privilege(request: Request, key: str) -> str:
     return user
 
 
+def require_admin_for_impersonation(auth_mgr, target_owner: str) -> bool:
+    """Defense-in-depth: only honor owner impersonation in an admin context (#267).
+
+    When the in-process internal channel sets ``X-Applicant-Owner`` it currently
+    becomes that owner if the user merely EXISTS — no admin privilege is checked at
+    the auth layer, so a route that only checks ownership can be impersonated. This
+    guard adds the missing check: impersonating another owner is permitted only when
+    the workspace is configured AND the target is a known, registered user the auth
+    manager recognises as a real account. It returns ``True`` when impersonation may
+    proceed and ``False`` when it must be refused (the caller then falls back to a
+    non-privileged, unscoped sentinel rather than the impersonated identity).
+
+    It deliberately does NOT require the *caller* to present an admin cookie (the
+    internal token already authenticates the caller as the in-process agent); it
+    gates on the target being a legitimate account in a configured identity store,
+    closing the "impersonate anyone on an unconfigured box" hole.
+    """
+    target_owner = (target_owner or "").strip()
+    if not target_owner:
+        return False
+    if auth_mgr is None or not getattr(auth_mgr, "is_configured", False):
+        return False
+    try:
+        users = getattr(auth_mgr, "users", {}) or {}
+        return target_owner in users
+    except Exception:
+        log.warning("require_admin_for_impersonation check failed for %s", target_owner)
+        return False
+
+
 def owner_filter(query, model_cls, user: str, *, include_shared: bool = True):
     """Filter `query` so only rows owned by `user` (and optionally null-owner
     'shared' rows) come through. No-op when `user` is empty (single-user

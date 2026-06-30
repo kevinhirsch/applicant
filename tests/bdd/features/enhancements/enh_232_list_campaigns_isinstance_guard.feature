@@ -17,7 +17,6 @@
     When the engine returns a bare list of campaigns
     Then the guard yields that same list
 
-  @pending
   Scenario: The chat route also guards a non-list engine response
     Given the chat campaign-list route source
     Then it validates the campaign response is a list before returning it

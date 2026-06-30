@@ -4,7 +4,6 @@ Feature: Engine chat replies are scrubbed before being forwarded to the browser
   # strips internal implementation detail (campaign/application UUIDs, credential
   # references, debug state) before returning it to the browser.
 
-  @pending
   Scenario: Internal identifiers are stripped from the forwarded chat reply
     Given an engine chat reply containing an internal campaign UUID
     When the chat proxy forwards the reply to the browser

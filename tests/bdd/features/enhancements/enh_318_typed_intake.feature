@@ -9,7 +9,6 @@ Feature: Onboarding intake sections are validated at the API boundary
     When a section whose name is not a known intake section is submitted
     Then the unknown section is rejected before it reaches the service
 
-  @pending
   Scenario: A section payload is validated against a typed schema
     Given the onboarding save-section request model
     When the request body is inspected for a typed per-section payload schema

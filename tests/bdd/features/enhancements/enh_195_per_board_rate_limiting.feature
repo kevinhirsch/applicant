@@ -11,7 +11,6 @@ Feature: Throughput is capped per campaign but not per job board
     When the throughput is clamped
     Then the applied value never exceeds the campaign hard cap
 
-  @pending
   Scenario: Requests to a single job board are paced below a per-domain ceiling
     Given several postings discovered from the same job-board domain in one run
     When the engine schedules requests against that domain

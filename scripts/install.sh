@@ -216,13 +216,36 @@ heartbeat() {
 }
 
 # --- 1. Preflight: required tooling ----------------------------------------
+# A bare Ubuntu/Debian VM has no Docker, which used to abort the one-liner on
+# step 1 ("Install Docker first") and leave the operator to do it by hand — the
+# opposite of a one-liner. On an apt-based host we now install Docker Engine +
+# the Compose v2 plugin via Docker's official convenience script (idempotent;
+# it no-ops when Docker is already present), then enable + start the daemon.
+# Set APPLICANT_SKIP_DOCKER_INSTALL=1 to opt out (e.g. rootless/hardened hosts).
 log "Checking prerequisites (docker, docker compose)…"
+_maybe_sudo() { if [[ "$(id -u)" -eq 0 ]]; then "$@"; elif command -v sudo >/dev/null 2>&1; then sudo "$@"; else "$@"; fi; }
 if ! command -v docker >/dev/null 2>&1; then
-  echo "docker is required but not found. Install Docker first." >&2
+  if [[ "${APPLICANT_SKIP_DOCKER_INSTALL:-0}" != "1" ]] && command -v apt-get >/dev/null 2>&1; then
+    log "Docker not found — installing Docker Engine + Compose v2 (get.docker.com)…"
+    if ! curl -fsSL https://get.docker.com | _maybe_sudo sh; then
+      echo "Automatic Docker install failed. Install Docker Engine + Compose v2 manually, then re-run." >&2
+      exit 1
+    fi
+    # Start the daemon (systemd hosts) so the build/up steps below can reach it.
+    _maybe_sudo systemctl enable --now docker >/dev/null 2>&1 || true
+  else
+    echo "docker is required but not found, and auto-install is unavailable here." >&2
+    echo "Install Docker Engine + Compose v2 (https://docs.docker.com/engine/install/), then re-run." >&2
+    exit 1
+  fi
+fi
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is still not on PATH after install — open a new shell or check the install logs, then re-run." >&2
   exit 1
 fi
 if ! docker compose version >/dev/null 2>&1; then
-  echo "docker compose v2 is required but not found." >&2
+  echo "docker compose v2 is required but not found (the Compose plugin did not install)." >&2
+  echo "Install it: https://docs.docker.com/compose/install/linux/  then re-run." >&2
   exit 1
 fi
 

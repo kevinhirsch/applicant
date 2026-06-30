@@ -9,7 +9,6 @@ Feature: Email toolbar launcher is reachable for feature gating
     When the email section nav ids are read
     Then the email toolbar launcher id is among them
 
-  @pending
   Scenario: The email toolbar launcher element exists in the page
     Given the front-door page markup
     When the email toolbar launcher element is looked up

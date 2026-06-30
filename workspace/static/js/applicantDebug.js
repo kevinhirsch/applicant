@@ -160,6 +160,30 @@ function _empty(msg) {
   return `<div class="admin-toggle-sub" style="opacity:0.6;padding:8px 0;">${esc(msg)}</div>`;
 }
 
+// Render the immutable submission snapshot (#372): the exact answers, document
+// versions, posting, and timestamp recorded at the stop-boundary.
+function _renderSnapshot(snap) {
+  if (!snap || snap.has_snapshot === false || (!snap.timestamp && !snap.answers && !snap.material_versions)) {
+    return _empty('No submission record yet — it is captured when an application is submitted.');
+  }
+  const when = snap.timestamp ? new Date(snap.timestamp).toLocaleString() : 'unknown time';
+  const answers = snap.answers || {};
+  const mats = snap.material_versions || {};
+  const answerRows = Object.keys(answers).length
+    ? Object.entries(answers).map(([k, v]) => `<div class="admin-toggle-sub" style="opacity:0.8;">${esc(k)}: ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</div>`).join('')
+    : _empty('No answers captured.');
+  const matRows = Object.keys(mats).length
+    ? Object.entries(mats).map(([k, v]) => `<span class="admin-toggle-sub" style="opacity:0.8;">${esc(k)}: ${esc(v)}</span>`).join(' · ')
+    : '<span class="admin-toggle-sub" style="opacity:0.6;">none</span>';
+  return `<div class="admin-card" style="margin-top:4px;background:var(--bg-subtle,#0001);">
+    <div class="admin-toggle-sub" style="opacity:0.7;">Recorded ${esc(when)}</div>
+    ${snap.posting_url ? `<div class="admin-toggle-sub" style="opacity:0.7;">Posting: ${esc(snap.posting_url)}</div>` : ''}
+    <div class="admin-toggle-sub" style="margin-top:4px;"><strong>Documents</strong>: ${matRows}</div>
+    <div class="admin-toggle-sub" style="margin-top:4px;"><strong>Answers</strong></div>
+    ${answerRows}
+  </div>`;
+}
+
 // ── Campaign picker ───────────────────────────────────────────────────────────
 
 async function _loadCampaigns() {
@@ -293,9 +317,11 @@ async function _showAppDetail(appId) {
   host.innerHTML = '<div class="hwfit-loading">Loading details…</div>';
   let shots = { screenshots: [] }, wf = { steps: [] }, outcomes = { outcomes: [] };
   let anyErr = null;
+  let snapshot = { has_snapshot: false };
   try { shots = await _fetchJSON(`${ADMIN}/screenshots/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
   try { wf = await _fetchJSON(`${ADMIN}/workflow/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
   try { outcomes = await _fetchJSON(`${ADMIN}/outcomes/${encodeURIComponent(appId)}`); } catch (e) { anyErr = anyErr || e; }
+  try { snapshot = await _fetchJSON(`${ADMIN}/snapshot/${encodeURIComponent(appId)}`); } catch { /* snapshot is optional */ }
   if (anyErr && !shots.screenshots.length && !(wf.completed_steps || wf.steps || []).length && !outcomes.outcomes.length) {
     host.innerHTML = `<div class="admin-card">${_empty(anyErr.message || 'Could not load application details.')}</div>`;
     return;
@@ -316,6 +342,8 @@ async function _showAppDetail(appId) {
     ${steps.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${steps.map((s) => esc(typeof s === 'string' ? s : (s.name || s.step || JSON.stringify(s)))).join(' → ')}</div>${wf.pending_recovery ? '<div class="admin-toggle-sub" style="color:var(--warn,#c80);">Pending recovery</div>' : ''}` : _empty('No durable workflow recorded.')}
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Outcomes</strong></div>
     ${evs.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${evs.map((e) => `${esc(e.type)} (${esc(e.source)})`).join(', ')}</div>` : _empty('No outcomes recorded yet.')}
+    <div class="admin-toggle-sub" style="margin-top:8px;" title="An immutable record of exactly what was submitted: the answers, the document versions, the posting, and when."><strong>Submission record</strong></div>
+    ${_renderSnapshot(snapshot)}
   </div>`;
   host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
 }
@@ -801,4 +829,6 @@ if (document.readyState === 'loading') {
 const applicantDebugModule = { openApplicantDebug };
 try { window.applicantDebugModule = applicantDebugModule; } catch { /* no-op */ }
 
+// Exported so the submission-record drill-in renderer (#372) is unit-renderable.
+export { _renderSnapshot };
 export default applicantDebugModule;
