@@ -4,7 +4,7 @@ Two halves:
 
 * **Registry invariants** — every entry is well-formed, keys are unique, statuses
   are one of the two allowed values, and the live/dormant split matches the spec
-  (only ``resume_aggressiveness`` and ``multi_campaign_switcher`` ship grayed).
+  (only ``multi_campaign_switcher`` ships grayed).
 * **Seeding** — ``seed_dormant_surfaces`` tolerates no-DB (returns the count) AND,
   when given a real session, upserts one row per surface idempotently. The DB path
   is hermetic on SQLite (no Postgres).
@@ -44,15 +44,15 @@ def test_surface_keys_are_unique():
 
 
 def test_only_expected_surfaces_remain_genuinely_dormant():
-    # The only genuinely-grayed surfaces are resume tuning + the multi-campaign switcher
-    # (MVP-1). FR-MIND's agent-learning surfaces and FR-CUA's desktop assist are now
-    # wired end-to-end and registered LIVE; desktop assist is additionally CAPABILITY-
-    # gated at runtime (it shows locked until COMPUTER_USE_BACKEND=cua and the desktop
-    # driver is baked into the sandbox image so the health preflight passes), which is a
-    # runtime gate, not a dormant-registry flag.
+    # The only genuinely-grayed surface is the multi-campaign switcher (MVP-1 runs a
+    # single campaign). resume_aggressiveness was promoted to live in #187.
+    # FR-MIND's agent-learning surfaces and FR-CUA's desktop assist are wired end-to-end
+    # and registered LIVE; desktop assist is additionally CAPABILITY-gated at runtime
+    # (it shows locked until COMPUTER_USE_BACKEND=cua and the desktop driver is baked
+    # into the sandbox image so the health preflight passes), which is a runtime gate,
+    # not a dormant-registry flag.
     dormant_keys = {s.key for s in DORMANT_SURFACES if s.status == STATUS_DORMANT}
     assert dormant_keys == {
-        "resume_aggressiveness",
         "multi_campaign_switcher",
     }
 
@@ -110,7 +110,7 @@ def test_seed_persists_one_row_per_surface(db_session):
     by_id = {r.id: r for r in rows}
     # Spot-check a known dormant surface and a known live one are persisted faithfully.
     aggro = by_id["resume_aggressiveness"]
-    assert aggro.status == STATUS_DORMANT
+    assert aggro.status == STATUS_LIVE, "resume_aggressiveness promoted to live in #187"
     assert "FR-RESUME-9" in aggro.requirement_ids
     assert aggro.wiring_notes["live_phase"] == 3
     assert "notes" in aggro.wiring_notes

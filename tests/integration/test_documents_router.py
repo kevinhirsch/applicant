@@ -93,12 +93,12 @@ def test_screening_answer_classified_and_reviewed(client):
 
 
 @pytest.mark.integration
-def test_aggressiveness_setting_is_dormant_but_wired(client):
+def test_aggressiveness_setting_is_live_after_187(client):
     res = client.post("/api/documents/aggressiveness", json={"aggressiveness": 500})
     assert res.status_code == 200
     body = res.json()
     assert body["aggressiveness"] == 100  # clamped (FR-RESUME-9)
-    assert body["dormant_ui"] is True  # UI control stays grayed (FR-UI-2)
+    assert body["dormant_ui"] is False  # UI control is live after #187
 
 
 # CRIT-profile: banned-phrase ("no-AI-look") list editor (FR-RESUME-5).

@@ -286,5 +286,5 @@ def test_dormant_registry_exposes_real_status(client):
     assert rows["chatbot"]["status"] == "live"
     assert rows["tool_toggle_registry"]["status"] == "live"
     # Genuinely dormant surfaces stay dormant.
-    assert rows["resume_aggressiveness"]["status"] == "dormant"
+    assert rows["resume_aggressiveness"]["status"] == "live", "promoted to live in #187"
     assert rows["multi_campaign_switcher"]["status"] == "dormant"

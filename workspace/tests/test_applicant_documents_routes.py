@@ -242,7 +242,7 @@ def test_approve_decline_variant(monkeypatch):
 
 
 def test_aggressiveness_forwards_value(monkeypatch):
-    _patch_engine(monkeypatch, result={"aggressiveness": 42, "dormant_ui": True})
+    _patch_engine(monkeypatch, result={"aggressiveness": 42, "dormant_ui": False})
     resp = _make_client().post(
         "/api/applicant/documents/aggressiveness", json={"aggressiveness": 42}
     )

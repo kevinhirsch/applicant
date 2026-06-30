@@ -193,79 +193,72 @@ class AdvancedLearningService:
         """
         if not self.is_conversion(application, outcomes):
             return model
-        signature = dict(model.converting_role_signature)
-        for feature in self._role_features(application, posting=posting):
-            signature[feature] = signature.get(feature, 0.0) + _CONVERSION_WEIGHT
-        # #238: also fold the converting role's text into the Phase-1 embedding CENTROID
-        # (``converting_role_signature["vector"]``) so the live loop populates it — not
-        # just the discrete features. Previously ``record_converting_role`` (the only
-        # writer of the centroid vector) was never called by the live loop, so the
-        # Phase-1 ``converting_alignment`` stayed 0.0 forever. The centroid and the
-        # discrete features are complementary facets of the SAME conversion; folding
-        # both here keeps ``converting_samples`` a single source of truth (incremented
-        # once below) and feeds every reader (scoring/discovery/variant selection).
-        signature = self._fold_centroid_vector(
-            signature,
-            sample_count=model.converting_samples,
-            application=application,
-            posting=posting,
-        )
-        return replace(
-            model,
-            converting_role_signature=signature,
-            converting_samples=model.converting_samples + 1,
-        )
 
-    def _fold_centroid_vector(
-        self,
-        signature: dict,
-        *,
-        sample_count: int,
-        application: Application,
-        posting: JobPosting | None,
-    ) -> dict:
-        """Incrementally fold the converting role's JD text into the centroid vector.
-
-        Mirrors ``LearningService.record_converting_role``'s running-mean math but
-        WITHOUT bumping the sample count (the discrete fold owns the single increment),
-        so the centroid and the discrete features share one ``converting_samples``.
-        Requires an embedding (via the Phase-1 base); degrades to leaving the centroid
-        untouched when no embedding/text is available, so the discrete fold still lands.
-
-        """
-        embedding = getattr(self._base, "_embedding", None)
-        if embedding is None:
-            return signature
+        # #238: Wire record_converting_role into the live conversion loop so the
+        # Phase-1 embedding centroid vector is populated by real conversions — not
+        # just the discrete role-feature signature. The centroid and the discrete
+        # features are complementary facets of the same conversion; folding both
+        # here keeps ``converting_samples`` a single source of truth (incremented
+        # once) and feeds every reader (scoring/discovery/variant selection).
         title = application.job_title or application.role_name or ""
         description = ""
         if posting is not None:
             title = title or posting.title
             description = posting.description or ""
         jd_text = f"{title} {description}".strip()
-        if not jd_text:
-            return signature
-        try:
-            vecs = embedding.embed([jd_text])
-        except Exception:  # pragma: no cover - embedding must never break a conversion
-            return signature
-        if not vecs or not vecs[0]:
-            return signature
-        vec = vecs[0]
-        prior = signature.get("vector")
-        n = sample_count
-        if prior and len(prior) == len(vec):
-            merged = [(prior[i] * n + vec[i]) / (n + 1) for i in range(len(vec))]
-        else:
-            merged = list(vec)
-        out = dict(signature)
-        out["vector"] = merged
-        # Deliberately do NOT also write a ``titles`` list here: the discrete fold
-        # already records the role title as a ``role:`` feature (read by
-        # ``converting_titles``), and the discrete bias readers (``conversion_alignment``
-        # / ``text_alignment`` / ``variant_alignment``) sum over signature VALUES — a
-        # list under ``titles`` would break that sum. ``vector`` is the only non-numeric
-        # key and is already skipped by every discrete reader.
-        return out
+
+        # Preserve existing discrete role features BEFORE calling
+        # record_converting_role: that Phase-1 method resets
+        # converting_role_signature to {"vector": ..., "titles": ...}, which
+        # would erase the cumulative discrete features from prior conversions.
+        # We save them here and fold them back after the centroid update.
+        prior_discrete = {
+            k: v
+            for k, v in model.converting_role_signature.items()
+            if k not in ("vector", "titles")
+        }
+
+        # Delegate centroid folding to the Phase-1 base (record_converting_role
+        # handles embedding, running-mean math, and bumps converting_samples).
+        # Guard: when no embedding adapter is wired (e.g. tests with
+        # embedding=None) skip the centroid fold so we do not crash — the
+        # discrete fold still runs and owns the sample-count increment.
+        _embedding = getattr(self._base, "_embedding", None)
+        centroid_updated = False
+        if jd_text and _embedding is not None:
+            model = self._base.record_converting_role(model, jd_text, title=title)
+            centroid_updated = True
+
+        # Build the merged signature: start from the existing signature
+        # (which record_converting_role may have updated with a new centroid
+        # vector), strip "titles" because discrete bias readers sum over
+        # numeric values only, then restore accumulated prior discrete features
+        # and fold in the new conversion's features.
+        sig = {
+            k: v
+            for k, v in model.converting_role_signature.items()
+            if k not in ("titles",)
+        }
+        # Restore prior discrete features accumulated from previous conversions.
+        for k, v in prior_discrete.items():
+            sig[k] = v
+
+        # Fold this conversion's discrete features (additive accumulation).
+        for feature in self._role_features(application, posting=posting):
+            sig[feature] = sig.get(feature, 0.0) + _CONVERSION_WEIGHT
+
+        # converting_samples was already bumped by record_converting_role when
+        # the centroid fold ran; only bump it here when the fold was skipped.
+        new_samples = model.converting_samples
+        if not centroid_updated:
+            new_samples += 1
+
+        return replace(
+            model,
+            converting_role_signature=sig,
+            converting_samples=new_samples,
+        )
+
 
     def record_and_persist_conversion(
         self, campaign_id, application: Application, *, posting: JobPosting | None = None
