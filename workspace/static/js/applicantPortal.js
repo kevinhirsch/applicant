@@ -1178,11 +1178,18 @@ export async function openApplicantPortal() {
 
 // ── Launcher + boot ────────────────────────────────────────────────────────────
 
+// Both launchers open the Portal: #rail-portal in the collapsed .icon-rail, and
+// #tool-portal-btn the sidebar list-item (the only door when the wide .sidebar is
+// expanded, where the icon-rail is display:none).
+const _LAUNCHER_IDS = ['rail-portal', 'tool-portal-btn'];
+
 function _wireLauncher() {
-  const btn = document.getElementById('rail-portal');
-  if (!btn || btn._applicantPortalWired) return;
-  btn._applicantPortalWired = true;
-  btn.addEventListener('click', () => openApplicantPortal());
+  _LAUNCHER_IDS.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn || btn._applicantPortalWired) return;
+    btn._applicantPortalWired = true;
+    btn.addEventListener('click', () => openApplicantPortal());
+  });
 }
 
 function _boot() {
@@ -1193,7 +1200,11 @@ function _boot() {
   const iv = setInterval(() => {
     tries += 1;
     _wireLauncher();
-    if (document.getElementById('rail-portal')?._applicantPortalWired || tries > 20) {
+    const allWired = _LAUNCHER_IDS.every((id) => {
+      const btn = document.getElementById(id);
+      return !btn || btn._applicantPortalWired;
+    });
+    if (allWired || tries > 20) {
       clearInterval(iv);
     }
   }, 500);
