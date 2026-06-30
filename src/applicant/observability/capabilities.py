@@ -15,7 +15,9 @@ are live.
 
 from __future__ import annotations
 
+import functools
 import shutil
+from pathlib import Path
 
 
 def _tex_status() -> str:
@@ -29,12 +31,44 @@ def _tex_status() -> str:
     return "NOT FOUND (using stub PDF)"
 
 
+@functools.lru_cache(maxsize=1)
+def _libreoffice_writer_present(soffice: str) -> bool:
+    """Whether the LibreOffice *Writer* component is installed alongside soffice.
+
+    ``shutil.which("soffice")`` only proves the launcher exists; if the Writer
+    component (the ``libreoffice-writer`` package) is absent, soffice cannot open
+    or convert any ``.docx`` and the DOCX render path is silently broken. The
+    Writer module ships ``swriter.bin`` under the install's ``program`` dir, so we
+    look for it there (resolving the soffice symlink first). Cached because the
+    install layout does not change at runtime — this keeps ``/healthz`` fast.
+    """
+    # A bare ``swriter`` wrapper on PATH is the cheapest positive signal.
+    if shutil.which("swriter"):
+        return True
+    try:
+        program_dir = Path(soffice).resolve().parent
+    except OSError:
+        return False
+    for name in ("swriter.bin", "swriter"):
+        if (program_dir / name).exists():
+            return True
+    return False
+
+
 def _libreoffice_status() -> str:
-    """LibreOffice headless — needed for DOCX-to-PDF resume render."""
+    """LibreOffice headless — needed for DOCX-to-PDF resume render.
+
+    Presence of the ``soffice`` launcher is NOT sufficient: without the Writer
+    component installed, soffice cannot load a ``.docx`` and the convert silently
+    produces no PDF. Report ``ok`` only when a Writer component is actually present
+    so ``/healthz`` cannot mask a fully-broken docx render path.
+    """
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
-    if soffice:
+    if not soffice:
+        return "NOT FOUND (using stub DOCX)"
+    if _libreoffice_writer_present(soffice):
         return f"ok ({soffice})"
-    return "NOT FOUND (using stub DOCX)"
+    return f"DEGRADED ({soffice} found, but the Writer component is missing — docx render broken)"
 
 
 def _fc_cache_status() -> str:

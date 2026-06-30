@@ -221,3 +221,26 @@ def test_docx_convert_failure_is_honest_and_white_labeled(monkeypatch, tmp_path)
     assert result.fidelity_ok is False
     assert "approximate preview" in result.notes
     _assert_white_labeled(result.notes)
+
+
+def test_docx_convert_accepts_str_output_dir(monkeypatch, tmp_path):
+    """Regression: output_dir injected as a str must not raise AttributeError on
+    .mkdir() — DocxTailor wraps it with Path(...) defensively."""
+    from applicant.core.ids import ResumeVariantId, new_id
+
+    src = tmp_path / "base.docx"
+    src.write_bytes(b"PK\x03\x04stub-docx")
+    monkeypatch.setattr(
+        docx_mod.shutil,
+        "which",
+        lambda name: "/usr/bin/soffice" if name in ("soffice", "libreoffice") else None,
+    )
+    monkeypatch.setattr(docx_mod.subprocess, "run", lambda *a, **k: None)
+
+    out = tmp_path / "out"
+    # output_dir is a STRING, not a Path — would previously raise AttributeError.
+    tailor = DocxTailor(render_mode="auto", output_dir=str(out))
+    result = tailor.render_artifact(ResumeVariantId(new_id()), str(src))
+    # The convert ran (no crash) and the str output dir was created.
+    assert out.is_dir()
+    assert result.fidelity_ok is False  # no PDF produced -> honest degrade, not a crash

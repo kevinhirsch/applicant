@@ -101,6 +101,35 @@ def test_build_cover_source_strips_emdash_in_every_field():
     assert not contains_emdash(source)
 
 
+def test_build_cover_source_escapes_latex_specials_in_body():
+    """Regression: a cover body with LaTeX specials (%&$#_{}) must be ESCAPED so the
+    xelatex compile cannot break on an unescaped char or unbalanced brace."""
+    tailor = LatexTailor()
+    source = tailor.build_cover_source(
+        first_name="Jane",
+        company="R&D Co_50% {Group}",
+        body_paragraphs=["Saved 30% on cost & cut churn; ref #42 for the $1M_deal {2024}."],
+    )
+    # Every special char round-trips to its escaped form, not the raw literal.
+    assert "30\\%" in source
+    assert "\\&" in source
+    assert "\\$" in source
+    assert "\\_" in source
+    assert "\\#" in source
+    assert "\\{" in source and "\\}" in source
+    # The recipient/company field is escaped on the same path as the résumé.
+    assert "R\\&D Co\\_50\\% \\{Group\\}" in source
+    # No UNescaped special survives in the body content (defensive sweep).
+    body_line = next(ln for ln in source.splitlines() if "\\lettercontent{" in ln)
+    inner = body_line[len("\\lettercontent{") : -1]
+    for ch in ("%", "&", "$", "#"):
+        # each occurrence of the special must be immediately preceded by a backslash
+        idx = 0
+        while (idx := inner.find(ch, idx)) != -1:
+            assert inner[idx - 1] == "\\", f"unescaped {ch!r} in cover body"
+            idx += 1
+
+
 def test_build_cover_source_defaults_to_no_body():
     tailor = LatexTailor()
     source = tailor.build_cover_source(first_name="Solo")

@@ -348,6 +348,49 @@ def test_select_or_generate_rejects_llm_injected_fabrication(storage):
         )
 
 
+class _ExhaustingLLM:
+    """An LLM that is configured but whose ladder is fully exhausted (e.g. every
+    configured tier returns a hard auth error)."""
+
+    def is_configured(self) -> bool:
+        return True
+
+    def complete(self, messages, **kwargs):
+        from applicant.ports.driven.llm import LLMLadderExhausted
+
+        raise LLMLadderExhausted("all tiers failed")
+
+
+@pytest.mark.unit
+def test_generate_text_marks_degraded_on_ladder_exhaustion(storage):
+    """Regression: a configured-but-exhausted LLM (e.g. misconfigured 401 upper tier)
+    must NOT masquerade as a real generation. The deterministic reframe is used as a
+    last resort AND the pass is marked degraded so a canned draft is visible."""
+    svc = MaterialService(
+        storage, llm=_ExhaustingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    src = "I built Python pipelines and wrote SQL."
+    out = svc._generate_text(src, ["Python"], kind="essay_answer")
+    # Falls back to the deterministic reframe (last resort), not empty/crashing.
+    assert out == svc.reframe_truthfully(src, ["Python"])
+    # …and the fallback is OBSERVABLE, not silent.
+    assert svc.last_generation_degraded is True
+    assert svc.silent_failure_count >= 1
+
+
+@pytest.mark.unit
+def test_generate_text_not_degraded_on_real_generation(storage):
+    """A successful generation does NOT set the degraded marker."""
+    svc = MaterialService(
+        storage,
+        llm=_StartTierRecordingLLM(),
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+    )
+    svc._generate_text("I write Python and SQL.", ["Python"], kind="essay_answer")
+    assert svc.last_generation_degraded is False
+
+
 @pytest.mark.unit
 def test_reframe_truthfully_reemphasizes_supported_terms_only(svc):
     """#17: reframe surfaces ONLY JD terms the source supports, never injecting an
