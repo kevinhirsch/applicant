@@ -62,9 +62,9 @@ function _ensureModalEl() {
         </p>
 
         <div id="applicant-remote-frame-wrap"
-             style="position:relative;border:1px solid var(--border-color,#3334);border-radius:8px;overflow:hidden;background:#0b0b0b;min-height:42dvh;max-height:480px;">
+             style="position:relative;border:1px solid var(--border-color,#3334);border-radius:8px;overflow:hidden;background:#0b0b0b;min-height:40dvh;max-height:72dvh;">
           <iframe id="applicant-remote-frame" title="Live session"
-                  style="width:100%;height:42dvh;max-height:480px;border:0;display:block;background:#0b0b0b;"
+                  style="width:100%;height:40dvh;max-height:72dvh;border:0;display:block;background:#0b0b0b;"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock"
                   referrerpolicy="no-referrer"></iframe>
           <div id="applicant-remote-empty"
