@@ -3,7 +3,7 @@
 # The Inter faces are declared in the served shell (static/index.html), not style.css,
 # so they DO load (corrects the audit's "never declared"). GohuFont.ttf has zero
 # references anywhere and is the one genuinely dead file. GREEN: FiraCode is declared in
-# the stylesheet and GohuFont is unreferenced. @pending: the dead GohuFont file removed.
+# the stylesheet, GohuFont is unreferenced, and the dead GohuFont file has been removed.
 
 Feature: The stylesheet only ships font faces it actually uses
 
@@ -16,7 +16,6 @@ Feature: The stylesheet only ships font faces it actually uses
     When the tree is scanned for any reference to the bitmap font file
     Then nothing references it
 
-  @pending
   Scenario: The unreferenced bitmap font file has been removed
     Given the workspace font directory
     Then the unreferenced bitmap font file no longer exists
