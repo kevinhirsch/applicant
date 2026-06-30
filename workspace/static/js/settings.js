@@ -376,7 +376,10 @@ function _bindFallbackWidget(opts) {
 
       var rm = document.createElement('button');
       rm.type = 'button';
-      rm.className = 'settings-fallback-remove';
+      // Element kit: compose the kit's .ow-btn (.ow-btn-icon variant for the
+      // icon-only ×) onto the existing settings-fallback-remove hook so the
+      // button wears the one kit chrome while keeping its JS selector/behavior.
+      rm.className = 'ow-btn ow-btn-icon settings-fallback-remove';
       rm.title = 'Remove fallback';
       rm.innerHTML = '&times;';
       rm.addEventListener('click', function() {
@@ -480,7 +483,10 @@ async function initDefaultChat() {
 
       var rm = document.createElement('button');
       rm.type = 'button';
-      rm.className = 'settings-fallback-remove';
+      // Element kit: compose the kit's .ow-btn (.ow-btn-icon variant for the
+      // icon-only ×) onto the existing settings-fallback-remove hook so the
+      // button wears the one kit chrome while keeping its JS selector/behavior.
+      rm.className = 'ow-btn ow-btn-icon settings-fallback-remove';
       rm.title = 'Remove fallback';
       rm.innerHTML = '&times;';
       rm.addEventListener('click', function() {

@@ -8,7 +8,6 @@ Feature: Map the Credential vault onto Elements + Window
     Given the UI-kit migration item "S13"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S13 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S13"
     Then its post-migration kit target is satisfied
