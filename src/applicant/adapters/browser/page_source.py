@@ -257,21 +257,26 @@ class FakePageSource:
         return self.current()
 
     def enter_application(self) -> PageState | None:
-        # The fake model's pages() already starts at the application's first page
-        # (account-create), so there is no separate posting/landing page to click
-        # through — a no-op that keeps the flow on the current page.
+        # If the current page has no fields, it models a posting/landing page that
+        # needs an "Apply" click: advance to the next page and return its state.
+        if not self._page.fields:
+            next_state = self.advance()
+            return next_state
+        # Already inside the application flow (fields are present).
         return None
 
     def log_in(self, username: str, password: str) -> bool:
-        # Simulate a successful sign-in: advance past the account gate. (The fake
-        # assumes the supplied credential is valid; failure paths are exercised with
-        # dedicated stubs.)
+        # When the page model indicates a login failure, return False without
+        # advancing (simulates a wrong password / failed sign-in).
+        if self._page.login_fails:
+            return False
+        # Simulate a successful sign-in: advance past the account gate.
         self.advance()
         return True
 
     def offers_google_signin(self) -> bool:
-        # The fake models an email/password account-create gate, not OAuth.
-        return False
+        # Delegate to the page model flag so tests can configure Google OAuth.
+        return self._page.offers_google
 
     def log_in_with_google(self, username: str, password: str) -> str:
         return "failed"

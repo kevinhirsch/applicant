@@ -272,6 +272,8 @@ def fake_posting_needs_apply(n4ctx):
 def fake_gate_wrong_password(n4ctx):
     src = FakePageSource(_SignInOnlyAts())
     src.open("https://ats.example/job")
+    # Configure the sign-in page to simulate a login failure.
+    src._pages[src._index].login_fails = True  # noqa: SLF001
     n4ctx["source"] = src
     n4ctx["credential"] = ("kevin@kevinhirsch.com", "wrong-password")
 
@@ -287,6 +289,8 @@ def fake_signin_only(n4ctx):
 def fake_offers_google(n4ctx):
     src = FakePageSource(_SignInOnlyAts())
     src.open("https://ats.example/job")
+    # Configure the sign-in page to offer Google OAuth.
+    src._pages[src._index].offers_google = True  # noqa: SLF001
     n4ctx["source"] = src
 
 
@@ -316,11 +320,13 @@ def check_fake_google(n4ctx):
     n4ctx["offers_google"] = n4ctx["source"].offers_google_signin()
 
 
-@then("the fake takes no apply action today")
-def fake_no_apply_today(n4ctx):
-    # GREEN regression: FakePageSource.enter_application is a no-op returning None,
-    # whereas PlaywrightPageSource clicks an Apply control and returns a PageState.
-    assert n4ctx["enter_result"] is None
+@then("the fake clicks Apply and advances to the next page")
+def fake_clicks_apply(n4ctx):
+    # After parity (#337), FakePageSource.enter_application now advances past
+    # a posting page and returns the next PageState (mirrors the real driver).
+    assert n4ctx["enter_result"] is not None, (
+        "the fake page source did not click Apply on the posting page"
+    )
 
 
 @then("the fake always reports success today")
@@ -332,8 +338,8 @@ def fake_login_always_succeeds(n4ctx):
 
 @then("the fake reports it clicked into the application flow")
 def fake_reports_apply(n4ctx):
-    # The fake's enter_application is a no-op today, so it never reports an Apply click
-    # and the apply-button path is never exercised — genuine red until parity lands.
+    # After parity (#337), FakePageSource.enter_application advances past a posting
+    # page and returns the next PageState — the apply-click path is now exercised.
     assert n4ctx["enter_result"] is not None, (
         "the fake page source never exercises the Apply-button click path"
     )
@@ -341,8 +347,8 @@ def fake_reports_apply(n4ctx):
 
 @then("the fake reports the login failed")
 def fake_reports_login_failed(n4ctx):
-    # The fake's log_in always succeeds today, so a wrong password is untestable in CI —
-    # genuine red until the fake can model a login failure.
+    # After parity (#337), FakePageSource.log_in checks the login_fails flag and
+    # returns False when set — login failure is now testable in CI.
     assert n4ctx["login_ok"] is False, (
         "the fake page source cannot model a login failure (always succeeds)"
     )
