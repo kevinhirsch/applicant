@@ -235,22 +235,13 @@ class Settings(BaseSettings):
 
     # Stage 2.5 — ENGINE -> WORKSPACE callback channel. The engine calls BACK into
     # the front-door workspace app (``applicant-ui``) over the private docker
-    # network to read calendar interviews / run research / list local models.
+    # network to read calendar interviews / run research.
     # ``workspace_url`` is where to reach it (the in-network address); the shared
     # ``applicant_internal_token`` is the bearer of trust (constant-time compared
     # by the workspace). Empty token => the channel is OFF and the client's
     # ``available()`` is False, so callers degrade gracefully.
     workspace_url: str = Field(default="http://applicant-ui:7000", alias="WORKSPACE_URL")
     applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
-    # Lane C (Cookbook auto-register): the workspace reports a Cookbook-served
-    # endpoint's base URL from the UI's vantage point (often ``http://localhost:PORT``
-    # because the serve runs on the workspace host). The engine is a sibling
-    # container, so ``localhost`` there points at the engine itself — wrong. We
-    # rewrite a localhost/loopback host to ``cookbook_local_host`` (default
-    # ``applicant-ui`` — the front-door container that runs local serves) so the
-    # engine reaches the same process over the docker network. A serve with an
-    # explicit remote host is left untouched (already network-addressable).
-    cookbook_local_host: str = Field(default="applicant-ui", alias="COOKBOOK_LOCAL_HOST")
 
     # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
     # Backend for the curated-memory / skills / recall stores. ``in_memory``

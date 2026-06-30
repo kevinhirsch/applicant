@@ -3,8 +3,8 @@
 The engine normally exposes surfaces that the front-door **workspace UI** calls
 *into*. Stage 2.5 adds the *reverse*: the engine calls BACK into the workspace
 ``applicant-ui`` app (over the private docker network) to read things only the
-front-door app knows — auto-detected interview calendar events (lane A), deep
-research runs (lane B), and Cookbook-served local models (lane C).
+front-door app knows — auto-detected interview calendar events (lane A) and deep
+research runs (lane B).
 
 This is the **driven (outbound) port** for that reverse direction. The adapter
 (``adapters/workspace/http_workspace_client.py``) speaks HTTP to the workspace's
@@ -85,8 +85,4 @@ class WorkspacePort(Protocol):
         the workspace so the report is tailored to the application; ``max_time``
         bounds the synchronous run (clamped workspace-side).
         """
-        ...
-
-    def local_models(self, *, owner: str | None = None) -> dict:
-        """LANE C — list Cookbook-served local models."""
         ...

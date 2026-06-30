@@ -594,12 +594,6 @@ def build_container(settings: Settings | None = None) -> Container:
         base_url=settings.workspace_url,
         token=settings.applicant_internal_token,
     )
-    # Lane C (Cookbook auto-register): let the model-endpoint service surface the
-    # workspace's Cookbook-served local models as auto-discovered LLM endpoints.
-    # Injected post-construction (workspace is built after the service) so the
-    # service stays decoupled and the dependency is optional/None in tests.
-    model_endpoint_service.workspace = workspace
-    model_endpoint_service.cookbook_local_host = settings.cookbook_local_host
     # Tool registry persisted to tool_settings when a DB session is available
     # (FR-UI-4: toggles survive restarts); in-memory otherwise (hermetic boot).
     tool_sink = (

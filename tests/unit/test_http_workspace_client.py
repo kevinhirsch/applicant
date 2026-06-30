@@ -90,10 +90,8 @@ def test_typed_methods_hit_expected_paths():
 
     client = _client(handler)
     assert client.calendar_interviews(owner="kev") == {"items": []}
-    assert client.local_models() == {"items": []}
     assert client.run_research(query="ml roles", owner="kev") == {"run": "r1"}
     assert ("GET", "/api/applicant/internal/calendar/interviews") in paths
-    assert ("GET", "/api/applicant/internal/local-models") in paths
     assert ("POST", "/api/applicant/internal/research") in paths
 
 
