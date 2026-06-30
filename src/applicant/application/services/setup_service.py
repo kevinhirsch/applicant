@@ -176,6 +176,29 @@ class SetupService:
         # additively by the composition root; when unset, the readiness payload is
         # omitted and behavior is unchanged.
         self._apply_readiness_reporter: Callable[[], Any] | None = None
+        # Config-change hooks fired AFTER the LLM tier ladder is persisted, so a model
+        # connected at runtime takes effect with no engine restart: the composition
+        # root registers the live LLM adapter's ``refresh_ladder`` here, which drops its
+        # cached (initially-empty) ladder so the next completion re-reads the new tiers.
+        # Empty by default ⇒ behavior unchanged when nothing is registered.
+        self._llm_config_change_hooks: list[Callable[[], None]] = []
+
+    def register_llm_config_change_hook(self, hook: Callable[[], None]) -> None:
+        """Register a callback fired after the LLM ladder is (re)configured.
+
+        Additive + optional. Used by the composition root to re-arm the live LLM
+        adapter when a model is connected/changed at runtime so the running engine
+        picks it up immediately (FR-LLM-2/3) — no process restart. A failing hook is
+        logged and never propagates, so persisting the config still succeeds.
+        """
+        self._llm_config_change_hooks.append(hook)
+
+    def _fire_llm_config_change(self) -> None:
+        for hook in self._llm_config_change_hooks:
+            try:
+                hook()
+            except Exception:  # pragma: no cover - a hook hiccup never breaks config
+                log.warning("llm_config_change_hook_failed", exc_info=True)
 
     def set_apply_readiness_reporter(self, reporter: Callable[[], Any]) -> None:
         """Inject the required-to-apply readiness reporter (composition root).
@@ -514,6 +537,9 @@ class SetupService:
             tiers = [tier]
         self._save_tiers(tiers)
         log.info("llm_configured", provider=settings.provider, model=settings.model)
+        # Re-arm the live LLM adapter so this runtime change takes effect without a
+        # restart (the boot-time adapter otherwise keeps its stale ladder).
+        self._fire_llm_config_change()
 
     def configure_llm_from_endpoint(
         self, *, endpoint_resolver: Callable[[], dict[str, Any] | None], model: str
@@ -578,6 +604,8 @@ class SetupService:
                 raise ValueError("Each tier needs provider and model.")
         self._save_tiers(records)
         log.info("llm_ladder_set", tiers=len(records))
+        # Re-arm the live LLM adapter so a runtime ladder edit/reorder applies at once.
+        self._fire_llm_config_change()
 
     def build_ladder(self) -> TierLadder | None:
         """Materialize a :class:`TierLadder` from persisted config (with secrets)."""

@@ -547,35 +547,54 @@ def build_container(settings: Settings | None = None) -> Container:
     # local model (the adapter dispatches _call_ollama/_call_openai off the active
     # tier's base_url). The existing context-window fallback still walks the rest.
     # OFF: the ladder is built straight from build_ladder(), byte-identical to today.
-    llm_ladder = setup_service.build_ladder()
     smart_router = None
     if settings.llm_smart_routing:
-        from applicant.adapters.llm.smart_router import (
-            SmartLlmRouter,
-            order_ladder_by_router,
-        )
-        from applicant.ports.driven.llm_router import CostTier, TaskType
+        from applicant.adapters.llm.smart_router import SmartLlmRouter
 
         smart_router = SmartLlmRouter(model_endpoint_service)
-        llm_ladder = order_ladder_by_router(
-            llm_ladder,
-            smart_router,
-            task=TaskType.CHAT,
-            cost_tier=(
-                CostTier.LOWEST
-                if settings.llm_smart_routing_prefer_local
-                else CostTier.BALANCED
-            ),
-            prefer_local=settings.llm_smart_routing_prefer_local,
-        )
+
+    def _resolve_llm_ladder():
+        """Re-read the tier ladder from the config store + apply smart routing.
+
+        This is the SINGLE source of the live ladder, called both at boot and again
+        whenever a model is (re)configured at runtime (the LLM adapter re-invokes it
+        after ``setup_service`` fires its config-change hook). Re-reading here is what
+        lets a model connected through the OOBE take effect with NO engine restart —
+        the boot-time adapter used to freeze the initially-empty ladder. OFF: the
+        ladder is built straight from ``build_ladder()``, byte-identical to today.
+        """
+        ladder = setup_service.build_ladder()
+        if smart_router is not None and ladder is not None:
+            from applicant.adapters.llm.smart_router import order_ladder_by_router
+            from applicant.ports.driven.llm_router import CostTier, TaskType
+
+            ladder = order_ladder_by_router(
+                ladder,
+                smart_router,
+                task=TaskType.CHAT,
+                cost_tier=(
+                    CostTier.LOWEST
+                    if settings.llm_smart_routing_prefer_local
+                    else CostTier.BALANCED
+                ),
+                prefer_local=settings.llm_smart_routing_prefer_local,
+            )
+        return ladder
+
     llm = OpenAICompatibleLLM(
-        ladder=llm_ladder,
+        # Resolve the ladder lazily through the provider so a runtime model-connect
+        # (which re-fires this) is picked up without rebuilding the adapter — the chat,
+        # agent, prefill and material paths all share THIS singleton.
+        ladder_provider=_resolve_llm_ladder,
         context_manager=ContextWindowManager(
             token_budget=settings.context_compress_threshold
         ),
         app_context_manager=app_context_manager,
         prefix_cache=settings.prefix_cache,
     )
+    # Connecting a model at runtime persists the new tier and then re-arms this exact
+    # adapter, so the next completion walks the freshly-configured ladder (no restart).
+    setup_service.register_llm_config_change_hook(llm.refresh_ladder)
     # FR-MIND-8/-13: upgrade the context summarizer to the CHEAP, OPTIONAL cheap-model
     # path now that ``llm`` exists. Defensive: ``build_llm_summarizer`` returns the
     # deterministic heuristic when no model is configured, so the hermetic lane stays
