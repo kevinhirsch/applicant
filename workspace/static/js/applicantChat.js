@@ -20,6 +20,7 @@ import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 const API = '/api/applicant/chat';
 
 let _modalEl = null;
+let _renderSeq = 0; // monotonic - guards stale async renders on fast campaign switches
 let _modalA11yCleanup = null;
 let _campaigns = [];
 let _activeCampaignId = null;
@@ -203,8 +204,9 @@ function _renderConversation() {
   if (pick) {
     pick.addEventListener('change', () => {
       _activeCampaignId = pick.value;
-      _renderThreadIntro();
-      _loadPending();
+      const seq = ++_renderSeq;
+      _renderThreadIntro(seq);
+      _loadPending(seq);
     });
   }
 
@@ -221,7 +223,7 @@ function _renderConversation() {
   input.focus();
 }
 
-function _renderThreadIntro() {
+function _renderThreadIntro(seq) {
   const thread = _modalEl.querySelector('#applicant-thread');
   if (!thread) return;
   thread.innerHTML = '';
@@ -450,13 +452,14 @@ function _wireCriteriaButtons(container, actions) {
 // surfaces a live count and a link that opens the Portal home base. The Portal
 // owns the affordances, the rendering, and the resolve/answer wiring.
 
-async function _loadPending() {
+async function _loadPending(seq) {
   const host = _modalEl && _modalEl.querySelector('#applicant-pending');
   if (!host) return;
   try {
     // Cross-job-search count from the Portal proxy — the same source the rail
     // badge and the Portal home base use, so the number always agrees.
     const data = await _fetchJSON('/api/applicant/portal/pending');
+    if (seq && seq !== _renderSeq) return; // stale — a newer switch is already in flight
     if (data && data.engine_available === false) { host.innerHTML = ''; return; }
     const count = (data && (data.count != null ? data.count : (data.items || []).length)) || 0;
     if (!count) { host.innerHTML = ''; return; }
@@ -491,7 +494,7 @@ async function _loadPending() {
 
 async function _loadCampaigns() {
   const data = await _fetchJSON(`${API}/campaigns`);
-  _campaigns = (data && data.campaigns) || [];
+  _campaigns = Array.isArray(data && data.campaigns) ? data.campaigns : [];
   if (!_activeCampaignId && _campaigns.length) _activeCampaignId = _campaigns[0].id;
   return data;
 }
