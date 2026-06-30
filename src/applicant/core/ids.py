@@ -30,6 +30,11 @@ ToolSettingId = NewType("ToolSettingId", str)
 DormantSurfaceId = NewType("DormantSurfaceId", str)
 AppConfigId = NewType("AppConfigId", str)
 PendingActionId = NewType("PendingActionId", str)
+# G16: Post-submission lifecycle identifiers.
+SubmissionSnapshotId = NewType("SubmissionSnapshotId", str)
+FollowUpId = NewType("FollowUpId", str)
+PortfolioAttachmentId = NewType("PortfolioAttachmentId", str)
+RejectionSignalId = NewType("RejectionSignalId", str)
 
 
 #: Reserved sentinel campaign that scopes instance-level secrets (LLM keys, sandbox
