@@ -467,7 +467,13 @@ async function _renderChannels() {
           </label>
           <input id="ao-ch-email" class="settings-select" type="text" placeholder="mailto://user:pass@smtp.example.com" value="${esc(cur.apprise_urls || '')}" />
         </div>
-        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add either or both — or skip for now.</div>
+        <div class="settings-row">
+          <label class="settings-label">Phone push (ntfy)
+            ${_tip('A free ntfy topic URL for instant push to your phone, e.g. ntfy://ntfy.sh/your-secret-topic. Install the ntfy app, subscribe to the same topic, and urgent action alerts arrive as push notifications. Add several, comma-separated.')}
+          </label>
+          <input id="ao-ch-ntfy" class="settings-select" type="text" placeholder="${cur.ntfy_configured ? '•••• already saved — leave blank to keep' : 'ntfy://ntfy.sh/your-secret-topic'}" value="" />
+        </div>
+        <div style="font-size:11px;opacity:0.6;margin-top:4px;">Add any of these — or skip for now.</div>
       </div>
     </div>
     <div class="admin-card ao-help">
@@ -484,6 +490,12 @@ async function _renderChannels() {
         <li>Other SMTP: <code>mailtos://user:pass@smtp.yourhost.com:587</code></li>
         <li>Add several by separating them with commas.</li>
       </ul>
+      <p style="margin:4px 0 2px;"><strong>Phone push (ntfy)</strong> — free instant push to your phone:</p>
+      <ol style="margin:0 0 8px 18px;padding:0;">
+        <li>Install the <strong>ntfy</strong> app (iOS / Android) or open <code>ntfy.sh</code>.</li>
+        <li>Pick a hard-to-guess topic name and subscribe to it in the app.</li>
+        <li>Paste <code>ntfy://ntfy.sh/your-topic</code> above (self-hosted: <code>ntfy://your-host/your-topic</code>).</li>
+      </ol>
       <p style="margin:0;opacity:0.6;">Full URL formats: github.com/caronc/apprise/wiki</p>
     </div>
     <div class="admin-card">
@@ -545,10 +557,22 @@ async function _renderChannels() {
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-ch-save">Save &amp; continue</button>`);
 
-  const collect = () => ({
-    discord_webhook_url: (document.getElementById('ao-ch-discord').value || '').trim(),
-    apprise_urls: (document.getElementById('ao-ch-email').value || '').trim(),
-  });
+  const collect = () => {
+    const body = {
+      discord_webhook_url: (document.getElementById('ao-ch-discord').value || '').trim(),
+      apprise_urls: (document.getElementById('ao-ch-email').value || '').trim(),
+    };
+    // ntfy field shows a masked placeholder when already saved; only send a new value
+    // (empty leaves the persisted topic untouched on the engine side).
+    const ntfy = (document.getElementById('ao-ch-ntfy').value || '').trim();
+    if (ntfy) body.ntfy_url = ntfy;
+    return body;
+  };
+  // True when a channel is configured EITHER in the form now or already saved (so the
+  // Test button works for an already-saved ntfy topic the masked field left blank).
+  const anyChannel = (body) =>
+    !!(body.discord_webhook_url || body.apprise_urls || body.ntfy_url || cur.ntfy_configured
+       || cur.discord_configured || cur.email_configured);
 
   // Same save-then-test handler shape as settings.js's reminder Test button:
   // disable, status into a span, success → `.admin-success`, failure → `.admin-error`.
@@ -556,7 +580,7 @@ async function _renderChannels() {
   const testMsg = document.getElementById('ao-ch-test-msg');
   testBtn.onclick = async () => {
     const body = collect();
-    if (!body.discord_webhook_url && !body.apprise_urls) {
+    if (!anyChannel(body)) {
       testMsg.textContent = 'Add a channel first.'; testMsg.className = 'admin-error'; return;
     }
     testBtn.disabled = true;
@@ -565,7 +589,16 @@ async function _renderChannels() {
       await _post(`${SETUP}/channels`, body);
       const res = await _post(`${SETUP}/channels/test`, {});
       const ch = (res.channels || []).join(', ') || 'your channels';
-      testMsg.textContent = `Test sent to ${ch}.`; testMsg.className = 'admin-success';
+      // UX honesty: when notifications aren't live, the engine captured the test but
+      // sent nothing — say so instead of claiming delivery (matches the engine note).
+      if (res.live === false) {
+        testMsg.textContent = res.note
+          ? `Configured ${ch}. ${res.note}.`
+          : `Configured ${ch} (dry run — nothing sent yet).`;
+        testMsg.className = 'admin-warn';
+      } else {
+        testMsg.textContent = `Test sent to ${ch}.`; testMsg.className = 'admin-success';
+      }
     } catch (e) {
       testMsg.textContent = 'Failed: ' + (e.message || 'Test failed.'); testMsg.className = 'admin-error';
     } finally {
@@ -628,7 +661,7 @@ async function _renderChannels() {
   document.getElementById('ao-ch-save').onclick = async () => {
     if (_busy) return;
     const body = collect();
-    if (!body.discord_webhook_url && !body.apprise_urls) {
+    if (!anyChannel(body)) {
       document.getElementById('ao-ch-msg').innerHTML = _err('Add at least one notification channel to continue.');
       return;
     }

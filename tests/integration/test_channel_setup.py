@@ -75,6 +75,33 @@ def test_test_notification_is_hermetic(client):
     assert body["sent"] is True
     # No network was touched (send_real defaults off); the channel is reported.
     assert "discord" in body["channels"]
+    # K6 UX honesty: the default lane is a DRY RUN — say so instead of implying it
+    # delivered. live=False + a note the UI surfaces (FR-NOTIF-1).
+    assert body["live"] is False
+    assert "NOTIFICATIONS_LIVE" in body["note"]
+
+
+@pytest.mark.integration
+def test_ntfy_channel_round_trips_and_completes_gate(client):
+    # K5: ntfy push is configurable from the front-door, not just NTFY_URL boot env.
+    # Saving an ntfy topic alone marks channels configured and ungates work (FR-NOTIF-1).
+    _open_llm_gate(client)
+    r = client.post(
+        "/api/setup/channels",
+        json={"ntfy_url": "ntfy://ntfy.sh/applicant-test-topic"},
+    )
+    assert r.status_code == 204
+
+    chan = client.get("/api/setup/channels").json()
+    assert chan["ntfy_configured"] is True
+    assert chan["channels_configured"] is True
+
+    status = client.get("/api/setup/status").json()
+    assert "channels" in status["steps_complete"]
+
+    # The live notifier picked up the ntfy channel without a restart.
+    test = client.post("/api/setup/channels/test").json()
+    assert "ntfy" in test["channels"]
 
 
 @pytest.mark.integration

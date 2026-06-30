@@ -11288,6 +11288,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 /* Status messages */
 .admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
 .admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+.admin-warn { color: var(--color-warning, #f0ad4e); font-size: 11px; margin-top: 4px; }
 .admin-empty {
   color: color-mix(in srgb, var(--fg) 40%, transparent);
   font-size: 12px;

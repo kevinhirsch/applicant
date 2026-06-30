@@ -165,6 +165,18 @@ if [[ -z "${APPLICANT_INTERNAL_TOKEN:-}" ]]; then
   fi
 fi
 export APPLICANT_INTERNAL_TOKEN
+# SearXNG secret_key: substituted into the mounted settings.yml on first boot (the
+# searxng service enables ?format=json, which discovery needs). Minted ONCE here and
+# persisted to .env (same lifecycle as the credentials above) so the rendered config
+# is stable across restarts; the container falls back to its own random one if unset.
+if [[ -z "${SEARXNG_SECRET:-}" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    SEARXNG_SECRET="$(openssl rand -hex 32)"
+  else
+    SEARXNG_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  fi
+fi
+export SEARXNG_SECRET
 APP_URL="${APP_URL:-http://localhost:8000}"
 # The compose file publishes the front door on ${APP_PORT:-8000}. Derive APP_PORT
 # from APP_URL (unless explicitly set) and EXPORT it so the host port compose
@@ -263,6 +275,7 @@ POSTGRES_USER=${POSTGRES_USER}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=${POSTGRES_DB}
 APPLICANT_INTERNAL_TOKEN=${APPLICANT_INTERNAL_TOKEN}
+SEARXNG_SECRET=${SEARXNG_SECRET}
 APP_URL=${APP_URL}
 APP_PORT=${APP_PORT}
 APPLICANT_REPO_DIR=${REPO_ROOT}

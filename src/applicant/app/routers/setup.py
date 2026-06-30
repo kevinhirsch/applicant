@@ -49,6 +49,10 @@ class LadderIn(BaseModel):
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""  # email/SMTP/other Apprise URLs (comma-separated)
+    #: ntfy push topic URL(s), comma-separated (e.g. ``ntfy://ntfy.sh/my-topic``).
+    #: Opt-in mobile push for urgent action alerts (FR-NOTIF-1); empty leaves the
+    #: persisted value (and the NTFY_URL boot default) untouched.
+    ntfy_url: str = ""
     #: UI-configurable email-escalation delay in minutes (FR-NOTIF-2); None = leave
     #: the persisted value (default 15) untouched.
     email_timeout_minutes: int | None = None
@@ -209,6 +213,7 @@ def get_channels(svc=Depends(get_setup_service)) -> dict:
     return {
         "discord_configured": bool(chan.get("discord_webhook_url")),
         "email_configured": bool(chan.get("apprise_urls")),
+        "ntfy_configured": bool(chan.get("ntfy_url")),
         "channels_configured": svc.channels_configured(),
         "quiet_hours": svc.get_quiet_hours(),
         "email_timeout_minutes": svc.get_email_timeout_minutes(),
@@ -224,7 +229,10 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
     reconfigured in place so no restart is needed (zero-CLI).
     """
     if not (
-        body.discord_webhook_url or body.apprise_urls or body.email_timeout_minutes is not None
+        body.discord_webhook_url
+        or body.apprise_urls
+        or body.ntfy_url
+        or body.email_timeout_minutes is not None
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -233,6 +241,7 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
     container.setup_service.configure_channels(
         discord_webhook_url=body.discord_webhook_url,
         apprise_urls=body.apprise_urls,
+        ntfy_url=body.ntfy_url,
         email_timeout_minutes=body.email_timeout_minutes,
     )
     if hasattr(container.notification, "configure"):
@@ -241,6 +250,7 @@ def configure_channels(body: ChannelsIn, container=Depends(get_container)) -> No
         container.notification.configure(
             discord_webhook_url=body.discord_webhook_url or None,
             apprise_urls=body.apprise_urls or None,
+            ntfy_url=body.ntfy_url or None,
             email_timeout_seconds=container.setup_service.get_email_timeout_minutes() * 60,
         )
 
@@ -298,7 +308,14 @@ def test_channels(container=Depends(get_container)) -> dict:
         if hasattr(notification, "configured_channels")
         else []
     )
-    return {"sent": True, "handle": handle, "channels": channels}
+    # UX honesty: the default lane captures the test in memory and sends NOTHING over
+    # the wire. Surface that so "Send a test" doesn't claim delivery it didn't make —
+    # only NOTIFICATIONS_LIVE actually delivers (FR-NOTIF-1).
+    live = notification.is_live() if hasattr(notification, "is_live") else True
+    result = {"sent": True, "live": live, "handle": handle, "channels": channels}
+    if not live:
+        result["note"] = "dry run — set NOTIFICATIONS_LIVE=true to deliver"
+    return result
 
 
 @router.get("/sandbox-connection")
