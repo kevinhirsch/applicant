@@ -143,7 +143,13 @@ function _buildOverlay() {
   // strip and scroll behaviour as every other tool window.
   const o = document.createElement('div');
   o.id = 'applicant-onboarding-overlay';
-  o.className = 'modal';
+  // FR-UIKIT-2 (#471): the real dialog root composes the vendored Window kit's
+  // `ow-window` alongside the legacy `.modal` (mirrors appkitChatHint.js, which
+  // composes the kit `ow-`/`on-` classes onto its real rendered element). The class
+  // lands on the actual painted dialog (role=dialog, aria-modal) so the kit window
+  // chrome/glass applies; all existing `.modal`/`.modal-content` rules, handlers and
+  // the focus trap are preserved.
+  o.className = 'modal ow-window';
   // Blocking: trap focus, no dismiss-into-app. The user can't escape into the job
   // features until setup is done (the engine also blocks server-side).
   o.setAttribute('role', 'dialog');
