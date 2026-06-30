@@ -415,6 +415,28 @@ export function applyFrostedGlass(on) {
   document.body.classList.toggle('theme-frosted', !!on);
 }
 
+// Glass house-theme tiers, mapped to the EXACT body classes kit-themes.css
+// targets:
+//   off     → no house classes (the solid default panels)
+//   frosted → body.house-theme  (the FROST @supports block:
+//             `body.house-theme .ow-window` / `.modal-content` / `#sidebar` …)
+//   full    → body.house-theme + body.glass-full, the Full-Glass tier
+//             appkitGlass.js consumes for the Chromium SVG refraction on top of
+//             the CSS glass material.
+export const GLASS_TIERS = ['off', 'frosted', 'full'];
+const DEFAULT_GLASS_TIER = 'off';
+
+/** Apply a glass house-theme tier ('off' | 'frosted' | 'full'). Drives the
+ *  `house-theme` and `glass-full` body classes that the shipped kit-themes.css
+ *  frost rules (and the appkitGlass.js refraction) gate on. Deliberately leaves
+ *  `theme-frosted` alone — that class is owned by the legacy Frosted toggle, an
+ *  independent control, so the two never fight over the same class. */
+export function applyGlassTier(tier) {
+  const t = GLASS_TIERS.includes(tier) ? tier : DEFAULT_GLASS_TIER;
+  document.body.classList.toggle('house-theme', t !== 'off');
+  document.body.classList.toggle('glass-full', t === 'full');
+}
+
 // Read current size multiplier for JS effects (canvas-based).
 function _getEffectSize() {
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-size'));
@@ -458,6 +480,7 @@ export function save(name, colors, opts) {
     if (opts.bgEffectIntensity !== undefined && opts.bgEffectIntensity !== 1) obj.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
     if (opts.frosted) obj.frosted = true;
+    if (opts.glassTier && opts.glassTier !== 'off') obj.glassTier = opts.glassTier;
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -672,6 +695,8 @@ export function initThemeUI() {
     if (sz) opts.bgEffectSize = parseFloat(sz.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
+    const gt = document.getElementById('theme-glass-select');
+    if (gt) opts.glassTier = gt.value;
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -700,11 +725,19 @@ export function initThemeUI() {
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
+        // The glass house-theme tier is a global treatment independent of the
+        // color palette — carry the active selection across a color swap
+        // (custom themes may pin one; built-ins keep whatever's selected).
+        const gtSel = document.getElementById('theme-glass-select');
+        const gt = (ct && ct.glassTier && GLASS_TIERS.includes(ct.glassTier))
+          ? ct.glassTier
+          : (gtSel && GLASS_TIERS.includes(gtSel.value) ? gtSel.value : DEFAULT_GLASS_TIER);
         applyFontDensity(f, d);
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
         applyFrostedGlass(fr);
+        applyGlassTier(gt);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
         const ds = document.getElementById('theme-density-select');
@@ -922,12 +955,18 @@ export function initThemeUI() {
       syncPickers(colors);
       applyFontDensity(DEFAULT_FONT, DEFAULT_DENSITY);
       applyBgPattern('none');
+      applyFrostedGlass(false);
+      applyGlassTier(DEFAULT_GLASS_TIER);
       const fs = document.getElementById('theme-font-select');
       const ds = document.getElementById('theme-density-select');
       const ps = document.getElementById('theme-bg-pattern-select');
+      const gt = document.getElementById('theme-glass-select');
+      const fr = document.getElementById('theme-frosted-toggle');
       if (fs) fs.value = DEFAULT_FONT;
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
+      if (gt) gt.value = DEFAULT_GLASS_TIER;
+      if (fr) fr.checked = false;
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
       const darkSwatch = grid.querySelector('[data-theme="dark"]');
       if (darkSwatch) darkSwatch.classList.add('active');
@@ -1085,11 +1124,15 @@ export function initThemeUI() {
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
+  const _initGlassTier = (saved && GLASS_TIERS.includes(saved.glassTier))
+    ? saved.glassTier
+    : DEFAULT_GLASS_TIER;
   applyFontDensity(_initFont, _initDensity);
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
   applyFrostedGlass(_initFrosted);
+  applyGlassTier(_initGlassTier);
   applyBgPattern(_initPattern);
 
   const fontSelect = document.getElementById('theme-font-select');
@@ -1173,6 +1216,20 @@ export function initThemeUI() {
       applyFrostedGlass(frostedToggle.checked);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
+  }
+
+  // Glass house-theme tier picker — exposes the shipped kit-themes.css house
+  // themes (body.house-theme / body.glass-full). Additive; bound once.
+  const glassSelect = document.getElementById('theme-glass-select');
+  if (glassSelect) {
+    glassSelect.value = _initGlassTier;
+    if (glassSelect.dataset.themeBound !== '1') {
+      glassSelect.dataset.themeBound = '1';
+      glassSelect.addEventListener('change', () => {
+        applyGlassTier(glassSelect.value);
+        const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+      });
+    }
   }
 
   // --- Color Harmony Generator (inside Advanced section) ---
@@ -2025,7 +2082,7 @@ function _initEmbers() {
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
-                       applyFrostedGlass,
+                       applyFrostedGlass, applyGlassTier, GLASS_TIERS,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 
