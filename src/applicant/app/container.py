@@ -58,6 +58,7 @@ from applicant.application.services.learning_service import LearningService
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.pending_actions_service import PendingActionsService
+from applicant.application.services.retention_service import RetentionService
 from applicant.application.services.scoring_service import ScoringService
 from applicant.application.services.setup_service import SetupService
 from applicant.application.workflows import application_pipeline
@@ -65,7 +66,12 @@ from applicant.application.workflows import application_pipeline
 
 @dataclass
 class Container:
-    """Holds every adapter + service. Built once at startup, injected via deps."""
+    """Holds every adapter + service. Built once at startup, injected via deps.
+
+    FROZEN after construction: ``__init__`` builds it, and then
+    ``__setattr__`` prevents mutation so phase agents cannot accidentally
+    swap out services at runtime (defense-in-depth — the wiring contract).
+    """
 
     settings: Settings
 
@@ -163,9 +169,28 @@ class Container:
     # shared). Each call returns a dict including ``_session`` to close in ``finally``.
     request_services_factory: Any = None
 
+    _frozen: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Freeze the container after construction."""
+        object.__setattr__(self, "_frozen", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Prevent mutation after the container is built (FROZEN enforcement)."""
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"Cannot set attribute {name!r} on frozen Container. "
+                "The container is built once at startup and must not be mutated "
+                "at runtime by phase agents."
+            )
+        object.__setattr__(self, name, value)
+
 
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     """Return (engine, session_factory, storage). Falls back to in-memory."""
+    import logging
+    _logger = logging.getLogger("applicant.storage")
+
     try:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
         from applicant.adapters.storage.session import make_engine, make_session_factory
@@ -177,8 +202,16 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
         if storage.healthcheck():
             return engine, session_factory, storage
         session.close()
-    except Exception:
-        pass
+        _logger.warning(
+            "Database healthcheck failed — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts."
+        )
+    except Exception as exc:
+        _logger.warning(
+            "Cannot connect to database (%s) — falling back to in-memory storage. "
+            "Data will NOT be persisted across restarts.",
+            exc,
+        )
     # No reachable DB (tests / first boot) — use in-memory storage.
     return None, None, InMemoryStorage()
 
@@ -287,7 +320,12 @@ def _build_orchestrator(settings: Settings) -> Any:
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
 
-        return DbosOrchestrator(settings.database_url)
+        timeout_seconds = (
+            float(settings.approval_timeout_days * 86_400)
+            if settings.approval_timeout_days > 0
+            else 0.0
+        )
+        return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
@@ -535,6 +573,9 @@ def build_container(settings: Settings | None = None) -> Container:
     notification = AppriseNotifier(
         discord_webhook_url=chan.get("discord_webhook_url") or settings.discord_webhook_url,
         apprise_urls=chan.get("apprise_urls") or settings.apprise_urls,
+        # #300: ntfy push channel — opt-in, empty by default (no push). Persisted
+        # alongside the other channels so it survives restarts.
+        ntfy_url=chan.get("ntfy_url") or settings.ntfy_url,
         quiet_hours=(quiet["start"], quiet["end"]) if quiet["enabled"] else None,
         quiet_tz=quiet["tz"],
         always_on=not quiet["enabled"],
@@ -673,8 +714,11 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_period=settings.llm_rate_period or None,
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
+    from applicant.application.services.post_submission_service import PostSubmissionService
+    post_submission_service = PostSubmissionService(storage, notification_service)
     submission_service = SubmissionService(
-        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service
+        storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
+        post_submission=post_submission_service,
     )
     prefill_service = PrefillService(
         storage=storage,
@@ -713,6 +757,7 @@ def build_container(settings: Settings | None = None) -> Container:
         embedding=embedding,
         docx_tailoring=docx_tailor,
         conversion_service=conversion_service,
+        config_store=config_store,
         notifications=notification_service,
         pending_actions=pending_actions_service,
         learning=learning_service,
@@ -727,7 +772,7 @@ def build_container(settings: Settings | None = None) -> Container:
     research_service = ResearchService(workspace=workspace)
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
-    from applicant.application.services.agent_loop import AgentLoop, ResumeLedger
+    from applicant.application.services.agent_loop import AgentLoop, DigestLedger, ResumeLedger
     from applicant.application.services.scheduler import Scheduler
 
     # ONE resume ledger for the whole process. The scheduler rebuilds a fresh
@@ -735,6 +780,10 @@ def build_container(settings: Settings | None = None) -> Container:
     # failure cap must live OUTSIDE the loop instance or they reset every tick and
     # never take effect. Injected into both the shared loop and each per-tick loop.
     resume_ledger = ResumeLedger()
+    # ONE digest ledger for the whole process (same reasoning: the per-tick rebuild
+    # would reset the "already delivered today" guard, re-sending the digest every
+    # tick). Injected into both the shared loop and each per-tick loop.
+    digest_ledger = DigestLedger()
 
     # FR-MIND: the agent-learning substrate. Build the curated-memory / skills / recall
     # adapter trio (default ``in_memory`` — hermetic, no deps; ``bridge`` reaches the
@@ -868,8 +917,16 @@ def build_container(settings: Settings | None = None) -> Container:
         setup_service=setup_service,
         research_service=research_service,
         resume_ledger=resume_ledger,
+        digest_ledger=digest_ledger,
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
+        # G07: pre-submit safety parameters from settings.
+        presubmit_safety_params={
+            "max_age_days": settings.presubmit_max_listing_age_days,
+            "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+            "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+            "eligibility_enabled": settings.presubmit_eligibility_enabled,
+        },
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -911,8 +968,11 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=pas,
         )
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        post_sub = PostSubmissionService(tick_storage, notification_service)
         sub = SubmissionService(
-            tick_storage, browser, learning=ls, advanced_learning=adv
+            tick_storage, browser, learning=ls, advanced_learning=adv,
+            post_submission=post_sub,
         )
         pf = PrefillService(
             storage=tick_storage,
@@ -937,6 +997,7 @@ def build_container(settings: Settings | None = None) -> Container:
             embedding=embedding,
             docx_tailoring=docx_tailor,
             conversion_service=conversion_service,
+            config_store=config_store,
             notifications=notification_service,
             pending_actions=pas,
             learning=ls,
@@ -970,10 +1031,18 @@ def build_container(settings: Settings | None = None) -> Container:
             setup_service=setup_service,
             research_service=research_service,
             resume_ledger=resume_ledger,
+            digest_ledger=digest_ledger,
             llm=llm,
             # FR-MIND-6 / FR-CUA-2: the per-tick loop's tool set stages through this
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
             loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
+            # G07: pre-submit safety parameters from settings.
+            presubmit_safety_params={
+                "max_age_days": settings.presubmit_max_listing_age_days,
+                "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+                "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+                "eligibility_enabled": settings.presubmit_eligibility_enabled,
+            },
         )
         return {
             "storage": tick_storage,
@@ -1079,8 +1148,11 @@ def build_container(settings: Settings | None = None) -> Container:
             onboarding=rs_onboarding,
         )
         rs_chat._scheduler = scheduler
+        from applicant.application.services.post_submission_service import PostSubmissionService
+        rs_post_sub = PostSubmissionService(req_storage, notification_service)
         rs_submission = SubmissionService(
-            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv
+            req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,
+            post_submission=rs_post_sub,
         )
         rs_prefill = PrefillService(
             storage=req_storage,
@@ -1104,6 +1176,7 @@ def build_container(settings: Settings | None = None) -> Container:
             embedding=embedding,
             docx_tailoring=docx_tailor,
             conversion_service=rs_conversion,
+            config_store=rs_config_store,
             notifications=notification_service,
             pending_actions=rs_pas,
             learning=rs_ls,
@@ -1212,6 +1285,13 @@ def build_container(settings: Settings | None = None) -> Container:
         # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
         essentials_nudge_service=essentials_nudge_service,
         essentials_nudge_schedule=settings.essentials_nudge_schedule,
+        # #363: PII retention sweep — prunes stored PII/EEO older than the configured
+        # window once per UTC day (default ``off`` => dormant, byte-identical behavior).
+        retention_service=RetentionService(
+            storage,
+            pii_retention_days=settings.pii_retention_days,
+        ),
+        retention_schedule=settings.pii_retention_schedule,
         # FR-OBS-2 / NFR-OPS: how many CONSECUTIVE failed ticks raise ONE operator alert
         # through the existing notification ladder (idempotent). Uses the process-lived
         # metrics singleton so the agent-status surface reads the same registry.

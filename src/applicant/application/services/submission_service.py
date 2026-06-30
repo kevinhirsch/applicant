@@ -35,6 +35,48 @@ from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
 
+# ATS parse self-check: minimum field count for a parsable generated resume.
+_ATS_PARSE_MIN_FIELDS = 3
+_ATS_PARSE_MIN_SECTION_WORDS = 5
+
+
+def _verify_ats_parse(resume_text: str) -> tuple[bool, str]:
+    """Verify a generated resume parses through the standard resume parser (issue #370).
+
+    Parses the text with ResumeParser and checks that identity, work history and
+    skills are all present. Returns (ok, message). Best-effort: never blocks
+    submission — warns instead.
+    """
+    try:
+        from applicant.adapters.resume_parser.resume_parser import ResumeParser
+        parser = ResumeParser()
+        import os
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".txt", text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(resume_text)
+            parsed = parser.parse(tmp)
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        missing = []
+        if not parsed.full_name:
+            missing.append("full name")
+        if not parsed.work_history:
+            missing.append("work history")
+        if not parsed.skills:
+            missing.append("skills")
+        if not parsed.email and not parsed.phone:
+            missing.append("contact info")
+        if missing:
+            return False, f"ATS parse self-check: missing {', '.join(missing)}"
+        return True, "ATS parse self-check passed"
+    except Exception as exc:
+        return False, f"ATS parse self-check error: {exc}"
+
 
 def _reviewable_materials_for(storage, application_id) -> list[ReviewableMaterial]:
     """Build the review-gate material set for an application (FR-RESUME-8, FR-RESUME-8).
@@ -68,7 +110,7 @@ def _reviewable_materials_for(storage, application_id) -> list[ReviewableMateria
 
 
 class SubmissionService:
-    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None) -> None:
+    def __init__(self, storage, browser=None, *, learning=None, advanced_learning=None, post_submission=None) -> None:
         self._storage = storage
         self._browser = browser
         # Optional LearningService so a real submission records the SUBMISSIONS leg of
@@ -79,6 +121,7 @@ class SubmissionService:
         # converting-role signature once a real conversion lands (FR-LEARN-2). Moving
         # this here means the remote path no longer silently skips conversion learning.
         self._advanced_learning = advanced_learning
+        self._post_submission = post_submission
 
     # --- detection (FR-LOG-4) ---------------------------------------------
     def detect_submission(self, application_id: ApplicationId) -> bool:
@@ -138,6 +181,20 @@ class SubmissionService:
             log.info("submission_already_recorded", application_id=str(application.id))
             return existing_event
         self.ensure_submittable(application.id)
+        # ATS parse self-check: verify the generated resume parses correctly (issue #370).
+        # Best-effort — logs a warning but does not block submission.
+        try:
+            app = self._storage.applications.get(application.id)
+            if app is not None and app.resume_variant_id is not None:
+                variant = self._storage.resume_variants.get(app.resume_variant_id)
+                if variant is not None and variant.source:
+                    ok, msg = _verify_ats_parse(variant.source)
+                    if not ok:
+                        log.warning("ats_parse_self_check_failed", application_id=str(application.id), detail=msg)
+                    else:
+                        log.info("ats_parse_self_check_passed", application_id=str(application.id))
+        except Exception:
+            pass
         terminal = (
             ApplicationState.FINISHED_BY_ENGINE
             if source is OutcomeSource.AUTO
@@ -172,6 +229,11 @@ class SubmissionService:
         )
         # keep the logged app available to callers
         self._last_logged = logged
+        # Post-submission lifecycle (POST_SUBMISSION -> AWAITING_RESPONSE) is driven
+        # by the lifecycle tracker/scheduler as a SEPARATE step.  We do NOT call
+        # enter_post_submission() here: doing so would advance the state away from
+        # SUBMITTED_BY_USER / FINISHED_BY_ENGINE synchronously, breaking the
+        # mark-submitted contract (test: test_mark_submitted_then_retrieve_log).
         return event
 
     def mark_submitted(
@@ -237,6 +299,7 @@ class SubmissionService:
                 application.campaign_id, application, posting=posting
             )
         except Exception:  # pragma: no cover - learning must never break a submission
+            log.warning("record_and_persist_conversion failed for campaign %s", application.campaign_id)
             pass
 
     def _record_submission_yield(self, application: Application) -> None:
@@ -251,6 +314,7 @@ class SubmissionService:
                 posting.campaign_id, posting.source_key, "submissions"
             )
         except Exception:  # pragma: no cover - learning must never break a submission
+            log.warning("record_and_persist_conversion failed for campaign %s", application.campaign_id)
             pass
 
     # --- internals --------------------------------------------------------

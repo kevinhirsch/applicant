@@ -71,25 +71,34 @@ class DesktopActionIn(BaseModel):
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
-    Transport failure (``status is None``) -> 502 (engine down/unreachable);
-    otherwise pass the engine's own status through so the UI can react precisely
-    (e.g. 403 boundary refusal, 404 unknown session, 409 review-required).
+    Transport failure (``status is None``) -> 502 (engine down/unreachable).
+    4xx responses are forwarded (client-correctable: 403 boundary refusal, 404
+    unknown session, 409 review-required). 5xx responses are scrubbed — raw
+    detail may contain internal stack traces; logged server-side only.
     """
     if exc.status is None:
-        status_code = 502
         message = (
             "The live-session service timed out."
             if exc.is_timeout
             else "The live-session service is unavailable."
         )
-    else:
-        status_code = exc.status
-        message = "The live-session service reported an error."
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": message, "engine_status": None},
+        )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (remote): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": "The live-session service reported an error.", "engine_status": exc.status},
+        )
+    # 4xx: pass detail through (client-correctable: 403 boundary, 404 not found,
+    # 409 review-required) so the UI can show the engine's own reason.
     return JSONResponse(
-        status_code=status_code,
+        status_code=exc.status,
         content={
             "error": "engine_error",
-            "message": message,
+            "message": "The live-session service reported an error.",
             "engine_status": exc.status,
             "detail": exc.detail,
         },

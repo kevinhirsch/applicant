@@ -247,7 +247,7 @@ function _persistMsg(role, content, metadata) {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
-  }).catch(() => {});
+  }).catch(e => console.error('Silent catch in slashCommands:', e));
 }
 
 function slashReply(text) {

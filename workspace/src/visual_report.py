@@ -1775,6 +1775,7 @@ def generate_visual_report(
                 if domain.startswith("www."):
                     domain = domain[4:]
             except Exception:
+                logger.warning("Failed to parse URL, using raw: %s", url)
                 domain = url
             items.append(
                 f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'

@@ -53,7 +53,7 @@ export function initKeyboardShortcuts(modules) {
   fetch('/api/auth/settings', { credentials: 'same-origin' })
     .then(r => r.json())
     .then(s => { if (s.keybinds) window._applicantKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
-    .catch(() => {});
+    .catch(e => console.error('Silent catch in keyboard-shortcuts:', e));
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
   // Every tool's bulk-select bar has a `*-bulk-cancel` button whose click

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,36 +18,32 @@ from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
-from applicant.core.entities.follow_up import FollowUp, FollowUpStatus, FollowUpTemplate
-from applicant.core.entities.ghosting_signal import GhostingSignal
-from applicant.core.entities.portfolio_attachment import PortfolioAttachment, AttachmentType
-from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
-from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.entities.campaign import Campaign, RunMode
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
+from applicant.core.entities.follow_up import FollowUp, FollowUpStatus, FollowUpTemplate
 from applicant.core.entities.generated_document import (
     DocumentType,
     GeneratedDocument,
     LearnedProvenance,
 )
+from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.pending_action import PendingAction
+from applicant.core.entities.portfolio_attachment import AttachmentType, PortfolioAttachment
+from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import (
     RevisionSession,
     RevisionStatus,
     RevisionTurn,
 )
+from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
-    FollowUpId,
-    PortfolioAttachmentId,
-    RejectionSignalId,
-    SubmissionSnapshotId,
     AgentRunId,
     ApplicationId,
     AttributeId,
@@ -61,6 +58,7 @@ from applicant.core.ids import (
     ResumeVariantId,
     RevisionSessionId,
     ScreenshotId,
+    new_id,
 )
 from applicant.core.state_machine import ApplicationState
 
@@ -128,6 +126,7 @@ def _application_to_entity(row: m.ApplicationModel) -> Application:
         resume_variant_id=(ResumeVariantId(row.resume_variant_id) if row.resume_variant_id else None),
         sandbox_session_url=row.sandbox_session_url,
         attributes_used=dict(row.attributes_used or {}),
+        created_at=row.created_at,
     )
 
 
@@ -262,7 +261,7 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
 
 def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
     blob = dict(row.intent_sentence or {})
-    kwargs = dict(
+    return AgentRun(
         id=AgentRunId(row.id),
         campaign_id=CampaignId(row.campaign_id),
         intent_sentence=blob.get("sentence", ""),
@@ -270,12 +269,8 @@ def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
         throughput_target=int(blob.get("throughput_target", 15)),
         stats=dict(blob.get("stats", {})),
         timestamp=row.timestamp,
+        seq=row.seq,
     )
-    # Preserve the monotonic insertion ``seq`` for deterministic tie-break on equal
-    # timestamps (FR-AGENT-7); fall back to the entity default when absent.
-    if "seq" in blob:
-        kwargs["seq"] = int(blob["seq"])
-    return AgentRun(**kwargs)
 
 
 def _detection_to_entity(row: m.DetectionEventModel) -> DetectionEvent:
@@ -891,8 +886,8 @@ class AgentRunRepo:
                     "run_mode": run.run_mode.value,
                     "throughput_target": run.throughput_target,
                     "stats": run.stats,
-                    "seq": run.seq,
                 },
+                seq=run.seq,
                 timestamp=run.timestamp,
             )
         )
@@ -911,7 +906,7 @@ class AgentRunRepo:
         stmt = (
             select(m.AgentRunModel)
             .where(m.AgentRunModel.campaign_id == campaign_id)
-            .order_by(m.AgentRunModel.timestamp, m.AgentRunModel.id)
+            .order_by(m.AgentRunModel.timestamp, m.AgentRunModel.seq)
         )
         if offset:
             stmt = stmt.offset(offset)
@@ -942,41 +937,53 @@ class AgentRunRepo:
         return total
 
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
-        """Most recent run (timestamp DESC, seq tie-break per FR-AGENT-7)."""
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        runs = [_agent_run_to_entity(r) for r in rows]
-        if not runs:
-            return None
-        # ``seq`` lives inside the JSON blob, so tie-break in Python (mirrors in-memory).
-        return max(runs, key=lambda r: (r.timestamp, r.seq))
+        """Most recent run (timestamp DESC, seq DESC tie-break per FR-AGENT-7)."""
+        row = self._s.scalars(
+            select(m.AgentRunModel)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .order_by(m.AgentRunModel.timestamp.desc(), m.AgentRunModel.seq.desc())
+            .limit(1)
+        ).first()
+        return _agent_run_to_entity(row) if row else None
 
     def max_seq(self, campaign_id: CampaignId) -> int:
         """Highest ``seq`` among campaign runs (0 if none)."""
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        return max((_agent_run_to_entity(r).seq for r in rows), default=0)
+        from sqlalchemy import func
+        result = self._s.execute(
+            select(func.coalesce(func.max(m.AgentRunModel.seq), 0))
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+        ).scalar()
+        return result or 0
 
     def prune_old(self, campaign_id: CampaignId, *, keep: int) -> int:
         """Keep the newest ``keep`` runs for ``campaign_id``; delete the rest.
 
-        Newness is ordered by ``(timestamp, seq)``. ``seq`` lives inside the JSON blob,
-        so ordering is resolved in Python (mirrors the in-memory lane) before the stale
-        rows are deleted. Returns the number of runs deleted."""
+        Newness is ordered by ``(timestamp, seq)``, resolved at the SQL level so only
+        the stale rows are fetched. Returns the number of runs deleted."""
         if keep < 0:
             keep = 0
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        ordered = sorted(
-            rows, key=lambda r: (r.timestamp, _agent_run_to_entity(r).seq)
+        if keep == 0:
+            result = self._s.execute(
+                sa.delete(m.AgentRunModel).where(
+                    m.AgentRunModel.campaign_id == campaign_id
+                )
+            )
+            return result.rowcount
+
+        keep_ids = (
+            select(m.AgentRunModel.id)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .order_by(m.AgentRunModel.timestamp.desc(), m.AgentRunModel.seq.desc())
+            .limit(keep)
+        ).subquery()
+
+        result = self._s.execute(
+            sa.delete(m.AgentRunModel).where(
+                m.AgentRunModel.campaign_id == campaign_id,
+                m.AgentRunModel.id.not_in(select(keep_ids.c.id)),
+            )
         )
-        stale = ordered[: max(0, len(ordered) - keep)]
-        for row in stale:
-            self._s.delete(row)
-        return len(stale)
+        return result.rowcount
 
 
 class DetectionEventRepo:
@@ -1015,7 +1022,6 @@ class DetectionEventRepo:
         return [_detection_to_entity(r) for r in rows]
 
 
-
 def _snapshot_to_entity(row):
     return SubmissionSnapshot(id=row.id, application_id=row.application_id, answers=dict(row.answers or {}), materials=list(row.materials or []), ats_metadata=dict(row.ats_metadata or {}))
 
@@ -1029,45 +1035,187 @@ def _follow_up_to_entity(row):
     return FollowUp(id=row.id, campaign_id=row.campaign_id, application_id=row.application_id, template=FollowUpTemplate(row.template), status=FollowUpStatus(row.status), subject=row.subject, body=row.body, scheduled_at=row.scheduled_at, sent_at=row.sent_at)
 
 def _attachment_to_entity(row):
-    return PortfolioAttachment(id=row.id, campaign_id=row.campaign_id, application_id=row.application_id if row.application_id else None, attachment_type=AttachmentType(row.attachment_type), file_name=row.file_name, storage_path=row.storage_path, display_name=row.display_name, description=row.description, metadata=dict(row.metadata or {}))
+    return PortfolioAttachment(id=row.id, campaign_id=row.campaign_id, application_id=row.application_id if row.application_id else None, attachment_type=AttachmentType(row.attachment_type), file_name=row.file_name, storage_path=row.storage_path, display_name=row.display_name, description=row.description, metadata=dict(row.attachment_metadata or {}))
 
 
 class SubmissionSnapshotRepo:
-    def __init__(self, session): self._s = session
-    def add(self, s): self._s.merge(m.SubmissionSnapshotModel(id=s.id, application_id=s.application_id, answers=s.answers, materials=s.materials, ats_metadata=s.ats_metadata))
-    def get(self, sid): row = self._s.get(m.SubmissionSnapshotModel, sid); return _snapshot_to_entity(row) if row else None
-    def get_for_application(self, aid): row = self._s.scalars(select(m.SubmissionSnapshotModel).where(m.SubmissionSnapshotModel.application_id == aid).order_by(m.SubmissionSnapshotModel.captured_at.desc())).first(); return _snapshot_to_entity(row) if row else None
-    def list_for_campaign(self, cid): rows = self._s.scalars(select(m.SubmissionSnapshotModel).join(m.ApplicationModel, m.SubmissionSnapshotModel.application_id == m.ApplicationModel.id).where(m.ApplicationModel.campaign_id == cid)).all(); return [_snapshot_to_entity(r) for r in rows]
-    def delete_for_application(self, aid): return bool(self._s.query(m.SubmissionSnapshotModel).filter(m.SubmissionSnapshotModel.application_id == aid).delete(synchronize_session=False))
+    def __init__(self, session):
+        self._s = session
+
+    def add(self, s):
+        self._s.merge(m.SubmissionSnapshotModel(
+            id=s.id, application_id=s.application_id,
+            answers=s.answers, materials=s.materials, ats_metadata=s.ats_metadata,
+        ))
+
+    def get(self, sid):
+        row = self._s.get(m.SubmissionSnapshotModel, sid)
+        return _snapshot_to_entity(row) if row else None
+
+    def get_for_application(self, aid):
+        row = self._s.scalars(
+            select(m.SubmissionSnapshotModel)
+            .where(m.SubmissionSnapshotModel.application_id == aid)
+            .order_by(m.SubmissionSnapshotModel.captured_at.desc())
+        ).first()
+        return _snapshot_to_entity(row) if row else None
+
+    def list_for_campaign(self, cid):
+        rows = self._s.scalars(
+            select(m.SubmissionSnapshotModel)
+            .join(m.ApplicationModel, m.SubmissionSnapshotModel.application_id == m.ApplicationModel.id)
+            .where(m.ApplicationModel.campaign_id == cid)
+        ).all()
+        return [_snapshot_to_entity(r) for r in rows]
+
+    def delete_for_application(self, aid):
+        return bool(
+            self._s.query(m.SubmissionSnapshotModel)
+            .filter(m.SubmissionSnapshotModel.application_id == aid)
+            .delete(synchronize_session=False)
+        )
+
 
 class RejectionSignalRepo:
-    def __init__(self, session): self._s = session
-    def add(self, sig): self._s.merge(m.RejectionSignalModel(id=sig.id, application_id=sig.application_id, source=sig.source.value, signal_text=sig.signal_text, confidence=sig.confidence, detail=sig.detail))
-    def list_for_application(self, aid): rows = self._s.scalars(select(m.RejectionSignalModel).where(m.RejectionSignalModel.application_id == aid).order_by(m.RejectionSignalModel.detected_at)).all(); return [_rejection_to_entity(r) for r in rows]
-    def list_for_campaign(self, cid): rows = self._s.scalars(select(m.RejectionSignalModel).join(m.ApplicationModel, m.RejectionSignalModel.application_id == m.ApplicationModel.id).where(m.ApplicationModel.campaign_id == cid).order_by(m.RejectionSignalModel.detected_at)).all(); return [_rejection_to_entity(r) for r in rows]
+    def __init__(self, session):
+        self._s = session
+
+    def add(self, sig):
+        self._s.merge(m.RejectionSignalModel(
+            id=sig.id, application_id=sig.application_id, source=sig.source.value,
+            signal_text=sig.signal_text, confidence=sig.confidence, detail=sig.detail,
+        ))
+
+    def list_for_application(self, aid):
+        rows = self._s.scalars(
+            select(m.RejectionSignalModel)
+            .where(m.RejectionSignalModel.application_id == aid)
+            .order_by(m.RejectionSignalModel.detected_at)
+        ).all()
+        return [_rejection_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, cid):
+        rows = self._s.scalars(
+            select(m.RejectionSignalModel)
+            .join(m.ApplicationModel, m.RejectionSignalModel.application_id == m.ApplicationModel.id)
+            .where(m.ApplicationModel.campaign_id == cid)
+            .order_by(m.RejectionSignalModel.detected_at)
+        ).all()
+        return [_rejection_to_entity(r) for r in rows]
+
 
 class GhostingSignalRepo:
-    def __init__(self, session): self._s = session
-    def add(self, sig): from applicant.core.ids import new_id; self._s.merge(m.GhostingSignalModel(id=new_id(), campaign_id=sig.campaign_id, application_id=sig.application_id, sla_days=sig.sla_days, submission_age_days=sig.submission_age_days, detail=sig.detail))
-    def list_for_application(self, aid): rows = self._s.scalars(select(m.GhostingSignalModel).where(m.GhostingSignalModel.application_id == aid).order_by(m.GhostingSignalModel.detected_at)).all(); return [_ghosting_to_entity(r) for r in rows]
-    def list_for_campaign(self, cid): rows = self._s.scalars(select(m.GhostingSignalModel).where(m.GhostingSignalModel.campaign_id == cid).order_by(m.GhostingSignalModel.detected_at)).all(); return [_ghosting_to_entity(r) for r in rows]
+    def __init__(self, session):
+        self._s = session
+
+    def add(self, sig):
+        self._s.merge(m.GhostingSignalModel(
+            id=new_id(), campaign_id=sig.campaign_id, application_id=sig.application_id,
+            sla_days=sig.sla_days, submission_age_days=sig.submission_age_days, detail=sig.detail,
+        ))
+
+    def list_for_application(self, aid):
+        rows = self._s.scalars(
+            select(m.GhostingSignalModel)
+            .where(m.GhostingSignalModel.application_id == aid)
+            .order_by(m.GhostingSignalModel.detected_at)
+        ).all()
+        return [_ghosting_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, cid):
+        rows = self._s.scalars(
+            select(m.GhostingSignalModel)
+            .where(m.GhostingSignalModel.campaign_id == cid)
+            .order_by(m.GhostingSignalModel.detected_at)
+        ).all()
+        return [_ghosting_to_entity(r) for r in rows]
+
 
 class FollowUpRepo:
-    def __init__(self, session): self._s = session
-    def add(self, f): self._s.merge(m.FollowUpModel(id=f.id, campaign_id=f.campaign_id, application_id=f.application_id, template=f.template.value, status=f.status.value, subject=f.subject, body=f.body, scheduled_at=f.scheduled_at, sent_at=f.sent_at))
-    def get(self, fid): row = self._s.get(m.FollowUpModel, fid); return _follow_up_to_entity(row) if row else None
-    def list_for_application(self, aid): rows = self._s.scalars(select(m.FollowUpModel).where(m.FollowUpModel.application_id == aid).order_by(m.FollowUpModel.created_at)).all(); return [_follow_up_to_entity(r) for r in rows]
-    def list_for_campaign(self, cid): rows = self._s.scalars(select(m.FollowUpModel).where(m.FollowUpModel.campaign_id == cid).order_by(m.FollowUpModel.created_at)).all(); return [_follow_up_to_entity(r) for r in rows]
-    def list_due(self, now): rows = self._s.scalars(select(m.FollowUpModel).where(m.FollowUpModel.scheduled_at <= now).where(m.FollowUpModel.status == "SCHEDULED").order_by(m.FollowUpModel.scheduled_at)).all(); return [_follow_up_to_entity(r) for r in rows]
+    def __init__(self, session):
+        self._s = session
+
+    def add(self, f):
+        self._s.merge(m.FollowUpModel(
+            id=f.id, campaign_id=f.campaign_id, application_id=f.application_id,
+            template=f.template.value, status=f.status.value,
+            subject=f.subject, body=f.body,
+            scheduled_at=f.scheduled_at, sent_at=f.sent_at,
+        ))
+
+    def get(self, fid):
+        row = self._s.get(m.FollowUpModel, fid)
+        return _follow_up_to_entity(row) if row else None
+
+    def list_for_application(self, aid):
+        rows = self._s.scalars(
+            select(m.FollowUpModel)
+            .where(m.FollowUpModel.application_id == aid)
+            .order_by(m.FollowUpModel.created_at)
+        ).all()
+        return [_follow_up_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, cid):
+        rows = self._s.scalars(
+            select(m.FollowUpModel)
+            .where(m.FollowUpModel.campaign_id == cid)
+            .order_by(m.FollowUpModel.created_at)
+        ).all()
+        return [_follow_up_to_entity(r) for r in rows]
+
+    def list_due(self, now):
+        rows = self._s.scalars(
+            select(m.FollowUpModel)
+            .where(m.FollowUpModel.scheduled_at <= now)
+            .where(m.FollowUpModel.status == "SCHEDULED")
+            .order_by(m.FollowUpModel.scheduled_at)
+        ).all()
+        return [_follow_up_to_entity(r) for r in rows]
+
 
 class PortfolioAttachmentRepo:
-    def __init__(self, session): self._s = session
-    def add(self, a): self._s.merge(m.PortfolioAttachmentModel(id=a.id, campaign_id=a.campaign_id, application_id=a.application_id, attachment_type=a.attachment_type.value, file_name=a.file_name, storage_path=a.storage_path, display_name=a.display_name, description=a.description, metadata=a.metadata))
-    def get(self, aid): row = self._s.get(m.PortfolioAttachmentModel, aid); return _attachment_to_entity(row) if row else None
-    def list_for_application(self, aid): rows = self._s.scalars(select(m.PortfolioAttachmentModel).where(m.PortfolioAttachmentModel.application_id == aid).order_by(m.PortfolioAttachmentModel.created_at)).all(); return [_attachment_to_entity(r) for r in rows]
-    def list_for_campaign(self, cid): rows = self._s.scalars(select(m.PortfolioAttachmentModel).where(m.PortfolioAttachmentModel.campaign_id == cid).order_by(m.PortfolioAttachmentModel.created_at)).all(); return [_attachment_to_entity(r) for r in rows]
-    def delete(self, aid): row = self._s.get(m.PortfolioAttachmentModel, aid); self._s.delete(row); return bool(row)
-    def delete_for_application(self, aid): return int(self._s.query(m.PortfolioAttachmentModel).filter(m.PortfolioAttachmentModel.application_id == aid).delete(synchronize_session=False) or 0)
+    def __init__(self, session):
+        self._s = session
+
+    def add(self, a):
+        self._s.merge(m.PortfolioAttachmentModel(
+            id=a.id, campaign_id=a.campaign_id, application_id=a.application_id,
+            attachment_type=a.attachment_type.value, file_name=a.file_name,
+            storage_path=a.storage_path, display_name=a.display_name,
+            description=a.description, attachment_metadata=a.metadata,
+        ))
+
+    def get(self, aid):
+        row = self._s.get(m.PortfolioAttachmentModel, aid)
+        return _attachment_to_entity(row) if row else None
+
+    def list_for_application(self, aid):
+        rows = self._s.scalars(
+            select(m.PortfolioAttachmentModel)
+            .where(m.PortfolioAttachmentModel.application_id == aid)
+            .order_by(m.PortfolioAttachmentModel.created_at)
+        ).all()
+        return [_attachment_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, cid):
+        rows = self._s.scalars(
+            select(m.PortfolioAttachmentModel)
+            .where(m.PortfolioAttachmentModel.campaign_id == cid)
+            .order_by(m.PortfolioAttachmentModel.created_at)
+        ).all()
+        return [_attachment_to_entity(r) for r in rows]
+
+    def delete(self, aid):
+        row = self._s.get(m.PortfolioAttachmentModel, aid)
+        self._s.delete(row)
+        return bool(row)
+
+    def delete_for_application(self, aid):
+        return int(
+            self._s.query(m.PortfolioAttachmentModel)
+            .filter(m.PortfolioAttachmentModel.application_id == aid)
+            .delete(synchronize_session=False) or 0
+        )
 
 class OnboardingProfileRepo:
     def __init__(self, session: Session) -> None:
@@ -1196,9 +1344,6 @@ class SqlAlchemyStorage:
             counts["portfolio_attachments"] = _del(
                 m.PortfolioAttachmentModel,
                 m.PortfolioAttachmentModel.application_id.in_(app_ids),
-            )
-                m.DetectionEventModel,
-                m.DetectionEventModel.application_id.in_(app_ids),
             )
         # Revision sessions (FK -> generated_materials) before the materials.
         if material_ids:

@@ -26,6 +26,28 @@
 # Wayland — the web-streaming layer (KasmVNC) and the automation/handoff path are
 # X11-native. Chrome runs headful on that X server (NOT --headless).
 
+# SUPPLY-CHAIN PINNING (#160, #374): base images SHOULD be pinned to an immutable
+# digest (`...webtop:ubuntu-xfce@sha256:<digest>`) rather than a mutable LinuxServer
+# rolling tag, which is rebuilt frequently and is a moving target. The DE base is a
+# build ARG (so the same Dockerfile builds every DE variant), so the digest cannot be
+# baked into a single `FROM` line — pin it at build time by passing the resolved
+# digest into BASE, e.g.:
+#     docker build --build-arg BASE=lscr.io/linuxserver/webtop:ubuntu-xfce@sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d docker/webtop-chrome
+# Resolve a current digest with:
+#     docker buildx imagetools inspect lscr.io/linuxserver/webtop:ubuntu-xfce
+#
+# TODO(pin-digest): the historical default `:ubuntu-cinnamon` rolling tag no longer
+# resolves upstream (ghcr.io returns 404 for linuxserver/webtop:ubuntu-cinnamon), so
+# no real digest can be pinned for it here — DO NOT invent one. The known-good
+# digests at the time of writing (resolved from ghcr.io/linuxserver/webtop) are:
+#     ubuntu-xfce  -> sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d
+#     ubuntu-kde   -> sha256:32fb57cb5a97314faf690935b1b973562982afb5463a35764e3a57e7bcd40476
+# The ARG default is left UNCHANGED at the historical `:ubuntu-cinnamon` tag to
+# preserve existing build behavior (the production builds pass BASE explicitly via
+# --build-arg per the BUILD examples above and docker-compose.prod.yml, so this
+# default is only a fallback). Override BASE with a digest-pinned reference for
+# reproducible/audited builds. NOTE: the cinnamon rolling tag's upstream availability
+# is itself unstable (see TODO above) — prefer xfce/kde, which still resolve.
 ARG BASE=lscr.io/linuxserver/webtop:ubuntu-cinnamon
 FROM ${BASE}
 
@@ -40,13 +62,27 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # realistic desktop FONT SET (FR-STEALTH-1) so font enumeration matches a real
 # machine: the Liberation/DejaVu/Noto core, common web fonts (Microsoft corefonts:
 # Arial/Times/Verdana...), emoji + CJK coverage. fc-cache rebuilds the font index.
+# Google's signing key is pinned by FINGERPRINT, not "trust whatever the URL
+# returns" (#164): download the key, dearmor it, and assert its fingerprint matches
+# Google's published Linux Package Signing key before writing it into the apt
+# keyring — a swapped/MITM'd key fails the build instead of silently signing a
+# malicious repo. The apt source uses https (not http) so the index/.deb transport
+# is also authenticated end to end.
+ARG GOOGLE_SIGNING_KEY_FPR="EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg && \
     install -d -m 0755 /etc/apt/keyrings && \
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-        | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg && \
-    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /tmp/google-key.pub && \
+    gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg /tmp/google-key.pub && \
+    fpr="$(gpg --show-keys --with-colons --with-fingerprint /tmp/google-key.pub \
+        | awk -F: '/^fpr:/ {print $10; exit}')" && \
+    if [ "$fpr" != "${GOOGLE_SIGNING_KEY_FPR}" ]; then \
+        echo "ERROR: Google signing key fingerprint mismatch: got '$fpr', expected '${GOOGLE_SIGNING_KEY_FPR}'" >&2; \
+        exit 1; \
+    fi && \
+    rm -f /tmp/google-key.pub && \
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
         > /etc/apt/sources.list.d/google-chrome.list && \
     # MS corefonts require accepting the EULA non-interactively.
     echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
@@ -85,8 +121,23 @@ RUN apt-get update && \
 #   * CUA_DRIVER_URL=<url>  → drop a prebuilt binary deterministically (air-gapped /
 #     pinned mirrors). Takes precedence when set.
 # To light up desktop assist at runtime, also set the engine COMPUTER_USE_BACKEND=cua.
+#
+# INTEGRITY (#375): neither baking path trusts an unverified remote payload. The
+# installer is NEVER piped straight into a shell (`curl … | bash`); it is downloaded
+# to a file, its sha256 is verified against an operator-supplied expected checksum,
+# and only then executed. Likewise a prebuilt CUA_DRIVER_URL binary is verified
+# before it is made executable. We do NOT ship a hard-coded checksum default for the
+# upstream `main` installer because that script is mutable upstream — pinning a fake
+# value would defeat the check. Instead the build PRINTS the downloaded script's
+# sha256 and fails closed unless the operator pins it via CUA_DRIVER_INSTALL_SHA256
+# (set it to the value the build logs, after auditing the script, or pin a commit via
+# CUA_DRIVER_INSTALL_URL). Both checks fail the build on mismatch rather than running
+# a tampered payload.
 ARG CUA_DRIVER_URL=""
+ARG CUA_DRIVER_SHA256=""
 ARG INSTALL_CUA_DRIVER="0"
+ARG CUA_DRIVER_INSTALL_URL="https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh"
+ARG CUA_DRIVER_INSTALL_SHA256=""
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         at-spi2-core \
@@ -95,9 +146,24 @@ RUN apt-get update && \
         wmctrl && \
     if [ -n "${CUA_DRIVER_URL}" ]; then \
         curl -fsSL "${CUA_DRIVER_URL}" -o /usr/local/bin/cua-driver && \
+        if [ -n "${CUA_DRIVER_SHA256}" ]; then \
+            echo "${CUA_DRIVER_SHA256}  /usr/local/bin/cua-driver" | sha256sum -c - \
+              || { echo "ERROR: cua-driver binary sha256 mismatch (CUA_DRIVER_SHA256)" >&2; exit 1; } ; \
+        else \
+            echo "WARNING: CUA_DRIVER_URL set without CUA_DRIVER_SHA256 — binary integrity not verified" >&2 ; \
+        fi && \
         chmod 0755 /usr/local/bin/cua-driver ; \
     elif [ "${INSTALL_CUA_DRIVER}" = "1" ]; then \
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh)" && \
+        curl -fsSL "${CUA_DRIVER_INSTALL_URL}" -o /tmp/cua-install.sh && \
+        echo "cua-driver installer sha256: $(sha256sum /tmp/cua-install.sh | cut -d' ' -f1)" && \
+        if [ -z "${CUA_DRIVER_INSTALL_SHA256}" ]; then \
+            echo "ERROR: refusing to run the cua-driver installer unverified. Audit the script above, then rebuild with CUA_DRIVER_INSTALL_SHA256=<the printed sha256> (or pin a commit via CUA_DRIVER_INSTALL_URL)." >&2; \
+            exit 1; \
+        fi && \
+        echo "${CUA_DRIVER_INSTALL_SHA256}  /tmp/cua-install.sh" | sha256sum -c - \
+          || { echo "ERROR: cua-driver installer sha256 mismatch (CUA_DRIVER_INSTALL_SHA256)" >&2; exit 1; } && \
+        /bin/bash /tmp/cua-install.sh && \
+        rm -f /tmp/cua-install.sh && \
         ( command -v cua-driver >/dev/null 2>&1 || \
           for p in /root/.local/bin/cua-driver "$HOME/.local/bin/cua-driver" /root/.cua-driver/bin/cua-driver; do \
               [ -x "$p" ] && ln -sf "$p" /usr/local/bin/cua-driver && break ; \

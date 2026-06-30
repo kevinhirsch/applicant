@@ -120,6 +120,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
                             if m.get("name") or m.get("model")
                         ]
                 except Exception:
+                    logger.warning("Failed to list models from endpoint, using empty list")
                     model_ids = []
 
                 # Exact match first
@@ -722,6 +723,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
         try:
             _parsed = json.loads(_raw)
         except Exception:
+            logger.warning("Failed to parse action response JSON")
             _parsed = None
     if isinstance(_parsed, dict):
         action = str(_parsed.get("action") or "").strip().lower()
@@ -980,6 +982,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             try:
                 _memory_vector.add(entry["id"], text)
             except Exception:
+                logger.warning("Failed to fire memory_added event")
                 pass
         try:
             from src.event_bus import fire_event
@@ -1019,6 +1022,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             try:
                 _memory_vector.add(full_id, new_text)
             except Exception:
+                logger.warning("Failed to fire memory_edited event")
                 pass
 
         return {"action": "edit", "memory_id": memory_id,
@@ -1051,6 +1055,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             try:
                 _memory_vector.remove(full_id)
             except Exception:
+                logger.warning("Failed to fire memory_deleted event")
                 pass
 
         return {"action": "delete", "memory_id": memory_id,
@@ -1128,6 +1133,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
                             if m.get("name") or m.get("model")
                         ]
                 except Exception:
+                    logger.warning("Failed to list models from endpoint")
                     model_ids = ["(endpoint offline)"]
 
             if keyword:
@@ -1365,6 +1371,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
             from routes.prefs_routes import _load as _load_prefs
             custom_themes = _load_prefs().get("custom-themes", {}) or {}
         except Exception:
+            logger.warning("Failed to load custom themes")
             pass
         all_known = set(known_presets) | set(custom_themes.keys())
         if theme_name not in all_known:
@@ -1561,6 +1568,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         from src.settings import load_settings
         _settings = load_settings()
     except Exception:
+        logger.warning("Failed to load settings for image gen config")
         _settings = {}
 
     # Use admin-configured model/quality if not specified by the tool call
@@ -1601,10 +1609,12 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                                 model_spec = _mids[0]
                                 break
                         except Exception:
+                            logger.warning("Failed to iterate image DB cursor")
                             continue
                 finally:
                     _idb.close()
             except Exception:
+                logger.warning("Failed to close image DB")
                 pass
         if not model_spec:
             return {"error": "No image model found. Configure one in Admin → Image Generation."}
@@ -1660,6 +1670,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                     err_json = resp.json()
                     error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
                 except Exception:
+                    logger.warning("Failed to parse image generation error response")
                     pass
                 return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
 

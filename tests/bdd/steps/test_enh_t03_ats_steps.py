@@ -373,10 +373,12 @@ def inspect_terminal_transitions(t03ctx):
 
 @then("each is terminal with no outgoing transitions")
 def each_terminal(t03ctx):
-    assert is_terminal(ApplicationState.SUBMITTED_BY_USER)
-    assert is_terminal(ApplicationState.FINISHED_BY_ENGINE)
-    assert t03ctx["submitted_out"] == frozenset()
-    assert t03ctx["finished_out"] == frozenset()
+    # G16: SUBMITTED_BY_USER and FINISHED_BY_ENGINE are no longer terminal --
+    # they have an outgoing transition to POST_SUBMISSION.
+    assert not is_terminal(ApplicationState.SUBMITTED_BY_USER)
+    assert not is_terminal(ApplicationState.FINISHED_BY_ENGINE)
+    assert ApplicationState.POST_SUBMISSION in t03ctx["submitted_out"]
+    assert ApplicationState.POST_SUBMISSION in t03ctx["finished_out"]
 
 
 @given("an application that has been recorded as submitted")
@@ -887,12 +889,6 @@ def check_false_positive(t03ctx):
     t03ctx["result"] = t03ctx["is_ctx_error"](resp)
 
 
-@then("the current substring heuristic wrongly flags it as a context error")
-def heuristic_false_positive(t03ctx):
-    # GREEN: documents the bug — the bare "context" substring trips on unrelated text.
-    assert t03ctx["result"] is True
-
-
 @when(
     "a content-filter error envelope mentioning the context of the request is checked strictly"
 )
@@ -907,13 +903,8 @@ def check_strict(t03ctx):
             }
         }
     )
-    # PENDING: a strict classifier that matches specific codes, not the word "context".
-    strict = _require_attr(
-        OpenAICompatibleLLM,
-        "_is_context_error_strict",
-        "OpenAICompatibleLLM._is_context_error_strict",
-    )
-    t03ctx["result"] = strict(resp)
+    # #285: the strict classifier matches specific codes/phrases, not the bare word "context".
+    t03ctx["result"] = OpenAICompatibleLLM._is_context_error_strict(resp)
 
 
 @then("it is not flagged as a context error")

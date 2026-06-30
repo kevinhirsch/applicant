@@ -32,9 +32,16 @@ logger = logging.getLogger(__name__)
 
 
 def _raise_engine_http(exc: EngineError) -> None:
-    """Translate an :class:`EngineError` into an HTTPException for the front-end."""
+    """Translate an :class:`EngineError` into an HTTPException for the front-end.
+
+    4xx responses are forwarded (client-correctable). 5xx responses are scrubbed
+    — raw detail may contain internal stack traces; logged server-side only.
+    """
     if exc.status is None:
         raise HTTPException(503, "The Applicant engine is unavailable right now.") from exc
+    if exc.status >= 500:
+        logger.warning("engine 5xx (mind): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        raise HTTPException(502, "The Applicant engine returned an error.") from exc
     detail = exc.detail if exc.detail is not None else exc.message
     raise HTTPException(exc.status, detail) from exc
 
@@ -123,6 +130,7 @@ def setup_applicant_mind_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in applicant_mind_routes.py")
             body = {}
         if not isinstance(body, dict):
             body = {}

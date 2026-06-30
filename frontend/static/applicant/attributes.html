@@ -34,13 +34,13 @@
     <section class="admin-card applicant-section" id="add-attribute-section">
       <h2>Add or update a detail</h2>
       <form id="attribute-form" class="applicant-form">
-        <label>Name<input id="a-name" type="text" required /></label>
-        <label>Value<input id="a-value" type="text" required /></label>
-        <label class="applicant-inline"
+        <label for="a-name">Name<input id="a-name" type="text" required /></label>
+        <label for="a-value">Value<input id="a-value" type="text" required /></label>
+        <label class="applicant-inline" for="a-integral"
                title="Changes to these fields ask for your confirmation before they're saved.">
           <input id="a-integral" type="checkbox" /> Important field
         </label>
-        <label class="applicant-inline"
+        <label class="applicant-inline" for="a-sensitive"
                title="Equal-opportunity fields are never auto-filled and default to 'decline to self-identify'.">
           <input id="a-sensitive" type="checkbox" /> Equal-opportunity field
         </label>

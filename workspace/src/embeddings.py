@@ -196,6 +196,7 @@ def _load_persisted_endpoint() -> dict:
             if data.get("url"):
                 return data
     except Exception:
+        logger.warning("Failed to load endpoint config from %s", endpoint_file)
         pass
     return {}
 

@@ -96,6 +96,7 @@ def setup_editor_draft_routes() -> APIRouter:
             try:
                 payload = json.loads(d.payload) if d.payload else {}
             except Exception:
+                logger.warning("Bare exception in editor_draft_routes.py")
                 payload = {}
             return {
                 **_summary(d),

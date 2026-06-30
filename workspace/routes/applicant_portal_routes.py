@@ -83,14 +83,18 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
     """Translate a typed :class:`EngineError` into an HTTPException for a *write*.
 
     A transport-level failure (no ``status``) means the engine is unreachable →
-    503. An engine HTTP error is forwarded with its own status + the engine's own
-    detail so the user sees the real reason (e.g. a 409 confirm gate).
+    503. 4xx responses are forwarded (client-correctable: 409 confirm gate,
+    422 validation). 5xx responses are scrubbed — raw detail may contain internal
+    stack traces or state; logged server-side and a generic message returned.
     """
     if exc.status is None:
         return HTTPException(
             status_code=503,
             detail="The Applicant engine is unavailable right now. Please try again shortly.",
         )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (portal): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
     detail = exc.detail if exc.detail not in (None, "") else exc.message
     return HTTPException(status_code=exc.status, detail=detail)
 
@@ -277,6 +281,7 @@ def setup_applicant_portal_routes() -> APIRouter:
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in applicant_portal_routes.py")
             body = None
         if not isinstance(body, dict):
             body = None

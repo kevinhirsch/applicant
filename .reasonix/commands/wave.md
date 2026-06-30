@@ -19,8 +19,9 @@ Dispatch wave "$ARGUMENTS" the Claude-Code way: isolated, uncapped, owner-steera
    fan out freely regardless.
 
 4. **Stay steerable & oversee.** After dispatch, run an active supervision loop of escalating
-   short `wait`s — **first `wait` = 15s, hard-cap every `wait` at 120s**, reset to 15s on any
-   change. A multi-minute `wait` is a bug (blind + unsteerable until it returns). On each `wait`
+   short `wait`s — **default 15s, NEVER >30s while the owner's engaged** (each wait blocks
+   dialogue for its full length; a 120s wait = a 2-min lockout = a bug); ramp 15→30 only while
+   quiet, reset to 15s on any change/owner message; 120s is an unattended-only ceiling. On each `wait`
    return: handle any owner message first (natural language —
    interpret intent), then run the liveness/error check from SOUL.md "Oversight" —
    `kill_shell`+salvage+re-dispatch stalled agents (stalled = no token movement, output, or

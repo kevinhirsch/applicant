@@ -3,7 +3,7 @@ name = "applicant"
 version = "0.1.0"
 description = "Applicant — autonomous, human-in-the-loop job-application agent (hexagonal core)."
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "Applicant" }]
 dependencies = [
@@ -41,6 +41,9 @@ dependencies = [
     # parsed base resume is rendered into a real moderncv ".tex" source via the
     # vendored templates/latex/moderncv/main.tex.j2 template. Pure-python, no I/O.
     "jinja2>=3.1.6",
+    "fastapi-mcp>=0.4.0",
+    "agentlab>=0.4.2",
+    "browsergym>=0.14.2",
 ]
 
 [project.optional-dependencies]
@@ -67,11 +70,20 @@ browser = [
 durable-orchestration = [
     "dbos",
 ]
+# MCP (Model Context Protocol) server surface (Issue #308). Exposes the engine
+# as an MCP server via fastapi_mcp so external agents can discover and invoke
+# the same guarded application services through the MCP tool protocol.
+# Install with uv sync --extra mcp.
+mcp = [
+    "fastapi-mcp",
+]
 dev = [
     "pytest",
     "pytest-bdd",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-xdist",
+    "pytest-timeout",
     "httpx",
     "ruff",
     "import-linter",
@@ -84,6 +96,8 @@ dev = [
     "pytest-bdd",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-xdist",
+    "pytest-timeout",
     "httpx",
     "ruff",
     "import-linter",
@@ -110,12 +124,12 @@ markers = [
     "pending: enhancement BDD spec not yet implemented (tag mapped to xfail; TDD red)",
     "architecture: import-linter structural boundary tests (NFR-ARCH-1)",
 ]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -n auto --timeout=60"
 asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 # ``workspace/`` is a vendored self-hosted UI app (its own repo/toolchain). It is
 # an opaque build context for Applicant's image, not part of our lint/test surface.

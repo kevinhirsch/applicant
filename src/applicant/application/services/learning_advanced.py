@@ -231,6 +231,7 @@ class AdvancedLearningService:
         so the centroid and the discrete features share one ``converting_samples``.
         Requires an embedding (via the Phase-1 base); degrades to leaving the centroid
         untouched when no embedding/text is available, so the discrete fold still lands.
+
         """
         embedding = getattr(self._base, "_embedding", None)
         if embedding is None:

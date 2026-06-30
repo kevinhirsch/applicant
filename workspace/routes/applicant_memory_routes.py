@@ -98,6 +98,13 @@ class EditCriteriaIn(BaseModel):
     campaign_id: Optional[str] = None
 
 
+class LearnedIn(BaseModel):
+    """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3)."""
+    adjustment: dict
+    rationale: str = ""
+    campaign_id: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Error translation
 # ---------------------------------------------------------------------------
@@ -107,12 +114,16 @@ def _raise_engine_http(exc: EngineError) -> None:
     """Translate an :class:`EngineError` into an HTTPException for the front-end.
 
     * a timeout / connection failure (no ``status``) -> 503 (engine offline);
-    * an engine HTTP status is forwarded verbatim so the UI can react to the
-      engine's own gates — notably 409 (confirmation required, FR-FB-3) and 422
-      (sensitive-field violation, FR-ATTR-6).
+    * 4xx responses are forwarded (client-correctable: 409 confirmation
+      required, 422 sensitive-field violation);
+    * 5xx responses are scrubbed — raw detail may contain internal stack traces
+      or state; we log server-side and return a generic message to the browser.
     """
     if exc.status is None:
         raise HTTPException(503, "The Applicant engine is unavailable right now.") from exc
+    if exc.status >= 500:
+        logger.warning("engine 5xx (memory): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        raise HTTPException(502, "The Applicant engine returned an error.") from exc
     detail = exc.detail if exc.detail is not None else exc.message
     raise HTTPException(exc.status, detail) from exc
 
@@ -379,6 +390,23 @@ def setup_applicant_memory_routes() -> APIRouter:
             cid = await _resolve_campaign(engine, campaign_id)
             try:
                 return await _signature_get(engine, cid)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
+    @router.post("/criteria/learned")
+    async def apply_learned(request: Request, body: LearnedIn) -> dict:
+        """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3).
+
+        Returns the updated criteria with the learned adjustment applied.
+        """
+        require_privilege(request, "can_manage_memory")
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, body.campaign_id)
+            try:
+                return await engine.criteria_apply_learned(cid, {
+                    "adjustment": body.adjustment,
+                    "rationale": body.rationale,
+                })
             except EngineError as exc:
                 _raise_engine_http(exc)
 

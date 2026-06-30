@@ -167,7 +167,7 @@ def test_research_clamps_max_time(research_client, monkeypatch):
     client, handler = research_client
     client.post(
         "/api/applicant/internal/research",
-        headers={INTERNAL_TOKEN_HEADER: TOKEN},
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "someone"},
         json={"query": "q", "max_time": 99999},
     )
     assert handler.calls[0]["max_time"] == 600  # clamped to the ceiling
@@ -203,7 +203,7 @@ def test_research_503_when_no_endpoint(monkeypatch):
     client = TestClient(app)
     resp = client.post(
         "/api/applicant/internal/research",
-        headers={INTERNAL_TOKEN_HEADER: TOKEN},
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "someone"},
         json={"query": "q"},
     )
     assert resp.status_code == 503
@@ -216,7 +216,7 @@ def test_research_503_when_handler_unwired(monkeypatch):
     client = TestClient(app)
     resp = client.post(
         "/api/applicant/internal/research",
-        headers={INTERNAL_TOKEN_HEADER: TOKEN},
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "someone"},
         json={"query": "q"},
     )
     assert resp.status_code == 503

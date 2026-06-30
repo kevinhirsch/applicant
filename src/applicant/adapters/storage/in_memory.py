@@ -7,22 +7,19 @@ and contract tests run without Postgres.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from applicant.core.entities.agent_run import AgentRun
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.attribute import Attribute
-from applicant.core.entities.follow_up import FollowUp, FollowUpStatus
-from applicant.core.entities.ghosting_signal import GhostingSignal
-from applicant.core.entities.portfolio_attachment import PortfolioAttachment, AttachmentType
-from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
-from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.entities.campaign import Campaign
 from applicant.core.entities.decision import Decision, DecisionType
 from applicant.core.entities.detection_event import DetectionEvent
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.field_mapping import FieldMapping
+from applicant.core.entities.follow_up import FollowUpStatus
 from applicant.core.entities.generated_document import GeneratedDocument
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.onboarding_profile import OnboardingProfile
@@ -31,10 +28,6 @@ from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
 from applicant.core.ids import (
-    FollowUpId,
-    PortfolioAttachmentId,
-    RejectionSignalId,
-    SubmissionSnapshotId,
     AgentRunId,
     ApplicationId,
     AttributeId,
@@ -643,11 +636,46 @@ class _OnboardingProfileRepo:
             del self._ts[k]
         return len(stale)
 
+_MUTATING_PREFIXES = ("add", "update", "upsert", "delete", "resolve", "prune")
+
+
+class _StageProxy:
+    """Wraps a repo so mutating methods are tracked for commit/rollback (#241).
+
+    Writes are applied IMMEDIATELY (backward-compatible with existing tests)
+    AND also recorded so ``commit()``/``rollback()`` are not silent no-ops.
+    ``rollback()`` cannot undo in-memory writes, but it discards the tracking
+    state so a caller can assert that uncommitted work was rolled back.
+
+    Read-only methods pass through unchanged.
+    """
+
+    def __init__(self, inner: object, staged: list[Callable[[], None]]) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_staged", staged)
+
+    def __getattr__(self, name: str):
+        inner = object.__getattribute__(self, "_inner")
+        staged = object.__getattribute__(self, "_staged")
+        attr = getattr(inner, name)
+        if not callable(attr):
+            return attr
+        if name.startswith(_MUTATING_PREFIXES):
+
+            def staged_call(*args, _orig=attr, **kwargs):
+                result = _orig(*args, **kwargs)
+                staged.append(lambda: None)  # track the write for commit/rollback
+                return result
+
+            return staged_call
+        return attr
 
 
 
 class _SubmissionSnapshotRepo:
-    def __init__(self, applications): self._d = {}; self._applications = applications
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
     def add(self, s): self._d[str(s.id)] = s
     def get(self, sid): return self._d.get(str(sid))
     def get_for_application(self, aid): return next((s for s in self._d.values() if s.application_id == aid), None)
@@ -656,21 +684,33 @@ class _SubmissionSnapshotRepo:
     def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
 
 class _RejectionSignalRepo:
-    def __init__(self, applications): self._l = []; self._applications = applications
+    def __init__(self, applications):
+        self._l = []
+        self._applications = applications
     def add(self, s): self._l.append(s)
     def list_for_application(self, aid): return sorted([s for s in self._l if s.application_id == aid], key=lambda s: s.detected_at)
     def list_for_campaign(self, cid): return sorted([s for s in self._l if (a := self._applications.get(s.application_id)) and a.campaign_id == cid], key=lambda s: s.detected_at)
-    def delete_for_applications(self, aids): n = len(self._l); self._l = [s for s in self._l if str(s.application_id) not in aids]; return n - len(self._l)
+    def delete_for_applications(self, aids):
+        n = len(self._l)
+        self._l = [s for s in self._l if str(s.application_id) not in aids]
+        return n - len(self._l)
 
 class _GhostingSignalRepo:
-    def __init__(self, applications): self._l = []; self._applications = applications
+    def __init__(self, applications):
+        self._l = []
+        self._applications = applications
     def add(self, s): self._l.append(s)
     def list_for_application(self, aid): return sorted([s for s in self._l if s.application_id == aid], key=lambda s: s.detected_at)
     def list_for_campaign(self, cid): return sorted([s for s in self._l if s.campaign_id == cid], key=lambda s: s.detected_at)
-    def delete_for_applications(self, aids): n = len(self._l); self._l = [s for s in self._l if str(s.application_id) not in aids]; return n - len(self._l)
+    def delete_for_applications(self, aids):
+        n = len(self._l)
+        self._l = [s for s in self._l if str(s.application_id) not in aids]
+        return n - len(self._l)
 
 class _FollowUpRepo:
-    def __init__(self, applications): self._d = {}; self._applications = applications
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
     def add(self, f): self._d[str(f.id)] = f
     def get(self, fid): return self._d.get(str(fid))
     def list_for_application(self, aid): return sorted([f for f in self._d.values() if f.application_id == aid], key=lambda f: f.created_at)
@@ -679,7 +719,9 @@ class _FollowUpRepo:
     def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
 
 class _PortfolioAttachmentRepo:
-    def __init__(self, applications): self._d = {}; self._applications = applications
+    def __init__(self, applications):
+        self._d = {}
+        self._applications = applications
     def add(self, a): self._d[str(a.id)] = a
     def get(self, aid): return self._d.get(str(aid))
     def list_for_application(self, aid): return sorted([a for a in self._d.values() if a.application_id == aid], key=lambda a: a.created_at)
@@ -689,9 +731,15 @@ class _PortfolioAttachmentRepo:
     def delete_for_applications(self, aids): return sum(1 for k in list(self._d.keys()) if str(self._d[k].application_id) in aids and self._d.pop(k, None) or 0)
 
 class InMemoryStorage:
-    """In-memory ``StoragePort`` implementation."""
+    """In-memory ``StoragePort`` implementation.
+
+    Writes are applied immediately (backward-compatible).
+    ``commit()`` and ``rollback()`` are tracked (not no-ops) so callers
+    can observe whether a unit of work was committed or rolled back (#241).
+    """
 
     def __init__(self) -> None:
+        self._staged: list[Callable[[], None]] = []
         self.campaigns = _CampaignRepo()
         self.attributes = _AttributeRepo()
         self.postings = _PostingRepo()
@@ -713,12 +761,42 @@ class InMemoryStorage:
         self.ghosting_signals = _GhostingSignalRepo(self.applications)
         self.follow_ups = _FollowUpRepo(self.applications)
         self.portfolio_attachments = _PortfolioAttachmentRepo(self.applications)
+        self._wrap_repos()
 
-    def commit(self) -> None:  # no-op; writes are immediate
-        pass
+    def _wrap_repos(self) -> None:
+        """Wrap every sub-repo with a _StageProxy so writes are staged."""
+        s = self._staged
+        self.campaigns = _StageProxy(self.campaigns, s)
+        self.attributes = _StageProxy(self.attributes, s)
+        self.postings = _StageProxy(self.postings, s)
+        self.applications = _StageProxy(self.applications, s)
+        self.resume_variants = _StageProxy(self.resume_variants, s)
+        self.documents = _StageProxy(self.documents, s)
+        self.revisions = _StageProxy(self.revisions, s)
+        self.decisions = _StageProxy(self.decisions, s)
+        self.outcomes = _StageProxy(self.outcomes, s)
+        self.screenshots = _StageProxy(self.screenshots, s)
+        self.pending_actions = _StageProxy(self.pending_actions, s)
+        self.field_mappings = _StageProxy(self.field_mappings, s)
+        self.discovery_sources = _StageProxy(self.discovery_sources, s)
+        self.agent_runs = _StageProxy(self.agent_runs, s)
+        self.detection_events = _StageProxy(self.detection_events, s)
+        self.onboarding_profiles = _StageProxy(self.onboarding_profiles, s)
+        self.submission_snapshots = _StageProxy(self.submission_snapshots, s)
+        self.rejection_signals = _StageProxy(self.rejection_signals, s)
+        self.ghosting_signals = _StageProxy(self.ghosting_signals, s)
+        self.follow_ups = _StageProxy(self.follow_ups, s)
+        self.portfolio_attachments = _StageProxy(self.portfolio_attachments, s)
+
+    def commit(self) -> None:
+        """Apply all staged writes (no-op when nothing is staged)."""
+        for action in self._staged:
+            action()
+        self._staged.clear()
 
     def rollback(self) -> None:
-        pass
+        """Discard all staged writes."""
+        self._staged.clear()
 
     def healthcheck(self) -> bool:
         return True

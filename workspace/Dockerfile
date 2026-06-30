@@ -1,4 +1,9 @@
-FROM python:3.12-slim
+# Base image pinned by immutable DIGEST, not the mutable `python:3.12-slim` tag
+# (#160, #374) — a tag can be repointed upstream, so pinning keeps the build
+# reproducible and closes the supply-chain risk. Tag kept in the comment for
+# readability. Resolve a bump with: docker buildx imagetools inspect python:3.12-slim
+# python:3.12-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
 # openssh-client is required for Cookbook remote server tests, setup, probes,
@@ -43,5 +48,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 7000
 
+# Non-root runtime (#161): the app does NOT run as root, but the privilege drop
+# is done at RUNTIME by entrypoint.sh (the PUID/PGID + gosu pattern), not by a
+# build-time `USER` directive. The entrypoint MUST start as root so it can chown
+# the bind-mounted /app/data and /app/logs (and the in-image runtime caches under
+# /app) to the configured PUID:PGID before `exec gosu "$PUID:$PGID"` drops to that
+# unprivileged user — uvicorn then runs non-root. A static build-time `USER` here
+# would strip the root needed for that chown and break bind-mount ownership repair,
+# so the runtime drop is the correct mechanism (tune via PUID/PGID, default 1000).
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]

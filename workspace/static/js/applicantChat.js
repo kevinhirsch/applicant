@@ -15,49 +15,19 @@
 
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const API = '/api/applicant/chat';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _campaigns = [];
 let _activeCampaignId = null;
 let _sending = false;
 
-function esc(s) {
-  // Prefer the shared helper; fall back to a local escape so this module never
-  // throws if ui.js changes shape.
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try { uiModule.showToast(msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 // ── Campaign steering controls (#290,#182) ────────────────────────────
 // Bidirectional assistant steering: start/pause/resume/run-now controls.
@@ -162,6 +132,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-chat-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Job Assistant');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:720px;display:flex;flex-direction:column;max-height:86vh;">
       <div class="modal-header">
@@ -176,6 +149,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -183,6 +159,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
@@ -391,6 +368,30 @@ function _renderGaps(gaps) {
     </div>`;
 }
 
+// FR-FB-3 / FR-CRIT: render criteria refocus proposals that require confirmation.
+// These come back as control_actions with kind="criteria" + requires_confirmation=true.
+function _renderCriteriaActions(actions) {
+  if (!actions || !actions.length) return '';
+  const pending = actions.filter((a) => a.kind === 'criteria' && a.requires_confirmation && !a.applied);
+  if (!pending.length) return '';
+  const rows = pending.map((a, i) => {
+    const summary = Object.entries(a.detail || {})
+      .map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(', ') || 'criteria update';
+    return `
+      <div class="applicant-criteria-action" data-idx="${i}"
+           style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+          <div><strong>Criteria change</strong>: ${summary}</div>
+          <button type="button" class="cal-btn cal-btn-primary applicant-confirm-criteria-btn"
+                  data-idx="${i}">Confirm</button>
+        </div>
+      </div>`;
+  }).join('');
+  return `<div class="applicant-criteria-actions" style="margin-top:8px;">
+      <div style="font-size:11px;opacity:0.7;margin-bottom:2px;">Proposed criteria update</div>${rows}
+    </div>`;
+}
+
 async function _send(text) {
   const message = (text || '').trim();
   if (!message || _sending) return;
@@ -406,8 +407,14 @@ async function _send(text) {
     const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message });
     const reply = res.message || '(no reply)';
     if (thinking) {
-      _setBubbleBody(thinking, reply, _renderGaps(res.gaps) + _renderProposals(res.proposed_changes));
+      const controls = res.control_actions || [];
+      _setBubbleBody(thinking, reply,
+        _renderGaps(res.gaps) +
+        _renderProposals(res.proposed_changes) +
+        _renderCriteriaActions(controls),
+      );
       _wireProposalButtons(thinking, res.proposed_changes || []);
+      _wireCriteriaButtons(thinking, controls);
     }
   } catch (e) {
     if (thinking) {
@@ -444,6 +451,40 @@ function _wireProposalButtons(container, proposals) {
         btn.disabled = false;
         btn.textContent = 'Confirm';
         _toast(e.message || 'Could not save');
+      }
+    });
+  });
+}
+
+// FR-FB-3 / FR-CRIT: wire "Confirm" buttons for criteria refocus actions.
+// Calls POST /api/applicant/chat/confirm-criteria with the campaign id and
+// the detail dict from the control action.
+function _wireCriteriaButtons(container, actions) {
+  const pending = (actions || []).filter(
+    (a) => a.kind === 'criteria' && a.requires_confirmation && !a.applied,
+  );
+  container.querySelectorAll('.applicant-confirm-criteria-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const idx = Number(btn.dataset.idx);
+      const a = pending[idx];
+      if (!a) return;
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        await _post(`${API}/confirm-criteria`, {
+          campaign_id: _activeCampaignId,
+          changes: a.detail || {},
+        });
+        const row = container.querySelector(`.applicant-criteria-action[data-idx="${idx}"]`);
+        if (row) {
+          btn.remove();
+          row.innerHTML += ' <span style="color:var(--success,#3a8a3a);font-size:11px;">saved</span>';
+        }
+        _toast('Criteria updated');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Confirm';
+        _toast(e.message || 'Could not save criteria change');
       }
     });
   });

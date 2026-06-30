@@ -240,7 +240,7 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ allowed_models: value }),
-      }).catch(() => {});
+      }).catch(e => console.error('Silent catch in admin:', e));
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
 
@@ -366,7 +366,7 @@ async function _selectAddedModelInChat(endpoint) {
 async function loadEndpoints() {
   // Lazily render the in-UI Ollama local-model manager (admin-only; hides
   // itself if unavailable). Isolated so a failure can't break this panel.
-  import('./ollamaModels.js').then(m => m.initOllamaModels && m.initOllamaModels()).catch(() => {});
+  import('./ollamaModels.js').then(m => m.initOllamaModels && m.initOllamaModels()).catch(e => console.error('Silent catch in admin:', e));
   const listLocal = el('adm-epList-local');
   const listApi = el('adm-epList-api');
   // Fallback to the legacy single list if the split containers don't exist
@@ -481,7 +481,7 @@ async function loadEndpoints() {
           btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
           btn.style.opacity = '1';
           setTimeout(() => { btn.innerHTML = prev; btn.style.opacity = ''; }, 1400);
-        }).catch(() => {});
+        }).catch(e => console.error('Silent catch in admin:', e));
       });
     });
     queryAll('[data-adm-del-ep]').forEach(btn => {
@@ -1927,7 +1927,7 @@ function initCalDAV() {
       urlIn.value = d.caldav_url || '';
       userIn.value = d.caldav_username || '';
       passIn.value = d.caldav_password || '';
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in admin:', e));
 
   saveBtn.addEventListener('click', async () => {
     status.textContent = 'Saving...';

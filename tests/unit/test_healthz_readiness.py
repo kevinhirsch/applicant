@@ -50,7 +50,8 @@ def test_healthz_degraded_when_db_select_fails():
         def dispose(self):  # called by the lifespan on shutdown
             pass
 
-    app.state.container.engine = _BoomEngine()
+    # Container is frozen after construction; bypass with object.__setattr__ for test.
+    object.__setattr__(app.state.container, "engine", _BoomEngine())
 
     with TestClient(app) as c:
         res = c.get("/healthz")
@@ -81,7 +82,8 @@ def test_healthz_ok_when_db_select_succeeds():
         def dispose(self):  # called by the lifespan on shutdown
             pass
 
-    app.state.container.engine = _OkEngine()
+    # Container is frozen after construction; bypass with object.__setattr__ for test.
+    object.__setattr__(app.state.container, "engine", _OkEngine())
 
     with TestClient(app) as c:
         res = c.get("/healthz")

@@ -1,10 +1,18 @@
 """Real patchright/Playwright browser smoke test (FR-PREFILL-1) — integration only.
 
-The DEFAULT test lane uses the in-memory FakePageSource (NO browser). This test
-drives the REAL :class:`PlaywrightPageSource` against a local ``data:`` HTML page,
-proving the real driver navigates + detects + types + screenshots behind the
-boundary. It SKIPS automatically when no browser driver/binary is installed, so the
-hermetic suite never needs a browser.
+The DEFAULT test lane uses the in-memory FakePageSource (NO browser). These tests
+drive the REAL :class:`PlaywrightPageSource` against a locally-injected HTML fixture,
+proving the real driver detects + types + screenshots behind the boundary. They SKIP
+automatically when no browser driver/binary is installed, so the hermetic suite never
+needs a browser.
+
+Fixtures are loaded with Playwright ``set_content`` (see :func:`_load_fixture`), NOT a
+``data:text/html`` navigation: the production navigation sink ``open()`` runs the SSRF
+guard (``assert_navigable_url``), which by design refuses every non-http(s) scheme —
+``data:``/``file:``/``javascript:`` — so a ``data:`` fixture is rejected (locked in by
+``tests/unit/test_ssrf_navigation_guard.py``). These tests exercise the driver's DOM
+mechanics, not URL navigation, so they inject the markup directly and keep the guard
+intact rather than carving a ``data:`` hole into a security boundary.
 
 Run it with:  uv sync --extra browser && patchright install chromium
 """
@@ -14,6 +22,19 @@ from __future__ import annotations
 import importlib.util
 
 import pytest
+
+
+def _load_fixture(src, html: str) -> None:
+    """Inject fixture ``html`` into the REAL browser without a URL navigation.
+
+    Uses Playwright ``set_content`` (which parses + runs inline scripts) instead of
+    ``src.open("data:text/html,...")`` so the fixtures never touch the SSRF guard or
+    any host — hermetic, no network — while still driving the real engine. Runs the
+    same ``_settle()`` hydration wait ``open()`` performs so the DOM is ready to scan.
+    """
+    src._page.set_content(html)  # noqa: SLF001 - integration introspection
+    src._settle()  # noqa: SLF001 - integration introspection
+
 
 _HAS_DRIVER = (
     importlib.util.find_spec("patchright") is not None
@@ -74,7 +95,7 @@ def test_real_browser_navigates_and_detects_fields():
     src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
     try:
         html = "<html><body><input name='email' aria-label='Email'></body></html>"
-        src.open("data:text/html," + html)
+        _load_fixture(src, html)
         fields = src.detect_fields()
         assert any(f.selector == '[name="email"]' for f in fields)
         src.type_value('[name="email"]', "kevin@kevinhirsch.com")
@@ -113,7 +134,7 @@ def test_real_browser_enter_application_clicks_into_the_flow():
     )
     src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
     try:
-        src.open("data:text/html," + html)
+        _load_fixture(src, html)
         # Before applying: the posting page exposes no fillable fields.
         assert src.detect_fields() == []
         assert src.is_account_create_page() is False
@@ -155,13 +176,13 @@ def test_real_browser_recognizes_sign_in_gate():
     )
     src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
     try:
-        src.open("data:text/html," + signin)
+        _load_fixture(src, signin)
         # The Sign In gate has no inputs yet but MUST be recognized as the account gate.
         assert src.detect_fields() == []
         assert src.is_account_gate() is True
         assert src.is_account_create_page() is False  # it's sign-in, not create
         # A real form page (fields present) is NOT an account gate.
-        src.open("data:text/html," + form)
+        _load_fixture(src, form)
         assert src.is_account_gate() is False
     finally:
         src.close()
@@ -200,7 +221,7 @@ def test_real_browser_detects_and_fills_workday_listbox_dropdown():
     )
     src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
     try:
-        src.open("data:text/html," + html)
+        _load_fixture(src, html)
         # 1. The <button> dropdown is detected as a 'listbox' field (NOT missed).
         fields = src.detect_fields()
         gender = [f for f in fields if f.label == "gender" and f.field_type == "listbox"]
@@ -228,7 +249,7 @@ def test_camoufox_engine_navigates_and_detects_fields():
     src = PlaywrightPageSource(dict(NORMALIZED_FINGERPRINT), engine="camoufox")
     try:
         html = "<html><body><input name='email' aria-label='Email'></body></html>"
-        src.open("data:text/html," + html)
+        _load_fixture(src, html)
         fields = src.detect_fields()
         assert any(f.selector == '[name="email"]' for f in fields)
         src.type_value('[name="email"]', "kevin@kevinhirsch.com")
@@ -253,7 +274,7 @@ def test_real_browser_identity_is_coherent_real_linux_chrome():
     channel = _working_channel()
     src = PlaywrightPageSource(coherent_fingerprint(channel), headless=False, channel=channel)
     try:
-        src.open("data:text/html,<html><body>hi</body></html>")
+        _load_fixture(src, "<html><body>hi</body></html>")
         page = src._page  # noqa: SLF001 - integration introspection
         ua = page.evaluate("() => navigator.userAgent")
         platform = page.evaluate("() => navigator.platform")
