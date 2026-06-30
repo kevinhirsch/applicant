@@ -8,7 +8,6 @@ Feature: Non-submit buttons declare type=button
     When the buttons are counted
     Then the page contains many button elements
 
-  @pending
   Scenario: Every button declares an explicit type
     Given the front-door page markup
     When the buttons without an explicit type are counted

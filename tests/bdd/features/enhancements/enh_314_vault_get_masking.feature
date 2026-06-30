@@ -9,7 +9,6 @@ Feature: vault_get never returns plaintext passwords or TOTP secrets to the mode
     When the vault entry is requested
     Then the request is refused for a missing reason
 
-  @pending
   Scenario: The password and TOTP secret are masked in the model-visible output
     Given a vault login entry with a password and a TOTP secret
     When the vault entry is rendered for the model context

@@ -4,7 +4,6 @@ Feature: The takeover desktop base image is pinned to an immutable digest
   # rather than a digest-pinned reference, so a rebuild can silently pull a different
   # upstream image. Pinning to @sha256:... is not yet done → @pending probe on the Dockerfile.
 
-  @pending
   Scenario: The webtop base image default is digest pinned
     Given the takeover desktop Dockerfile
     When its default base image reference is inspected

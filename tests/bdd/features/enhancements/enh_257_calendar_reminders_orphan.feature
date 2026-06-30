@@ -5,7 +5,6 @@
 
 Feature: Calendar reminder logic lives in one place
 
-  @pending
   Scenario: No module imports the orphaned reminders module
     Given the workspace browser modules
     When every module is scanned for an import of the calendar reminders module

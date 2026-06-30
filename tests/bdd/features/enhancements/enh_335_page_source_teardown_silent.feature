@@ -15,7 +15,6 @@ Feature: Browser teardown failures surface a diagnostic instead of masking the r
     When best-effort teardown runs
     Then it completes without raising rather than crashing cleanup
 
-  @pending
   Scenario: A failing teardown step is logged as a warning rather than swallowed
     Given an engine page-source driver whose close step raises during teardown
     When best-effort teardown runs

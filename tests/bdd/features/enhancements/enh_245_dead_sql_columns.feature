@@ -16,12 +16,10 @@
     Then the job-posting entity has no normalized field
     And the generated-document entity has no redline-state field
 
-  @pending
   Scenario: The job-posting model drops its dead normalized column
     Given the SQL models
     Then the job-posting model no longer declares a normalized column
 
-  @pending
   Scenario: The generated-material model drops its dead redline-state column
     Given the SQL models
     Then the generated-material model no longer declares a redline-state column

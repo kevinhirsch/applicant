@@ -16,7 +16,6 @@ Feature: Browser-agent eval harness for the pre-fill planner
     When the harness compares candidate against baseline
     Then a regression in success rate fails the gate
 
-  @pending
   Scenario: Generated-material quality is judged by an LLM-as-judge pass
     Given a set of generated résumé/cover-letter materials
     When the LLM-as-judge evaluation runs

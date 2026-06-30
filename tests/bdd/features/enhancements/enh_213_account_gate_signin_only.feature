@@ -11,7 +11,6 @@ Feature: The fake account-gate check matches a sign-in-only page like the real b
     When the engine checks whether the page is an account gate
     Then the page is recognised as a gate
 
-  @pending
   Scenario: A sign-in-only page is recognised as a gate
     Given a fake page modelling a sign-in step with no account creation
     When the engine checks whether the page is an account gate

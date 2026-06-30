@@ -13,7 +13,6 @@ Feature: Upload endpoints cap the request body to prevent disk/memory exhaustion
     When a body larger than the cap is streamed in
     Then the upload is rejected as too large
 
-  @pending
   Scenario: The gallery upload route enforces a body-size cap
     Given the gallery upload route module
     When it is inspected for an explicit upload size cap

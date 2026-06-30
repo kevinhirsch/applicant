@@ -11,7 +11,6 @@ Feature: One-shot maintenance scripts are documented, integrated, or removed
     Given the workspace scripts directory
     Then the five one-shot tools are present on disk
 
-  @pending
   Scenario: The five one-shot tools have no cross-references in the project
     Given the workspace scripts directory
     When each one-shot tool is scanned for references across the project

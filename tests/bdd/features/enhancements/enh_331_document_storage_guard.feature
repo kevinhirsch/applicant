@@ -10,7 +10,6 @@ Feature: Document module guards local storage and carries no stale work markers
     When the module is scanned for work markers
     Then it contains no TODO, FIXME or HACK marker
 
-  @pending
   Scenario: Persisting the document visible-state is guarded against storage errors
     Given the document browser module
     When the visible-state persistence is inspected

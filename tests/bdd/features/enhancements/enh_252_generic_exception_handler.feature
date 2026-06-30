@@ -4,7 +4,6 @@ Feature: A catch-all exception handler enriches unhandled crashes
   # an unhandled crash returns a bare 500 with no logging enrichment or correlation context.
   # A catch-all handler registration does not exist yet → @pending probe on app.py.
 
-  @pending
   Scenario: A generic unhandled-exception handler is registered
     Given the front-door application module source
     When its registered exception handlers are inspected

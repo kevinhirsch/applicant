@@ -15,7 +15,6 @@
     Given the material-provenance migration
     Then the provenance migration JSON column type uses the postgresql JSONB variant
 
-  @pending
   Scenario: The initial migration declares JSONB-variant columns
     Given the initial schema migration source
     Then it uses the JSONB-variant type rather than a bare JSON type

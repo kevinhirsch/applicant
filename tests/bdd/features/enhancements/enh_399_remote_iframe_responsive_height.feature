@@ -7,7 +7,6 @@ Feature: The live-session iframe expands on small viewports
     When the embedded session frame styling is inspected
     Then the frame height is expressed in viewport-relative units
 
-  @pending
   Scenario: The frame is not letterboxed by a fixed 480px cap on mobile
     Given the live-session takeover browser module
     When the embedded session frame styling is inspected

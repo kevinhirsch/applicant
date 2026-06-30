@@ -3,7 +3,6 @@ Feature: A chat-proposed criteria refocus can be committed from the front-door
   # Requirement: A chat-proposed, confirmation-gated criteria change MUST be committable
   # from the front-door (a proxy + a client method that POSTs to /api/chat/confirm-criteria).
 
-  @pending
   Scenario: The front-door commits a chat-proposed criteria refocus
     Given the front-door chat engine client
     When a confirmation-gated criteria refocus is committed through the front-door

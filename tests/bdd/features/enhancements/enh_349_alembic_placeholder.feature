@@ -4,7 +4,6 @@ Feature: The alembic.ini DB URL is an obviously-invalid placeholder, not real-lo
   # placeholder (e.g. "placeholder") so it cannot be mistaken for a real credential
   # and cannot silently connect anywhere; the live URL is injected from Settings.
 
-  @pending
   Scenario: The static placeholder URL uses an obviously-invalid value
     Given the static alembic configuration file
     When the placeholder sqlalchemy.url is read

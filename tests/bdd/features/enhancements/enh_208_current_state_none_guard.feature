@@ -11,7 +11,6 @@ Feature: Chained page-state access is guarded against a None page state
     When the engine reads the current page state
     Then the page url is available
 
-  @pending
   Scenario: A None page state is handled instead of raising an attribute error
     Given a browser whose current state returns nothing
     When the engine inspects the current page state during detection

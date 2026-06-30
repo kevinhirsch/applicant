@@ -20,7 +20,6 @@
     When old runs are pruned keeping only the newest two
     Then only the two newest runs remain
 
-  @pending
   Scenario: The SQL repo fetches the latest run with a bounded query
     Given the SQL agent-run repository source
     Then latest pushes ordering and a single-row limit to the database

@@ -8,7 +8,6 @@ Feature: The review gate's submittability check is reachable from the front-door
     When the ensure-submittable endpoint is inspected on the engine
     Then the engine exposes the ensure-submittable review gate
 
-  @pending
   Scenario: A front-door path queries ensure-submittable
     Given the front-door documents engine client
     When submittability is queried through the front-door
