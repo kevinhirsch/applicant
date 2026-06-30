@@ -64,10 +64,13 @@ front for TLS if you want it, but the baseline posture is private + HTTP.
 Every surface below is reachable in the workspace front door (proxy → JS → nav/section),
 backed by an engine router under `src/applicant/app/routers/`:
 
-- **OOBE setup / onboarding wizard** — auto-launching, gated, resumable. LLM step
-  reuses the existing Local/Remote endpoint manager → notification channels → fonts
-  → the Workday-ready intake, ending in the résumé LaTeX-conversion accept/reject
-  gate. Automated work is blocked until it completes.
+- **OOBE setup / onboarding wizard** — auto-launching, gated, resumable. Slimmed to
+  the two steps that actually gate automated work: **Connect a model** (reuses the
+  existing Local/Remote endpoint manager) → **Your profile** (the Workday-ready intake
+  + base résumé, ending in the résumé LaTeX-conversion accept/reject gate). Notification
+  channels, résumé fonts, and the automation sandbox are **not** wizard steps — they live
+  in **Settings**, which reuses the exact same renderers (`mountSettingsStep`). Automated
+  work is blocked until the wizard completes; everything else is post-setup configuration.
 - **Pending-actions portal** — the operator's home base: one aggregated feed of
   everything awaiting input across all campaigns (digest approvals, material
   reviews, missing-detail soft errors, agent questions, account-creation handoffs,
