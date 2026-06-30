@@ -179,10 +179,6 @@ class HttpWorkspaceClient:
             "POST", "/research", owner=owner, json=body, timeout=self._research_timeout
         )
 
-    def local_models(self, *, owner: str | None = None) -> dict:
-        """LANE C — list Cookbook-served local models."""
-        return self._request("GET", "/local-models", owner=owner)
-
     # --- FR-MIND agent-memory bridge (memory / skills / recall) ---------------
     # These reach the front-door memory/skills substrate (workspace/services/memory/)
     # over the same token-gated channel; the bridge adapters in
