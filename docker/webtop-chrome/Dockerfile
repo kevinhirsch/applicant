@@ -12,14 +12,14 @@
 # so this derived image adds it on top, plus a realistic desktop font set so font
 # enumeration looks like a real machine instead of a bare container (FR-STEALTH-1).
 #
-# BUILD (Cinnamon — the default DE):
-#   docker build -t applicant/webtop-chrome:cinnamon \
-#     --build-arg BASE=lscr.io/linuxserver/webtop:ubuntu-cinnamon docker/webtop-chrome
-# BUILD (Xfce):
-#   docker build -t applicant/webtop-chrome:xfce \
+# BUILD (Xfce — the default DE, pinned by digest):
+#   docker build -t applicant/webtop-chrome:xfce 
+#     --build-arg BASE=lscr.io/linuxserver/webtop:ubuntu-xfce@sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d docker/webtop-chrome
+# BUILD (Cinnamon — deprecated; tag 404s upstream):
+#   docker build -t applicant/webtop-chrome:cinnamon 
 #     --build-arg BASE=lscr.io/linuxserver/webtop:ubuntu-xfce docker/webtop-chrome
 #
-# RUN: selected automatically by TAKEOVER_DESKTOP (cinnamon|xfce) -> the
+# RUN: selected automatically by TAKEOVER_DESKTOP (xfce|cinnamon) -> the
 #      applicant/webtop-chrome:<de> image (see src/applicant/app/config.py table).
 #
 # X11 RATIONALE: like the other takeover desktops, this runs on Xorg (X11), not
@@ -36,19 +36,14 @@
 # Resolve a current digest with:
 #     docker buildx imagetools inspect lscr.io/linuxserver/webtop:ubuntu-xfce
 #
-# TODO(pin-digest): the historical default `:ubuntu-cinnamon` rolling tag no longer
-# resolves upstream (ghcr.io returns 404 for linuxserver/webtop:ubuntu-cinnamon), so
-# no real digest can be pinned for it here — DO NOT invent one. The known-good
-# digests at the time of writing (resolved from ghcr.io/linuxserver/webtop) are:
+# NOTE: the historical default `:ubuntu-cinnamon` rolling tag no longer resolves
+# upstream (ghcr.io returns 404 for linuxserver/webtop:ubuntu-cinnamon), so it has
+# been replaced here with the pinned digest of `:ubuntu-xfce`, which still resolves.
+# Known-good digests at the time of writing (resolved from ghcr.io/linuxserver/webtop):
 #     ubuntu-xfce  -> sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d
 #     ubuntu-kde   -> sha256:32fb57cb5a97314faf690935b1b973562982afb5463a35764e3a57e7bcd40476
-# The ARG default is left UNCHANGED at the historical `:ubuntu-cinnamon` tag to
-# preserve existing build behavior (the production builds pass BASE explicitly via
-# --build-arg per the BUILD examples above and docker-compose.prod.yml, so this
-# default is only a fallback). Override BASE with a digest-pinned reference for
-# reproducible/audited builds. NOTE: the cinnamon rolling tag's upstream availability
-# is itself unstable (see TODO above) — prefer xfce/kde, which still resolve.
-ARG BASE=lscr.io/linuxserver/webtop:ubuntu-cinnamon
+# Override BASE with a different digest-pinned reference as needed.
+ARG BASE=lscr.io/linuxserver/webtop:ubuntu-xfce@sha256:dc139d17cb8ff9e78b8cbd0639438cac46ceaeb30b3d772f48d9435b97b8690d
 FROM ${BASE}
 
 LABEL org.opencontainers.image.title="applicant-webtop-chrome" \
