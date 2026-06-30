@@ -135,6 +135,9 @@ class Container:
     material_service: Any = None
     # Setup-page model sources (add a local/cloud endpoint; auto-list its models).
     model_endpoint_service: Any = None
+    # #298: smart LLM router (None unless LLM_SMART_ROUTING is on). Selects/reorders
+    # the endpoint ladder by task/cost/local-preference; exposed for status/health.
+    llm_router: Any = None
     # Lane B (Stage 2.5): capped/deduped/cached deep-research tool over the
     # WorkspacePort — the agent escalates to it on a company/role knowledge gap and
     # the manual-trigger research router calls it for user-initiated runs.
@@ -485,8 +488,36 @@ def build_container(settings: Settings | None = None) -> Container:
     app_context_manager = ContextManager(
         threshold=settings.context_compress_threshold,
     )
+    # #298: smart routing (config-gated, default OFF). When ON, a SmartLlmRouter
+    # reorders the tier ladder so a router-preferred endpoint (e.g. a local
+    # Ollama/OpenAI-compatible model under local-preference) is the FIRST tier
+    # OpenAICompatibleLLM walks — which is exactly what makes the engine CALL the
+    # local model (the adapter dispatches _call_ollama/_call_openai off the active
+    # tier's base_url). The existing context-window fallback still walks the rest.
+    # OFF: the ladder is built straight from build_ladder(), byte-identical to today.
+    llm_ladder = setup_service.build_ladder()
+    smart_router = None
+    if settings.llm_smart_routing:
+        from applicant.adapters.llm.smart_router import (
+            SmartLlmRouter,
+            order_ladder_by_router,
+        )
+        from applicant.ports.driven.llm_router import CostTier, TaskType
+
+        smart_router = SmartLlmRouter(model_endpoint_service)
+        llm_ladder = order_ladder_by_router(
+            llm_ladder,
+            smart_router,
+            task=TaskType.CHAT,
+            cost_tier=(
+                CostTier.LOWEST
+                if settings.llm_smart_routing_prefer_local
+                else CostTier.BALANCED
+            ),
+            prefer_local=settings.llm_smart_routing_prefer_local,
+        )
     llm = OpenAICompatibleLLM(
-        ladder=setup_service.build_ladder(),
+        ladder=llm_ladder,
         context_manager=ContextWindowManager(
             token_budget=settings.context_compress_threshold
         ),
@@ -1363,6 +1394,7 @@ def build_container(settings: Settings | None = None) -> Container:
         prefill_service=prefill_service,
         material_service=material_service,
         model_endpoint_service=model_endpoint_service,
+        llm_router=smart_router,
         research_service=research_service,
         agent_loop=agent_loop,
         scheduler=scheduler,
