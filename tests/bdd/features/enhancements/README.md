@@ -90,7 +90,7 @@ Where / Acceptance criteria / Definition-of-done).
 | #235 | `enh_235_sent_dict_lock.feature` | 1 | 2 |
 | #236 | `enh_236_email_timeout_floor.feature` | 2 | 2 |
 | #237 | `enh_237_feature_stats_unread.feature` | 3 | 1 |
-| #238 | `enh_238_record_converting_role_dead.feature` | 2 | 1 |
+| #238 | `enh_238_record_converting_role_dead.feature` | 2 | 0 |
 | #239 | `enh_239_digest_cache_ignores_learning.feature` | 3 | 1 |
 | #240 | `enh_240_conversion_loop_swallows.feature` | 2 | 1 |
 | #241 | `enh_241_inmemory_transactional.feature` | 3 | 2 |
