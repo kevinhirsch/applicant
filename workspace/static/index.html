@@ -213,7 +213,8 @@
       }, { once: true });
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link id="app-style-css" rel="stylesheet" href="/static/style.css" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="/static/style.css"></noscript>
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -225,6 +226,10 @@
   <!-- Loading overlay — hides all flashing until app is ready -->
   <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
     <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
+    <div id="loader-error" style="display:none;text-align:center;font-size:13px;color:var(--fg,#abb2bf);max-width:380px;line-height:1.5;padding:12px;">
+      <div style="font-weight:600;margin-bottom:4px;">Taking longer than expected</div>
+      <div style="opacity:0.7;font-size:12px;">The app may still be loading. Try refreshing the page or check your connection.</div>
+    </div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -237,7 +242,7 @@
       el.textContent=frames[i%frames.length];
       i++;
     },150);
-    setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
+    setTimeout(function(){var l=document.getElementById('app-loader');if(!l)return;var w=l.querySelector('#loader-wave');var e=l.querySelector('#loader-error');if(w)w.style.display='none';if(e)e.style.display=''},5000);
   })();
   </script>
   <!-- Memory Management Modal -->
