@@ -87,6 +87,11 @@ def _run_rollback(tmp_path: Path, bin_dir: Path, backup_dir: Path) -> subprocess
 def test_rollback_streams_latest_backup_over_stdin(tmp_path):
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
+    # A real rollback now reverts code + images alongside the DB (issue #279), so it
+    # requires the pre-update snapshot recorded by the update flow. Provide one.
+    (backup_dir / "last-deploy.images").write_text(
+        "GIT_REV=abc123\nAPI_IMAGE_ID=sha256:aaa\nUI_IMAGE_ID=sha256:bbb\n", encoding="utf-8"
+    )
     # Two dumps; the newest must be the one restored.
     (backup_dir / "applicant-20250101-000000.sql").write_text("-- OLD\n", encoding="utf-8")
     newest = backup_dir / "applicant-20260101-000000.sql"

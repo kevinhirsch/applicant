@@ -718,6 +718,35 @@ class ApplicantEngineClient:
         """Read a campaign's research budget + channel availability."""
         return await self._request("GET", f"/api/research/{campaign_id}/budget")
 
+    # -- review-gate ensure-submittable (engine routers/documents.py) --------
+    # FR-RESUME-8: enforce the review gate before submission. Returns 409 when
+    # the application has unapproved materials.
+
+    async def ensure_submittable(self, application_id: str) -> Any:
+        """Check that the application's materials have passed the review gate."""
+        return await self._request(
+            "POST", f"/api/documents/applications/{application_id}/ensure-submittable"
+        )
+
+    # -- chat: confirm-criteria refocus (engine routers/chat.py) --------------
+    # FR-FB-3 / FR-CRIT: commit a confirmation-gated criteria refocus the user
+    # approved through the chat surface. The engine's own gate raises 409 if
+    # confirmation is still required.
+
+    async def chat_confirm_criteria(self, body: dict) -> Any:
+        """Commit a confirmation-gated criteria refocus (FR-FB-3)."""
+        return await self._request("POST", "/api/chat/confirm-criteria", json=body)
+
+    # -- criteria: apply learned adjustment (engine routers/criteria.py) ------
+    # FR-CRIT-3: surface a learned criteria adjustment from the LLM + rationale,
+    # returning the updated criteria. Write-through, user-visible, overridable.
+
+    async def criteria_apply_learned(self, campaign_id: str, body: dict) -> Any:
+        """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3)."""
+        return await self._request(
+            "POST", f"/api/criteria/{campaign_id}/learned", json=body
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

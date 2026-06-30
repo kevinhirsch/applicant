@@ -22,6 +22,15 @@ import modalManager from '../modalManager.js';
 import { HISTORY_ICON, relTime } from './layer-helpers.js';
 import { historyPanelHTML } from './build/popups.js';
 
+function _escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 export function createHistoryPanel({ undo, redo }) {
   function jumpToHistory(offset) {
     if (offset === 0) return;
@@ -157,7 +166,7 @@ export function createHistoryPanel({ undo, redo }) {
     list.innerHTML = rows.map(r => `
     <button class="ge-history-row${r.current ? ' current' : ''}${r.future ? ' future' : ''}" data-offset="${r.offset}">
       <span class="ge-history-row-dot"></span>
-      <span class="ge-history-row-label">${(r.label || '').replace(/[<>&]/g,'')}</span>
+      <span class="ge-history-row-label">${_escHtml(r.label)}</span>
       <span class="ge-history-row-time">${relTime(r.ts)}</span>
     </button>
   `).join('');

@@ -58,6 +58,7 @@ def is_self_hosted(endpoint_url: str) -> bool:
     try:
         host = (urlparse(endpoint_url).hostname or "").lower()
     except Exception:
+        logger.warning("Bare exception in teacher_escalation.py")
         return True
     if not host:
         return True
@@ -339,6 +340,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
             return None
         return data
     except Exception:
+        logger.warning("Bare exception in teacher_escalation.py")
         return None
 
 
@@ -454,6 +456,7 @@ def maybe_escalate(
         if not (get_setting("teacher_model", "") or "").strip():
             return None
     except Exception:
+        logger.warning("Bare exception in teacher_escalation.py")
         return None
 
     # Gate 3: regex eval — only escalate on detected failure.
@@ -498,6 +501,7 @@ async def run_teacher_inline(
         if not teacher_spec:
             return
     except Exception:
+        logger.warning("Bare exception in teacher_escalation.py")
         return
 
     status, reason = evaluate_turn_regex(student_tool_events, student_reply)
@@ -580,6 +584,7 @@ async def run_teacher_inline(
             try:
                 payload = json.loads(evt_str[6:].strip())
             except Exception:
+                logger.warning("Bare exception in teacher_escalation.py")
                 yield evt_str
                 continue
             if isinstance(payload, dict):

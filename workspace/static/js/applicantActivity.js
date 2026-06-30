@@ -22,36 +22,18 @@
 // .hwfit-loading / .applicant-status-strip).
 
 import uiModule from './ui.js';
+import { esc, _fetchJSON } from './applicantCore.js';
 
 const API = '/api/applicant/activity';
 // Slow poll for the always-visible strip — mirrors the Portal's BADGE_POLL_MS.
 const STATUS_POLL_MS = 45000;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _statusPollIv = null;
 let _runsLoading = false;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
 // Compact relative time ("just now", "5m ago", "3h ago", "2d ago"). Accepts an
 // ISO string, an epoch-seconds number, or an epoch-ms number. Returns '' when the
@@ -156,6 +138,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-activity-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Activity');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
@@ -174,6 +159,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
   modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -185,6 +173,7 @@ function _close() {
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-activity-body'); }

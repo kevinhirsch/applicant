@@ -6,7 +6,6 @@ Feature: The notification delivery state machine is guarded against concurrent a
   # protection so an expire racing a _fire_due cannot fire an already-handled decision a
   # second time. @pending probes for the absent lock on the notifier.
 
-  @pending
   Scenario: The notifier holds a lock around its shared delivery state
     Given the shipped notifier adapter
     When the delivery state machine is inspected for a concurrency guard

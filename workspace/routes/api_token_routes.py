@@ -1,5 +1,8 @@
 """API Token management routes — /api/tokens/*."""
 
+import logging
+
+log = logging.getLogger(__name__)
 import secrets
 import uuid
 
@@ -43,6 +46,7 @@ def setup_api_token_routes() -> APIRouter:
             if invalidator:
                 invalidator()
         except Exception:
+            log.warning("Bare exception in api_token_routes.py")
             pass
 
     @router.post("/tokens")

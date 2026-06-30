@@ -141,6 +141,7 @@ class ResearchHandler:
                 if _match:
                     parsed = _json.loads(_match.group())
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
 
             return {
@@ -309,6 +310,7 @@ class ResearchHandler:
                     "started_at": data.get("started_at", 0),
                 }
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
         return None
 
@@ -343,6 +345,7 @@ class ResearchHandler:
                     return None
                 return data.get("result")
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
         return None
 
@@ -363,6 +366,7 @@ class ResearchHandler:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("sources")
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
         return None
 
@@ -432,8 +436,10 @@ class ResearchHandler:
                         if started and completed and completed > started:
                             durations.append(completed - started)
                 except Exception:
+                    logger.warning("Bare exception in research_handler.py")
                     continue
         except Exception:
+            logger.warning("Bare exception in research_handler.py")
             pass
         if durations:
             return sum(durations) / len(durations)
@@ -452,6 +458,7 @@ class ResearchHandler:
                 data["consumed"] = True
                 path.write_text(json.dumps(data), encoding="utf-8")
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
 
     def _save_result(self, session_id: str, entry: dict):
@@ -498,6 +505,7 @@ class ResearchHandler:
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
+                logger.warning("Bare exception in research_handler.py")
                 pass
         return None
 
@@ -732,6 +740,7 @@ class ResearchHandler:
                 "URLs": tracker.counters['urls_processed'],
             }
         except Exception:
+            logger.warning("Bare exception in research_handler.py")
             return {}
 
     def _format_research_report(

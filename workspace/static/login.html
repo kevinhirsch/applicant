@@ -472,7 +472,7 @@
         form._totpMode = true;
         const totpWrap = document.createElement('div');
         totpWrap.style.cssText = 'margin-top:12px;';
-        totpWrap.innerHTML = '<label style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
+        totpWrap.innerHTML = '<label style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;" aria-label="Enter 6-digit code">';
         const formEl = submitBtn.parentElement;
         formEl.insertBefore(totpWrap, submitBtn);
         const totpInput = document.getElementById('totp-input');

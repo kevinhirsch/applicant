@@ -165,7 +165,7 @@ function _prefetchAdjacent() {
         (d.events || []).forEach(ev => { _allEvents[ev.uid] = ev; });
         _fetchedRanges.push([s, e]);
       })
-      .catch(() => {});
+      .catch(e => console.error('Silent catch in calendar:', e));
   }
 }
 
@@ -2062,7 +2062,7 @@ function _wireAll(body) {
     const minSpin = new Promise(r => setTimeout(r, 700));
     try {
       await Promise.all([
-        _fetchEvents(_range[0], _range[1], /*force*/ true).catch(() => {}),
+        _fetchEvents(_range[0], _range[1], /*force*/ true).catch(e => console.error('Silent catch in calendar:', e)),
         minSpin,
       ]);
     } finally {
@@ -3337,7 +3337,7 @@ window.addEventListener('calendar-refresh', () => {
     : (_view === 'week') ? _weekRange(_currentDate) : _monthRange(_currentDate);
   _fetchEvents(range[0], range[1], /*force*/ true)
     .then(() => { if (_open) _render(); _updateBadge(); })
-    .catch(() => {});
+    .catch(e => console.error('Silent catch in calendar:', e));
 });
 
 // Calendar reminders are stored as Notes. The Notes reminder loop owns

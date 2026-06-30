@@ -33,8 +33,8 @@ DORMANT_SURFACES: tuple[DormantSurface, ...] = (
         surface_name="Resume aggressiveness / tuning control",
         requirement_ids=("FR-RESUME-9",),
         wiring_notes=(
-            "Generation accepts the aggressiveness param (Phase 3 MaterialService); "
-            "per FR-RESUME-9 the control still SHIPS GRAYED for MVP-1. Stays dormant."
+            "Backend endpoint exists and clamps/persists the value (MaterialService), "
+            "but the slider control ships grayed per FR-UI-2. Activation tracked in #187."
         ),
         live_phase=3,
         status=STATUS_DORMANT,

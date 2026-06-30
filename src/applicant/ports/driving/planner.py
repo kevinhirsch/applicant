@@ -1,104 +1,66 @@
-"""PlannerPort — driving port for the plan-as-data typed-DSL planner.
+"""PlannerPort — the driving (inbound) port for plan-as-data execution.
 
-The PlannerPort is the driving port every surface (pre-fill, scrape, whole-
-application) uses to request a plan. The same typed-DSL contract is used
-across all surfaces.
+The planner is the **intelligence layer**: given a goal, an observation of the
+current page (semantic DOM snapshot), the attribute-cloud manifest, and
+constraints (stop-boundary rules), it emits one :class:`~applicant.core.entities.plan.Plan`
+that the executor harness runs.
 
-Implementations:
-* The real LLM-backed planner emits typed operations over a semantic-DOM
-  snapshot.
-* The test stub returns canned plans.
+This replaces per-step LLM reasoning with a single plan emission, cutting model
+round-trips from O(N) to O(1) per page while keeping all safety guarantees intact.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from applicant.core.rules.plan import Plan, PlanValidationResult, ReadOnlyScrapePlan
+from applicant.core.entities.plan import Plan
+
+
+@dataclass(frozen=True)
+class PlannerObservation:
+    """A snapshot of the current page the planner sees — semantic, not pixel.
+
+    Contains interactive elements with their role, accessible name, nearby label
+    text, current value, and a stable ``ref`` (``data-applicant-ref``).
+    """
+
+    snapshot_tokens: int = 0
+    html_summary: str = ""
+    detected_fields: list[dict] | None = None
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class PlannerInput:
+    """Everything the planner needs to emit a plan."""
+
+    goal: str
+    observation: PlannerObservation | None = None
+    facts: dict[str, str] | None = None  # attribute_id -> label
+    constraints: dict[str, str] | None = None
+    previous_plan_id: str | None = None
+    failure_reason: str | None = None  # set on replan (self-correction loop)
 
 
 @runtime_checkable
 class PlannerPort(Protocol):
-    """Driving port: the engine's plan-as-data planner.
+    """Driving port: emit a Plan from goal + observation + facts + constraints."""
 
-    Every surface requests a typed-DSL plan through this port. The same
-    contract is used for pre-fill, scrape, and whole-application flows.
-    """
+    def plan(self, input_: PlannerInput) -> Plan:
+        """Emit a Plan to achieve ``goal`` given the current observation.
 
-    def plan_prefill(
-        self,
-        page_url: str,
-        fields: list[dict],
-        attributes: dict[str, str],
-    ) -> Plan:
-        """Emit a typed-DSL plan for a pre-fill page.
-
-        Args:
-            page_url: The URL of the page to plan for.
-            fields: Detected fields on the page (label, selector, type).
-            attributes: Attribute cloud (attribute_id -> value).
-
-        Returns:
-            A validated Plan with fill/select/advance ops.
+        The plan is validated by the caller before execution. If the planner
+        cannot construct a valid plan (e.g. insufficient information), it returns
+        an empty plan and the caller escalates to the human.
         """
         ...
 
-    def plan_scrape(
-        self,
-        page_url: str,
-        fields: list[dict],
-    ) -> ReadOnlyScrapePlan:
-        """Emit a read-only scrape plan for a page.
+    def plan_many(self, goal: str, pages: list[PlannerObservation], facts: dict[str, str]) -> list[Plan]:
+        """Emit a plan for each page in a multi-page journey (flow planning).
 
-        Args:
-            page_url: The URL of the page to scrape.
-            fields: Detected fields on the page.
-
-        Returns:
-            A ReadOnlyScrapePlan with only EXTRACT ops.
-        """
-        ...
-
-    def validate_plan(
-        self,
-        plan: Plan,
-        *,
-        allowed_ops: frozenset | None = None,
-    ) -> PlanValidationResult:
-        """Validate a plan against the plan-as-data schema.
-
-        Args:
-            plan: The plan to validate.
-            allowed_ops: Optional override for the allowed op-set.
-
-        Returns:
-            PlanValidationResult indicating validity.
-        """
-        ...
-
-    def resolve_fill_values(
-        self,
-        plan: Plan,
-        attribute_map: dict[str, str],
-    ) -> PlanValidationResult:
-        """Resolve fill values from the attribute cloud.
-
-        Args:
-            plan: The plan with attribute_id references.
-            attribute_map: Attribute cloud (attribute_id -> value).
-
-        Returns:
-            PlanValidationResult with resolved operations.
-        """
-        ...
-
-    def stop_boundary_check(self, plan: Plan) -> bool:
-        """Check whether a plan crosses the stop-boundary.
-
-        A plan that contains FINAL_SUBMIT or ACCOUNT_CREATE ops crosses the
-        stop-boundary and must be withheld for human review.
-
-        Returns:
-            True if the plan stays within the stop-boundary.
+        The flow planner plans the application journey once — enter application,
+        navigate, fill page(s), stop at the first irreducible human step — and
+        delegates each page to the page-level planner.
         """
         ...

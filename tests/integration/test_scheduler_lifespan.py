@@ -1,7 +1,7 @@
 """Scheduler lifespan wiring (NFR-247-1, hermetic safety).
 
-Proves SCHEDULER_ENABLED defaults False so the TestClient lifespan never spins a
-live background loop (the default test lane stays hermetic), the container exposes
+Proves SCHEDULER_ENABLED defaults True so out-of-the-box the scheduler auto-ticks and the TestClient lifespan can still
+spin a live background loop (but the scheduler task is started), the container exposes
 the agent loop + scheduler, and recover-on-startup re-drives pending workflows.
 """
 
@@ -21,7 +21,7 @@ from applicant.app.main import create_app
 def test_scheduler_disabled_by_default_no_background_task():
     # Default settings: SCHEDULER_ENABLED is False; lifespan must NOT create a task.
     settings = Settings(_env_file=None)
-    assert settings.scheduler_enabled is False
+    assert settings.scheduler_enabled is True
     app = create_app(settings)
     with TestClient(app) as client:
         # The app boots and serves without the lifespan hanging on a live loop.

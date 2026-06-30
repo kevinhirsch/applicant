@@ -67,6 +67,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         try:
             body = await request.json()
         except Exception:
+            logger.warning("Bare exception in backup_routes.py")
             raise HTTPException(400, "Invalid JSON")
 
         if not isinstance(body, dict):

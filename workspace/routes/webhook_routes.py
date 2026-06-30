@@ -227,6 +227,7 @@ def setup_webhook_routes(
                 from src.auth_helpers import get_current_user as _gcu
                 _tok_user = token_owner or getattr(request.state, "user", None) or _gcu(request)
             except Exception:
+                logger.warning("Bare exception in webhook_routes.py")
                 _tok_user = None
             _sess_owner = getattr(sess, "owner", None)
             if _tok_user and _sess_owner and _sess_owner != _tok_user:
@@ -296,6 +297,7 @@ def setup_webhook_routes(
                             ]
                         model = ids[0] if ids else "auto"
                 except Exception:
+                    logger.warning("Bare exception in webhook_routes.py")
                     raise HTTPException(500, "Could not discover models from endpoint")
 
             if not session_manager:

@@ -13,12 +13,12 @@ Feature: Search code lives in one canonical package, not two
     Then the canonical search package under src is importable by the app modules
     And the duplicate package is only reached from the search route
 
+  @pending
   Scenario: Four search files are byte-identical across the two packages today
     Given the workspace search packages
     When the shared search files are compared between the two packages
     Then the cache, query, ranking and analytics files are duplicated verbatim
 
-  @pending
   Scenario: The duplicate search files have been removed
     Given the workspace search packages
     Then the duplicated cache, query, ranking and analytics files no longer exist under services

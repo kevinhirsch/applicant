@@ -43,7 +43,8 @@ def _service() -> ModelEndpointService:
 def client():
     app = create_app()
     # Swap in a hermetic service so the route's live fetch never hits the network.
-    app.state.container.model_endpoint_service = _service()
+    # Container is frozen after construction; bypass with object.__setattr__ for test.
+    object.__setattr__(app.state.container, "model_endpoint_service", _service())
     with TestClient(app) as c:
         yield c
 

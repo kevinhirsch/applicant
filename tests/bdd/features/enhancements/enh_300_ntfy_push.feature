@@ -7,13 +7,11 @@ Feature: Urgent action alerts are pushed to the user's device via the ntfy chann
   # scenarios are @pending and probe the intended seams (a push channel enum value / a push
   # configuration entrypoint on the adapter).
 
-  @pending
   Scenario: The notifier exposes a push channel for ntfy delivery
     Given the shipped notification channel set
     When the available channels are inspected for a device-push option
     Then a push channel is available alongside Discord, in-app, and email
 
-  @pending
   Scenario: An urgent takeover alert is dispatched to the push channel with a deep link
     Given a notifier configured with an ntfy push endpoint
     When a critical takeover alert with a deep link is queued

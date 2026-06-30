@@ -47,6 +47,7 @@ def _pick_endpoint_for_sort():
         if url and model:
             return url, model, headers
     except Exception:
+        logger.warning("Bare exception in session_routes.py")
         pass
     # Fall back to default
     url, model, headers = resolve_endpoint("default")
@@ -319,6 +320,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             body = await request.json()
             ids = body.get("ids", [])
         except Exception:
+            logger.warning("Bare exception in session_routes.py")
             ids = []
         for sid in ids:
             try:
@@ -330,10 +332,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db.query(DbSession).filter(DbSession.id == sid).delete()
                     db.commit()
                 except Exception:
+                    logger.warning("Bare exception in session_routes.py")
                     db.rollback()
                 finally:
                     db.close()
             except Exception:
+                logger.warning("Bare exception in session_routes.py")
                 pass
         return {"deleted": len(ids)}
 
@@ -451,6 +455,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 else:
                     session_manager._load_session_from_db(sid)
             except Exception:
+                logger.warning("Bare exception in session_routes.py")
                 pass  # Non-fatal — session will load on next access
             return {"status": "unarchived"}
         except HTTPException:
@@ -1025,6 +1030,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ctx = get_context_length(session.endpoint_url, session.model)
             return {"context_length": ctx, "model": session.model}
         except Exception:
+            logger.warning("Bare exception in session_routes.py")
             return {"context_length": None}
 
     return router

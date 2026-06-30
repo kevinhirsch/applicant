@@ -133,7 +133,7 @@ import createResearchSynapse from './researchSynapse.js';
     if (!target) return null;
     const modelsRes = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin', signal });
     if (!modelsRes.ok) return null;
-    const modelsData = await modelsRes.json().catch(() => ({}));
+    const modelsData = await modelsRes.json().catch(e => { console.error('Failed to parse models response:', e); return {}; });
     const item = (modelsData.items || []).find(ep =>
       _normalizeEndpointForCompare(ep.url || ep.endpoint_url || ep.base_url) === target
     );
@@ -144,7 +144,7 @@ import createResearchSynapse from './researchSynapse.js';
       signal,
     });
     if (!probesRes.ok) return null;
-    const probes = await probesRes.json().catch(() => ({}));
+    const probes = await probesRes.json().catch(e => { console.error('Failed to parse probes response:', e); return {}; });
     return probes[item.endpoint_id] || null;
   }
 
@@ -2785,7 +2785,7 @@ import createResearchSynapse from './researchSynapse.js';
         const _sid = _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(e => console.error('Failed to stop chat:', e));
         }
       } catch (_) {}
     }
@@ -2940,7 +2940,7 @@ import createResearchSynapse from './researchSynapse.js';
             metadata: { stopped: true, cancelled: true, model: modelName },
           }],
         }),
-      }).catch(() => {});
+      }).catch(e => console.error('Failed to update session metadata:', e));
     }
   }
 
@@ -4444,7 +4444,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
     } catch (e) {
       console.error('open attachment as document failed', e);
-      import('./ui.js').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
+      import('./ui.js').then(m => m.showError && m.showError('Could not open attachment')).catch(e => console.error('Failed to show attachment error:', e));
       window.open(url, '_blank');  // fallback so the file is still reachable
     }
   }

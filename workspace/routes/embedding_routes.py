@@ -88,6 +88,7 @@ def _load_custom_endpoint() -> dict:
         if os.path.exists(_ENDPOINT_FILE):
             return json.loads(Path(_ENDPOINT_FILE).read_text(encoding="utf-8"))
     except Exception:
+        logger.warning("Bare exception in embedding_routes.py")
         pass
     return {}
 
@@ -274,6 +275,7 @@ def setup_embedding_routes():
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
         except Exception:
+            logger.warning("Bare exception in embedding_routes.py")
             pass
 
         # Reset ChromaDB client (collections will be recreated with new embeddings)
@@ -281,6 +283,7 @@ def setup_embedding_routes():
             from src.chroma_client import reset_client
             reset_client()
         except Exception:
+            logger.warning("Bare exception in embedding_routes.py")
             pass
 
         logger.info(f"Custom embedding endpoint set: {url}")
@@ -304,6 +307,7 @@ def setup_embedding_routes():
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
         except Exception:
+            logger.warning("Bare exception in embedding_routes.py")
             pass
 
         # Reset ChromaDB client
@@ -311,6 +315,7 @@ def setup_embedding_routes():
             from src.chroma_client import reset_client
             reset_client()
         except Exception:
+            logger.warning("Bare exception in embedding_routes.py")
             pass
 
         logger.info("Custom embedding endpoint cleared, reverting to local fastembed")
