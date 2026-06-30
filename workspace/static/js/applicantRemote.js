@@ -42,7 +42,13 @@ function _ensureModalEl() {
   if (_modalEl) return _modalEl;
   const modal = document.createElement('div');
   modal.id = 'applicant-remote-modal';
-  modal.className = 'modal hidden';
+  // FR-UIKIT-2 (#481): the real dialog root composes the vendored Window kit's
+  // `ow-window` alongside the legacy `.modal` (mirrors appkitChatHint.js, which
+  // composes the kit `ow-`/`on-` classes onto its real rendered element). The class
+  // lands on the actual painted dialog (role=dialog, aria-modal) so the responsive
+  // kit window (no 480px cap) applies; existing `.modal hidden`/`.modal-content`
+  // rules, handlers and the focus trap are preserved.
+  modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-label', 'Live application session');

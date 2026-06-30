@@ -8,7 +8,6 @@ Feature: Map the Live remote view / takeover onto Window + Decision
     Given the UI-kit migration item "S12"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S12 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S12"
     Then its post-migration kit target is satisfied
