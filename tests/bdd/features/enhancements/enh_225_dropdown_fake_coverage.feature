@@ -16,7 +16,6 @@ Feature: Dropdown option matching is covered by hermetic tests
     When the wanted value would only substring-match a different option
     Then no match is returned
 
-  @pending
   Scenario: The fake page source actually validates a dropdown selection
     Given the fake page source standing in for a real combobox
     When a value is selected against an option set on the fake

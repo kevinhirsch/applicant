@@ -539,3 +539,23 @@ class LearningService:
             slot[label] = slot.get(label, 0) + 1
         # #12: bound the blob at fold time so it never grows unbounded across decisions.
         return replace(model, feature_stats=cap_feature_stats(stats))
+
+    # --- AWM workflow induction (#306 / Skyvern parity #351) ----------------
+    def induce_workflow(self, routine_store, domain: str, steps):
+        """Induce a reusable per-ATS routine from a successful pre-fill (#351, #306).
+
+        Skyvern parity: after a successful pre-fill on a given ATS the engine learns a
+        reusable *routine* (the compact op-sequence that worked, keyed by domain) so
+        the next application to that ATS is guided by the induced routine rather than
+        re-derived cold. This is the learning-side entry point that folds a working
+        trace into the process-lived :class:`~applicant.ports.driven.routine_store.RoutineStore`
+        (AWM workflow-induction), returning the stored :class:`Routine` (or ``None``
+        when there is nothing to induce or no store is wired).
+
+        The routine is **data, not free text** — fill/select/upload steps reference the
+        attribute cloud / document library by id, never a literal value, so an induced
+        routine can never smuggle a fabricated answer into a form (NFR-TRUTH-1).
+        """
+        if routine_store is None or not domain or not steps:
+            return None
+        return routine_store.induce(domain, tuple(steps))
