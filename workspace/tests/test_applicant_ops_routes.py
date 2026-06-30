@@ -147,9 +147,19 @@ def test_non_admin_is_rejected(monkeypatch):
 
 
 def test_single_user_mode_allows_owner(monkeypatch):
+    # Single-user mode = operator on localhost; the lone owner is allowed from
+    # loopback. The remote-refusal hardening (#228) is covered just below.
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
-    c = TestClient(_make_app(user="", configured=False, admins=()))
+    c = TestClient(_make_app(user="", configured=False, admins=()), client=("127.0.0.1", 51000))
     assert c.get("/api/applicant/ops/update").status_code == 200
+
+
+def test_single_user_mode_refuses_remote(monkeypatch):
+    # #228: an unconfigured + unauthenticated remote caller must not reach the
+    # operator controls during setup.
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="", configured=False, admins=()), client=("203.0.113.9", 40000))
+    assert c.get("/api/applicant/ops/update").status_code == 401
 
 
 # --- update -----------------------------------------------------------------

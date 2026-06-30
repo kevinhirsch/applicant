@@ -15,7 +15,6 @@ Feature: Corrupt background-job state surfaces a diagnostic instead of silent re
     When the job store is loaded
     Then an empty job map is returned so the monitor keeps running
 
-  @pending
   Scenario: A corrupt job-state file is logged before the queue is reset
     Given the front-door background-job store with a corrupt state file
     When the job store is loaded

@@ -90,6 +90,15 @@ def add_endpoint(
     return JSONResponse(result)
 
 
+# This module uses ``from __future__ import annotations`` (PEP 563), so every
+# annotation is stored as a STRING. The ``model_type`` Form parameter is genuinely
+# constrained to the ``ModelType`` enum (#319), but ``inspect.signature`` would
+# otherwise report the bare string ``"ModelType"`` and hide that constraint from
+# introspection. Reify the real enum class on the annotation so the constraint is
+# visible to ``inspect.signature(add_endpoint)`` without needing ``eval_str=True``.
+add_endpoint.__annotations__["model_type"] = ModelType
+
+
 @router.post("/test")
 def test_endpoint(
     base_url: str = Form(""),

@@ -9,7 +9,6 @@ Feature: Adding a model endpoint uses a typed request model with a validated mod
     When skip_probe is given as the string "false"
     Then the live model probe is enabled
 
-  @pending
   Scenario: model_type is constrained to a known set of values
     Given the model-endpoint add route signature
     When the model_type parameter type is inspected

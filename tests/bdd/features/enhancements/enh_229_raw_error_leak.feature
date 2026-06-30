@@ -9,7 +9,6 @@ Feature: Engine 5xx detail is masked before reaching the browser
     When the email proxy translates it for the browser
     Then a generic message is returned and the raw traceback is not exposed
 
-  @pending
   Scenario: The documents proxy masks an engine server error
     Given an engine server error carrying a raw traceback
     When the documents proxy translates it for the browser

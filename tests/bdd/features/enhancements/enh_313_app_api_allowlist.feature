@@ -9,7 +9,6 @@ Feature: The app_api loopback tool is bounded by an explicit allowlist, not a bl
     When a sensitive endpoint prefix is checked against it
     Then the auth, user, and admin prefixes are refused
 
-  @pending
   Scenario: A newly added endpoint is denied by default under an allowlist
     Given the app_api loopback tool exposes an explicit allowlist of permitted prefixes
     When a brand-new endpoint that nobody allowlisted is requested
