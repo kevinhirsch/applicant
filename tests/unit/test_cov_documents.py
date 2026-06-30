@@ -249,6 +249,47 @@ def test_owner_variant_library_endpoint_reports_lineage(client):
     assert lib[str(child.id)]["approved"] is True
 
 
+def test_ensure_submittable_body_reports_verdict(client):
+    """#284 — POST ensure-submittable must return the submittability verdict in the
+    response body, not merely a 200 status code (FR-RESUME-8).
+
+    Covers both the blocked path (409 with detail) and the open path (200 with
+    ``{"submittable": true, "application_id": ...}`` in the body). The hermetic app
+    drives real in-memory storage, so the assertions hit the live router code path.
+    """
+    cid, aid = "camp-sub-check-1", "app-sub-check-1"
+
+    # --- Gate blocks while material is unapproved ---
+    made = client.post(
+        "/api/documents/screening-answer",
+        json={
+            "campaign_id": cid,
+            "application_id": aid,
+            "question": "Describe your experience.",
+            "true_source": "Built Python pipelines.",
+        },
+    )
+    assert made.status_code == 201
+    assert made.json()["approved"] is False
+
+    blocked = client.post(f"/api/documents/applications/{aid}/ensure-submittable")
+    assert blocked.status_code == 409
+    assert "detail" in blocked.json()
+
+    # --- Gate opens on approval; body confirms the verdict ---
+    # The router requires a review session to be opened before approval is accepted.
+    doc_id = made.json()["id"]
+    assert client.post(f"/api/documents/{doc_id}/review").status_code == 201
+    assert client.post(f"/api/documents/{doc_id}/approve").status_code == 201
+
+    open_r = client.post(f"/api/documents/applications/{aid}/ensure-submittable")
+    assert open_r.status_code == 200
+    body = open_r.json()
+    # #284: the verdict must be present in the BODY, not merely implied by the status.
+    assert body["submittable"] is True
+    assert body["application_id"] == aid
+
+
 def test_material_service_fallback_builds_from_container_adapters(app):
     """The module-level ``_material_service`` helper builds a MaterialService from the
     frozen container's adapters when no per-request service exists (CONC-REQ-1)."""

@@ -72,7 +72,12 @@ def test_cover_letter_on_demand_and_review_gate(client):
 
     # Approve -> gate opens (FR-RESUME-8).
     assert client.post(f"/api/documents/{doc_id}/approve").status_code == 201
-    assert client.post(f"/api/documents/applications/{aid}/ensure-submittable").status_code == 200
+    # #284: assert the BODY confirms the verdict, not merely a 200 status.
+    open_r = client.post(f"/api/documents/applications/{aid}/ensure-submittable")
+    assert open_r.status_code == 200
+    body = open_r.json()
+    assert body["submittable"] is True
+    assert body["application_id"] == aid
 
 
 @pytest.mark.integration
