@@ -22,7 +22,6 @@ import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
-import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -45,6 +44,7 @@ import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
+const notesModule = null; // notes integration removed (#303); guards below no-op safely
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
