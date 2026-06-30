@@ -216,7 +216,7 @@ class ResumeParser:
         if not body:
             body = lines  # fall back to whole doc
         entries: list[WorkHistoryEntry] = []
-        for line in body:
+        for idx, line in enumerate(body):
             dm = _DATE_RANGE_RE.search(line)
             if not dm:
                 continue
@@ -225,6 +225,12 @@ class ResumeParser:
             # dangling at the end of `before`. Strip brackets/separators from both
             # ends so the company never renders as "Acme Corp (" (FR-RESUME-3 fidelity).
             before = line[: dm.start()].strip(" \t,-–—|([{")
+            if not before:
+                # Common layout: "Title, Company" on its own line, the date range on
+                # the NEXT line. The title/company is therefore on the immediately
+                # preceding non-empty, non-date line — look back and attribute it,
+                # otherwise the entry renders as "\cventry{2021 - Present}{}{}...".
+                before = self._look_back_title_company(body, idx)
             title, company = self._split_title_company(before)
             # Defensive: the split can still leave a trailing bracket on either field
             # when the separator sat between the date and the bracket.
@@ -241,6 +247,24 @@ class ResumeParser:
         return entries
 
     @staticmethod
+    def _look_back_title_company(body: list[str], idx: int) -> str:
+        """Return the nearest preceding non-empty, non-date line as title/company.
+
+        Handles the layout where ``Title, Company`` sits on its own line and the
+        date range is on the following line. The look-back stops at the first
+        candidate and ignores lines that themselves carry a date range (they belong
+        to a different, earlier entry).
+        """
+        for prev in range(idx - 1, -1, -1):
+            cand = body[prev].strip(" \t,-–—|([{")
+            if not cand:
+                continue
+            if _DATE_RANGE_RE.search(body[prev]):
+                break
+            return cand
+        return ""
+
+    @staticmethod
     def _split_title_company(text: str) -> tuple[str, str]:
         for sep in (" at ", " @ ", ", ", " | ", "\t", " - "):
             if sep in text:
@@ -254,11 +278,16 @@ class ResumeParser:
         if not body:
             body = [ln for ln in lines if _DEGREE_RE.search(ln)]
         entries: list[EducationEntry] = []
-        for line in body:
+        for idx, line in enumerate(body):
             dm = _DEGREE_RE.search(line)
             if not dm:
                 continue
             ym = _YEAR_RANGE_RE.search(line)
+            if not ym:
+                # The year range is frequently on the line that follows the degree
+                # ("M.S. Computer Science\n2018 - 2020"); pull it from the next
+                # non-empty line so the entry doesn't drop its dates.
+                ym = self._look_ahead_year_range(body, idx)
             rest = line.replace(dm.group(0), "").strip(" \t,-|")
             inst, _ = self._split_title_company(rest)
             entries.append(
@@ -270,6 +299,22 @@ class ResumeParser:
                 )
             )
         return entries
+
+    @staticmethod
+    def _look_ahead_year_range(body: list[str], idx: int) -> re.Match | None:
+        """Return a year range found on the line following a degree line, if any.
+
+        Stops at the first non-empty line; a degree on that line means it belongs to
+        a different entry, so the look-ahead yields nothing.
+        """
+        for nxt in range(idx + 1, len(body)):
+            cand = body[nxt].strip()
+            if not cand:
+                continue
+            if _DEGREE_RE.search(cand):
+                return None
+            return _YEAR_RANGE_RE.search(cand)
+        return None
 
     def _extract_skills(self, lines: list[str]) -> list[str]:
         sections = self._current_section(lines)

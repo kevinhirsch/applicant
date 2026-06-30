@@ -79,6 +79,7 @@ from applicant.core.rules.truthfulness import (
     unsupported_prose_claims,
     voice_alignment,
 )
+from applicant.ports.driven.llm import LLMLadderExhausted
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +198,20 @@ class MaterialService:
         # reads it right after generation and attaches it to the material; empty
         # when no agent-memory substrate was drawn on.
         self._last_provenance: tuple[LearnedProvenance, ...] = ()
+        # Transient: True when the most recent ``_generate_text`` pass fell back to
+        # the DETERMINISTIC reframe because the LLM tier ladder was exhausted (e.g. a
+        # misconfigured upper tier returning 401). Surfaced so a canned draft is
+        # visible as degraded rather than masquerading as a real generation.
+        self._last_degraded: bool = False
+
+    @property
+    def last_generation_degraded(self) -> bool:
+        """Whether the most recent generation fell back to the deterministic draft.
+
+        Set when the LLM ladder was exhausted (not when no model is wired at all);
+        lets the caller / review UI flag the draft as a degraded fallback.
+        """
+        return self._last_degraded
 
     # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
     def tailoring_for(self, campaign_id: CampaignId):
@@ -1680,6 +1695,8 @@ class MaterialService:
         """
         # Default: nothing was drawn on (the deterministic fallback path).
         self._last_provenance = ()
+        # Reset the degraded marker for this pass; set only on ladder exhaustion.
+        self._last_degraded = False
         # Neutralize untrusted scraped text before it enters the LLM prompt so an
         # attacker-controlled posting cannot steer tailoring/screening answers.
         safe_source = neutralize_untrusted_text(true_source)
@@ -1718,6 +1735,21 @@ class MaterialService:
                     start_tier=_HEAVY_WRITING_START_TIER,
                 )
                 return _strip_llm_preamble(result.text)
+            except LLMLadderExhausted as exc:
+                # A configured model exists but EVERY tier (up AND down) failed —
+                # e.g. a misconfigured upper tier returning 401. This is NOT the
+                # benign "no model wired" path: log it loudly and mark the result
+                # degraded so the canned deterministic draft is visible as a
+                # fallback rather than masquerading as a real generation.
+                log.error(
+                    "material generation degraded: LLM tier ladder exhausted "
+                    "(kind=%s); falling back to deterministic draft: %s",
+                    kind,
+                    exc,
+                )
+                self._last_degraded = True
+                self._note_silent_degradation("material_service.py")
+                self._last_provenance = ()
             except Exception:
                 self._note_silent_degradation("material_service.py")
                 # Generation fell back to the deterministic path — no learned context

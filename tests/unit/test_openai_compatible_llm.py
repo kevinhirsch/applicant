@@ -247,6 +247,48 @@ def test_start_tier_beyond_ladder_clamps_to_top():
     assert res.tier == 1 and res.text == "only"
 
 
+def test_start_tier_falls_back_down_when_upper_tier_auth_fails():
+    """Regression: heavy writing starts at tier 2; if the configured upper tier(s)
+    return a hard auth error (401), the ladder must fall back DOWN to a healthy
+    LOWER configured tier — not exhaust into the canned deterministic fallback."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["model"] == "t2":
+            # Misconfigured upper tier: hard auth failure.
+            return httpx.Response(401, json={"error": "invalid api key"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": body["model"]}}]})
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://a/v1", model="t2", context_window=100_000),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    res = llm.complete([ChatMessage(role="user", content="q")], start_tier=2)
+    # The healthy lower tier's output is used, not an exhaustion.
+    assert res.tier == 1 and res.text == "t1"
+
+
+def test_start_tier_total_failure_still_exhausts():
+    """When the upper tier fails AND the lower tier also fails, the ladder is fully
+    exhausted (so the caller can mark the draft degraded) — it does not hang."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "invalid api key"})
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://a/v1", model="t2", context_window=100_000),
+        ]
+    )
+    llm = OpenAICompatibleLLM(ladder=ladder, transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMLadderExhausted):
+        llm.complete([ChatMessage(role="user", content="q")], start_tier=2)
+
+
 # --- FR-LLM-4: ceiling exhaustion -----------------------------------------
 def test_ceiling_exhaustion_raises():
     def handler(request: httpx.Request) -> httpx.Response:

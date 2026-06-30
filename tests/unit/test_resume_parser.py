@@ -154,3 +154,53 @@ def test_parse_missing_file_is_safe(parser):
     parsed = parser.parse("/no/such/file.txt")
     assert parsed.full_name == ""
     assert parsed.work_history == ()
+
+
+_DATE_ON_NEXT_LINE_RESUME = """\
+Jane Q Candidate
+jane@example.com
+
+Experience:
+Senior Engineer, Acme Corp
+2021 - Present
+Led the platform team and shipped the billing rewrite.
+
+Software Engineer, Globex
+2017 - 2019
+Built internal tooling.
+
+Education:
+M.S. Computer Science
+2015 - 2017
+State University
+"""
+
+
+def test_work_entry_title_company_survive_date_on_next_line(parser, tmp_path):
+    """Regression: 'Title, Company' on one line with the date range on the NEXT line
+    must NOT drop the title/company (would render '\\cventry{2021 - Present}{}{}...')."""
+    p = tmp_path / "r.txt"
+    p.write_text(_DATE_ON_NEXT_LINE_RESUME)
+    parsed = parser.parse(str(p))
+    titles = {w.title for w in parsed.work_history}
+    companies = {w.company for w in parsed.work_history}
+    assert "Senior Engineer" in titles
+    assert "Acme Corp" in companies
+    assert "Software Engineer" in titles
+    assert "Globex" in companies
+    senior = next(w for w in parsed.work_history if w.title == "Senior Engineer")
+    assert senior.start_date == "2021"
+    assert senior.end_date.lower() == "present"
+    # No entry may have an empty title (the date-only line attributed to a real entry).
+    assert all(w.title for w in parsed.work_history)
+
+
+def test_education_year_range_on_next_line_is_not_dropped(parser, tmp_path):
+    """Regression: a degree with its year range on the FOLLOWING line keeps the dates."""
+    p = tmp_path / "r.txt"
+    p.write_text(_DATE_ON_NEXT_LINE_RESUME)
+    parsed = parser.parse(str(p))
+    assert any("M.S" in e.degree for e in parsed.education)
+    edu = next(e for e in parsed.education if "M.S" in e.degree)
+    assert edu.start_year == "2015"
+    assert edu.end_year == "2017"

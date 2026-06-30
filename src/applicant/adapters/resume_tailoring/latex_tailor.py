@@ -251,20 +251,25 @@ class LatexTailor:
         ``\\documentclass[]{cover}`` marker makes the fidelity check enforce exactly
         one page (FR-RESUME-4).
         """
-        paras = [normalize_emdashes(p) for p in (body_paragraphs or []) if p.strip()]
+        # Escape LaTeX specials on every field exactly as the résumé path does
+        # (latex_escape normalizes em-dashes first), so a body containing
+        # %&$#_{} or an unbalanced brace cannot break the xelatex compile.
+        from applicant.adapters.resume_tailoring.moderncv_converter import latex_escape
+
+        paras = [latex_escape(p) for p in (body_paragraphs or []) if p.strip()]
         lines = [
             "\\documentclass[]{cover}",
             "\\begin{document}",
-            f"\\namesection{{{normalize_emdashes(first_name)}}}"
-            f"{{{normalize_emdashes(last_name)}}}{{{normalize_emdashes(contact_line)}}}",
-            f"\\currentdate{{{normalize_emdashes(date)}}}",
-            f"\\companyname{{{normalize_emdashes(company)}}}",
-            f"\\companyaddress{{{normalize_emdashes(company_address)}}}",
+            f"\\namesection{{{latex_escape(first_name)}}}"
+            f"{{{latex_escape(last_name)}}}{{{latex_escape(contact_line)}}}",
+            f"\\currentdate{{{latex_escape(date)}}}",
+            f"\\companyname{{{latex_escape(company)}}}",
+            f"\\companyaddress{{{latex_escape(company_address)}}}",
         ]
         lines += [f"\\lettercontent{{{p}}}" for p in paras]
         lines += [
-            f"\\closing{{{normalize_emdashes(closing)}}}",
-            f"\\signature{{{normalize_emdashes(signature)}}}",
+            f"\\closing{{{latex_escape(closing)}}}",
+            f"\\signature{{{latex_escape(signature)}}}",
             "\\end{document}",
         ]
         return "\n".join(lines)

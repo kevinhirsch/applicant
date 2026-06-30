@@ -63,19 +63,42 @@ class TestTexStatus:
 
 
 class TestLibreOfficeStatus:
+    def _clear_writer_cache(self):
+        # The writer-component probe is lru_cached on the soffice path; clear it so
+        # each test sees its own monkeypatched filesystem.
+        cap_mod._libreoffice_writer_present.cache_clear()
+
     def test_libreoffice_not_found_when_binary_absent(self, monkeypatch):
+        self._clear_writer_cache()
         monkeypatch.setattr(cap_mod.shutil, "which", lambda name: None)
         status = capability_status(browser_real=False, postgres_engine=None)
         assert "NOT FOUND" in status["libreoffice"]
 
-    def test_libreoffice_ok_when_soffice_present(self, monkeypatch):
+    def test_libreoffice_ok_when_writer_component_present(self, monkeypatch):
+        self._clear_writer_cache()
+        # soffice on PATH AND the swriter wrapper present -> the Writer component
+        # exists, so the docx render path is real.
         monkeypatch.setattr(
             cap_mod.shutil, "which",
-            lambda name: "/usr/bin/soffice" if name == "soffice" else None,
+            lambda name: f"/usr/bin/{name}" if name in ("soffice", "swriter") else None,
         )
         status = capability_status(browser_real=False, postgres_engine=None)
         assert status["libreoffice"].startswith("ok")
         assert "soffice" in status["libreoffice"]
+
+    def test_libreoffice_degraded_when_writer_component_missing(self, monkeypatch):
+        self._clear_writer_cache()
+        # Regression (#g1-5): soffice present but the Writer component absent must
+        # NOT report ok — that would mask a fully-broken docx render path. The
+        # resolve()d install dir has no swriter.bin, so the probe reports DEGRADED.
+        monkeypatch.setattr(
+            cap_mod.shutil, "which",
+            lambda name: "/nonexistent-libreoffice/program/soffice" if name == "soffice" else None,
+        )
+        status = capability_status(browser_real=False, postgres_engine=None)
+        assert not status["libreoffice"].startswith("ok")
+        assert "DEGRADED" in status["libreoffice"]
+        assert "Writer" in status["libreoffice"]
 
 
 class TestFcCacheStatus:

@@ -251,7 +251,9 @@ class DocxTailor:
                 storage_path=storage_path, page_count=1, fonts_embedded=True, converted=False
             )
 
-        out_root = self._output_dir or (Path.cwd() / ".artifacts" / "docx")
+        # ``output_dir`` may be injected as a str; wrap defensively so .mkdir() (and
+        # the / joins below) don't raise AttributeError on a string path.
+        out_root = Path(self._output_dir) if self._output_dir else (Path.cwd() / ".artifacts" / "docx")
         out_root.mkdir(parents=True, exist_ok=True)
         # Headless LibreOffice needs a writable user-profile dir; without an explicit
         # UserInstallation the first invocation can silently produce no output.

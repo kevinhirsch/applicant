@@ -385,6 +385,9 @@ class OpenAICompatibleLLM:
                 )
             idx = fit
 
+        # Remember where the climb began so a total upward failure can fall back to
+        # the LOWER configured rungs below it (downward fallback, see after the loop).
+        start_index = idx
         last_error: Exception | None = None
         while idx < len(self._ladder):
             tier = self._ladder.at(idx)
@@ -413,6 +416,28 @@ class OpenAICompatibleLLM:
                 log.info("llm_escalate_low_confidence", from_tier=idx + 1)
                 idx += 1
                 continue
+            return result
+
+        # The upward climb exhausted. A heavy task can start ABOVE the bottom rung
+        # (e.g. start_tier=2), so a hard auth/transport failure on the upper tier(s)
+        # would otherwise raise without ever trying a LOWER configured tier that is
+        # healthy. Fall back DOWN those rungs (highest-below-start first) so a
+        # misconfigured top tier degrades to a working lower one rather than to the
+        # canned deterministic fallback (FR-LLM-3/4).
+        down = start_index - 1
+        while down >= 0:
+            tier = self._ladder.at(down)
+            if tier.context_window < required:
+                down -= 1
+                continue
+            try:
+                result = self._call_tier(tier, down + 1, messages, json_schema, max_tokens)
+            except (httpx.HTTPError, LLMNotConfigured, ValueError, _Overflow) as exc:
+                last_error = exc
+                log.warning("llm_tier_failed", tier=down + 1, error=str(exc), direction="down")
+                down -= 1
+                continue
+            log.info("llm_fallback_down", from_start_tier=start_index + 1, to_tier=down + 1)
             return result
 
         raise LLMLadderExhausted(
