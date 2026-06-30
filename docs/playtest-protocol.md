@@ -83,6 +83,79 @@ Background the slow steps first; they parallelize.
 
 ---
 
+## 1a. `MIND_BACKEND=bridge` END-TO-END VERIFICATION (live; needs the multi-container stack)
+
+`bridge` is the **deployed default** (engine #523): the engine keeps no local
+agent-memory/skills/recall store — it reaches the front-door substrate
+(`workspace/services/memory/`, the extractors + ChromaDB it already owns) as a thin
+client over the token-gated engine→workspace callback (`/api/applicant/internal/*`).
+The adapters are `src/applicant/adapters/memory/bridge.py`
+(`WorkspaceBridge{Memory,Skill,Recall}*`); the workspace endpoints are the FR-MIND
+block in `workspace/routes/applicant_internal_routes.py`. The **hermetic** half is
+proven in `tests/unit/test_agent_memory_bridge.py` (mapping both ways + graceful
+degradation against a fake client). This subsection is the **live** half, which
+needs both containers up and a shared token — run it after §1 stand-up.
+
+**Wiring (both processes share ONE secret):**
+1. Engine: launch with `MIND_BACKEND=bridge` **and**
+   `APPLICANT_INTERNAL_TOKEN=audit-internal-token` **and** `WORKSPACE_URL=http://127.0.0.1:7000`
+   (the address of the front-door it calls back into). Confirm the channel is ON:
+   the engine's `WorkspacePort.available()` is True only when the token is set —
+   token unset ⇒ the bridge silently degrades to empty (you'd see no substrate
+   reflection and wrongly conclude "broken").
+2. Front-door: launch with the **same** `APPLICANT_INTERNAL_TOKEN`. With it unset the
+   `/api/applicant/internal/*` prefix is DISABLED (every call → 403) and the bridge
+   degrades to empty — so a mismatched/blank token is the #1 false-negative here.
+3. Sanity-ping the channel directly (proves token + reachability before UI checks):
+   ```
+   curl -s -H 'X-Applicant-Internal-Token: audit-internal-token' \
+        -H 'X-Applicant-Owner: admin' http://127.0.0.1:7000/api/applicant/internal/ping
+   #   -> {"ok": true, "owner": "admin"}   (403/connection-refused ⇒ fix wiring before continuing)
+   ```
+
+**The checks #145 lists (each must reflect the workspace substrate, owner-scoped):**
+- **Curated memory read+write reflect the substrate.** In the front-door, add a
+  memory line via the workspace's own memory UI for `admin`; then read the engine's
+  curated-memory surface (the engine's snapshot proxies through the bridge to
+  `GET /memory/snapshot`) and confirm the new line appears in the env/user split.
+  Conversely, add a line through the **engine** path (`POST /memory/add` over the
+  bridge) and confirm it shows up in the front-door memory store for the same owner.
+  Confirm a DIFFERENT owner does NOT see it (owner-scoping is enforced workspace-side
+  via `X-Applicant-Owner`).
+- **Skills read+write reflect the substrate.** List saved playbooks from the engine
+  (bridge → `GET /skills`, L0 metadata) and confirm parity with the front-door's
+  `SKILL.md` set for the owner; load one (`GET /skills/{name}`, L1 body) and confirm
+  the procedure/pitfalls/verification render. Create/patch/edit/delete one over the
+  engine bridge and confirm the change lands in the front-door skills store (and
+  vice-versa).
+- **Recall reflects the substrate.** Run a recall query from the engine
+  (bridge → `GET /recall?q=…`) and confirm the hits (`run_id`/`text`/`score`) come
+  from the front-door's stored run history, not an empty/engine-local index.
+- **Portal-approved curation persists to the substrate.** Approve a curation/redline
+  action from the Pending-Actions **Portal** (the home base); confirm the approved
+  add/subtract/edit is written THROUGH the bridge into the front-door memory/skills
+  store (re-read it from both sides) and **persists across an engine restart** — the
+  engine holds no local copy, so persistence proves the substrate is the source of
+  truth.
+- **cua-driver health + benign action round-trip (only when the driver is baked).**
+  If the computer-use driver image is present, confirm its health is **green** and
+  run one benign action end-to-end (e.g. open a page / read a field — NOT a final
+  submit, which the core blocks). If the driver is NOT baked into the deployed image,
+  this check is **N/A** (record it as skipped, not failed — like the
+  `@pytest.mark.integration` deps that skip when absent).
+
+**Degrade-safe expectation (verify too):** stop the front-door and re-run an engine
+memory/skills/recall read — it must return empty / no-op WITHOUT 500ing the engine
+loop (the bridge swallows `WorkspaceError`). A 500 here is a real regression; an empty
+result is correct degradation.
+
+> **STATUS: live run DEFERRED.** This subsection is the documented protocol; the
+> actual multi-container pass (engine + front-door + cua-driver) has not yet been
+> executed and is owned by the follow-up live-stack task. The hermetic coverage in
+> `tests/unit/test_agent_memory_bridge.py` stands in for it in CI.
+
+---
+
 ## 2. TELEMETRY & SCREENSHOTTING (autonomous; ingest with vision)
 
 Author Node+Playwright scripts in `.audit-telemetry/`. Each script:
