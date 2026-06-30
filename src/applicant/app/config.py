@@ -495,6 +495,7 @@ class Settings(BaseSettings):
     presubmit_eligibility_enabled: bool = Field(
         default=True, alias="PRESUBMIT_ELIGIBILITY_ENABLED"
     )
+
     @model_validator(mode="after")
     def _apply_production_mode(self) -> Self:
         """Apply the production preset when APPLICANT_MODE=production.
