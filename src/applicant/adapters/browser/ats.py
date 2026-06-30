@@ -87,6 +87,14 @@ class FakePage:
 
     expected_host: str | None = None
 
+    #: whether log_in should simulate a failure (False = always succeed).
+
+    login_fails: bool = False
+
+    #: whether the gate offers "Sign in with Google" OAuth.
+
+    offers_google: bool = False
+
 
 
 
@@ -381,183 +389,238 @@ class WorkdayAts(AtsAdapter):
 
 class GreenhouseAts(AtsAdapter):
 
-    """A SECOND ATS adapter, proving the abstraction is extensible (NFR-EXT-1).
+    """Greenhouse ATS adapter with full real-application field map (NFR-EXT-1).
 
-
-
-    Not an MVP-1 target; it exists so the "new ATS = new subclass, no core change"
-
-    claim is demonstrable. Greenhouse typically has no separate account-create page.
-
+    Models the Greenhouse hosted apply flow (``boards.greenhouse.io/<tenant>/<id>``).
+    Greenhouse typically presents a single application page housing personal info,
+    resume/cover-letter uploads, links, work-authorisation, education, EEO, and
+    screening questions, followed by a review/submit step. The field map below covers
+    the same breadth of real application fields as the Workday adapter (issue #171).
     """
-
-
 
     name = "greenhouse"
 
-
-
     def matches(self, url: str) -> bool:
-
         return "greenhouse" in url.lower() or "boards.greenhouse" in url.lower()
 
-
-
     def pages(self, url: str) -> list[FakePage]:
-
         return [
-
             FakePage(
-
                 url=f"{url}/apply",
-
                 fields=(
-
+                    # --- Personal information ---
                     DetectedField("#first_name", "First Name", "text"),
-
                     DetectedField("#last_name", "Last Name", "text"),
-
                     DetectedField("#email", "Email", "text"),
-
+                    DetectedField("#phone", "Phone", "text"),
+                    DetectedField("#location", "Location", "text"),
+                    # --- Resume / documents ---
+                    DetectedField("#resume", "Resume/CV", "file"),
+                    DetectedField("#cover_letter", "Cover Letter", "file"),
+                    # --- Links ---
+                    DetectedField("#linkedin", "LinkedIn Profile", "text"),
+                    DetectedField("#website", "Website", "text"),
+                    DetectedField("#portfolio", "Portfolio URL", "text"),
+                    DetectedField("#github", "GitHub URL", "text"),
+                    # --- Work authorisation ---
+                    DetectedField(
+                        "#work_authorization",
+                        "Are you legally authorised to work in this country?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    DetectedField(
+                        "#visa_sponsorship",
+                        "Will you now or in the future require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Current role ---
+                    DetectedField("#current_company", "Current Company", "text"),
+                    DetectedField("#current_title", "Current Job Title", "text"),
+                    # --- Education ---
+                    DetectedField("#education_school", "School", "text"),
+                    DetectedField("#education_degree", "Degree", "text"),
+                    DetectedField("#education_discipline", "Field of Study", "text"),
+                    # --- Screening questions ---
+                    DetectedField(
+                        "#salary_expectation",
+                        "Salary Expectations",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "#how_did_you_hear",
+                        "How did you hear about this job?",
+                        SCREENING_FACTUAL,
+                        options=(
+                            "LinkedIn",
+                            "Indeed",
+                            "Company website",
+                            "Referral",
+                            "Other",
+                        ),
+                    ),
+                    DetectedField(
+                        "#q_why",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- EEO / voluntary disclosures ---
+                    DetectedField(
+                        "#eeo_gender",
+                        "Gender",
+                        "select",
+                        options=("Male", "Female", "Non-binary", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#eeo_race",
+                        "Race/Ethnicity",
+                        "select",
+                        options=("...", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#eeo_veteran",
+                        "Protected Veteran Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "#eeo_disability",
+                        "Disability Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
                 ),
-
             ),
-
             FakePage(url=f"{url}/review", is_final_submit=True, fields=()),
-
         ]
-
-
 
 
 
 class LeverAts(AtsAdapter):
 
-    """A THIRD ATS adapter shape, further proving the abstraction (NFR-EXT-1).
-
-
+    """Lever ATS adapter with full real-application field map (NFR-EXT-1, issue #171).
 
     Lever's hosted apply flow (``jobs.lever.co/<tenant>/<id>``) is a single
-
     application page (name/email/resume/links) plus tenant "additional questions",
-
-    then a review/submit. Like Greenhouse it has no separate account-create page.
+    then a review/submit. The field map below covers the same breadth of real
+    application fields as the Workday and Greenhouse adapters.
 
     Added purely by SUBCLASSING + registry entry — NO core or port change is
-
     required (FR-PREFILL-2 / NFR-EXT-1): the maximal-pre-fill loop walks ``pages``
-
     exactly as it does for Workday. Field-mapping knowledge (the per-label selectors)
-
     lives here and is shareable across campaigns via ``field_mappings`` (FR-ATTR-2).
-
     """
-
-
 
     name = "lever"
 
-
-
     def matches(self, url: str) -> bool:
-
         low = url.lower()
-
         return "lever.co" in low or "jobs.lever" in low
 
-
-
     def tenant_key(self, url: str) -> str:
-
         # jobs.lever.co/<tenant>/<posting-id> — the tenant is the first path segment.
-
         rest = url.split("lever.co/", 1)[-1]
-
         tenant = rest.split("/", 1)[0] if "/" in rest else rest
-
         return f"lever:{tenant}"
 
-
-
     def pages(self, url: str) -> list[FakePage]:
-
         return [
-
             FakePage(
-
+                # Page 1: core application fields (name, contact, resume, links, role).
                 url=f"{url}/apply",
-
                 fields=(
-
+                    # --- Personal information ---
                     DetectedField("input[name=name]", "Full name", "text"),
-
                     DetectedField("input[name=email]", "Email", "text"),
-
                     DetectedField("input[name=phone]", "Phone", "text"),
-
-                    DetectedField("input[name=org]", "Current company", "text"),
-
+                    DetectedField("input[name=location]", "Location", "text"),
+                    # --- Resume / cover letter ---
+                    DetectedField("input[name=resume]", "Resume/CV", "file"),
+                    DetectedField("input[name=cover]", "Cover Letter", "file"),
+                    # --- Links ---
                     DetectedField("input[name=urls[LinkedIn]]", "LinkedIn URL", "text"),
-
+                    DetectedField("input[name=urls[Portfolio]]", "Portfolio URL", "text"),
+                    DetectedField("input[name=urls[Website]]", "Website", "text"),
+                    DetectedField("input[name=urls[GitHub]]", "GitHub URL", "text"),
+                    # --- Current employment ---
+                    DetectedField("input[name=org]", "Current company", "text"),
+                    DetectedField("input[name=title]", "Current Job Title", "text"),
                 ),
-
             ),
-
             FakePage(
-
-                # Lever "additional information" custom questions per tenant.
-
+                # Page 2: screening questions, EEO, and additional info.
                 url=f"{url}/apply/questions",
-
                 fields=(
-
+                    # --- Work authorisation ---
                     DetectedField(
-
                         "input[name=cards[work-auth]]",
-
-                        "Are you authorized to work?",
-
-                        SCREENING_FACTUAL,
-
-                        options=("Yes", "No"),
-
-                    ),
-
-                    DetectedField(
-
-                        "textarea[name=cards[why]]",
-
-                        "Why are you interested in this role?",
-
-                        SCREENING_ESSAY,
-
-                    ),
-
-                    # Lever surfaces EEO via its own self-identification card.
-
-                    DetectedField(
-
-                        "select[name=eeo[gender]]",
-
-                        "Gender",
-
+                        "Are you authorised to work in this country?",
                         "select",
-
-                        options=("Male", "Female", "Decline to self-identify"),
-
+                        options=("Yes", "No"),
                     ),
-
+                    DetectedField(
+                        "input[name=cards[visa]]",
+                        "Will you require visa sponsorship?",
+                        "select",
+                        options=("Yes", "No"),
+                    ),
+                    # --- Education ---
+                    DetectedField("input[name=cards[school]]", "School", "text"),
+                    DetectedField("input[name=cards[degree]]", "Degree", "text"),
+                    DetectedField("input[name=cards[discipline]]", "Field of Study", "text"),
+                    # --- Screening questions ---
+                    DetectedField(
+                        "input[name=cards[salary]]",
+                        "Salary Expectations",
+                        SCREENING_FACTUAL,
+                    ),
+                    DetectedField(
+                        "select[name=cards[how-heard]]",
+                        "How did you hear about this job?",
+                        SCREENING_FACTUAL,
+                        options=(
+                            "LinkedIn",
+                            "Indeed",
+                            "Company website",
+                            "Referral",
+                            "Other",
+                        ),
+                    ),
+                    DetectedField(
+                        "textarea[name=cards[why]]",
+                        "Why are you interested in this role?",
+                        SCREENING_ESSAY,
+                    ),
+                    # --- Lever EEO self-identification ---
+                    DetectedField(
+                        "select[name=eeo[gender]]",
+                        "Gender",
+                        "select",
+                        options=("Male", "Female", "Non-binary", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "select[name=eeo[race]]",
+                        "Race/Ethnicity",
+                        "select",
+                        options=("...", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "select[name=eeo[veteran]]",
+                        "Protected Veteran Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
+                    DetectedField(
+                        "select[name=eeo[disability]]",
+                        "Disability Status",
+                        "select",
+                        options=("Yes", "No", "Decline to self-identify"),
+                    ),
                 ),
-
             ),
-
             FakePage(url=f"{url}/apply/review", is_final_submit=True, fields=()),
-
         ]
-
-
-
-
 
 class GenericAts(AtsAdapter):
 

@@ -102,7 +102,7 @@ def _require_attr(obj, attr: str, hint: str):
 
 
 # ===========================================================================
-# #171 — Greenhouse/Lever shells (GREEN: they resolve & are thin; PENDING: parity)
+# #171 — Greenhouse/Lever full field maps (GREEN: resolve + comprehensive real-application fields)
 # ===========================================================================
 @given("the ATS registry")
 def the_ats_registry(t03ctx):
@@ -134,15 +134,22 @@ def walk_gh_lever(t03ctx):
     t03ctx["wd_fields"] = [f for p in WorkdayAts().pages(WORKDAY_URL) for f in p.fields]
 
 
-@then("Greenhouse exposes at most a handful of fields")
-def greenhouse_handful(t03ctx):
-    # The shell models only first/last/email today.
-    assert len(t03ctx["gh_fields"]) <= 4
+@then(
+    "Greenhouse exposes at least 20 distinct application fields covering personal info,"
+    " resume, links, work authorisation, education, screening questions, and EEO disclosures"
+)
+def greenhouse_full_field_map(t03ctx):
+    # Issue #171 promoted: full real-application field map now ships (not the old 3-field shell).
+    assert len(t03ctx["gh_fields"]) >= 20
 
 
-@then("Lever exposes fewer fields than the full Workday flow")
-def lever_fewer_than_workday(t03ctx):
-    assert len(t03ctx["lever_fields"]) < len(t03ctx["wd_fields"])
+@then(
+    "Lever exposes at least 20 distinct application fields covering the same breadth"
+    " as Greenhouse and Workday"
+)
+def lever_full_field_map(t03ctx):
+    # Issue #171 promoted: Lever also ships a comprehensive real-application field map.
+    assert len(t03ctx["lever_fields"]) >= 20
 
 
 @when("the Greenhouse flow is walked for field-modeling parity with Workday")
@@ -153,7 +160,8 @@ def walk_gh_for_parity(t03ctx):
 
 @then("it models the same breadth of real application fields as Workday")
 def gh_parity_with_workday(t03ctx):
-    # PENDING: today Greenhouse is a 3-field shell — far short of Workday's breadth.
+    # Issue #171 completed: Greenhouse now exposes a full real-application field map
+    # (26 fields) that meets or exceeds Workday's breadth (~10 fields).
     assert len(t03ctx["gh_fields"]) >= len(t03ctx["wd_fields"])
 
 

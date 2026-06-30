@@ -639,13 +639,69 @@ class _OnboardingProfileRepo:
 _MUTATING_PREFIXES = ("add", "update", "upsert", "delete", "resolve", "prune")
 
 
-class _StageProxy:
-    """Wraps a repo so mutating methods are tracked for commit/rollback (#241).
+def _capture_dict_undo(
+    d: dict, name: str, args: tuple, kwargs: dict
+) -> Callable[[], None] | None:
+    """Capture undo information for a mutation on a dict-based repo.
 
-    Writes are applied IMMEDIATELY (backward-compatible with existing tests)
-    AND also recorded so ``commit()``/``rollback()`` are not silent no-ops.
-    ``rollback()`` cannot undo in-memory writes, but it discards the tracking
-    state so a caller can assert that uncommitted work was rolled back.
+    Returns a callable that, when invoked, reverses the mutation.
+    Returns ``None`` if the operation cannot be generically unwound.
+    """
+    if name in ("add", "update", "upsert"):
+        # These methods take an entity with `.id`
+        entity = args[0]
+        key = str(entity.id)
+        old = d.get(key)
+        def _undo(*, _k=key, _old=old):
+            if _old is not None:
+                d[_k] = _old
+            else:
+                d.pop(_k, None)
+        return _undo
+    elif name in ("delete", "resolve"):
+        # These methods take an id-like object (key = str(args[0]))
+        key = str(args[0])
+        old = d.get(key)
+        def _undo(*, _k=key, _old=old):
+            if _old is not None:
+                d[_k] = _old
+        return _undo
+    elif name == "delete_for_campaign":
+        cid = args[0]
+        stale = {k: v for k, v in d.items() if v.campaign_id == cid}
+        def _undo(*, _stale=stale):
+            d.update(_stale)
+        return _undo
+    elif name.startswith("prune"):
+        return None
+    return None
+
+
+def _capture_list_undo(
+    lst: list, name: str, args: tuple
+) -> Callable[[], None] | None:
+    """Capture undo information for a mutation on a list-based repo."""
+    if name == "add":
+        idx = len(lst)
+        def _undo(*, _idx=idx):
+            if _idx < len(lst):
+                lst.pop(_idx)
+        return _undo
+    elif name == "delete_for_applications":
+        before = list(lst)
+        def _undo(*, _before=before):
+            lst[:] = _before
+        return _undo
+    return None
+
+
+class _StageProxy:
+    """Wraps a repo so mutating methods record undo information.
+
+    Writes are applied IMMEDIATELY (backward-compatible with existing tests).
+    Each mutation records an *undo action* in the shared ``_staged`` list.
+    ``commit()`` discards the undo log (writes are finalized).
+    ``rollback()`` replays undos in reverse order, then clears the log.
 
     Read-only methods pass through unchanged.
     """
@@ -656,15 +712,47 @@ class _StageProxy:
 
     def __getattr__(self, name: str):
         inner = object.__getattribute__(self, "_inner")
-        staged = object.__getattribute__(self, "_staged")
         attr = getattr(inner, name)
         if not callable(attr):
             return attr
         if name.startswith(_MUTATING_PREFIXES):
 
-            def staged_call(*args, _orig=attr, **kwargs):
+            def staged_call(*args, _orig=attr, _name=name, **kwargs):
+                inner = object.__getattribute__(self, "_inner")
+                staged = object.__getattribute__(self, "_staged")
+                d = getattr(inner, "_d", None)
+                lst = getattr(inner, "_l", None)
+
+                # For prune operations, deep-copy the entire state before mutation
+                if _name.startswith("prune"):
+                    import copy as _copy
+                    if d is not None:
+                        snapshot = _copy.deepcopy(d)
+                        def _undo(*, _snap=snapshot, _d=d):
+                            _d.clear()
+                            _d.update(_snap)
+                        staged.append(_undo)
+                    elif lst is not None:
+                        snapshot = _copy.deepcopy(lst)
+                        def _undo(*, _snap=snapshot, _lst=lst):
+                            _lst[:] = _snap
+                        staged.append(_undo)
+                    return _orig(*args, **kwargs)
+
+                # For non-prune mutations, capture targeted undo
+                undo = None
+                if d is not None:
+                    undo = _capture_dict_undo(d, _name, args, kwargs)
+                elif lst is not None:
+                    undo = _capture_list_undo(lst, _name, args)
+
                 result = _orig(*args, **kwargs)
-                staged.append(lambda: None)  # track the write for commit/rollback
+
+                if undo is not None:
+                    staged.append(undo)
+                else:
+                    staged.append(lambda: None)
+
                 return result
 
             return staged_call
@@ -734,8 +822,8 @@ class InMemoryStorage:
     """In-memory ``StoragePort`` implementation.
 
     Writes are applied immediately (backward-compatible).
-    ``commit()`` and ``rollback()`` are tracked (not no-ops) so callers
-    can observe whether a unit of work was committed or rolled back (#241).
+    ``commit()`` finalizes pending changes by discarding the undo log.
+    ``rollback()`` discards uncommitted changes by replaying undos.
     """
 
     def __init__(self) -> None:
@@ -789,13 +877,13 @@ class InMemoryStorage:
         self.portfolio_attachments = _StageProxy(self.portfolio_attachments, s)
 
     def commit(self) -> None:
-        """Apply all staged writes (no-op when nothing is staged)."""
-        for action in self._staged:
-            action()
+        """Finalize pending changes by discarding the undo log."""
         self._staged.clear()
 
     def rollback(self) -> None:
-        """Discard all staged writes."""
+        """Discard uncommitted changes by replaying undos in reverse."""
+        for undo in reversed(self._staged):
+            undo()
         self._staged.clear()
 
     def healthcheck(self) -> bool:
