@@ -170,13 +170,15 @@ services:
       COMPUTER_USE_MODE: ${COMPUTER_USE_MODE:-som}
       COMPUTER_USE_APPROVALS: ${COMPUTER_USE_APPROVALS:-manual}
       CUA_TELEMETRY: ${CUA_TELEMETRY:-false}
-      # --- Opt-in advanced capabilities (default OFF/safe; flip to enable) ------
-      # All four default to today's behavior, so an out-of-the-box deploy is
-      # unchanged; set the env var to opt in.
-      # Smart LLM routing (#298): route each task to the best-fit local/cloud
-      # endpoint by capability + cost tier (prefers local) instead of the plain
-      # context-window tier ladder.
-      LLM_SMART_ROUTING: ${LLM_SMART_ROUTING:-false}
+      # --- Advanced capabilities --------------------------------------------
+      # Smart LLM routing (#298) is ON by default: route each task to the
+      # best-fit local/cloud endpoint by capability + cost tier (prefers local)
+      # instead of the plain context-window tier ladder. The reorder is additive
+      # (every tier stays as a fallback) and a no-op when no router-preferred
+      # endpoint exists, so an out-of-the-box deploy still behaves identically
+      # until you configure a local/cheaper endpoint. Set =false to pin the
+      # plain cloud-first ladder. The remaining flags below default OFF/safe.
+      LLM_SMART_ROUTING: ${LLM_SMART_ROUTING:-true}
       LLM_SMART_ROUTING_PREFER_LOCAL: ${LLM_SMART_ROUTING_PREFER_LOCAL:-true}
       # Company research → cover letters (#299): enrich generated cover letters with
       # capped/budgeted deep research about the employer. OFF by default: it widens

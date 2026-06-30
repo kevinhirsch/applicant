@@ -527,9 +527,13 @@ class Settings(BaseSettings):
     # endpoint (e.g. a local Ollama/OpenAI-compatible model under the
     # local-preference policy) is walked first by OpenAICompatibleLLM. The
     # existing context-window tier-walk/fallback is preserved within that order.
-    # Default OFF: behaviour is byte-identical to today (ladder built straight
-    # from setup_service.build_ladder()) until an operator opts in.
-    llm_smart_routing: bool = Field(default=False, alias="LLM_SMART_ROUTING")
+    # Default ON: the router reorders the ladder per its policy. This is safe
+    # because the reorder is additive (every tier is retained as a fallback
+    # rung) and a no-op when no router-preferred endpoint exists — with the
+    # default prefer-local policy and no local endpoint configured, the ladder
+    # is returned unchanged (see order_ladder_by_router's no-stranding path).
+    # Set LLM_SMART_ROUTING=false to pin the byte-identical cloud-first ladder.
+    llm_smart_routing: bool = Field(default=True, alias="LLM_SMART_ROUTING")
     # Prefer a local model when smart routing is ON and a local endpoint is
     # configured and online (keeps tokens free/on-box, FR-LLM-5/NFR-TOKEN-1).
     llm_smart_routing_prefer_local: bool = Field(
