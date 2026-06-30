@@ -292,6 +292,35 @@ function _wireToastSwipe(el) {
   el.addEventListener('touchcancel', endSwipe);
 }
 
+// #462 (FR-UIKIT-1/3) — re-back the toast through the vendored AppKit Notice kit
+// (appkitNotice.js). Rather than re-implement the toast on the kit's corner-toast host
+// (which would change the singleton `#toast` element, its timing, swipe, and stacking that
+// many modules depend on), we COMPOSE the kit's `.on-card` notice chrome onto the EXISTING
+// `#toast` element: the kit owns the visual language (one shared card/severity/border family),
+// the legacy element keeps owning show/hide/timer/swipe — so showToast's API + behaviour are
+// byte-for-byte unchanged. Degrades gracefully to the pre-kit look if the kit global is absent
+// (no hard dependency): we only ADD classes the kit's stylesheet styles, never remove the
+// existing `.toast`/`.error`/`.show` chrome.
+//
+// `severity` ∈ info | error (success uses the default/info tint; the green check is the
+// caller's leadingIcon). Idempotent: it ensures the kit CSS once, then re-skins in place.
+function _applyNoticeKitChrome(el, severity) {
+  if (!el) return;
+  // Always carry the kit's base card class so the one notice chrome applies.
+  el.classList.add('on-card', 'on-toast');
+  // Severity tint — clear any prior, then apply the requested skin. The kit styles these
+  // via `.on-card.on-sev-*`; with the kit CSS absent they are inert no-op classes.
+  el.classList.remove('on-sev-info', 'on-sev-error', 'on-sev-success');
+  el.classList.add(severity === 'error' ? 'on-sev-error' : 'on-sev-info');
+  // Ensure the kit's stylesheet is injected (the kit ensures it lazily on first create()).
+  // Touch the kit seam if present so `.on-card`/`.on-toast`/`.on-sev-*` are styled; absent
+  // kit ⇒ we simply fall back to the legacy `.toast` rules already on the element.
+  try {
+    const kit = (typeof window !== 'undefined') && window.AppkitNoticeKit;
+    if (kit && typeof kit.ensureZone === 'function') kit.ensureZone();
+  } catch (_) { /* fail-open: keep the legacy toast look */ }
+}
+
 /**
  * Show success toast message
  */
@@ -300,6 +329,7 @@ export function showToast(msg, durationOrOpts) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
+  _applyNoticeKitChrome(toastEl, 'info');
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
@@ -426,6 +456,7 @@ export function showError(msg) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
+  _applyNoticeKitChrome(toastEl, 'error');
   toastEl.textContent = msg;
   toastEl.classList.add('error');
   toastEl.style.left = '';
