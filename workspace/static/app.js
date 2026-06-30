@@ -1331,6 +1331,15 @@ function initializeEventListeners() {
               e.title = e.dataset.applicantLockTitle;
               delete e.dataset.applicantLockTitle;
             }
+            // A control can flip active after having been locked on an earlier
+            // tick (e.g. memory/mind share nav_ids — one section activates while
+            // the other stays gated). If we leave the capture-phase guard in
+            // place it keeps swallowing clicks, so the control looks enabled but
+            // opens nothing. Tear it down so the launcher's own handler can run.
+            if (e._applicantGuard) {
+              e.removeEventListener('click', e._applicantGuard, true);
+              delete e._applicantGuard;
+            }
           } else {
             e.classList.add('applicant-locked');
             e.setAttribute('aria-disabled', 'true');
@@ -1341,9 +1350,15 @@ function initializeEventListeners() {
             // Capture-phase guard: stop the click before the element's own
             // launcher handler (registered in bubble phase) can run. CSS
             // pointer-events:none already blocks mouse clicks; this also covers
-            // keyboard activation and any programmatic dispatch.
+            // keyboard activation and any programmatic dispatch. Surface honest
+            // feedback (a toast) instead of swallowing the click silently — a
+            // locked control that does nothing reads as broken.
             if (!e._applicantGuard) {
-              e._applicantGuard = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+              e._applicantGuard = (ev) => {
+                ev.stopPropagation();
+                ev.preventDefault();
+                try { uiModule.showToast('Finish setup to unlock this'); } catch (_) {}
+              };
               e.addEventListener('click', e._applicantGuard, true);
             }
           }
@@ -2304,16 +2319,19 @@ function initializeEventListeners() {
     'tools-section':       '#tools-section',
     // Per-tool visibility — fine-grained control over which entries show
     // inside the Tools section in the sidebar.
-    'tool-calendar':       '#tool-calendar-btn',
+    //
+    // White-label: the off-product vendored tools (calendar, cookbook,
+    // research, the duplicate image gallery, notes, tasks, theme) are
+    // DELIBERATELY absent from this map. They carry an inline
+    // `style="display:none"` in index.html, and applyUIVis must never touch
+    // them — for any key present here applyUIVis force-sets el.style.display
+    // (to '' when visible), which would re-reveal them at runtime. Keeping
+    // them out of the map lets the inline display:none hold unconditionally,
+    // regardless of any stale localStorage. Their Appearance toggle rows are
+    // likewise removed so a user cannot re-enable an off-product surface.
     'tool-compare':        '#tool-compare-btn',
-    'tool-cookbook':       '#tool-cookbook-btn',
-    'tool-research':       '#tool-research-btn',
-    'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
     'tool-memory':         '#tool-memory-btn',
-    'tool-notes':          '#tool-notes-btn',
-    'tool-tasks':          '#tool-tasks-btn',
-    'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',

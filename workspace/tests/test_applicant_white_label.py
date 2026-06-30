@@ -22,8 +22,28 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = _REPO / "static" / "index.html"
+_APP_JS = _REPO / "static" / "app.js"
 _PRESETS = _REPO / "static" / "js" / "presets.js"
 _CALENDAR = _REPO / "static" / "js" / "calendar.js"
+
+# The UI_VIS_MAP keys for the 7 vendored sidebar tools. Inline display:none in
+# index.html (HIDDEN_SIDEBAR_IDS) is NOT enough on its own: app.js
+# applyUIVis(loadUIVis()) iterates UI_VIS_MAP and force-sets el.style.display
+# for every key it contains — to '' (visible) unless the key is in
+# UI_VIS_DEFAULT_OFF and absent from localStorage — re-revealing these tools at
+# runtime. So the runtime guard below asserts each vendored key is either ABSENT
+# from UI_VIS_MAP (preferred — inline display:none then holds unconditionally) or
+# present in UI_VIS_DEFAULT_OFF. This is the assertion that would FAIL on the
+# pre-fix main (where the keys sit in UI_VIS_MAP and not in DEFAULT_OFF).
+VENDORED_UI_VIS_KEYS = [
+    "tool-calendar",
+    "tool-cookbook",
+    "tool-research",
+    "tool-gallery",
+    "tool-notes",
+    "tool-tasks",
+    "tool-theme",
+]
 
 # The 7 vendored sidebar tools that must NOT render as visible Applicant
 # surfaces. (The real Applicant surfaces — gallery/assistant/compare/debug/
@@ -219,6 +239,71 @@ def test_vendored_settings_cards_are_hidden():
         assert parser.hidden_for[toggle_id], (
             f"the Settings card holding {toggle_id} is VISIBLE — vendored AI-media "
             f"subsystem must be hidden (display:none) in the white-label front door"
+        )
+
+
+def _parse_app_js_vis() -> tuple[set[str], set[str]]:
+    """Return (UI_VIS_MAP keys, UI_VIS_DEFAULT_OFF members) parsed from app.js.
+
+    Pure string/regex parse — no node, no network — so it runs in the hermetic
+    front-door lane while still capturing the *runtime* behaviour of applyUIVis.
+    """
+    text = _APP_JS.read_text(encoding="utf-8")
+
+    map_m = re.search(r"const\s+UI_VIS_MAP\s*=\s*\{(.*?)\}", text, re.DOTALL)
+    assert map_m, "UI_VIS_MAP object not found in app.js — symbol may have drifted"
+    # Keys are the quoted identifiers on the left of each `'key': 'selector'` pair.
+    map_keys = set(re.findall(r"'([^']+)'\s*:", map_m.group(1)))
+
+    off_m = re.search(
+        r"const\s+UI_VIS_DEFAULT_OFF\s*=\s*new\s+Set\(\[(.*?)\]\)", text, re.DOTALL
+    )
+    assert off_m, "UI_VIS_DEFAULT_OFF set not found in app.js — symbol may have drifted"
+    default_off = set(re.findall(r"'([^']+)'", off_m.group(1)))
+
+    return map_keys, default_off
+
+
+def test_vendored_tools_not_re_revealed_at_runtime():
+    """Runtime guard: applyUIVis must not force the 7 vendored tools visible.
+
+    Static index.html display:none alone passed while the live UI was wrong
+    (PR #542) because applyUIVis overwrites inline display for every UI_VIS_MAP
+    key. Each vendored key must therefore be absent from UI_VIS_MAP (so applyUIVis
+    never touches it) or, failing that, present in UI_VIS_DEFAULT_OFF.
+    """
+    map_keys, default_off = _parse_app_js_vis()
+    for key in VENDORED_UI_VIS_KEYS:
+        honoured = key not in map_keys or key in default_off
+        assert honoured, (
+            f"UI_VIS_MAP key '{key}' is present in UI_VIS_MAP and absent from "
+            f"UI_VIS_DEFAULT_OFF — applyUIVis will force-set its display to '' and "
+            f"re-reveal this vendored tool at runtime despite the inline "
+            f"display:none. Drop it from UI_VIS_MAP or add it to UI_VIS_DEFAULT_OFF."
+        )
+
+
+def test_kept_applicant_vis_keys_stay_toggleable():
+    """Guard against over-hiding: the kept user-toggleable Applicant tools must
+    stay in UI_VIS_MAP and out of UI_VIS_DEFAULT_OFF (visible by default)."""
+    map_keys, default_off = _parse_app_js_vis()
+    for key in ("tool-memory", "tool-compare", "tool-library"):
+        assert key in map_keys, f"'{key}' dropped from UI_VIS_MAP — over-hiding regression"
+        assert key not in default_off, (
+            f"'{key}' is an Applicant surface but defaults OFF — over-hiding regression"
+        )
+
+
+def test_appearance_toggle_has_no_vendored_rows():
+    """The Appearance 'Sidebar' visibility list must not expose data-ui-key rows
+    for the vendored tools — otherwise a user could re-enable an off-product
+    surface that FIX 1 hid."""
+    text = _INDEX.read_text(encoding="utf-8")
+    ui_keys = set(re.findall(r'data-ui-key="([^"]+)"', text))
+    for key in VENDORED_UI_VIS_KEYS:
+        assert key not in ui_keys, (
+            f'Appearance toggle row data-ui-key="{key}" still present — remove the '
+            f"vendored-tool visibility toggle from the white-label front door"
         )
 
 
