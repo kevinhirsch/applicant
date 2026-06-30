@@ -87,6 +87,14 @@ class FakePage:
 
     expected_host: str | None = None
 
+    #: whether log_in should simulate a failure (False = always succeed).
+
+    login_fails: bool = False
+
+    #: whether the gate offers "Sign in with Google" OAuth.
+
+    offers_google: bool = False
+
 
 
 
