@@ -201,6 +201,21 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    # Gallery (#296) — the per-campaign screenshots + generated materials the
+    # engine captured, surfaced as a browsable grid via the
+    # /api/applicant/gallery/* proxy over the engine's gallery router (gated
+    # behind the engine LLM gate). Activates once a model is connected. Its own
+    # nav entry (tool-applicant-gallery-btn / rail-applicant-gallery) — distinct
+    # from the workspace's native image gallery launcher (tool-gallery-btn).
+    {
+        "key": "gallery",
+        "lane": None,
+        "title": "Gallery — screenshots & materials",
+        "nav_ids": ["tool-applicant-gallery-btn", "rail-applicant-gallery"],
+        "dormant_keys": [],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
     # Compare is engine-backed (#297): the engine's CompareService diffs two or
     # more applications/postings side-by-side (engine /api/compare → the
     # /api/applicant/compare proxy → applicantCompare.js). It lights up once a model

@@ -510,6 +510,14 @@ class ApplicantEngineClient:
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 
+    # -- gallery collections (engine routers/gallery.py, issue #296) ----------
+    # Screenshots + generated materials for a campaign, grouped into collections
+    # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
+
+    async def gallery(self, campaign_id: str) -> Any:
+        """Screenshot + material collections for a campaign (#296)."""
+        return await self._request("GET", f"/api/gallery/{campaign_id}")
+
     async def outcome_log(self, application_id: str) -> Any:
         return await self._request(
             "GET", f"/api/outcomes/applications/{application_id}/log"

@@ -833,6 +833,13 @@ app.include_router(setup_applicant_ops_routes())
 from routes.applicant_activity_routes import setup_applicant_activity_routes
 app.include_router(setup_applicant_activity_routes())
 
+# Gallery (#296) — owner-scoped proxy over the engine's gallery collections
+# (/api/applicant/gallery/*). Surfaces the per-campaign screenshots + generated
+# materials the engine already captured as a browsable grid (applicantGallery.js).
+# Separate from the workspace's own native image gallery; read-only; degrades soft.
+from routes.applicant_gallery_routes import setup_applicant_gallery_routes
+app.include_router(setup_applicant_gallery_routes())
+
 # Manual deep-research trigger — owner-scoped proxy over the engine's manual
 # research run + budget (/api/applicant/research/*). The agent auto-escalates to
 # research already; this gives the user a front-door "Research this" affordance

@@ -26,6 +26,7 @@ from applicant.app.routers import (
     documents,
     feedback,
     fonts,
+    gallery,
     mcp,
     model_endpoints,
     notifications,
@@ -68,5 +69,6 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(notifications.router)
     app.include_router(research.router)
     app.include_router(admin.router)
+    app.include_router(gallery.router)
     app.include_router(update.router)
     app.include_router(mcp.router)
