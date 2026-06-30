@@ -25,7 +25,7 @@ export default function createResearchSynapse(container, opts = {}) {
   const cx = W / 2, cy = H / 2;
 
   const wrap = document.createElement('div');
-  wrap.className = 'research-synapse' + (opts.compact ? ' research-synapse-compact' : '');
+  wrap.className = 'research-synapse og-card' + (opts.compact ? ' research-synapse-compact' : '');
   wrap.innerHTML = `
     <div class="rs-stage">
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">

@@ -100,7 +100,7 @@ function _renderSkills(skills) {
       No saved playbooks yet. The assistant writes these from its own work.</div>`;
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((s) => `
-    <li class="memory-item applicant-mind-skill" data-skill="${esc(s.name)}" tabindex="0"
+    <li class="memory-item og-card applicant-mind-skill" data-skill="${esc(s.name)}" tabindex="0"
         role="button" title="Open this playbook"
         style="border:1px solid var(--border,#3334);border-radius:8px;
         padding:8px 10px;margin:6px 0;cursor:pointer;">
@@ -141,7 +141,7 @@ function _renderCuration(curation) {
            Heads up: this note mentions taking an action on its own — it is a suggestion only and
            grants no permission.</div>`
       : '';
-    return `<li class="memory-item" data-proposal-id="${esc(p.id)}"
+    return `<li class="memory-item og-card" data-proposal-id="${esc(p.id)}"
         style="border:1px solid var(--border,#3334);border-radius:8px;padding:8px 10px;margin:6px 0;">
       <div>${summary}</div>${flag}
       <div style="display:flex;gap:8px;margin-top:8px;">

@@ -286,7 +286,7 @@ function _renderRuns(host, items) {
     const when = _relTime(_runTime(run));
     const meta = [summary, when].filter(Boolean).join(' · ');
     return `
-      <div class="memory-item" style="display:block;padding:9px 10px;border-bottom:1px solid var(--border);">
+      <div class="memory-item og-card" style="display:block;padding:9px 10px;border-bottom:1px solid var(--border);">
         <div style="font-size:12px;font-weight:500;line-height:1.35;">${esc(intent)}</div>
         ${meta ? `<div class="memory-item-meta" style="font-size:10.5px;opacity:0.6;margin-top:3px;">${esc(meta)}</div>` : ''}
       </div>`;
