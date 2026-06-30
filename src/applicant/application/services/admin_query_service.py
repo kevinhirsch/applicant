@@ -89,6 +89,43 @@ class AdminQueryService:
             for s in self._storage.screenshots.list_for_application(application_id)
         ]
 
+    # --- gallery collections (issue #296) ---------------------------------
+    def gallery(self, campaign_id: CampaignId) -> dict:
+        """Gallery read-model: per-campaign screenshot + material collections (#296).
+
+        Reuses the SAME real read sources as the debug surface — no new storage,
+        no new state. Screenshots come from the campaign-wide screenshot batch
+        (real fields ``page_ref``/``page_url``); materials come from the generated-
+        materials repo (real fields ``type``/``storage_path``/``approved``/
+        ``content``). Both are grouped into "collections" so a simple grid view can
+        render them. Query-only, so it can never regress live state.
+        """
+        screenshots = [
+            {
+                "id": str(s.id),
+                "application_id": str(s.application_id),
+                "page_ref": s.page_ref,
+                "page_url": s.page_url,
+            }
+            for s in self._storage.screenshots.list_for_campaign(campaign_id)
+        ]
+        materials = [
+            {
+                "id": str(d.id),
+                "application_id": str(d.application_id) if d.application_id else None,
+                "type": d.type.value if hasattr(d.type, "value") else str(d.type),
+                "storage_path": d.storage_path,
+                "approved": bool(d.approved),
+                "content": d.content,
+            }
+            for d in self._storage.documents.list_for_campaign(campaign_id)
+        ]
+        return {
+            "campaign_id": str(campaign_id),
+            "screenshots": {"count": len(screenshots), "items": screenshots},
+            "materials": {"count": len(materials), "items": materials},
+        }
+
     # --- detection-event history (FR-OBS-2 / FR-PREFILL-6) ----------------
     def detection_events(self, campaign_id: CampaignId) -> list[dict]:
         """Persisted detection signals for a campaign's debug history surface."""

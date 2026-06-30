@@ -843,6 +843,8 @@
     <button type="button" class="icon-rail-btn" id="rail-memory" title="Profile — what the assistant knows about you"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-email" title="Daily updates — today's roles your assistant flagged"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-research" title="Deep Research"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>
+    <!-- Gallery (#296): the Applicant engine's captured screenshots + generated materials. DISTINCT from the workspace image gallery (#rail-gallery). Greyed by the feature-activation layer until the engine reports the `gallery` section configured; opens via applicantGallery.js. -->
+    <button type="button" class="icon-rail-btn" id="rail-applicant-gallery" title="Gallery — your assistant's screenshots and generated materials"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-calendar" title="Calendar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
     <button type="button" class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <!-- Off-purpose generic tool launchers hidden for the job-application product (A2):
@@ -1098,6 +1100,21 @@
           <span class="grow">Activity</span>
         </div>
         <!-- end CRIT-ops -->
+        <!-- Gallery (#296): the per-campaign screenshots + generated materials the
+             Applicant engine captured, as a browsable grid. DISTINCT from the
+             workspace's own image gallery (#tool-gallery-btn). Greyed by the
+             feature-activation layer until the engine reports the `gallery`
+             section configured; opens via applicantGallery.js. -->
+        <div class="list-item" id="tool-applicant-gallery-btn" title="Gallery — your assistant's screenshots and generated materials">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+          <span class="grow">Gallery</span>
+        </div>
         <!-- Email / Daily updates launcher — the Applicant digest-in-app surface.
              Greyed by the feature-activation layer until the engine reports
              channels_configured + digest_in_app live. -->
@@ -2561,6 +2578,7 @@
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
+<script type="module" src="/static/js/applicantGallery.js"></script>  <!-- #296: Gallery — screenshots + generated materials -->
 <script type="module" src="/static/js/applicantModelLadder.js"></script>  <!-- FR-LLM-3: model escalation ladder editor (Settings → AI) -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
