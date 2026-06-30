@@ -107,6 +107,16 @@ _THROUGHPUT = re.compile(
     r"(?:apply|application|applications)|per day|a day|each day|/day)",
     re.IGNORECASE,
 )
+#: "approve all" / "approve everything" / "accept all today's roles" — bulk-approve
+#: every role waiting in today's digest at once (FR-DIGEST, mirrors the Portal's
+#: "Approve all" control). Routed to the digest service so each approval goes through
+#: the SAME gated decision path as a single approve — chat never bypasses the gate.
+_APPROVE_ALL = re.compile(
+    r"\bapprove[_ -]?all\b"
+    r"|\b(?:approve|accept|ok|okay|yes to)\s+(?:all|every|everything|"
+    r"(?:all\s+(?:of\s+)?)?(?:today'?s?|the)\s+(?:roles?|matches?|digest|items?|suggestions?))\b",
+    re.IGNORECASE,
+)
 #: A bare integer in the message (used to read off the requested throughput number).
 _INT = re.compile(r"(?<![\w.])(\d{1,4})(?![\w.])")
 #: "focus on remote roles" / "remote only" — refocus to remote work (criteria, FR-CRIT).
@@ -219,7 +229,7 @@ class ControlAction:
     not take (out-of-range value, or the control isn't wired) so the reply stays truthful.
     """
 
-    kind: str  # "pause" | "resume" | "throughput" | "criteria"
+    kind: str  # "pause" | "resume" | "throughput" | "criteria" | "approve_all"
     applied: bool = False
     requires_confirmation: bool = False
     ok: bool = True
@@ -253,6 +263,7 @@ class ChatService:
         *,
         attribute_service,
         criteria_service=None,
+        digest_service=None,
         llm=None,
         learning=None,
         storage=None,
@@ -273,6 +284,11 @@ class ChatService:
     ) -> None:
         self._attrs = attribute_service
         self._criteria = criteria_service
+        # FR-DIGEST: optional DigestService so a chat "approve all today's roles"
+        # directive routes a bulk approval through the SAME gated decision path the
+        # digest/Portal uses (chat never bypasses the per-application gate). Absent =>
+        # the chat declines the bulk-approve request rather than fabricating.
+        self._digest = digest_service
         self._llm = llm
         # Optional LearningService so a chat taste statement folds a cheap signal into
         # the per-campaign learning model (FR-LEARN-3: every input feeds learning).
@@ -1059,6 +1075,15 @@ class ChatService:
                 actions.append(act)
                 replies.append(line)
 
+        # --- approve all of today's digest (FR-DIGEST) ---------------------
+        # "approve all today's roles" bulk-approves every waiting digest item via the
+        # digest service — the SAME gated approve path a single approval uses (chat
+        # never bypasses the per-application decision gate). A question is informational.
+        if not is_question and _APPROVE_ALL.search(text):
+            act, line = self._do_approve_all(campaign_id)
+            actions.append(act)
+            replies.append(line)
+
         # --- daily throughput (FR-AGENT-1) ---------------------------------
         if not is_question and _THROUGHPUT.search(text):
             n = self._read_throughput_number(text)
@@ -1109,6 +1134,62 @@ class ChatService:
                 "tell me to resume."
             )
         return ControlAction(kind=verb, applied=True), line
+
+    def _do_approve_all(self, campaign_id: CampaignId) -> tuple[ControlAction, str]:
+        """Bulk-approve every waiting digest item for the campaign (FR-DIGEST).
+
+        Lists the open ``digest_approval`` pending actions, approves each posting
+        through ``digest_service.approve`` (the SAME gated decision path a single
+        approve uses — chat never bypasses the per-application gate), then clears the
+        corresponding pending action. Declines gracefully if the digest service or the
+        pending-actions read-model is not wired, and is truthful when there is nothing
+        waiting. Mirrors the Portal's "Approve all" control rather than reinventing it.
+        """
+        from applicant.application.services.pending_actions_service import (
+            KIND_DIGEST_APPROVAL,
+        )
+
+        if self._digest is None or self._pending_actions is None:
+            return (
+                ControlAction(kind="approve_all", ok=False, applied=False),
+                "I can't approve today's roles from chat right now.",
+            )
+        try:
+            pending = self._pending_actions.list_pending(campaign_id)
+        except Exception:
+            return (
+                ControlAction(kind="approve_all", ok=False, applied=False),
+                "I wasn't able to read today's roles just now.",
+            )
+        rows = [a for a in pending if getattr(a, "kind", None) == KIND_DIGEST_APPROVAL]
+        if not rows:
+            return (
+                ControlAction(kind="approve_all", applied=False),
+                "There are no roles waiting for approval right now.",
+            )
+        approved = 0
+        for action in rows:
+            posting_id = (action.payload or {}).get("posting_id")
+            if not posting_id:
+                continue
+            try:
+                self._digest.approve(posting_id)
+                self._pending_actions.resolve(action.id)
+                approved += 1
+            except Exception:
+                # Skip a row that can't be approved (already gone, etc.) and keep going;
+                # the count stays truthful about what actually went through.
+                continue
+        if approved == 0:
+            return (
+                ControlAction(kind="approve_all", ok=False, applied=False),
+                "I wasn't able to approve today's roles just now.",
+            )
+        noun = "role" if approved == 1 else "roles"
+        return (
+            ControlAction(kind="approve_all", applied=True, detail={"approved": approved}),
+            f"Done — I approved {approved} {noun} from today's roles and will start on them.",
+        )
 
     @staticmethod
     def _read_throughput_number(text: str) -> int | None:

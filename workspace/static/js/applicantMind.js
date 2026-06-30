@@ -38,7 +38,7 @@ function _ensureModalEl() {
          style="width:min(720px,94vw);max-height:88vh;overflow:auto;padding:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <h3 style="margin:0;font-size:16px;">What the assistant remembers</h3>
-        <button type="button" class="cal-btn applicant-mind-close" title="Close">Close</button>
+        <button type="button" class="cal-btn applicant-mind-close" aria-label="Close" title="Close">Close</button>
       </div>
       <div class="applicant-mind-body" style="font-size:13px;"></div>
     </div>`;

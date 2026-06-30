@@ -48,7 +48,7 @@ function _ensureModalEl() {
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:90vh;">
       <div class="modal-header">
         <h4>Saved sign-ins</h4>
-        <button id="applicant-vault-close" class="modal-close" title="Close">×</button>
+        <button id="applicant-vault-close" class="modal-close" aria-label="Close" title="Close">×</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;overflow:auto;">
         <p style="margin:0;opacity:0.75;font-size:13px;">

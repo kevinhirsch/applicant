@@ -7,7 +7,6 @@ Feature: Visible labels in the Applicant forms associate to their control
     When the Tone control label is inspected
     Then it associates to its slider via a for attribute that matches the control id
 
-  @pending
   Scenario: Every visible label associates to a real control
     Given the front-door page markup
     When the visible labels are compared to their for-associations

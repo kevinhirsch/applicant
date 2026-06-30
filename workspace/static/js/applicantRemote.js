@@ -58,7 +58,7 @@ function _ensureModalEl() {
         <h4>Live application session</h4>
         <select id="applicant-remote-picker" class="settings-select" title="Choose which live session to watch"
                 style="flex:0 1 auto;max-width:46%;display:none;"></select>
-        <button id="applicant-remote-close" class="modal-close" title="Close">×</button>
+        <button id="applicant-remote-close" class="modal-close" aria-label="Close" title="Close">×</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;overflow:auto;">
         <p style="margin:0;opacity:0.75;font-size:13px;" id="applicant-remote-intro">

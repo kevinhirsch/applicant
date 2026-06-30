@@ -206,6 +206,15 @@ async function _loadCampaigns() {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
+// Stale-response guard: each re-render bumps a token, so a slow tab/campaign
+// fetch that resolves AFTER the user has switched tab or job-search is discarded
+// instead of overwriting the now-current view with stale rows.
+let _renderToken = 0;
+
+function _renderIsStale(token) {
+  return token !== _renderToken;
+}
+
 async function _renderTab() {
   const map = {
     activity: _renderActivity,
@@ -217,10 +226,12 @@ async function _renderTab() {
     tools: _renderTools,
     update: _renderUpdate,
   };
+  const token = ++_renderToken;
   _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
   try {
-    await (map[_activeTab] || _renderActivity)();
+    await (map[_activeTab] || _renderActivity)(token);
   } catch (e) {
+    if (_renderIsStale(token)) return;
     if (e && e.status === 403) {
       _renderOffline('This view is available to admins only.');
     } else {
@@ -266,9 +277,11 @@ async function _downloadAuditLog() {
   }
 }
 
-async function _renderActivity() {
+async function _renderActivity(token) {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${ADMIN}/history/${encodeURIComponent(_campaignId)}`);
+  // Discard a late response whose tab/job-search is no longer the current one.
+  if (token != null && _renderIsStale(token)) return;
   if (data.engine_available === false) { _renderOffline(); return; }
   const apps = data.applications || [];
   if (!apps.length) { _body().innerHTML = _empty('No applications recorded for this job search yet.'); return; }
@@ -294,7 +307,7 @@ async function _renderActivity() {
     b.addEventListener('click', () => _showAppDetail(b.dataset.app));
   });
   _body().querySelectorAll('.applicant-debug-marksub').forEach((b) => {
-    b.addEventListener('click', () => _markSubmitted(b.dataset.app));
+    b.addEventListener('click', () => _markSubmitted(b.dataset.app, b));
   });
 }
 
@@ -342,14 +355,15 @@ async function _confirm(message, opts) {
   try { return window.confirm(message); } catch { return false; }
 }
 
-async function _markSubmitted(appId) {
+async function _markSubmitted(appId, btn) {
   if (!appId || _busySubmit) return;
   _busySubmit = true;
-  const ok = await _confirm(
-    'Record that you submitted this application yourself? This helps the system learn which details convert.',
-    { confirmText: 'Record it', cancelText: 'Cancel' });
-  if (!ok) return;
+  if (btn) btn.disabled = true;
   try {
+    const ok = await _confirm(
+      'Record that you submitted this application yourself? This helps the system learn which details convert.',
+      { confirmText: 'Record it', cancelText: 'Cancel' });
+    if (!ok) return;
     await _post(`${ADMIN}/applications/${encodeURIComponent(appId)}/mark-submitted`, {});
     _toast('Recorded — thanks, this helps the system learn.');
     _renderActivity();
@@ -357,6 +371,7 @@ async function _markSubmitted(appId) {
     _toast(e.message || 'Could not record that right now.');
   } finally {
     _busySubmit = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -552,9 +567,11 @@ async function _renderRun() {
       <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
       <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
     </div>`;
-  _body().querySelector('#applicant-run-save').addEventListener('click', async () => {
+  _body().querySelector('#applicant-run-save').addEventListener('click', async (ev) => {
     if (_busySave) return;
     _busySave = true;
+    const saveBtn = ev.currentTarget;
+    if (saveBtn) saveBtn.disabled = true;
     const mode = _body().querySelector('#applicant-run-mode').value;
     const tRaw = _body().querySelector('#applicant-run-target').value;
     const body = { run_mode: mode };
@@ -567,6 +584,7 @@ async function _renderRun() {
       _toast(e.message || 'Could not save run settings.');
     } finally {
       _busySave = false;
+      if (saveBtn) saveBtn.disabled = false;
     }
   });
   const runNowBtn = _body().querySelector('#applicant-run-now');

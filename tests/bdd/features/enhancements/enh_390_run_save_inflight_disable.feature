@@ -7,7 +7,6 @@ Feature: Save run settings disables itself while saving
     When the Run-now and Pause click handlers are inspected
     Then each disables its button while the request is in flight and re-enables it afterwards
 
-  @pending
   Scenario: The Save button guards against a double submit
     Given the Activity/Debug browser module
     When the Save run settings click handler is inspected

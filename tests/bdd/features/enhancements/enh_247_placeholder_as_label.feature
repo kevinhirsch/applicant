@@ -9,7 +9,6 @@ Feature: Form controls carry associated labels for screen readers
     When the form controls are counted
     Then the page contains many input, select and textarea controls
 
-  @pending
   Scenario: Most form controls have an associated label
     Given the front-door page markup
     When the explicitly associated labels are counted against the controls

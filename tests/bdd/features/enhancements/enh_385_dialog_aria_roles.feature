@@ -7,8 +7,7 @@ Feature: Every Applicant overlay exposes a dialog role and accessible name
     When their overlay markup is inspected
     Then each declares role dialog, aria-modal true, and an accessible name
 
-  @pending
   Scenario: The Portal, Remote and Vault overlays expose the dialog contract
     Given the Applicant overlay modules
     When their overlay markup is inspected for the dialog contract
-    Then each declares role dialog, aria-modal true, and an accessible name
+    Then each declares role dialog, aria-modal true, and an accessible name too

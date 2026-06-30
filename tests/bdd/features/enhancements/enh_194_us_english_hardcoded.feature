@@ -9,13 +9,11 @@ Feature: Internationalized field parsing in the engine
     When a US number written with its +1 country code is normalized
     Then it reduces to the bare ten-digit national number
 
-  @pending
   Scenario: An international number keeps its country code intact
     Given the phone-normalization core rule
     When a UK number written with its +44 country code is normalized
     Then the country code is preserved rather than mangled
 
-  @pending
   Scenario: A translation framework backs user-facing parsing
     Given the engine parsing layer
     When a localization framework is looked up

@@ -29,7 +29,26 @@ import re
 _PHONE_FIELD_MARKERS: tuple[str, ...] = ("phone", "mobile", "telephone", "fax")
 
 _NON_DIGIT_RE = re.compile(r"\D")
+_NON_DIGIT_NO_PLUS_RE = re.compile(r"[^\d+]")
 _WS_RE = re.compile(r"\s+")
+
+#: Country dialling codes whose international ``+CC`` form maps to a national
+#: number reached by replacing the code with a trunk prefix (usually ``0``).
+#: Ordered longest-first so e.g. ``+44`` is tried before ``+4``. The US/Canada
+#: ``+1`` is handled separately (its national form is the bare number, no trunk
+#: prefix), so it is not in this table. This makes a number written in its stated
+#: international form (``+44 7700 900123``) reconcile with the same number written
+#: in national form (``07700 900123``) instead of being mangled into a mismatch.
+_COUNTRY_TRUNK: tuple[tuple[str, str], ...] = (
+    ("44", "0"),   # United Kingdom
+    ("61", "0"),   # Australia
+    ("64", "0"),   # New Zealand
+    ("33", "0"),   # France
+    ("49", "0"),   # Germany
+    ("91", "0"),   # India
+    ("81", "0"),   # Japan
+    ("353", "0"),  # Ireland
+)
 
 
 def is_phone_field(name: str) -> bool:
@@ -39,16 +58,40 @@ def is_phone_field(name: str) -> bool:
 
 
 def normalize_phone(value: str) -> str:
-    """Reduce a phone number to its comparable digits.
+    """Reduce a phone number to its comparable national digits (country-aware).
 
-    Strips every non-digit (spaces, dashes, parentheses, dots, ``+``) and drops a
-    leading single-digit country code (the US ``+1`` / bare ``1`` prefix on an
-    11-digit number) so ``+1 (314) 669-5386``, ``314) 669-5386`` and
-    ``3146695386`` all reduce to ``3146695386``.
+    Formatting (spaces, dashes, parentheses, dots) is stripped. A leading country
+    code is reconciled to the number's NATIONAL form so the same number written
+    in its stated international ``+CC`` form and in its local national form
+    compare equal rather than being mangled into a mismatch:
+
+    * US/Canada ``+1`` / a bare leading ``1`` on an 11-digit number drops to the
+      bare ten-digit national number — ``+1 (314) 669-5386`` and ``3146695386``
+      both reduce to ``3146695386``;
+    * other known country codes (``+44`` UK, ``+61`` AU, …) are replaced with the
+      national trunk prefix — ``+44 7700 900123`` and ``07700 900123`` both reduce
+      to ``07700900123``.
+
+    An unrecognized ``+CC`` number is left as its digits so genuinely different
+    numbers stay different.
     """
-    digits = _NON_DIGIT_RE.sub("", value or "")
-    # Drop a leading "1" country code on an 11-digit North-American number so a
-    # "+1 314..." stated value matches a bare "314..." resume value.
+    raw = (value or "").strip()
+    # Preserve a leading "+" so an explicit international prefix can be detected
+    # before we collapse to digits.
+    had_plus = raw.startswith("+")
+    digits = _NON_DIGIT_RE.sub("", raw)
+
+    if had_plus:
+        # US/Canada: +1 NXX... → bare national (drop the single-digit code).
+        if digits.startswith("1") and len(digits) == 11:
+            return digits[1:]
+        for code, trunk in _COUNTRY_TRUNK:
+            if digits.startswith(code):
+                return trunk + digits[len(code):]
+        return digits
+
+    # No explicit "+": only the long-standing US 11-digit "1NXX..." shorthand is
+    # treated as a country code (unchanged behaviour); everything else is verbatim.
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     return digits

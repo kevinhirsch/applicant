@@ -7,13 +7,11 @@ Feature: Digest feedback and survey actions guard against re-entry
     When the Approve, Pass and Research handlers are inspected
     Then each disables its control before awaiting the request
 
-  @pending
   Scenario: Sending feedback cannot be triggered twice while a prompt is open
     Given the Daily-updates digest browser module
     When the Send-feedback handler is inspected
     Then it guards re-entry while the prompt or submit is outstanding
 
-  @pending
   Scenario: The quick survey cannot be submitted twice
     Given the Daily-updates digest browser module
     When the Quick-survey handler is inspected

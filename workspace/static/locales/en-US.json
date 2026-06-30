@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "locale": "en-US",
+    "name": "English (United States)",
+    "comment": "Source locale. Keys are referenced from index.html via data-i18n and applied at runtime by static/js/i18n.js. Other locale files mirror these keys."
+  },
+  "applicant.profile.title": "Application profile",
+  "applicant.criteria.title": "What jobs to look for",
+  "applicant.attr.title": "Saved details",
+  "applicant.style.title": "Writing style"
+}

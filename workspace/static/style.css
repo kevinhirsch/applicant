@@ -32149,6 +32149,14 @@ body.theme-frosted .modal {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #2ecc71 45%, transparent); }
   50% { box-shadow: 0 0 0 4px color-mix(in srgb, #2ecc71 12%, transparent); }
 }
+/* Honor the reduced-motion preference: the live status-strip dot keeps its
+   colour but stops the applicant-status-pulse animation for users who opt out
+   of motion. */
+@media (prefers-reduced-motion: reduce) {
+  .applicant-status-strip.is-live .applicant-status-dot {
+    animation: none !important;
+  }
+}
 
 /* ===== First-run setup wizard (static/js/applicantOnboarding.js) =====
    The wizard is re-skinned onto the SHARED workspace components — `.modal` /

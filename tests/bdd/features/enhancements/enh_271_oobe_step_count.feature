@@ -9,7 +9,6 @@ Feature: OOBE wizard step count matches the documented flow
     When the wizard steps are counted
     Then the wizard defines exactly three steps
 
-  @pending
   Scenario: The README describes the three-step OOBE flow
     Given the README first-run setup section
     When the documented OOBE step count is read
