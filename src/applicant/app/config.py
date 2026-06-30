@@ -206,6 +206,16 @@ class Settings(BaseSettings):
     # (effectively forever, matching the old hardcoded ~10 years).
     approval_timeout_days: int = Field(default=30, ge=0, alias="APPROVAL_TIMEOUT_DAYS")
 
+    # Fine-grained override for the durable approval-gate ``recv`` wait, in SECONDS
+    # (#189). The "indefinite" wait was a hardcoded ~10-year module constant with no
+    # per-deployment knob; this field makes it tunable. When set (>0) it takes
+    # precedence over ``approval_timeout_days``; 0 means "no timeout" (wait forever);
+    # unset (None) falls back to the days-based setting. Exposed in seconds so a short
+    # operational/test window (e.g. a few minutes) can be configured precisely.
+    approval_wait_seconds: float | None = Field(
+        default=None, ge=0, alias="APPROVAL_WAIT_SECONDS"
+    )
+
     # Scheduler (FR-DIG-1, FR-NOTIF-2, NFR-247-1). OFF by default so the default
     # test lane / TestClient never spins a live background loop; prod compose sets
     # it True (zero-CLI via env). When True the lifespan starts the asyncio tick

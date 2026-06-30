@@ -17,7 +17,6 @@
     Then the two loops have distinct per-loop locks
     And they share the one ledger lock that guards cross-tick state
 
-  @pending
   Scenario: New per-instance loop state is protected from silent reset
     Given the agent loop module
     Then it declares which instance state is allowed to live only for one tick

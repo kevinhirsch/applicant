@@ -11,7 +11,6 @@
     When a step result is checkpointed
     Then exactly one checkpoint file exists and it parses cleanly
 
-  @pending
   Scenario: A disk-full write surfaces a critical health signal instead of crashing the step
     Given a checkpoint orchestrator over a temp directory whose disk is full
     When a step tries to checkpoint its result

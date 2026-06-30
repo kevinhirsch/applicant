@@ -397,6 +397,23 @@ class PatchrightBrowser:
             except Exception:
                 pass
 
+    def close_all(self) -> int:
+        """Close every open browser session — used on graceful shutdown (#316).
+
+        Without this, a SIGTERM left every live page/automation session (and the
+        underlying browser process) running. Iterates a SNAPSHOT of the open
+        application ids and best-effort closes each via :meth:`close`, returning the
+        number closed. Safe to call multiple times; a second call closes nothing.
+        """
+        closed = 0
+        for app_id in list(self._sessions.keys()):
+            try:
+                self.close(app_id)
+                closed += 1
+            except Exception:  # pragma: no cover - defensive, per-session isolation
+                pass
+        return closed
+
     def _session(self, application_id: ApplicationId) -> _Session:
 
         session = self._sessions.get(str(application_id))

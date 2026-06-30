@@ -56,11 +56,16 @@ def _register_shutdown_signals() -> None:
 
 
 def _flush_checkpoints(container: Any) -> None:
-    """Flush any in-memory checkpoint state to disk (FR-DUR-1, #316).
+    """Quiesce + flush durable workflow checkpoints on shutdown (FR-DUR-1, #316).
 
-    The checkpoint shim persists on every write, so this is a no-op there.
-    On DBOS the runtime handles its own flush. Defensive logging ensures
-    we surface any unexpected failures.
+    The checkpoint shim persists on every step write, so no in-flight STEP is lost.
+    But a graceful shutdown should also leave the pending set in a clean, re-drivable
+    state so the next boot's recovery picks up exactly the interrupted workflows. This:
+
+      * calls ``orchestrator.flush()`` when the backend exposes one (DBOS flushes its
+        own queues), and
+      * snapshots ``recover_pending()`` so the count of workflows handed to the next
+        boot's drain/re-drive is logged — nothing in-progress is silently abandoned.
     """
     orch = getattr(container, "orchestrator", None)
     if orch is None:
@@ -70,10 +75,54 @@ def _flush_checkpoints(container: Any) -> None:
         if flush is not None:
             flush()
             log.info("checkpoint_flush_completed")
-        else:
-            log.info("checkpoint_flush_skipped", reason="orchestrator has no flush method")
+        # Drain check: record the pending workflows the next boot will re-drive so a
+        # shutdown mid-flight is observable, not silent (#316).
+        recover = getattr(orch, "recover_pending", None)
+        if callable(recover):
+            pending = list(recover())
+            log.info("checkpoint_drain_pending", count=len(pending))
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("checkpoint_flush_failed", error=str(exc))
+
+
+def _cleanup_browser(container: Any) -> None:
+    """Close every open browser/automation session on graceful shutdown (#316).
+
+    Without this a SIGTERM leaves live pages and the underlying browser process
+    running. Best-effort closes all sessions via the adapter's ``close_all``.
+    """
+    browser = getattr(container, "browser", None)
+    if browser is None:
+        return
+    try:
+        close_all = getattr(browser, "close_all", None)
+        if callable(close_all):
+            closed = close_all()
+            log.info("browser_cleanup_completed", closed=closed)
+        else:  # pragma: no cover - all real adapters expose close_all
+            log.info("browser_cleanup_skipped", reason="browser has no close_all method")
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("browser_cleanup_failed", error=str(exc))
+
+
+def _cleanup_vault(container: Any) -> None:
+    """Release the credential vault's in-memory key on shutdown (#316, FR-VAULT-3).
+
+    Drops the in-memory master-key box so the unsealing key does not linger in process
+    memory after the engine stops. The sealed records on disk are untouched.
+    """
+    credentials = getattr(container, "credentials", None)
+    if credentials is None:
+        return
+    try:
+        close = getattr(credentials, "close", None)
+        if callable(close):
+            close()
+            log.info("credential_vault_closed")
+        else:  # pragma: no cover - all real stores expose close
+            log.info("credential_vault_close_skipped", reason="store has no close method")
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("credential_vault_close_failed", error=str(exc))
 
 
 def _cleanup_sandboxes(container: Any) -> None:
@@ -284,11 +333,18 @@ async def lifespan(app: FastAPI):
             log.warning("scheduler_stop_error", error=str(exc))
         log.info("scheduler_stopped")
 
-    # Flush any in-memory checkpoint state to disk (FR-DUR-1, #316).
+    # quiesce + drain durable workflow checkpoints so no in-flight step is abandoned
+    # and the next boot re-drives exactly the interrupted workflows (FR-DUR-1, #316).
     _flush_checkpoints(container)
 
     # Tear down all live sandbox sessions (FR-SANDBOX-4, #316).
     _cleanup_sandboxes(container)
+
+    # Close every open browser/automation session (FR-STEALTH-3, #316).
+    _cleanup_browser(container)
+
+    # Release the credential vault's in-memory key (FR-VAULT-3, #316).
+    _cleanup_vault(container)
 
     if getattr(container, "engine", None) is not None:
         container.engine.dispose()

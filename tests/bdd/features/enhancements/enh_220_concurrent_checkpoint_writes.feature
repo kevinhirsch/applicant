@@ -17,7 +17,6 @@
     Then two different workflow ids resolve to two different locks
     And the same workflow id resolves to the same lock
 
-  @pending
   Scenario: Only one tick may advance a parked workflow at a time
     Given a checkpoint orchestrator over a temp directory
     Then it exposes a cross-process guard binding a workflow to a single advancing tick
