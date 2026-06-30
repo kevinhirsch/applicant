@@ -271,4 +271,27 @@ def setup_applicant_email_routes() -> APIRouter:
         payload = {"campaign_id": body.campaign_id, "answers": body.answers}
         return await _engine_call(lambda e: e.feedback_survey(payload))
 
+    
+    # ── Two-way email workflow (#291) ───────────────────────────────────
+    # The engine can send digests AND receive replies/feedback; these endpoints
+    # enable the full round-trip so the user never leaves the workspace.
+
+    @router.get("/inbox")
+    async def email_inbox(request: Request) -> dict:
+        """List engine-sent notifications/digests (the in-app inbox)."""
+        require_user(request)
+        return await _engine_call(lambda e: e.list_notifications())
+
+    @router.post("/inbox/{notification_id}/dismiss")
+    async def dismiss_notification(notification_id: str, request: Request) -> dict:
+        """Dismiss a notification from the inbox."""
+        require_user(request)
+        return await _engine_call(lambda e: e.dismiss_notification(notification_id))
+
+    @router.post("/campaigns/{campaign_id}/digest/deliver")
+    async def manual_digest_delivery(campaign_id: str, request: Request) -> dict:
+        """Manually trigger digest delivery for a campaign."""
+        require_user(request)
+        return await _engine_call(lambda e: e.deliver_digest(campaign_id))
+
     return router

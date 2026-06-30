@@ -741,6 +741,68 @@ def setup_applicant_internal_routes() -> APIRouter:
             return {"interviews": []}
         return {"interviews": detect_interviews(raw)}
 
+    @router.post("/calendar/events")
+    async def calendar_create_event(request: Request):
+        """LANE A — create a calendar event on behalf of the owner.
+
+        The engine calls this to schedule interview events or reminders in the
+        workspace calendar. Body: ``{title, start, end?, notes?, location?}``.
+        Returns the created event's id. Degrades to 502 on DB failure.
+        """
+        verify_internal_token(request)
+        owner = internal_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Body must be a JSON object")
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="'title' is required")
+        start = (body.get("start") or "").strip()
+        if not start:
+            raise HTTPException(status_code=400, detail="'start' is required")
+        try:
+            from datetime import datetime
+            dt_start = datetime.fromisoformat(start)
+            dt_end = None
+            if body.get("end"):
+                dt_end = datetime.fromisoformat(str(body["end"]).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid datetime: {exc}") from exc
+        try:
+            from core.database import CalendarCal, CalendarEvent, SessionLocal
+            db = SessionLocal()
+            try:
+                cal = db.query(CalendarCal).filter(
+                    CalendarCal.owner == owner if owner else True
+                ).first()
+                if not cal:
+                    cal = CalendarCal(owner=owner or "", name="Applicant")
+                    db.add(cal)
+                    db.flush()
+                event = CalendarEvent(
+                    calendar_id=cal.id,
+                    title=title,
+                    dtstart=dt_start,
+                    dtend=dt_end,
+                    description=body.get("notes") or "",
+                    location=body.get("location") or "",
+                    owner=owner or "",
+                )
+                db.add(event)
+                db.commit()
+                return {"id": str(event.id), "ok": True}
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("calendar_create_event failed: %s", exc)
+            raise HTTPException(status_code=502, detail="Failed to create event") from exc
+
     @router.post("/research")
     async def research(request: Request):
         """LANE B — run the workspace's native deep-research for the owner.
