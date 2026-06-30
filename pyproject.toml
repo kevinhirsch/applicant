@@ -55,7 +55,13 @@ dependencies = [
 # `patchright install chromium`) to drive the real adapter (integration-only).
 browser = [
     "camoufox[geoip]",
-    "patchright",
+    # Pin the REAL patchright (the undetected Playwright fork). Unpinned, the
+    # resolver can land on the non-importable 0.0.1 name-squatter stub on PyPI —
+    # which makes `from patchright.sync_api import ...` (page_source.py) raise
+    # ImportError and SILENTLY fall back to vanilla playwright, losing patchright's
+    # automation-tell stripping (FR-STEALTH-1). The 1.x series is the genuine fork
+    # (current 1.61.x); pin its floor so a real, importable build is always chosen.
+    "patchright>=1.48",
 ]
 # Durable orchestration backbone (FR-DUR-3). The DEFAULT runtime backend is the
 # file-backed checkpoint SHIM (``ORCHESTRATOR_BACKEND=shim``), which needs NO extra
@@ -120,6 +126,21 @@ packages = ["src/applicant"]
 
 [tool.uv]
 package = true
+
+# The `browser` and `eval` extras are mutually exclusive at resolve time: the real
+# patchright (browser, pyee>=12) and browsergym (eval, which pins playwright==1.44 →
+# pyee==11.1.0) disagree on a shared transitive dep, so they cannot co-resolve into
+# one lockfile. They are never installed together — the deploy image installs only
+# `--extra browser` (docker/Dockerfile), and `eval` is a separate integration-only
+# lane — so declaring them conflicting lets uv lock both extras independently instead
+# of failing the whole resolution. (Before pinning patchright they "co-existed" only
+# because the unpinned 0.0.1 name-squatter stub had no real deps.)
+conflicts = [
+    [
+        { extra = "browser" },
+        { extra = "eval" },
+    ],
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -100,6 +100,7 @@ class ScoringService:
             ViabilityScored(
                 posting_id=posting_id,
                 score=scoring.score,
+                campaign_id=posting.campaign_id,
             )
         )
         return scoring
