@@ -16,7 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
 ENV HOME=/app \
     XDG_CACHE_HOME=/app/.cache \
     XDG_DATA_HOME=/app/.local/share \
-    XDG_CONFIG_HOME=/app/.config
+    XDG_CONFIG_HOME=/app/.config \
+    PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
 # Install uv (the project toolchain). Pinned by digest (#160, #374) — `:latest` is
 # the worst-case mutable tag, so copy uv from an immutable image (tag in the comment
@@ -118,6 +119,19 @@ RUN uv sync --no-dev --extra browser --frozen --no-install-project \
 # layer depends only on the deps it is cached across code changes instead of
 # re-downloading hundreds of MB on every update.
 RUN uv run --no-sync camoufox fetch
+
+# Fetch the patchright/Chromium browser binary for the FALLBACK chromium engine
+# (BROWSER_ENGINE=chromium). The default chromium launch uses channel=chrome (the
+# real Google Chrome .deb above), but patchright's driver still needs a browser
+# bundle that MATCHES the installed patchright/playwright revision — patchright
+# `install chromium` pulls exactly that matched revision, which avoids the
+# "bundled chromium vs driver" revision mismatch a hand-pinned download would risk.
+# Anchored under /app via PLAYWRIGHT_BROWSERS_PATH so the binary lands in the tree
+# chowned to the non-root runtime user (same rationale as the camoufox fetch).
+# Like camoufox, this is integration-only and not exercised by CI (which does not
+# build images) — first run at deploy `compose up --build`. Must confirm there:
+# the download succeeds and the engine launches chromium without falling back.
+RUN uv run --no-sync patchright install chromium
 
 # --- Project layer (cheap; rebuilt on code changes) ---------------------------
 # Now copy the engine source and install just the local `applicant` package on top

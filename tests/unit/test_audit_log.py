@@ -199,7 +199,8 @@ class TestAuditLogServicePersistence:
             "to_state": "SCORED",
         }
 
-    def test_viability_scored_persists_with_score(self):
+    def test_viability_scored_without_campaign_is_unscoped(self):
+        """A score with no campaign_id can't be attributed to a campaign export."""
         storage = InMemoryStorage()
         bus = DomainEventBus()
         svc = AuditLogService(storage, bus=bus)
@@ -211,14 +212,28 @@ class TestAuditLogServicePersistence:
         events = storage.action_events.list_for_campaign(CampaignId(""))
         assert len(events) == 0  # no campaign/application matched
 
-        # Add campaign context this time
+    def test_viability_scored_persists_with_campaign_id(self):
+        """Regression for #547: ViabilityScored now carries campaign_id, so the
+        campaign-scoped audit export surfaces scored events."""
+        storage = InMemoryStorage()
         _make_campaign(storage, "c-1")
-        ev2 = JobDiscovered(campaign_id=CampaignId("c-1"), posting_id=JobPostingId("p-2"))
-        bus.emit(ev2)
+        bus = DomainEventBus()
+        svc = AuditLogService(storage, bus=bus)
+        svc.start()
+
+        ev = ViabilityScored(
+            posting_id=JobPostingId("p-1"),
+            score=0.85,
+            campaign_id=CampaignId("c-1"),
+        )
+        bus.emit(ev)
 
         events = storage.action_events.list_for_campaign(CampaignId("c-1"))
         assert len(events) == 1
-        assert events[0].action == "discovered"
+        assert events[0].action == "scored"
+        assert events[0].campaign_id == CampaignId("c-1")
+        assert events[0].reason == "score 0.85"
+        assert events[0].context == {"score": 0.85}
 
     def test_outcome_recorded_persists_with_reason(self):
         storage = InMemoryStorage()
@@ -570,3 +585,42 @@ class TestWiredEndToEnd:
         assert len(events) == 1
         assert events[0].action == "discovered"
         assert events[0].campaign_id == CampaignId("c-1")
+
+    def test_scoring_service_scored_event_is_campaign_scoped(self):
+        """Regression for #547: the real ScoringService.score_viability emits a
+        ViabilityScored carrying the posting's campaign_id, so the scored event
+        is surfaced by the campaign-scoped audit export (not silently dropped)."""
+        from applicant.adapters.embedding.local_embedding import LocalEmbedding
+        from applicant.application.services.scoring_service import ScoringService
+        from applicant.core.entities.job_posting import JobPosting
+
+        class _NullLLM:
+            def is_configured(self) -> bool:
+                return False
+
+            def complete(self, *a, **k):  # pragma: no cover - never called
+                raise AssertionError("LLM should not be called when unconfigured")
+
+        storage = InMemoryStorage()
+        _make_campaign(storage, "c-1")
+        posting = JobPosting(
+            id=JobPostingId("p-1"),
+            campaign_id=CampaignId("c-1"),
+            source_url="https://example.com/jobs/1",
+            title="Senior Backend Engineer",
+            company="Acme",
+            description="Build Python services.",
+        )
+        storage.postings.add(posting)
+        storage.commit()
+
+        svc = AuditLogService(storage)
+        svc.start()
+
+        scorer = ScoringService(storage, _NullLLM(), LocalEmbedding())
+        scorer.score_viability(JobPostingId("p-1"))
+
+        events = storage.action_events.list_for_campaign(CampaignId("c-1"))
+        scored = [e for e in events if e.action == "scored"]
+        assert len(scored) == 1, "scored event must surface in the campaign audit export"
+        assert scored[0].campaign_id == CampaignId("c-1")
