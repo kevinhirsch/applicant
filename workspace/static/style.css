@@ -80,6 +80,37 @@
   --window-sheet-radius: 14px;                 /* sheet top corners         */
   --window-sheet-max-h: 85dvh;                 /* sheet height (dyn. vp)    */
   --window-sheet-pad-top: 6px;                 /* tighter top (grab handle) */
+
+  /* ── AppKit design tokens (FR-UIKIT-1) ──────────────────────────────────
+     The vendored AppKit kits (appkitWindow / appkitNotice / appkitGadget /
+     appkitDecision / appkitChatHint / appkitGlass / appkitElements) consume
+     these --ow-* custom properties off the document root. Several call sites
+     read them WITHOUT an inline var() fallback (e.g. appkitChatHint's
+     --ow-glass-light-color / --ow-glass-radius, appkitWindow's --ow-ui-font /
+     --ow-scrim-bg, the glass pointer-specular --ow-spec-x/y), so the shell
+     must define them here or those surfaces resolve to invalid/empty. Values
+     mirror the kits' own inline fallbacks so adopting the token layer is a
+     no-op visually while making the tokens real (single source of truth).   */
+  --ow-ui-font: var(--font, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --ow-fs-caption: .75rem;                     /* caption / fine print      */
+  --ow-fs-label: .8125rem;                     /* control labels            */
+  --ow-fs-heading: .8125rem;                   /* gadget headings           */
+  --ow-fs-body: .875rem;                       /* body text                 */
+  --ow-fs-title: .875rem;                      /* window / notice titles    */
+  --ow-fw-semibold: 600;                       /* semibold weight           */
+  --ow-space-1: 4px;                           /* spacing scale             */
+  --ow-space-2: 8px;
+  --ow-space-3: 12px;
+  --ow-glass-radius: 14px;                     /* kit surface corner radius */
+  --ow-glass-light-color: rgba(255,255,255,0.10);   /* light-glass tint     */
+  --ow-glass-light-fill: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04));
+  --ow-glass-text-shadow: 0 1px 1px rgba(255,255,255,0.45);
+  --ow-ios-blue: #0a84ff;                      /* accent / focus blue       */
+  --ow-scrim-bg: rgba(0,0,0,0.55);             /* modal scrim               */
+  --ow-spec-x: 0.5;                            /* glass pointer-specular X  */
+  --ow-spec-y: 0.5;                            /* glass pointer-specular Y  */
+  --ow-fly-x: 0;                               /* window fly-in origin X    */
+  --ow-fly-y: 0;                               /* window fly-in origin Y    */
 }
 
 :root.light {
