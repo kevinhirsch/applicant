@@ -397,13 +397,13 @@ def lookup_aggressiveness_surface(t07ctx):
     t07ctx["surface"] = t07ctx["surfaces"].get("resume_aggressiveness")
 
 
-@then("it is recorded as a dormant, present-but-grayed surface")
-def surface_is_dormant(t07ctx):
-    from applicant.dormant import STATUS_DORMANT
+@then("it is recorded as a live surface")
+def surface_is_live(t07ctx):
+    from applicant.dormant import STATUS_LIVE
 
     surface = t07ctx["surface"]
     assert surface is not None
-    assert surface.status == STATUS_DORMANT
+    assert surface.status == STATUS_LIVE
 
 
 @given("the résumé-aggressiveness control markup")
