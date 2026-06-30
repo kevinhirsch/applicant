@@ -80,6 +80,19 @@
   --window-sheet-radius: 14px;                 /* sheet top corners         */
   --window-sheet-max-h: 85dvh;                 /* sheet height (dyn. vp)    */
   --window-sheet-pad-top: 6px;                 /* tighter top (grab handle) */
+  /* ---- AppKit (ow-*) tokens (FR-UIKIT F1) ------------------------------ */
+  --ow-glass-backdrop: 0.62;
+  --ow-glass-rim-border: rgba(255,255,255,0.06);
+  --ow-glass-float: 0 8px 32px rgba(0,0,0,0.45);
+  --ow-btn-tint-primary: var(--accent, #e06c75);
+  --ow-focus-ring: 2px solid var(--accent, #e06c75);
+  --ow-focus-ring-w: 2px;
+  --ow-parent-radius: 10px;
+  --ow-inset: 6px;
+  --ow-slider-fill: var(--accent, #e06c75);
+  --ow-ui-font: .8rem;
+  --ow-ui-mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ow-radius: 10px;
 }
 
 :root.light {

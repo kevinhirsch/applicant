@@ -1,0 +1,24 @@
+/* ============================================================================
+   mesh-gradient.css — Mesh gradient background for the AppKit glass surface.
+   Renamed from upstream meshGradient.css per FR-UIKIT-4.
+   ========================================================================== */
+
+/* Mesh gradient base layer — a soft animated gradient behind glass surfaces.
+   Applied to a dedicated canvas or overlay via data-mesh attribute.
+   This is the lightweight version; game-specific variants are not vendored. */
+.mesh-gradient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(100, 140, 200, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(200, 100, 140, 0.10) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(80, 180, 160, 0.10) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mesh-gradient-bg {
+    transition: background 4s ease;
+  }
+}
