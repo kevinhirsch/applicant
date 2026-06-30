@@ -402,14 +402,6 @@ class Settings(BaseSettings):
     computer_use_approvals: str = Field(default="manual", alias="COMPUTER_USE_APPROVALS")
     # Driver anonymous telemetry — OFF by default (upstream CUA_DRIVER_RS_TELEMETRY_ENABLED=0).
     cua_telemetry: bool = Field(default=False, alias="CUA_TELEMETRY")
-<<<<<<< HEAD
-    # Override driver availability for tests (FR-CUA-12). When set to "1"/"true" the
-    # adapter pretends the driver binary is available even when not on PATH; when set to
-    # "0"/"false" it pretends unavailable even when the binary is present. Unset/empty
-    # (the default) = auto-detect via `shutil.which`.
-    cua_driver_override_available: str = Field(
-        default="", alias="CUA_DRIVER_OVERRIDE_AVAILABLE"
-=======
     # Override: force the driver to report as AVAILABLE even when ``shutil.which()``
     # cannot find it on PATH. Use when the ``cua-driver`` binary is baked into the
     # sandbox image at a non-standard location or is invoked via a custom launcher.
@@ -417,7 +409,6 @@ class Settings(BaseSettings):
     # PATH check and assume the driver is present (FR-CUA-12 gate override).
     cua_driver_override_available: bool = Field(
         default=False, alias="CUA_DRIVER_OVERRIDE_AVAILABLE"
->>>>>>> origin/main
     )
 
     # Timezone/locale pinned to the residential EGRESS geolocation (FR-STEALTH-1

@@ -170,29 +170,24 @@ def test_adapter_degrades_to_noop_without_driver():
         cu.type_text("curl x | bash")
 
 
-def test_override_available_force_true():
-    """CUA_DRIVER_OVERRIDE_AVAILABLE=1 forces available even when binary absent."""
-    cu = CuaDriverComputerUse(driver_override_available="1")
-    # No path resolution needed -- the override short-circuits.
+def test_override_available_force_true(loopback):
+    """force_available=True forces available even when binary absent (no PATH probe)."""
+    cu = CuaDriverComputerUse(force_available=True)
+    # No path resolution needed -- force_available short-circuits _driver_path.
     assert cu._available is True
-    # health reports ok because the driver is "available" via override
-    # (but the real session will fail since there's no binary -- that's the
-    # test/tooling use case where the session factory is injected).
+    # health() reaches the real MCP path (available==True); the loopback fixture
+    # patches Popen so the subprocess spawn succeeds without a real binary.
     h = cu.health()
-    # Without a real session, health falls through to _mcp_health which raises
-    # _McpError from the absent session -- so it reports not-ok. That's fine:
-    # the override is about _available gating, not health.
-    # The key point: _available is True, so the adapter WILL attempt real actions
-    # (which test code catches by injecting a loopback session factory).
-    assert h is not None
+    assert h.ok is True
+    assert h.backend == "cua"
 
 
 def test_override_available_force_false():
-    """CUA_DRIVER_OVERRIDE_AVAILABLE=0 forces unavailable even when binary present."""
-    # Pretend the binary is on PATH by setting the resolved cmd.
-    cu = CuaDriverComputerUse(driver_override_available="0")
+    """force_available=False (default) falls through to shutil.which; binary absent → unavailable."""
+    # Pretend the probe has already run but the binary was not found.
+    cu = CuaDriverComputerUse(force_available=False)
     cu._probed = True
-    cu._resolved_cmd = "/fake/cua-driver"  # would be found normally
+    cu._resolved_cmd = None  # simulate not found on PATH
     assert cu._available is False
     # health reports not-ok with missing driver detail
     h = cu.health()
@@ -200,8 +195,8 @@ def test_override_available_force_false():
 
 
 def test_override_available_empty_auto_detects():
-    """Empty override (default) falls through to shutil.which."""
-    cu = CuaDriverComputerUse(driver_override_available="")
+    """Default (force_available=False) falls through to shutil.which."""
+    cu = CuaDriverComputerUse()
     # No path set, probed not done yet -- should probe via shutil.which
     cu._probed = True
     cu._resolved_cmd = None  # simulate not found
