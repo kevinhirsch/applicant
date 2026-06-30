@@ -8,7 +8,7 @@ Feature: Expose the kit house themes (theme-frosted / glass-full) in Settings vi
     Given the UI-kit migration item "X4"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: X4 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "X4"
     Then its post-migration kit target is satisfied

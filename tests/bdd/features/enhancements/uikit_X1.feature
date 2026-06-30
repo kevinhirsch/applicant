@@ -8,7 +8,7 @@ Feature: White-label the vendored kit — rename upstream codenamed modules to a
     Given the UI-kit migration item "X1"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: X1 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "X1"
     Then its post-migration kit target is satisfied

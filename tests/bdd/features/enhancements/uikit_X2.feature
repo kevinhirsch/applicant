@@ -8,7 +8,7 @@ Feature: Kit components preserve the a11y affordances won in #379-#394
     Given the UI-kit migration item "X2"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: X2 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "X2"
     Then its post-migration kit target is satisfied

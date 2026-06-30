@@ -8,7 +8,7 @@ Feature: Vendored kit modules pass node --check with no bundler and respect the 
     Given the UI-kit migration item "X3"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: X3 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "X3"
     Then its post-migration kit target is satisfied
