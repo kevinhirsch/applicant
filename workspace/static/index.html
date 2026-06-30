@@ -213,8 +213,16 @@
       }, { once: true });
     })();
   </script>
-  <link id="app-style-css" rel="stylesheet" href="/static/style.css" media="print" onload="this.media='all'">
+  <link id="app-style-css" rel="stylesheet" href="/static/style.css" media="print">
   <noscript><link rel="stylesheet" href="/static/style.css"></noscript>
+  <script nonce="{{CSP_NONCE}}">
+    (function(){
+      var s = document.getElementById('app-style-css');
+      if (!s) return;
+      if (s.sheet) { s.media = 'all'; }
+      else { s.addEventListener('load', function(){ s.media = 'all'; }, { once: true }); }
+    })();
+  </script>
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
