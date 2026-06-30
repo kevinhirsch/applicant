@@ -87,7 +87,7 @@ DEF_IMG="$(pick_default "${IMG_STORES[@]}")"
 # Defaults sized for the full stack (front-door UI image build + engine + postgres
 # + searxng + chromadb + ntfy). The first UI build is heavy, so the disk default is
 # generous; override any of these in the wizard's "advanced" mode.
-VMID="$NEXTID"; NAME="applicant"; DISK="32"; CORES="4"; RAM="8192"; BRIDGE="vmbr0"; IMG_STORE="$DEF_IMG"
+VMID="$NEXTID"; NAME="applicant"; DISK="40"; CORES="4"; RAM="8192"; BRIDGE="vmbr0"; IMG_STORE="$DEF_IMG"
 
 MODE="$(whiptail --title "$APP_NAME deploy (Proxmox VM)" --menu \
   "Create a Docker-ready Ubuntu Server 24.04 LTS VM and deploy $APP_NAME.\nChoose a setup mode:" 15 70 2 \
@@ -269,7 +269,7 @@ EOF
 if [[ -n "$IP" ]]; then
 cat <<EOF
   ${GN}Open:${CL}          http://${IP}:${APP_PORT}   (allow a few minutes for the first build)
-  ${GN}Next:${CL}          finish the in-browser OOBE wizard (LLM → channels → fonts → onboarding).
+  ${GN}Next:${CL}          finish the in-browser OOBE wizard (Connect a model → Your profile).
 
   Watch first-boot provisioning:
     qm guest exec ${VMID} -- tail -n40 /var/log/cloud-init-output.log
