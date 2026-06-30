@@ -46,6 +46,22 @@ def safe_join(base_dir: str, *parts: str) -> str:
 
     Use this at the boundary where a caller-supplied value first becomes a path;
     do the owner-scoping check BEFORE calling this, never instead of it.
+
+    NOTE: delegates to core.safe_path.safe_join when available; inlines the same
+    logic otherwise so this module stays importable without the full workspace deps.
     """
-    from core.safe_path import safe_join as _core_safe_join
-    return _core_safe_join(base_dir, *parts)
+    try:
+        from core.safe_path import safe_join as _core_safe_join
+        return _core_safe_join(base_dir, *parts)
+    except ImportError:
+        # Fallback: inline the containment logic (identical behaviour, no extra deps).
+        if not parts:
+            raise ValueError("safe_join requires at least one path component")
+        base = os.path.realpath(base_dir)
+        candidate = os.path.realpath(os.path.join(base, *parts))
+        if not inside_base_dir(base, candidate):
+            raise ValueError(
+                f"refusing path outside allowed base: {os.path.join(*parts)!r} "
+                f"escapes {base_dir!r}"
+            )
+        return candidate
