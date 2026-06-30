@@ -97,7 +97,12 @@ def test_configured_llm_reply_is_used():
     assert sent[0].role == "system"
     assert sent[1].role == "user"
     assert "Known missing details" in sent[1].content  # gaps folded into the prompt
-    assert llm.calls[0]["max_tokens"] == 256
+    # D2: the visible-reply budget was raised off 256 so a reasoning model's hidden
+    # reasoning tokens don't starve the visible answer into an empty (canned) reply.
+    from applicant.application.services.chat_service import _CHAT_MAX_TOKENS
+
+    assert llm.calls[0]["max_tokens"] == _CHAT_MAX_TOKENS
+    assert _CHAT_MAX_TOKENS >= 1024
 
 
 def test_llm_exception_degrades_to_deterministic_reply():

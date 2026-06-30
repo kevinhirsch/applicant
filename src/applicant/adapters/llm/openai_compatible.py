@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -214,6 +215,7 @@ class OpenAICompatibleLLM:
         self,
         *,
         ladder: TierLadder | None = None,
+        ladder_provider: Callable[[], TierLadder | None] | None = None,
         provider: str = "",
         base_url: str = "",
         api_key: str = "",
@@ -237,7 +239,17 @@ class OpenAICompatibleLLM:
                     )
                 ]
             )
-        self._ladder = ladder
+        # The ladder may be supplied directly (frozen — the legacy/test path, byte
+        # identical to before) OR resolved lazily through ``ladder_provider`` (the
+        # composition root re-reads it from the config store + applies smart routing).
+        # The provider path makes a model connected AT RUNTIME take effect with no
+        # engine restart: ``refresh_ladder()`` (called from setup_service on every
+        # ``configure_llm``) drops the cache so the next completion re-resolves. When
+        # no provider is wired the cache is seeded with the supplied ladder and never
+        # re-resolved, so existing call sites + tests are unchanged.
+        self._ladder_provider = ladder_provider
+        self._ladder_cache = ladder
+        self._ladder_resolved = ladder_provider is None
         self._transport = transport
         self._timeout = timeout
         # FR-MIND-8: bound the context (compress middle turns over budget). A
@@ -257,6 +269,43 @@ class OpenAICompatibleLLM:
         # Local/OpenAI-compatible providers advertise no support, so this is a
         # clean no-op for them regardless of the setting.
         self._prefix_cache = (prefix_cache or "auto").strip().lower()
+
+    # --- runtime-reloadable ladder ---------------------------------------
+    @property
+    def _ladder(self) -> TierLadder | None:
+        """The active tier ladder, resolved lazily through the provider if wired.
+
+        Without a ``ladder_provider`` this returns the frozen ladder supplied at
+        construction (byte-identical to before). With one, it resolves+caches the
+        ladder on first read after construction or after :meth:`refresh_ladder`, so
+        a model connected at runtime (which re-runs the provider with fresh config)
+        is picked up without rebuilding the adapter. A provider that raises or
+        returns ``None`` leaves the last good cache in place rather than stranding
+        the engine.
+        """
+        if not self._ladder_resolved and self._ladder_provider is not None:
+            try:
+                resolved = self._ladder_provider()
+            except Exception:  # pragma: no cover - defensive: never break dispatch
+                log.warning("llm_ladder_provider_failed", exc_info=True)
+                resolved = None
+            if resolved is not None:
+                self._ladder_cache = resolved
+            # Mark resolved even when the provider returned None, so we don't re-run
+            # it on every call; ``refresh_ladder`` re-arms it when config changes.
+            self._ladder_resolved = True
+        return self._ladder_cache
+
+    def refresh_ladder(self) -> None:
+        """Re-arm the ladder provider so the next read re-resolves from config.
+
+        Wired as a config-change hook on the SetupService: connecting a model at
+        runtime persists the new tier, then calls this to drop the cached ladder so
+        the very next completion walks the freshly-configured tiers — no restart.
+        A no-op when no provider is wired (the ladder is frozen by design).
+        """
+        if self._ladder_provider is not None:
+            self._ladder_resolved = False
 
     # --- helpers ----------------------------------------------------------
     def _client(self) -> httpx.Client:

@@ -159,6 +159,13 @@ _KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+#: Visible-reply token budget for a chat turn. 256 was too small for a reasoning
+#: model (e.g. deepseek-v4-pro): its hidden reasoning tokens consumed the whole
+#: budget, leaving ``result.text`` empty so the chat silently fell back to the
+#: canned deterministic reply. 1024 leaves ample room for the visible answer after
+#: reasoning while staying reasonable on cost.
+_CHAT_MAX_TOKENS = 1024
+
 
 @dataclass(frozen=True)
 class ProposedChange:
@@ -511,7 +518,7 @@ class ChatService:
                     return tooled.strip() or deterministic
             result = self._llm.complete(
                 [ChatMessage(role="system", content=system), ChatMessage(role="user", content=prompt)],
-                max_tokens=256,
+                max_tokens=_CHAT_MAX_TOKENS,
             )
             text = (result.text or "").strip()
             return text or deterministic
@@ -570,7 +577,7 @@ class ChatService:
         ]
         used_a_tool = False
         for _ in range(MAX_TOOL_ROUNDS):
-            result = self._llm.complete_with_tools(messages, schemas, max_tokens=256)
+            result = self._llm.complete_with_tools(messages, schemas, max_tokens=_CHAT_MAX_TOKENS)
             calls = tuple(getattr(result, "tool_calls", ()) or ())
             if not calls:
                 text = (getattr(result, "text", "") or "").strip()
@@ -589,7 +596,7 @@ class ChatService:
                 )
         # Round cap hit: ask once more for a plain-text wrap-up (no tools).
         try:
-            final = self._llm.complete(messages, max_tokens=256)
+            final = self._llm.complete(messages, max_tokens=_CHAT_MAX_TOKENS)
             return (getattr(final, "text", "") or "").strip() or None
         except Exception:
             return None
