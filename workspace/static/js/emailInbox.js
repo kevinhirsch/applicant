@@ -180,6 +180,18 @@ function _bindEvents() {
     });
   }
 
+  // Sidebar "Daily updates" launcher — opens the same email library popup,
+  // which mounts the Applicant digest surface (mountApplicantDigest in
+  // emailLibrary.js). Reuses the existing openEmailLibrary launcher rather than
+  // a second email path.
+  const emailToolBtn = document.getElementById('tool-email-btn');
+  if (emailToolBtn) {
+    emailToolBtn.addEventListener('click', () => {
+      openEmailLibrary();
+      markInboxAsSeen();
+    });
+  }
+
   // Compose button creates a new email document
   const composeBtn = document.getElementById('email-compose-btn');
   if (composeBtn) {
