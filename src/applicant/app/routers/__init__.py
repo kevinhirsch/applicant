@@ -25,6 +25,7 @@ from applicant.app.routers import (
     documents,
     feedback,
     fonts,
+    mcp,
     model_endpoints,
     notifications,
     onboarding,
@@ -35,7 +36,6 @@ from applicant.app.routers import (
     setup,
     ui,
     update,
-    mcp,
 )
 
 

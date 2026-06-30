@@ -9,19 +9,19 @@ Tests verify that:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from applicant.app.routers.mcp import (
+    _fastapi_mcp_available,
+    _tool_get_applications,
+    _tool_get_attributes,
+    _tool_get_pending_actions,
     _tool_health_check,
     _tool_list_campaigns,
-    _tool_get_applications,
-    _tool_get_pending_actions,
-    _tool_get_attributes,
-    wire_mcp_tools,
     mount_mcp,
-    _fastapi_mcp_available,
+    wire_mcp_tools,
 )
 
 

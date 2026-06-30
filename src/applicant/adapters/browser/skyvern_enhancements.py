@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -163,42 +163,42 @@ def penetrate_shadow_dom(
 
     try:
         results = page.evaluate(
-            f"""
-            (maxDepth) => {{
+            """
+            (maxDepth) => {
                 const results = [];
 
-                function penetrateShadow(root, depth, path) {{
+                function penetrateShadow(root, depth, path) {
                     if (depth > maxDepth) return;
                     const elements = root.querySelectorAll('input, select, textarea');
-                    elements.forEach(el => {{
+                    elements.forEach(el => {
                         const name = el.getAttribute('name') || '';
                         const id = el.getAttribute('id') || '';
                         const label = el.getAttribute('aria-label') || name || id;
                         const ftype = el.getAttribute('type') || el.tagName.toLowerCase();
-                        results.push({{
-                            selector: path ? `${{path}} >>> ${{name ? '[name="${{name}}"]' : '[id="${{id}}"]'}}` : (name ? '[name="${{name}}"]' : '[id="${{id}}"]'),
+                        results.push({
+                            selector: path ? `${path} >>> ${name ? '[name="${name}"]' : '[id="${id}"]'}` : (name ? '[name="${name}"]' : '[id="${id}"]'),
                             label: label,
                             fieldType: ftype,
                             required: el.hasAttribute('required'),
                             source: 'shadow_dom',
-                        }});
-                    }});
+                        });
+                    });
 
                     // Recurse into shadow hosts
                     const hosts = root.querySelectorAll('*');
-                    hosts.forEach(host => {{
-                        if (host.shadowRoot) {{
+                    hosts.forEach(host => {
+                        if (host.shadowRoot) {
                             const newPath = path
-                                ? `${{path}} >>> ${{host.tagName.toLowerCase()}}`
+                                ? `${path} >>> ${host.tagName.toLowerCase()}`
                                 : host.tagName.toLowerCase();
                             penetrateShadow(host.shadowRoot, depth + 1, newPath);
-                        }}
-                    }});
-                }}
+                        }
+                    });
+                }
 
                 penetrateShadow(document, 0, '');
                 return results;
-            }}
+            }
             """,
             max_depth,
         )
@@ -360,7 +360,7 @@ def adaptive_wait_for_element(
                 if condition == "visible":
                     el = page.query_selector(selector)
                     if el is not None and el.is_visible():
-                        waited = total_waited + (deadline - time.monotonic())
+                        _waited = total_waited + (deadline - time.monotonic())
                         return AdaptiveWaitResult(
                             found=True,
                             total_waited_s=cfg.initial_timeout_s
@@ -371,7 +371,7 @@ def adaptive_wait_for_element(
                 elif condition == "attached":
                     el = page.query_selector(selector)
                     if el is not None:
-                        waited = total_waited + (deadline - time.monotonic())
+                        _waited = total_waited + (deadline - time.monotonic())
                         return AdaptiveWaitResult(
                             found=True,
                             total_waited_s=cfg.initial_timeout_s
@@ -389,7 +389,7 @@ def adaptive_wait_for_element(
                             time.sleep(0.3)
                             new_count = el.evaluate("e => e.attributes.length")
                             if initial_count == new_count and el.is_visible():
-                                waited = total_waited + (deadline - time.monotonic())
+                                _waited = total_waited + (deadline - time.monotonic())
                                 return AdaptiveWaitResult(
                                     found=True,
                                     total_waited_s=cfg.initial_timeout_s
@@ -481,7 +481,7 @@ def recover_broken_selector(
         RecoveryResult indicating whether recovery succeeded and how.
     """
     attempts: list[RecoveryAttempt] = []
-    start = time.monotonic()
+    _start = time.monotonic()
 
     # Strategy 1: Retry with adaptive wait
     wait_result = adaptive_wait_for_element(page, original_selector)
@@ -504,11 +504,11 @@ def recover_broken_selector(
     if field_label:
         alt_selectors = _build_alternative_selectors(original_selector, field_label)
         for alt_sel in alt_selectors[:max_attempts]:
-            alt_start = time.monotonic()
+            _ts = time.monotonic()
             try:
                 el = page.query_selector(alt_sel)
                 if el is not None and el.is_visible():
-                    duration = time.monotonic() - alt_start
+                    duration = time.monotonic() - _ts
                     attempts.append(
                         RecoveryAttempt(
                             strategy="fallback_selector",
@@ -524,7 +524,7 @@ def recover_broken_selector(
                     )
             except Exception:
                 pass
-            duration = time.monotonic() - alt_start
+            duration = time.monotonic() - _ts
             attempts.append(
                 RecoveryAttempt(
                     strategy="fallback_selector",
@@ -536,7 +536,7 @@ def recover_broken_selector(
 
     # Strategy 3: Look for elements by text content
     if field_label:
-        text_start = time.monotonic()
+        _ts = time.monotonic()
         try:
             # Look for a label with this text, then get its for/id target
             label_el = page.query_selector(
@@ -547,7 +547,7 @@ def recover_broken_selector(
                 if for_attr:
                     target = page.query_selector(f"#{for_attr}")
                     if target is not None:
-                        duration = time.monotonic() - text_start
+                        duration = time.monotonic() - _ts
                         attempts.append(
                             RecoveryAttempt(
                                 strategy="label_for_attribute",

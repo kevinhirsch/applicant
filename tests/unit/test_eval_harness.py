@@ -8,19 +8,15 @@ Tests cover:
 
 from __future__ import annotations
 
-import pytest
-
 from applicant.evaluation import (
     EvalTask,
-    EvalRunMetrics,
-    SuiteResult,
     InMemoryEvalHarness,
-    run_suite,
+    SuiteResult,
     ab_gate,
+    run_suite,
 )
 from applicant.evaluation.material_judge import (
     DEFAULT_RUBRIC,
-    MaterialJudgment,
     MaterialQualityScore,
     judge_material,
 )

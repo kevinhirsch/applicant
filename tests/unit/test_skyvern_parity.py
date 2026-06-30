@@ -9,14 +9,10 @@ Tests cover:
 
 from __future__ import annotations
 
-import time
-from unittest.mock import MagicMock, PropertyMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from applicant.adapters.browser.skyvern_enhancements import (
     AdaptiveWaitConfig,
-    AdaptiveWaitResult,
     PenetratedField,
     RecoveryAttempt,
     RecoveryResult,
@@ -28,7 +24,6 @@ from applicant.adapters.browser.skyvern_enhancements import (
     penetrate_shadow_dom,
     recover_broken_selector,
 )
-
 
 # ── iframe penetration ─────────────────────────────────────────────────────
 

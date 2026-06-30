@@ -6,14 +6,13 @@ import pytest
 
 from applicant.core.rules.plan import (
     PREFILL_OPS,
-    ReadOnlyScrapePlan,
+    SCRAPE_OPS,
     Plan,
     PlanOp,
     PlanOpType,
-    PlanValidationResult,
-    SCRAPE_OPS,
-    validate_plan,
+    ReadOnlyScrapePlan,
     resolve_fill_values,
+    validate_plan,
 )
 
 

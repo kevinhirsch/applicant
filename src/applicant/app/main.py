@@ -18,6 +18,7 @@ from applicant.app.container import build_container
 from applicant.app.lifespan import lifespan
 from applicant.app.routers import register_routers
 from applicant.app.routers.mcp import mount_mcp
+from applicant.app.static import mount_static
 from applicant.core.errors import (
     ConfirmationRequired,
     DomainError,
