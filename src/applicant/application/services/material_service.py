@@ -138,6 +138,8 @@ class MaterialService:
         learning=None,
         advanced_learning=None,
         agent_memory=None,
+        research_service=None,
+        research_enabled: bool = True,
         review_base_url: str = "/review",
     ) -> None:
         self._storage = storage
@@ -159,6 +161,15 @@ class MaterialService:
         # call — FR-MIND-10). When ``None`` (the default), behavior is byte-identical
         # to before: no block, no extra calls.
         self._agent_memory = agent_memory
+        # Pre-application company research (#299): the SAME capped/deduped/cached
+        # ResearchService the agent loop escalates to. When wired + enabled, on-demand
+        # cover-letter generation folds a short company-research block into the
+        # generation context (and the truthfulness ground truth, so referencing a
+        # researched fact is not flagged as a fabrication). Best-effort + budget-aware:
+        # a cache hit is free, an exhausted budget / unavailable channel is a silent
+        # no-op, so behaviour is byte-identical to before when research is off.
+        self._research = research_service
+        self._research_enabled = bool(research_enabled)
         # Review-ready notification ladder + pending-actions home base (FR-NOTIF-4).
         self._notifications = notifications
         self._pending_actions = pending_actions
@@ -368,6 +379,71 @@ class MaterialService:
                     getattr(posting, "location", "") or "",
                 ]
         return " ".join(b for b in bits if b)
+
+    def _company_role_for(self, application_id) -> tuple[str, str]:
+        """Resolve the application's target ``(company, role)`` for research.
+
+        Reuses the same application/posting lookup ``_posting_context`` does, but
+        returns the company + role as distinct fields so they can be forwarded to the
+        owner-scoped, URL-safe deep-research channel. Best-effort: ``("", "")`` when
+        unavailable so research is simply skipped (no crash).
+        """
+        try:
+            app = self._storage.applications.get(application_id)
+        except Exception:  # pragma: no cover - defensive
+            app = None
+        if app is None:
+            return "", ""
+        role = (getattr(app, "role_name", "") or getattr(app, "job_title", "") or "").strip()
+        company = ""
+        pid = getattr(app, "posting_id", None)
+        if pid is not None:
+            try:
+                posting = self._storage.postings.get(pid)
+            except Exception:  # pragma: no cover - defensive
+                posting = None
+            if posting is not None:
+                company = (getattr(posting, "company", "") or "").strip()
+                if not role:
+                    role = (getattr(posting, "title", "") or "").strip()
+        return company, role
+
+    def _company_research_context(
+        self, campaign_id: CampaignId, application_id
+    ) -> str:
+        """A short company-research block to fold into cover-letter generation (#299).
+
+        Escalates to the SAME capped/deduped/cached ``ResearchService`` the agent loop
+        uses, scoped to the campaign so the per-campaign budget + dedupe cache are
+        shared. Returns ``""`` (a silent no-op, byte-identical to research-off) when:
+        research is not wired or disabled, the channel is unavailable, the budget is
+        spent, there is no company to research, or the run fails. The ResearchService
+        itself enforces the cap + dedupe + cache and uses the owner-scoped, URL-safe
+        deep-research channel — this method never weakens that.
+        """
+        if self._research is None or not self._research_enabled:
+            return ""
+        company, role = self._company_role_for(application_id)
+        if not company:
+            return ""
+        query = (
+            f"What should a job applicant know about {company} to tailor their "
+            "application?"
+        )
+        try:
+            report = self._research.research(
+                campaign_id, query, company=company, role=role or None
+            )
+        except Exception:  # pragma: no cover - service degrades, never raises
+            return ""
+        if report is None or not (report.summary or report.key_findings):
+            return ""
+        lines = [f"[Company research — {company}]"]
+        if report.summary:
+            lines.append(report.summary.strip())
+        for finding in (report.key_findings or [])[:6]:
+            lines.append(f"- {finding}")
+        return "\n".join(p for p in lines if p).strip()
 
     def reframe_truthfully(self, true_source: str, jd_terms: list[str]) -> str:
         """Reframe/re-emphasize TRUE source toward the JD without fabricating.
@@ -761,8 +837,18 @@ class MaterialService:
             return None
         self._ensure_voice_for(campaign_id)  # constrain to the user's voice (FR-RESUME-5)
         true_source = self._resolve_true_source(campaign_id, true_source)
+        # #299: best-effort, budget-aware pre-application company research folded into
+        # the generation context so the letter can reference company-specific detail.
+        # The block is added to the generation source AND the fabrication-check source
+        # (it is researched context the letter is allowed to draw on, not a claim about
+        # the candidate), mirroring the agent-loop auto-escalation. A no-op (and so
+        # byte-identical) when research is off / unavailable / budget-spent.
+        research_ctx = self._company_research_context(campaign_id, application_id)
+        gen_source = (
+            f"{true_source}\n\n{research_ctx}" if research_ctx else true_source
+        )
         body = self._generate_text(
-            true_source, jd_terms, kind="cover_letter", campaign_id=campaign_id
+            gen_source, jd_terms, kind="cover_letter", campaign_id=campaign_id
         )
         report = self.apply_post_filter(body)
         # A cover letter is free prose (FR-RESUME-10): use the entity-shaped check so
@@ -772,7 +858,7 @@ class MaterialService:
         # it is addressed to would self-report as a fabrication). The fabrication
         # post-check is enforced fail-closed at the persistence boundary by
         # ``_store_document`` (NFR-TRUTH-1) — nothing is stored unless it passes.
-        check_source = self._with_application_context(true_source, application_id)
+        check_source = self._with_application_context(gen_source, application_id)
         doc = self._store_document(
             campaign_id,
             application_id,
