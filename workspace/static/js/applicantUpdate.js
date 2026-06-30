@@ -104,7 +104,7 @@ function _render(status) {
       <div style="font-weight:600;">${esc(view.headline)}</div>
       <div class="admin-toggle-sub" style="opacity:0.85;margin-top:6px;line-height:1.5;">${esc(view.message)}</div>
       ${showButton
-        ? `<button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;"${view.canTrigger ? '' : ' disabled'}>${esc(btnLabel)}</button>`
+        ? `<button class="cal-btn cal-btn-primary odec-confirm" id="applicant-update-go" style="margin-top:12px;"${view.canTrigger ? '' : ' disabled'}>${esc(btnLabel)}</button>`
         : ''}
       ${log
         ? `<div class="admin-toggle-sub" style="opacity:0.6;margin:12px 0 4px;">Update log</div>
