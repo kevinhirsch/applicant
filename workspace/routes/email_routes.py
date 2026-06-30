@@ -27,6 +27,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+from core.safe_path import safe_join
 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -1873,7 +1874,7 @@ def setup_email_routes():
             # Sanitize filename and generate a unique token
             safe_name = re.sub(r"[^\w\s\-.]", "_", file.filename or "file").strip()
             token = f"{uuid.uuid4().hex}_{safe_name}"
-            filepath = COMPOSE_UPLOADS_DIR / token
+            filepath = Path(safe_join(str(COMPOSE_UPLOADS_DIR), token))
             content = await file.read()
             if len(content) > MAX_BYTES:
                 raise HTTPException(413, f"Attachment exceeds {MAX_BYTES // (1024*1024)}MB limit")
@@ -1896,7 +1897,7 @@ def setup_email_routes():
         """Delete a staged compose upload."""
         try:
             # Prevent path traversal
-            safe_token = Path(token).name
+            safe_token = Path(safe_join(str(COMPOSE_UPLOADS_DIR), token)).name
             filepath = COMPOSE_UPLOADS_DIR / safe_token
             if filepath.exists():
                 filepath.unlink()

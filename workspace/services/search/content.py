@@ -8,7 +8,8 @@ import re
 import logging
 import socket
 from datetime import datetime, timedelta
-from typing import List
+from typing import
+from core.safe_path import safe_join List
 from urllib.parse import urljoin, urlparse
 
 import httpx

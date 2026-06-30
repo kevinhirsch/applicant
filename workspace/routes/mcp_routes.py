@@ -12,6 +12,7 @@ import httpx
 
 from core.database import McpServer, SessionLocal
 from core.middleware import require_admin
+from core.safe_path import safe_join
 from src.mcp_manager import McpManager
 
 logger = logging.getLogger(__name__)
@@ -350,7 +351,10 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 raise HTTPException(400, "Server has no OAuth config")
 
             oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
+            keys_file_raw = oauth_cfg.get("keys_file", "")
+            if not keys_file_raw:
+                raise HTTPException(400, "OAuth keys file not specified")
+            keys_file = safe_join(os.path.expanduser("~"), keys_file_raw)
             if not keys_file or not os.path.exists(keys_file):
                 raise HTTPException(400, "OAuth keys file not found")
 
@@ -425,7 +429,10 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 return HTMLResponse(_oauth_result_page("Error", "No OAuth config."), status_code=400)
 
             oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
+            keys_file_raw = oauth_cfg.get("keys_file", "")
+            if not keys_file_raw:
+                raise HTTPException(400, "OAuth keys file not specified")
+            keys_file = safe_join(os.path.expanduser("~"), keys_file_raw)
             token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
 
             with open(keys_file, encoding="utf-8") as f:

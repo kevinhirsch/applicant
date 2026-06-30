@@ -12,6 +12,7 @@ import uuid
 import tempfile
 from collections import namedtuple
 from pathlib import Path
+from core.safe_path import safe_join
 from typing import Dict, Any
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist

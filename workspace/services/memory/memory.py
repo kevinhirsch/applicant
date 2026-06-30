@@ -5,6 +5,8 @@ import os
 import time
 import uuid
 import re
+from typing import List
+from core.safe_path import safe_join
 from typing import List, Dict, Tuple
 from datetime import datetime
 
