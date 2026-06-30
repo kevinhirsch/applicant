@@ -69,7 +69,11 @@ _FOUNDATION = {
         "paths": "workspace/static/js/appkitNotice.js (re-back ui.js showToast)",
         "rationale": "One notification mechanism; showToast keeps its signature.",
         "baseline": ("file_contains", "js/ui.js", "showToast"),
-        "target": ("file_exists", "js/appkitNotice.js"),
+        # The re-back has LANDED: ui.js's toast composes the kit's notice chrome (it touches the
+        # AppkitNoticeKit seam + carries the `.on-card` class). Probing the kit seam reference in
+        # ui.js (not just the vendored module's existence) makes this a real regression gate for
+        # the showToast re-back, not merely "the file was vendored". #462.
+        "target": ("file_contains", "js/ui.js", "AppkitNoticeKit"),
     },
     "F5": {
         "issue": 463,
