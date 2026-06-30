@@ -1,4 +1,5 @@
 // static/js/applicantDebug.js
+// FR-UIKIT S10: Debug panels render as .og-card gadget cards
 //
 // Activity / Debug — the workspace observability + operations surface wired to
 // the Applicant engine. ADDITIVE and self-contained: it opens its own modal,

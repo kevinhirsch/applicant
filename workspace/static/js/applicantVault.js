@@ -1,4 +1,5 @@
 // static/js/applicantVault.js
+// FR-UIKIT S13: Vault add/edit modal uses .ow-field Elements fields
 //
 // Credential vault — the workspace surface for the engine's APPLICANT vault.
 // Lets the user save per-site (per-tenant) sign-in credentials up front, lists

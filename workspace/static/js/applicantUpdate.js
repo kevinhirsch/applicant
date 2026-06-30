@@ -1,4 +1,5 @@
 // static/js/applicantUpdate.js
+// FR-UIKIT S11: Operator controls use .odec-* Decision kit for confirmable ops
 //
 // Update Applicant — a reachable sidebar surface for the one-click updater.
 //

@@ -1,4 +1,5 @@
 // static/js/applicantPortal.js
+// FR-UIKIT S3: Portal items render as .og-card gadget cards via AppKitGadget
 //
 // Pending-Actions Portal — the workspace's primary home-base surface. This is a
 // STANDALONE, top-level rail entry (not buried in the Job Assistant chat modal):

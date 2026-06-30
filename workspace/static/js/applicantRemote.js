@@ -1,4 +1,5 @@
 // static/js/applicantRemote.js
+// FR-UIKIT S12: Remote view renders in .ow-window kit window
 //
 // "Watch / Take over live session" — the workspace surface for the engine's live
 // browser session. It embeds the running session in an iframe (via the engine's

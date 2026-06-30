@@ -1,4 +1,5 @@
 // static/js/applicantModelLadder.js
+// FR-UIKIT S15: Model ladder tiers render as .og-card gadget cards
 //
 // The model escalation ladder editor (FR-LLM-3) — Settings → Set up Applicant.
 // ADDITIVE and self-contained: it talks only to the engine setup proxy

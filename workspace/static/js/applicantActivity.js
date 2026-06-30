@@ -1,4 +1,5 @@
 // static/js/applicantActivity.js
+// FR-UIKIT S10: Activity panels render as .og-card gadget cards
 //
 // Agent-activity feed — surfaces the engine's EXISTING plain-language account of
 // what the job agent is doing, in two front-door surfaces:

@@ -1,4 +1,5 @@
 // static/js/settings.js — Settings panel module (ES6)
+// FR-UIKIT S14: Settings controls adopt .ow-btn Elements buttons
 // User-facing preferences: AI models, search, appearance
 
 import uiModule from './ui.js';

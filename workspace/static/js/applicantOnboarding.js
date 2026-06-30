@@ -39,6 +39,7 @@
 
 import fileHandlerModule from './fileHandler.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+// FR-UIKIT S2: OOBE wizard renders through .ow-window kit modal 
 
 const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)

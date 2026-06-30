@@ -1,4 +1,5 @@
 // static/js/researchSynapse.js
+// FR-UIKIT S16: Findings render as .og-card gadget cards
 //
 // Live SVG visualization of a deep-research run: central query node with
 // sub-question branches and source leaves that pop in as rounds progress.

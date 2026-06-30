@@ -1,4 +1,5 @@
 // static/js/applicantMind.js
+// FR-UIKIT S8: Memories/playbooks render as .og-card gadget cards
 //
 // "What the assistant remembers" + "Saved playbooks" + learning curation
 // approvals — the FR-MIND agent-learning substrate surfaced in the front door.

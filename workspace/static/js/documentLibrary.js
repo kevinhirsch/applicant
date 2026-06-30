@@ -1,4 +1,5 @@
 // static/js/documentLibrary.js
+// FR-UIKIT S4: Redline approve/decline renders through .odec-* Decision kit
 /**
  * Document Library — modal with Chats / Documents / Research / Archive tabs.
  * Extracted from document.js to reduce file size.

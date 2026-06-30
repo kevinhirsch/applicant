@@ -1,4 +1,5 @@
 // static/js/applicantChat.js
+// FR-UIKIT S7: Above-composer guidance via appkitChatHint kit
 //
 // Job Assistant — the workspace Chat/Agent surface wired to the Applicant
 // engine. This is ADDITIVE and self-contained: it does NOT touch the native

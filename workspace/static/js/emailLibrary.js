@@ -1,4 +1,5 @@
 /**
+// FR-UIKIT S9: In-app digest panel adopts .on-card notice kit (email artifact exempt per FR-DIG-2)
  * emailLibrary.js — Email library popup modal.
  * Similar pattern to documentLibrary.js. Shows emails in a grid with search/filter.
  */
