@@ -451,10 +451,13 @@ def test_notification_dismiss_404_is_idempotent_success(client):
     assert r.json() == {"dismissed": True, "id": "gone"}
 
 
-def test_notification_dismiss_forwards_other_errors(client):
+def test_notification_dismiss_scrubs_5xx_to_502(client):
+    # Engine 5xx is scrubbed to 502 Bad Gateway; detail must not leak to the browser.
     FakeEngine.raises[("dismiss_notification", "x")] = EngineError("boom", status=500, detail="bad")
     r = client.post("/api/applicant/portal/notifications/x/seen")
-    assert r.status_code == 500
+    assert r.status_code == 502
+    body = r.json()
+    assert "detail" not in body or body.get("detail") != "bad"
 
 
 # --- exact engine paths via a real client over MockTransport ----------------
