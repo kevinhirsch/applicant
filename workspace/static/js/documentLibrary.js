@@ -2108,7 +2108,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
       const head = document.createElement('div');
       head.style.cssText = 'display:flex;align-items:center;gap:8px;margin:2px 0 8px;';
-      const gateOk = !!(data && data.all_approved);
+      // A non-existent/empty application must NOT read as fully-approved: the
+      // engine returns an empty 200 for a bogus id, making `data.all_approved`
+      // vacuously true for 0 items. Only show the "All approved" badge when
+      // there is at least one material; the honest empty-state copy below
+      // covers the truly-empty case.
+      const gateOk = items.length > 0 && !!(data && data.all_approved);
       head.innerHTML =
         `<span class="memory-count" style="opacity:0.7;">${items.length} item${items.length === 1 ? '' : 's'}</span>` +
         `<span class="doclib-applicant-gate" title="${gateOk ? 'All materials for this application have been approved.' : 'Some materials still need your approval before this application can be sent.'}" ` +

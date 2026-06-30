@@ -1402,7 +1402,11 @@ async function _buildPreview() {
     // `notes` may come back as an array, a single string, or be absent — coerce to
     // an array so a string value doesn't crash the preview on `.map` (it has a
     // truthy `.length` but no `.map`), which surfaced as "Preview unavailable".
-    const notesList = Array.isArray(p.notes) ? p.notes : (p.notes ? [String(p.notes)] : []);
+    // The engine echoes the fidelity line into `p.notes` too, so it would render
+    // twice (once in the summary `<p>` above, once as a bullet). De-dup: drop any
+    // notes entry equal to the summary `note`.
+    const notesList = (Array.isArray(p.notes) ? p.notes : (p.notes ? [String(p.notes)] : []))
+      .filter((n) => String(n).trim() !== note.trim());
     wrap.innerHTML = `
       <div class="admin-card">
         <p style="margin:0 0 8px;">We built a high-fidelity version of your resume (${esc(String(p.page_count || '?'))} page(s)). ${esc(note)}</p>

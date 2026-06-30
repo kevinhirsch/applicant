@@ -238,3 +238,49 @@ def test_no_learning_service_is_a_noop():
     cid = CampaignId(new_id())
     result = svc.converse(cid, "no learning wired here")
     assert result.message  # nothing to fold; turn still works
+
+
+# === multi-fact statement bounds the captured value (FR-FB-2) ===============
+def test_multi_fact_statement_bounds_first_field_value():
+    """A multi-fact sentence must not let the greedy value capture swallow the tail.
+
+    "My first name is Dana and my email is dana@example.com" previously proposed
+    first name = "Dana and my email is dana@example.com". The value is now bounded
+    at the " and <next field> is ..." clause boundary, yielding just "Dana".
+    """
+    svc, _ = _svc()
+    parsed = svc._parse_proposal(
+        "My first name is Dana and my email is dana@example.com"
+    )
+    assert parsed is not None
+    assert parsed.name == "first name"
+    assert parsed.value == "Dana"
+
+
+def test_multi_fact_statement_bounds_value_via_converse():
+    """End-to-end through converse(): the surfaced proposal carries the bounded value."""
+    svc, _ = _svc()
+    cid = CampaignId(new_id())
+    result = svc.converse(
+        cid, "My first name is Dana and my email is dana@example.com"
+    )
+    first_name = [p for p in result.proposed_changes if p.name == "first name"]
+    assert first_name, "expected a first-name proposal"
+    assert first_name[0].value == "Dana"
+
+
+def test_plain_conjunction_in_value_is_bounded():
+    """A bare " and " clause is also a boundary, not part of the value."""
+    svc, _ = _svc()
+    parsed = svc._parse_proposal("My first name is Dana and I like coffee")
+    assert parsed is not None
+    assert parsed.value == "Dana"
+
+
+def test_single_fact_value_is_unchanged():
+    """A normal single-fact statement keeps its full value (no over-trimming)."""
+    svc, _ = _svc()
+    parsed = svc._parse_proposal("My email address is dana@example.com")
+    assert parsed is not None
+    assert parsed.name == "email address"
+    assert parsed.value == "dana@example.com"

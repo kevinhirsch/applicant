@@ -36,7 +36,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Request
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -50,16 +50,24 @@ def _campaign_label(campaign: dict) -> str:
     return str(campaign.get("name") or campaign.get("id") or "")
 
 
-async def _owner_campaigns(engine: ApplicantEngineClient) -> Optional[list[dict]]:
-    """Resolve the owner's campaigns, or ``None`` when the engine is unreachable.
+async def _owner_campaigns(engine: ApplicantEngineClient) -> "list[dict] | dict":
+    """Resolve the owner's campaigns, or a soft-degrade payload on failure.
 
-    ``None`` means "offline"; an empty list means "online, no campaign yet".
+    On success this returns a ``list`` (possibly empty — "online, no campaign yet").
+
+    On an :class:`EngineError` it returns a ``dict`` built by :func:`soft_degrade`,
+    which distinguishes a client-correctable GATE (``gated: true`` + the engine's
+    message, ``engine_available: true``) from a genuine TRANSPORT-OFFLINE
+    (``engine_available: false``) — so a 409 setup gate no longer dishonestly reads
+    as "engine offline" here, matching the activity/ops/portal proxies. Callers
+    detect the failure with ``isinstance(result, list)`` and merge the dict with
+    their own well-formed empty body (``has_gallery``/``campaigns``/collections).
     """
     try:
         campaigns = await engine.list_campaigns()
     except EngineError as exc:
-        logger.debug("gallery: engine unavailable listing campaigns: %s", exc)
-        return None
+        logger.debug("gallery: campaigns read failed (status=%s): %s", exc.status, exc)
+        return soft_degrade(exc, {})
     return [c for c in campaigns if isinstance(c, dict)] if isinstance(campaigns, list) else []
 
 
@@ -89,8 +97,8 @@ def setup_applicant_gallery_routes() -> APIRouter:
         require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-        if campaigns is None:
-            return {"engine_available": False, "campaigns": []}
+        if not isinstance(campaigns, list):
+            return {**campaigns, "campaigns": []}
         return {"engine_available": True, "campaigns": campaigns}
 
     @router.get("")
@@ -104,8 +112,8 @@ def setup_applicant_gallery_routes() -> APIRouter:
         require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_gallery": False, **_empty_gallery()}
+            if not isinstance(campaigns, list):
+                return {**campaigns, "has_gallery": False, **_empty_gallery()}
             first = _first_campaign(campaigns)
             if first is None:
                 return {"engine_available": True, "has_gallery": False, **_empty_gallery()}
@@ -128,8 +136,8 @@ def setup_applicant_gallery_routes() -> APIRouter:
         require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_gallery": False, **_empty_gallery()}
+            if not isinstance(campaigns, list):
+                return {**campaigns, "has_gallery": False, **_empty_gallery()}
             owned = {str(c.get("id")): _campaign_label(c) for c in campaigns if c.get("id")}
             if campaign_id not in owned:
                 # Not the owner's campaign (or no campaign yet): empty, well-formed.
