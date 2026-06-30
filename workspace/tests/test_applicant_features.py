@@ -57,16 +57,17 @@ def _features(transport):
     return compute_features(base_url="http://api:8000", transport=transport)
 
 
-def test_payload_shape_and_compare_always_disabled():
+def test_payload_shape_and_compare_engine_backed():
     out = _features(_router(status=FULLY_CONFIGURED, dormant=ALL_LIVE))
     assert set(out) == {"engine_available", "engine_url", "sections"}
     assert out["engine_url"] == "http://api:8000"
     # Every registered section is present.
     assert set(out["sections"]) == {s["key"] for s in APPLICANT_SECTIONS}
-    # Compare ships present-but-disabled regardless of engine state.
+    # Compare is now engine-backed (#297): no longer present-but-disabled; it
+    # activates with the other llm-gated surfaces when a model is configured.
     compare = out["sections"]["compare"]
-    assert compare["present_but_disabled"] is True
-    assert compare["state"] == STATE_DISABLED
+    assert compare["present_but_disabled"] is False
+    assert compare["state"] == STATE_ACTIVE
     assert compare["lane"] is None
 
 
@@ -75,7 +76,8 @@ def test_all_active_when_engine_up_and_configured():
     assert out["engine_available"] is True
     for key in ("documents", "memory", "chat", "email"):
         assert out["sections"][key]["state"] == STATE_ACTIVE, key
-    assert out["sections"]["compare"]["state"] == STATE_DISABLED
+    # Compare is engine-backed now — it activates with the rest.
+    assert out["sections"]["compare"]["state"] == STATE_ACTIVE
 
 
 def test_sections_locked_when_gates_not_met():
@@ -107,8 +109,9 @@ def test_engine_down_degrades_to_locked_never_raises():
     assert out["engine_available"] is False
     for key in ("documents", "memory", "chat", "email"):
         assert out["sections"][key]["state"] == STATE_LOCKED, key
-    # Compare is still reported disabled (product decision, not engine-derived).
-    assert out["sections"]["compare"]["state"] == STATE_DISABLED
+    # Compare is engine-backed now, so it degrades to locked with the rest when
+    # the engine is unreachable (no longer a standalone present-but-disabled).
+    assert out["sections"]["compare"]["state"] == STATE_LOCKED
 
 
 def test_status_error_degrades_without_raising():

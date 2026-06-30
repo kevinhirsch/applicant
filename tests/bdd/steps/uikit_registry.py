@@ -293,11 +293,15 @@ _SURFACES = {
     "S17": {
         "issue": 486,
         "frref": "FR-UIKIT-2/6",
-        "title": "Map the Compare surface onto Elements in its themed-but-disabled state",
-        "paths": "workspace/src/applicant_features.py (compare; present-but-disabled)",
-        "rationale": "Compare looks like the product while staying disabled (kit covers disabled).",
-        "baseline": ("section_present_but_disabled", "compare"),
-        "target": ("file_exists", "js/appkitElements.js"),
+        "title": "Map the now-active Compare surface onto Elements",
+        "paths": "workspace/static/js/applicantCompare.js (compare; engine-backed, #297)",
+        "rationale": "Compare is engine-backed and reachable; its controls compose on the Elements kit.",
+        # The Compare surface module now exists (#297 landed its engine backing,
+        # #184/#486 wired the front door), so the anchor is the real module file…
+        "baseline": ("file_exists", "js/applicantCompare.js"),
+        # …and the migration target is that module composing on the Elements kit
+        # (.ow-btn / .ow-field / .ow-select) rather than bespoke control markup.
+        "target": ("file_contains", "js/applicantCompare.js", "ow-btn"),
     },
 }
 

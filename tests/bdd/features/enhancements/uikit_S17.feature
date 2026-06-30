@@ -1,8 +1,8 @@
-# Issue #486 — FR-UIKIT-2/6 — workspace/src/applicant_features.py (compare; present-but-disabled)
-# Compare looks like the product while staying disabled (kit covers disabled).
+# Issue #486 — FR-UIKIT-2/6 — workspace/static/js/applicantCompare.js (compare; engine-backed, #297)
+# Compare is engine-backed and reachable; its controls compose on the Elements kit.
 # Part of the FR-UIKIT component-kit migration (epic #458). See docs/spec/ui-kit-migration.md.
 
-Feature: Map the Compare surface onto Elements in its themed-but-disabled state
+Feature: Map the now-active Compare surface onto Elements
 
   Scenario: S17 baseline — the pre-migration anchor holds today
     Given the UI-kit migration item "S17"
