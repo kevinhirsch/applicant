@@ -20,7 +20,6 @@ Feature: Cold-start viability gate
     Then the rationale explains that no criteria are set yet
 
   # PENDING — the residual gap: discovery must refuse to run with zero criteria.
-  @pending
   Scenario: Discovery refuses to run until at least one criterion is set
     Given a campaign with no search criteria set
     When discovery is asked to run for that campaign

@@ -245,7 +245,13 @@ def setup_applicant_chat_routes() -> APIRouter:
             except EngineError as exc:
                 logger.debug("list_campaigns: engine unavailable: %s", exc)
                 return {"engine_available": False, "campaigns": []}
-        return {"engine_available": True, "campaigns": campaigns or []}
+        # #232: the panel JS iterates ``campaigns`` directly, so a non-list engine
+        # response (e.g. a dict-shaped error/envelope) would crash the front-end
+        # iteration. Coerce anything that is not a bare list to an empty list — the
+        # panel then renders its empty state instead of throwing.
+        if not isinstance(campaigns, list):
+            campaigns = []
+        return {"engine_available": True, "campaigns": campaigns}
 
     @router.post("/campaigns")
     async def create_campaign(body: CreateCampaignIn, request: Request) -> dict:

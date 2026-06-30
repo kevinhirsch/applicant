@@ -14,13 +14,16 @@ adapter (``dbos_orchestrator``), which co-resides workflow state in Postgres.
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import hashlib
 import json
 import os
 import tempfile
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,28 @@ from typing import Any
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
+
+#: Schema/integrity version stamped into every checkpoint. A file without this marker
+#: (an older partial / truncated-but-parseable write) is rejected as corrupt rather
+#: than trusted as complete (#218).
+_CHECKPOINT_VERSION = 1
+
+
+class CheckpointStorageError(OSError):
+    """A durable-checkpoint write failed for a storage reason (base health signal).
+
+    Distinct from a bare ``OSError`` so callers (the scheduler / health probe) can catch
+    a *recognizable* checkpoint-storage fault instead of every IOError.
+    """
+
+
+class CheckpointDiskFull(CheckpointStorageError):
+    """The checkpoint store is out of space (ENOSPC) — a critical health signal (#219).
+
+    Raised in place of the raw ``OSError(28)`` so a full disk surfaces a recognizable
+    event the operator can act on, instead of propagating as a generic error that drives
+    an infinite step-retry loop.
+    """
 
 
 @dataclass
@@ -104,19 +129,112 @@ class CheckpointShimOrchestrator:
         with self._registry_lock:
             return self._locks[key]
 
+    # --- cross-process advance guard (#220) -------------------------------
+    def _lease_path(self, workflow_id: str) -> Path:
+        safe = workflow_id.replace("/", "_")
+        return self._dir / f"{safe}.lease"
+
+    @contextlib.contextmanager
+    def claim_workflow(self, workflow_id: str) -> Iterator[bool]:
+        """Bind a parked workflow to a SINGLE advancing tick across processes (#220).
+
+        The per-workflow ``threading.Lock`` only serializes in-process callers; two
+        worker processes (e.g. a redeploy overlap, or two scheduler hosts over a shared
+        checkpoint volume) could both pick up the same parked workflow and double-advance
+        it. This is an OS-level exclusive lease over a per-workflow lock file: the first
+        claimant yields ``True`` and holds the advance right; a concurrent claimant yields
+        ``False`` and must skip the workflow this tick. The lease is released (and the
+        lock file removed) when the context exits, so the next tick can re-claim it.
+
+        Used as::
+
+            with orch.claim_workflow(wf_id) as won:
+                if won:
+                    ...advance the workflow...
+        """
+        # threading.Lock first so in-process contenders also serialize cleanly.
+        in_proc = self._lock_for(f"lease:{workflow_id}")
+        if not in_proc.acquire(blocking=False):
+            yield False
+            return
+        lease = self._lease_path(workflow_id)
+        fd: int | None = None
+        held = False
+        try:
+            try:
+                # O_CREAT|O_EXCL: atomic "create-only" claim across processes.
+                fd = os.open(str(lease), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.write(fd, str(os.getpid()).encode("ascii"))
+                held = True
+            except FileExistsError:
+                held = False
+            yield held
+        finally:
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            if held:
+                with contextlib.suppress(OSError):
+                    lease.unlink()
+            in_proc.release()
+
+    #: Alias: a single-tick advance claim is the durable-queue "lease" primitive.
+    lease = claim_workflow
+
     # --- checkpoint persistence -------------------------------------------
     def _path(self, workflow_id: str) -> Path:
         safe = workflow_id.replace("/", "_")
         return self._dir / f"{safe}.checkpoint.json"
+
+    @staticmethod
+    def _checksum(state: dict[str, Any]) -> str:
+        """Stable integrity digest over the durable ``steps`` payload (#218).
+
+        Computed over a canonical JSON encoding of ``steps`` (sorted keys) so a
+        truncated/partial file whose stamped digest no longer matches its content — or
+        which carries no digest at all — is detectable as corrupt rather than trusted.
+        """
+        steps = state.get("steps", {})
+        canonical = json.dumps(steps, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def verify_checkpoint(self, workflow_id: str) -> bool:
+        """Return whether the on-disk checkpoint for ``workflow_id`` is intact (#218).
+
+        ``True`` only when the file parses, carries the version + integrity markers, and
+        the stored digest matches a fresh checksum of its steps. A truncated-but-parseable
+        write (no/old marker, or a digest mismatch) returns ``False`` and is treated as
+        "no checkpoint" by ``_load`` so the step re-executes instead of returning stale
+        or partial data.
+        """
+        p = self._path(workflow_id)
+        if not p.exists():
+            return False
+        try:
+            state = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            return False
+        return self._is_intact(state)
+
+    @staticmethod
+    def _is_intact(state: Any) -> bool:
+        if not isinstance(state, dict):
+            return False
+        if state.get("_version") != _CHECKPOINT_VERSION:
+            return False
+        stored = state.get("_integrity")
+        if not isinstance(stored, str):
+            return False
+        return stored == CheckpointShimOrchestrator._checksum(state)
 
     def _load(self, workflow_id: str) -> dict[str, Any]:
         p = self._path(workflow_id)
         if p.exists():
             try:
                 raw = p.read_text()
-                return json.loads(raw)
+                state = json.loads(raw)
             except json.JSONDecodeError:
-                # Corrupted checkpoint: log and treat as "no checkpoint" so the step
+                # Unparseable checkpoint: log and treat as "no checkpoint" so the step
                 # re-executes from scratch (transparent recovery, #218). Raising here
                 # would prevent any recovery; returning empty state lets the workflow
                 # restart cleanly. The warning surfaces the event for operators.
@@ -131,19 +249,31 @@ class CheckpointShimOrchestrator:
                     f"Failed to read checkpoint for workflow {workflow_id!r} from {p}: {exc}. "
                     "The disk may have failed or the file may be inaccessible."
                 ) from exc
+            # #218: a structurally-valid-but-partial file (missing/mismatched integrity
+            # marker) is a truncated write, NOT a complete checkpoint — reject it as
+            # corrupt so the step re-runs rather than trusting stale/partial data.
+            if not self._is_intact(state):
+                log.warning(
+                    "checkpoint_integrity_failed_treating_as_empty",
+                    workflow_id=workflow_id,
+                    path=str(p),
+                )
+                return {"steps": {}}
+            return state
         return {"steps": {}}
 
     def _save(self, workflow_id: str, state: dict[str, Any]) -> None:
         p = self._path(workflow_id)
+        # Stamp the integrity markers so a later load can tell a complete checkpoint from
+        # a truncated-but-parseable one (#218).
+        state["_version"] = _CHECKPOINT_VERSION
+        state["_integrity"] = self._checksum(state)
         # Atomically write so a crash mid-write never corrupts the checkpoint.
         # Check for disk-full / write failure before writing the final checkpoint.
         try:
             fd, tmp = tempfile.mkstemp(dir=str(self._dir))
         except OSError as exc:
-            raise OSError(
-                f"Cannot create temporary checkpoint file for workflow {workflow_id!r} "
-                f"in {self._dir}: {exc}. Check disk space and permissions."
-            ) from exc
+            raise self._storage_error(exc, workflow_id, p, creating_temp=True) from exc
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(state, f)
@@ -151,13 +281,36 @@ class CheckpointShimOrchestrator:
                 os.fsync(f.fileno())
             os.replace(tmp, p)
         except OSError as exc:
-            raise OSError(
-                f"Failed to write checkpoint for workflow {workflow_id!r} to {p}: {exc}. "
-                "The disk may be full or the filesystem is read-only."
-            ) from exc
+            raise self._storage_error(exc, workflow_id, p, creating_temp=False) from exc
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
+
+    @staticmethod
+    def _storage_error(
+        exc: OSError, workflow_id: str, path: Path, *, creating_temp: bool
+    ) -> CheckpointStorageError:
+        """Map a raw write ``OSError`` to a recognizable checkpoint health signal (#219).
+
+        ENOSPC becomes ``CheckpointDiskFull`` so the scheduler/health layer can react to
+        a full disk instead of letting a generic error drive an infinite retry loop; any
+        other write failure becomes the ``CheckpointStorageError`` base.
+        """
+        where = (
+            f"Cannot create temporary checkpoint file for workflow {workflow_id!r} in "
+            f"{path.parent}"
+            if creating_temp
+            else f"Failed to write checkpoint for workflow {workflow_id!r} to {path}"
+        )
+        if exc.errno == errno.ENOSPC:
+            return CheckpointDiskFull(
+                exc.errno,
+                f"{where}: no space left on device. The checkpoint store is full.",
+            )
+        return CheckpointStorageError(
+            exc.errno or errno.EIO,
+            f"{where}: {exc}. The disk may be full or the filesystem is read-only.",
+        )
 
     # --- DurableOrchestrationPort -----------------------------------------
     def register_workflow(self, name: str, fn: Callable[..., Any]) -> None:

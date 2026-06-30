@@ -115,6 +115,64 @@ class TickResult:
 
 
 class AgentLoop:
+    #: #180 — the documented, machine-checkable set of instance attributes that are
+    #: ALLOWED to live for only one tick (they are rebuilt fresh each tick and resetting
+    #: them is correct). The scheduler rebuilds a fresh ``AgentLoop`` every tick, so any
+    #: instance attribute NOT in this set — and not a ``*_ledger`` process-lived object
+    #: injected into every loop — would silently reset each tick (the #180 footgun).
+    #: ``assert_no_undeclared_cross_tick_state`` turns "I added a new per-instance dict
+    #: that quietly resets each tick" from a silent bug into a loud, catchable failure.
+    __per_tick_state__: frozenset[str] = frozenset(
+        {
+            "_acted",  # (campaign, date) -> count acted today; per-tick scratch.
+            "_state_lock",  # guards this tick's per-run scratch ledgers.
+        }
+    )
+
+    #: Public alias of the per-tick declaration (introspection / tooling).
+    per_tick_fields = __per_tick_state__
+
+    #: Instance attributes that MUST outlive a single tick. Each is either a process-
+    #: lived ledger injected by the container (so cross-tick state survives the rebuild)
+    #: or one of its read-through aliases. Anything mutable-and-stateful that is neither
+    #: declared per-tick here nor cross-tick is the footgun #180 guards against.
+    __cross_tick_state__: frozenset[str] = frozenset(
+        {
+            "_resume_ledger",
+            "_digest_ledger",
+            "_last_resume",
+            "_resume_failures",
+            "_resume_giveup",
+            "_digest_sent",
+        }
+    )
+
+    def assert_no_undeclared_cross_tick_state(self) -> None:
+        """Fail loudly if a mutable instance ledger is neither per-tick nor cross-tick.
+
+        Catches the #180 footgun at construction/test time: a newly-added per-instance
+        ``dict``/``set`` that resets every tick (because the scheduler rebuilds the loop)
+        with nothing to flag it. Either declare it in ``__per_tick_state__`` (resetting is
+        intended) or route it through a process-lived ledger listed in
+        ``__cross_tick_state__``.
+        """
+        allowed = self.__per_tick_state__ | self.__cross_tick_state__
+        offenders = []
+        for name, value in vars(self).items():
+            if name in allowed:
+                continue
+            # Only mutable containers can silently lose cross-tick state; injected
+            # services/configs/scalars are stateless w.r.t. the tick cadence.
+            if isinstance(value, (dict, set, list)) and value is not None:
+                offenders.append(name)
+        if offenders:
+            raise AssertionError(
+                "AgentLoop has undeclared mutable per-instance state that the per-tick "
+                f"rebuild would silently reset: {sorted(offenders)}. Declare it in "
+                "__per_tick_state__ (reset is intended) or move it into a process-lived "
+                "ledger listed in __cross_tick_state__ (#180)."
+            )
+
     def __init__(
         self,
         *,
@@ -429,7 +487,18 @@ class AgentLoop:
     # --- discovery + digest ----------------------------------------------
     def _discover_and_digest(self, campaign, result: TickResult, now: datetime) -> None:
         criteria = self._criteria_for(campaign.id)
-        if self._discovery is not None:
+        # #344 cold-start gate: with zero criteria the scorer returns the neutral 0.75
+        # (which clears the default threshold), so an ungated run would surface arbitrary
+        # postings before the user has said what they want. Decline discovery until at
+        # least one concrete criterion is configured; scoring/digest of any existing
+        # backlog still proceeds so nothing already found is stranded. The gate only
+        # applies when a criteria service is wired (the production path) — legacy/unit
+        # setups with no criteria service keep their prior unconditional behavior.
+        from applicant.core.rules.discovery_gate import has_any_criterion
+
+        gate_applies = self._criteria is not None
+        criteria_ready = (not gate_applies) or has_any_criterion(criteria)
+        if self._discovery is not None and criteria_ready:
             try:
                 # #6: discovery uses the campaign criteria (it accepts an optional
                 # criteria arg; older signatures ignore it via the fallback).
@@ -437,6 +506,8 @@ class AgentLoop:
                 result.discovered = len(found)
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("discovery_failed", campaign_id=str(campaign.id), error=str(exc))
+        elif self._discovery is not None:
+            log.info("discovery_declined_no_criteria", campaign_id=str(campaign.id))
         # #8: score ONLY the postings not yet scored this campaign (was: re-score the
         # ENTIRE posting history every tick, reloading the LearningModel per posting).
         # The LearningModel is loaded once per tick inside ScoringService via the

@@ -32,6 +32,7 @@ read-misses so a *fresh instance* (a "restart") unseals persisted rows.
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 
 from nacl import exceptions as nacl_exc
@@ -162,6 +163,19 @@ class _SealingMixin:
             }
         store.clear()
         store.update(rotated)
+
+    def close(self) -> None:
+        """Drop the in-memory master-key box on graceful shutdown (#316, FR-VAULT-3).
+
+        The credential vault holds the libsodium ``SecretBox`` (built from the master
+        key) in memory for the process lifetime. On a clean shutdown, release it so the
+        unsealing key does not linger in the process's memory after the engine stops.
+        Idempotent and safe: any later seal/unseal would re-init the box from the key
+        file. (The sealed records on disk are untouched — only the in-memory key handle
+        is cleared.)
+        """
+        with contextlib.suppress(AttributeError):
+            del self._box
 
     def __repr__(self) -> str:  # never leak sealed/plaintext material in a repr
         return f"<{type(self).__name__} (sealed credential store)>"

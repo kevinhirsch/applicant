@@ -20,7 +20,6 @@
     When the step is run again over the same directory
     Then the checkpointed result is returned without re-running the body
 
-  @pending
   Scenario: A truncated-but-parseable checkpoint is rejected as corrupt
     Given a checkpoint orchestrator over a temp directory
     When a checkpoint file is left structurally valid but missing its integrity marker

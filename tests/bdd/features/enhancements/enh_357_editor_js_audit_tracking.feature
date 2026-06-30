@@ -17,7 +17,6 @@ Feature: Editor JS audit tracker
     Then the layer panel still writes raw markup more than ten times
 
   # PENDING — the audit work this tracker is opened to drive.
-  @pending
   Scenario: The layer panel has been audited and its raw-markup writes cleared
     Given the editor JS directory
     When the layer-panel audit ledger is consulted
