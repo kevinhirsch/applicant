@@ -405,10 +405,15 @@ def routes_bare_baseline(n2ctx):
     )
 
 
-@then("many of them silently swallow the error with a bare pass")
+@then("few of them silently swallow the error with a bare pass after the G09 sweep")
 def routes_silent_present(n2ctx):
-    # The systemic problem: a large share is silent ``except Exception: pass``.
-    assert n2ctx["silent"] >= 50, f"only {n2ctx['silent']} silent-swallow blocks in routes/"
+    # Post-sweep assertion: the G09 remediation dropped the silent-swallow count from
+    # hundreds to a small residual (measured 9 after the sweep). Assert the count is
+    # now low (≤ 15) to prove the systemic problem was fixed, not just hidden.
+    assert n2ctx["silent"] <= 15, (
+        f"routes/ still has {n2ctx['silent']} silent-swallow blocks after G09 sweep "
+        f"(expected ≤ 15)"
+    )
 
 
 @when("the highest-risk route file is scanned for silent-swallow blocks")
@@ -446,9 +451,15 @@ def src_bare_baseline(n2ctx):
     )
 
 
-@then("many source handlers silently swallow the error with a bare pass")
+@then("few source handlers silently swallow the error with a bare pass after the G09 sweep")
 def src_silent_present(n2ctx):
-    assert n2ctx["silent"] >= 50, f"only {n2ctx['silent']} silent-swallow blocks in src/"
+    # Post-sweep assertion: the G09 remediation dropped the silent-swallow count from
+    # hundreds to a small residual (measured 7 after the sweep). Assert the count is
+    # now low (≤ 15) to prove the systemic problem was fixed, not just hidden.
+    assert n2ctx["silent"] <= 15, (
+        f"src/ still has {n2ctx['silent']} silent-swallow blocks after G09 sweep "
+        f"(expected ≤ 15)"
+    )
 
 
 @when("the worst source file is scanned for silent-swallow blocks")

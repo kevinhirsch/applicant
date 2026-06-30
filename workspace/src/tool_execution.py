@@ -106,6 +106,7 @@ async def _run_subprocess_streaming(
                         "tail": "\n".join(list(tail)),
                     })
                 except Exception:
+                    logger.warning("Bare exception in tool_execution.py")
                     # Progress is best-effort — never let a UI hiccup
                     # break the underlying subprocess.
                     pass
@@ -123,10 +124,12 @@ async def _run_subprocess_streaming(
         try:
             proc.kill()
         except Exception:
+            logger.warning("Bare exception in tool_execution.py")
             pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:
+            logger.warning("Bare exception in tool_execution.py")
             pass
     except asyncio.CancelledError:
         # User hit stop / SSE stream torn down. Kill the child so it
@@ -135,10 +138,12 @@ async def _run_subprocess_streaming(
         try:
             proc.kill()
         except Exception:
+            logger.warning("Bare exception in tool_execution.py")
             pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:
+            logger.warning("Bare exception in tool_execution.py")
             pass
         # Best-effort: stop the readers + emitter before re-raising.
         for t in (rd_out, rd_err):
@@ -158,6 +163,7 @@ async def _run_subprocess_streaming(
             try:
                 await asyncio.wait_for(t, timeout=1)
             except Exception:
+                logger.warning("Bare exception in tool_execution.py")
                 pass
 
     return (

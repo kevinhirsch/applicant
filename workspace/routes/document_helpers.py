@@ -135,6 +135,7 @@ def _upload_path_inside(upload_dir: str, path: str) -> bool:
     try:
         return os.path.commonpath([base, p]) == base
     except Exception:
+        logger.warning("Bare exception in document_helpers.py")
         return False
 
 

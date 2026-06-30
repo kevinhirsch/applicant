@@ -430,6 +430,7 @@ async def dispatch_reminder(
             try:
                 _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
             except Exception:
+                logger.warning("Bare exception in note_routes.py")
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
             _cache[cache_key or str(note_id)] = {
@@ -720,6 +721,7 @@ def setup_note_routes(task_scheduler=None):
             from core.auth import AuthManager
             _allow_null = not AuthManager().is_configured
         except Exception:
+            logger.warning("Bare exception in note_routes.py")
             _allow_null = False
         db = SessionLocal()
         try:

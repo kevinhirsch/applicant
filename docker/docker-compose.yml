@@ -7,7 +7,7 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://applicant:applicant@postgres:5432/applicant
-      APP_STATIC_DIR: frontend/static
+      APP_STATIC_DIR: workspace/static
       ORCHESTRATOR_BACKEND: shim
       LOG_FORMAT: json
     ports:

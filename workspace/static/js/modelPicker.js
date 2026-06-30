@@ -356,7 +356,7 @@ function _initModelPickerDropdown() {
         window.modelsModule.refreshModels(true).then(() => {
           if (!menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
-        }).catch(() => {});
+        }).catch(e => console.error('Silent catch in modelPicker:', e));
       }
       // Kick off a local-endpoint probe — when it returns, re-render
       // the list so stale local servers get dimmed. Cloud entries
@@ -471,7 +471,7 @@ export function updateModelPicker() {
         fd.append('endpoint_url', first.url || '');
         if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
         fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
+          .catch(e => console.error('Silent catch in modelPicker:', e))
           .finally(() => { _autoSelectingDefault = false; });
       }
     }

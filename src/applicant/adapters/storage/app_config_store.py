@@ -53,16 +53,17 @@ class SqlAlchemyAppConfigStore:
         return dict(row.value) if row is not None and row.value is not None else None
 
     def set(self, key: str, value: dict[str, Any]) -> None:
-        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         from applicant.adapters.storage import models as m
 
-        row = self._session.execute(
-            select(m.AppConfigModel).where(m.AppConfigModel.key == key)
-        ).scalar_one_or_none()
-        if row is None:
-            row = m.AppConfigModel(id=key, key=key, value=dict(value))
-            self._session.add(row)
-        else:
-            row.value = dict(value)
+        # Upsert to avoid the select-then-insert race (#169): concurrent callers
+        # both see no row, both insert, and the second raises UniqueViolation.
+        stmt = pg_insert(m.AppConfigModel).values(
+            id=key, key=key, value=dict(value)
+        ).on_conflict_do_update(
+            index_elements=["key"],
+            set_={"value": dict(value)},
+        )
+        self._session.execute(stmt)
         self._session.commit()

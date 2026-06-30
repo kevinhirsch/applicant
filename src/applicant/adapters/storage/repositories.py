@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -253,7 +254,7 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
 
 def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
     blob = dict(row.intent_sentence or {})
-    kwargs = dict(
+    return AgentRun(
         id=AgentRunId(row.id),
         campaign_id=CampaignId(row.campaign_id),
         intent_sentence=blob.get("sentence", ""),
@@ -261,12 +262,8 @@ def _agent_run_to_entity(row: m.AgentRunModel) -> AgentRun:
         throughput_target=int(blob.get("throughput_target", 15)),
         stats=dict(blob.get("stats", {})),
         timestamp=row.timestamp,
+        seq=row.seq,
     )
-    # Preserve the monotonic insertion ``seq`` for deterministic tie-break on equal
-    # timestamps (FR-AGENT-7); fall back to the entity default when absent.
-    if "seq" in blob:
-        kwargs["seq"] = int(blob["seq"])
-    return AgentRun(**kwargs)
 
 
 def _detection_to_entity(row: m.DetectionEventModel) -> DetectionEvent:
@@ -882,8 +879,8 @@ class AgentRunRepo:
                     "run_mode": run.run_mode.value,
                     "throughput_target": run.throughput_target,
                     "stats": run.stats,
-                    "seq": run.seq,
                 },
+                seq=run.seq,
                 timestamp=run.timestamp,
             )
         )
@@ -902,7 +899,7 @@ class AgentRunRepo:
         stmt = (
             select(m.AgentRunModel)
             .where(m.AgentRunModel.campaign_id == campaign_id)
-            .order_by(m.AgentRunModel.timestamp, m.AgentRunModel.id)
+            .order_by(m.AgentRunModel.timestamp, m.AgentRunModel.seq)
         )
         if offset:
             stmt = stmt.offset(offset)
@@ -933,41 +930,53 @@ class AgentRunRepo:
         return total
 
     def latest(self, campaign_id: CampaignId) -> AgentRun | None:
-        """Most recent run (timestamp DESC, seq tie-break per FR-AGENT-7)."""
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        runs = [_agent_run_to_entity(r) for r in rows]
-        if not runs:
-            return None
-        # ``seq`` lives inside the JSON blob, so tie-break in Python (mirrors in-memory).
-        return max(runs, key=lambda r: (r.timestamp, r.seq))
+        """Most recent run (timestamp DESC, seq DESC tie-break per FR-AGENT-7)."""
+        row = self._s.scalars(
+            select(m.AgentRunModel)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .order_by(m.AgentRunModel.timestamp.desc(), m.AgentRunModel.seq.desc())
+            .limit(1)
+        ).first()
+        return _agent_run_to_entity(row) if row else None
 
     def max_seq(self, campaign_id: CampaignId) -> int:
         """Highest ``seq`` among campaign runs (0 if none)."""
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        return max((_agent_run_to_entity(r).seq for r in rows), default=0)
+        from sqlalchemy import func
+        result = self._s.execute(
+            select(func.coalesce(func.max(m.AgentRunModel.seq), 0))
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+        ).scalar()
+        return result or 0
 
     def prune_old(self, campaign_id: CampaignId, *, keep: int) -> int:
         """Keep the newest ``keep`` runs for ``campaign_id``; delete the rest.
 
-        Newness is ordered by ``(timestamp, seq)``. ``seq`` lives inside the JSON blob,
-        so ordering is resolved in Python (mirrors the in-memory lane) before the stale
-        rows are deleted. Returns the number of runs deleted."""
+        Newness is ordered by ``(timestamp, seq)``, resolved at the SQL level so only
+        the stale rows are fetched. Returns the number of runs deleted."""
         if keep < 0:
             keep = 0
-        rows = self._s.scalars(
-            select(m.AgentRunModel).where(m.AgentRunModel.campaign_id == campaign_id)
-        ).all()
-        ordered = sorted(
-            rows, key=lambda r: (r.timestamp, _agent_run_to_entity(r).seq)
+        if keep == 0:
+            result = self._s.execute(
+                sa.delete(m.AgentRunModel).where(
+                    m.AgentRunModel.campaign_id == campaign_id
+                )
+            )
+            return result.rowcount
+
+        keep_ids = (
+            select(m.AgentRunModel.id)
+            .where(m.AgentRunModel.campaign_id == campaign_id)
+            .order_by(m.AgentRunModel.timestamp.desc(), m.AgentRunModel.seq.desc())
+            .limit(keep)
+        ).subquery()
+
+        result = self._s.execute(
+            sa.delete(m.AgentRunModel).where(
+                m.AgentRunModel.campaign_id == campaign_id,
+                m.AgentRunModel.id.not_in(select(keep_ids.c.id)),
+            )
         )
-        stale = ordered[: max(0, len(ordered) - keep)]
-        for row in stale:
-            self._s.delete(row)
-        return len(stale)
+        return result.rowcount
 
 
 class DetectionEventRepo:

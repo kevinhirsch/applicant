@@ -26,6 +26,8 @@ class NotificationChannel(str, Enum):
     DISCORD = "discord"
     IN_APP = "in_app"
     EMAIL = "email"
+    NTFY = "ntfy"  # push notifications via ntfy server (opt-in, urgent action alerts)
+    PUSH = "ntfy"  # alias: PUSH is the logical name; ntfy is the transport
 
 
 @dataclass(frozen=True)

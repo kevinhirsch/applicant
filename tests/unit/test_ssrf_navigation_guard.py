@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import pytest
 
-from applicant.adapters.browser.page_source import assert_navigable_url
+from applicant.adapters.browser.page_source import (
+    PlaywrightPageSource,
+    assert_navigable_url,
+)
 from applicant.core.errors import InvalidInput
 from applicant.core.rules.url_safety import (
+    ip_chain_is_blocked,
     ip_is_blocked,
     scheme_is_allowed,
 )
@@ -94,3 +98,65 @@ def test_assert_navigable_url_allows_public(url):
     # Returns None (does not raise) for a public destination. Numeric literals
     # resolve via getaddrinfo without touching the network, so this is hermetic.
     assert assert_navigable_url(url) is None
+
+
+# --- #310: the navigation-wide route guard (redirects + subresources) ----------
+
+
+def test_ip_chain_is_blocked_any_member_blocks():
+    # A host that resolves to several addresses is refused if ANY is non-public.
+    assert ip_chain_is_blocked(["8.8.8.8", "169.254.169.254"]) is True
+    assert ip_chain_is_blocked(["10.0.0.1"]) is True
+    # All-public chain is allowed; an empty chain fails closed.
+    assert ip_chain_is_blocked(["8.8.8.8", "1.1.1.1"]) is False
+    assert ip_chain_is_blocked([]) is True
+    assert ip_chain_is_blocked(None) is True
+
+
+class _FakeRoute:
+    def __init__(self, url: str):
+        self.request = type("R", (), {"url": url})()
+        self.aborted = False
+        self.continued = False
+
+    def abort(self):
+        self.aborted = True
+
+    def continue_(self):
+        self.continued = True
+
+
+def _guard(url: str) -> _FakeRoute:
+    # ``_guard_route`` ignores instance state, so an uninitialized instance is a
+    # valid ``self`` — this exercises the real guard without launching a browser.
+    route = _FakeRoute(url)
+    PlaywrightPageSource._guard_route(object.__new__(PlaywrightPageSource), route)
+    return route
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # redirect to metadata
+        "http://10.0.0.5/internal-asset.js",  # private subresource
+        "http://127.0.0.1:8000/",  # loopback
+        "file:///etc/passwd",  # non-http(s) scheme
+    ],
+)
+def test_guard_route_aborts_blocked_hop(url):
+    route = _guard(url)
+    assert route.aborted is True
+    assert route.continued is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://8.8.8.8/jobs/123",
+        "https://1.1.1.1/static/app.js",
+    ],
+)
+def test_guard_route_allows_public_hop(url):
+    route = _guard(url)
+    assert route.continued is True
+    assert route.aborted is False

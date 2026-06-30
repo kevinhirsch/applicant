@@ -77,6 +77,7 @@ def _require_admin(request: Request) -> str:
     try:
         is_admin = bool(auth_mgr.is_admin(owner))
     except Exception:
+        logger.warning("Bare exception in applicant_ops_routes.py")
         is_admin = False
     if not is_admin:
         raise HTTPException(status_code=403, detail="This control is available to admins only.")

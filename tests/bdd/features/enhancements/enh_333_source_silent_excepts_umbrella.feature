@@ -14,7 +14,7 @@ Feature: Workspace source files do not silently swallow errors
     Given the workspace source files
     When the source files are scanned for bare exception handlers
     Then the source count of bare exception handlers is at least the audited baseline
-    And many source handlers silently swallow the error with a bare pass
+    And few source handlers silently swallow the error with a bare pass after the G09 sweep
 
   @pending
   Scenario: The worst source file has no silent-swallow exception blocks

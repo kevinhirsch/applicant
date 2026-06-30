@@ -6,8 +6,9 @@
  *  - runs the add/subtract/free-text revision loop, refreshing the changes after
  *    each request;
  *  - approve or decline (nothing is submitted until you approve it).
- * The aggressiveness control isn't available yet and ships disabled. Network
- * failures are handled gracefully. Shares the redirect-aware fetch from ApplicantUI.
+ * The aggressiveness control is wired and functional; the slider persists its
+ * value via the API and the generation directive adjusts framing accordingly.
+ * Network failures are handled gracefully. Shares the redirect-aware fetch from ApplicantUI.
  */
 import { ApplicantUI, apiFetch } from "/static/applicant/js/applicant-ui.js";
 
@@ -33,6 +34,8 @@ import { ApplicantUI, apiFetch } from "/static/applicant/js/applicant-ui.js";
   async function loadRedline(baseSource, newSource) {
     const view = document.getElementById("redline-view");
     if (!view) return;
+    const slider = document.getElementById("aggressiveness-slider");
+    const aggr = slider ? parseInt(slider.value, 10) || 20 : 20;
     try {
       const payload = await api("/api/documents/redline", {
         method: "POST",
@@ -40,7 +43,7 @@ import { ApplicantUI, apiFetch } from "/static/applicant/js/applicant-ui.js";
           variant_id: variantId,
           base_source: baseSource || "",
           new_source: newSource || "",
-          aggressiveness: 20,
+          aggressiveness: aggr,
         }),
       });
       // rendered_html already wraps additions/deletions in highlighted spans.
@@ -142,8 +145,31 @@ import { ApplicantUI, apiFetch } from "/static/applicant/js/applicant-ui.js";
     loadMaterials();
   }
 
+  async function saveAggressiveness(value) {
+    try {
+      const result = await api("/api/documents/aggressiveness", {
+        method: "POST",
+        body: JSON.stringify({ aggressiveness: parseInt(value, 10) || 20 }),
+      });
+      return result.aggressiveness;
+    } catch (e) {
+      return null;
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     ApplicantUI.mountShell({ active: "review" });
+    const slider = document.getElementById("aggressiveness-slider");
+    const label = document.getElementById("aggressiveness-value");
+    if (slider) {
+      slider.addEventListener("input", function () {
+        if (label) label.textContent = this.value;
+      });
+      slider.addEventListener("change", async function () {
+        const val = await saveAggressiveness(this.value);
+        if (val !== null && label) label.textContent = val;
+      });
+    }
     document.querySelectorAll("button[data-kind]").forEach((btn) => {
       btn.addEventListener("click", () => submitTurn(btn.getAttribute("data-kind")));
     });

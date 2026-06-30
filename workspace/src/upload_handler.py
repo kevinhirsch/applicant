@@ -61,6 +61,7 @@ class UploadHandler:
             import magic
             self.file_detector = magic.Magic(mime=True)
         except Exception:
+            logger.warning("Bare exception in upload_handler.py")
             self.file_detector = None
             logger.warning("python-magic not available, falling back to basic detection")
     
@@ -71,6 +72,7 @@ class UploadHandler:
         try:
             return os.path.commonpath([base, p]) == base
         except Exception:
+            logger.warning("Bare exception in upload_handler.py")
             return False
     
     def get_upload_dir(self):
@@ -240,6 +242,7 @@ class UploadHandler:
         try:
             return os.path.commonpath([base, p]) == base
         except Exception:
+            logger.warning("Bare exception in upload_handler.py")
             return False
 
     def _load_upload_index(self) -> Dict[str, Any]:
@@ -306,6 +309,7 @@ class UploadHandler:
             try:
                 is_admin = bool(auth_manager.is_admin(owner))
             except Exception:
+                logger.warning("Bare exception in upload_handler.py")
                 is_admin = False
 
         if owner and not is_admin:
@@ -549,6 +553,7 @@ class UploadHandler:
                     with open(uploads_db_path, "r", encoding="utf-8") as f:
                         all_files = json.load(f)
                 except Exception:
+                    logger.warning("Bare exception in upload_handler.py")
                     all_files = {}
             else:
                 all_files = {}

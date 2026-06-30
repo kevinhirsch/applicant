@@ -401,8 +401,8 @@ def build_args_for_chrome_major(n4ctx):
     if callable(builder):
         n4ctx["args"] = builder(fp, chrome_major=major).get("args", [])
     else:
-        # No version-gating exists; _STEALTH_ARGS is unconditional.
-        n4ctx["args"] = list(PlaywrightPageSource._STEALTH_ARGS)
+        # Call the version-aware _stealth_args with the resolved major.
+        n4ctx["args"] = list(PlaywrightPageSource._stealth_args(chrome_major=major))
 
 
 @then("the unsafe-swiftshader flag is not passed to the newer Chrome")

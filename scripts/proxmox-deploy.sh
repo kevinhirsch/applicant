@@ -180,12 +180,28 @@ ssh_pwauth: true
 disable_root: false
 package_update: true
 packages: [qemu-guest-agent, ca-certificates, curl, git]
+# Deliver the DB password to install.sh via a mode-600 .env file it loads at
+# startup — NEVER inline on the install command line (issue #280). An inline
+# POSTGRES_PASSWORD=... would be visible in /proc/<pid>/cmdline and \`ps aux\` to
+# any local user for the lifetime of the install. write_files lands the secret
+# with 0600 perms before any command runs; install.sh sources .env first, so it
+# adopts this password instead of minting a fresh (mismatched) one.
+write_files:
+  - path: /opt/${REPO_NAME}.env/.env
+    permissions: '0600'
+    owner: root:root
+    content: |
+      POSTGRES_PASSWORD=${DB_PASS}
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
+  # Clone into the target dir, then move the pre-written .env into the checkout
+  # (git clone refuses a non-empty target, so the secret is staged outside it).
   - git clone --depth 1 --branch ${REPO_BRANCH} ${REPO_URL} /opt/${REPO_NAME}
-  - bash -lc 'cd /opt/${REPO_NAME} && POSTGRES_PASSWORD="${DB_PASS}" APP_URL="http://0.0.0.0:${APP_PORT}" bash scripts/install.sh --apply'
+  - install -m 0600 -o root -g root /opt/${REPO_NAME}.env/.env /opt/${REPO_NAME}/.env
+  - rm -rf /opt/${REPO_NAME}.env
+  - bash -lc 'cd /opt/${REPO_NAME} && APP_URL="http://0.0.0.0:${APP_PORT}" bash scripts/install.sh --apply'
   - touch /opt/${REPO_NAME}/.provisioned
 EOF
 msg_ok "Cloud-init user-data written: ${SNIP_STORE}:snippets/applicant-${VMID}.yaml"

@@ -75,6 +75,7 @@ def setup_signature_routes() -> APIRouter:
             if not payload:
                 raise ValueError("empty payload")
         except Exception:
+            logger.warning("Bare exception in signature_routes.py")
             raise HTTPException(400, "Signature data must be base64-encoded PNG bytes")
 
         sig = Signature(

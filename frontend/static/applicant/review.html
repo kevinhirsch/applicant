@@ -43,17 +43,17 @@
     <section style="margin-top:16px;">
       <h2>Revise</h2>
       <div>
-        <input id="revise-instruction" type="text" placeholder="e.g. make it more concise, emphasize leadership" />
-        <button class="admin-btn admin-btn-sm" data-kind="add">Add</button>
-        <button class="admin-btn admin-btn-sm" data-kind="subtract">Subtract</button>
-        <button class="admin-btn admin-btn-sm" data-kind="free_text">Free text</button>
+        <label for="revise-instruction" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);">Revision instruction</label><input id="revise-instruction" type="text" placeholder="e.g. make it more concise, emphasize leadership" />
+        <button type="button" class="admin-btn admin-btn-sm" data-kind="add">Add</button>
+        <button type="button" class="admin-btn admin-btn-sm" data-kind="subtract">Subtract</button>
+        <button type="button" class="admin-btn admin-btn-sm" data-kind="free_text">Free text</button>
       </div>
       <ul id="turn-log" class="admin-empty"></ul>
     </section>
 
     <section style="margin-top:16px;">
-      <button id="approve-btn" class="admin-btn">Approve</button>
-      <button id="decline-btn" class="admin-btn">Decline</button>
+      <button type="button" id="approve-btn" class="admin-btn">Approve</button>
+      <button type="button" id="decline-btn" class="admin-btn">Decline</button>
       <span id="review-status" class="admin-empty"></span>
     </section>
   </main>

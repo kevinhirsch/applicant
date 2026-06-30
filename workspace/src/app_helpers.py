@@ -1,6 +1,9 @@
 # src/app_helpers.py
 import os
 import base64
+import logging
+
+log = logging.getLogger(__name__)
 
 def read_if_exists(path: str) -> str:
     """Read file if it exists, return empty string otherwise."""
@@ -8,6 +11,7 @@ def read_if_exists(path: str) -> str:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
     except Exception:
+        log.warning("read_if_exists failed for %s", path)
         return ""
 
 def file_to_data_url(path: str, mime: str) -> str:
@@ -27,4 +31,5 @@ def inside_base_dir(base_dir: str, path: str) -> bool:
     try:
         return os.path.commonpath([base, p]) == base
     except Exception:
+        log.warning("inside_base_dir failed for base=%s path=%s", base_dir, path)
         return False

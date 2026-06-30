@@ -9,8 +9,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE
-from .analytics import RateLimitError, error_logger
-from .query import build_enhanced_query
+from src.search.analytics import RateLimitError, error_logger
+from src.search.query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
 

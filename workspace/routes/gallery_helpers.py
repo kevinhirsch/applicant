@@ -70,6 +70,7 @@ def _extract_exif(content: bytes) -> dict:
                     result["gps_lat"] = f"{lat:.6f}"
                     result["gps_lng"] = f"{lng:.6f}"
             except Exception:
+                logger.warning("Bare exception in gallery_helpers.py")
                 pass
     except Exception as e:
         # User-visible failure (photo loses metadata): surface at WARNING

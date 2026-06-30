@@ -175,6 +175,7 @@ def _is_ollama_native_url(url: str) -> bool:
     try:
         parsed = urlparse(url or "")
     except Exception:
+        logger.warning("Failed to parse URL: %s", url)
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
@@ -285,6 +286,7 @@ def _provider_label(url: str) -> str:
         host = urlparse(url).hostname or "provider"
         return host
     except Exception:
+        logger.warning("Failed to detect provider for URL")
         return "provider"
 
 
@@ -298,6 +300,7 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
         try:
             body = body.decode("utf-8", errors="replace")
         except Exception:
+            logger.warning("Failed to decode body as UTF-8")
             body = str(body)
     provider = _provider_label(url)
     # Try to pull a message out of the body
@@ -311,6 +314,7 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
             elif isinstance(err, str):
                 detail = err.strip()
     except Exception:
+        logger.warning("Failed to extract error detail from response")
         detail = (body or "").strip()[:240]
 
     if status in (401, 403):
@@ -564,6 +568,7 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
             ]
         return model_ids
     except Exception:
+        logger.warning("Failed to list models via endpoint, trying Ollama fallback")
         try:
             if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
                 root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
@@ -571,6 +576,7 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
                 r.raise_for_status()
                 return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
         except Exception:
+            logger.warning("Failed to parse Ollama model list")
             pass
         return []
 
@@ -600,6 +606,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         try:
             headers = json.loads(headers)
         except Exception:
+            logger.warning("Failed to parse headers JSON")
             headers = None
     if isinstance(headers, dict):
         h.update(headers)

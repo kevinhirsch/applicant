@@ -97,7 +97,7 @@ services:
     pull_policy: build
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (install.sh/proxmox-deploy.sh generate a strong one)}@postgres:5432/${POSTGRES_DB:-applicant}
-      APP_STATIC_DIR: frontend/static
+      APP_STATIC_DIR: workspace/static
       # Credential vault master key (FR-VAULT-3). MUST live on a PERSISTED volume:
       # the container layer is ephemeral, so a key written there is regenerated on
       # every `up --build` and ALL previously sealed secrets become permanently

@@ -4,8 +4,9 @@ Feature: The installer surfaces a failed source pull instead of swallowing it
   # failures, detached HEAD, merge conflicts — so the install proceeds and builds from stale
   # or corrupt source with no warning. The pull must distinguish a real error from
   # already-up-to-date and warn or abort rather than discarding the failure unconditionally.
+  # The pull result is now captured: "Already up to date" is tolerated, every other failure
+  # aborts the bootstrap with a clear message → hard regression gate.
 
-  @pending
   Scenario: A failed pull during bootstrap is not silently discarded
     Given the installer script
     When its checkout-reuse pull step is inspected

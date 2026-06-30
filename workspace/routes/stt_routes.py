@@ -6,6 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+#: Max upload size for STT audio (bytes). Prevents memory exhaustion.
+MAX_STT_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
 
 def setup_stt_routes(stt_service):
     """Setup STT routes with the provided STT service"""
@@ -31,6 +34,11 @@ def setup_stt_routes(stt_service):
                 )
 
             audio_bytes = await file.read()
+            if len(audio_bytes) > MAX_STT_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"message": f"Upload too large: max {MAX_STT_UPLOAD_BYTES} bytes."}
+                )
             if not audio_bytes:
                 raise HTTPException(status_code=400, detail={"message": "Empty audio file"})
 

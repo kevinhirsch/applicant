@@ -11,7 +11,6 @@ Feature: The email escalation delay can never be driven to an instant zero-secon
     When a normal approval is queued
     Then the email rung is not due immediately
 
-  @pending
   Scenario: A zero-second email timeout passed to the constructor is also floored
     Given a notifier constructed directly with a zero-second email timeout
     When a normal approval is queued

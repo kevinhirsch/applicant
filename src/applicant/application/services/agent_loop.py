@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -82,6 +83,21 @@ class ResumeLedger:
 
 
 @dataclass
+class DigestLedger:
+    """Cross-tick digest delivery guard that OUTLIVES a single AgentLoop instance.
+
+    The 24/7 scheduler rebuilds a fresh ``AgentLoop`` every tick, so the per-instance
+    ``_digest_sent`` dict resets each tick and the "already delivered today" guard is
+    lost — causing the digest email + ready-ping to re-send every ~60s. This ledger
+    persists the guard across rebuilds. The container creates ONE of these for the
+    process and injects it into every per-tick loop.
+    """
+
+    sent: dict[tuple[str, date], bool] = field(default_factory=dict)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
 class TickResult:
     """Structured outcome of one ``tick`` (introspection + tests)."""
 
@@ -120,6 +136,7 @@ class AgentLoop:
         setup_service=None,
         research_service=None,
         resume_ledger: ResumeLedger | None = None,
+        digest_ledger: DigestLedger | None = None,
         llm=None,
         loop_toolset_factory=None,
         # G07 pre-submit safety: optional dict of parameters.
@@ -177,8 +194,14 @@ class AgentLoop:
         self._acted: dict[tuple[str, date], int] = {}
         # (campaign_id, UTC date) -> True once today's digest was delivered (FR-DIG-1).
         # Guards the loop's own delivery so a ~60s scheduler tick does not re-send the
-        # digest email + Discord ready-ping every tick.
-        self._digest_sent: dict[tuple[str, date], bool] = {}
+        # digest email + Discord ready-ping every tick. This guard lives in a
+        # DigestLedger that OUTLIVES this instance: the scheduler rebuilds the loop every
+        # tick, so a per-instance dict would reset and re-deliver every ~60s. The
+        # container creates ONE ledger for the process and injects it into every per-tick
+        # loop; when none is given (unit tests / direct use) a fresh per-instance one is
+        # used.
+        self._digest_ledger = digest_ledger if digest_ledger is not None else DigestLedger()
+        self._digest_sent = self._digest_ledger.sent
         #: minimum seconds between resume re-drives of the same parked app (#9).
         self._resume_backoff_seconds: float = 300.0
         # Resume bookkeeping (#9 backoff + the failure cap) lives in a ledger that
@@ -292,8 +315,11 @@ class AgentLoop:
     def _prune_daily(self, today: date) -> None:
         """Drop ``_digest_sent`` / ``_acted`` entries from days other than today (CONC-3)."""
         with self._state_lock:
-            self._digest_sent = {k: v for k, v in self._digest_sent.items() if k[1] == today}
             self._acted = {k: v for k, v in self._acted.items() if k[1] == today}
+        with self._digest_ledger.lock:
+            stale = [k for k in self._digest_sent if k[1] != today]
+            for k in stale:
+                self._digest_sent.pop(k, None)
 
     def _tick(self, campaign_id: CampaignId, now: datetime, force: bool = False) -> TickResult:
         result = TickResult(campaign_id=str(campaign_id))
@@ -426,13 +452,13 @@ class AgentLoop:
             # ~60s scheduler cadence does not re-send the email + Discord ready-ping
             # on every tick.
             key = (str(campaign.id), now.date())
-            with self._state_lock:
+            with self._digest_ledger.lock:
                 already_sent = bool(self._digest_sent.get(key))
             if not already_sent:
                 try:
                     delivered = self._digest.deliver(campaign.id)
                     result.digest_rows = len(delivered.get("payload", {}).get("rows", []))
-                    with self._state_lock:
+                    with self._digest_ledger.lock:
                         self._digest_sent[key] = True
                 except Exception as exc:  # pragma: no cover - defensive
                     log.warning("digest_failed", campaign_id=str(campaign.id), error=str(exc))
@@ -1032,7 +1058,9 @@ class AgentLoop:
 
         Resolves the app's session via ``sandbox.for_application`` and tears it down
         so the real browser context / Neko room (and its cookies/state) does not
-        persist across applications. Idempotent + defensive: a missing session or a
+        persist across applications. Retries up to 3 times on failure before giving
+        up, so a transient error (network blip, container busy) does not leak a
+        sandbox session. Idempotent + defensive: a missing session or a
         driver error never breaks the terminal path.
         """
         if self._sandbox is None:
@@ -1040,12 +1068,28 @@ class AgentLoop:
         resolver = getattr(self._sandbox, "for_application", None)
         if resolver is None:
             return
-        try:
-            session = resolver(application_id)
-            if session is not None:
-                self._sandbox.teardown(session.session_id)
-        except Exception:  # pragma: no cover - defensive: teardown must never raise
-            log.warning("sandbox_teardown_failed", application_id=str(application_id))
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                session = resolver(application_id)
+                if session is not None:
+                    self._sandbox.teardown(session.session_id)
+                return  # success
+            except Exception as exc:  # pragma: no cover - defensive: teardown must never raise
+                last_exc = exc
+                log.warning(
+                    "sandbox_teardown_failed",
+                    application_id=str(application_id),
+                    attempt=attempt + 1,
+                    error=str(exc),
+                )
+                if attempt < 2:
+                    time.sleep(1.0 * (2 ** attempt))  # exponential backoff: 1s, 2s
+        log.error(
+            "sandbox_teardown_gave_up",
+            application_id=str(application_id),
+            error=str(last_exc),
+        )
 
     def _workflow_id(self, application_id: ApplicationId) -> str:
         return f"application:{application_id}"
@@ -1165,7 +1209,10 @@ class AgentLoop:
         legal transitions. NOT used to land the final-approval gate — that goes through
         ``_advance_to`` so an illegal pre-state can never be silently force-set (#2).
         """
-        updated = dataclasses.replace(app, status=to)
+        current = self._storage.applications.get(app.id) or app
+        if current.status is to:
+            return current
+        updated = dataclasses.replace(current, status=to)
         self._storage.applications.update(updated)
         self._storage.commit()
         return updated

@@ -28,55 +28,20 @@
 // the engine is unreachable or the caller isn't an admin.
 
 import uiModule from './ui.js';
+import { esc, _toast, _fetchJSON, _post, _put } from './applicantCore.js';
 
 const ADMIN = '/api/applicant/admin';
 const OPS = '/api/applicant/ops';
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _activeTab = 'activity';
 let _campaignId = null;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try { uiModule.showToast(msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
-function _put(url, body) {
-  return _fetchJSON(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 
@@ -96,6 +61,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-debug-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Applicant diagnostics');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:860px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
@@ -121,6 +89,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
@@ -151,6 +122,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';

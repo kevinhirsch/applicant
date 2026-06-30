@@ -14,7 +14,7 @@ Feature: Workspace route files do not silently swallow errors
     Given the workspace route source files
     When the route files are scanned for bare exception handlers
     Then the count of bare exception handlers is at least the audited baseline
-    And many of them silently swallow the error with a bare pass
+    And few of them silently swallow the error with a bare pass after the G09 sweep
 
   @pending
   Scenario: The highest-risk route file has no silent-swallow exception blocks

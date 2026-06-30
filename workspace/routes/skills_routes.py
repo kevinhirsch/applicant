@@ -166,6 +166,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                 try:
                     d = _coerce(_json.loads(cand))
                 except Exception:
+                    logger.warning("Bare exception in skills_routes.py")
                     d = None
                 if d is not None:
                     data = d
@@ -179,6 +180,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                     try:
                         d = _coerce(_json.loads(cand))
                     except Exception:
+                        logger.warning("Bare exception in skills_routes.py")
                         d = None
                     if d is not None:
                         data = d
@@ -289,6 +291,7 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
                 data = _json.loads(cand)
                 break
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 continue
     if not isinstance(data, dict) or "necessary" not in data:
         return None
@@ -375,6 +378,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
                 data = _json.loads(cand)
                 break
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 continue
     if not isinstance(data, dict) or "ok" not in data:
         return None
@@ -427,6 +431,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
             try:
                 d = _json.loads(chunk[6:])
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 continue
             if d.get("delta"):
                 say_buf.append(d["delta"]); transcript.append(d["delta"])
@@ -465,12 +470,14 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
         try:
             skills_manager.set_audit(name, v, by_teacher=False, worker_model=model)
         except Exception:
+            logger.warning("Bare exception in skills_routes.py")
             pass
         conf = {"pass": 0.95, "needs_work": 0.6, "fail": 0.4}.get(v)
         if conf is not None:
             try:
                 skills_manager.update_skill(name, {"confidence": conf})
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 pass
     job["status"] = "done"
 
@@ -485,11 +492,13 @@ def _audit_auto_publish_policy(owner) -> tuple[bool, float]:
         from routes.prefs_routes import _load_for_user
         prefs = _load_for_user(owner) or {}
     except Exception:
+        logger.warning("Bare exception in skills_routes.py")
         prefs = {}
     try:
         from src.settings import get_setting
         default_min = get_setting("skill_autosave_min_confidence", 0.85)
     except Exception:
+        logger.warning("Bare exception in skills_routes.py")
         default_min = 0.85
     enabled = bool(prefs.get("auto_approve_skills", True))
     try:
@@ -565,6 +574,7 @@ def _skill_duplicate_blocker(skills_manager, name: str, owner) -> Optional[str]:
                 f"Lower-priority duplicate of {keeper_name}",
             )
         except Exception:
+            logger.warning("Bare exception in skills_routes.py")
             pass
         return keeper_name
     return None
@@ -631,6 +641,7 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
         try:
             skills_manager.set_necessity(name, False, [], generic_reason)
         except Exception:
+            logger.warning("Bare exception in skills_routes.py")
             pass
     duplicate_of = _skill_duplicate_blocker(skills_manager, name, owner) if verdict == "pass" else None
     if duplicate_of:
@@ -640,6 +651,7 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
     try:
         skills_manager.update_skill(name, {"status": status})
     except Exception:
+        logger.warning("Bare exception in skills_routes.py")
         pass
     return status
 
@@ -687,6 +699,7 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
             try:
                 d = _json.loads(chunk[6:])
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 continue
             if d.get("delta"):
                 transcript.append(d["delta"])
@@ -764,6 +777,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         try:
             skills_manager.update_skill(name, {"confidence": c})
         except Exception:
+            logger.warning("Bare exception in skills_routes.py")
             pass
 
     md = skills_manager.read_skill_md(name)
@@ -806,6 +820,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
             else:
                 skills_manager.set_necessity(name, False, [], reason)
         except Exception:
+            logger.warning("Bare exception in skills_routes.py")
             pass
         log(f"{name}: draft — skipped functional test ({reason[:100]})")
         return {"skill": name, "result": "skipped", "reason": reason, "confidence": 0.35, "status": "draft"}
@@ -903,6 +918,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     try:
         skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35})
     except Exception:
+        logger.warning("Bare exception in skills_routes.py")
         pass
     skills_manager.set_audit(
         name, v or "fail", by_teacher=teacher_ran,
@@ -964,6 +980,7 @@ async def _run_audit_all_job(key, skills_manager, names, url, model, headers, te
                         "necessity": refreshed.get("necessity"),
                     }
             except Exception:
+                logger.warning("Bare exception in skills_routes.py")
                 pass
             job["results"].append(res)
             job["done"] = len(job["results"])
@@ -996,6 +1013,7 @@ def _resolve_audit_models():
             _base = _os.path.basename((model or "").rstrip("/"))
             model = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None) or _avail[0]
     except Exception:
+        logger.warning("Bare exception in skills_routes.py")
         pass
 
     teacher = None

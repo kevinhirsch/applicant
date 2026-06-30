@@ -174,9 +174,12 @@ def test_recover_pending_does_not_call_nonexistent_api(stub_dbos):
 def test_recv_none_timeout_waits_indefinitely(stub_dbos):
     from applicant.adapters.orchestration.dbos_orchestrator import (
         _INDEFINITE_WAIT_SECONDS,
+        DbosOrchestrator,
     )
 
-    orch = _orch()
+    # The approval gate timeout is configurable (FR-DUR-3): 0 ⇒ wait indefinitely.
+    # Build the orchestrator in that mode to exercise the indefinite-wait branch.
+    orch = DbosOrchestrator("postgresql://localhost/test", approval_timeout_seconds=0.0)
     orch.register_workflow("gated", lambda o, wid: None)
     orch._ensure_launched()
     orch.recv("wf-1", "approval", timeout=None)
@@ -184,6 +187,21 @@ def test_recv_none_timeout_waits_indefinitely(stub_dbos):
     assert topic == "approval"
     # NOT the old 60s substitution.
     assert timeout_seconds == _INDEFINITE_WAIT_SECONDS
+    assert timeout_seconds > 60.0
+
+
+def test_recv_none_timeout_uses_configured_default(stub_dbos):
+    # With a finite configured timeout (FR-DUR-3 default 30 days), recv(None) waits
+    # that long — a timeout yields/re-parks (never auto-submits), so it is safe.
+    from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
+
+    orch = DbosOrchestrator("postgresql://localhost/test", approval_timeout_seconds=2_592_000.0)
+    orch.register_workflow("gated", lambda o, wid: None)
+    orch._ensure_launched()
+    orch.recv("wf-1", "approval", timeout=None)
+    _topic, timeout_seconds = _StubDBOS.recv_calls[0]
+    assert timeout_seconds == 2_592_000.0
+    # Still far longer than the old premature 60s substitution.
     assert timeout_seconds > 60.0
 
 

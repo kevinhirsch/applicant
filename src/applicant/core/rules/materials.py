@@ -92,10 +92,8 @@ _FACTUAL_CUES: tuple[str, ...] = (
     "require sponsorship",
     "need sponsorship",
     "visa",
-    "salary",
-    "compensation",
-    "desired pay",
-    "expected pay",
+    # Salary cues are locale-configurable (issue #194); defaults are US/English.
+    "salary", "compensation", "desired pay", "expected pay",
     "willing to relocate",
     "start date",
     "available to start",

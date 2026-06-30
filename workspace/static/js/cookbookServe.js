@@ -1057,7 +1057,7 @@ function _rerenderCachedModels() {
         // Auto-probe (silent) on open so the GPU buttons reflect the real count
         // — a single-GPU server should show just GPU 0, not the placeholder 0–7.
         // Falls back to the full 0–7 set if the server is unreachable.
-        _runProbe(true).catch(() => {});
+        _runProbe(true).catch(e => console.error('Silent catch in cookbookServe:', e));
 
         if (_clearBtn) {
           _clearBtn.addEventListener('click', async () => {

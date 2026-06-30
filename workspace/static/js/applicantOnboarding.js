@@ -38,6 +38,7 @@
 //     progress) instead of raw <input type=file>.
 
 import fileHandlerModule from './fileHandler.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
@@ -99,43 +100,9 @@ const NEVER_DOES = [
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
-function esc(s) {
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try {
-    if (window.uiModule && typeof window.uiModule.showToast === 'function') {
-      window.uiModule.showToast(msg);
-      return;
-    }
-  } catch { /* fall through */ }
-  try { console.warn('[setup]', msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    err.body = data;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 // (Multipart uploads no longer hand-roll FormData here — the fonts/resume steps
 // reuse fileHandler.js's picker uploadPending(), which builds + POSTs the form.)
 
@@ -265,7 +232,7 @@ async function _renderStep() {
 async function _advanceAndContinue(stepKey) {
   // Mark the engine step complete (best-effort) then move forward (linearly).
   try { _status = await _post(`${SETUP}/advance/${stepKey}`); }
-  catch { await _refreshStatus().catch(() => {}); }
+  catch { await _refreshStatus().catch(e => console.error('Silent catch in applicantOnboarding:', e)); }
   // Settings reuse: a relocated step renderer is being driven from a Settings
   // panel (no wizard overlay open) — save only, never drive wizard navigation.
   if (!_overlay) return;
@@ -277,7 +244,7 @@ async function _advanceAndContinue(stepKey) {
 // advance — the engine still gates real automated work server-side until setup is
 // actually done, so letting the user roam the wizard is safe.
 async function _nextStep() {
-  await _refreshStatus().catch(() => {});
+  await _refreshStatus().catch(e => console.error('Silent catch in applicantOnboarding:', e));
   if (_stepIndex >= STEPS.length - 1) { await _finish(); return; }
   _stepIndex += 1;
   await _renderStep();
@@ -807,7 +774,7 @@ async function _renderSandbox() {
   // into the sandbox image and the engine's health preflight passes. The actual
   // opt-in is per live session (in the live-session surface); here we surface the
   // capability + the honest best-effort caveat, and reflect the locked state.
-  _renderDesktopAssistSetting().catch(() => {});
+  _renderDesktopAssistSetting().catch(e => console.error('Silent catch in applicantOnboarding:', e));
 
   const backendSel = document.getElementById('ao-sb-backend');
   const winBox = document.getElementById('ao-sb-win');
