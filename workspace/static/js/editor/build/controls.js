@@ -9,17 +9,26 @@
  * @param {{ color: string, brushSize: number, wandTolerance: number }} ctx
  * @returns {string}
  */
+function _escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 export function controlsHTML({ color, brushSize, wandTolerance }) {
   const brushSliderValue = Math.round(Math.log(Math.max(1, brushSize)) / Math.log(800) * 1000);
   return `
     <div id="ge-brush-controls">
       <div class="ge-control-row" id="ge-color-row">
         <label>Color</label>
-        <input type="color" class="ge-color-picker" value="${color}" />
+        <input type="color" class="ge-color-picker" value="${_escHtml(color)}" />
       </div>
       <div class="ge-control-row">
-        <label>Size <span class="ge-size-label">${brushSize}px</span></label>
-      <input type="range" class="ge-size-slider" min="0" max="1000" value="${brushSliderValue}" />
+        <label>Size <span class="ge-size-label">${_escHtml(String(brushSize))}px</span></label>
+      <input type="range" class="ge-size-slider" min="0" max="1000" value="${_escHtml(String(brushSliderValue))}" />
     </div>
     </div>
     <div class="ge-lasso-section" id="ge-lasso-section" style="display:none;">
@@ -61,9 +70,9 @@ export function controlsHTML({ color, brushSize, wandTolerance }) {
       </div>
       <div class="ge-control-row ge-eraser-row">
         <span class="ge-eraser-preview" id="ge-wand-tol-preview" aria-hidden="true"></span>
-        <label>Tolerance <span id="ge-wand-tol-label">${wandTolerance}</span></label>
+        <label>Tolerance <span id="ge-wand-tol-label">${_escHtml(String(wandTolerance))}</span></label>
         <button type="button" class="ge-btn ge-btn-sm ge-wand-live-btn" id="ge-wand-live" title="Retune selection while dragging tolerance" aria-pressed="false">Live</button>
-        <input type="range" id="ge-wand-tolerance" min="0" max="100" value="${wandTolerance}" />
+        <input type="range" id="ge-wand-tolerance" min="0" max="100" value="${_escHtml(String(wandTolerance))}" />
       </div>
       <div class="ge-control-row ge-eraser-row ge-sel-refine" id="ge-wand-refine-feather" style="display:none;">
         <span class="ge-eraser-preview" id="ge-wand-feather-preview" aria-hidden="true"></span>

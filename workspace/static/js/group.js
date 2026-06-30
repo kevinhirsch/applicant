@@ -603,7 +603,7 @@ export async function startGroup(models, parentSessionId) {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: [{ role: 'system', content: sysPrompt }]}),
-      }).catch(() => {});
+      }).catch(e => console.error('Silent catch in group:', e));
     } catch (e) {
       console.error('[group] Failed to create participant session:', m.display, e);
       _participantSessions.push(null);
@@ -653,7 +653,7 @@ export async function sendMessage(msg) {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content: msg }] }),
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in group:', e));
   }
 
   if (_mode === 'parallel') {
@@ -902,7 +902,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
         role: 'assistant', content: accumulated,
         metadata: { group_model: gName, model: _models[modelIdx].mid }
       }]}),
-    }).catch(() => {});
+    }).catch(e => console.error('Silent catch in group:', e));
   }
 }
 

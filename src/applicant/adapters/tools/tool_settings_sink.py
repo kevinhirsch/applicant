@@ -39,17 +39,18 @@ class SqlAlchemyToolSettingsSink:
         return {row.tool_key: bool(row.enabled) for row in rows}
 
     def save(self, state: dict[str, bool]) -> None:
-        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         from applicant.adapters.storage import models as m
 
+        # Upsert to avoid the select-then-insert race (#169): concurrent callers
+        # both see no row, both insert, and the second raises UniqueViolation.
         for tool_key, enabled in state.items():
-            row = self._session.execute(
-                select(m.ToolSettingModel).where(m.ToolSettingModel.tool_key == tool_key)
-            ).scalar_one_or_none()
-            if row is None:
-                row = m.ToolSettingModel(id=tool_key, tool_key=tool_key, enabled=bool(enabled))
-                self._session.add(row)
-            else:
-                row.enabled = bool(enabled)
+            stmt = pg_insert(m.ToolSettingModel).values(
+                id=tool_key, tool_key=tool_key, enabled=bool(enabled)
+            ).on_conflict_do_update(
+                index_elements=["tool_key"],
+                set_={"enabled": bool(enabled)},
+            )
+            self._session.execute(stmt)
         self._session.commit()

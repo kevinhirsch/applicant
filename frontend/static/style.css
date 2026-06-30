@@ -772,6 +772,10 @@ body.bg-pattern-sparkles {
       0%, 100% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 0 color-mix(in srgb, var(--red) 50%, transparent); }
       50% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 4px color-mix(in srgb, var(--red) 15%, transparent); }
     }
+    @media (prefers-reduced-motion: reduce) {
+      .rail-notes-badge.fired,
+      .tool-notes-dot { animation: none; }
+    }
     /* Main sidebar notes button — dot when a reminder has fired */
     .tool-notes-dot {
       display: inline-block;
@@ -809,6 +813,10 @@ body.bg-pattern-sparkles {
       box-shadow: 0 0 0 2px var(--bg);
       pointer-events: none;
       animation: rail-min-pulse 2s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .icon-rail-btn.rail-minimized::after,
+      .list-item.rail-minimized::after { animation: none; }
     }
     /* Compact icon-rail buttons: top-right corner of the icon */
     .icon-rail-btn.rail-minimized::after { top: 4px; right: 4px; transform: none; }
@@ -1469,6 +1477,10 @@ body.bg-pattern-sparkles {
     /* The dot doubles as the provider-logo holder; hide that logo in the
        done state so the solid notif dot doesn't collide with the SVG behind it. */
     .session-star.notify svg { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .session-star.processing,
+      .session-star.notify { animation: none; }
+    }
     @keyframes research-done-pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.5); opacity: 0.7; }
@@ -2475,6 +2487,9 @@ body.bg-pattern-sparkles {
       0%, 100% { background: color-mix(in srgb, var(--red) 12%, transparent); }
       50% { background: color-mix(in srgb, var(--red) 22%, transparent); }
     }
+    @media (prefers-reduced-motion: reduce) {
+      #research-toggle-btn.research-running { animation: none; }
+    }
     .tool-indicator-x {
       margin-left: 2px;
       opacity: 0.4;
@@ -2545,6 +2560,9 @@ body.bg-pattern-sparkles {
     @keyframes send-pending-pulse {
       0%, 100% { opacity: 0.55; }
       50%      { opacity: 0.85; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .send-btn.send-pending { animation: none; }
     }
     /* Send button icon transitions — send mode forces no animation */
     .send-btn[data-mode="send"] svg { animation: none !important; }
@@ -2658,6 +2676,9 @@ body.bg-pattern-sparkles {
     @keyframes pulse-recording {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.7; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .send-btn.recording { animation: none; }
     }
     /* Mode toggle — Agent / Chat */
     .mode-toggle {
@@ -8749,6 +8770,9 @@ body.hide-thinking .thinking-section { display: none !important; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.8); }
 }
+@media (prefers-reduced-motion: reduce) {
+  .icon-rail-btn.rail-notify::before { animation: none; }
+}
 @keyframes stream-complete-pulse {
   0%, 100% { box-shadow: none; }
   50% { box-shadow: inset 0 0 0 1.5px var(--accent); }
@@ -8787,6 +8811,9 @@ body.hide-thinking .thinking-section { display: none !important; }
 @keyframes bar-pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-done-indicator { animation: none; }
 }
 
 /* ===== AGENT MULTI-BUBBLE ===== */

@@ -308,6 +308,7 @@ def comprehensive_web_search(
         try:
             netloc = urlparse(url).netloc.lower()
         except Exception:
+            logger.warning("Failed to parse allowed_domains, denying all")
             return False
         if domain_whitelist is not None and netloc not in domain_whitelist:
             return False

@@ -381,7 +381,7 @@ function _undoArchive(note, prevIdx) {
   const safeIdx = Math.min(Math.max(prevIdx, 0), _notes.length);
   _notes.splice(safeIdx, 0, { ...note, archived: false });
   _renderNotes();
-  _patchNote(note.id, { archived: false }).catch(() => {
+  _patchNote(note.id, { archived: false }).catch(e => { console.error('Failed to unarchive note:', e);
     // Roll back local insertion if the server refuses
     const i = _notes.findIndex(n => n.id === note.id);
     if (i >= 0) _notes.splice(i, 1);
@@ -877,7 +877,7 @@ function _checkReminders() {
         const next = _advanceRecurring(note.due_date, note.repeat);
         if (next) {
           note.due_date = next;
-          _patchNote(note.id, { due_date: next }).catch(() => {});
+          _patchNote(note.id, { due_date: next }).catch(e => console.error('Failed to update recurring due date:', e));
           // Don't add to fired — new due_date is in the future
           continue;
         }
@@ -890,7 +890,7 @@ function _checkReminders() {
         const next = _advanceRecurring(note.due_date, note.repeat);
         if (next) {
           note.due_date = next;
-          _patchNote(note.id, { due_date: next }).catch(() => {});
+          _patchNote(note.id, { due_date: next }).catch(e => console.error('Failed to update recurring due date:', e));
           continue;
         }
       }
@@ -959,7 +959,8 @@ function _fireReminder(note) {
       const body = (data && data.synthesis) ? data.synthesis : rawBody;
       showLocal(body);
     })
-    .catch(() => {
+    .catch(e => {
+      console.error('Synthesis fetch failed:', e);
       clearTimeout(timer);
       if (!shown) { shown = true; showLocal(rawBody); }
     });
@@ -1285,7 +1286,7 @@ export function openPanel() {
   document.getElementById('notes-bulk-archive').addEventListener('click', async () => {
     const ids = [..._selectedIds];
     if (!ids.length) return;
-    await Promise.all(ids.map(id => _patchNote(id, { archived: true }).catch(() => {})));
+    await Promise.all(ids.map(id => _patchNote(id, { archived: true }).catch(e => console.error('Failed to archive note:', e))));
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
@@ -1298,7 +1299,7 @@ export function openPanel() {
       const ok = await uiModule.styledConfirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true });
       if (!ok) return;
     }
-    await Promise.all(ids.map(id => _deleteNoteApi(id).catch(() => {})));
+    await Promise.all(ids.map(id => _deleteNoteApi(id).catch(e => console.error('Failed to delete note:', e))));
     _exitSelectMode();
     await _fetchNotes();
     _renderNotes();
@@ -1452,7 +1453,7 @@ async function _clearPastReminders() {
     ? await uiModule.styledConfirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true })
     : confirm(`Delete ${targets.length} past reminder${targets.length === 1 ? '' : 's'}?`);
   if (!ok) return;
-  await Promise.all(targets.map(n => _deleteNoteApi(n.id).catch(() => {})));
+  await Promise.all(targets.map(n => _deleteNoteApi(n.id).catch(e => console.error('Failed to delete past reminder:', e))));
   await _fetchNotes();
   _renderNotes();
   uiModule.showToast?.(`Cleared ${targets.length} past reminder${targets.length === 1 ? '' : 's'}`);
@@ -2181,7 +2182,8 @@ function _bindCardEvents(body) {
         patch.sort_order = note.sort_order;
       }
       _renderNotes();
-      _patchNote(id, patch).catch(() => {
+      _patchNote(id, patch).catch(e => {
+        console.error('Failed to toggle pin:', e);
         note.pinned = prevPinned;
         note.sort_order = prevSortOrder;
         _renderNotes();
@@ -2282,7 +2284,8 @@ function _bindCardEvents(body) {
         _renderNotes();
         _patchNote(id, { archived: true }).then(() => {
           uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
-        }).catch(() => {
+        }).catch(e => {
+          console.error('Failed to archive note:', e);
           _notes.splice(idx, 0, removed);
           _renderNotes();
           uiModule.showError('Failed to archive');
@@ -2308,7 +2311,8 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(() => {
+      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(e => {
+        console.error('Failed to unarchive note:', e);
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to unarchive');
@@ -2325,9 +2329,9 @@ function _bindCardEvents(body) {
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
       _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(() => {
+        uiModule.showError('Failed to delete');
         _notes.splice(idx, 0, removed);
         _renderNotes();
-        uiModule.showError('Failed to delete');
       });
     });
   });
@@ -2360,7 +2364,8 @@ function _bindCardEvents(body) {
         const _undoIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>';
         _patchNote(id, { archived: true }).then(() => {
           uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
-        }).catch(() => {
+        }).catch(e => {
+          console.error('Failed to archive note:', e);
           _notes.splice(curIdx, 0, removed);
           _renderNotes();
           uiModule.showError('Failed to archive');
@@ -2384,7 +2389,8 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(() => {
+      _patchNote(id, { archived: false }).then(() => uiModule.showToast('Unarchived')).catch(e => {
+        console.error('Failed to unarchive note:', e);
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to unarchive');
@@ -2400,7 +2406,8 @@ function _bindCardEvents(body) {
       if (idx < 0) return;
       const removed = _notes.splice(idx, 1)[0];
       _renderNotes();
-      _deleteNoteApi(id).catch(() => {
+      _deleteNoteApi(id).catch(e => {
+        console.error('Failed to delete note:', e);
         _notes.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to delete');
@@ -2454,7 +2461,8 @@ function _bindCardEvents(body) {
       const removed = note.items[idx];
       note.items = note.items.filter((_, i) => i !== idx);
       _renderNotes();
-      _patchNote(noteId, { items: note.items }).catch(() => {
+      _patchNote(noteId, { items: note.items }).catch(e => {
+        console.error('Failed to remove checklist item:', e);
         note.items.splice(idx, 0, removed);
         _renderNotes();
         uiModule.showError('Failed to remove item');
@@ -2484,7 +2492,8 @@ function _bindCardEvents(body) {
         const next = document.querySelector(`.note-cl-quickadd-input[data-note-id="${noteId}"]`);
         if (next) next.focus();
       }, 0);
-      _patchNote(noteId, { items }).catch(() => {
+      _patchNote(noteId, { items }).catch(e => {
+        console.error('Failed to add checklist item:', e);
         note.items = items.slice(0, -1);
         _renderNotes();
         uiModule.showError('Failed to add item');
@@ -2512,7 +2521,8 @@ function _bindCardEvents(body) {
           spawnConfetti(r.left + r.width / 2, r.top + r.height / 2, 60);
         }
       }
-      _patchNote(noteId, { items: note.items }).catch(() => {
+      _patchNote(noteId, { items: note.items }).catch(e => {
+        console.error('Failed to toggle checklist item:', e);
         note.items[idx].done = !note.items[idx].done;
         el.classList.toggle('done', note.items[idx].done);
       });
@@ -2633,7 +2643,7 @@ function _bindCardEvents(body) {
         document.documentElement.style.touchAction = '';
         if (committed) {
           const ids = [...body.querySelectorAll('.note-card')].map(c => c.dataset.noteId);
-          fetch(`${API_BASE}/api/notes/reorder`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }).catch(() => {});
+          fetch(`${API_BASE}/api/notes/reorder`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }).catch(e => console.error('Failed to persist reorder:', e));
         }
       }
       dragCard = null;
@@ -3573,7 +3583,8 @@ function _buildForm(note = null) {
     const _undoIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>';
     _patchNote(id, { archived: true }).then(() => {
       uiModule.showToast('Archived', { duration: 6000, action: 'Undo', actionIcon: _undoIcon, onAction: undo, actionHint: 'Ctrl+Z' });
-    }).catch(() => {
+    }).catch(e => {
+      console.error('Failed to archive note:', e);
       _notes.splice(idx, 0, removed);
       _renderNotes();
       uiModule.showError('Failed to archive');
@@ -3592,7 +3603,8 @@ function _buildForm(note = null) {
     if (idx >= 0) _notes.splice(idx, 1);
     _editingId = null;
     _renderNotes();
-    _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(() => {
+    _deleteNoteApi(id).then(() => uiModule.showToast('Deleted')).catch(e => {
+      console.error('Failed to delete note:', e);
       uiModule.showError('Failed to delete');
       _fetchNotes().then(() => _renderNotes());
     });
@@ -4294,7 +4306,7 @@ async function _agentSolveNote(id) {
     const n = _notes.find(x => x.id === id);
     if (n) n.agent_session_id = sid;
     _renderNotes();
-    _patchNote(id, { agent_session_id: sid }).catch(() => {});
+    _patchNote(id, { agent_session_id: sid }).catch(e => console.error('Failed to link agent session to note:', e));
 
     // 3. Kick off the agent run in the background. POST to chat_stream in
     //    agent mode and drain the SSE so the server runs the loop to
@@ -4313,7 +4325,7 @@ async function _agentSolveNote(id) {
           try { window.sessionModule.markStreamComplete(sid); } catch {}
         }
       })
-      .catch(() => {});
+      .catch(e => console.error('Agent chat stream failed:', e));
 
     uiModule.showToast('Agent working in background — tap the Agent tag when ready');
   } catch (e) {
@@ -4647,7 +4659,7 @@ function _closeMobileFullscreenEdit(opts = {}) {
     _mobileFsNoteId = null;
     _editingId = null;
     // Refresh the grid so any save the user made is reflected.
-    if (opts.save !== false) { _fetchNotes().then(_renderNotes).catch(() => {}); }
+    if (opts.save !== false) { _fetchNotes().then(_renderNotes).catch(e => console.error('Failed to refresh notes:', e)); }
   }, 220);
 }
 

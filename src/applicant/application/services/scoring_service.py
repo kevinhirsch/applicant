@@ -28,10 +28,18 @@ from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
 from applicant.core.ids import JobPostingId
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
+from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import ChatMessage
+
+log = get_logger(__name__)
 
 #: Default viability threshold on a 0..100 scale (FR-AGENT-3); configurable.
 DEFAULT_VIABILITY_THRESHOLD = 70
+#: Neutral-positive default score when no search criteria are set (#344).
+#: Configurable so operators can tune whether unscored postings are leaned
+#: toward inclusion (higher) or exclusion (lower). 0.5 = neutral, 0.75 = lean
+#: toward inclusion so nothing is silently dropped until criteria are stated.
+DEFAULT_NEUTRAL_SCORE = 0.75
 #: Max share of the score the converting-role signature can contribute (FR-LEARN-5).
 _SIGNATURE_WEIGHT = 0.2
 
@@ -44,6 +52,7 @@ class ScoringService:
         embedding,
         *,
         threshold: int = DEFAULT_VIABILITY_THRESHOLD,
+        neutral_score: float = DEFAULT_NEUTRAL_SCORE,
         learning=None,
         advanced_learning=None,
         tool_registry=None,
@@ -53,6 +62,7 @@ class ScoringService:
         self._llm = llm
         self._embedding = embedding
         self._threshold = threshold
+        self._neutral_score = neutral_score
         self._learning = learning
         # Optional AdvancedLearningService so scoring can bias toward the DISCRETE
         # converting signature that the live conversion loop actually writes (+ an
@@ -382,22 +392,32 @@ class ScoringService:
 
     @staticmethod
     def _parse_json_loose(text: str) -> dict:
-        """Best-effort extract a JSON object from a model reply (defensive)."""
+        """Best-effort extract a JSON object from a model reply (defensive).
+
+        Logs a warning when the extracted dict lacks a ``score`` key (#345) so
+        operators can detect models that silently omit the expected field rather
+        than having the error swallowed in the caller's fallback chain.
+        """
         import json
         import re
 
+        obj: dict = {}
         try:
-            obj = json.loads(text)
-            return obj if isinstance(obj, dict) else {}
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                obj = parsed
         except Exception:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 try:
-                    obj = json.loads(match.group(0))
-                    return obj if isinstance(obj, dict) else {}
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, dict):
+                        obj = parsed
                 except Exception:
-                    return {}
-        return {}
+                    pass
+        if obj and "score" not in obj:
+            log.warning("parse_json_loose_missing_score", snippet=text[:200])
+        return obj
 
     def _learned_context(self, campaign_id) -> str:
         """A BOUNDED, advisory curated-memory block about the user's taste (FR-MIND-1/5).

@@ -1251,7 +1251,7 @@ async function initSearchSettings() {
         '<span class="search-fb-grip" title="Drag to reorder">⋮⋮</span>' +
         '<span class="search-fb-logo">' + logo + '</span>' +
         '<span>' + esc(label) + '</span>' +
-        '<button type="button" class="search-fb-remove" data-value="' + esc(p) + '" title="Remove">&times;</button>' +
+        '<button type="button" class="search-fb-remove" data-value="' + esc(p) + '" title="Remove" aria-label="Remove filter">&times;</button>' +
       '</span>';
     }).join('');
     var addOptions = _availableFallbackOptions();
@@ -3433,7 +3433,7 @@ async function initUnifiedIntegrations() {
         <div class="settings-hint" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
-      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" data-intg-name="${(item.name || '').replace(/"/g, '&quot;')}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
+      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" data-intg-name="${(item.name || '').replace(/"/g, '&quot;')}" title="Remove" aria-label="Remove integration" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </div>`;

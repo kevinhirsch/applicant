@@ -112,7 +112,9 @@ class DiscoveryService:
             if order is not None
             else self._discovery.search(campaign_id, criteria)
         )
-        kept = self._dedup(raw)
+        # Load previously persisted postings for cross-run dedup (#196).
+        existing = list(self._storage.postings.list_for_campaign(campaign_id))
+        kept = self._dedup(raw, existing=existing)
         for posting in kept:
             self._storage.postings.add(posting)
         self._storage.commit()
@@ -217,13 +219,26 @@ class DiscoveryService:
             campaign_id, {k: {"matches": v} for k, v in counts.items()}
         )
 
-    def _dedup(self, postings: list[JobPosting]) -> list[JobPosting]:
+    def _dedup(
+        self,
+        postings: list[JobPosting],
+        *,
+        existing: list[JobPosting] | None = None,
+    ) -> list[JobPosting]:
+        """Dedup within a run AND across runs (FR-DISC-3, #196).
+
+        Compares each candidate against postings already kept THIS run (cross-source
+        within-run dedup) AND against previously persisted postings from earlier runs
+        (cross-run dedup) so the same posting is never ingested twice across
+        discovery schedule ticks.
+        """
+        baseline = list(existing) if existing else []
         kept: list[JobPosting] = []
         for candidate in postings:
             sig = f"{candidate.title} {candidate.company}"
             if any(
                 self._embedding.similarity(sig, f"{k.title} {k.company}") >= _DEDUP_THRESHOLD
-                for k in kept
+                for k in [*kept, *baseline]
             ):
                 continue
             kept.append(candidate)

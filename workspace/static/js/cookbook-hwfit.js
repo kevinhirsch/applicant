@@ -422,7 +422,7 @@ export async function _hwfitFetch(fresh = false) {
             }
           }
         });
-      }).catch(() => {});
+      }).catch(e => console.error('Silent catch in cookbook-hwfit:', e));
   }
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'score';

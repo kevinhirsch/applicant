@@ -889,12 +889,6 @@ def check_false_positive(t03ctx):
     t03ctx["result"] = t03ctx["is_ctx_error"](resp)
 
 
-@then("the current substring heuristic wrongly flags it as a context error")
-def heuristic_false_positive(t03ctx):
-    # GREEN: documents the bug — the bare "context" substring trips on unrelated text.
-    assert t03ctx["result"] is True
-
-
 @when(
     "a content-filter error envelope mentioning the context of the request is checked strictly"
 )
@@ -909,13 +903,8 @@ def check_strict(t03ctx):
             }
         }
     )
-    # PENDING: a strict classifier that matches specific codes, not the word "context".
-    strict = _require_attr(
-        OpenAICompatibleLLM,
-        "_is_context_error_strict",
-        "OpenAICompatibleLLM._is_context_error_strict",
-    )
-    t03ctx["result"] = strict(resp)
+    # #285: the strict classifier matches specific codes/phrases, not the bare word "context".
+    t03ctx["result"] = OpenAICompatibleLLM._is_context_error_strict(resp)
 
 
 @then("it is not flagged as a context error")

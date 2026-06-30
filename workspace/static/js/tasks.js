@@ -1327,7 +1327,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         modelSel.appendChild(opt);
       }
     })
-    .catch(() => {});
+    .catch(e => console.error('Silent catch in tasks:', e));
 
   // Populate chain dropdown
   const chainSel = document.getElementById('task-form-chain');

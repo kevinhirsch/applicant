@@ -20,6 +20,7 @@
 
 import uiModule from './ui.js';
 import { updateStateView, formatLogTail } from './applicantUpdateView.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const OPS = '/api/applicant/ops';
 // While an update is running, re-poll status on this cadence so the live log
@@ -27,41 +28,12 @@ const OPS = '/api/applicant/ops';
 const POLL_MS = 3000;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 let _pollIv = null;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try { uiModule.showToast(msg); } catch { /* no-op */ }
-}
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 // The pure view helpers (updateStateView / formatLogTail) live in the
 // dependency-free leaf module ./applicantUpdateView.js (imported above) so they
@@ -75,6 +47,9 @@ function _ensureModalEl() {
   const modal = document.createElement('div');
   modal.id = 'applicant-update-modal';
   modal.className = 'modal hidden';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-label', 'Update applicant');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
@@ -89,6 +64,9 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-update-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -97,6 +75,7 @@ function _ensureModalEl() {
 
 function _close() {
   _stopPolling();
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';

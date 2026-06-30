@@ -30,6 +30,7 @@ import uiModule from './ui.js';
 import digestModule from './emailLibrary/applicantDigest.js';
 import remoteModule from './applicantRemote.js';
 import { neverDoesList } from './applicantOnboarding.js';
+import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const API = '/api/applicant/portal';
 const BADGE_POLL_MS = 60000;
@@ -49,18 +50,7 @@ let _notifs = [];
 let _loading = false;
 let _badgePollIv = null;
 
-function esc(s) {
-  try {
-    if (typeof uiModule.esc === 'function') return uiModule.esc(s);
-  } catch { /* fall through */ }
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
 
-function _toast(msg) {
-  try { uiModule.showToast(msg); } catch { /* no-op */ }
-}
 
 async function _confirm(message, opts) {
   try {
@@ -69,26 +59,7 @@ async function _confirm(message, opts) {
   try { return window.confirm(message); } catch { return false; }
 }
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  let data = null;
-  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
-    err.status = res.status;
-    throw err;
-  }
-  return data || {};
-}
 
-function _post(url, body) {
-  return _fetchJSON(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-}
 
 // ── Notification center (informational notifications + toasts) ────────────────
 //
@@ -836,7 +807,7 @@ function _wireRows(host) {
       const line = data && (data.caveat || data.egress_caveat);
       if (!line) return;
       caveatSlots.forEach((slot) => { slot.textContent = String(line); });
-    }).catch(() => { /* silent */ });
+    }).catch(e => console.error('Failed:', e));
   }
 
   // Missing detail → acquire + resume.

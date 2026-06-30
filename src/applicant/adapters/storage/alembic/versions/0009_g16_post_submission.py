@@ -4,8 +4,8 @@ Adds the five tables that track what happens after a submission is recorded:
 submission_snapshots, rejection_signals, ghosting_signals, follow_ups,
 portfolio_attachments.
 
-Revision ID: 0008_g16_post_submission
-Revises: 0007_pii_retention_timestamps
+Revision ID: 0009_g16_post_submission
+Revises: 0008_schema_hardening
 Create Date: 2026-06-29
 """
 from __future__ import annotations
@@ -13,8 +13,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0008_g16_post_submission"
-down_revision = "0007_pii_retention_timestamps"
+revision = "0009_g16_post_submission"
+down_revision = "0008_schema_hardening"
 branch_labels = None
 depends_on = None
 

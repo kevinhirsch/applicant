@@ -281,6 +281,7 @@ class VectorRAG:
             try:
                 client.delete_collection(COLLECTION_NAME)
             except Exception:
+                logger.warning("Failed to delete collection %s", self.COLLECTION_NAME)
                 pass
             self._collection = client.get_or_create_collection(
                 name=COLLECTION_NAME,

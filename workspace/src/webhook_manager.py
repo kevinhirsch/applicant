@@ -47,6 +47,7 @@ def _resolve_hostname_ips(hostname: str) -> list:
     try:
         infos = socket.getaddrinfo(hostname, None)
     except Exception:
+        logger.warning("Bare exception in webhook_manager.py")
         return []
     out = []
     for info in infos:
@@ -144,6 +145,7 @@ class WebhookManager:
             try:
                 return self._api_key_manager.decrypt_api_key(encrypted)
             except Exception:
+                logger.warning("Bare exception in webhook_manager.py")
                 # If decryption fails, assume it's stored in plaintext (legacy)
                 return encrypted
         return encrypted
@@ -218,6 +220,7 @@ class WebhookManager:
                 })
                 db.commit()
             except Exception:
+                logger.warning("Bare exception in webhook_manager.py")
                 db.rollback()
         finally:
             db.close()

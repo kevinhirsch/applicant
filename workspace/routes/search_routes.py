@@ -32,6 +32,7 @@ async def _request_values(request: Request) -> Dict[str, Any]:
             form = await request.form()
             values.update(dict(form))
     except Exception:
+        logger.warning("Bare exception in search_routes.py")
         pass
     return values
 
@@ -93,6 +94,7 @@ def setup_search_routes(config) -> APIRouter:
         try:
             count = int(values.get("count") or values.get("limit") or 10)
         except Exception:
+            logger.warning("Bare exception in search_routes.py")
             count = 10
         if not query:
             return {"results": [], "provider": provider, "error": "query is required"}

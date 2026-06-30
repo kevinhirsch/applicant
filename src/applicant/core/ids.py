@@ -44,6 +44,31 @@ RejectionSignalId = NewType("RejectionSignalId", str)
 SYSTEM_CAMPAIGN_ID = "__system__"
 
 
+def validate_id(value: str) -> str:
+    """Validate an ID string: reject empty, NUL bytes, and path-traversal patterns.
+
+    Returns the validated string on success, raises ValueError on failure.
+    Use as a FastAPI Depends or a manual guard on path-parameter values.
+    """
+    if not value or not value.strip():
+        raise ValueError("ID must not be empty")
+    if "\x00" in value:
+        raise ValueError("ID must not contain NUL bytes")
+    # Reject path-traversal patterns: ../, ..\, or bare .. at start
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("..") or "/../" in normalized or "/.." == normalized:
+        raise ValueError("ID must not contain path-traversal sequences")
+    # Reject absolute-path-looking values
+    if normalized.startswith("/") or normalized.startswith("\\"):
+        raise ValueError("ID must not be an absolute path")
+    return value
+
+
+def assert_valid_id(value: str) -> str:
+    """Alias for validate_id — raises ValueError on invalid IDs."""
+    return validate_id(value)
+
+
 def new_id() -> str:
     """Generate a fresh opaque identifier (UUID4 hex)."""
     return uuid.uuid4().hex

@@ -36,6 +36,7 @@ def _get_search_settings() -> dict:
         from src.settings import load_settings
         return load_settings()
     except Exception:
+        log.warning("Failed to load search providers config")
         return {}
 
 
