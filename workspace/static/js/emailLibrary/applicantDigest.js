@@ -932,4 +932,21 @@ export function rememberedCampaignId() {
   try { return localStorage.getItem(LAST_CAMPAIGN_KEY) || ''; } catch (_) { return ''; }
 }
 
-export default { mountApplicantDigest, buildDigestRow, listCampaigns, fetchDigest, rememberedCampaignId };
+export async function loadEmailInbox() {
+  try {
+    const data = await _api('/inbox');
+    return (data && Array.isArray(data.items)) ? data.items : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+export async function dismissNotification(id) {
+  return _api(`/inbox/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+}
+
+export async function triggerDigestDelivery(campaignId) {
+  return _api(`/campaigns/${encodeURIComponent(campaignId)}/digest/deliver`, { method: 'POST' });
+}
+
+export default { mountApplicantDigest, buildDigestRow, listCampaigns, fetchDigest, rememberedCampaignId, loadEmailInbox, dismissNotification, triggerDigestDelivery };
