@@ -2368,11 +2368,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         }
       });
 
-      // Approve / Decline.
+      // Approve / Decline — the redline decision row composes the Decision kit's
+      // .odec-row action zone; Approve is the binding CTA (.odec-confirm) and Decline
+      // the secondary choice (.odec-opt), mirroring appkitDecision.js's own naming.
       const decide = document.createElement('div');
+      decide.className = 'odec-row';
       decide.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
       const approveBtn = document.createElement('button');
-      approveBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+      approveBtn.className = 'doclib-card-text-btn doclib-card-action-btn odec-confirm';
       approveBtn.textContent = 'Approve';
       approveBtn.title = 'Approve this document so it can be used for the application.';
       approveBtn.addEventListener('click', async () => {
@@ -2390,7 +2393,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         }
       });
       const declineBtn = document.createElement('button');
-      declineBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
+      declineBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger odec-opt';
       declineBtn.textContent = 'Decline';
       declineBtn.title = 'Reject this draft. It stays unapproved and will not be sent.';
       declineBtn.addEventListener('click', async () => {

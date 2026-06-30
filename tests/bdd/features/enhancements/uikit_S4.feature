@@ -8,7 +8,6 @@ Feature: Map the Documents / resume redline review onto Window + Elements + Deci
     Given the UI-kit migration item "S4"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
   Scenario: S4 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S4"
     Then its post-migration kit target is satisfied
