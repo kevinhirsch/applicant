@@ -646,20 +646,25 @@ def two_matching_attributes(t02ctx):
 
 @when("the engine looks up a value for that label")
 def lookup_value_for_label(t02ctx):
-    t02ctx["value_alt_first"] = PrefillService._lookup(
-        t02ctx["label"], t02ctx["attrs_alt_first"]
-    )
-    t02ctx["value_primary_first"] = PrefillService._lookup(
-        t02ctx["label"], t02ctx["attrs_primary_first"]
-    )
+    # The first scenario supplies attrs_alt_first / attrs_primary_first (two-list variant).
+    # The second scenario supplies only t02ctx["attributes"]; the @then does the lookup.
+    if "attrs_alt_first" in t02ctx:
+        t02ctx["value_alt_first"] = PrefillService._lookup(
+            t02ctx["label"], t02ctx["attrs_alt_first"]
+        )
+        t02ctx["value_primary_first"] = PrefillService._lookup(
+            t02ctx["label"], t02ctx["attrs_primary_first"]
+        )
 
 @then("a matching value is returned deterministically by list order")
 def deterministic_by_order(t02ctx):
     # With priority tiers (exact name > alias), exact name match wins regardless of order.
-    assert t02ctx["value_alt_first"] == "555-0001",
+    assert t02ctx["value_alt_first"] == "555-0001", (
         "exact name match should beat alias match even when alt is first in list"
-    assert t02ctx["value_primary_first"] == "555-0001",
+    )
+    assert t02ctx["value_primary_first"] == "555-0001", (
         "exact name match should beat alias match when primary is first"
+    )
 
 
 @given('a field labelled "Phone" with both a primary phone and an aliased alternate')
