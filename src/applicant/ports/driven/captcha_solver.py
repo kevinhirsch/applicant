@@ -1,149 +1,73 @@
-"""CaptchaSolverPort — behavioral-avoidance + solver-service + human-handoff
-interfaces for CAPTCHA resolution (issue #350, tied to #305).
+"""CaptchaSolverPort — behavioral-avoidance + human-handoff interfaces.
 
-Three complementary strategies, each a separate Protocol so a concrete adapter
-may implement one, two, or all three:
-
-1. **Behavioral avoidance** — steer the browser interaction so the site's
-   CAPTCHA heuristic is never triggered (mouse-movement patterns, timing,
-   scroll cadence). The default no-op adapter records calls without acting.
-
-2. **Solver service** — farm the CAPTCHA challenge to an external solving
-   service (e.g. 2Captcha, Anti-Captcha, CapSolver). The adapter holds the
-   service API key and returns the solution token.
-
-3. **Human hand-off** — when the solver cannot resolve (or the operator has
-   disabled automated solving), escalate to the human takeover path: push a
-   notification with a deep link to the takeover desktop so the user can
-   resolve the CAPTCHA in the live session.
+Issue #350: Provides the port protocol for CAPTCHA solving strategies.
+Only the interfaces are defined here; live solver service needs API keys
+and is built by Claude/user separately.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from enum import StrEnum, auto
+from typing import Any, Protocol, runtime_checkable
+
+
+class CaptchaKind(StrEnum):
+    """Types of CAPTCHA challenges the engine may encounter."""
+    IMAGE = auto()
+    RECAPTCHA_V2 = auto()
+    RECAPTCHA_V3 = auto()
+    HCAPTCHA = auto()
+    TURNSTILE = auto()
+    FUNCAPTCHA = auto()
+    TEXT = auto()
+    AUDIO = auto()
+
+
+class SolveStrategy(StrEnum):
+    """Strategy for handling a CAPTCHA."""
+    AVOID = auto()       # Change behavior to not trigger CAPTCHA
+    HANDOFF = auto()     # Escalate to human
+    SOLVE_AUTO = auto()  # Automatic solving (requires API key)
+    RETRY = auto()       # Retry the action
 
 
 @runtime_checkable
-class BehavioralAvoidancePort(Protocol):
-    """Steer browser interaction to avoid triggering CAPTCHA challenges.
+class CaptchaSolverPort(Protocol):
+    """Port for CAPTCHA detection, avoidance, and solving.
 
-    The adapter intercepts or wraps browser actions to inject human-like
-    timing, mouse-movement patterns, scroll cadence, and click randomization.
+    Implementations range from behavioral avoidance (change timing/headers
+    to avoid triggering CAPTCHAs) to full automated solving (needs keys).
     """
 
-    def record_navigation(self, url: str) -> None:
-        """Record that the browser is navigating to ``url``.
+    def detect(self, page_source: str) -> list[dict[str, Any]]:
+        """Scan ``page_source`` for known CAPTCHA patterns.
 
-        Allows the adapter to prepare behavioral profiles for the target site.
+        Returns a list of detections, each with ``kind`` (CaptchaKind),
+        ``selector`` (CSS selector if found), and ``confidence`` (0-1).
+        Empty list when no CAPTCHA is detected.
         """
         ...
 
-    def humanize_before_action(self, action_type: str = "") -> None:
-        """Inject a human-like delay and optional mouse trajectory before an action.
+    def select_strategy(self, detections: list[dict[str, Any]]) -> SolveStrategy:
+        """Choose the best strategy for the detected CAPTCHAs.
 
-        ``action_type`` hints at the kind of action (``click``, ``type``,
-        ``scroll``, ``select``) so the adapter can vary timing per action.
+        Default implementation returns AVOID when possible, HANDOFF otherwise.
         """
         ...
 
-    def should_bypass_captcha(self, page_url: str) -> bool:
-        """Return True when the current page context is unlikely to trigger a
-        CAPTCHA challenge.
+    def attempt_avoidance(self, url: str, context: dict[str, Any] | None = None) -> bool:
+        """Attempt to avoid triggering the CAPTCHA by changing behavior.
 
-        A no-op adapter always returns False (no confidence), deferring to the
-        solver or hand-off path.
+        Returns True if avoidance succeeded (page loaded without CAPTCHA),
+        False if the CAPTCHA still appeared.
         """
         ...
 
-
-@runtime_checkable
-class CaptchaSolverServicePort(Protocol):
-    """Submit a CAPTCHA challenge to an external solving service.
-
-    The adapter manages the service API key, rate limits, and polling for the
-    solution.
-    """
-
-    def is_configured(self) -> bool:
-        """True when the solver service API key and endpoint are set."""
-        ...
-
-    def solve_image_captcha(self, image_base64: str, *, instructions: str = "") -> str | None:
-        """Submit an image-based CAPTCHA for solving.
-
-        Returns the solution token string, or None if solving failed or timed out.
-        ``instructions`` may carry additional context (e.g. "select all
-        traffic lights" for reCAPTCHA-style challenges).
-        """
-        ...
-
-    def solve_recaptcha_v2(
-        self, site_key: str, page_url: str, *, invisible: bool = False
-    ) -> str | None:
-        """Solve a reCAPTCHA v2 challenge (checkbox or invisible).
-
-        Returns the ``g-recaptcha-response`` token, or None on failure.
-        """
-        ...
-
-    def solve_recaptcha_v3(
-        self, site_key: str, page_url: str, *, action: str = "submit"
-    ) -> str | None:
-        """Solve a reCAPTCHA v3 challenge.
-
-        Returns the action token, or None on failure.
-        """
-        ...
-
-    def solve_hcaptcha(self, site_key: str, page_url: str) -> str | None:
-        """Solve an hCaptcha challenge.
-
-        Returns the solution token, or None on failure.
-        """
-        ...
-
-    def solve_fun_captcha(self, site_key: str, page_url: str) -> str | None:
-        """Solve a FunCAPTCHA challenge.
-
-        Returns the solution token, or None on failure.
-        """
-        ...
-
-
-@runtime_checkable
-class CaptchaHumanHandoffPort(Protocol):
-    """Escalate an unsolved CAPTCHA to the human operator via the takeover
-    surface.
-
-    The adapter pushes a notification that includes a deep link to the live
-    session where the CAPTCHA is displayed, so the user can resolve it
-    directly.
-    """
-
-    def request_human_captcha_resolution(
-        self,
-        session_url: str,
-        *,
-        site_name: str = "",
-        timeout_minutes: int = 5,
+    def request_human_handoff(
+        self, campaign_id: str, application_id: str, details: dict[str, Any]
     ) -> bool:
-        """Request that a human resolve the CAPTCHA in the live session.
+        """Escalate to a human operator via notification + pending action.
 
-        ``session_url`` is the deep link to the takeover desktop or browser
-        session where the CAPTCHA challenge is displayed. Returns True when
-        the hand-off was successfully requested (the human may still need to
-        act). Returns False when no notification channel is available.
-        """
-        ...
-
-    def is_pending_resolution(self, session_url: str) -> bool:
-        """True when a human CAPTCHA hand-off for this session is still
-        pending (not yet resolved or expired).
-        """
-        ...
-
-    def cancel_pending(self, session_url: str) -> None:
-        """Cancel a pending human hand-off (e.g. the CAPTCHA timed out or the
-        page changed).
+        Returns True when the handoff was recorded successfully.
         """
         ...
