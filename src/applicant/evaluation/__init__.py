@@ -292,7 +292,8 @@ class BrowserGymEvalHarness:
     def __init__(self):
         self._bg_available = False
         try:
-            self._bg_available = False
+            import browsergym  # noqa: F401 — presence check only
+            self._bg_available = True
         except ImportError:
             pass
 

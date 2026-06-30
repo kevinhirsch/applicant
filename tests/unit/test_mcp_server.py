@@ -158,8 +158,71 @@ class TestMountMCP:
         # Should not raise
         mount_mcp(app)
 
+    def test_mount_mcp_with_fastapi_mcp(self):
+        """When fastapi_mcp is installed, mount adds routes to the app.
+
+        Checks via app.routes — no SSE/blocking GET is issued.
+        """
+        if not _fastapi_mcp_available:
+            pytest.skip("fastapi_mcp not installed (install with uv sync --extra mcp)")
+
+        from fastapi import FastAPI
+        app = FastAPI()
+        route_count_before = len(app.routes)
+        mount_mcp(app)
+        # fastapi_mcp should add at least one route (e.g. the MCP SSE endpoint)
+        assert len(app.routes) > route_count_before, (
+            "mount_mcp should add at least one route when fastapi_mcp is installed"
+        )
+
     def test_router_prefix(self):
         """The MCP router is registered under /mcp."""
         from applicant.app.routers.mcp import router
         assert router.prefix == "/mcp"
         assert "mcp" in router.tags
+
+
+class TestMCPToolsRegistration:
+    """wire_mcp_tools always registers the five expected tools regardless of fastapi_mcp."""
+
+    _EXPECTED_TOOL_NAMES = frozenset(
+        {"list_campaigns", "get_attributes", "get_applications", "get_pending_actions", "health"}
+    )
+
+    def test_all_five_tools_registered_with_storage(self):
+        """wire_mcp_tools returns all five tools when storage is present."""
+        container = MagicMock()
+        container.storage = MagicMock()
+
+        tools = wire_mcp_tools(container)
+        names = {t["name"] for t in tools}
+        assert names == self._EXPECTED_TOOL_NAMES
+
+    def test_tool_descriptors_have_required_fields(self):
+        """Every tool descriptor has name, description, and handler."""
+        container = MagicMock()
+        container.storage = MagicMock()
+
+        tools = wire_mcp_tools(container)
+        for tool in tools:
+            assert "name" in tool, f"Tool {tool} missing 'name'"
+            assert "description" in tool, f"Tool {tool!r} missing 'description'"
+            assert "handler" in tool, f"Tool {tool!r} missing 'handler'"
+            assert callable(tool["handler"]), f"Tool {tool['name']} handler is not callable"
+
+    def test_tool_handlers_are_callable(self):
+        """Each tool handler can be invoked without error against mock storage."""
+        container = MagicMock()
+        container.storage = MagicMock()
+        container.storage.campaigns.list.return_value = []
+        container.storage.attributes.list.return_value = []
+        container.storage.applications.list.return_value = []
+        container.storage.pending_actions.list_open.return_value = []
+
+        tools = wire_mcp_tools(container)
+        for tool in tools:
+            result = tool["handler"]()
+            # All handlers should return a list or dict
+            assert isinstance(result, (list, dict)), (
+                f"Tool {tool['name']} returned unexpected type {type(result)}"
+            )

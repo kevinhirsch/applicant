@@ -219,13 +219,9 @@ name = "applicant"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "agentlab" },
     { name = "alembic" },
     { name = "apprise" },
-    { name = "browsergym", version = "0.14.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "browsergym", version = "0.14.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "fastapi" },
-    { name = "fastapi-mcp" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "langgraph" },
@@ -262,6 +258,11 @@ dev = [
 durable-orchestration = [
     { name = "dbos" },
 ]
+eval = [
+    { name = "agentlab" },
+    { name = "browsergym", version = "0.14.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "browsergym", version = "0.14.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
 mcp = [
     { name = "fastapi-mcp" },
 ]
@@ -281,15 +282,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentlab", specifier = ">=0.4.2" },
+    { name = "agentlab", marker = "extra == 'eval'", specifier = ">=0.4.2" },
     { name = "alembic" },
     { name = "apprise" },
-    { name = "browsergym", specifier = ">=0.14.2" },
+    { name = "browsergym", marker = "extra == 'eval'", specifier = ">=0.14.2" },
     { name = "camoufox", extras = ["geoip"], marker = "extra == 'browser'" },
     { name = "dbos", marker = "extra == 'durable-orchestration'" },
     { name = "fastapi" },
-    { name = "fastapi-mcp", specifier = ">=0.4.0" },
-    { name = "fastapi-mcp", marker = "extra == 'mcp'" },
+    { name = "fastapi-mcp", marker = "extra == 'mcp'", specifier = ">=0.4.0" },
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "import-linter", marker = "extra == 'dev'" },
@@ -315,7 +315,7 @@ requires-dist = [
     { name = "structlog" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["browser", "durable-orchestration", "mcp", "dev"]
+provides-extras = ["browser", "durable-orchestration", "mcp", "eval", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
