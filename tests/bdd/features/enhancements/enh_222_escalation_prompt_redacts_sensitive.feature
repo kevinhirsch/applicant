@@ -12,7 +12,6 @@ Feature: Sensitive attribute names are kept out of the LLM escalation prompt
     When the engine considers escalating the field's mapping
     Then no LLM call is made for the sensitive field
 
-  @pending
   Scenario: Sensitive attribute names are excluded from the escalation prompt text
     Given a configured LLM and an attribute cloud containing a demographic attribute
     When the engine builds the escalation prompt for a non-sensitive field

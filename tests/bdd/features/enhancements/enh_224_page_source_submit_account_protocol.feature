@@ -11,7 +11,6 @@ Feature: submit_account is part of the PageSource contract across implementation
     When its account-submit capability is inspected
     Then a submit_account method is present
 
-  @pending
   Scenario: The PageSource protocol declares submit_account
     Given the page-source port contract
     When the contract's declared members are inspected

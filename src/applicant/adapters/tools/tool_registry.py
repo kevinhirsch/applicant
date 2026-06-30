@@ -80,6 +80,51 @@ class ToolRegistry:
             except Exception:
                 # First boot / empty table — keep defaults (no dead UI, no crash).
                 pass
+        # FR-MIND-6 (#144): the ONE engine-wide dispatch surface for every agent tool
+        # call (memory / skills / recall / desktop). Per-campaign tool sets register
+        # their dispatcher here so a model's ``function_call`` is routed through a single
+        # shared path that also enforces the FR-UI-4 toggle — instead of each campaign's
+        # LoopToolset/ChatToolbox owning its own private dispatch with no central gate.
+        self._dispatchers: dict[str, object] = {}
+
+    # --- central agent-tool dispatch (FR-MIND-6, #144) --------------------
+    def register_dispatcher(self, key: str, dispatcher: object) -> None:
+        """Register a tool dispatcher (e.g. a campaign's ``LoopToolset``) under ``key``.
+
+        The dispatcher must expose ``dispatch(name, arguments) -> str`` (the shape
+        ``LoopToolset``/``ChatToolbox`` already implement). Registering it routes its
+        tool calls through the single :meth:`handle_function_call` path.
+        """
+        self._dispatchers[key] = dispatcher
+
+    def handle_function_call(
+        self, name: str, arguments: str, *, key: str | None = None, tool_key: str | None = None
+    ) -> str:
+        """Dispatch ONE agent tool/function call through the central registry (#144).
+
+        This is the single engine-wide entry point every agent tool call flows through:
+        memory (``remember``/``forget``), skills (``save_playbook``/``update_playbook``),
+        recall, and the bounded ``desktop`` action. It enforces the FR-UI-4 toggle for
+        the owning tool (``tool_key``) FIRST, then delegates to the registered
+        dispatcher's existing guarded ``dispatch`` (staged-write review, advisory-only,
+        the FR-CUA stop-boundary stay where they live — this adds the shared gate, it
+        does not re-implement them).
+
+        Raises ``ToolDisabledError`` when the owning tool is toggled off, or
+        ``KeyError`` when no dispatcher is registered for ``key``.
+        """
+        if tool_key is not None:
+            self.ensure_enabled(tool_key)
+        if key is None:
+            if len(self._dispatchers) != 1:
+                raise KeyError(
+                    "handle_function_call requires an explicit dispatcher key when "
+                    f"{len(self._dispatchers)} dispatchers are registered"
+                )
+            (dispatcher,) = self._dispatchers.values()
+        else:
+            dispatcher = self._dispatchers[key]
+        return dispatcher.dispatch(name, arguments)
 
     def is_enabled(self, tool_key: str) -> bool:
         return self._state.get(tool_key, True)

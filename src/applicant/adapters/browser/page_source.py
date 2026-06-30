@@ -185,6 +185,16 @@ class PageSource(Protocol):
         'ok' | 'email_verify' | 'failed' (gated by the adapter)."""
         ...
 
+    def submit_account(self) -> None:
+        """Click the account-creating submit (#224).
+
+        Declared on the contract so EVERY implementation (fake + real) exposes the
+        account-submit capability — the boundary check (the engine never *itself*
+        authorizes the final account-creating submit; it hands off) lives in the
+        adapter, not here. Both ``FakePageSource`` and ``PlaywrightPageSource``
+        implement it; declaring it on the Protocol enforces that parity."""
+        ...
+
     def is_account_create_page(self) -> bool:
         ...
 
@@ -603,6 +613,9 @@ class PlaywrightPageSource:
         # Captured per-navigation main-frame HTTP status + the expected host so
         # current() can populate cautious-mode signals (FR-PREFILL-6).
         self._status: int | None = None
+        #: #339: timestamped (status, epoch_seconds) log of observed main-frame
+        #: responses, so a captured status can be correlated in time for diagnostics.
+        self._status_log: list[tuple[int, float]] = []
         self._expected_host: str | None = None
         # Camoufox engine (the default product path): a local launch only. A CDP
         # endpoint forces the chromium path (remote real Chrome over CDP).
@@ -765,10 +778,21 @@ class PlaywrightPageSource:
             pass
 
     def _on_response(self, response) -> None:  # pragma: no cover - integration-gated
-        """Capture the main-frame document response status for cautious mode."""
+        """Capture the main-frame document response status for cautious mode (#339).
+
+        Records BOTH the bare status (``self._status``, read by ``_last_status``) AND a
+        timestamped entry in ``self._status_log`` so a captured status can be correlated
+        in time — a bare int loses *when* a 403/429 was observed, which matters when
+        diagnosing an intermittent block (cautious mode / FR-PREFILL-6 / FR-OBS-2)."""
         try:
             if response.url == self._page.url or response.request.is_navigation_request():
                 self._status = response.status
+                log_entry = (response.status, time.time())
+                existing = getattr(self, "_status_log", None)
+                if isinstance(existing, list):
+                    existing.append(log_entry)
+                else:
+                    self._status_log = [log_entry]
         except Exception:
             pass
 
@@ -940,6 +964,28 @@ class PlaywrightPageSource:
         "--enable-unsafe-swiftshader",
     )
 
+    #: Chrome dropped the ``--enable-unsafe-swiftshader`` flag in Chrome 125 (#338):
+    #: passing a removed flag to a newer Chrome is itself an automation tell (Chrome
+    #: logs an "unrecognized flag" warning), and on 125+ WebGL's software fallback is
+    #: enabled by other means. So the flag is version-gated to Chrome < 125.
+    _SWIFTSHADER_FLAG = "--enable-unsafe-swiftshader"
+    _SWIFTSHADER_REMOVED_MAJOR = 125
+
+    @classmethod
+    def _stealth_args(cls, *, chrome_major: int | None = None) -> list[str]:
+        """Build the launch args that remove automation tells (FR-STEALTH-1), #338.
+
+        Always includes ``--disable-blink-features=AutomationControlled`` (drops the
+        ``navigator.webdriver`` tell). Includes ``--enable-unsafe-swiftshader`` ONLY for
+        Chrome older than 125 — the flag was removed in Chrome 125, so passing it to a
+        newer Chrome is an unrecognized-flag tell. ``chrome_major=None`` keeps the flag
+        (conservative: an unknown/older Chrome still needs the WebGL software fallback).
+        """
+        args = ["--disable-blink-features=AutomationControlled"]
+        if chrome_major is None or chrome_major < cls._SWIFTSHADER_REMOVED_MAJOR:
+            args.append(cls._SWIFTSHADER_FLAG)
+        return args
+
     @staticmethod
     def launch_kwargs(
         fingerprint: dict[str, str],
@@ -963,6 +1009,12 @@ class PlaywrightPageSource:
             scale_f = float(scale)
         except (TypeError, ValueError):
             scale_f = 1.0
+        # #338: version-gate the SwiftShader flag off the fingerprint's Chrome major so
+        # a 125+ Chrome never gets the removed --enable-unsafe-swiftshader flag.
+        try:
+            chrome_major: int | None = int(fingerprint.get("chrome_major", ""))
+        except (TypeError, ValueError):
+            chrome_major = None
         kwargs: dict = {
             "user_data_dir": user_data_dir,  # the adapter supplies a per-tenant dir
             # Real Google Chrome (channel), HEADFUL (no --headless): the genuine
@@ -976,7 +1028,7 @@ class PlaywrightPageSource:
             "timezone_id": fingerprint.get("timezone", "America/Phoenix"),
             "viewport": {"width": int(width or 1920), "height": int(height or 1080)},
             "device_scale_factor": scale_f,
-            "args": list(PlaywrightPageSource._STEALTH_ARGS),
+            "args": PlaywrightPageSource._stealth_args(chrome_major=chrome_major),
         }
         if proxy:
             # FR-STEALTH-4: residential proxy actually used for automation egress.
@@ -1062,17 +1114,28 @@ class PlaywrightPageSource:
         "[role='button']:has-text('Apply Manually')",
     )
 
-    def _settle(self, timeout_ms: int = 12_000) -> None:  # pragma: no cover - integration-gated
+    def _settle(self, timeout_ms: int = 12_000) -> bool:  # pragma: no cover - integration-gated
         """Wait for an SPA to finish hydrating before the page is inspected.
 
         Workday (and most modern ATSes) render an empty shell on the ``load`` event
         and hydrate the real DOM afterward, so a field-scan / screenshot taken at
         ``load`` is blank. Wait for network to go idle — bounded + best-effort
-        (never raises; a slow page just proceeds with whatever has rendered)."""
+        (never raises; a slow page just proceeds with whatever has rendered).
+
+        #212: the timeout is no longer swallowed into a bare ``pass``. A networkidle
+        timeout means the page may NOT have hydrated (an empty-DOM field-scan risk), so
+        we RECORD it (``last_settle_timed_out``) and signal it via the return value —
+        ``True`` when the page settled cleanly, ``False`` when the wait timed out — so
+        callers / diagnostics can see the stall instead of mistaking a blank page for a
+        rendered one. Still never raises (a slow page proceeds with what rendered)."""
         try:
             self._page.wait_for_load_state("networkidle", timeout=timeout_ms)
         except Exception:
             log.warning("_settle(): wait_for_load_state timed out after %d ms", timeout_ms, exc_info=True)
+            self.last_settle_timed_out = True
+            return False
+        self.last_settle_timed_out = False
+        return True
 
     def _click_first(self, selectors) -> bool:  # pragma: no cover - integration-gated
         """Click the first present + enabled selector; return whether one was clicked."""
@@ -1703,10 +1766,22 @@ class PlaywrightPageSource:
             self._page.keyboard.type(self._filter_query(value), delay=15)
             if self._pick_visible_option(value, 4.0):
                 return
-            # Leave no half-typed filter string behind.
+            # Leave no half-typed filter string behind — BUT only if the trigger is still
+            # attached (#342). Selecting an option can NAVIGATE the page, detaching the
+            # combobox element; pressing Escape + ``fill("")`` on a detached handle then
+            # operates on a stale element (a no-op at best, a thrown error swallowed at
+            # worst). Guard on ``is_attached`` so cleanup is skipped once the page moved on.
             try:
-                self._page.keyboard.press("Escape")
-                trigger.fill("")
+                still_attached = True
+                try:
+                    still_attached = bool(trigger.is_attached())
+                except Exception:
+                    # A handle that can no longer answer is_attached() is gone (detached
+                    # / page navigated) — skip the cleanup rather than touch a dead node.
+                    still_attached = False
+                if still_attached:
+                    self._page.keyboard.press("Escape")
+                    trigger.fill("")
             except Exception:
                 pass
         raise ValueError(f"no listbox option matching {value!r}")

@@ -36,7 +36,6 @@ Feature: The autonomous loop can call memory, skills, recall, and desktop as too
     When the model calls the remember tool with a note
     Then the note is staged for the user's approval rather than applied silently
 
-  @pending
   Scenario: A single engine-wide tool registry dispatches every agent tool call
     Given the engine's central tool registry
     Then memory, skills, recall, and desktop are registered for one shared dispatch path

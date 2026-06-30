@@ -12,7 +12,6 @@ Feature: A browser crash during login is distinguished from a wrong password
     When the engine tries to log in with a stored credential
     Then the login is reported as unsuccessful and the flow hands off
 
-  @pending
   Scenario: A browser crash during login surfaces a diagnostic, not a silent false
     Given a browser whose login attempt crashes the session
     When the engine tries to log in with a stored credential

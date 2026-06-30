@@ -16,7 +16,6 @@ Feature: The Chrome version probe finds Chrome under container binary names
     When the Chrome major is probed
     Then the probe reports that no Chrome was found
 
-  @pending
   Scenario: The probe also tries container and beta Chrome binary names
     Given a container that ships Chrome only as a container binary name
     When the Chrome major is probed on the chrome channel

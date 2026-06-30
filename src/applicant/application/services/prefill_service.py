@@ -228,6 +228,39 @@ class PrefillService:
         # op (a broken selector) before giving up to the normal fill path. Bounded so a
         # persistently-broken page never loops forever.
         self._max_replans = max(0, int(max_replans))
+        # Operator-visible diagnostics for SILENT degradations (#202/#203/#211/#223):
+        # a credential lookup whose tenant resolver crashed, an all-scopes vault
+        # failure, an LLM-mapping outage, or a transient browser error during login —
+        # each degrades gracefully (no crash) BUT must leave a trace an operator can see
+        # rather than vanishing. A bounded ring of recent diagnostic strings, surfaced
+        # via ``diagnostics()``; the loop also lands a pending action where it has the
+        # application context to do so.
+        self._diagnostics: list[str] = []
+
+    #: Cap the in-process diagnostics ring so a persistently-failing dependency cannot
+    #: grow it without bound across a long-lived service.
+    _MAX_DIAGNOSTICS = 200
+
+    def diagnostics(self) -> list[str]:
+        """Recent operator-visible diagnostics for silent-degradation events.
+
+        Credential / LLM / login failures degrade gracefully (the loop never crashes),
+        but a swallowed-without-a-trace failure is invisible to the operator. Each such
+        event is recorded here so it is surfaced rather than lost (#202/#203/#211/#223).
+        """
+        return list(self._diagnostics)
+
+    def _record_diagnostic(self, message: str) -> None:
+        """Record one operator-visible diagnostic (bounded, deduped against the last)."""
+        if not message:
+            return
+        # Drop an immediate duplicate so one failing dependency does not spam the ring
+        # (e.g. an LLM that raises on every field re-records the same outage).
+        if self._diagnostics and self._diagnostics[-1] == message:
+            return
+        self._diagnostics.append(message)
+        if len(self._diagnostics) > self._MAX_DIAGNOSTICS:
+            del self._diagnostics[: -self._MAX_DIAGNOSTICS]
 
     # --- public API -------------------------------------------------------
     def prefill_application(
@@ -528,6 +561,51 @@ class PrefillService:
         return self._continue_pages(app, attributes, result, cautious=cautious)
 
     def _continue_pages(self, app, attributes, result, *, cautious):
+        # #207 / #336 browser-crash recovery: the page walk drives a real browser whose
+        # tab/context can vanish (TargetClosedError) or hang (TimeoutError) mid-flow.
+        # Without a boundary here the raw exception escapes to the orchestrator — no
+        # PrefillResult, no FAILED state, no pending action — so a crashed application is
+        # stranded with nothing to resume from. Catch any browser error from the walk and
+        # land a structured FAILED result (§7: "any unrecoverable error -> FAILED").
+        try:
+            return self._walk_pages(app, attributes, result, cautious=cautious)
+        except Exception as exc:  # noqa: BLE001 — a dead browser must not escape the loop
+            log.warning(
+                "Pre-fill page walk crashed for application %s — returning a FAILED "
+                "result instead of propagating",
+                app.id,
+                exc_info=True,
+            )
+            return self._failed_prefill(app, result, exc)
+
+    def _failed_prefill(self, app, result, exc: Exception) -> PrefillResult:
+        """Land a structured FAILED :class:`PrefillResult` after a browser crash (#207/#336).
+
+        Records a diagnostic + an error pending action so the operator sees WHY the
+        application failed (a dead tab / hung operation), then transitions to the §7
+        terminal ``FAILED`` state. Defensive: emitting the trail must never re-raise.
+        """
+        self._record_diagnostic(
+            f"Pre-fill browser crashed for application {app.id}: {exc}"
+        )
+        try:
+            self._emit_error(
+                app,
+                title="Pre-fill failed — the automation browser stopped responding",
+                detail=str(exc),
+                selector=f"browser:{app.id}",
+            )
+        except Exception:  # noqa: BLE001 — error-trail emission must never crash recovery
+            log.debug("Failed to emit browser-crash error action", exc_info=True)
+        try:
+            app = app.with_status(ApplicationState.FAILED)
+            self._persist(app)
+        except Exception:  # noqa: BLE001 — even an illegal transition must not re-raise
+            log.debug("Failed to persist FAILED transition", exc_info=True)
+        result.state = ApplicationState.FAILED
+        return result
+
+    def _walk_pages(self, app, attributes, result, *, cautious):
         aid = app.id
         while True:
             # Cautious mode: pause on a detection signal BEFORE filling (FR-PREFILL-6).
@@ -975,11 +1053,17 @@ class PrefillService:
                 return None
             try:
                 tenant_key = tenant_of(app.id)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — degrade gracefully, but surface it
                 log.warning(
                     "tenant_of() failed for application %s — credential lookup degraded",
                     app.id,
                     exc_info=True,
+                )
+                # #202: a CRASHED tenant resolver is not the same as a genuinely absent
+                # tenant — record a diagnostic the operator can see so the failure does
+                # not vanish silently (the lookup still degrades to None / hand-off).
+                self._record_diagnostic(
+                    f"Credential tenant lookup failed for application {app.id}: {exc}"
                 )
                 return None
         if not tenant_key:
@@ -993,14 +1077,26 @@ class PrefillService:
             from applicant.core.ids import SYSTEM_CAMPAIGN_ID, CampaignId
 
             scopes.append(CampaignId(SYSTEM_CAMPAIGN_ID))
+        scopes_failed = 0
+        last_error: Exception | None = None
         for scope in scopes:
             try:
                 cred = store.retrieve(scope, tenant_key)
-            except Exception:  # pragma: no cover - defensive
+            except Exception as exc:  # noqa: BLE001 — a failing scope must not stop the rest
                 log.warning("Credential lookup failed for scope %s key %s", scope, tenant_key, exc_info=True)
+                scopes_failed += 1
+                last_error = exc
                 cred = None
             if cred is not None:
                 return cred
+        # #203: when EVERY scope raised (vs. simply held nothing) the vault is failing,
+        # not empty — surface a diagnostic so a transient/total outage is not mistaken
+        # for "no credential stored". A single working scope above already returned.
+        if scopes_failed and scopes_failed == len(scopes):
+            self._record_diagnostic(
+                f"Every credential scope failed for tenant {tenant_key!r} "
+                f"(vault unreachable): {last_error}"
+            )
         return None
 
     def _try_log_in(self, aid, credential) -> bool:
@@ -1013,12 +1109,20 @@ class PrefillService:
             return False
         try:
             return bool(log_in(aid, credential.username, credential.secret))
-        except Exception:  # pragma: no cover - defensive: login failure -> hand off
+        except Exception as exc:  # noqa: BLE001 — degrade to hand-off, but distinguish it
             log.warning(
                 "Login attempt failed for application %s — probable browser crash or "
                 "connection error, not a wrong-password rejection",
                 aid,
                 exc_info=True,
+            )
+            # #223: a transient browser/CDP error during login is NOT a wrong password —
+            # both currently degrade to the same hand-off (return False), so without a
+            # diagnostic the operator cannot tell "the session crashed" from "bad creds".
+            # Record the browser error so the two are distinguishable.
+            self._record_diagnostic(
+                f"Browser error during login for application {aid} "
+                f"(transient, not an auth rejection): {exc}"
             )
             return False
 
@@ -1114,8 +1218,28 @@ class PrefillService:
             tenant_key = tenant_of(app.id)
             if tenant_key:
                 store.capture(app.campaign_id, tenant_key, username, password)
-        except Exception:  # pragma: no cover - defensive
+        except Exception as exc:  # noqa: BLE001 — never crash, but never lose the credential
             log.warning("Failed to capture credential for tenant", exc_info=True)
+            # #204: a swallowed capture means the engine CREATED an account whose
+            # generated password is now lost — the worst silent failure. Land a recovery
+            # pending action so the operator can recover/reset the account credential
+            # instead of it vanishing with a bare ``pass``.
+            self._record_diagnostic(
+                f"Failed to bank a captured account credential for application {app.id}: {exc}"
+            )
+            try:
+                self._emit_error(
+                    app,
+                    title="Account credential could not be saved — recover it",
+                    detail=(
+                        f"A new account was created for {username!r} but its generated "
+                        f"password could not be banked ({exc}). Reset/recover this "
+                        "account credential so future applications can sign in."
+                    ),
+                    selector=f"credential:{username}",
+                )
+            except Exception:  # noqa: BLE001 — recovery-action emission must never crash
+                log.debug("Failed to emit credential-recovery action", exc_info=True)
 
     def _two_factor_handoff(self, app, result) -> PrefillResult:
         """Google sign-in needs a second factor the engine cannot produce. Hold the
@@ -1480,6 +1604,32 @@ class PrefillService:
             return False
         return True
 
+    def _complete_native_dialog(self, app, intent: str, *, confirm_key: str = "escape") -> bool:
+        """Clear a NON-file off-page OS dialog with desktop assist (#141, FR-CUA).
+
+        Generalises ``_complete_native_picker`` beyond the résumé file-open dialog to the
+        other off-page windows a page can spawn that the browser DOM cannot reach — an
+        "Open with…" handler chooser or a print-to-PDF dialog. STRICTLY bounded: it only
+        ever focuses the dialog (background, no foreground steal — FR-CUA-7) and presses a
+        single dismiss/confirm key. It NEVER clicks, types a secret, or crosses the
+        account-create / final-submit stop-boundary — those carry no boundary ``intent``
+        here, and the desktop adapter enforces the stop-boundary (FR-CUA-3) on every
+        action regardless. Returns False (degrade — leave the step for a human) when
+        desktop assist is not operable or any bounded step fails.
+        """
+        if not self._desktop_operable():
+            return False
+        cu = self._computer_use
+        try:
+            cu.focus_app(f"native-dialog:{intent}")
+            cu.key(confirm_key)
+        except Exception as exc:  # noqa: BLE001 — a desktop failure is a soft hand-off
+            self._record_diagnostic(
+                f"Desktop assist could not clear off-page dialog {intent!r}: {exc}"
+            )
+            return False
+        return True
+
     # --- field resolution -------------------------------------------------
     @dataclass
     class _Resolved:
@@ -1507,7 +1657,13 @@ class PrefillService:
 
         explicit = self._lookup(fld.label, attributes)
 
-        if is_sensitive_field(fld.label):
+        # A field is sensitive when its LABEL is a recognised demographic/EEO field OR
+        # the matched attribute is itself flagged sensitive (#206). The substring label
+        # matcher cannot recognise every protected attribute (e.g. "Caste"), so an
+        # attribute the user explicitly marked sensitive must still route through the
+        # sensitive-field policy (explicit-answer-only, never AI-guessed — FR-ATTR-6),
+        # not the plain mapping path — defence against leaking/guessing a demographic.
+        if is_sensitive_field(fld.label) or self._matched_attr_is_sensitive(fld.label, attributes):
             decision = decide_sensitive_fill(fld.label, explicit)
             return self._Resolved(
                 value=decision.value,
@@ -1568,8 +1724,12 @@ class PrefillService:
                 [ChatMessage(role="user", content=prompt)],
                 start_tier=FIELD_MAPPING_START_TIER,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — LLM outage degrades, never crashes
             log.warning("LLM escalation failed for field %r", fld.label, exc_info=True)
+            # #211: surface a SINGLE 'LLM unavailable' diagnostic (deduped in the ring)
+            # so a rate-limit / bad-key outage during mapping is visible to the operator
+            # instead of silently degrading every ambiguous field to a soft error.
+            self._record_diagnostic(f"LLM unavailable during field mapping: {exc}")
             return None  # LLM unavailable → fall through to soft error (frugal).
         if getattr(res, "low_confidence", False):
             return None
@@ -1690,6 +1850,28 @@ class PrefillService:
             if label_low in name_low or name_low in label_low:
                 return attr.value
         return None
+
+    @staticmethod
+    def _matched_attr_is_sensitive(label: str, attributes: list[Attribute]) -> bool:
+        """True when the attribute that maps to ``label`` is flagged sensitive (#206).
+
+        Mirrors :meth:`_lookup`'s priority (exact name > alias > loose) to find the SAME
+        attribute the value would come from, and reports its ``is_sensitive`` flag — so a
+        protected attribute whose label the substring matcher misses (e.g. "Caste") is
+        still gated by the sensitive-field policy rather than the plain mapping path.
+        """
+        label_low = label.strip().lower()
+        for attr in attributes:  # tier 1: exact name
+            if label_low == attr.name.strip().lower():
+                return bool(getattr(attr, "is_sensitive", False))
+        for attr in attributes:  # tier 2: alias
+            if label_low in {a.strip().lower() for a in attr.aliases}:
+                return bool(getattr(attr, "is_sensitive", False))
+        for attr in attributes:  # tier 3: loose / fuzzy
+            name_low = attr.name.strip().lower()
+            if label_low in name_low or name_low in label_low:
+                return bool(getattr(attr, "is_sensitive", False))
+        return False
 
     # --- block emitters ---------------------------------------------------
     def _block_missing_attr(self, app, fld: DetectedField, result: PrefillResult) -> PrefillResult:

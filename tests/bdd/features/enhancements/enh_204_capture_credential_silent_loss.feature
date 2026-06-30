@@ -11,7 +11,6 @@ Feature: A freshly-created account credential is never silently lost
     When the engine banks the captured credential
     Then the credential is retrievable for future applications at that tenant
 
-  @pending
   Scenario: A failed credential capture surfaces a recovery action rather than vanishing
     Given a credential vault that raises while banking a new account credential
     When the engine tries to bank the captured credential

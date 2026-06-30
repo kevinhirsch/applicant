@@ -12,7 +12,6 @@ Feature: An attribute marked sensitive is gated even when the label is not recog
     When the sensitive-field rule classifies the label
     Then the field is treated as sensitive
 
-  @pending
   Scenario: An attribute flagged sensitive is gated despite an unrecognised label
     Given an attribute marked sensitive whose label the substring matcher misses
     When the engine resolves a value for that field
