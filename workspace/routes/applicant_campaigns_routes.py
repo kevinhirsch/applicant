@@ -1,0 +1,145 @@
+# routes/applicant_campaigns_routes.py
+"""Campaign + discovery-source settings ↔ engine bridge (issue #301).
+
+Surfaces the engine's campaign config (run mode, daily throughput target,
+exploration budget, archive/reactivate, rename) and the per-campaign discovery
+source toggles in the white-labeled Settings surface. The engine owns ALL the
+logic and the safety clamps (throughput hard cap, budget range); this is a thin,
+auth-protected, owner-scoped proxy over
+:class:`src.applicant_engine.ApplicantEngineClient`.
+
+Owner-scoping: every mutating call FIRST resolves the owner's campaigns from the
+engine and rejects any ``campaign_id`` the owner does not have — a caller cannot
+edit another owner's campaign (mirrors the Gallery proxy, #296). Reads degrade
+soft: an unreachable engine returns ``engine_available: false`` with an empty,
+well-formed body instead of a 5xx so the panel shows its offline state.
+
+Endpoints (all under ``/api/applicant/campaigns``):
+
+* ``GET  /api/applicant/campaigns``                       — campaigns + config.
+* ``PATCH /api/applicant/campaigns/{campaign_id}``        — rename/archive/re-tune.
+* ``GET  /api/applicant/campaigns/{campaign_id}/sources`` — discovery sources.
+* ``PUT  /api/applicant/campaigns/{campaign_id}/sources/{source_key}`` — toggle.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.auth_helpers import require_user
+
+logger = logging.getLogger(__name__)
+
+
+class UpdateCampaignIn(BaseModel):
+    """Partial campaign-config update — every field optional (engine clamps ranges)."""
+
+    name: Optional[str] = None
+    run_mode: Optional[str] = None
+    throughput_target: Optional[int] = None
+    exploration_budget: Optional[float] = None
+    active: Optional[bool] = None
+
+
+class ToggleSourceIn(BaseModel):
+    enabled: bool
+
+
+async def _owner_campaign_ids(engine: ApplicantEngineClient) -> Optional[set[str]]:
+    """The owner's campaign ids, or ``None`` when the engine is unreachable."""
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("campaigns: engine unavailable: %s", exc)
+        return None
+    if not isinstance(campaigns, list):
+        return set()
+    return {str(c.get("id")) for c in campaigns if isinstance(c, dict) and c.get("id")}
+
+
+def setup_applicant_campaigns_routes() -> APIRouter:
+    router = APIRouter(prefix="/api/applicant/campaigns", tags=["applicant-campaigns"])
+
+    @router.get("")
+    async def list_campaigns(request: Request) -> dict:
+        """The owner's campaigns with full config (read-only, soft-degrades)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                campaigns = await engine.list_campaigns()
+            except EngineError as exc:
+                logger.debug("campaigns: list failed: %s", exc)
+                return {"engine_available": False, "campaigns": []}
+        items = [c for c in campaigns if isinstance(c, dict)] if isinstance(campaigns, list) else []
+        return {"engine_available": True, "campaigns": items}
+
+    @router.patch("/{campaign_id}")
+    async def update_campaign(
+        request: Request, campaign_id: str, body: UpdateCampaignIn
+    ) -> dict:
+        """Rename / archive / re-tune a campaign (owner-scoped)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            payload = body.model_dump(exclude_none=True)
+            try:
+                updated = await engine.update_campaign(campaign_id, payload)
+            except EngineError as exc:
+                logger.debug("campaigns: update failed for %s: %s", campaign_id, exc)
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return updated if isinstance(updated, dict) else {}
+
+    @router.get("/{campaign_id}/sources")
+    async def list_sources(request: Request, campaign_id: str) -> dict:
+        """The campaign's discovery sources + per-source yield stats (owner-scoped)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                return {"engine_available": False, "campaign_id": campaign_id, "items": []}
+            if campaign_id not in owned:
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+            try:
+                data = await engine.list_discovery_sources(campaign_id)
+            except EngineError as exc:
+                logger.debug("campaigns: sources read failed for %s: %s", campaign_id, exc)
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+        out = data if isinstance(data, dict) else {}
+        items = out.get("items") if isinstance(out.get("items"), list) else []
+        return {"engine_available": True, "campaign_id": campaign_id, "items": items}
+
+    @router.put("/{campaign_id}/sources/{source_key}")
+    async def toggle_source(
+        request: Request, campaign_id: str, source_key: str, body: ToggleSourceIn
+    ) -> dict:
+        """Enable/disable a discovery source for a campaign (owner-scoped)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                result = await engine.toggle_discovery_source(
+                    campaign_id, source_key, body.enabled
+                )
+            except EngineError as exc:
+                logger.debug("campaigns: toggle failed for %s/%s: %s", campaign_id, source_key, exc)
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
+
+    return router

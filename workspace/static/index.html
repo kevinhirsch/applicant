@@ -1554,6 +1554,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/></svg>
             <span>AI Defaults</span>
           </button>
+          <button type="button" class="settings-nav-item" data-settings-tab="campaign">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+            <span>Campaign</span>
+          </button>
           <button type="button" class="settings-nav-item" data-settings-tab="search">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <span>Search</span>
@@ -1622,6 +1626,14 @@
           </button>
         </div>
         <div class="settings-panels">
+
+        <!-- ═══ CAMPAIGN TAB (#301) ═══
+             applicantCampaignSettings.js mounts here when the Campaign tab opens:
+             create / rename / archive a campaign, tune run mode + daily target +
+             exploration budget, and toggle discovery sources with their yield. -->
+        <div data-settings-panel="campaign" class="hidden">
+          <div id="ao-settings-campaign"></div>
+        </div>
 
         <!-- ═══ AI TAB ═══ -->
 
@@ -2580,6 +2592,7 @@
 <script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
 <script type="module" src="/static/js/applicantGallery.js"></script>  <!-- #296: Gallery — screenshots + generated materials -->
 <script type="module" src="/static/js/applicantModelLadder.js"></script>  <!-- FR-LLM-3: model escalation ladder editor (Settings → AI) -->
+<script type="module" src="/static/js/applicantCampaignSettings.js"></script>  <!-- #301: campaign config + discovery-source toggles (Settings → Campaign) -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
      before app.js so the window.openApplicantRemoteSession / openApplicantVault
      seams exist for other lanes to call. -->

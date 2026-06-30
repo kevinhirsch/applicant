@@ -165,3 +165,67 @@ def test_clone_does_not_invoke_criteria_seeding(storage):
 
     svc.clone_campaign(source.id, "Clone Of Seeded")
     assert len(criteria.calls) == seed_calls  # no extra seeding on clone
+
+
+# --- update_campaign (#301: rename / archive / re-tune) ---------------------
+
+
+def test_update_campaign_partial_only_changes_supplied_fields(storage):
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Original")
+    updated = svc.update_campaign(c.id, name="Renamed", throughput_target=8)
+
+    assert updated.name == "Renamed"
+    assert updated.throughput_target == 8
+    # Untouched fields keep their prior value.
+    assert updated.run_mode == c.run_mode
+    assert updated.active is True
+    # Persisted (add() is a merge/upsert).
+    assert storage.campaigns.get(c.id).name == "Renamed"
+
+
+def test_update_campaign_clamps_throughput_to_hard_cap(storage):
+    from applicant.core.entities.campaign import THROUGHPUT_HARD_CAP
+
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Greedy")
+    # A caller cannot push past the safety envelope: clamped server-side.
+    over = svc.update_campaign(c.id, throughput_target=999)
+    assert over.throughput_target == THROUGHPUT_HARD_CAP
+    under = svc.update_campaign(c.id, throughput_target=0)
+    assert under.throughput_target == 1
+
+
+def test_update_campaign_clamps_exploration_budget_range(storage):
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Explorer")
+    assert svc.update_campaign(c.id, exploration_budget=5.0).exploration_budget == 1.0
+    assert svc.update_campaign(c.id, exploration_budget=-1.0).exploration_budget == 0.0
+
+
+def test_update_campaign_archives_and_reactivates(storage):
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Toggle me")
+    assert svc.update_campaign(c.id, active=False).active is False
+    assert svc.update_campaign(c.id, active=True).active is True
+
+
+def test_update_campaign_run_mode_parsed_and_bad_value_raises(storage):
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Mode")
+    assert svc.update_campaign(c.id, run_mode="fixed_duration").run_mode == RunMode.FIXED_DURATION
+    with pytest.raises(ValueError):
+        svc.update_campaign(c.id, run_mode="teleport")
+
+
+def test_update_campaign_no_changes_is_noop_returns_current(storage):
+    svc = CampaignService(storage)
+    c = svc.create_campaign("Stable")
+    same = svc.update_campaign(c.id)  # nothing supplied
+    assert same == c
+
+
+def test_update_campaign_missing_raises_keyerror(storage):
+    svc = CampaignService(storage)
+    with pytest.raises(KeyError):
+        svc.update_campaign(CampaignId(new_id()), name="ghost")

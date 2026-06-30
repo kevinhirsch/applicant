@@ -19,6 +19,18 @@ class CampaignManagementPort(Protocol):
     def create_campaign(self, name: str) -> Campaign: ...
     def get_campaign(self, campaign_id: CampaignId) -> Campaign | None: ...
     def list_campaigns(self) -> list[Campaign]: ...
+    def update_campaign(
+        self,
+        campaign_id: CampaignId,
+        *,
+        name: str | None = None,
+        run_mode: str | None = None,
+        throughput_target: int | None = None,
+        exploration_budget: float | None = None,
+        active: bool | None = None,
+    ) -> Campaign:
+        """Partial-update a campaign's name / run config (rename, archive, throughput)."""
+        ...
     def clone_campaign(self, source_id: CampaignId, name: str) -> Campaign:
         """Clone a campaign's setup (multi-ready; grayed until multi-campaign)."""
         ...
