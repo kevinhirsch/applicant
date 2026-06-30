@@ -50,6 +50,33 @@ def _app() -> Application:
     )
 
 
+def _seed_app(storage, app: Application) -> Application:
+    """Persist *app* with its parent campaign + posting rows first.
+
+    ``applications.{campaign_id,posting_id}`` are real FKs on a Postgres-backed
+    storage (the integration lane); the in-memory store has no FK enforcement.  Seed
+    the parents before the child so ``applications.add`` does not raise a
+    ForeignKeyViolation on a real database — this is the parents-before-children
+    ordering production always follows.
+    """
+    from applicant.core.entities.campaign import Campaign
+    from applicant.core.entities.job_posting import JobPosting
+
+    storage.campaigns.add(Campaign(id=app.campaign_id, name="Safety-gate test"))
+    storage.postings.add(
+        JobPosting(
+            id=app.posting_id,
+            campaign_id=app.campaign_id,
+            title="Test role",
+            company="Test co",
+            source_url=app.root_url or "https://acme.test/job/1",
+        )
+    )
+    storage.applications.add(app)
+    storage.commit()
+    return app
+
+
 def _add_doc(storage, app: Application, *, approved: bool) -> GeneratedDocument:
     doc = GeneratedDocument(
         id=GeneratedDocumentId(new_id()),
@@ -104,7 +131,7 @@ def test_fr_resume_8_outcomes_mark_submitted_409_when_unapproved(client):
     open_automated_work_gate(client)
     storage = client.app.state.container.storage
     app = _app()
-    storage.applications.add(app)
+    _seed_app(storage, app)
     _add_doc(storage, app, approved=False)
     r = client.post(f"/api/outcomes/applications/{app.id}/mark-submitted")
     assert r.status_code == 409
@@ -115,7 +142,7 @@ def test_fr_resume_8_remote_submit_self_409_when_unapproved(client):
     open_automated_work_gate(client)
     storage = client.app.state.container.storage
     app = _app()
-    storage.applications.add(app)
+    _seed_app(storage, app)
     _add_doc(storage, app, approved=False)
     r = client.post(f"/api/remote/applications/{app.id}/submit-self")
     assert r.status_code == 409
@@ -126,7 +153,7 @@ def test_fr_resume_8_remote_engine_finish_409_when_unapproved(client):
     open_automated_work_gate(client)
     storage = client.app.state.container.storage
     app = _app()
-    storage.applications.add(app)
+    _seed_app(storage, app)
     _add_doc(storage, app, approved=False)
     r = client.post(f"/api/remote/applications/{app.id}/authorize-engine-finish")
     assert r.status_code == 409
@@ -147,7 +174,7 @@ def test_fr_resume_8_outcomes_mark_submitted_ok_when_approved(client):
     open_automated_work_gate(client)
     storage = client.app.state.container.storage
     app = _app()
-    storage.applications.add(app)
+    _seed_app(storage, app)
     _add_doc(storage, app, approved=True)
     r = client.post(f"/api/outcomes/applications/{app.id}/mark-submitted")
     assert r.status_code == 201
@@ -208,7 +235,7 @@ def test_fr_fb_1_blank_decline_feedback_rejected(client):
     # checks still 422 regardless).
     storage = client.app.state.container.storage
     app = _app()
-    storage.applications.add(app)
+    _seed_app(storage, app)
     storage.commit()
     aid = app.id
     # Blank/whitespace feedback rejected with 422.

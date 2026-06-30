@@ -53,9 +53,9 @@ def test_survey_cross_references_attribute_cloud(client):
 
 
 @pytest.mark.integration
-def test_dynamic_ai_add_attribute(client):
+def test_dynamic_ai_add_attribute(client, seeded_campaign):
     _open_gate(client)
-    cid = new_id()
+    cid = seeded_campaign()  # attributes.campaign_id is a real FK — seed the parent
     r = client.post(
         "/api/attributes/ai-add",
         json={"campaign_id": cid, "name": "Portfolio URL", "value": "https://me.dev"},
@@ -77,9 +77,9 @@ def test_ai_add_sensitive_rejected(client):
 
 
 @pytest.mark.integration
-def test_field_binding_persists(client):
+def test_field_binding_persists(client, seeded_campaign):
     _open_gate(client)
-    cid = new_id()
+    cid = seeded_campaign()  # attributes.campaign_id is a real FK — seed the parent
     attr = client.post(
         "/api/attributes",
         json={"campaign_id": cid, "name": "Email", "value": "me@x.dev"},

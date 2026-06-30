@@ -117,8 +117,8 @@ def test_workflow_state_introspects_orchestrator(client):
 
 # === Chatbot (FR-CHAT-1 / FR-FB-3) ========================================
 @pytest.mark.integration
-def test_chatbot_identifies_gaps_and_gates_integral_change(client):
-    cid = "c-chat"
+def test_chatbot_identifies_gaps_and_gates_integral_change(client, seeded_campaign):
+    cid = seeded_campaign()  # confirming a change writes an attribute (real campaign FK)
     r = client.post(
         "/api/chat", json={"campaign_id": cid, "message": "my first name is Kevin"}
     ).json()
@@ -137,8 +137,8 @@ def test_chatbot_identifies_gaps_and_gates_integral_change(client):
 
 
 @pytest.mark.integration
-def test_chatbot_autoapplies_non_integral_change(client):
-    cid = "c-chat2"
+def test_chatbot_autoapplies_non_integral_change(client, seeded_campaign):
+    cid = seeded_campaign()  # auto-applied change writes an attribute (real campaign FK)
     r = client.post(
         "/api/chat", json={"campaign_id": cid, "message": "my years of python is 8"}
     ).json()
@@ -226,9 +226,9 @@ def test_exploration_budget_rejects_out_of_range(client):
 
 
 @pytest.mark.integration
-def test_attribute_integral_edit_is_confirmation_gated(client):
+def test_attribute_integral_edit_is_confirmation_gated(client, seeded_campaign):
     # FR-FB-3: an integral attribute upsert without confirm 409s; with confirm 201.
-    cid = "c-attr"
+    cid = seeded_campaign()  # the confirmed upsert writes an attribute (real campaign FK)
     blocked = client.post(
         "/api/attributes",
         json={"campaign_id": cid, "name": "First Name", "value": "Kevin", "is_integral": True},
@@ -249,8 +249,8 @@ def test_attribute_integral_edit_is_confirmation_gated(client):
 
 # CRIT-profile: explicit attribute delete (FR-ATTR-3).
 @pytest.mark.integration
-def test_attribute_delete_removes_it(client):
-    cid = "c-attr-del"
+def test_attribute_delete_removes_it(client, seeded_campaign):
+    cid = seeded_campaign()  # the created attribute references a real campaign FK
     made = client.post(
         "/api/attributes",
         json={"campaign_id": cid, "name": "Phone", "value": "+1 555 0100"},
