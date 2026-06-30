@@ -132,7 +132,7 @@ def setup_gallery_routes() -> APIRouter:
             content = await file.read()
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            img_path = Path(safe_join(str(img_dir), img.filename))
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
@@ -207,7 +207,7 @@ def setup_gallery_routes() -> APIRouter:
             if not user or img.owner != user:
                 raise HTTPException(403, "Not your image")
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = Path(safe_join("data/generated_images", img.filename))
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -1692,7 +1692,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             img = _get_or_404_image(db, image_id, user)
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = Path(safe_join("data/generated_images", img.filename))
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 

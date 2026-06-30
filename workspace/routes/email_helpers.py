@@ -28,6 +28,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import mimetypes
 from pathlib import Path
+from core.safe_path import safe_join
 
 from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
@@ -227,7 +228,7 @@ def _attach_compose_uploads(outer: MIMEMultipart, tokens) -> None:
     if not tokens:
         return
     for token in tokens:
-        safe_token = Path(token).name
+        safe_token = Path(safe_join(str(COMPOSE_UPLOADS_DIR), token)).name
         path = COMPOSE_UPLOADS_DIR / safe_token
         if not path.exists():
             logger.warning(f"Attachment token not found: {safe_token}")
@@ -252,7 +253,7 @@ def _cleanup_compose_uploads(tokens) -> None:
         return
     for token in tokens:
         try:
-            (COMPOSE_UPLOADS_DIR / Path(token).name).unlink(missing_ok=True)
+            (COMPOSE_UPLOADS_DIR / Path(safe_join(str(COMPOSE_UPLOADS_DIR), token)).name).unlink(missing_ok=True)
         except Exception:
             logger.warning("Bare exception in email_helpers.py")
             pass
@@ -950,7 +951,7 @@ def _extract_attachment_to_disk(msg, index, target_dir):
             if not payload:
                 return None
             target_dir.mkdir(parents=True, exist_ok=True)
-            filepath = target_dir / safe_name
+            filepath = Path(safe_join(str(target_dir), safe_name))
             with open(filepath, "wb") as f:
                 f.write(payload)
             return filepath

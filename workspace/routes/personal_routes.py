@@ -11,6 +11,7 @@ from src.rag_singleton import get_rag_manager
 from src.auth_helpers import get_current_user, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
+from core.safe_path import safe_join
 
 UPLOADS_DIR = os.path.join(BASE_DIR, "data", "personal_uploads")
 MAX_PERSONAL_UPLOAD_BYTES = int(
@@ -23,10 +24,7 @@ logger = logging.getLogger(__name__)
 def _personal_upload_dir_for_owner(owner: str | None) -> str:
     """Return the per-owner upload directory used for direct RAG uploads."""
     owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
-    upload_dir = os.path.abspath(os.path.join(UPLOADS_DIR, owner_segment))
-    base_abs = os.path.abspath(UPLOADS_DIR)
-    if os.path.commonpath([upload_dir, base_abs]) != base_abs:
-        raise ValueError("Unsafe upload owner path")
+    upload_dir = safe_join(UPLOADS_DIR, owner_segment)
     os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
 
@@ -40,10 +38,7 @@ def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> 
     stem, ext = os.path.splitext(safe_name)
     stem = (stem or "upload")[:80]
     filename = f"{stem}-{uuid.uuid4().hex[:10]}{ext.lower()}"
-    file_path = os.path.abspath(os.path.join(upload_dir, filename))
-    upload_abs = os.path.abspath(upload_dir)
-    if os.path.commonpath([file_path, upload_abs]) != upload_abs:
-        raise ValueError("Unsafe upload filename")
+    file_path = safe_join(upload_dir, filename)
     return file_path, filename, safe_name
 
 def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):

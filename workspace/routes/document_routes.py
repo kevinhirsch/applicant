@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 
 from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
+from core.safe_path import safe_join
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
 

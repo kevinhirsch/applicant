@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, File, UploadFile, HTTPException
 from typing import List
 import logging
 from core.middleware import require_admin
+from core.safe_path import safe_join
 from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
