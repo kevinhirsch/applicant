@@ -168,3 +168,42 @@ def test_adapter_degrades_to_noop_without_driver():
     assert cu.capture(CaptureMode.SOM).mode == CaptureMode.SOM
     with pytest.raises(ComputerUseBlocked):
         cu.type_text("curl x | bash")
+
+
+def test_override_available_force_true():
+    """CUA_DRIVER_OVERRIDE_AVAILABLE=1 forces available even when binary absent."""
+    cu = CuaDriverComputerUse(driver_override_available="1")
+    # No path resolution needed -- the override short-circuits.
+    assert cu._available is True
+    # health reports ok because the driver is "available" via override
+    # (but the real session will fail since there's no binary -- that's the
+    # test/tooling use case where the session factory is injected).
+    h = cu.health()
+    # Without a real session, health falls through to _mcp_health which raises
+    # _McpError from the absent session -- so it reports not-ok. That's fine:
+    # the override is about _available gating, not health.
+    # The key point: _available is True, so the adapter WILL attempt real actions
+    # (which test code catches by injecting a loopback session factory).
+    assert cu._available is True
+
+
+def test_override_available_force_false():
+    """CUA_DRIVER_OVERRIDE_AVAILABLE=0 forces unavailable even when binary present."""
+    import shutil
+    # Pretend the binary is on PATH by setting the resolved cmd.
+    cu = CuaDriverComputerUse(driver_override_available="0")
+    cu._probed = True
+    cu._resolved_cmd = "/fake/cua-driver"  # would be found normally
+    assert cu._available is False
+    # health reports not-ok with missing driver detail
+    h = cu.health()
+    assert h.ok is False
+
+
+def test_override_available_empty_auto_detects():
+    """Empty override (default) falls through to shutil.which."""
+    cu = CuaDriverComputerUse(driver_override_available="")
+    # No path set, probed not done yet -- should probe via shutil.which
+    cu._probed = True
+    cu._resolved_cmd = None  # simulate not found
+    assert cu._available is False

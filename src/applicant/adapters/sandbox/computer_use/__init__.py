@@ -49,6 +49,9 @@ def build_computer_use(settings: Any) -> ComputerUsePort:
             telemetry=settings.cua_telemetry,
             engine_submit_authorized=False,
             automated_accounts_enabled=settings.allow_automated_accounts,
+            driver_override_available=getattr(
+                settings, "cua_driver_override_available", None
+            ),
         )
     return NoopComputerUse(
         mode=settings.computer_use_mode,

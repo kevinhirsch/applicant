@@ -71,6 +71,7 @@ class CuaDriverComputerUse:
         telemetry: bool = False,
         engine_submit_authorized: bool = False,
         automated_accounts_enabled: bool = False,
+        driver_override_available: str | None = None,
     ) -> None:
         self._driver_cmd = (driver_cmd or _DEFAULT_DRIVER_CMD).strip() or _DEFAULT_DRIVER_CMD
         self._mode = (mode or "som").strip().lower()
@@ -78,6 +79,7 @@ class CuaDriverComputerUse:
         self._telemetry = bool(telemetry)
         self._engine_submit_authorized = engine_submit_authorized
         self._automated_accounts_enabled = automated_accounts_enabled
+        self._driver_override_available = (driver_override_available or '').strip().lower()
         #: Resolved absolute driver path (lazy, cached); None until probed.
         self._resolved_cmd: str | None = None
         self._probed = False
@@ -112,6 +114,12 @@ class CuaDriverComputerUse:
 
     @property
     def _available(self) -> bool:
+        # CUA_DRIVER_OVERRIDE_AVAILABLE can force availability on/off for tests.
+        ov = self._driver_override_available
+        if ov in ('1', 'true', 'on'):
+            return True
+        if ov in ('0', 'false', 'off'):
+            return False
         return self._driver_path() is not None
 
     # --- read-only -------------------------------------------------------
