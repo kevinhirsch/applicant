@@ -480,3 +480,147 @@ class TestRecoveryAttempt:
         assert attempt.strategy == "retry"
         assert attempt.success is True
         assert attempt.duration_s == 1.5
+
+
+# ── FakePenetrablePageSource — hermetic iframe/shadow-DOM model (#351) ─────
+
+
+class TestFakePenetrablePageSource:
+    """FakePenetrablePageSource is a hermetic model of an iframe/shadow DOM page.
+
+    These tests exercise ``penetrate_iframes()``, ``penetrate_shadow_dom()``, and
+    ``detect_fields_with_penetration()`` against the fake without any real browser.
+    This is the CI-safe coverage increment for Issue #351.
+    """
+
+    def test_penetrate_iframes_on_fake_page_empty(self):
+        """No child_frames → penetrate_iframes returns empty list."""
+        from applicant.adapters.browser.page_source import FakePenetrablePageSource
+
+        page = FakePenetrablePageSource(main_fields=[], child_frames=[])
+        result = penetrate_iframes(page)
+        assert result == []
+
+    def test_penetrate_iframes_single_iframe(self):
+        """Fields inside one iframe are detected by penetrate_iframes on the fake."""
+        from applicant.adapters.browser.page_source import (
+            FakePenetrablePageSource,
+            _FakeFrame,
+        )
+
+        iframe_fields = [
+            {"name": "email", "id": "email_id", "type": "email",
+             "aria-label": "Email Address", "required": ""},
+        ]
+        iframe = _FakeFrame(name="apply-frame", fields=iframe_fields)
+        page = FakePenetrablePageSource(child_frames=[iframe])
+
+        result = penetrate_iframes(page)
+        assert len(result) == 1
+        assert result[0].label == "Email Address"
+        assert result[0].field_type == "email"
+        assert result[0].source == "iframe"
+        assert result[0].required is True
+
+    def test_penetrate_iframes_nested(self):
+        """Fields inside nested iframes are detected at both levels."""
+        from applicant.adapters.browser.page_source import (
+            FakePenetrablePageSource,
+            _FakeFrame,
+        )
+
+        inner_fields = [{"name": "phone", "id": "phone_id", "type": "tel"}]
+        outer_fields = [{"name": "fullname", "id": "name_id", "type": "text"}]
+
+        inner_frame = _FakeFrame(name="inner", fields=inner_fields)
+        outer_frame = _FakeFrame(name="outer", fields=outer_fields, child_frames=[inner_frame])
+        page = FakePenetrablePageSource(child_frames=[outer_frame])
+
+        result = penetrate_iframes(page)
+        labels = {r.label for r in result}
+        assert "phone" in labels
+        assert "fullname" in labels
+
+    def test_penetrate_shadow_dom_on_fake_page_empty(self):
+        """No shadow DOM results → penetrate_shadow_dom returns empty list."""
+        from applicant.adapters.browser.page_source import FakePenetrablePageSource
+
+        page = FakePenetrablePageSource(shadow_dom_results=[])
+        result = penetrate_shadow_dom(page)
+        assert result == []
+
+    def test_penetrate_shadow_dom_with_canned_results(self):
+        """Shadow DOM evaluate returns canned results → penetrate_shadow_dom maps them."""
+        from applicant.adapters.browser.page_source import FakePenetrablePageSource
+
+        shadow_results = [
+            {
+                "selector": "my-form >>> [name='username']",
+                "label": "Username",
+                "fieldType": "text",
+                "required": True,
+                "source": "shadow_dom",
+            },
+        ]
+        page = FakePenetrablePageSource(shadow_dom_results=shadow_results)
+        result = penetrate_shadow_dom(page)
+        assert len(result) == 1
+        assert result[0].label == "Username"
+        assert result[0].source == "shadow_dom"
+        assert result[0].field_type == "text"
+        assert result[0].required is True
+
+    def test_detect_fields_with_penetration_main_and_iframes(self):
+        """detect_fields_with_penetration combines main-doc and iframe fields."""
+        from applicant.adapters.browser.page_source import (
+            FakePenetrablePageSource,
+            _FakeFrame,
+        )
+
+        main_fields = [{"name": "first_name", "id": "fn", "type": "text"}]
+        iframe_fields = [{"name": "last_name", "id": "ln", "type": "text"}]
+        iframe = _FakeFrame(name="frame1", fields=iframe_fields)
+        page = FakePenetrablePageSource(main_fields=main_fields, child_frames=[iframe])
+
+        result = detect_fields_with_penetration(page, detect_shadow_dom=False)
+        labels = {r.label for r in result}
+        assert "first_name" in labels
+        assert "last_name" in labels
+
+    def test_detect_fields_deduplication_across_sources(self):
+        """Duplicate selectors are deduplicated across main + iframe."""
+        from applicant.adapters.browser.page_source import (
+            FakePenetrablePageSource,
+            _FakeFrame,
+        )
+
+        # Same name/selector in both main and iframe → should appear only once
+        same_field = {"name": "email", "id": "email_id", "type": "email"}
+        iframe = _FakeFrame(name="frame", fields=[same_field])
+        page = FakePenetrablePageSource(main_fields=[same_field], child_frames=[iframe])
+
+        result = detect_fields_with_penetration(page, detect_shadow_dom=False)
+        selectors = [r.selector for r in result]
+        # Selector for name="email" appears only once
+        assert selectors.count('[name="email"]') == 1
+
+    def test_recovery_on_fake_page_source_element(self):
+        """recover_broken_selector on the fake page finds the element immediately."""
+        from applicant.adapters.browser.page_source import FakePenetrablePageSource
+
+        page = FakePenetrablePageSource(
+            main_fields=[{"name": "email", "id": "em", "type": "email"}]
+        )
+        result = recover_broken_selector(page, '[name="email"]', field_label="Email")
+        # The fake page's query_selector always returns the first element
+        assert result.recovered is True
+
+    def test_adaptive_wait_on_fake_page_source(self):
+        """adaptive_wait_for_element finds elements instantly on the fake page."""
+        from applicant.adapters.browser.page_source import FakePenetrablePageSource
+
+        page = FakePenetrablePageSource(
+            main_fields=[{"name": "email", "id": "em", "type": "email"}]
+        )
+        result = adaptive_wait_for_element(page, '[name="email"]')
+        assert result.found is True

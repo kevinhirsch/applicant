@@ -1,9 +1,14 @@
-"""Unit tests for Plan-as-Data core entities and validator."""
+"""Unit tests for Plan-as-Data core entities, validator, resolve_fill_values,
+and the ReadOnlyScrapePlan constraint."""
 
 from __future__ import annotations
 
+import pytest
+
 from applicant.core.entities.plan import (
+    AssertOp,
     ClickOp,
+    ExtractOp,
     FillOp,
     GotoOp,
     OpKind,
@@ -16,6 +21,8 @@ from applicant.core.entities.plan import (
 from applicant.core.rules.plan import (
     MAX_OPS_PER_PLAN,
     STOP_REASONS,
+    ReadOnlyScrapePlan,
+    resolve_fill_values,
     validate_op_sequence,
     validate_plan,
 )
@@ -181,3 +188,135 @@ class TestValidateOpSequence:
         plan = Plan(ops=ops)
         errors = validate_op_sequence(plan)
         assert errors == []
+
+
+class TestResolveFillValues:
+    """resolve_fill_values maps fill/select ops to attribute cloud values."""
+
+    def test_fill_ops_resolved_from_attribute_cloud(self) -> None:
+        cloud = {"first_name": "Alice", "last_name": "Smith", "email": "alice@example.com"}
+        ops = (
+            GotoOp(url="https://example.com/apply"),
+            FillOp(ref="r1", attribute_id="first_name"),
+            FillOp(ref="r2", attribute_id="last_name"),
+            FillOp(ref="r3", attribute_id="email"),
+        )
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, cloud)
+        assert resolved == {"r1": "Alice", "r2": "Smith", "r3": "alice@example.com"}
+
+    def test_select_ops_resolved(self) -> None:
+        cloud = {"country": "United States"}
+        ops = (SelectOp(ref="r1", attribute_id="country"),)
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, cloud)
+        assert resolved == {"r1": "United States"}
+
+    def test_missing_attribute_skipped(self) -> None:
+        """Attributes absent from the cloud are silently skipped (plan was pre-validated)."""
+        cloud = {"email": "bob@example.com"}
+        ops = (
+            FillOp(ref="r1", attribute_id="phone"),  # not in cloud
+            FillOp(ref="r2", attribute_id="email"),
+        )
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, cloud)
+        assert resolved == {"r2": "bob@example.com"}
+        assert "r1" not in resolved
+
+    def test_non_fill_ops_excluded(self) -> None:
+        """GotoOp/ClickOp/StopOp are not fill-resolvable; they must not appear in output."""
+        cloud = {"email": "c@c.com"}
+        ops = (
+            GotoOp(url="https://example.com"),
+            FillOp(ref="r1", attribute_id="email"),
+            ClickOp(ref="next-btn"),
+            StopOp(reason="final_submit"),
+        )
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, cloud)
+        # Only the fill op should appear
+        assert set(resolved.keys()) == {"r1"}
+
+    def test_empty_cloud_yields_empty_mapping(self) -> None:
+        ops = (FillOp(ref="r1", attribute_id="name"),)
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, {})
+        assert resolved == {}
+
+    def test_values_come_from_cloud_not_plan(self) -> None:
+        """Value in resolved MUST come from attribute_cloud, not from any plan field."""
+        cloud = {"name": "Dave Stored"}
+        ops = (FillOp(ref="r1", attribute_id="name"),)
+        plan = Plan(ops=ops)
+        resolved = resolve_fill_values(plan, cloud)
+        assert resolved["r1"] == "Dave Stored"
+
+
+class TestReadOnlyScrapePlan:
+    """ReadOnlyScrapePlan enforces the constraint that only extract/assert/wait
+    ops are allowed in the scrape lane."""
+
+    def test_valid_scrape_plan_accepted(self) -> None:
+        ops = (
+            ExtractOp(ref="r1", shape="text"),
+            AssertOp(ref="r2", predicate="visible"),
+            WaitOp(for_="visible", timeout=5.0),
+        )
+        plan = Plan(ops=ops)
+        ro = ReadOnlyScrapePlan(plan=plan)
+        assert len(ro.ops()) == 3
+
+    def test_fill_op_rejected(self) -> None:
+        ops = (
+            ExtractOp(ref="r1", shape="text"),
+            FillOp(ref="r2", attribute_id="email"),
+        )
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_goto_op_rejected(self) -> None:
+        ops = (GotoOp(url="https://example.com"),)
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_click_op_rejected(self) -> None:
+        ops = (ClickOp(ref="btn"),)
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_select_op_rejected(self) -> None:
+        ops = (SelectOp(ref="r1", attribute_id="country"),)
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_upload_op_rejected(self) -> None:
+        ops = (UploadOp(ref="r1", document_id="doc1"),)
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_stop_op_rejected(self) -> None:
+        ops = (StopOp(reason="final_submit"),)
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError, match="mutating op"):
+            ReadOnlyScrapePlan(plan=plan)
+
+    def test_empty_extract_plan_accepted(self) -> None:
+        ops = (ExtractOp(ref=None, shape="full_page"),)
+        plan = Plan(ops=ops)
+        ro = ReadOnlyScrapePlan(plan=plan)
+        assert ro.ops() == plan.ops
+
+    def test_error_message_names_bad_ops(self) -> None:
+        ops = (FillOp(ref="r1", attribute_id="x"), GotoOp(url="https://x.com"))
+        plan = Plan(ops=ops)
+        with pytest.raises(ValueError) as exc_info:
+            ReadOnlyScrapePlan(plan=plan)
+        msg = str(exc_info.value)
+        assert "op[0]=fill" in msg
+        assert "op[1]=goto" in msg

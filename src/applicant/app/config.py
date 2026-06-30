@@ -474,6 +474,13 @@ class Settings(BaseSettings):
         default="", alias="PROXMOX_TAKEOVER_URL_TEMPLATE"
     )
 
+    # --- #305 Plan-as-Data (experimental, default OFF) ----------------------
+    # When true AND an LLM is configured, the pre-fill loop emits a typed Plan
+    # per page (via LLMPlanner) and executes each op through the existing guarded
+    # actions. The STOP boundary is still enforced. Default OFF: behaviour is
+    # byte-identical to today until an operator opts in.
+    prefill_use_planner: bool = Field(default=False, alias="PREFILL_USE_PLANNER")
+
     # --- Pre-submit safety (G07) --------------------------------------------
     # Scam/ghost-job detection: maximum allowed age (in days) for a listing.
     # Postings older than this are blocked before the pipeline starts.

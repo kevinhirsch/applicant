@@ -720,6 +720,14 @@ def build_container(settings: Settings | None = None) -> Container:
         storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
         post_submission=post_submission_service,
     )
+    # #305 Plan-as-Data: build the LLMPlanner only when PREFILL_USE_PLANNER=true
+    # AND an LLM is configured — otherwise ``None`` and use_planner=False leaves
+    # behaviour byte-identical to today.
+    _prefill_planner = None
+    if settings.prefill_use_planner and llm is not None:
+        from applicant.adapters.planner.llm_planner import LLMPlanner
+        _prefill_planner = LLMPlanner(llm=llm)
+
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -737,6 +745,9 @@ def build_container(settings: Settings | None = None) -> Container:
         # #177: flag a probable wrong-ATS / near-empty fill below this match-rate floor
         # for human review rather than offering it for submission.
         match_rate_floor=settings.ats_match_rate_floor,
+        # #305 Plan-as-Data: opt-in, default OFF (PREFILL_USE_PLANNER env).
+        planner=_prefill_planner,
+        use_planner=settings.prefill_use_planner,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
@@ -989,6 +1000,9 @@ def build_container(settings: Settings | None = None) -> Container:
             computer_use=computer_use,
             # #177: flag a probable wrong-ATS / near-empty fill below this floor.
             match_rate_floor=settings.ats_match_rate_floor,
+            # #305 Plan-as-Data: reuse the same planner as the main prefill_service.
+            planner=_prefill_planner,
+            use_planner=settings.prefill_use_planner,
         )
         mat = MaterialService(
             tick_storage,
@@ -1167,6 +1181,9 @@ def build_container(settings: Settings | None = None) -> Container:
             computer_use=computer_use,
             # #177: flag a probable wrong-ATS / near-empty fill below this floor.
             match_rate_floor=settings.ats_match_rate_floor,
+            # #305 Plan-as-Data: reuse the same planner as the main prefill_service.
+            planner=_prefill_planner,
+            use_planner=settings.prefill_use_planner,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
