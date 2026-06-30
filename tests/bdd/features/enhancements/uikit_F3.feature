@@ -8,7 +8,7 @@ Feature: Vendor the Window kit (.ow-window) and reconcile it with windowDrag/mod
     Given the UI-kit migration item "F3"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: F3 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "F3"
     Then its post-migration kit target is satisfied

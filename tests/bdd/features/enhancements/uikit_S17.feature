@@ -8,7 +8,7 @@ Feature: Map the Compare surface onto Elements in its themed-but-disabled state
     Given the UI-kit migration item "S17"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: S17 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "S17"
     Then its post-migration kit target is satisfied

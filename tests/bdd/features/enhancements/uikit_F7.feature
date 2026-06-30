@@ -8,7 +8,7 @@ Feature: Vendor the Chat Hint kit (above-composer guide tip)
     Given the UI-kit migration item "F7"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: F7 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "F7"
     Then its post-migration kit target is satisfied

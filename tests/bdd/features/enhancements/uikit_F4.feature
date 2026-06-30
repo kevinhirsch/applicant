@@ -8,7 +8,7 @@ Feature: Vendor the Notice kit (.on-card) and re-back ui.js showToast through it
     Given the UI-kit migration item "F4"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: F4 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "F4"
     Then its post-migration kit target is satisfied

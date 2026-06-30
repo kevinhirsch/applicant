@@ -8,7 +8,7 @@ Feature: Vendor the Decision kit (.odec-* prompt -> options -> confirm, risk var
     Given the UI-kit migration item "F6"
     Then its pre-migration baseline anchor is satisfied today
 
-  @pending
+
   Scenario: F6 target — the surface is migrated onto the vendored kit
     Given the UI-kit migration item "F6"
     Then its post-migration kit target is satisfied
