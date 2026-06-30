@@ -19,6 +19,10 @@ from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.events import JobDiscovered, event_bus
 from applicant.core.ids import CampaignId, DiscoverySourceId, new_id
+from applicant.core.rules.source_pacing import (
+    DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
+    SourcePacer,
+)
 
 #: Cosine similarity above which two postings are treated as duplicates.
 _DEDUP_THRESHOLD = 0.97
@@ -34,10 +38,18 @@ class DiscoveryService:
         tool_registry=None,
         *,
         advanced_learning=None,
+        source_pacer: SourcePacer | None = None,
+        per_domain_interval_seconds: float = DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
     ) -> None:
         self._storage = storage
         self._discovery = discovery
         self._embedding = embedding
+        # Per-job-board (per-domain) request pacer (#195). A process-scoped pacer can be
+        # injected so the per-domain interval survives the per-tick service rebuild;
+        # otherwise a fresh one is created with the configured interval.
+        self._source_pacer = source_pacer or SourcePacer(
+            interval_seconds=per_domain_interval_seconds
+        )
         self._learning = learning  # optional LearningService for yield persistence
         # Optional AdvancedLearningService so discovery can also lean toward titles
         # mined from the DISCRETE converting signature the live loop writes, plus an
@@ -207,6 +219,28 @@ class DiscoveryService:
             if key not in ordered:
                 ordered.append(key)
         return ordered
+
+    def pace_schedule(
+        self, postings: list[JobPosting], *, start: float = 0.0
+    ) -> list[tuple[JobPosting, float]]:
+        """Pace per-board requests under the configurable per-domain interval (#195).
+
+        Given postings discovered in one run, assign each a release time that keeps
+        successive requests to the SAME job-board domain at least ``interval_seconds``
+        apart, so a burst from one domain (e.g. ten ``linkedin.com`` postings) is
+        spread out below the anti-bot ceiling. Returns ``(posting, release_at)`` pairs
+        in input order; postings on different domains are independent and never delay
+        each other. Pure scheduling (the caller decides whether/how to wait), so it is
+        deterministic and side-effect-free apart from advancing the pacer's per-domain
+        last-allowed marks.
+        """
+        scheduled: list[tuple[JobPosting, float]] = []
+        for posting in postings:
+            url = getattr(posting, "source_url", "") or ""
+            release = max(start, self._source_pacer.next_allowed_at(url))
+            self._source_pacer.record(url, release)
+            scheduled.append((posting, release))
+        return scheduled
 
     def source_yield(self, postings: list[JobPosting]) -> dict[str, int]:
         """Count postings per source-key for FR-DISC-5 source-yield learning."""

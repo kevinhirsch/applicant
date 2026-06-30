@@ -190,12 +190,25 @@ def setup_applicant_memory_routes() -> APIRouter:
                     learned = conv.get("engine")
             except EngineError:
                 pass
+            # Engine-proposed attributes awaiting approval (#273): ride along on /status
+            # so the front-door suggested-attribute card has a data source. Best-effort —
+            # a missing/empty list simply keeps the card hidden.
+            suggested: list = []
+            try:
+                st = await engine.setup_status()
+                if isinstance(st, dict):
+                    raw = st.get("suggested_attributes") or st.get("pending_attributes")
+                    if isinstance(raw, list):
+                        suggested = raw
+            except EngineError:
+                pass
             return {
                 "ready": True,
                 "engine_available": True,
                 "campaign_id": cid,
                 "attribute_count": attr_count,
                 "learned_engine": learned,
+                "suggested_attributes": suggested,
             }
 
     # -- attribute cloud ----------------------------------------------------

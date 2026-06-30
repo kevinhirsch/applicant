@@ -146,6 +146,13 @@ class MaterialService:
         self._storage = storage
         self._config_store = config_store
         self._llm = llm
+        # Silent-degradation diagnostics (#246): the generation pipeline has many
+        # defensive ``except`` blocks that let it degrade rather than crash. Counting
+        # them — and surfacing a diagnostic once they cross a threshold within one
+        # service lifetime — turns invisible degradation into an observable signal
+        # instead of silently producing empty/approximate output.
+        self._silent_failure_count: int = 0
+        self._last_diagnostic_at: int = 0
         self._resume_tailoring = resume_tailoring  # default/LaTeX engine
         self._docx_tailoring = docx_tailoring  # docx fallback engine
         self._embedding = embedding  # local embedding port (variant clustering)
@@ -203,7 +210,7 @@ class MaterialService:
             try:
                 engine = self._conversion.get_engine(str(campaign_id))
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 engine = None
             if engine == "docx":
                 return self._docx_tailoring
@@ -219,41 +226,139 @@ class MaterialService:
         return self._extra_banned
 
     # === aggressiveness dial (FR-RESUME-9, dormant per FR-UI-2) ============
-    def set_aggressiveness(self, value: int | None) -> int:
+    def _effective_config_store(self):
+        """The config store to persist the dial through.
+
+        Prefers the injected ``AppConfigStore``; when none is wired (e.g. a bare
+        service over shared storage) it lazily stashes one on the ``storage`` object so
+        every service built over the SAME storage shares the value across requests
+        (#187 per-job-search persistence) without a config store being threaded in.
+        """
+        if self._config_store is not None:
+            return self._config_store
+        store = getattr(self._storage, "_material_config_store", None)
+        if store is None:
+            from applicant.adapters.storage.app_config_store import (
+                InMemoryAppConfigStore,
+            )
+
+            store = InMemoryAppConfigStore()
+            try:
+                self._storage._material_config_store = store
+            except Exception:
+                return None
+        return store
+
+    @staticmethod
+    def _campaign_aggressiveness_key(campaign_id: CampaignId) -> str:
+        """Per-campaign persistence key for the dial (#187)."""
+        return f"{_AGGRESSIVENESS_CONFIG_KEY}.{campaign_id}"
+
+    def set_aggressiveness(
+        self, value: int | None, campaign_id: CampaignId | None = None
+    ) -> int:
         """Set the truthful-framing dial (FR-RESUME-9), clamped into range.
 
-        Persisted via the AppConfigStore so the value survives across requests.
-        The dial only biases framing (assertive vs measured), never the truthfulness
-        guardrail.
+        Persisted via the AppConfigStore so the value survives across requests. When a
+        ``campaign_id`` is supplied the choice is ALSO banked per job search (#187) so a
+        fresh service can recall it for that campaign; the global key always tracks the
+        latest choice as a fallback. The dial only biases framing (assertive vs
+        measured), never the truthfulness guardrail.
         """
         self._aggressiveness = clamp_aggressiveness(value)
-        self._persist_aggressiveness()
+        self._persist_aggressiveness(campaign_id)
         return self._aggressiveness
 
+    def load_aggressiveness(self, campaign_id: CampaignId) -> int:
+        """Recall the chosen dial value for a job search across requests (#187).
+
+        Reads the per-campaign value first, falling back to the latest global choice,
+        then the default — so a fresh service built for the same campaign recovers the
+        operator's chosen framing rather than resetting to the default each request.
+        """
+        store = self._effective_config_store()
+        if store is not None:
+            for key in (
+                self._campaign_aggressiveness_key(campaign_id),
+                _AGGRESSIVENESS_CONFIG_KEY,
+            ):
+                try:
+                    rec = store.get(key)
+                except Exception:
+                    rec = None
+                if rec is not None and "value" in rec:
+                    return clamp_aggressiveness(rec["value"])
+        return AGGRESSIVENESS_DEFAULT
+
     def _load_aggressiveness(self) -> int:
-        """Read the persisted aggressiveness value, or return the default."""
-        if self._config_store is not None:
+        """Read the persisted (global) aggressiveness value, or return the default."""
+        store = self._effective_config_store()
+        if store is not None:
             try:
-                rec = self._config_store.get(_AGGRESSIVENESS_CONFIG_KEY)
+                rec = store.get(_AGGRESSIVENESS_CONFIG_KEY)
                 if rec is not None and "value" in rec:
                     return clamp_aggressiveness(rec["value"])
             except Exception:
                 pass
         return AGGRESSIVENESS_DEFAULT
 
-    def _persist_aggressiveness(self) -> None:
-        """Write the current aggressiveness to the config store."""
-        if self._config_store is not None:
-            try:
-                self._config_store.set(
-                    _AGGRESSIVENESS_CONFIG_KEY, {"value": self._aggressiveness}
-                )
-            except Exception:
-                pass
+    def _persist_aggressiveness(self, campaign_id: CampaignId | None = None) -> None:
+        """Write the current aggressiveness to the config store (global + per-campaign)."""
+        store = self._effective_config_store()
+        if store is None:
+            return
+        payload = {"value": self._aggressiveness}
+        try:
+            store.set(_AGGRESSIVENESS_CONFIG_KEY, payload)
+            if campaign_id is not None:
+                store.set(self._campaign_aggressiveness_key(campaign_id), dict(payload))
+        except Exception:
+            pass
 
     @property
     def aggressiveness(self) -> int:
         return self._aggressiveness
+
+    # === silent-degradation diagnostics (#246) ============================
+    #: How many silent degradations may accumulate before a diagnostic is surfaced.
+    SILENT_FAILURE_DIAGNOSTIC_THRESHOLD = 3
+
+    @property
+    def silent_failure_count(self) -> int:
+        """How many times this service has silently degraded (#246)."""
+        return self._silent_failure_count
+
+    def _note_silent_degradation(self, where: str) -> None:
+        """Record one silent degradation and surface a diagnostic past the threshold.
+
+        Every defensive ``except`` in the generation pipeline routes through here so a
+        run of swallowed failures becomes a visible, counted signal rather than vanishing
+        into empty output (#246). Crossing the threshold emits a degradation diagnostic
+        exactly once per threshold-multiple so a flaky run is loud without spamming.
+        """
+        self._silent_failure_count += 1
+        log.warning("material generation silently degraded at %s", where)
+        if (
+            self._silent_failure_count >= self.SILENT_FAILURE_DIAGNOSTIC_THRESHOLD
+            and self._silent_failure_count != self._last_diagnostic_at
+        ):
+            self._last_diagnostic_at = self._silent_failure_count
+            self.emit_degradation_diagnostic(self._silent_failure_count)
+
+    def emit_degradation_diagnostic(self, count: int) -> None:
+        """Surface a diagnostic event when silent degradation crosses the threshold (#246).
+
+        Emits a loud, structured observability event (an ``error``-level log carrying the
+        degradation count) so repeated silent degradation becomes visible rather than
+        vanishing into empty/approximate output. Never raises — a diagnostic must never
+        itself break generation.
+        """
+        log.error(
+            "material generation degradation diagnostic: silently degraded %d times — "
+            "output may be incomplete or approximate; check the model connection and "
+            "base profile",
+            count,
+        )
 
     # === voice matching (FR-RESUME-5) =====================================
     def load_voice_corpus(self, corpus: list[str]) -> VoiceProfile:
@@ -319,7 +424,7 @@ class MaterialService:
         try:
             attrs = self._storage.attributes.list_for_campaign(campaign_id)
         except Exception:
-            log.warning("Bare exception in material_service.py")
+            self._note_silent_degradation("material_service.py")
             attrs = []
         for a in attrs:
             val = getattr(a, "value", None)
@@ -361,7 +466,7 @@ class MaterialService:
         try:
             app = self._storage.applications.get(application_id)
         except Exception:
-            log.warning("Bare exception in material_service.py")
+            self._note_silent_degradation("material_service.py")
             app = None
         if app is None:
             return ""
@@ -371,7 +476,7 @@ class MaterialService:
             try:
                 posting = self._storage.postings.get(pid)
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 posting = None
             if posting is not None:
                 bits += [
@@ -547,6 +652,41 @@ class MaterialService:
             seen.add(str(cur.id))
             cur = self._storage.resume_variants.get(cur.parent_id) if cur.parent_id else None
         return chain
+
+    # === document-library integration (#293) ==============================
+    def promote_to_base_resume(self, variant: ResumeVariant) -> ResumeVariant:
+        """Adopt a library variant as the new base the engine tailors from (#293).
+
+        Marks the chosen variant as an approved root (clears its ``parent_id`` so it
+        becomes the lineage root) and persists it, so future ``select_or_generate``
+        runs fork from this variant rather than the original base. Returns the promoted
+        variant. Idempotent: promoting the same variant again is a no-op.
+        """
+        from dataclasses import replace
+
+        promoted = replace(variant, parent_id=None, approved=True)
+        self._storage.resume_variants.add(promoted)
+        self._storage.commit()
+        return promoted
+
+    def fill_cover_letter_template(
+        self, template: str, context: dict[str, str]
+    ) -> str:
+        """Fill a cover-letter template's ``{{field}}`` merge fields from context (#293).
+
+        A small, deterministic merge-field filler for the template library: every
+        ``{{name}}`` placeholder is replaced with ``context["name"]`` (whitespace inside
+        the braces tolerated). Unknown placeholders are left blank rather than leaking the
+        raw ``{{...}}`` token into the letter, so a partial context never produces broken
+        output. Pure string substitution — never an LLM call, never a fabrication path.
+        """
+        import re
+
+        def _sub(match: re.Match) -> str:
+            key = match.group(1).strip()
+            return str(context.get(key, ""))
+
+        return re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", _sub, template)
 
     def select_or_generate(
         self,
@@ -779,7 +919,7 @@ class MaterialService:
             try:
                 return self._embedding.similarity(a, b) >= CLUSTER_SIMILARITY
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 pass
         return False
 
@@ -1238,7 +1378,7 @@ class MaterialService:
                     dedup_key=f"material_review:{doc.id}",
                 )
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 pass
         if self._notifications is not None:
             try:
@@ -1249,7 +1389,7 @@ class MaterialService:
                     deep_link=deep_link,
                 )
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 pass
 
     # --- factual screening-answer scoping (FR-ANSWER-1, NFR-PRIV-1, #5) ----
@@ -1427,7 +1567,7 @@ class MaterialService:
         try:
             snap = am.memory.snapshot(campaign_id=scope)
         except Exception:
-            log.warning("Bare exception in material_service.py")
+            self._note_silent_degradation("material_service.py")
             snap = None
         if snap is not None:
             mem_lines: list[str] = []
@@ -1451,7 +1591,7 @@ class MaterialService:
         try:
             metas = am.skills.list_skills(campaign_id=scope)
         except Exception:
-            log.warning("Bare exception in material_service.py")
+            self._note_silent_degradation("material_service.py")
             metas = ()
         if metas:
             q = {w for w in (query or "").lower().split() if len(w) > 3}
@@ -1492,7 +1632,7 @@ class MaterialService:
             try:
                 hits = recall.search(query, limit=1, campaign_id=scope)
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 hits = ()
             for h in hits:
                 txt = getattr(h, "text", "")
@@ -1579,7 +1719,7 @@ class MaterialService:
                 )
                 return _strip_llm_preamble(result.text)
             except Exception:
-                log.warning("Bare exception in material_service.py")
+                self._note_silent_degradation("material_service.py")
                 # Generation fell back to the deterministic path — no learned context
                 # was actually used, so do not record provenance for it.
                 self._last_provenance = ()
@@ -1643,7 +1783,7 @@ class MaterialService:
             text = _strip_llm_preamble((result.text or "").strip())
             return text or None
         except Exception:
-            log.warning("Bare exception in material_service.py")
+            self._note_silent_degradation("material_service.py")
             return None
 
     def _store_document(
