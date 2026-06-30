@@ -17,6 +17,7 @@ from applicant.app.routers import (
     attributes,
     campaigns,
     chat,
+    compare,
     conversion,
     credentials,
     criteria,
@@ -60,6 +61,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(chat.router)
     app.include_router(remote.router)
     app.include_router(outcomes.router)
+    app.include_router(compare.router)
     app.include_router(credentials.router)
     app.include_router(pending_actions.router)
     app.include_router(agent_memory.router)

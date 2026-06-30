@@ -241,6 +241,21 @@ def get_learning_service(
     return _resolved(services, container, "learning_service")
 
 
+def get_compare_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """The cross-entity comparison engine (#297), built on the per-request storage.
+
+    There is no container singleton — the service is pure read-logic over storage —
+    so it is constructed here from the same Session-bound (or in-memory) storage every
+    other per-request service uses (CONC-REQ-1).
+    """
+    from applicant.application.services.compare_service import CompareService
+
+    return CompareService(get_storage(container, services))
+
+
 def get_agent_memory(container: Container = Depends(get_container)):
     """The curated-memory / skills / recall adapter trio (FR-MIND-1/2/3).
 
