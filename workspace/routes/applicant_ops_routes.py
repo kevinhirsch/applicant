@@ -85,12 +85,19 @@ def _require_admin(request: Request) -> str:
 
 
 def _engine_http_error(exc: EngineError) -> HTTPException:
-    """Translate a typed :class:`EngineError` into an HTTPException for a *write*."""
+    """Translate a typed :class:`EngineError` into an HTTPException for a *write*.
+
+    4xx responses are forwarded (client-correctable). 5xx responses are scrubbed
+    — raw detail may contain internal stack traces; logged server-side only.
+    """
     if exc.status is None:
         return HTTPException(
             status_code=503,
             detail="The Applicant engine is unavailable right now. Please try again shortly.",
         )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (ops): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
     detail = exc.detail if exc.detail not in (None, "") else exc.message
     return HTTPException(status_code=exc.status, detail=detail)
 

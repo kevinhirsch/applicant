@@ -530,7 +530,6 @@ class Settings(BaseSettings):
         """The deployment profile derived from applicant_mode (empty = hermetic)."""
         return self.applicant_mode
 
-
     @field_validator("takeover_desktop")
     @classmethod
     def _validate_takeover_desktop(cls, v: str) -> str:

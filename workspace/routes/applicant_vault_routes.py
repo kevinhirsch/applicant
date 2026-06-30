@@ -70,24 +70,30 @@ class AccountCredentialIn(BaseModel):
 
 
 def _engine_error_response(exc: EngineError) -> JSONResponse:
+    """Translate a typed :class:`EngineError` into a clean JSON error response.
+
+    Transport failure -> 502. 4xx forwarded (client-correctable). 5xx scrubbed
+    — raw detail may contain internal stack traces; logged server-side only.
+    """
     if exc.status is None:
-        status_code = 502
         message = (
             "The credential vault timed out."
             if exc.is_timeout
             else "The credential vault is unavailable."
         )
-    else:
-        status_code = exc.status
-        message = "The credential vault reported an error."
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": message, "engine_status": None},
+        )
+    if exc.status >= 500:
+        logger.warning("engine 5xx (vault): status=%s detail=%s", exc.status, exc.detail or exc.message)
+        return JSONResponse(
+            status_code=502,
+            content={"error": "engine_error", "message": "The credential vault reported an error.", "engine_status": exc.status},
+        )
     return JSONResponse(
-        status_code=status_code,
-        content={
-            "error": "engine_error",
-            "message": message,
-            "engine_status": exc.status,
-            "detail": exc.detail,
-        },
+        status_code=exc.status,
+        content={"error": "engine_error", "message": "The credential vault reported an error.", "engine_status": exc.status},
     )
 
 
