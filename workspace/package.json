@@ -3,8 +3,12 @@
     "type": "git",
     "url": "https://github.com/kevinhirsch/applicant.git"
   },
+  "scripts": {
+    "test": "node --test tests/js/*.test.js"
+  },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
+    "@antithesishq/bombadil": "^0.3.2",
+    "node:test": "*"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0"

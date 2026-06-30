@@ -390,6 +390,25 @@ def setup_applicant_portal_routes() -> APIRouter:
         items = items if isinstance(items, list) else []
         return {"engine_available": True, "count": len(items), "items": items}
 
+    @router.post("/notifications/deliver-now")
+    async def deliver_notifications_now(request: Request) -> dict:
+        """Release notifications held back by quiet hours, right now (FR-NOTIF-5).
+
+        Thin proxy over the engine's force-flush so the Settings "Deliver now"
+        control can release held Discord/email pushes without waiting for the quiet
+        window to end. Degrades soft when the engine is unreachable.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.deliver_notifications_now()
+            except EngineError as exc:
+                logger.debug("portal: deliver-now failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(exc, {"flushed": [], "count": 0})
+        flushed = data.get("flushed") if isinstance(data, dict) else None
+        flushed = flushed if isinstance(flushed, list) else []
+        return {"engine_available": True, "flushed": flushed, "count": len(flushed)}
+
     @router.post("/notifications/{notification_id}/seen")
     async def dismiss_notification(notification_id: str, request: Request) -> dict:
         """Dismiss one informational notification so it stops persisting.

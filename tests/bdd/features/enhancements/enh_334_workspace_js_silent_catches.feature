@@ -13,7 +13,6 @@ Feature: Workspace JS no longer fails silently across the board
     When the silent catch blocks are counted across every module
     Then many modules contain many silent catch blocks
 
-  @pending
   Scenario: An audited module has no silent catch blocks left
     Given the workspace browser modules
     When the audited target module is scanned for silent catches

@@ -22,11 +22,15 @@ jobs:
     # sudo (runner user in the `docker` group) for the compose-config step; git.
     # uv/Python and Node are installed by the workflow steps below.
     #
-    # HOSTED FALLBACK: this is a required PR check with no GitHub-hosted fallback,
-    # so if the runner is offline PRs will queue until it returns. To flip back to
-    # GitHub-hosted, comment the `self-hosted` line and uncomment `ubuntu-latest`.
-    runs-on: ubuntu-latest
-    # runs-on: self-hosted   # <-- self-hosted runner: flip back here if preferred (#278: hosted is now default for reliability + parallelism)
+    # HOSTED FALLBACK (#278): the GitHub-hosted runner is wired in as an ACTIVE
+    # fallback, not left commented out, so a required PR check never queues
+    # indefinitely when a self-hosted runner is offline. ``ubuntu-latest`` always
+    # resolves to a GitHub-hosted runner; listing it here keeps the hosted lane
+    # live. (To prefer a self-hosted runner when one is available, front the list
+    # with its label, e.g. ``[self-hosted, ubuntu-latest]`` once that runner group
+    # is registered — the hosted entry below stays as the guaranteed fallback.)
+    runs-on:
+      - ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,6 +126,12 @@ jobs:
         run: |
           find workspace/static -name '*.js' -not -path '*/node_modules/*' -print0 \
             | xargs -0 -r -n1 node --check
+      # Behavioral gate (not just syntax): runs the front-door JS unit suite via
+      # the built-in node:test runner. The suite dynamically import()s real
+      # front-door ES modules and asserts genuine facts, so a regression fails CI.
+      - name: Front-door JS unit tests (npm test)
+        working-directory: workspace
+        run: npm test
 
       # --- Deploy artifact ------------------------------------------------------
       - name: Production compose validates

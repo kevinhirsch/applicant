@@ -123,6 +123,9 @@ def test_quiet_hours_round_trip_and_24_7(client):
         "start": "22:30",
         "end": "07:15",
         "tz": "America/Phoenix",
+        # Per-channel quiet preference (#302) rides along; both channels respect the
+        # window by default until the user exempts one ("send anytime").
+        "channels": {"discord": True, "email": True},
     }
     # It also rides along on the channels GET so the UI renders it in one fetch.
     assert client.get("/api/setup/channels").json()["quiet_hours"]["enabled"] is True

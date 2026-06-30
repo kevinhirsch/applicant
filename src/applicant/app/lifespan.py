@@ -235,6 +235,23 @@ async def lifespan(app: FastAPI):
                 status=status,
                 real=is_real,
             )
+        # #188: the operator-facing real-vs-stub report — names the resume renderer,
+        # the browser, and the orchestrator and whether each is wired to a real
+        # binary or running as a stub, so a missing image dependency is visible at
+        # boot rather than after a silent failure.
+        from applicant.app.capability_report import build_capability_report
+
+        report = build_capability_report(
+            browser_real=getattr(container.settings, "browser_real", False),
+            postgres_engine=getattr(container, "engine", None),
+        )
+        for name, cap in report.items():
+            log.info(
+                "capability_report",
+                capability=name,
+                status=cap.status,
+                detail=cap.detail,
+            )
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("capability_status_failed", error=str(exc))
 

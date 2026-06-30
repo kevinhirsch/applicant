@@ -18,6 +18,12 @@ from typing import Protocol, runtime_checkable
 class NotificationUrgency(str, Enum):
     NORMAL = "normal"  # digests/approvals; may respect quiet hours
     IMMEDIATE = "immediate"  # errors surface any hour (FR-NOTIF-5)
+    # A targeted action that MUST reach the user even during quiet hours — e.g. a
+    # live-takeover / captcha hand-off where the agent is blocked waiting on the
+    # human. Unlike IMMEDIATE (a generic error fan-out), CRITICAL is a decision the
+    # user acts on: it escalates like a NORMAL approval (in-app + Discord/email/push,
+    # honoring web pre-emption) but is NEVER deferred by quiet hours (FR-NOTIF-5).
+    CRITICAL = "critical"
 
 
 class NotificationChannel(str, Enum):

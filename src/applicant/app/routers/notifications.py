@@ -64,6 +64,19 @@ def list_notifications(notifications=Depends(get_notification_service)) -> dict:
     return {"count": len(items), "items": items}
 
 
+@router.post("/deliver-now")
+def deliver_now(notifications=Depends(get_notification_service)) -> dict:
+    """Release notifications held back by quiet hours, right now (FR-NOTIF-5).
+
+    The "Deliver now" control in Settings: when a quiet window is suppressing
+    Discord/email pushes, this force-flushes every pending push immediately so the
+    user can pull held approvals/digests without waiting for the window to end.
+    Returns the channels that were flushed.
+    """
+    flushed = notifications.deliver_now()
+    return {"flushed": sorted(set(flushed)), "count": len(flushed)}
+
+
 @router.post("/{notification_id}/seen", status_code=204)
 def mark_seen(notification_id: str, notifications=Depends(get_notification_service)) -> None:
     """Dismiss one informational notification so it stops persisting.

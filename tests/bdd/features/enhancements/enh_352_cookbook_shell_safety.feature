@@ -11,13 +11,11 @@ Feature: Cookbook remote-execution failures and injected labels are made safe
     When the remote-execution calls are inspected
     Then it sends commands to the shell-exec endpoint
 
-  @pending
   Scenario: No shell, task or model failure is swallowed silently
     Given the cookbook running browser module
     When the module is scanned for empty catch handlers
     Then no empty arrow catch or empty bare catch block remains
 
-  @pending
   Scenario: Remote SSH commands shell-quote their user-controlled task fields
     Given the cookbook running browser module
     When the remote SSH command builders are inspected

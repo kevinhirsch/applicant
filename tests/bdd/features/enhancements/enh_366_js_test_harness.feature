@@ -8,13 +8,11 @@ Feature: The front-door has a JS unit-test harness wired into CI
   # validates JS with `node --check` only (syntax, not behavior). Both scenarios are @pending
   # until the harness and the CI step land.
 
-  @pending
   Scenario: A JS test runner is configured with a real behavioral test
     Given the front-door package manifest
     When the JS test tooling is inspected
     Then a test runner and a runnable test script with at least one behavioral test are configured
 
-  @pending
   Scenario: CI invokes the JS test suite alongside node --check
     Given the continuous-integration workflow
     When its steps are inspected

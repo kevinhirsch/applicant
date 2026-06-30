@@ -177,6 +177,7 @@ class AppriseNotifier:
         presence: Callable[[], bool] | None = None,
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str = "",
+        quiet_hours_channels: dict[str, bool] | None = None,
         always_on: bool = False,
         send_real: bool = False,
     ) -> None:
@@ -205,6 +206,13 @@ class AppriseNotifier:
         self._quiet_hours = _normalize_quiet_window(quiet_hours)
         # The timezone the window is interpreted in. Empty => UTC (the clock's tz).
         self._quiet_tz = quiet_tz or ""
+        # #302: per-channel quiet-hours preference — a channel mapped to ``False`` is
+        # EXEMPT from quiet hours (it still delivers overnight); a channel mapped to
+        # ``True`` (or absent) respects the window. This lets a user say "hold Discord
+        # at night but let email through" without disabling quiet hours wholesale.
+        # In-app always surfaces regardless (it is silent), and IMMEDIATE/CRITICAL are
+        # never deferred by quiet hours at all (those gates are independent of this map).
+        self._quiet_hours_channels: dict[str, bool] = dict(quiet_hours_channels or {})
         self._always_on = always_on
         self._send_real = send_real
         # #235: guard _sent (and _sent_emails) against concurrent access from the
@@ -282,6 +290,7 @@ class AppriseNotifier:
         ntfy_url: str | None = None,
         quiet_hours: tuple[int | str, int | str] | None = None,
         quiet_tz: str | None = None,
+        quiet_hours_channels: dict[str, bool] | None = None,
         always_on: bool | None = None,
         email_timeout_seconds: int | None = None,
     ) -> None:
@@ -303,6 +312,11 @@ class AppriseNotifier:
             self._quiet_hours = _normalize_quiet_window(quiet_hours)
         if quiet_tz is not None:
             self._quiet_tz = quiet_tz or ""
+        if quiet_hours_channels is not None:
+            # #302: replace the per-channel quiet preference map wholesale (the UI
+            # always sends the full picture). An empty dict means "every push channel
+            # respects quiet hours" (the default behaviour).
+            self._quiet_hours_channels = dict(quiet_hours_channels)
         if always_on is not None:
             self._always_on = always_on
         if email_timeout_seconds is not None:
@@ -327,6 +341,18 @@ class AppriseNotifier:
                 rungs.append(_Rung(channel=NotificationChannel.IN_APP.value, due_at=now))
             return rungs
 
+        if notification.urgency is NotificationUrgency.CRITICAL:
+            # A targeted action the user MUST see now (e.g. live-takeover / captcha):
+            # fan out to every configured channel immediately — no Discord hold, no
+            # email backstop wait — so the blocked agent gets the human in the loop at
+            # once. Unlike IMMEDIATE this is a decision (carries a deep link), and the
+            # quiet-hours gate in ``_fire_due`` exempts CRITICAL so it lands overnight.
+            for ch in self.configured_channels():
+                rungs.append(_Rung(channel=ch, due_at=now))
+            if not rungs:
+                rungs.append(_Rung(channel=NotificationChannel.IN_APP.value, due_at=now))
+            return rungs
+
         # NORMAL: in-app is always available immediately as the home-base sink.
         if self._in_app:
             rungs.append(_Rung(channel=NotificationChannel.IN_APP.value, due_at=now))
@@ -340,9 +366,17 @@ class AppriseNotifier:
             )
 
         # Email is the final rung after the configurable timeout (FR-NOTIF-2).
+        # #302: when the user has marked email as their quiet-hours-exempt "anytime"
+        # channel, it is no longer the slow backstop — it is the channel they WANT
+        # overnight, so deliver it immediately rather than after the escalation delay.
         if self._apprise:
+            email_exempt = (
+                self._quiet_hours is not None
+                and self._quiet_hours_channels.get(NotificationChannel.EMAIL.value) is False
+            )
+            email_due = now if email_exempt else now + self._email_timeout
             rungs.append(
-                _Rung(channel=NotificationChannel.EMAIL.value, due_at=now + self._email_timeout)
+                _Rung(channel=NotificationChannel.EMAIL.value, due_at=email_due)
             )
 
         # #300: ntfy fires only for urgent action alerts (web-preemptable decisions) —
@@ -394,6 +428,33 @@ class AppriseNotifier:
         except (ZoneInfoNotFoundError, ValueError, OSError):
             return when
         return when.astimezone(tz)
+
+    def _channel_quiet_deferred(
+        self, channel: str, notification: Notification, when: datetime
+    ) -> bool:
+        """True when this rung should be held back by quiet hours (FR-NOTIF-5).
+
+        Only NORMAL push channels are ever deferred — in-app always surfaces (it is
+        silent) and IMMEDIATE/CRITICAL bypass quiet hours entirely (errors and
+        live-takeover actions must reach the user any hour).
+
+        #302 per-channel preference: when ``_quiet_hours_channels`` names this channel,
+        it takes precedence over the time window — ``True`` holds the channel while
+        quiet hours are configured (so "hold Discord overnight" is deterministic) and
+        ``False`` exempts it so it delivers even inside the window ("let email
+        through"). When the channel is not named, the time-window check governs.
+        """
+        if notification.urgency is not NotificationUrgency.NORMAL:
+            return False  # IMMEDIATE / CRITICAL never deferred
+        if channel == NotificationChannel.IN_APP.value:
+            return False  # the silent home-base sink always surfaces
+        pref = self._quiet_hours_channels.get(channel)
+        if pref is not None:
+            # Explicit per-channel preference governs (independent of the instant): a
+            # respected channel is held whenever a quiet window is configured; an
+            # exempt channel is never held.
+            return bool(pref) and self._quiet_hours is not None and not self._always_on
+        return self._in_quiet_hours(when)
 
     # --- dispatch ---------------------------------------------------------
     @staticmethod
@@ -608,6 +669,23 @@ class AppriseNotifier:
             fired.extend(self._fire_due(delivery, ts))
         return fired
 
+    def deliver_now(self, now: datetime | None = None) -> list[str]:
+        """Force-flush every pending rung immediately, bypassing quiet hours (#302).
+
+        The "deliver now" action the user taps to release notifications that were
+        held back by an active quiet window — it fires every not-yet-fired rung on
+        every active delivery at once, regardless of its scheduled ``due_at`` or the
+        quiet-hours gate, and surfaces the held Discord/email/push channels. Returns
+        the channels flushed on this call.
+        """
+        ts = (now or self._clock()).timestamp()
+        with self._sent_lock:
+            snapshot = list(self._sent.values())
+        flushed: list[str] = []
+        for delivery in snapshot:
+            flushed.extend(self._fire_due(delivery, ts, force=True))
+        return flushed
+
     def _prune_sent(self, ts: float) -> None:
         """Drop deliveries whose every rung has fired and which are past timeout.
 
@@ -631,29 +709,37 @@ class AppriseNotifier:
                 if all_fired and last_due <= cutoff:
                     self._sent.pop(key, None)
 
-    def _fire_due(self, delivery: _Delivery, ts: float) -> list[str]:
+    def _fire_due(
+        self, delivery: _Delivery, ts: float, *, force: bool = False
+    ) -> list[str]:
         if not delivery.active:
             return []
         fired: list[str] = []
         when = datetime.fromtimestamp(ts, tz=UTC)
         for rung in delivery.rungs:
-            if rung.fired or rung.due_at > ts:
+            # ``force`` (deliver-now) fires every not-yet-fired rung regardless of its
+            # scheduled time; the normal path only fires rungs whose ``due_at`` has come.
+            if rung.fired or (not force and rung.due_at > ts):
                 continue
             # Presence pre-emption (FR-NOTIF-2): when the user is verifiably present
             # in the web UI, suppress the Discord push in favor of the in-app surface.
+            # A force flush is an explicit "send everything now" — presence no longer
+            # suppresses Discord (the user asked for the held pushes to go out).
             if (
-                rung.channel == NotificationChannel.DISCORD.value
+                not force
+                and rung.channel == NotificationChannel.DISCORD.value
                 and delivery.notification.web_preemptable
                 and self._is_present(when)
             ):
                 rung.fired = True
                 continue
             # Quiet hours (FR-NOTIF-5): defer NORMAL hops to the next allowed hour;
-            # IMMEDIATE always fires. (Email/Discord deferral; in-app always surfaces.)
-            if (
-                delivery.notification.urgency is NotificationUrgency.NORMAL
-                and rung.channel != NotificationChannel.IN_APP.value
-                and self._in_quiet_hours(when)
+            # IMMEDIATE/CRITICAL always fire. (Email/Discord deferral; in-app always
+            # surfaces.) #302: a per-channel preference can exempt a channel so it
+            # still delivers overnight ("hold Discord, let email through"). A force
+            # flush (deliver-now) bypasses the quiet gate entirely.
+            if not force and self._channel_quiet_deferred(
+                rung.channel, delivery.notification, when
             ):
                 continue
             # #234: isolate per-channel failures so one bad channel (e.g. Discord

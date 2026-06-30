@@ -266,3 +266,13 @@ class NotificationService:
         """Fire any escalation rungs now due. Returns channels fired this tick."""
         advance = getattr(self._notification, "advance", None)
         return advance(now) if advance else []
+
+    def deliver_now(self, now: datetime | None = None) -> list[str]:
+        """Force-flush notifications held back by quiet hours (#302).
+
+        Backs the front-door "Deliver now" control: releases every pending rung on
+        every active delivery at once, bypassing the quiet-hours hold. Returns the
+        channels flushed (empty if the notifier does not support a force flush).
+        """
+        flush = getattr(self._notification, "deliver_now", None)
+        return flush(now) if flush else []

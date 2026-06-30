@@ -16,13 +16,11 @@ Feature: Time-based quiet-hours suppression with per-channel and override contro
     When a UTC instant that falls inside the local night is checked
     Then the instant is treated as inside the quiet window
 
-  @pending
   Scenario: Quiet hours can be configured per channel so email still sends overnight
     Given a notifier with per-channel quiet-hours preferences
     When a normal notification fires during quiet hours
     Then Discord is held but the email channel still delivers overnight
 
-  @pending
   Scenario: A deliver-now action flushes notifications queued during quiet hours
     Given notifications that were deferred because of an active quiet window
     When the user taps deliver now to force-send the queued notifications

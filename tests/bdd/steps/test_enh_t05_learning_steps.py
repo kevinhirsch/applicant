@@ -792,12 +792,23 @@ def submission_no_learning(t05ctx):
 
 @when("an approved application is submitted")
 def submit_approved_application(t05ctx, caplog):
+    from applicant.observability.logging import recent_logs
+
     app = t05ctx["storage"].applications.get(t05ctx["application_id"])
     with caplog.at_level(logging.WARNING):
         t05ctx["event"] = t05ctx["submission"].record_submission(
             app, source=OutcomeSource.AUTO
         )
-    t05ctx["log_text"] = caplog.text
+    # Capture BOTH the stdlib log (caplog) AND the engine's own structured-log sink
+    # (``recent_logs`` — populated by the structlog ``_capture_log`` processor). The
+    # conversion-loss warning is emitted through structlog; caplog only sees it when
+    # the stdlib bridge happens to be attached, which depends on prior tests in the
+    # suite reconfiguring logging. Reading the engine's deterministic sink makes the
+    # warn-on-loss assertion order-independent (it is real evidence either way).
+    structured = " ".join(
+        f"{e.get('event', '')} {e.get('msg', '')}" for e in recent_logs(limit=50)
+    )
+    t05ctx["log_text"] = caplog.text + "\n" + structured
 
 
 @then("the submission is still recorded with an outcome event")
