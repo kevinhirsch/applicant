@@ -123,7 +123,7 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "debug",
         "lane": None,
         "title": "Activity / debug",
-        "nav_ids": ["tool-debug-btn", "rail-activity", "rail-update"],
+        "nav_ids": ["tool-debug-btn"],
         "dormant_keys": [],
         "requires": "llm_configured",
         "present_but_disabled": False,
@@ -154,46 +154,6 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
-    # Deep Research surface — manual trigger for the engine's research
-    # service (capped/deduped/cached). Backed by the workspace proxy at
-    # /api/applicant/research/*, which forwards to the engine's research
-    # router. Activates once a model is configured (the engine gates research
-    # behind the LLM gate).
-    {
-        "key": "research",
-        "lane": None,
-        "title": "Deep Research",
-        "nav_ids": ["tool-research-btn", "rail-research"],
-        "dormant_keys": [],
-        "requires": "llm_configured",
-        "present_but_disabled": False,
-    },
-    # Agent Activity surface — live "now/next/recent" status from the engine's
-    # agent_status endpoint. Backed by /api/applicant/activity/* proxy. Shows
-    # what the assistant is doing right now, what it plans next, and what it
-    # just finished. Gated behind the LLM gate.
-    {
-        "key": "activity",
-        "lane": None,
-        "title": "Activity / agent status",
-        "nav_ids": ["rail-activity"],
-        "dormant_keys": [],
-        "requires": "llm_configured",
-        "present_but_disabled": False,
-    },
-    # Update / System surface — in-app update button and run-mode controls.
-    # Backed by the engine's update + agent-runs routers. Activates once a
-    # model is configured.
-    {
-        "key": "system",
-        "lane": None,
-        "title": "Update & system",
-        "nav_ids": ["rail-update"],
-        "dormant_keys": [],
-        "requires": "llm_configured",
-        "present_but_disabled": False,
-    },
-
     # Compare has NO Applicant engine backing. Per the brief it ships
     # present-but-DISABLED: visible in the nav, greyed, never wired.
     {
