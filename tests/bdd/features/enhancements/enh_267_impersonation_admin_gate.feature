@@ -5,7 +5,6 @@ Feature: Owner impersonation requires admin privilege at the auth layer
   # ownership can thus be impersonated. A defense-in-depth admin gate on impersonation does not
   # exist yet → @pending probe on the intended impersonation-guard seam.
 
-  @pending
   Scenario: Impersonating another owner requires an admin context
     Given the workspace impersonation auth seam
     When the internal channel attempts to impersonate an existing non-admin owner

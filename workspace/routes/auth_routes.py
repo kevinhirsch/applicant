@@ -32,6 +32,26 @@ from src.integrations import (
 logger = logging.getLogger(__name__)
 
 
+def _cookie_secure(request: Request) -> bool:
+    """Resolve the session-cookie ``Secure`` flag (#269).
+
+    Precedence:
+      1. The explicit ``SECURE_COOKIES`` env var, when set, always wins (operators
+         opt in/out deliberately).
+      2. Otherwise, auto-derive from the request scheme: if the connection is HTTPS
+         — directly, or via a reverse proxy that set ``X-Forwarded-Proto: https``
+         (request.url.scheme) — mark the cookie Secure so a TLS deployment that
+         forgot to set the env still does not emit an insecure session cookie.
+      3. Plain HTTP (e.g. localhost dev) stays non-Secure so the cookie is usable.
+    """
+    if os.getenv("SECURE_COOKIES") is not None:
+        return os.getenv("SECURE_COOKIES", "false").strip().lower() == "true"
+    fwd = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if fwd:
+        return fwd == "https"
+    return request.url.scheme == "https"
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -138,7 +158,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="strict",
-            secure=os.getenv("SECURE_COOKIES", "true").lower() == "true",
+            # Secure flag (#269): explicit SECURE_COOKIES env wins; when it is unset
+            # the flag is auto-derived from the (possibly proxy-forwarded) request
+            # scheme by _cookie_secure, so a TLS deployment that forgot the env still
+            # emits a Secure cookie instead of secure=os.getenv("SECURE_COOKIES") alone.
+            secure=_cookie_secure(request),
             path="/",
         )
         if body.remember:

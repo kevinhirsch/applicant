@@ -35,6 +35,60 @@ def inside_base_dir(base_dir: str, path: str) -> bool:
         return False
 
 
+#: Sentinel owner principal the engine->workspace callback channel falls back to
+#: when no ``X-Applicant-Owner`` header is supplied. Owner-scoping treats this as
+#: "all owners' data", so an unattributed callback must never be honored as this
+#: principal (see ``require_owner_attribution``).
+ALL_OWNER_PRINCIPAL = "internal-engine"
+
+
+def require_owner_attribution(owner, known_users) -> str:
+    """Resolve the owner an internal engine callback is scoped to, or refuse it.
+
+    The engine->workspace callback channel is token-gated, but the token only
+    proves the *caller* is the engine — it does not say *whose* data the call is
+    for. Attributing an unattributed (or unknown-user) callback to the
+    ``internal-engine`` all-owner principal means a single leaked token grants
+    access to EVERY owner's data. This guard refuses that: a callback must name a
+    real, known owner via ``X-Applicant-Owner`` or it is rejected.
+
+    ``owner`` is the trimmed header value (may be empty/None). ``known_users`` is
+    the auth manager's user map (or any container supporting ``in``). Returns the
+    validated owner string on success; raises ``ValueError`` otherwise so the
+    caller can translate it to a 401/403 rather than silently widening scope.
+    """
+    owner = (owner or "").strip()
+    if not owner:
+        raise ValueError("internal callback refused: no owner attribution supplied")
+    if owner == ALL_OWNER_PRINCIPAL:
+        raise ValueError("internal callback refused: cannot impersonate the all-owner principal")
+    try:
+        is_known = owner in (known_users or {})
+    except TypeError:
+        is_known = False
+    if not is_known:
+        raise ValueError(f"internal callback refused: unknown owner {owner!r}")
+    return owner
+
+
+def serve_html_contained(base_dir: str, file_path: str) -> str:
+    """Read an HTML file ONLY if it resolves inside ``base_dir``; refuse otherwise.
+
+    Centralised containment-enforcing read for any HTML-serving route: the path is
+    resolved (collapsing ``..`` and symlinks) and asserted to live inside
+    ``base_dir`` BEFORE the file is opened, so a caller threading user input here
+    cannot read outside the served-app root. Raises ``ValueError`` on an
+    out-of-base path (callers translate to a 404), and lets a genuine missing-file
+    ``FileNotFoundError`` propagate.
+    """
+    if not inside_base_dir(base_dir, file_path):
+        raise ValueError(
+            f"refusing to serve path outside base: {file_path!r} escapes {base_dir!r}"
+        )
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def safe_join(base_dir: str, *parts: str) -> str:
     """Join UNTRUSTED ``parts`` onto ``base_dir`` and return a contained realpath.
 

@@ -9,7 +9,6 @@ Feature: HTML serving is contained to its base directory
     When an escaping HTML path is checked against the base directory
     Then the escaping HTML path is reported as outside the base directory
 
-  @pending
   Scenario: HTML serving refuses a path outside its base directory
     Given the HTML-serving helper and a path outside its base directory
     When the HTML-serving helper is asked to serve that path

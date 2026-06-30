@@ -355,3 +355,25 @@ def compute_features(
         "engine_url": base_url or engine_base_url(),
         "sections": sections,
     }
+
+
+def compute_public_features() -> dict:
+    """A sanitised, configuration-free feature view safe for unauthenticated callers.
+
+    ``compute_features`` reflects deployment-internal state — whether the engine is
+    reachable, its URL, and per-section ``active``/``locked``/``configured`` states
+    that reveal which LLM/notification channels/surfaces are configured (#231). A
+    public/unauthenticated surface must not leak any of that. This variant returns
+    ONLY the static section catalogue (key/title/lane/nav_ids) with no engine
+    reachability, no engine URL, and no per-section live/configured status — so it
+    can be served to anyone without disclosing configuration posture.
+    """
+    sections: dict[str, dict] = {}
+    for section in APPLICANT_SECTIONS:
+        sections[section["key"]] = {
+            "key": section["key"],
+            "title": section["title"],
+            "lane": section["lane"],
+            "nav_ids": list(section["nav_ids"]),
+        }
+    return {"sections": sections}

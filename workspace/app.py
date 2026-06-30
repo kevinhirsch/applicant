@@ -47,7 +47,6 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
-from core.safe_path import is_within_base
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -274,11 +273,10 @@ if AUTH_ENABLED:
                     # authorized in-process agent via INTERNAL_TOOL_TOKEN + loopback.
                     _impersonate = (request.headers.get("X-Applicant-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
-                    _can_impersonate = (
-                        _impersonate
-                        and getattr(_auth_mgr, "is_configured", False)
-                        and _impersonate in getattr(_auth_mgr, "users", {})
-                    )
+                    # Defense-in-depth (#267): gate impersonation through the auth
+                    # layer rather than a mere user-existence check inlined here.
+                    from src.auth_helpers import require_admin_for_impersonation
+                    _can_impersonate = require_admin_for_impersonation(_auth_mgr, _impersonate)
                     if _can_impersonate:
                         request.state.current_user = _impersonate
                     else:
@@ -303,11 +301,23 @@ if AUTH_ENABLED:
                 if _int_secret and secrets.compare_digest(_int_hdr, _int_secret):
                     # Owner attribution only (authorization stays in the routes):
                     # scope the engine's call to the user it set in X-Applicant-Owner.
+                    # The token proves the CALLER is the engine; it does NOT say whose
+                    # data the call is for. So an unattributed/unknown owner must NOT be
+                    # promoted to the all-owner "internal-engine" principal (#230) — it
+                    # is stamped as an unprivileged sentinel that owner-scoped data
+                    # routes (require_internal_owner) reject. Only a real, known owner
+                    # becomes the scoped current_user.
                     _owner = (request.headers.get("X-Applicant-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
-                    if _owner and _owner in getattr(_auth_mgr, "users", {}):
-                        request.state.current_user = _owner
-                    else:
+                    from src.app_helpers import require_owner_attribution
+                    try:
+                        request.state.current_user = require_owner_attribution(
+                            _owner, getattr(_auth_mgr, "users", {})
+                        )
+                    except ValueError:
+                        # Unattributed callback: refuse all-owner access. Keep the
+                        # request alive for non-data system endpoints, but stamp a
+                        # sentinel with no data scope so require_internal_owner 400s.
                         request.state.current_user = "internal-engine"
                     request.state.api_token = False
                     return await call_next(request)
@@ -875,10 +885,11 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     threading user input here would otherwise be a path-traversal sink. Reject
     anything that escapes the served-app root.
     """
-    if not is_within_base(BASE_DIR, file_path):
+    from src.app_helpers import serve_html_contained
+    try:
+        html = serve_html_contained(BASE_DIR, file_path)
+    except ValueError:
         raise HTTPException(404, "not found")
-    with open(file_path, "r", encoding="utf-8") as f:
-        html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
     return HTMLResponse(html)
