@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Front-door JS test harness</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 820px; }
+    h1 { font-size: 1.25rem; }
+    #summary { font-weight: 600; padding: .5rem .75rem; border-radius: 6px; margin: 1rem 0; }
+    #summary.pass { background: #e6f6ea; color: #14532d; }
+    #summary.fail { background: #fdecec; color: #7f1d1d; }
+    #summary.run  { background: #eef2ff; color: #1e3a8a; }
+    ul { list-style: none; padding: 0; }
+    li { padding: .2rem 0; border-bottom: 1px solid #eee; }
+    .ok::before  { content: "PASS "; color: #15803d; font-weight: 700; }
+    .bad::before { content: "FAIL "; color: #b91c1c; font-weight: 700; }
+    code { background: #f3f4f6; padding: 0 .25rem; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>Front-door JS test harness</h1>
+  <p>
+    Loads the real <code>workspace/static/js/*.js</code> modules and asserts stable facts about
+    their exports and pure helpers. Serve the <strong>repository root</strong> and open this page at
+    <code>/workspace/tests/js/test_harness.html</code> — the module path below resolves relative to
+    this file, exactly as <code>runner.js</code> resolves <code>../../static/js/*</code>.
+  </p>
+  <div id="summary" class="run">Running…</div>
+  <ul id="results"></ul>
+
+  <script type="module">
+    // Same relative specifier runner.js uses for the modules; the browser
+    // resolves it against this file's URL just like Node does.
+    import { run } from './runner.js';
+
+    const summary = document.getElementById('summary');
+    const results = document.getElementById('results');
+
+    try {
+      const res = await run();
+      if (res.failures.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'ok';
+        li.textContent = `${res.passed} assertions passed across the front-door suites`;
+        results.appendChild(li);
+      } else {
+        for (const f of res.failures) {
+          const li = document.createElement('li');
+          li.className = 'bad';
+          li.textContent = f;
+          results.appendChild(li);
+        }
+      }
+      const ok = res.failed === 0;
+      summary.className = ok ? 'pass' : 'fail';
+      summary.textContent = `${res.passed} passed, ${res.failed} failed`;
+    } catch (e) {
+      summary.className = 'fail';
+      summary.textContent = 'Harness crashed: ' + (e && e.message ? e.message : e);
+    }
+  </script>
+</body>
+</html>
