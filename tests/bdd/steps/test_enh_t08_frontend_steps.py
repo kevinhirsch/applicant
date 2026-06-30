@@ -51,7 +51,9 @@ scenarios(
 # Repo root: tests/bdd/steps/<this file> -> parents[3] is the repo root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 INDEX_HTML = REPO_ROOT / "workspace" / "static" / "index.html"
-README = REPO_ROOT / "README.md"
+# The detailed product/surface docs live under docs/ (the root README is a
+# deliberately minimal stub); the surface-list + OOBE-flow contracts read here.
+README = REPO_ROOT / "docs" / "overview.md"
 DELIVERY_STATUS = REPO_ROOT / "docs" / "delivery-status.md"
 ONBOARDING_JS = REPO_ROOT / "workspace" / "static" / "js" / "applicantOnboarding.js"
 INTEGRATION_DIR = REPO_ROOT / "tests" / "integration"
