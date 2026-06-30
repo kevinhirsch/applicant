@@ -14,6 +14,10 @@ Kinds are stable strings the UI can switch on:
 
 from __future__ import annotations
 
+import dataclasses
+from datetime import UTC, datetime, timedelta
+
+from applicant.core import task_metadata
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.ids import ApplicationId, CampaignId, PendingActionId, new_id
 
@@ -144,12 +148,106 @@ class PendingActionsService:
         """Fetch one pending action by id (used by the apply-on-resolve path)."""
         return self._storage.pending_actions.get(action_id)
 
-    def list_pending(self, campaign_id: CampaignId) -> list[PendingAction]:
-        return self._storage.pending_actions.list_open(campaign_id)
+    def list_pending(
+        self, campaign_id: CampaignId, *, include_snoozed: bool = False
+    ) -> list[PendingAction]:
+        """Open pending actions for the campaign.
+
+        A snoozed item (one carrying a future ``snoozed_until``, set via
+        :meth:`snooze`) is hidden until it comes due, so "remind me tomorrow"
+        actually removes the row from the home base until then (#295). Pass
+        ``include_snoozed=True`` to keep them (e.g. an "all tasks" view).
+        """
+        actions = self._storage.pending_actions.list_open(campaign_id)
+        if include_snoozed:
+            return actions
+        now = datetime.now(UTC)
+        return [a for a in actions if not task_metadata.is_snoozed(a.payload, now)]
+
+    def list_with_metadata(
+        self,
+        campaign_id: CampaignId,
+        *,
+        include_snoozed: bool = False,
+        now: datetime | None = None,
+    ) -> list[tuple[PendingAction, dict]]:
+        """Each open action paired with its derived task metadata (#295).
+
+        The metadata (aging, urgency, priority, snooze state) is computed purely
+        from the stored action via :mod:`applicant.core.task_metadata`. Sorted by
+        descending priority so the most pressing tasks float to the top.
+        """
+        now = now or datetime.now(UTC)
+        actions = self.list_pending(campaign_id, include_snoozed=include_snoozed)
+        paired = [
+            (
+                a,
+                task_metadata.derive(
+                    kind=a.kind, created_at=a.created_at, payload=a.payload, now=now
+                ),
+            )
+            for a in actions
+        ]
+        paired.sort(key=lambda pair: (-pair[1]["priority"], pair[0].created_at, str(pair[0].id)))
+        return paired
 
     def resolve(self, action_id: PendingActionId) -> None:
         self._storage.pending_actions.resolve(action_id)
         self._storage.commit()
+
+    def resolve_many(
+        self, campaign_id: CampaignId, action_ids: list[PendingActionId]
+    ) -> dict:
+        """Resolve a batch of pending actions in one unit of work (#295 bulk).
+
+        Campaign-scoped: an id that doesn't belong to ``campaign_id`` (or is
+        already resolved / unknown) is skipped, not resolved, so a caller can't
+        clear another campaign's items by id. Returns the ids actually resolved
+        and the ones skipped, and commits once.
+        """
+        resolved: list[str] = []
+        skipped: list[str] = []
+        for aid in action_ids:
+            action = self._storage.pending_actions.get(aid)
+            if (
+                action is not None
+                and str(action.campaign_id) == str(campaign_id)
+                and not action.resolved
+            ):
+                self._storage.pending_actions.resolve(aid)
+                resolved.append(str(aid))
+            else:
+                skipped.append(str(aid))
+        self._storage.commit()
+        return {"resolved": resolved, "skipped": skipped}
+
+    def snooze(
+        self,
+        action_id: PendingActionId,
+        *,
+        until: datetime | None = None,
+        hours: float | None = None,
+    ) -> PendingAction | None:
+        """Reschedule a pending action — "remind me later" (#295 snooze).
+
+        Stamps ``snoozed_until`` onto the action's payload so it drops off the
+        home base until it comes due (then it re-appears for the user to act on).
+        ``until`` is an explicit wake time; otherwise ``hours`` (default 24, i.e.
+        "remind me tomorrow") sets it relative to now. Returns the updated action,
+        or ``None`` if it doesn't exist / is already resolved.
+        """
+        action = self._storage.pending_actions.get(action_id)
+        if action is None or action.resolved:
+            return None
+        if until is None:
+            until = datetime.now(UTC) + timedelta(hours=hours if hours is not None else 24.0)
+        new_payload = dict(action.payload or {})
+        new_payload["snoozed_until"] = until.isoformat()
+        updated = dataclasses.replace(action, payload=new_payload)
+        # ``add`` is an upsert (merge) keyed on id, so re-adding persists the field.
+        self._storage.pending_actions.add(updated)
+        self._storage.commit()
+        return updated
 
     def resolve_by_dedup(self, campaign_id: CampaignId, dedup_key: str) -> None:
         """Resolve a materialized item by its dedup key (idempotency aid)."""

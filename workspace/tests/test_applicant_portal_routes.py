@@ -104,6 +104,18 @@ class FakeEngine:
             raise FakeEngine.raises[("dismiss_notification", nid)]
         return None
 
+    async def resolve_pending_actions_bulk(self, cid, action_ids):
+        FakeEngine.calls.append(("resolve_pending_actions_bulk", cid, list(action_ids)))
+        if "resolve_pending_actions_bulk" in FakeEngine.raises:
+            raise FakeEngine.raises["resolve_pending_actions_bulk"]
+        return {"resolved": list(action_ids), "skipped": [], "resolved_count": len(action_ids)}
+
+    async def snooze_pending_action(self, aid, body=None):
+        FakeEngine.calls.append(("snooze_pending_action", aid, body))
+        if ("snooze_pending_action", aid) in FakeEngine.raises:
+            raise FakeEngine.raises[("snooze_pending_action", aid)]
+        return {"action_id": aid, "snoozed_until": "2026-07-01T09:00:00+00:00"}
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -460,6 +472,79 @@ def test_notification_dismiss_scrubs_5xx_to_502(client):
     assert "detail" not in body or body.get("detail") != "bad"
 
 
+# --- bulk resolve ("approve all N") -----------------------------------------
+
+
+def test_bulk_resolve_proxies(client):
+    r = client.post(
+        "/api/applicant/portal/actions/resolve-bulk",
+        json={"campaign_id": "c1", "action_ids": ["a1", "a2"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["resolved_count"] == 2
+    assert set(body["resolved"]) == {"a1", "a2"}
+    assert ("resolve_pending_actions_bulk", "c1", ["a1", "a2"]) in FakeEngine.calls
+
+
+def test_bulk_resolve_requires_campaign(client):
+    r = client.post(
+        "/api/applicant/portal/actions/resolve-bulk",
+        json={"campaign_id": " ", "action_ids": ["a1"]},
+    )
+    assert r.status_code == 400
+
+
+def test_bulk_resolve_empty_is_noop(client):
+    r = client.post(
+        "/api/applicant/portal/actions/resolve-bulk",
+        json={"campaign_id": "c1", "action_ids": []},
+    )
+    assert r.status_code == 200
+    assert r.json()["resolved_count"] == 0
+    # No engine round-trip for an empty batch.
+    assert not any(
+        isinstance(c, tuple) and c[0] == "resolve_pending_actions_bulk" for c in FakeEngine.calls
+    )
+
+
+def test_bulk_resolve_forwards_engine_error(client):
+    FakeEngine.raises["resolve_pending_actions_bulk"] = EngineError("nope", status=409, detail="gate")
+    r = client.post(
+        "/api/applicant/portal/actions/resolve-bulk",
+        json={"campaign_id": "c1", "action_ids": ["a1"]},
+    )
+    assert r.status_code == 409
+    assert r.json()["detail"] == "gate"
+
+
+# --- snooze ("remind me later") ---------------------------------------------
+
+
+def test_snooze_proxies_default(client):
+    r = client.post("/api/applicant/portal/actions/a1/snooze", json={})
+    assert r.status_code == 200
+    assert r.json()["snoozed_until"]
+    assert ("snooze_pending_action", "a1", None) in FakeEngine.calls
+
+
+def test_snooze_forwards_until_and_hours(client):
+    r = client.post(
+        "/api/applicant/portal/actions/a1/snooze", json={"until": "2026-07-01T09:00:00Z"}
+    )
+    assert r.status_code == 200
+    sent = [c for c in FakeEngine.calls if isinstance(c, tuple) and c[0] == "snooze_pending_action"]
+    assert sent and sent[0][2] == {"until": "2026-07-01T09:00:00Z"}
+
+
+def test_snooze_forwards_404(client):
+    FakeEngine.raises[("snooze_pending_action", "gone")] = EngineError(
+        "missing", status=404, detail="gone"
+    )
+    r = client.post("/api/applicant/portal/actions/gone/snooze", json={})
+    assert r.status_code == 404
+
+
 # --- exact engine paths via a real client over MockTransport ----------------
 
 
@@ -495,6 +580,32 @@ def test_resolve_hits_exact_engine_path(monkeypatch):
     assert r.status_code == 200
     assert seen["path"] == "/api/pending-actions/a9/resolve"
     assert seen["method"] == "POST"
+
+
+def test_bulk_and_snooze_hit_exact_engine_paths(monkeypatch):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.url.path.endswith("/resolve-bulk"):
+            return httpx.Response(200, json={"resolved": ["a1"], "skipped": [], "resolved_count": 1})
+        if request.url.path.endswith("/snooze"):
+            return httpx.Response(200, json={"action_id": "a1", "snoozed_until": "2026-07-01T09:00:00+00:00"})
+        return httpx.Response(404, json={"detail": "unexpected"})
+
+    app, engine_cls = _mock_transport_app(handler)
+    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
+    c = TestClient(app)
+
+    rb = c.post(
+        "/api/applicant/portal/actions/resolve-bulk",
+        json={"campaign_id": "c1", "action_ids": ["a1"]},
+    )
+    assert rb.status_code == 200
+    rs = c.post("/api/applicant/portal/actions/a1/snooze", json={})
+    assert rs.status_code == 200
+    assert ("POST", "/api/pending-actions/c1/resolve-bulk") in seen
+    assert ("POST", "/api/pending-actions/a1/snooze") in seen
 
 
 def test_missing_attribute_hits_exact_engine_path(monkeypatch):
