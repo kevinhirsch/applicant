@@ -682,7 +682,6 @@ def _capture_list_undo(
 ) -> Callable[[], None] | None:
     """Capture undo information for a mutation on a list-based repo."""
     if name == "add":
-        entity = args[0]
         idx = len(lst)
         def _undo(*, _idx=idx):
             if _idx < len(lst):
@@ -713,7 +712,6 @@ class _StageProxy:
 
     def __getattr__(self, name: str):
         inner = object.__getattribute__(self, "_inner")
-        staged = object.__getattribute__(self, "_staged")
         attr = getattr(inner, name)
         if not callable(attr):
             return attr

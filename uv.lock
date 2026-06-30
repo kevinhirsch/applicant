@@ -262,6 +262,9 @@ dev = [
 durable-orchestration = [
     { name = "dbos" },
 ]
+mcp = [
+    { name = "fastapi-mcp" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -286,6 +289,7 @@ requires-dist = [
     { name = "dbos", marker = "extra == 'durable-orchestration'" },
     { name = "fastapi" },
     { name = "fastapi-mcp", specifier = ">=0.4.0" },
+    { name = "fastapi-mcp", marker = "extra == 'mcp'" },
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "import-linter", marker = "extra == 'dev'" },
@@ -311,7 +315,7 @@ requires-dist = [
     { name = "structlog" },
     { name = "uvicorn", extras = ["standard"] },
 ]
-provides-extras = ["browser", "durable-orchestration", "dev"]
+provides-extras = ["browser", "durable-orchestration", "mcp", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
