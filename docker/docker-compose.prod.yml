@@ -142,11 +142,13 @@ services:
       WORKSPACE_URL: http://applicant-ui:7000
       APPLICANT_INTERNAL_TOKEN: ${APPLICANT_INTERNAL_TOKEN:-}
       # Assistant learning & memory substrate (docs/spec/agent-intelligence.md).
-      # Defaults match config.py: the self-contained in-process store, self-writes
-      # staged for review, background review OFF (ships dormant until wired). Set
-      # MIND_BACKEND=bridge to read the front-door memory/playbooks store over the
-      # internal callback channel (needs APPLICANT_INTERNAL_TOKEN above).
-      MIND_BACKEND: ${MIND_BACKEND:-in_memory}
+      # The code default (config.py) is the self-contained in-process trio, kept
+      # so the hermetic test lane stays deterministic. The DEPLOYED default is
+      # `bridge` (#286): it reads the front-door memory/playbooks store over the
+      # internal callback channel (needs APPLICANT_INTERNAL_TOKEN above) so the
+      # workspace memory UI is live out-of-the-box, degrading gracefully to the
+      # in-memory trio if the callback is unset. Override with MIND_BACKEND=in_memory.
+      MIND_BACKEND: ${MIND_BACKEND:-bridge}
       MEMORY_WRITE_APPROVAL: ${MEMORY_WRITE_APPROVAL:-true}
       SKILLS_WRITE_APPROVAL: ${SKILLS_WRITE_APPROVAL:-true}
       MEMORY_MAX_CHARS: ${MEMORY_MAX_CHARS:-8000}

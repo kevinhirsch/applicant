@@ -244,12 +244,12 @@ class Settings(BaseSettings):
     applicant_internal_token: str = Field(default="", alias="APPLICANT_INTERNAL_TOKEN")
 
     # --- Agent intelligence: learning/looping substrate (FR-MIND) -----------
-    # Backend for the curated-memory / skills / recall stores. ``bridge``
-    # (default) reaches the front-door substrate (workspace/services/memory/) over
+    # Backend for the curated-memory / skills / recall stores. ``in_memory``
+    # (default) is the hermetic in-process trio (no deps; boot-/test-safe);
+    # ``bridge`` reaches the front-door substrate (workspace/services/memory/) over
     # the engine->workspace callback channel (agent-intelligence.md §10 — recommended
     # placement). The bridge degrades to empty behavior when that channel is OFF.
-    # ``in_memory`` is the hermetic in-process trio (no deps; boot-/test-safe).
-    mind_backend: str = Field(default="bridge", alias="MIND_BACKEND")
+    mind_backend: str = Field(default="in_memory", alias="MIND_BACKEND")
     # Stage agent self-writes for human review by default (FR-MIND-9). Memory MAY be
     # relaxed to auto-apply non-sensitive entries; skills/identity always require
     # approval regardless of these flags.
