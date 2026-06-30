@@ -137,6 +137,20 @@ function _renderOffline(msg) {
   _body().innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
 }
 
+// A GATED response (engine is UP, but setup is incomplete / a precondition isn't
+// met) is NOT offline. Show the engine's own plain-language setup message so the
+// owner knows what to finish, instead of the misleading "not reachable" copy.
+function _renderGated(data) {
+  const msg = (data && data.message)
+    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+  _body().innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
+}
+
+// True only for a genuine transport-offline soft-degrade (engine unreachable),
+// NOT for a gated response (which keeps engine_available true).
+function _isOffline(data) { return !!data && data.engine_available === false; }
+function _isGated(data) { return !!data && data.gated === true; }
+
 function _empty(msg) {
   return `<div class="admin-toggle-sub" style="opacity:0.6;padding:8px 0;">${esc(msg)}</div>`;
 }
@@ -437,7 +451,12 @@ async function _renderRun() {
   try { status = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}/status`); } catch { /* soft */ }
   try { intent = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}/intent`); } catch { /* soft */ }
   try { runs = await _fetchJSON(`${OPS}/runs/${encodeURIComponent(_campaignId)}`); } catch { /* soft */ }
-  if (intent.engine_available === false && runs.engine_available === false && status.engine_available === false) {
+  // A setup gate (engine up, automated work blocked until setup is finished) is
+  // honestly surfaced as the setup message, not "not reachable".
+  if (_isGated(status) || _isGated(runs) || _isGated(intent)) {
+    _renderGated(status.gated ? status : (runs.gated ? runs : intent)); return;
+  }
+  if (_isOffline(intent) && _isOffline(runs) && _isOffline(status)) {
     _renderOffline(); return;
   }
   const last = (runs.items || [])[0] || {};
@@ -533,7 +552,8 @@ async function _renderRun() {
 async function _renderSources() {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
-  if (data.engine_available === false) { _renderOffline(); return; }
+  if (_isGated(data)) { _renderGated(data); return; }
+  if (_isOffline(data)) { _renderOffline(); return; }
   const items = data.items || [];
   // Exploration budget (FR-LEARN-6): the explore/exploit knob. Shown above the
   // source list. Editable when the engine reports it; read-only note otherwise.

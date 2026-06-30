@@ -43,7 +43,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -62,19 +62,25 @@ def _campaign_label(campaign: dict) -> str:
     return str(campaign.get("name") or campaign.get("id") or "")
 
 
-async def _owner_campaigns(engine: ApplicantEngineClient) -> Optional[list[dict]]:
-    """Resolve the owner's campaigns, or ``None`` when the engine is unreachable.
+async def _owner_campaigns(engine: ApplicantEngineClient) -> "list[dict] | dict":
+    """Resolve the owner's campaigns, or a soft-degrade payload on failure.
 
     The engine returns campaigns owner-scoped already (the same call the Portal
-    fans out over). ``None`` means "offline" so callers can return the soft
-    ``engine_available: false`` payload; an empty list means "online, no campaign
-    yet" so callers can return the soft ``has_activity: false`` payload.
+    fans out over). On success this returns a ``list`` (possibly empty — "online,
+    no campaign yet" — so callers return the soft ``has_activity: false`` payload).
+
+    On an :class:`EngineError` it returns a ``dict`` built by
+    :func:`soft_degrade`, which distinguishes a client-correctable GATE
+    (``gated: true`` + the engine's message, ``engine_available: true``) from a
+    genuine TRANSPORT-OFFLINE (``engine_available: false``). Callers detect the
+    failure with ``isinstance(result, list)`` and return the dict as-is — so a
+    409 setup gate no longer dishonestly reads as "engine offline".
     """
     try:
         campaigns = await engine.list_campaigns()
     except EngineError as exc:
-        logger.debug("activity: engine unavailable listing campaigns: %s", exc)
-        return None
+        logger.debug("activity: campaigns read failed (status=%s): %s", exc.status, exc)
+        return soft_degrade(exc, {"has_activity": False})
     return [c for c in campaigns if isinstance(c, dict)] if isinstance(campaigns, list) else []
 
 
@@ -105,8 +111,8 @@ def setup_applicant_activity_routes() -> APIRouter:
         _require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_activity": False}
+            if not isinstance(campaigns, list):
+                return campaigns
             first = _first_campaign(campaigns)
             if first is None:
                 return {"engine_available": True, "has_activity": False}
@@ -135,8 +141,8 @@ def setup_applicant_activity_routes() -> APIRouter:
         _require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_activity": False, "intent": None}
+            if not isinstance(campaigns, list):
+                return {**campaigns, "intent": None}
             first = _first_campaign(campaigns)
             if first is None:
                 return {"engine_available": True, "has_activity": False, "intent": None}
@@ -168,8 +174,8 @@ def setup_applicant_activity_routes() -> APIRouter:
         _require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_activity": False, "count": 0, "items": []}
+            if not isinstance(campaigns, list):
+                return {**campaigns, "count": 0, "items": []}
             first = _first_campaign(campaigns)
             if first is None:
                 return {"engine_available": True, "has_activity": False, "count": 0, "items": []}
@@ -210,8 +216,8 @@ def setup_applicant_activity_routes() -> APIRouter:
         _require_user(request)
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
-            if campaigns is None:
-                return {"engine_available": False, "has_activity": False}
+            if not isinstance(campaigns, list):
+                return campaigns
             first = _first_campaign(campaigns)
             if first is None:
                 return {"engine_available": True, "has_activity": False}

@@ -405,3 +405,70 @@ def test_update_trigger_hits_exact_engine_path(monkeypatch):
     r = c.post("/api/applicant/ops/update/trigger")
     assert r.status_code == 200
     assert seen["path"] == "/api/update/trigger"
+
+
+# --- HONESTY: gated (409) vs transport-offline split ------------------------
+#
+# A client-correctable setup gate (409, also 401/403/422) must surface as GATED
+# (gated:true + the engine's plain-language message, engine_available:true), NOT
+# as engine_available:false. Only a true transport failure (status None) is
+# offline. These fail on origin/main (which mapped every EngineError to offline).
+
+_GATE_MSG = (
+    "Automated work is blocked until onboarding is complete and the LLM + "
+    "notification channels are configured."
+)
+
+
+def test_list_runs_gate_409_is_not_offline(client):
+    FakeEngine.raises["runs"] = EngineError("gated", status=409, detail=_GATE_MSG)
+    r = client.get("/api/applicant/ops/runs/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _GATE_MSG
+    assert body["items"] == []
+
+
+def test_list_runs_transport_error_is_offline(client):
+    FakeEngine.raises["runs"] = EngineError("conn refused", status=None)
+    r = client.get("/api/applicant/ops/runs/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body.get("gated") is not True
+
+
+def test_run_status_gate_409_is_not_offline(client):
+    FakeEngine.raises["status"] = EngineError("gated", status=409, detail=_GATE_MSG)
+    r = client.get("/api/applicant/ops/runs/c1/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _GATE_MSG
+
+
+def test_run_status_transport_error_is_offline(client):
+    FakeEngine.raises["status"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/ops/runs/c1/status")
+    assert r.status_code == 200
+    assert r.json()["engine_available"] is False
+
+
+def test_list_sources_gate_403_is_not_offline(client):
+    FakeEngine.raises["sources"] = EngineError("forbidden", status=403, detail="Admins only.")
+    r = client.get("/api/applicant/ops/discovery/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == "Admins only."
+
+
+def test_list_sources_transport_error_is_offline(client):
+    FakeEngine.raises["sources"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/ops/discovery/c1")
+    assert r.status_code == 200
+    assert r.json()["engine_available"] is False

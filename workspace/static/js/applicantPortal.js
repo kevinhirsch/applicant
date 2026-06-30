@@ -321,6 +321,20 @@ function _renderOffline(body) {
     </div>`;
 }
 
+// A GATED response (the engine is UP, but automated work is blocked until setup
+// is finished) is NOT offline. Show the engine's own plain-language setup message
+// so the owner knows what to finish, instead of the misleading "not connected".
+function _renderGated(body, data) {
+  const msg = (data && data.message)
+    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+  body.innerHTML = `
+    <div style="padding:28px 18px;text-align:center;opacity:0.85;">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:10px;"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
+      <div style="font-size:14px;margin-bottom:6px;">Finish setup to begin</div>
+      <div style="font-size:12px;max-width:420px;margin:0 auto;">${esc(msg)}</div>
+    </div>`;
+}
+
 function _neverDoesHTML() {
   // D4: reuse the EXACT "what Applicant never does" list from the OOBE (B1).
   const items = (Array.isArray(neverDoesList) && neverDoesList.length)
@@ -1125,6 +1139,11 @@ async function _load(showSpinner) {
   if (body && showSpinner) body.innerHTML = '<div class="hwfit-loading">Loading…</div>';
   try {
     const data = await _fetchJSON(`${API}/pending`);
+    if (data && data.gated === true) {
+      if (body) _renderGated(body, data);
+      _setBadge(0);
+      return;
+    }
     if (data && data.engine_available === false) {
       if (body) _renderOffline(body);
       _setBadge(0);

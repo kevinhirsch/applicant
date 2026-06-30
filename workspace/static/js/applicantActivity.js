@@ -243,6 +243,15 @@ function _renderOffline(host) {
     </div>`;
 }
 
+// A GATED response (engine up, setup incomplete) is NOT offline — show the
+// engine's own plain-language setup message so the owner knows what to finish.
+function _renderGated(host, data) {
+  const msg = (data && data.message)
+    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+  host.innerHTML = `
+    <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.8;">${esc(msg)}</div>`;
+}
+
 function _renderEmpty(host) {
   host.innerHTML = `
     <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.75;">
@@ -306,6 +315,7 @@ async function _loadRuns(showSpinner) {
   try {
     const data = await _fetchJSON(`${API}/runs`);
     if (!host) return;
+    if (data && data.gated === true) { _renderGated(host, data); return; }
     if (data && data.engine_available === false) { _renderOffline(host); return; }
     const items = (data && data.items) || [];
     _renderRuns(host, items);

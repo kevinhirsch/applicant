@@ -79,6 +79,47 @@ class EngineError(Exception):
         return f"EngineError(status={self.status!r}, is_timeout={self.is_timeout!r}, message={self.message!r})"
 
 
+#: HTTP statuses that mean "the engine is UP but is refusing this read because a
+#: client-correctable setup gate is in force" — NOT that the engine is offline.
+#: 401/403 = auth/permission gate, 409 = a precondition gate (e.g. automated work
+#: blocked until onboarding + model + notification channels are configured, or no
+#: campaign exists yet), 422 = the engine rejected the input. These are honestly
+#: surfaced as a GATE with the engine's own plain-language message, so the UI can
+#: tell the owner what to fix instead of falsely reporting "engine offline".
+GATE_STATUSES = frozenset({401, 403, 409, 422})
+
+
+def soft_degrade(exc: "EngineError", base: Optional[dict] = None) -> dict:
+    """Classify a soft-degrading read failure as GATED vs TRANSPORT-OFFLINE.
+
+    A read endpoint that wants to degrade gracefully (return a well-formed empty
+    body rather than 5xx) calls this with the caught :class:`EngineError` and the
+    endpoint's own base payload (campaign id, empty ``items``, etc.). It returns a
+    *new* dict layering the right honesty flags on top of ``base``:
+
+    * A gate (status in :data:`GATE_STATUSES`) → ``{"gated": True, "message": …,
+      "engine_available": True}``. The engine is reachable; the owner needs to
+      finish setup / has no permission / supplied a bad value. The engine's own
+      plain-language detail is forwarded as ``message`` so the UI can show it.
+    * A transport failure (``status is None``) or any other status (e.g. 404/5xx)
+      → ``{"engine_available": False}``. The engine is genuinely unreachable (or
+      returned something we can't honestly call a gate), so the offline empty
+      state is correct.
+
+    The proxy stays a forwarder: the engine owns the gate rules and the message;
+    this only routes the failure to the honest empty state.
+    """
+    out = dict(base or {})
+    if exc.status in GATE_STATUSES:
+        message = exc.detail if isinstance(exc.detail, str) and exc.detail else exc.message
+        out["engine_available"] = True
+        out["gated"] = True
+        out["message"] = message or "Setup is required before this is available."
+    else:
+        out["engine_available"] = False
+    return out
+
+
 class ApplicantEngineClient:
     """Async httpx client for the engine API.
 
