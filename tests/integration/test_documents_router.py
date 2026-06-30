@@ -28,8 +28,9 @@ def client():
 
 
 @pytest.mark.integration
-def test_cover_letter_on_demand_and_review_gate(client):
-    cid, aid = "camp-doc-1", "app-doc-1"
+def test_cover_letter_on_demand_and_review_gate(client, seeded_application):
+    # generated_materials.{campaign_id,application_id} are real FKs — seed both parents.
+    cid, aid = seeded_application()
     # A role with no override + default off -> no cover letter (FR-RESUME-10).
     none = client.post(
         "/api/documents/cover-letter",
@@ -81,8 +82,9 @@ def test_cover_letter_on_demand_and_review_gate(client):
 
 
 @pytest.mark.integration
-def test_screening_answer_classified_and_reviewed(client):
-    cid, aid = "camp-doc-2", "app-doc-2"
+def test_screening_answer_classified_and_reviewed(client, seeded_application):
+    # generated_materials.{campaign_id,application_id} are real FKs — seed both parents.
+    cid, aid = seeded_application()
     res = client.post(
         "/api/documents/screening-answer",
         json={

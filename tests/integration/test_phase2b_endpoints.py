@@ -102,9 +102,13 @@ def test_global_account_credential_rejects_unknown_kind(client):
 
 # === Submission detection + logging + retrieval (FR-LOG-3/4) ===============
 @pytest.mark.integration
-def test_mark_submitted_then_retrieve_log(client):
+def test_mark_submitted_then_retrieve_log(client, seeded_application):
     _open_gate(client)
-    aid = new_id()
+    # mark-submitted persists the application + an outcome_events row (real FKs to
+    # campaigns/job_postings/applications) — seed the parent chain, parked at the gate.
+    from applicant.core.state_machine import ApplicationState
+
+    _cid, aid = seeded_application(status=ApplicationState.AWAITING_FINAL_APPROVAL)
     r = client.post(
         f"/api/outcomes/applications/{aid}/mark-submitted",
         json={"attributes_used": {"First Name": "Kevin"}},
@@ -141,32 +145,23 @@ def test_request_final_approval_notifies(client):
 
 
 @pytest.mark.integration
-def test_submit_self_delivers_decision_through_gate(client):
+def test_submit_self_delivers_decision_through_gate(client, seeded_application):
     """#1: submit-self delivers the decision THROUGH the durable final-approval gate.
 
     The endpoint no longer records the outcome out-of-band; it ``send``s the decision
     to the workflow's ``recv`` gate so the parked pipeline runs submit/teardown. We
     prove the decision landed in the workflow mailbox and the ladder was expired.
     """
-    from applicant.core.entities.application import Application
-    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
     from applicant.core.state_machine import ApplicationState
     from tests.conftest import open_automated_work_gate
 
     open_automated_work_gate(client)
     container = client.app.state.container
     # Persist a real application parked at the final-approval gate (submit-self now
-    # requires the app to exist — a bogus id is a clean 404, not a FK 500).
-    aid = ApplicationId(new_id())
-    container.storage.applications.add(
-        Application(
-            id=aid,
-            campaign_id=CampaignId(new_id()),
-            posting_id=JobPostingId(new_id()),
-            status=ApplicationState.AWAITING_FINAL_APPROVAL,
-        )
-    )
-    container.storage.commit()
+    # requires the app to exist — a bogus id is a clean 404, not a FK 500). The
+    # campaign + posting parents are seeded too, since their FKs are enforced on a
+    # real database.
+    _cid, aid = seeded_application(status=ApplicationState.AWAITING_FINAL_APPROVAL)
     r = client.post(f"/api/remote/applications/{aid}/submit-self")
     assert r.status_code == 201 and r.json()["result"] == "submitted_by_user"
     assert r.json()["gate"] == "delivered"
@@ -179,12 +174,11 @@ def test_submit_self_delivers_decision_through_gate(client):
 
 # === #4: resume the human account step via a real endpoint ==================
 @pytest.mark.integration
-def test_resume_account_step_endpoint(client):
+def test_resume_account_step_endpoint(client, seeded_application):
     """#4: an app parked at AWAITING_ACCOUNT_HUMAN_STEP is resumed via a real
     endpoint (resume_after_account), continuing the LIVE session rather than orphaning
     it / full-restarting."""
-    from applicant.core.entities.application import Application
-    from applicant.core.ids import ApplicationId, CampaignId, JobPostingId
+    from applicant.core.ids import CampaignId
     from applicant.core.ids import new_id as nid
     from applicant.core.state_machine import ApplicationState
     from tests.conftest import open_automated_work_gate
@@ -192,19 +186,11 @@ def test_resume_account_step_endpoint(client):
     open_automated_work_gate(client)
     container = client.app.state.container
     storage = container.storage
-    cid = CampaignId(nid())
-    aid = ApplicationId(nid())
     url = "https://acme.myworkdayjobs.com/job/1"
-    storage.applications.add(
-        Application(
-            id=aid,
-            campaign_id=cid,
-            posting_id=JobPostingId(nid()),
-            status=ApplicationState.APPROVED,
-            root_url=url,
-        )
-    )
-    storage.commit()
+    # Seed the campaign + posting + application parent chain (real FKs); the app is
+    # parked at APPROVED with the live URL, ready for the pre-fill hand-off.
+    cid_str, aid = seeded_application(status=ApplicationState.APPROVED, root_url=url)
+    cid = CampaignId(cid_str)
     # Drive pre-fill to the account-creation hand-off (leaves the live session open).
     from applicant.core.entities.attribute import Attribute
     from applicant.core.ids import AttributeId
