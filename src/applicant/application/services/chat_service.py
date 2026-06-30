@@ -53,6 +53,22 @@ _STATEMENT = re.compile(
     re.IGNORECASE,
 )
 
+#: A captured attribute value is bounded at the first clause/conjunction boundary so a
+#: multi-fact sentence does not corrupt a single field. Without this the greedy value
+#: capture in ``_STATEMENT`` ran to end-of-string: "My first name is Dana and my email
+#: is dana@example.com" set ``first name = "Dana and my email is dana@example.com"``.
+#: We cut at the FIRST of: " and " / " but " / " or " / ", " (clause/conjunction), or
+#: the start of another recognized "<field> is/are/:" statement (covers "...; my email
+#: is ..." even without a leading conjunction). The leading char-class is the trailing
+#: separator that precedes the boundary, so we don't cut a value that merely contains a
+#: hyphenated/comma'd token mid-word.
+_VALUE_BOUNDARY = re.compile(
+    r"(?:\s+(?:and|but|or)\s+)"          # " and " / " but " / " or "
+    r"|(?:\s*[,;]\s+)"                    # ", " / "; " clause break
+    r"|(?:\s+(?:and\s+)?(?:my\s+)?[a-z][a-z0-9 _-]{1,48}?\s+(?:is|are|=|:)\s)",  # next field
+    re.IGNORECASE,
+)
+
 #: A message starting with one of these leads (or ending in "?") is a QUESTION, not an
 #: attribute statement. Without this guard "What is my salary range?" parsed as setting
 #: an attribute named "what" and was silently auto-applied, polluting the attribute
@@ -439,7 +455,14 @@ class ChatService:
         if m is None:
             return None
         name = m.group("name").strip().lower()
-        value = m.group("value").strip().rstrip(".")
+        value = m.group("value").strip()
+        # Bound the value at the first clause/conjunction boundary so a multi-fact
+        # sentence ("My first name is Dana and my email is dana@example.com") yields
+        # just "Dana" — not the whole tail (FR-FB-2 single-field capture).
+        boundary = _VALUE_BOUNDARY.search(value)
+        if boundary is not None:
+            value = value[: boundary.start()]
+        value = value.strip().rstrip(".").strip()
         if not name or not value:
             return None
         is_sensitive = is_sensitive_field(name)

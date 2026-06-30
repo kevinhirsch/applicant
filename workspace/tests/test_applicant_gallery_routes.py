@@ -238,3 +238,62 @@ def test_engine_path_is_hit_over_real_client(monkeypatch):
     assert r.json()["has_gallery"] is True
     assert "/api/campaigns" in captured["paths"]
     assert "/api/gallery/c1" in captured["paths"]
+
+
+# --- HONESTY: a 409 setup gate is NOT offline (mirrors #544) -----------------
+#
+# The gallery's own _owner_campaigns previously mapped ANY EngineError → None →
+# engine_available:false, so a 409 setup gate dishonestly read as "engine
+# offline" here too. It now routes failures through the shared soft_degrade()
+# classifier, so a GATE surfaces gated:true + the engine's message
+# (engine_available:true) while a transport failure (status None) stays offline.
+
+_GAL_GATE_MSG = (
+    "Automated work is blocked until onboarding is complete and the LLM + "
+    "notification channels are configured."
+)
+
+
+def test_default_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_GAL_GATE_MSG)
+    r = client.get("/api/applicant/gallery")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _GAL_GATE_MSG
+    assert body["has_gallery"] is False
+    # still a well-formed, renderable empty body
+    assert body["screenshots"] == {"count": 0, "items": []}
+    assert body["materials"] == {"count": 0, "items": []}
+
+
+def test_default_transport_error_is_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/gallery")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body.get("gated") is not True
+    assert body["has_gallery"] is False
+
+
+def test_campaigns_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_GAL_GATE_MSG)
+    r = client.get("/api/applicant/gallery/campaigns")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _GAL_GATE_MSG
+    assert body["campaigns"] == []
+
+
+def test_specific_campaign_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_GAL_GATE_MSG)
+    r = client.get("/api/applicant/gallery/c1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["has_gallery"] is False

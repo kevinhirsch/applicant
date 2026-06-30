@@ -52,53 +52,12 @@ let _sending = false;
 
 
 
-// ── Campaign steering controls (#290,#182) ────────────────────────────
-// Bidirectional assistant steering: start/pause/resume/run-now controls.
-
-async function _renderCampaignControls(body) {
-  const host = document.getElementById("applicant-controls");
-  if (!host) return;
-  _fetchJSON(`${API}/campaigns/${_activeCampaignId}/status`).then(data => {
-    const running = data && data.running;
-    const paused = data && data.paused;
-    host.innerHTML = `
-      <div class="applicant-controls" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;padding:6px 0;border-bottom:1px solid var(--border);">
-        ${running
-          ? `<button type="button" class="cal-btn" id="ac-pause" title="Pause automated work">⏸ Pause</button>
-             <button type="button" class="cal-btn" id="ac-run-now" title="Run a tick now">▶ Run now</button>`
-          : paused
-            ? `<button type="button" class="cal-btn cal-btn-primary" id="ac-resume" title="Resume automated work">▶ Resume</button>`
-            : `<button type="button" class="cal-btn cal-btn-primary" id="ac-start" title="Start automated work">▶ Start</button>`}
-        <span style="flex:1;"></span>
-        <span style="font-size:11px;opacity:0.6;align-self:center;">
-          ${running ? "Running" : paused ? "Paused" : "Idle"}
-        </span>
-      </div>`;
-    _wireControlButtons(host, data);
-  }).catch(() => { host.innerHTML = ""; });
-}
-
-function _wireControlButtons(host, status) {
-  const start = host.querySelector("#ac-start");
-  if (start) start.addEventListener("click", () => _runCampaignAction("start"));
-  const pause = host.querySelector("#ac-pause");
-  if (pause) pause.addEventListener("click", () => _runCampaignAction("pause"));
-  const resume = host.querySelector("#ac-resume");
-  if (resume) resume.addEventListener("click", () => _runCampaignAction("resume"));
-  const runNow = host.querySelector("#ac-run-now");
-  if (runNow) runNow.addEventListener("click", () => _runCampaignAction("run-now"));
-}
-
-async function _runCampaignAction(action) {
-  const host = document.getElementById("applicant-controls");
-  try {
-    await _post(`${API}/campaigns/${_activeCampaignId}/${action}`, {});
-    _toast(`Campaign ${action}ed`);
-    if (host) _renderCampaignControls(document.body);
-  } catch (e) {
-    _toast(e.message || `Could not ${action} campaign`);
-  }
-}
+// NOTE: campaign steering controls (start/pause/resume/run-now) were removed —
+// they were never wired into the conversation render and pointed at chat-proxy
+// endpoints (`/api/applicant/chat/campaigns/{id}/status|start|pause|resume|
+// run-now`) that do not exist (the engine exposes those only under
+// `/api/agent-runs/*`, which the chat proxy does not forward), so the controls
+// would only ever have 404'd. Removed as dead code.
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 
