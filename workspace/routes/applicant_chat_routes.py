@@ -110,22 +110,50 @@ _SAFE_CHANGE_KEYS = frozenset(
     {"kind", "name", "value", "is_integral", "is_sensitive", "requires_confirmation", "applied"}
 )
 
+#: User-facing fields of a control action (the agent-loop steering result for a
+#: turn). The in-chat criteria-confirm affordance (``applicantChat.js``) reads
+#: ``kind`` / ``requires_confirmation`` / ``applied`` to decide whether to render
+#: the Confirm button, and ``detail`` for the change summary + the
+#: ``/confirm-criteria`` body. ``ok`` keeps the reply truthful about an action the
+#: agent could not take. Anything else the engine might attach is dropped.
+_SAFE_CONTROL_KEYS = frozenset({"kind", "applied", "requires_confirmation", "ok"})
+
 
 def _scrub_chat_reply(raw: dict) -> dict:
     """Whitelist the engine's chat reply to only user-facing fields.
 
-    The engine may include ``control_actions`` (internal agent-loop orchestration
-    state that can carry run IDs and internal session handles) and other fields
-    that are not needed by and must not be forwarded to the browser.
+    Forwards ``message`` / ``gaps`` / ``proposed_changes`` and the turn's
+    ``control_actions`` (validated/shaped like the siblings) so the in-chat
+    criteria-refocus confirm affordance renders. Any other field the engine
+    attaches is not forwarded to the browser.
     """
     changes = []
     for c in raw.get("proposed_changes") or []:
         if isinstance(c, dict):
             changes.append({k: v for k, v in c.items() if k in _SAFE_CHANGE_KEYS})
+    controls = []
+    for a in raw.get("control_actions") or []:
+        if not isinstance(a, dict):
+            continue
+        shaped = {k: v for k, v in a.items() if k in _SAFE_CONTROL_KEYS}
+        # ``detail`` is the criteria summary + the /confirm-criteria body; keep it
+        # as a shallow dict (drop any nested non-primitive the engine may attach).
+        detail = a.get("detail")
+        shaped["detail"] = (
+            {
+                k: v
+                for k, v in detail.items()
+                if isinstance(v, (str, int, float, bool, type(None)))
+            }
+            if isinstance(detail, dict)
+            else {}
+        )
+        controls.append(shaped)
     return {
         "message": raw.get("message") or "",
         "gaps": [g for g in (raw.get("gaps") or []) if isinstance(g, str)],
         "proposed_changes": changes,
+        "control_actions": controls,
     }
 
 

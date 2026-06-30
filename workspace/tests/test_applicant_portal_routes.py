@@ -187,6 +187,56 @@ def test_pending_soft_degrades_when_engine_down(client):
     assert r.json() == {"engine_available": False, "count": 0, "items": []}
 
 
+# --- HONESTY: a 409 setup gate is NOT offline -------------------------------
+#
+# A pre-campaign / automated-work setup gate (409, also 401/403/422) on the
+# campaigns read must surface as GATED (gated:true + the engine's message,
+# engine_available:true) so the Portal shows the honest setup prompt instead of
+# "not connected yet". A transport failure (status None) stays offline.
+
+_PORTAL_GATE_MSG = (
+    "Automated work is blocked until onboarding is complete and the LLM + "
+    "notification channels are configured."
+)
+
+
+def test_pending_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_PORTAL_GATE_MSG)
+    r = client.get("/api/applicant/portal/pending")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _PORTAL_GATE_MSG
+    assert body["items"] == []
+
+
+def test_pending_transport_error_is_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("conn refused", status=None)
+    r = client.get("/api/applicant/portal/pending")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body.get("gated") is not True
+
+
+def test_notifications_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_notifications"] = EngineError("gated", status=409, detail=_PORTAL_GATE_MSG)
+    r = client.get("/api/applicant/portal/notifications")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _PORTAL_GATE_MSG
+
+
+def test_notifications_transport_error_is_offline(client):
+    FakeEngine.raises["list_notifications"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/portal/notifications")
+    assert r.status_code == 200
+    assert r.json()["engine_available"] is False
+
+
 def test_pending_skips_a_single_failing_campaign(client):
     FakeEngine.campaigns = [{"id": "c1", "name": "A"}, {"id": "c2", "name": "B"}]
     FakeEngine.pending = {"c1": {"items": [{"id": "a1", "kind": "error", "title": "snag"}]}}

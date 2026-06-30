@@ -33,7 +33,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
 from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -148,8 +148,10 @@ def setup_applicant_ops_routes() -> APIRouter:
             try:
                 data = await engine.agent_runs_list(campaign_id)
             except EngineError as exc:
-                logger.debug("list_runs: engine unavailable: %s", exc)
-                return {"engine_available": False, "campaign_id": campaign_id, "count": 0, "items": []}
+                logger.debug("list_runs: engine read failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(
+                    exc, {"campaign_id": campaign_id, "count": 0, "items": []}
+                )
         out = data if isinstance(data, dict) else {"items": data or []}
         out.setdefault("campaign_id", campaign_id)
         out.setdefault("items", [])
@@ -203,8 +205,8 @@ def setup_applicant_ops_routes() -> APIRouter:
             try:
                 data = await engine.agent_run_status(campaign_id)
             except EngineError as exc:
-                logger.debug("run_status: engine unavailable: %s", exc)
-                return {"engine_available": False, "campaign_id": campaign_id}
+                logger.debug("run_status: engine read failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(exc, {"campaign_id": campaign_id})
         out = data if isinstance(data, dict) else {}
         out.setdefault("campaign_id", campaign_id)
         out["engine_available"] = True
@@ -260,8 +262,8 @@ def setup_applicant_ops_routes() -> APIRouter:
             try:
                 data = await engine.discovery_sources_list(campaign_id)
             except EngineError as exc:
-                logger.debug("list_sources: engine unavailable: %s", exc)
-                return {"engine_available": False, "campaign_id": campaign_id, "items": []}
+                logger.debug("list_sources: engine read failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(exc, {"campaign_id": campaign_id, "items": []})
             budget = None
             try:
                 sig = await engine._request("GET", f"/api/criteria/{campaign_id}/signature")

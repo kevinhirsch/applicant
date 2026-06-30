@@ -52,7 +52,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -248,8 +248,11 @@ def setup_applicant_portal_routes() -> APIRouter:
             try:
                 campaigns = await engine.list_campaigns()
             except EngineError as exc:
-                logger.debug("portal: engine unavailable listing campaigns: %s", exc)
-                return {"engine_available": False, "count": 0, "items": []}
+                logger.debug("portal: campaigns read failed (status=%s): %s", exc.status, exc)
+                # A client-correctable setup gate (e.g. 409 automated-work gate) is
+                # NOT offline: forward the engine's plain-language message so the
+                # Portal shows the honest setup prompt, not "not connected yet".
+                return soft_degrade(exc, {"count": 0, "items": []})
 
             campaign_list = campaigns if isinstance(campaigns, list) else []
             items: list[dict] = []
@@ -381,8 +384,8 @@ def setup_applicant_portal_routes() -> APIRouter:
             try:
                 data = await engine.list_notifications()
             except EngineError as exc:
-                logger.debug("portal: engine unavailable listing notifications: %s", exc)
-                return {"engine_available": False, "count": 0, "items": []}
+                logger.debug("portal: notifications read failed (status=%s): %s", exc.status, exc)
+                return soft_degrade(exc, {"count": 0, "items": []})
         items = data.get("items") if isinstance(data, dict) else None
         items = items if isinstance(items, list) else []
         return {"engine_available": True, "count": len(items), "items": items}

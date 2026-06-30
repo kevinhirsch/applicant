@@ -295,6 +295,70 @@ def test_runs_no_activity_when_no_campaigns(client):
     }
 
 
+# --- HONESTY: a 409 setup gate is NOT offline -------------------------------
+#
+# A setup gate (409, also 401/403/422) on the campaigns read must surface as
+# GATED (gated:true + the engine's message, engine_available:true), NOT
+# engine_available:false. A transport failure (status None) stays offline. The
+# split is shared (src.applicant_engine.soft_degrade), so spot-check one read
+# per shape plus the transport-offline control.
+
+_ACT_GATE_MSG = (
+    "Automated work is blocked until onboarding is complete and the LLM + "
+    "notification channels are configured."
+)
+
+
+def test_status_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_ACT_GATE_MSG)
+    r = client.get("/api/applicant/activity/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _ACT_GATE_MSG
+    assert body["has_activity"] is False
+
+
+def test_status_transport_error_is_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/activity/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body.get("gated") is not True
+
+
+def test_intent_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_ACT_GATE_MSG)
+    r = client.get("/api/applicant/activity/intent")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _ACT_GATE_MSG
+    assert body["intent"] is None
+
+
+def test_runs_409_gate_is_not_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("gated", status=409, detail=_ACT_GATE_MSG)
+    r = client.get("/api/applicant/activity/runs")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gated"] is True
+    assert body["engine_available"] is True
+    assert body["message"] == _ACT_GATE_MSG
+    assert body["items"] == []
+    assert body["count"] == 0
+
+
+def test_runs_transport_error_is_offline(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down", status=None)
+    r = client.get("/api/applicant/activity/runs")
+    assert r.status_code == 200
+    assert r.json()["engine_available"] is False
+
+
 # --- snapshot (consolidated now / next / recent) ----------------------------
 
 

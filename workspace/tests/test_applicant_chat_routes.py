@@ -192,6 +192,74 @@ def test_send_message_returns_engine_reply(client):
     assert ("chat", {"campaign_id": "c1", "message": "hello"}) in FakeEngine.calls
 
 
+def test_send_message_preserves_control_actions(client):
+    # D3: the engine returns control_actions (criteria-refocus confirm affordance),
+    # which the JS consumes (applicantChat.js). The scrub must pass them through —
+    # shaped to the user-facing fields — not drop them.
+    FakeEngine.responses["chat"] = {
+        "message": "Bumping your salary floor reshapes the search.",
+        "gaps": [],
+        "proposed_changes": [],
+        "control_actions": [
+            {
+                "kind": "criteria",
+                "applied": False,
+                "requires_confirmation": True,
+                "ok": True,
+                "detail": {"min_salary": 150000},
+            }
+        ],
+    }
+    r = client.post("/api/applicant/chat/message", json={"campaign_id": "c1", "message": "raise salary"})
+    assert r.status_code == 200
+    actions = r.json()["control_actions"]
+    assert len(actions) == 1
+    a = actions[0]
+    assert a["kind"] == "criteria"
+    assert a["requires_confirmation"] is True
+    assert a["applied"] is False
+    assert a["ok"] is True
+    assert a["detail"] == {"min_salary": 150000}
+
+
+def test_scrub_chat_reply_preserves_control_actions():
+    from routes.applicant_chat_routes import _scrub_chat_reply
+
+    out = _scrub_chat_reply(
+        {
+            "message": "ok",
+            "gaps": [],
+            "proposed_changes": [],
+            "control_actions": [
+                {
+                    "kind": "criteria",
+                    "applied": False,
+                    "requires_confirmation": True,
+                    "ok": True,
+                    "detail": {"min_salary": 150000, "_internal": {"run_id": "secret"}},
+                    "session_handle": "leak",
+                }
+            ],
+        }
+    )
+    assert "control_actions" in out
+    a = out["control_actions"][0]
+    assert a["kind"] == "criteria"
+    assert a["requires_confirmation"] is True
+    # The internal session handle is dropped; only the user-facing fields remain.
+    assert "session_handle" not in a
+    # detail keeps the primitive summary fields but drops nested non-primitives.
+    assert a["detail"]["min_salary"] == 150000
+    assert "_internal" not in a["detail"]
+
+
+def test_scrub_chat_reply_control_actions_default_empty():
+    from routes.applicant_chat_routes import _scrub_chat_reply
+
+    out = _scrub_chat_reply({"message": "hi"})
+    assert out["control_actions"] == []
+
+
 def test_send_message_validates_input(client):
     assert client.post("/api/applicant/chat/message", json={"campaign_id": "c1", "message": " "}).status_code == 400
     assert client.post("/api/applicant/chat/message", json={"campaign_id": "", "message": "hi"}).status_code == 400
