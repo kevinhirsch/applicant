@@ -12,7 +12,6 @@ Feature: A failing LLM surfaces one diagnostic rather than dozens of confusing b
     When the engine escalates an ambiguous field to the LLM
     Then the mapping returns nothing and the loop does not crash
 
-  @pending
   Scenario: A failing LLM emits one "unavailable" diagnostic for the whole run
     Given a configured LLM that raises on every mapping call
     When the engine escalates an ambiguous field to the LLM

@@ -15,13 +15,11 @@ Feature: A browser crash during pre-fill yields a structured failure, not an esc
     When the engine runs the pre-fill page walk
     Then a structured pre-fill result is returned
 
-  @pending
   Scenario: A browser tab crash returns a failed result instead of propagating
     Given a browser whose tab closes unexpectedly partway through the walk
     When the engine runs the pre-fill page walk
     Then a failed pre-fill result is returned rather than the browser error escaping
 
-  @pending
   Scenario: A hung browser operation is bounded rather than hanging the pipeline
     Given a browser whose page operation times out mid-walk
     When the engine runs the pre-fill page walk

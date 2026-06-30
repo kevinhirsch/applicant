@@ -11,7 +11,6 @@ Feature: A broken credential-tenant lookup never crashes but is still surfaced
     When the engine looks up a stored credential
     Then no credential is returned and the loop does not crash
 
-  @pending
   Scenario: A failing tenant lookup is distinguished from a genuinely absent tenant
     Given a credential lookup whose tenant resolver crashes mid-call
     When the engine looks up a stored credential
