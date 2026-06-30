@@ -27,6 +27,7 @@ from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
+from applicant.core.events import ApplicationStateChanged, event_bus
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -141,7 +142,18 @@ class _ApplicationRepo:
         self._d[str(a.id)] = a
 
     def update(self, a: Application) -> None:
+        old = self._d.get(str(a.id))
         self._d[str(a.id)] = a
+        # Emit when status actually changes (the central chokepoint for all
+        # application state transitions).
+        if old is not None and old.status is not a.status:
+            event_bus.emit(
+                ApplicationStateChanged(
+                    application_id=a.id,
+                    from_state=old.status.value,
+                    to_state=a.status.value,
+                )
+            )
 
     def get(self, aid: ApplicationId) -> Application | None:
         return self._d.get(str(aid))

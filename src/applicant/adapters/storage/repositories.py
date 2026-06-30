@@ -43,6 +43,8 @@ from applicant.core.entities.revision_session import (
     RevisionTurn,
 )
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
+from applicant.core.events import ApplicationStateChanged as _AppStateChanged
+from applicant.core.events import event_bus
 from applicant.core.ids import (
     AgentRunId,
     ApplicationId,
@@ -424,7 +426,19 @@ class ApplicationRepo:
         self._s.merge(self._to_model(application))
 
     def update(self, application: Application) -> None:
+        old_row = self._s.get(m.ApplicationModel, application.id)
+        old_status = old_row.status if old_row is not None else None
         self._s.merge(self._to_model(application))
+        # Emit when status actually changes (the central chokepoint for all
+        # application state transitions).
+        if old_status is not None and old_status != application.status.value:
+            event_bus.emit(
+                _AppStateChanged(
+                    application_id=application.id,
+                    from_state=old_status,
+                    to_state=application.status.value,
+                )
+            )
 
     def get(self, application_id: ApplicationId) -> Application | None:
         row = self._s.get(m.ApplicationModel, application_id)

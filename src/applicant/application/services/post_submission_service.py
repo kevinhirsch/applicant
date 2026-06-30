@@ -7,6 +7,7 @@ from applicant.core.entities.follow_up import FollowUp, FollowUpTemplate
 from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
 from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
+from applicant.core.events import OutcomeRecorded, event_bus
 from applicant.core.ids import (
     FollowUpId,
     OutcomeEventId,
@@ -229,4 +230,12 @@ class PostSubmissionService:
             source=OutcomeSource.AUTO,
         )
         self._storage.outcomes.add(event)
+        event_bus.emit(
+            OutcomeRecorded(
+                application_id=application.id,
+                outcome_type=outcome_type,
+                source="auto",
+                reason=f"post-submission: {outcome_type}",
+            )
+        )
         return event

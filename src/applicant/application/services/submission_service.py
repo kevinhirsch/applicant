@@ -23,6 +23,7 @@ from __future__ import annotations
 from applicant.core.entities.application import Application
 from applicant.core.entities.application_screenshot import ApplicationScreenshot
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
+from applicant.core.events import OutcomeRecorded, event_bus
 from applicant.core.ids import (
     ApplicationId,
     OutcomeEventId,
@@ -215,6 +216,14 @@ class SubmissionService:
         )
         self._storage.outcomes.add(event)
         self._storage.commit()
+        event_bus.emit(
+            OutcomeRecorded(
+                application_id=application.id,
+                outcome_type="submitted",
+                source=source.value,
+                reason="auto-detected" if source is OutcomeSource.AUTO else "user marked submitted",
+            )
+        )
         self._record_submission_yield(application)
         # FR-LEARN-2: a recorded submission (with approval) is a REAL conversion —
         # fold the converting-role signature here so EVERY submit path closes the

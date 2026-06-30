@@ -26,6 +26,7 @@ import hashlib
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
 from applicant.core.entities.viability_scoring import ViabilityScoring
+from applicant.core.events import ViabilityScored, event_bus
 from applicant.core.ids import JobPostingId
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
 from applicant.observability.logging import get_logger
@@ -94,6 +95,12 @@ class ScoringService:
             scoring,
             criteria_sig=self._criteria_sig(criteria),
             learning_sig=self._learning_sig(posting.campaign_id),
+        )
+        event_bus.emit(
+            ViabilityScored(
+                posting_id=posting_id,
+                score=scoring.score,
+            )
         )
         return scoring
 

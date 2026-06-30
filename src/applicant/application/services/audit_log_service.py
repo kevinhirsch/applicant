@@ -7,6 +7,12 @@ ordered, exportable record.
 Usage: build once at startup (on the process-lived container) and call
 ``.start()`` to subscribe.  The service is additive and never touches the
 event emitters — it listens passively.
+
+**Per-event session isolation:** when a ``session_factory`` is provided
+(production / real DB lane), each event handler opens its own session —
+independent of the per-tick/per-request storage — so the audit log survives
+transaction rollbacks in the main pipeline.  In the in-memory lane (no
+session_factory) the shared storage is used directly.
 """
 
 from __future__ import annotations
@@ -46,10 +52,23 @@ _ACTION_MAP: dict[type[DomainEvent], str] = {
 
 
 class AuditLogService:
-    """Persists one ``ActionEvent`` per domain event emitted on the bus."""
+    """Persists one ``ActionEvent`` per domain event emitted on the bus.
 
-    def __init__(self, storage, bus: DomainEventBus | None = None) -> None:
+    When ``session_factory`` is given (real DB), every event opens a fresh
+    session + ``SqlAlchemyStorage``, writes, commits, and closes — isolated
+    from any in-flight tick/request transaction so the audit trail is durable
+    regardless of rollbacks in the main pipeline.
+    """
+
+    def __init__(
+        self,
+        storage,
+        *,
+        session_factory=None,
+        bus: DomainEventBus | None = None,
+    ) -> None:
         self._storage = storage
+        self._session_factory = session_factory
         self._bus = bus or event_bus
 
     def start(self) -> None:
@@ -61,7 +80,11 @@ class AuditLogService:
     # -- event handler -------------------------------------------------------
 
     def _on_event(self, event: DomainEvent) -> None:
-        """Persist one ActionEvent for the domain event."""
+        """Persist one ActionEvent for the domain event.
+
+        Opens its own session when ``session_factory`` is configured so the
+        audit log write is never rolled back with the caller's transaction.
+        """
         action = _ACTION_MAP.get(type(event), "unknown")
         reason = self._extract_reason(event)
         context = self._extract_context(event)
@@ -79,8 +102,29 @@ class AuditLogService:
             reason=reason,
             context=context,
         )
-        self._storage.action_events.add(ae)
-        self._storage.commit()
+
+        if self._session_factory is not None:
+            self._persist_isolated(ae)
+        else:
+            self._storage.action_events.add(ae)
+            self._storage.commit()
+
+    def _persist_isolated(self, ae: ActionEvent) -> None:
+        """Write the event through a fresh per-event session (real DB lane)."""
+        from applicant.adapters.storage.repositories import SqlAlchemyStorage
+
+        sess = self._session_factory()
+        try:
+            store = SqlAlchemyStorage(sess)
+            store.action_events.add(ae)
+            store.commit()
+        except Exception:
+            log.exception("Failed to persist audit event %s", ae.id)
+        finally:
+            try:
+                sess.close()
+            except Exception:
+                pass
 
     # -- reason extraction ---------------------------------------------------
 
@@ -125,13 +169,11 @@ class AuditLogService:
     def _get_campaign_id(
         self, event: DomainEvent, app_id: ApplicationId | None
     ) -> CampaignId | None:
-        # Prefer the event-level campaign_id when available.
         cid = getattr(event, "campaign_id", None)
         if cid and str(cid):
             return CampaignId(str(cid))
 
-        # Fall back to the application's campaign.
-        if app_id:
+        if app_id and self._session_factory is None:
             try:
                 app = self._storage.applications.get(app_id)
                 if app:
