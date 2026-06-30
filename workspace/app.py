@@ -179,7 +179,10 @@ if AUTH_ENABLED:
         "/api/auth/logout",
         "/api/auth/status",
         "/api/auth/features",
-        "/api/applicant/features",
+        # /api/applicant/features intentionally NOT exempt: its handler calls
+        # require_user(), so exempting it left current_user unset and it 401d for
+        # every browser session; the app-shell redirects to /login on any 401,
+        # which aborted the whole boot. Authenticate it like sibling proxy routes.
         "/api/auth/settings",
         "/api/auth/integrations/presets",
         "/api/health",
