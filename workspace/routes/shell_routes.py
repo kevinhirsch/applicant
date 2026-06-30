@@ -43,17 +43,32 @@ from core.platform_compat import (
 
 def _require_admin(request: Request):
     """Reject non-admin callers. Shell exec is admin-only — never expose to
-    regular users; that's RCE-after-signup."""
-    auth_manager = getattr(request.app.state, "auth_manager", None)
-    if not auth_manager:
-        # No auth at all — only safe in fully-trusted localhost dev mode
-        return
+    regular users; that's RCE-after-signup.
+
+    Fails closed in every mode:
+    - Unconfigured (no auth manager): loopback-only access enforced; no open
+      bypass just because auth has not been set up yet.
+    - Configured: must be a real admin user or the in-process tool loopback.
+    """
+    import os as _os
     user = getattr(request.state, "current_user", None)
     # In-process tool loopback. The AuthMiddleware already validated the
     # internal token + loopback client before setting this marker, so
     # honour it here as admin-equivalent.
     if user == "internal-tool":
         return
+    auth_manager = getattr(request.app.state, "auth_manager", None)
+    if not auth_manager:
+        # No configured auth manager — only permit loopback callers (same
+        # rule as require_user first-run mode). Unconfigured does NOT mean
+        # "open to everyone"; it means "admin not yet created, loopback only".
+        if _os.getenv("AUTH_ENABLED", "true").lower() == "false":
+            return
+        client = getattr(request, "client", None)
+        host = (client.host if client else "") or ""
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return
+        raise HTTPException(403, "Admin only")
     if not user or user == "api":
         raise HTTPException(403, "Admin only")
     if not auth_manager.is_admin(user):

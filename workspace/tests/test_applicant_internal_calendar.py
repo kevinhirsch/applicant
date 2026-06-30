@@ -181,9 +181,11 @@ def test_calendar_interviews_db_failure_degrades(client, monkeypatch):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ir, "_read_owner_calendar_events", _boom)
+    # Owner attribution is now required (#230); test with valid owner so
+    # we exercise the DB-failure degradation path, not the auth gate.
     resp = client.get(
         "/api/applicant/internal/calendar/interviews",
-        headers={INTERNAL_TOKEN_HEADER: TOKEN},
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "someone"},
     )
     assert resp.status_code == 200
     assert resp.json() == {"interviews": []}

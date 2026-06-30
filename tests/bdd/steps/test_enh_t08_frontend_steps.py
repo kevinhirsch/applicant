@@ -355,7 +355,7 @@ def count_sections(t08ctx):
 
 @then("exactly eight sections are wired into the gating map")
 def eight_sections(t08ctx):
-    assert t08ctx["section_count"] == 8
+    assert t08ctx["section_count"] == 9  # 8 + multi_campaign_switcher added in G26
 
 
 @given("the README front-door surface list and the section map")

@@ -11,7 +11,6 @@ Feature: File reads are contained to an allowed base directory
     Then the path is reported as outside the base directory
     And a path inside the base directory is reported as contained
 
-  @pending
   Scenario: A shared safe-join helper centralises path containment
     Given the workspace path utilities module
     When a shared safe-join helper is requested

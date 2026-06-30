@@ -274,16 +274,27 @@ def warning_logged(rctx):
 # ===========================================================================
 # PENDING — MCP server surface (#308) — probes the live app
 # ===========================================================================
+def _mcp_surface_mounted(app_client) -> bool:
+    """True if the /mcp SSE surface is mounted on the app.
+
+    The ``/mcp`` endpoint is an *infinite* Server-Sent-Events stream — issuing a
+    blocking ``GET`` against it with the TestClient never returns (it hangs the
+    whole suite). Assert the surface is mounted by inspecting the registered
+    routes instead of opening the stream.
+    """
+    app = getattr(app_client, "app", None) or getattr(app_client, "_transport", None)
+    routes = getattr(app, "routes", []) if app is not None else []
+    return any("/mcp" in getattr(r, "path", "") for r in routes)
+
+
 @then("the engine advertises its capabilities as MCP tools")
 def mcp_tools_listed(rctx, app_client):
-    resp = app_client.get("/mcp")
-    assert resp.status_code == 200
+    assert _mcp_surface_mounted(app_client), "MCP (/mcp) surface is not mounted"
 
 
 @then("it passes through the same review/stop-boundary gates as the HTTP surface")
 def mcp_reuses_gates(rctx, app_client):
-    resp = app_client.get("/mcp")
-    assert resp.status_code == 200
+    assert _mcp_surface_mounted(app_client), "MCP (/mcp) surface is not mounted"
 
 
 # ===========================================================================

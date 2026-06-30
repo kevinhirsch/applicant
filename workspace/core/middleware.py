@@ -12,9 +12,11 @@ from starlette.responses import Response
 
 # Per-process token that lets the in-app tool layer hit admin-gated
 # routes via HTTP loopback (the agent's tool calls don't carry the
-# admin user's session cookie). Set once at import; tools read the
-# same value from this module. Never persisted or exposed externally.
-INTERNAL_TOOL_TOKEN = os.environ.get("APPLICANT_INTERNAL_TOKEN") or secrets.token_hex(32)
+# admin user's session cookie). Read from APPLICANT_INTERNAL_TOKEN only;
+# never auto-generated. An empty/unset value disables the bypass so the
+# channel is not silently active in unconfigured deployments.
+# Mirror: routes/applicant_internal_routes.py requires explicit config.
+INTERNAL_TOOL_TOKEN: str = (os.environ.get("APPLICANT_INTERNAL_TOKEN") or "").strip()
 INTERNAL_TOOL_HEADER = "X-Applicant-Internal-Token"
 
 
