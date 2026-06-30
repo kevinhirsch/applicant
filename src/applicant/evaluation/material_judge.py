@@ -91,6 +91,16 @@ def judge_material(
     if rubric is None:
         rubric = DEFAULT_RUBRIC
 
+    if material_text is None:
+        return MaterialJudgment(
+            material_id=material_id,
+            material_type=material_type,
+            overall_score=0.0,
+            dimension_scores=(),
+            summary="Error: material_text is None",
+            errors=("material_text must not be None",),
+        )
+
     scores: list[MaterialQualityScore] = []
     errors: list[str] = []
 

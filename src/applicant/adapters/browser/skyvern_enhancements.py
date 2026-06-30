@@ -587,15 +587,19 @@ def _build_alternative_selectors(
     alternatives.append(f'[id="{alt_id}"]')
     alternatives.append(f'[name="{alt_id}"]')
 
-    # Try partial id match from original
+    # Try partial id match from original (handles both single and double quotes)
     if "name=" in original:
-        name_val = original.split('name="')[1].split('"')[0]
-        alternatives.append(f'[id="{name_val}"]')
-        alternatives.append(f'[data-automation-id="{name_val}"]')
+        import re as _re
+        m = _re.search(r'name=["\']([^"\']+)["\']', original)
+        if m:
+            name_val = m.group(1)
+            alternatives.append(f'[id="{name_val}"]')
+            alternatives.append(f'[data-automation-id="{name_val}"]')
 
     return alternatives
 
 
 def _escape_css_string(value: str) -> str:
     """Escape a string for use in a CSS attribute selector."""
-    return value.replace('"', '\\"').replace("\\", "\\\\")
+    # Escape backslashes first, then double-quotes
+    return value.replace("\\", "\\\\").replace('"', '\\"')

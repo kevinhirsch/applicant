@@ -47,7 +47,7 @@ class TestIframePenetration:
             "id": "email_id",
             "type": "email",
             "aria-label": "Email Address",
-            "required": None,
+            "required": "",  # Playwright returns "" for boolean attrs when present
         }.get(a)
 
         child_frame = MagicMock()
