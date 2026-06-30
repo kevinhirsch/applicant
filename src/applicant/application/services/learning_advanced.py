@@ -207,32 +207,51 @@ class AdvancedLearningService:
             description = posting.description or ""
         jd_text = f"{title} {description}".strip()
 
-        # delegate centroid folding to the Phase-1 base (record_converting_role
-        # handles embedding, running-mean math, and bumps converting_samples).
-        # No-op when jd_text is empty or unembeddable.
-        model = self._base.record_converting_role(model, jd_text, title=title)
+        # Preserve existing discrete role features BEFORE calling
+        # record_converting_role: that Phase-1 method resets
+        # converting_role_signature to {"vector": ..., "titles": ...}, which
+        # would erase the cumulative discrete features from prior conversions.
+        # We save them here and fold them back after the centroid update.
+        prior_discrete = {
+            k: v
+            for k, v in model.converting_role_signature.items()
+            if k not in ("vector", "titles")
+        }
 
-        # Strip the ``titles`` list that record_converting_role may have added:
-        # the discrete bias readers (conversion_alignment / text_alignment /
-        # variant_alignment) sum over signature VALUES, and a list under
-        # ``titles`` would break that sum. The discrete ``role:`` features
-        # below already capture title information.
+        # Delegate centroid folding to the Phase-1 base (record_converting_role
+        # handles embedding, running-mean math, and bumps converting_samples).
+        # Guard: when no embedding adapter is wired (e.g. tests with
+        # embedding=None) skip the centroid fold so we do not crash — the
+        # discrete fold still runs and owns the sample-count increment.
+        _embedding = getattr(self._base, "_embedding", None)
+        centroid_updated = False
+        if jd_text and _embedding is not None:
+            model = self._base.record_converting_role(model, jd_text, title=title)
+            centroid_updated = True
+
+        # Build the merged signature: start from the existing signature
+        # (which record_converting_role may have updated with a new centroid
+        # vector), strip "titles" because discrete bias readers sum over
+        # numeric values only, then restore accumulated prior discrete features
+        # and fold in the new conversion's features.
         sig = {
             k: v
             for k, v in model.converting_role_signature.items()
-            if k != "titles"
+            if k not in ("titles",)
         }
+        # Restore prior discrete features accumulated from previous conversions.
+        for k, v in prior_discrete.items():
+            sig[k] = v
 
-        # Fold discrete role features on top of the (already centroid-populated)
-        # model. converting_samples was already bumped by record_converting_role
-        # (when jd_text was non-empty); if the centroid fold was a no-op we bump
-        # it here so the counter always reflects the real conversion count.
+        # Fold this conversion's discrete features (additive accumulation).
         for feature in self._role_features(application, posting=posting):
             sig[feature] = sig.get(feature, 0.0) + _CONVERSION_WEIGHT
 
+        # converting_samples was already bumped by record_converting_role when
+        # the centroid fold ran; only bump it here when the fold was skipped.
         new_samples = model.converting_samples
-        if not jd_text:
-            new_samples += 1  # centroid was a no-op; discrete fold owns the increment
+        if not centroid_updated:
+            new_samples += 1
 
         return replace(
             model,
