@@ -70,6 +70,13 @@ browser = [
 durable-orchestration = [
     "dbos",
 ]
+# MCP (Model Context Protocol) server surface (Issue #308). Exposes the engine
+# as an MCP server via fastapi_mcp so external agents can discover and invoke
+# the same guarded application services through the MCP tool protocol.
+# Install with uv sync --extra mcp.
+mcp = [
+    "fastapi-mcp",
+]
 dev = [
     "pytest",
     "pytest-bdd",
