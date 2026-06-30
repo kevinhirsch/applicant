@@ -5,7 +5,6 @@ Feature: The feature-state endpoint does not leak engine configuration
   # detail. A sanitised public variant that reveals no configuration state does not exist
   # yet → @pending probe on that intended seam.
 
-  @pending
   Scenario: A sanitised public feature view hides configuration state
     Given the workspace feature-state module
     When a configuration-free public feature view is requested

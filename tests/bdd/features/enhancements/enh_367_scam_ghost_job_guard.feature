@@ -7,13 +7,11 @@ Feature: A posting is risk-checked for scam / ghost-job signals before applying
   # listing. This is an entirely new capability (0 code today) — both scenarios are
   # @pending and probe the intended core seam.
 
-  @pending
   Scenario: A posting with scam signals is held for human confirmation
     Given a posting carrying scam / ghost-job signals
     When the posting-risk rule scores it before apply
     Then it is flagged high-risk and routed to human confirmation instead of auto-apply
 
-  @pending
   Scenario: A clean posting passes the risk check unchanged
     Given an ordinary posting with no scam signals
     When the posting-risk rule scores it before apply

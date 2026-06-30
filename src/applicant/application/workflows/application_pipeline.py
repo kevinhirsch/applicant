@@ -28,6 +28,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from applicant.application.services.prefill_service import FINAL_APPROVAL_TOPIC
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 WORKFLOW_NAME = "application_pipeline"
 
@@ -71,10 +74,46 @@ class PipelineContext:
     request_final_approval: Callable[[], Any] | None = None
     #: -> dict: record the submission/outcome once approval is delivered.
     submit: Callable[[dict], dict] | None = None
-    #: -> None: tear down the sandbox / clean up.
+    #: -> None: tear down the sandbox / clean up. Wrapped to be idempotent (see below).
     teardown: Callable[[], None] | None = None
     #: timeout (seconds) for the durable final-approval ``recv`` wait.
     approval_timeout: float | None = None
+
+    #: #221 — teardown is idempotent BY CONTRACT. The terminal teardown step can be
+    #: re-driven after a crash in the window AFTER the sandbox was released but BEFORE its
+    #: checkpoint was written; a non-idempotent callback would then raise on (or worse,
+    #: double-release) an already-destroyed sandbox. ``__post_init__`` wraps the supplied
+    #: callback so the FIRST call runs it (swallowing an "already released" error as a
+    #: success, since the desired end-state — sandbox gone — already holds) and every
+    #: later call is a guaranteed no-op. Callers/tests may rely on this flag.
+    teardown_idempotent: bool = True
+
+    def __post_init__(self) -> None:
+        # Make teardown at-least-once safe: re-driving the terminal step must never
+        # double-release or raise on an already-torn-down sandbox (#221).
+        raw = self.teardown
+        if raw is None:
+            return
+        done = {"flag": False}
+
+        def _idempotent_teardown() -> None:
+            if done["flag"]:
+                return  # already torn down this process — contract-guaranteed no-op.
+            try:
+                raw()
+            except Exception as exc:  # noqa: BLE001 - any "already released" signal
+                # The end-state we want (sandbox gone) already holds; a re-drive after a
+                # crash-before-checkpoint must not surface as a failure. Record + swallow.
+                log.warning(
+                    "teardown_idempotent_swallowed",
+                    application_id=self.application_id,
+                    error=str(exc),
+                )
+            finally:
+                done["flag"] = True
+
+        # ``object.__setattr__`` keeps this robust even if the dataclass is frozen later.
+        object.__setattr__(self, "teardown", _idempotent_teardown)
 
 
 def _is_handoff(state: str | None) -> bool:

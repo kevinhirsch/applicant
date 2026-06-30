@@ -11,13 +11,11 @@ Feature: Graceful shutdown drains work and releases resources
     Then it cancels the scheduler task and disposes the database engine
 
   # PENDING — the residual gap: in-flight work is abandoned and resources leak.
-  @pending
   Scenario: Shutdown flushes pending workflow checkpoints before exiting
     Given the application lifespan source
     When a graceful shutdown is requested with workflows mid-flight
     Then it flushes the pending workflow checkpoints so no in-progress step is abandoned
 
-  @pending
   Scenario: Shutdown cleans up leaked sandbox sessions and adapters
     Given the application lifespan source
     When a graceful shutdown is requested with active sandbox sessions

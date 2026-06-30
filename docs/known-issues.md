@@ -1,0 +1,85 @@
+# Known issues — living bug log
+
+Every bug/finding observed during validation that is **not being actively fixed in an
+open PR** is recorded here so nothing is lost in an agent transcript. When a finding is
+fixed, it moves to "Resolved" with its PR. Status legend:
+
+- **OPEN** — real defect, not yet fixed; needs a fix PR.
+- **PRODUCT-DECISION** — a spec/behavior that's contradictory or out-of-design; needs the owner to decide.
+- **DEPLOY-GATED** — cannot be validated in the hermetic/sandbox lane; verify under `docs/production-smoke.md` (`compose up --build`).
+- **INFRA** — a limitation of this sandbox (no Docker daemon / blocked egress), not a product bug.
+- **RESOLVED** — fixed; PR linked.
+
+> Source tags reference the validation pass that found it (live core-validation, browser-prefill,
+> spec-categorization, the gap-closer agents G1–G6, etc.).
+
+---
+
+## OPEN (real defects awaiting a fix)
+
+| # | Severity | Finding | Where | Source |
+|---|---|---|---|---|
+| K1 | LOW (test-harness) | Camoufox and chromium cannot co-reside in one Playwright process — the module-level `_camoufox_launchable()` probe launches Camoufox at collection, poisoning the shared driver so the next chromium `launch_persistent_context` dies ("Target/context closed / Missing X server"). Causes ~3–4 spurious failures on an unguarded full-file run of the real-browser tests. Both engines work standalone. | `tests/integration/test_real_browser.py` (module-level probe) | browser-prefill validation |
+| K2 | HIGH (resilience) | After a transient Postgres blip, boot-Session-bound gate services stay stuck at HTTP 500 (`PendingRollbackError: can't reconnect until invalid transaction is rolled back`) until an engine **restart** — blast radius ~25 `require_llm_configured`-gated routers. Route-handler storage is per-request and recovers; the gate dependency is not. Not data-loss (restart-recoverable), but a transient DB hiccup shouldn't need a restart. Fix: per-request/short-lived session for these reads, or rollback-and-retry in `app_config_store.get/set`, or `pool_pre_ping=True`. | `app/deps.py:296-301`; `app/container.py:425-426,:203`; `adapters/storage/app_config_store.py` | resilience injection (G6) |
+| K3 | MEDIUM (resilience) | Prefill page-walk has no crash boundary returning a `FAILED` result — a `TargetClosedError`/`TimeoutError` propagates raw; `FAILED` is also unhandled in the pipeline (`application_pipeline.py:39-47`). **Crash is contained** (no double-submit, no sandbox-slot leak — `agent_loop._start_pipeline` try/except), but no honest FAILED state/diagnostic surfaces. **Being fixed**: the `enh_336`/`#207` crash→FAILED specs are built in **PR #551** (browser-automation batch) — verify on merge. | `application/services/prefill_service.py` `_continue_pages` | resilience injection (G6) + #551 |
+| K4 | HIGH (deploy config) | Live SearXNG discovery silently yields **zero postings** in prod — the `searxng` service has no `volumes:` mount for its settings file, and `searxng/searxng:latest` disables `?format=json` by default (answers 403/HTML). The correct settings (`formats: [html, json]` + secret) exist at `workspace/config/searxng/settings.yml` but aren't mounted, and `secret_key` is still the `__SEARXNG_SECRET__` placeholder. Graceful (logs `searxng_json_disabled`, returns `[]`) — but one of the two discovery sources is dead. jobspy/RSS unaffected. Fix: mount that settings.yml into the prod `searxng` service + substitute the secret. | `docker/docker-compose.prod.yml` `searxng` service (~:262-274); `workspace/config/searxng/settings.yml` | discovery/ATS validation (G4) |
+| K5 | MEDIUM (reachability) | **ntfy is not configurable from the front-door** (principle #2 unmet): `ChannelsIn` has no `ntfy_url` field in the proxy or engine, `configure_channels` forwards only discord+apprise+email and drops ntfy, and the wizard JS submits only `discord_webhook_url`+`apprise_urls`. ntfy works in the adapter but is settable **only** via the `NTFY_URL` boot env var — no Settings field, no "Send a test". Discord + email ARE fully UI-configurable + testable. Fix: thread an `ntfy_url` field through wizard JS → proxy → engine `configure_channels`. | `workspace/routes/applicant_setup_routes.py:123`; `app/routers/setup.py:49,237-241`; `workspace/static/js/applicantOnboarding.js:544` | notifications validation (G2) |
+| K6 | LOW (UX honesty) | When `NOTIFICATIONS_LIVE` is unset (off), the Settings "Send a test" returns `{"sent":true}` while **nothing actually sends** (in-memory no-op) — no UI signal it's a dry run. Prod compose defaults `NOTIFICATIONS_LIVE=true` so a real Compose deploy is fine; bites bare-uvicorn / dev runs. Fix: surface live-vs-dry-run state in the test response/UI. | `app/routers/setup.py` test endpoint; `adapters/notification/apprise_notifier.py` | notifications validation (G2) |
+
+_(gap-closer agents G1–G5 still running; their report-only findings — résumé render, notifications, pristine OOBE, discovery/ATS, deploy review — get appended here as they land.)_
+
+> **Validation caveat (process):** the shared local working checkout at `/home/user/applicant` is
+> periodically contaminated by builder worktree-bleed, and the live `:7000` front-door serves files
+> from it per request — so a re-audit against the live stack can surface **phantom regressions** that
+> are NOT on `origin/main`. A re-audit on 2026-06-30 reported a `focusLibrary` boot-blocker + "Ithaca"
+> persona leaks + a lost white-label test; **all three were verified ABSENT on clean `origin/main`** —
+> they were the dirty checkout, not the shipping branch. The post-wave re-audit must run from a fresh
+> clean checkout, not the bled live stack.
+
+---
+
+## PRODUCT-DECISION (spec contradictions / out-of-design — owner must decide)
+
+| # | Finding | Detail |
+|---|---|---|
+| P1 | Spec `#343` combobox shared-prefix filter is self-contradictory | Its `@pending` AC requires `_filter_query("United States Minor Outlying Islands")` to return **>2 words**, but a sibling **non-retired** regression scenario pins the **same call** to **exactly** "United States" (2 words). Unsatisfiable by one deterministic method. Left `@pending`. Decide which expectation wins. |
+| P2 | Per-board rate-limiting spec (`enh_195`) has no seam | No per-source pacing seam exists; only a campaign-level cap ships. Building a new `source_pacing` rule is net-new scope — confirm in-scope or `@skip`. |
+| P3 | Dead-code "today" probes are contradictory by design | Specs asserting the *current* duplicated/orphaned state (byte-identical search files, duplicated fetch/esc/toast helpers, one-shot cleanup targets) flip to fail once their sibling "cleaned" specs are implemented. The "today" probe must be retired in the same PR as the cleanup. |
+| P4 | Doc-sync specs will re-drift | `README describes the 3-step OOBE` and `documented skip-count matches the real integration suite` are hardcoded assertions that drift unless computed. Decide: compute them, or accept periodic updates. |
+
+---
+
+## DEPLOY-GATED (cannot pass hermetically — verify at `compose up --build`)
+
+These are honest "the deployed image needs this dependency" signals, **not** bench bugs. They
+must NOT be forced green in CI. Verified via `docs/production-smoke.md` on a Docker host.
+
+| # | Finding |
+|---|---|
+| D1 | CUA driver-schema reconcile (`#142`), engine↔workspace bridge round-trip / curation-persist (`#145`), desktop-assist-operable health (`#179`) — need the real `cua-driver` image + a live workspace. |
+| D2 | Font-embedded real PDF résumé render (`#2` gap) — needs TeX baked in the image (sandbox shows `tex: NOT FOUND → stub PDF`). |
+| D3 | Startup capability report "real vs stubbed", CI hosted-fallback/JS-test runner, seeded-E2E + migration-data-integrity harnesses — need the built image / CI runner. |
+| D4 | `patchright install chromium` (added to `docker/Dockerfile` in #550) downloading + the chromium engine launching without falling back to plain playwright — first exercised at image build. |
+| D5 | ~~Credential keyfile persistence / `update.sh` rollback / bridge over service-DNS~~ — **REVIEWED CLEAN (G5 deploy review)**: keyfile is on the `secrets` named volume and only created when absent (no regen on rebuild); `update.sh` backs up before migrate, auto-restores + refuses to serve on migration failure, `--rollback` reverts code+images+DB; bridge uses `api:8000`/`applicant-ui:7000` + a shared token minted once + healthcheck ordering. Image layers (TeX/LibreOffice/real-Chrome/camoufox/Xvfb, non-root) all baked. Still verify live via `docs/production-smoke.md`, but no static defect found. |
+
+---
+
+## INFRA (sandbox limitation, not a product bug)
+
+| # | Finding |
+|---|---|
+| I1 | Live job discovery (jobspy / SearXNG) can't run here — outbound egress is blocked, so real-posting discovery → scoring → digest has only been exercised with seeded/mock-shaped data. Needs the `searxng` service + egress on the deploy. |
+| I2 | No Docker daemon in the sandbox → the image build + the full Compose stack (searxng/chromadb/ntfy/takeover) are first exercised at deploy. |
+
+---
+
+## RESOLVED (fixed this session)
+
+| Finding | PR |
+|---|---|
+| `scored` audit events persisted with NULL `campaign_id` → invisible to campaign-scoped export | #550 |
+| `browser` extra's `patchright` resolved to the non-importable `0.0.1` name-squatter stub (chromium stealth silently degraded); chromium binary-rev mismatch | #550 |
+| Chat couldn't converse — boot-time LLM adapter never reloaded after a runtime model-connect; `max_tokens=256` starved reasoning models | #543 |
+| 409 setup-gates mislabeled "engine offline" across Portal/Activity/Ops; chat proxy dropped `control_actions` | #544 |
+| Front-door white-label runtime regression (vendored tools re-shown by `applyUIVis`); Portal had no sidebar door; dead-but-enabled nav; persona leaks | #542, #546 |
+| Front-door boot-blockers (search-package SyntaxError, `/api/applicant/features` 401→login loop, `focusLibrary` ReferenceError) | #539 |

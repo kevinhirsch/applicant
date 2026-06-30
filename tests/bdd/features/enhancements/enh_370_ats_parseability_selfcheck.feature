@@ -12,13 +12,11 @@ Feature: The generated résumé is round-tripped through an ATS-style parser bef
     When the résumé parser extracts it
     Then the contact email and the listed skills are recoverable
 
-  @pending
   Scenario: A clean single-column render passes the output parseability self-check
     Given a freshly rendered single-column résumé
     When the ATS-parseability self-check runs on the render
     Then the self-check reports it as machine-readable
 
-  @pending
   Scenario: An unparseable render is flagged rather than sent
     Given a rendered résumé whose text is not recoverable (e.g. text-as-image)
     When the ATS-parseability self-check runs on the render

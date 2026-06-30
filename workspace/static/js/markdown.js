@@ -94,7 +94,7 @@ function _cleanAllowedHtmlOnce(htmlString) {
   return tpl.innerHTML;
 }
 
-function sanitizeAllowedHtml(html) {
+export function sanitizeAllowedHtml(html) {
   const raw = String(html == null ? '' : html);
   // Non-browser context (e.g. a future SSR/Node import): fail closed by
   // escaping rather than trusting the markup.
@@ -794,6 +794,7 @@ const markdownModule = {
   renderMermaid,
   addStreamingCaret,
   removeStreamingCaret,
+  sanitizeAllowedHtml,
 };
 
 export default markdownModule;

@@ -16,7 +16,6 @@ Feature: Data fields are not misclassified as essay screening questions
     When a short first-name field is classified
     Then it is not treated as a screening question
 
-  @pending
   Scenario: A six-word address data field is not misclassified as a screening question
     Given the screening-question classifier
     When a six-word address line field is classified

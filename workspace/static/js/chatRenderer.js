@@ -8,6 +8,23 @@ import { providerLogo } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 
+// Single shared sanitizer for every model-derived innerHTML seam (#354). The
+// markdown pipeline already cleans HTML blocks it emits, but model-authored HTML
+// reaches several innerHTML assignments here; routing each through one reusable
+// sanitizeHtml() — backed by markdown.js's fixpoint sanitizeAllowedHtml (drops
+// script-capable tags, strips inline on*/javascript: handlers) — guarantees a
+// uniform guard rather than relying on each call site to remember to clean.
+function sanitizeHtml(html) {
+  try {
+    return markdownModule.sanitizeAllowedHtml(String(html == null ? '' : html));
+  } catch (e) {
+    // Fail closed: if the sanitizer is unavailable, escape rather than trust.
+    const d = document.createElement('div');
+    d.textContent = String(html == null ? '' : html);
+    return d.innerHTML;
+  }
+}
+
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
 const CHAT_ABOUT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
@@ -1923,7 +1940,7 @@ export function addMessage(role, content, modelName, metadata) {
           if (isLastTextRound && metadata?.rag_sources?.length) {
             agentFindingsSuffix += buildRagSourcesBox(metadata.rag_sources);
           }
-          body.innerHTML = agentSourcesPrefix + markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt)) + agentFindingsSuffix;
+          body.innerHTML = agentSourcesPrefix + sanitizeHtml(markdownModule.processWithThinking(markdownModule.squashOutsideCode(txt))) + agentFindingsSuffix;
           wrap.appendChild(body);
           wrap.dataset.raw = txt;
           if (metadata?._db_id) wrap.dataset.dbId = metadata._db_id;
@@ -2065,9 +2082,9 @@ export function addMessage(role, content, modelName, metadata) {
       const thinkHtml = markdownModule.processWithThinking(
         '<think' + (thinkTime ? ` time="${thinkTime}"` : '') + '>' + metadata.thinking + '</think>\n\n' + text
       );
-      b.innerHTML = sourcesPrefix + thinkHtml + findingsSuffix;
+      b.innerHTML = sourcesPrefix + sanitizeHtml(thinkHtml) + findingsSuffix;
     } else {
-      b.innerHTML = sourcesPrefix + markdownModule.processWithThinking(text) + findingsSuffix;
+      b.innerHTML = sourcesPrefix + sanitizeHtml(markdownModule.processWithThinking(text)) + findingsSuffix;
     }
 
     // The vision/OCR caption is stripped from the displayed text above (so the
@@ -2098,7 +2115,7 @@ export function addMessage(role, content, modelName, metadata) {
         // Extract instruction text (after "Instruction: ")
         const instrMatch = b.textContent.match(/Instruction:\s*([\s\S]*)$/);
         const instrText = instrMatch ? instrMatch[1].trim() : '';
-        b.innerHTML = '<span class="doc-edit-tag">Doc edit: ' + lineRef + '</span> ' + markdownModule.processWithThinking(instrText);
+        b.innerHTML = '<span class="doc-edit-tag">Doc edit: ' + lineRef + '</span> ' + sanitizeHtml(markdownModule.processWithThinking(instrText));
       }
 
       // Render attachment cards
@@ -2165,8 +2182,8 @@ export function addMessage(role, content, modelName, metadata) {
       // Variants ride through localStorage / chat export-import; cached HTML
       // would let an attacker-controlled session JSON inject markup.
       const _renderVariant = (v) => (v && v.raw)
-        ? markdownModule.processWithThinking(markdownModule.squashOutsideCode(v.raw))
-        : (v && v.html) || '';
+        ? sanitizeHtml(markdownModule.processWithThinking(markdownModule.squashOutsideCode(v.raw)))
+        : sanitizeHtml((v && v.html) || '');
 
       // Show the selected variant's content
       const v = metadata.variants[idx];

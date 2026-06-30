@@ -18,7 +18,6 @@ Feature: Master audit tracker for remaining unaudited areas
     Then the uv lockfile is present and substantial
 
   # PENDING — the audit completion this master tracker is opened to drive.
-  @pending
   Scenario: Every remaining unaudited area has been swept and cleared
     Given the repository tree
     When the master audit ledger is consulted

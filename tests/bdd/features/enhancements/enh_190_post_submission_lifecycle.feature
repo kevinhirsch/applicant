@@ -16,13 +16,11 @@ Feature: Application lifecycle continues past submit with real outcome types
     When its outcome events are listed
     Then a submitted outcome event is present
 
-  @pending
   Scenario: A post-submission rejection outcome can be recorded
     Given an application that has been recorded as submitted
     When a rejection outcome is recorded against it
     Then the rejected outcome type is a recognized post-submission outcome
 
-  @pending
   Scenario: Interview, ghosted, and offer are recognized post-submission outcomes
     Given the catalogue of post-submission outcome types
     When the recognized outcomes are enumerated

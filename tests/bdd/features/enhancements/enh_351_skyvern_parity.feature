@@ -9,7 +9,6 @@ Feature: Skyvern parity — autonomous form-filling capability bridge
     When the planner builds a semantic snapshot fusing the rendered page and the DOM
     Then it produces a typed plan for the form without a hardcoded page model
 
-  @pending
   Scenario: Per-ATS routines are induced so coverage grows with use
     Given a successful pre-fill on a given ATS
     When the engine induces a reusable routine from it

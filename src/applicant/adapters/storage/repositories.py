@@ -1037,7 +1037,19 @@ class DetectionEventRepo:
 
 
 def _snapshot_to_entity(row):
-    return SubmissionSnapshot(id=row.id, application_id=row.application_id, answers=dict(row.answers or {}), materials=list(row.materials or []), ats_metadata=dict(row.ats_metadata or {}))
+    meta = dict(row.ats_metadata or {})
+    material_versions = dict(meta.pop("_material_versions", {}) or {})
+    posting_url = meta.pop("_posting_url", "") or ""
+    return SubmissionSnapshot(
+        id=row.id,
+        application_id=row.application_id,
+        answers=dict(row.answers or {}),
+        materials=list(row.materials or []),
+        ats_metadata=meta,
+        material_versions=material_versions,
+        posting_url=posting_url,
+        captured_at=row.captured_at,
+    )
 
 def _rejection_to_entity(row):
     return RejectionSignal(id=row.id, application_id=row.application_id, source=RejectionSource(row.source), signal_text=row.signal_text, confidence=row.confidence, detail=dict(row.detail or {}))
@@ -1057,9 +1069,15 @@ class SubmissionSnapshotRepo:
         self._s = session
 
     def add(self, s):
+        meta = dict(s.ats_metadata or {})
+        if getattr(s, "material_versions", None):
+            meta["_material_versions"] = dict(s.material_versions)
+        if getattr(s, "posting_url", ""):
+            meta["_posting_url"] = s.posting_url
         self._s.merge(m.SubmissionSnapshotModel(
             id=s.id, application_id=s.application_id,
-            answers=s.answers, materials=s.materials, ats_metadata=s.ats_metadata,
+            answers=s.answers, materials=s.materials, ats_metadata=meta,
+            captured_at=s.captured_at,
         ))
 
     def get(self, sid):

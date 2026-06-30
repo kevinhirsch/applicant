@@ -9,7 +9,6 @@ Feature: Scraped research content is escaped and its links scheme-validated befo
     When it builds the source list for a job
     Then each scraped title and query is run through an HTML-escape helper
 
-  @pending
   Scenario: A javascript: source link is neutralized before it reaches an href
     Given the research panel source-link builder
     When it is inspected for safe-scheme validation of source URLs

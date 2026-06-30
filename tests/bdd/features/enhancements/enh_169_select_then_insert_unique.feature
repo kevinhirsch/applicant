@@ -17,7 +17,6 @@
     When the same tool toggle is saved twice
     Then the latest toggle state is read back
 
-  @pending
   Scenario: A same-key write race resolves with a conflict-safe upsert
     Given the SQL app-config store write path
     When two writers race the first write of the same key

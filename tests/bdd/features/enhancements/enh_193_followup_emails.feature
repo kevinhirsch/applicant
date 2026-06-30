@@ -5,13 +5,11 @@
 
 Feature: Follow-up outreach is generated after submission
 
-  @pending
   Scenario: A thank-you follow-up is generated for a submitted application
     Given an application that was recently submitted
     When the follow-up service drafts outreach for it
     Then a follow-up message is produced for review
 
-  @pending
   Scenario: Follow-up is detected as warranted based on time since submission
     Given an application submitted long enough ago to warrant a check-in
     When the follow-up service evaluates whether outreach is due

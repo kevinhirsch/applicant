@@ -189,10 +189,28 @@ class Container:
         object.__setattr__(self, name, value)
 
 
+def _safe_dsn_host(database_url: str) -> str:
+    """Return ``host[:port]`` from a DSN with the credentials stripped (#312).
+
+    Never returns the username or password — only the host (and port) so an
+    operator can identify the unreachable database without the warning leaking
+    secrets into the logs.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(database_url)
+        host = parsed.hostname or "unknown-host"
+        return f"{host}:{parsed.port}" if parsed.port else host
+    except Exception:
+        return "unknown-host"
+
+
 def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
     """Return (engine, session_factory, storage). Falls back to in-memory."""
     import logging
     _logger = logging.getLogger("applicant.storage")
+    host = _safe_dsn_host(settings.database_url)
 
     try:
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
@@ -206,14 +224,18 @@ def _build_storage(settings: Settings) -> tuple[Any, Any, Any]:
             return engine, session_factory, storage
         session.close()
         _logger.warning(
-            "Database healthcheck failed — falling back to in-memory storage. "
-            "Data will NOT be persisted across restarts."
+            "Database healthcheck failed for %s — falling back to in-memory "
+            "storage. Data will NOT be persisted across restarts.",
+            host,
         )
     except Exception as exc:
+        # Scrub the exception text: a psycopg connection error can echo the full
+        # DSN (including the password). Name only the host (#312).
         _logger.warning(
-            "Cannot connect to database (%s) — falling back to in-memory storage. "
-            "Data will NOT be persisted across restarts.",
-            exc,
+            "Cannot connect to database at %s (%s) — falling back to in-memory "
+            "storage. Data will NOT be persisted across restarts.",
+            host,
+            type(exc).__name__,
         )
     # No reachable DB — degrade to in-memory storage, but mark this instance as a
     # fallback so its healthcheck() reports unhealthy (#312): the engine must fail
@@ -377,11 +399,17 @@ def _build_orchestrator(settings: Settings) -> Any:
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
 
-        timeout_seconds = (
-            float(settings.approval_timeout_days * 86_400)
-            if settings.approval_timeout_days > 0
-            else 0.0
-        )
+        # #189: the per-second override wins when set, so a deployment can tune the
+        # approval-gate wait precisely instead of only in whole days; otherwise fall
+        # back to the days-based setting. 0 (either knob) means "no timeout / forever".
+        if settings.approval_wait_seconds is not None:
+            timeout_seconds = float(settings.approval_wait_seconds)
+        else:
+            timeout_seconds = (
+                float(settings.approval_timeout_days * 86_400)
+                if settings.approval_timeout_days > 0
+                else 0.0
+            )
         return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 

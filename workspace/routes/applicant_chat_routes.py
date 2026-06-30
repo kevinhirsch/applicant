@@ -40,6 +40,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -157,6 +158,51 @@ def _scrub_chat_reply(raw: dict) -> dict:
     }
 
 
+#: Matches a canonical UUID (the engine's internal campaign/application/run ids).
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
+#: Engine reply keys that carry internal identifiers and must never reach the
+#: browser. The surface addresses campaigns/applications by the user-chosen name,
+#: not the engine's internal UUID, so these are dropped wholesale.
+_INTERNAL_ID_KEYS = frozenset(
+    {"campaign_id", "application_id", "run_id", "workflow_id", "task_id"}
+)
+
+
+def scrub_engine_reply(reply: dict) -> dict:
+    """Strip internal identifiers from an engine chat reply before forwarding (#317).
+
+    The engine attaches internal UUIDs (campaign/application/run ids) both as
+    top-level keys and, occasionally, inline inside human-readable text. Forwarding
+    them verbatim leaks engine-internal state to the browser. This scrubber:
+
+    * drops the internal-id keys (``campaign_id`` etc.) from the payload, and
+    * redacts any UUID embedded in string values (recursively) to ``[id]``,
+
+    so no internal identifier survives in the serialized reply. It is shape-
+    preserving for everything else and never raises.
+    """
+
+    def _scrub(value):
+        if isinstance(value, str):
+            return _UUID_RE.sub("[id]", value)
+        if isinstance(value, dict):
+            return {
+                k: _scrub(v)
+                for k, v in value.items()
+                if k not in _INTERNAL_ID_KEYS
+            }
+        if isinstance(value, list):
+            return [_scrub(v) for v in value]
+        return value
+
+    if not isinstance(reply, dict):
+        return reply
+    return _scrub(reply)
+
+
 def _scrub_confirm_reply(raw: dict) -> dict:
     """Whitelist the engine's confirm reply to only user-facing fields."""
     return {
@@ -199,7 +245,13 @@ def setup_applicant_chat_routes() -> APIRouter:
             except EngineError as exc:
                 logger.debug("list_campaigns: engine unavailable: %s", exc)
                 return {"engine_available": False, "campaigns": []}
-        return {"engine_available": True, "campaigns": campaigns or []}
+        # #232: the panel JS iterates ``campaigns`` directly, so a non-list engine
+        # response (e.g. a dict-shaped error/envelope) would crash the front-end
+        # iteration. Coerce anything that is not a bare list to an empty list — the
+        # panel then renders its empty state instead of throwing.
+        if not isinstance(campaigns, list):
+            campaigns = []
+        return {"engine_available": True, "campaigns": campaigns}
 
     @router.post("/campaigns")
     async def create_campaign(body: CreateCampaignIn, request: Request) -> dict:
@@ -237,7 +289,9 @@ def setup_applicant_chat_routes() -> APIRouter:
                 )
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
-        return _scrub_chat_reply(result or {})
+        # Whitelist user-facing fields, then strip any internal identifiers
+        # (campaign UUID etc.) that survive in free-text before forwarding (#317).
+        return scrub_engine_reply(_scrub_chat_reply(result or {}))
 
     @router.post("/confirm")
     async def confirm_change(body: ConfirmIn, request: Request) -> dict:

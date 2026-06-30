@@ -1103,7 +1103,7 @@ function _renderResult(job) {
     html += '<div class="research-job-sources">';
     for (const s of job.sources.slice(0, 10)) {
       const title = _esc(s.title || s.url || '');
-      const url = _esc(s.url || '');
+      const url = _esc(_safeHref(s.url || ''));
       html += `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}</a>`;
     }
     if (job.sources.length > 10) html += `<span class="research-source-more">+${job.sources.length - 10} more</span>`;
@@ -1230,4 +1230,22 @@ function _esc(s) {
   const d = document.createElement('div');
   d.textContent = s || '';
   return d.innerHTML;
+}
+
+// Safe-scheme guard for source hrefs (#353). _esc() only HTML-entity-escapes, so a
+// scraped url like `javascript:alert(1)` survives intact inside an href and runs on
+// click. _safeHref allows only http(s)/mailto and returns '#' for anything else
+// (javascript:, data:, vbscript:, etc.), neutralising the scheme before it reaches
+// the attribute. The result is still passed through _esc at the call site.
+function _safeHref(url) {
+  const raw = (url || '').trim();
+  if (!raw) return '#';
+  // Reject control chars that browsers strip when resolving a scheme.
+  const cleaned = raw.replace(/[\u0000-\u0020]/g, '');
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(cleaned);
+  if (m) {
+    const scheme = m[1].toLowerCase();
+    if (scheme !== 'http' && scheme !== 'https' && scheme !== 'mailto') return '#';
+  }
+  return cleaned;
 }

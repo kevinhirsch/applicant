@@ -8,7 +8,6 @@
 
 Feature: Captured response statuses carry a timestamp for correlation
 
-  @pending
   Scenario: A captured response status records when it was observed
     Given a page driver observing a navigation response
     When the response handler captures the document status

@@ -5,7 +5,6 @@ Feature: Admin gate refuses remote callers in unconfigured mode
   # remote unauthenticated caller therefore passes the admin gate during setup → @pending for
   # the remote-refused fix; the loopback-allowed scenario is GREEN (today's correct behaviour).
 
-  @pending
   Scenario: An unconfigured remote caller is refused by the admin gate
     Given the workspace admin gate in unconfigured mode
     When an unauthenticated request arrives from a remote address

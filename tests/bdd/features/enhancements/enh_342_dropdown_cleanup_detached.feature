@@ -10,7 +10,6 @@
 
 Feature: Dropdown cleanup skips a detached element after navigation
 
-  @pending
   Scenario: Cleanup is skipped when option selection navigated the page
     Given a page driver selecting a dropdown option that navigates on selection
     When the dropdown filter cleanup runs after the navigation

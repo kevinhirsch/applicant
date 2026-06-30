@@ -5,7 +5,6 @@
 
 Feature: Asynchronously loaded dropdown options are fetched before giving up
 
-  @pending
   Scenario: A target option not yet in the DOM is fetched by typing the filter
     Given a combobox whose target option loads asynchronously after filtering
     When the picker looks for the target option

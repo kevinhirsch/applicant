@@ -64,7 +64,12 @@ const STEPS = [
   // B1: a welcome / preview step. It is "done" once the user has made any setup
   // progress, so the resumable wizard skips it on re-opens but a brand-new user
   // always lands here first.
-  { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.onboarding_complete || (Array.isArray(s.steps_complete) && s.steps_complete.length))) },
+  // "Welcome" is done once the user has made any REAL setup progress, so a returning
+  // user skips it but a brand-new user always lands here first. NOTE: the engine's
+  // `steps_complete` always contains 'sandbox' on the default local backend (it is
+  // auto-satisfied, not user-driven), so counting that as progress would skip Welcome
+  // on a pristine instance — exclude it and only treat genuine user steps as progress.
+  { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.onboarding_complete || s.apply_ready || (Array.isArray(s.steps_complete) && s.steps_complete.some((k) => k !== 'sandbox')))) },
   { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
   // "Your profile" is OPTIONAL — the only thing that strictly gates BEGINNING is a
   // connected model. Applicant gathers what it needs to apply over time (a résumé,

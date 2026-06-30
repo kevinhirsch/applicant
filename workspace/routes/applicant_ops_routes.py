@@ -71,7 +71,15 @@ def _require_admin(request: Request) -> str:
     configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
 
     if not configured:
-        return owner or ""
+        # First-run: allow the lone owner, but only from loopback — a remote
+        # unauthenticated caller must not reach operator controls during setup (#228).
+        if owner:
+            return owner
+        client = getattr(request, "client", None)
+        host = (getattr(client, "host", "") if client else "") or ""
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return ""
+        raise HTTPException(status_code=401, detail="Not authenticated")
     if not owner:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
