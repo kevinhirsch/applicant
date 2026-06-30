@@ -5,7 +5,6 @@ Feature: The zero-command-line acceptance step asserts something concrete
   # a concrete check that setup actually happened over the HTTP surface. The @pending→xfail
   # convention is already handled in conftest; this scenario specs the FIX = the no-op gone.
 
-  @pending
   Scenario: The zero-command-line step contains no tautological assertion
     Given the P0 acceptance step source
     When the zero-command-line step body is inspected
