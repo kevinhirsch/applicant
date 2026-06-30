@@ -271,12 +271,18 @@ def test_channels_get_and_save(monkeypatch):
     _patch_engine(monkeypatch, result=None)
     resp = _make_client().post(
         "/api/applicant/setup/channels",
-        json={"discord_webhook_url": "https://d", "apprise_urls": ""},
+        json={
+            "discord_webhook_url": "https://d",
+            "apprise_urls": "",
+            "ntfy_url": "ntfy://ntfy.sh/topic",
+        },
     )
     assert resp.status_code == 200
     name, args = _FakeEngine.last_call
     assert name == "setup_configure_channels"
     assert args[0]["discord_webhook_url"] == "https://d"
+    # K5: ntfy push is configurable from the front-door and passes through the proxy.
+    assert args[0]["ntfy_url"] == "ntfy://ntfy.sh/topic"
 
 
 def test_channels_test(monkeypatch):
@@ -284,6 +290,19 @@ def test_channels_test(monkeypatch):
     resp = _make_client().post("/api/applicant/setup/channels/test")
     assert resp.status_code == 200
     assert resp.json()["channels"] == ["discord"]
+
+
+def test_channels_test_passes_through_dry_run_state(monkeypatch):
+    # K6: the engine's live-vs-dry-run honesty fields reach the front-door unchanged.
+    _patch_engine(
+        monkeypatch,
+        result={"sent": True, "live": False, "note": "dry run — set NOTIFICATIONS_LIVE=true to deliver", "channels": ["ntfy"]},
+    )
+    resp = _make_client().post("/api/applicant/setup/channels/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["live"] is False
+    assert "NOTIFICATIONS_LIVE" in body["note"]
 
 
 # ── quiet hours (FR-NOTIF-5) ────────────────────────────────────────────────

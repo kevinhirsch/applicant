@@ -265,6 +265,15 @@ class AppriseNotifier:
     def has_ntfy(self) -> bool:
         return bool(self._ntfy)
 
+    def is_live(self) -> bool:
+        """True when configured channels actually go over the wire (NOTIFICATIONS_LIVE).
+
+        The default lane captures dispatches in memory (hermetic); only a deployment
+        with ``send_real`` on (NOTIFICATIONS_LIVE) delivers for real. Lets the Settings
+        "Send a test" report dry-run vs live honestly instead of claiming delivery.
+        """
+        return bool(self._send_real)
+
     def configure(
         self,
         *,

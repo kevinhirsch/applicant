@@ -123,6 +123,8 @@ class LadderIn(BaseModel):
 class ChannelsIn(BaseModel):
     discord_webhook_url: str = ""
     apprise_urls: str = ""
+    #: ntfy push topic URL(s), comma-separated (e.g. ntfy://ntfy.sh/my-topic).
+    ntfy_url: str = ""
     #: UI-configurable email-escalation delay in minutes (FR-NOTIF-2).
     email_timeout_minutes: int | None = None
 

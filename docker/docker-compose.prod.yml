@@ -287,8 +287,32 @@ services:
   # BOTH the engine (SEARXNG_URL) and the front-door UI (SEARXNG_INSTANCE).
   searxng:
     image: searxng/searxng:latest
+    # The stock searxng/searxng image disables ?format=json by default, so live
+    # discovery (engine SEARXNG_URL + UI SEARXNG_INSTANCE) gets ZERO machine-readable
+    # results. Mount our settings.yml (which enables `formats: [html, json]`) as a
+    # read-only TEMPLATE and substitute a real secret_key on first boot — the same
+    # pattern the workspace dev compose uses. SEARXNG_SECRET is minted + persisted by
+    # install.sh (mirrors POSTGRES_PASSWORD); if unset, a strong one is generated in
+    # the container so a hand-run `compose up` is never left on the placeholder.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ ! -s /etc/searxng/settings.yml ] || grep -q '__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+          secret="$${SEARXNG_SECRET:-}"
+          if [ -z "$$secret" ]; then
+            secret="$$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          fi
+          sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+        fi
+        exec /usr/local/searxng/entrypoint.sh
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+    volumes:
+      - searxng-data:/etc/searxng
+      - ../workspace/config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro
     expose:
       - "8080"
     healthcheck:
@@ -380,6 +404,7 @@ volumes:
   ui-data:       # front-door UI app data (its own sqlite, prefs, caches)
   ui-logs:       # front-door UI app logs
   chromadb-data: # UI vector store
+  searxng-data:  # rendered searxng settings.yml (secret substituted on first boot)
   ntfy-cache:    # ntfy message cache
   update-control:  # in-UI Update control plane (FR-OOBE-4) — shared api <-> updater
   # ollama:

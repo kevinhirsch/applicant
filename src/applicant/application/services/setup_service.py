@@ -286,9 +286,13 @@ class SetupService:
         return dict(rec) if rec else {}
 
     def channels_configured(self) -> bool:
-        """True once at least Discord OR email is configured (FR-OOBE-3)."""
+        """True once at least Discord, email, OR ntfy push is configured (FR-OOBE-3)."""
         chan = self.get_channels()
-        return bool(chan.get("discord_webhook_url") or chan.get("apprise_urls"))
+        return bool(
+            chan.get("discord_webhook_url")
+            or chan.get("apprise_urls")
+            or chan.get("ntfy_url")
+        )
 
     #: Bounds for the UI-configurable email-escalation delay (FR-NOTIF-2), in minutes.
     EMAIL_TIMEOUT_MIN_MINUTES = 1
@@ -311,24 +315,29 @@ class SetupService:
         *,
         discord_webhook_url: str = "",
         apprise_urls: str = "",
+        ntfy_url: str = "",
         email_timeout_minutes: int | None = None,
     ) -> None:
         """Persist notification-channel config from the wizard (FR-OOBE-2).
 
-        Configuring Discord + email marks the channels step able to complete and
-        ungates automated work (FR-OOBE-3). ``email_timeout_minutes`` sets the
-        UI-configurable email-escalation delay (FR-NOTIF-2). Secrets are not logged.
+        Configuring Discord, email, or ntfy push marks the channels step able to
+        complete and ungates automated work (FR-OOBE-3). ``email_timeout_minutes``
+        sets the UI-configurable email-escalation delay (FR-NOTIF-2). Secrets are
+        not logged.
         """
-        # Item 12 (SSRF): both are operator-supplied. The Discord webhook is an https
-        # URL; Apprise URLs are a comma-separated list (http(s) entries are guarded,
-        # native Apprise schemes like mailto://discord:// pass through).
+        # Item 12 (SSRF): all are operator-supplied. The Discord webhook is an https
+        # URL; Apprise + ntfy URLs are comma-separated lists (http(s) entries are
+        # guarded, native Apprise schemes like mailto://discord://ntfy:// pass through).
         validate_operator_url(discord_webhook_url, field="Discord webhook URL")
         validate_operator_urls(apprise_urls, field="Apprise URL")
+        validate_operator_urls(ntfy_url, field="ntfy URL")
         rec = self.get_channels()
         if discord_webhook_url:
             rec["discord_webhook_url"] = discord_webhook_url
         if apprise_urls:
             rec["apprise_urls"] = apprise_urls
+        if ntfy_url:
+            rec["ntfy_url"] = ntfy_url
         if email_timeout_minutes is not None:
             rec["email_timeout_minutes"] = max(
                 self.EMAIL_TIMEOUT_MIN_MINUTES,
@@ -344,6 +353,7 @@ class SetupService:
             "channels_configured",
             discord=bool(discord_webhook_url),
             email=bool(apprise_urls),
+            ntfy=bool(ntfy_url),
         )
 
     # --- quiet hours (FR-NOTIF-5) -----------------------------------------
