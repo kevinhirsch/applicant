@@ -138,7 +138,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="strict",
-            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            secure=os.getenv("SECURE_COOKIES", "true").lower() == "true",
             path="/",
         )
         if body.remember:
