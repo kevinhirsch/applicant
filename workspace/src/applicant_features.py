@@ -161,9 +161,9 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "lane": None,
         "title": "Compare",
         "nav_ids": ["rail-compare", "tool-compare-btn"],
-        "dormant_keys": ["compare_surface"],
-        "requires": "llm_configured",
-        "present_but_disabled": False,
+        "dormant_keys": [],
+        "requires": None,
+        "present_but_disabled": True,
     },
 )
 

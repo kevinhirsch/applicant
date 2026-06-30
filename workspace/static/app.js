@@ -44,6 +44,7 @@ import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
+const notesModule = null; // notes integration removed (#303); guards below no-op safely
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
