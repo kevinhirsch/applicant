@@ -41,6 +41,9 @@ dependencies = [
     # parsed base resume is rendered into a real moderncv ".tex" source via the
     # vendored templates/latex/moderncv/main.tex.j2 template. Pure-python, no I/O.
     "jinja2>=3.1.6",
+    "fastapi-mcp>=0.4.0",
+    "agentlab>=0.4.2",
+    "browsergym>=0.14.2",
 ]
 
 [project.optional-dependencies]
