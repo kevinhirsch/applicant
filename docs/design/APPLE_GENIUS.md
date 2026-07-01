@@ -1,15 +1,15 @@
 # APPLE_GENIUS — the Apple-HIG design-reviewer SOUL
 
-> **Vendored & adapted.** This corpus was vendored from the Orwell design-research corpus and
-> adapted to **Applicant**. Orwell's `ow-*` UI kits were vendored into Applicant as the
-> **`appkit*`** kits under **`workspace/static/`** (the white-labeled public front-door). The
-> CSS class + token API (`.ow-btn`, `.ow-btn-group`, `.ow-btn-concentric`, `--ow-*`, the
+> **Vendored & adapted.** This corpus was vendored from the upstream fork's design-research
+> corpus and adapted to **Applicant**. The upstream `ow-*` UI kits were vendored into Applicant
+> as the **`appkit*`** kits under **`workspace/static/`** (the white-labeled public front-door).
+> The CSS class + token API (`.ow-btn`, `.ow-btn-group`, `.ow-btn-concentric`, `--ow-*`, the
 > `#owlg-thumb` filter, `body.theme-frosted` / `body.glass-full`) was carried over **verbatim**;
-> only the JS files and their globals were renamed (`liquidGlass.js` + `adaptiveGlass.js` →
-> `appkitGlass.js`, `orwellWindow.js` → `appkitWindow.js`, `orwellGadget.js` → `appkitGadget.js`,
-> the element kit → `appkitElements.js` / `AppkitElements`, `OrwellWindowKit`/`GadgetKit`/`NoticeKit`
-> → `AppkitWindowKit`/`GadgetKit`/`NoticeKit`). Verbatim Apple quotes, source URLs, and image
-> facts are untouched.
+> only the JS files and their globals were renamed (the upstream `liquidGlass.js` +
+> `adaptiveGlass.js` → `appkitGlass.js`, the upstream window kit → `appkitWindow.js`, the gadget
+> kit → `appkitGadget.js`, the element kit → `appkitElements.js` / `AppkitElements`, the upstream
+> `*WindowKit`/`*GadgetKit`/`*NoticeKit` globals → `AppkitWindowKit`/`GadgetKit`/`NoticeKit`).
+> Verbatim Apple quotes, source URLs, and image facts are untouched.
 
 The persona the owner invokes when they ask *"would the apple genius approve?"*. This is a
 reusable, standing **design-review voice**: an Apple Human Interface Guidelines critic whose

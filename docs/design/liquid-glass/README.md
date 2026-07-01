@@ -3,8 +3,8 @@
 Durable record of the Apple "Liquid Glass" (iOS 26 / macOS 26 "Tahoe", WWDC25 June 2025)
 parity work. **This folder is the authoritative design reference for the glass system** — all
 of it was researched from Apple-authentic sources and is logged here so it survives (the live
-work happened in an ephemeral scratchpad). It was vendored from the Orwell design corpus into
-Applicant, whose implementation lives in the `appkit*` kits under `workspace/static/` (the
+work happened in an ephemeral scratchpad). It was vendored from the upstream fork's design corpus
+into Applicant, whose implementation lives in the `appkit*` kits under `workspace/static/` (the
 white-labeled public front-door). When changing any glass surface, read this first.
 
 > **See also:** [`../APPLE_GENIUS.md`](../APPLE_GENIUS.md) — the "apple genius" design-reviewer SOUL: the operating distillation of this knowledge base into a reusable HIG-parity review voice.

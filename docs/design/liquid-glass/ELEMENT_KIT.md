@@ -1,6 +1,6 @@
 # AppkitElements kit — Apple-HIG atomic primitives
 
-> Vendored from Orwell's `OrwellElement` kit into Applicant as `appkitElements.js` /
+> Vendored from the upstream fork's element kit into Applicant as `appkitElements.js` /
 > `window.AppkitElements`; the `.ow-*` class API was carried over verbatim.
 
 ONE source of truth for the atomic UI controls. Every front-door surface — the chat,
@@ -300,8 +300,8 @@ JS) to color the filled portion on WebKit. `:focus-visible` ring; `:disabled`.
 ## Demo / verification — the full kit reference
 
 The composite kits below are instantiated live in the app front-door (`workspace/static/`), not
-via a standalone demo page (Orwell's `frontend/static/element_kit_demo.html` + demo-only
-`orwellElements.js` driver did not vendor across). Verify them on the real surfaces, over a light
+via a standalone demo page (the upstream fork's element-kit demo page + demo-only driver did not
+vendor across). Verify them on the real surfaces, over a light
 wallpaper at Full Glass + Frosted. The kit is two tiers:
 
 1. **Atomic elements** — every AppkitElements primitive in every state (above), built by
@@ -351,4 +351,4 @@ Confirm legibility, Apple-correct states, and no-accent-on-text across every kit
 - **Frontend Masters — "Liquid Glass on the Web"** — https://frontendmasters.com/blog/liquid-glass-on-the-web/
 - App implementation the kit composes: `workspace/static/js/appkitGlass.js` (SVG refraction +
   `#owlg-thumb`, Full-Glass, perf-capped to chrome — **plus** the APCA/contrast veil + adaptive
-  ink, the layer that was Orwell's separate `adaptiveGlass.js`).
+  ink, the layer that was the upstream fork's separate `adaptiveGlass.js`).
