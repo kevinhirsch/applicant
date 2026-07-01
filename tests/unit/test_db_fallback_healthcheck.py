@@ -40,8 +40,20 @@ def test_build_storage_marks_unreachable_db_as_fallback(caplog):
     # End-to-end through the real wiring site: an unreachable DB yields an in-memory
     # storage that reports unhealthy (the #312 signal is live, not dead code), and
     # the fallback is loud (warning naming the host, never the credentials).
-    with caplog.at_level(logging.WARNING):
-        engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
+    # Another test that boots the full app configures the "applicant" logger with a
+    # handler and ``propagate = False``; after that, records from "applicant.storage"
+    # no longer reach caplog's root handler, so caplog.text would be empty even though
+    # the warning IS emitted (the fallback still happens — only the capture is lost).
+    # Restore propagation for the duration so the emitted warning is actually captured;
+    # this makes the assertion robust to that ordering pollution without weakening it.
+    app_logger = logging.getLogger("applicant")
+    prev_propagate = app_logger.propagate
+    app_logger.propagate = True
+    try:
+        with caplog.at_level(logging.WARNING, logger="applicant.storage"):
+            engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
+    finally:
+        app_logger.propagate = prev_propagate
 
     assert engine is None
     assert isinstance(storage, InMemoryStorage)
