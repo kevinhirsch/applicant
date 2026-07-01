@@ -273,7 +273,13 @@ DOCKER_PREFIX=()
 if ! docker info >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
     log "Can't reach the Docker socket as $(id -un) yet (group membership needs a re-login) — using sudo for this run."
-    DOCKER_PREFIX=(sudo)
+    # sudo resets the environment by default, which would strip the credentials this
+    # script exported (loaded from .env or freshly generated) — so `docker compose`
+    # would then fail interpolating required vars like POSTGRES_PASSWORD. Preserve
+    # exactly the vars the prod compose file needs without a default (the set the
+    # installer generates) plus the two build-behaviour flags. These pass through the
+    # environment (not argv), so the password is never exposed in the process list.
+    DOCKER_PREFIX=(sudo "--preserve-env=POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,APPLICANT_INTERNAL_TOKEN,SEARXNG_SECRET,APP_URL,APP_PORT,APPLICANT_REPO_DIR,BUILDKIT_PROGRESS,BUILDX_NO_DEFAULT_ATTESTATIONS")
   else
     echo "Cannot reach the Docker daemon at /var/run/docker.sock as $(id -un)." >&2
     echo "Grant this user Docker access and start a NEW shell, then re-run:" >&2
