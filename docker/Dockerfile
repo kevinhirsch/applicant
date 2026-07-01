@@ -103,10 +103,20 @@ WORKDIR /app
 # volume ownership on the host) makes useradd/groupadd warn. The account is still
 # non-login: no password, a nologin shell, and no home is created (Debian's
 # CREATE_HOME defaults to no). /app is near-empty here, so this chown is cheap.
+#
+# Also pre-create the runtime NAMED-VOLUME mountpoints (compose mounts these at
+# /data/* and /control) owned by applicant. Docker seeds a fresh named volume with
+# the ownership + mode of the image directory it is mounted over — so creating them
+# here as applicant means the volumes come up writable by the non-root process. If
+# we did NOT, Docker would create the mountpoints root-owned and the non-root api
+# could not write the vault master key (/data/secrets) or checkpoints, so /healthz
+# reports "degraded" (503) and the container never becomes healthy. Keep this list
+# in sync with the api service's `volumes:` in docker/docker-compose.prod.yml.
 RUN groupadd --gid 10001 applicant \
     && useradd --uid 10001 --gid applicant --no-create-home --home-dir /app --shell /usr/sbin/nologin applicant \
     && mkdir -p /app/.cache /app/.local/share /app/.config \
-    && chown -R applicant:applicant /app
+                /data/secrets /data/checkpoints /data/fonts /data/profiles /control \
+    && chown -R applicant:applicant /app /data /control
 USER applicant
 
 # Warm the xelatex/lualatex font + format cache at BUILD time. The first compile
