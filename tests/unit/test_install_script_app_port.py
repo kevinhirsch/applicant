@@ -30,13 +30,15 @@ def test_install_script_is_valid_bash():
 
 def test_app_port_is_derived_exported_and_persisted():
     text = _SCRIPT.read_text(encoding="utf-8")
-    # Derived from APP_URL when not explicitly provided, then exported for compose.
-    assert 'APP_PORT="${APP_URL##*:}"' in text
+    # Derived from APP_URL when not explicitly provided (an explicit :port wins, else
+    # inferred from the scheme so a bare http://host binds :80), then exported for compose.
+    assert 'case "${APP_URL}" in' in text
+    assert "APP_PORT=80" in text and "APP_PORT=443" in text
     assert "export APP_PORT" in text
     # Persisted to .env so update.sh (which sources .env) publishes the same port.
     assert "APP_PORT=${APP_PORT}" in text
-    # The heartbeat polls the very same APP_PORT (no second, divergent derivation).
-    assert 'heartbeat "${APP_PORT}"' in text
+    # The health monitor polls the very same APP_PORT (no second, divergent derivation).
+    assert 'monitor_health "${APP_PORT}"' in text
 
 
 # The exact derivation block lifted from install.sh; if the script's logic changes,
@@ -44,7 +46,14 @@ def test_app_port_is_derived_exported_and_persisted():
 _DERIVE = r"""
 set -euo pipefail
 APP_URL="${APP_URL:-http://localhost:8000}"
-if [[ -z "${APP_PORT:-}" ]]; then APP_PORT="${APP_URL##*:}"; fi
+if [[ -z "${APP_PORT:-}" ]]; then
+  case "${APP_URL}" in
+    *://*:[0-9]*) APP_PORT="${APP_URL##*:}"; APP_PORT="${APP_PORT%%/*}" ;;
+    https://*)    APP_PORT=443 ;;
+    http://*)     APP_PORT=80 ;;
+    *)            APP_PORT=8000 ;;
+  esac
+fi
 [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
 export APP_PORT
 echo "${APP_PORT}"
@@ -76,3 +85,12 @@ def test_explicit_app_port_wins_over_app_url():
 def test_app_port_falls_back_to_8000_on_garbage_url():
     assert _derive(app_url="not-a-url-no-port") == "8000"
     assert _derive() == "8000"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
+def test_app_port_inferred_from_scheme_when_url_has_no_explicit_port():
+    # First-class port-80 support: a bare http:// URL publishes on :80, https:// on :443.
+    assert _derive(app_url="http://myhost") == "80"
+    assert _derive(app_url="https://myhost") == "443"
+    # An explicit :port still wins over the scheme, even with a trailing path.
+    assert _derive(app_url="http://myhost:8080/app") == "8080"
