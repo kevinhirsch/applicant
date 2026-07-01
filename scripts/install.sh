@@ -168,7 +168,7 @@ ui_err()  { printf '  %s%s%s %s\n' "${CR}"  "${G_BAD}" "${C0}" "$*" >&2; }
 show_config() {
   _rule
   printf '  %sConfiguration%s  %s(preset any of these in the environment before --apply)%s\n' "${CB}" "${C0}" "${CD}" "${C0}"
-  printf '    %-20s %s%s%s\n' "APP_URL"       "${CBL}" "${APP_URL}" "${C0}"
+  printf '    %-20s %s%s%s\n' "APP_URL"       "${CBL}" "$(_display_url)" "${C0}"
   printf '    %-20s %s%s%s%s\n' "APP_PORT"    "${CB}"  "${APP_PORT}" "${C0}" "$([[ "${APP_PORT}" == "80" || "${APP_PORT}" == "443" ]] && printf ' %s(privileged — bound by the Docker daemon)%s' "${CD}" "${C0}")"
   printf '    %-20s %s\n' "POSTGRES_USER" "${POSTGRES_USER}"
   printf '    %-20s %s\n' "POSTGRES_DB"   "${POSTGRES_DB}"
@@ -183,9 +183,10 @@ show_config() {
 # to go — open the app and where the first-run onboarding (OOBE) appears.
 launch_pad() {
   echo
+  ui_banner
   _rule
   printf '  %s%s Applicant is running%s\n\n' "${CB}${CG}" "${G_OK}" "${C0}"
-  printf '    %sOpen the app:%s        %s%s%s\n' "${CB}" "${C0}" "${CBL}${CB}" "${APP_URL}" "${C0}"
+  printf '    %sOpen the app:%s        %s%s%s\n' "${CB}" "${C0}" "${CBL}${CB}" "$(_display_url)" "${C0}"
   printf '    %sFirst-run setup:%s     the %sOOBE onboarding wizard%s launches automatically at that\n' "${CB}" "${C0}" "${CB}" "${C0}"
   printf '                         URL on first login — %sConnect a model %s➜%s Your profile%s.\n' "${CD}" "${CD}" "${CD}" "${C0}"
   printf '                         Re-openable later from Settings.\n'
@@ -329,7 +330,30 @@ else
   export SEARXNG_SECRET="${SEARXNG_SECRET:-}"
 fi
 
-APP_URL="${APP_URL:-http://localhost:8000}"
+# Best-effort primary IP of THIS host so the launch pad shows a URL reachable from
+# other machines rather than localhost. Falls back to localhost if none is found.
+_host_ip() {
+  local ip=""
+  ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+  [[ -z "${ip}" ]] && ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ -z "${ip}" ]] && ip="localhost"
+  printf '%s' "${ip}"
+}
+HOST_IP="$(_host_ip)"
+
+# The URL to SHOW the operator: APP_URL with a localhost/127.0.0.1 host swapped for
+# the detected IP so it is reachable from another machine. Health probes still hit
+# localhost (this host), so this only affects what is printed.
+_display_url() {
+  local u="${APP_URL}"
+  case "${u}" in
+    *localhost*) u="${u/localhost/${HOST_IP}}" ;;
+    *127.0.0.1*) u="${u/127.0.0.1/${HOST_IP}}" ;;
+  esac
+  printf '%s' "${u}"
+}
+
+APP_URL="${APP_URL:-http://${HOST_IP}:8000}"
 # The compose file publishes the front door on ${APP_PORT:-8000}. Derive APP_PORT
 # from APP_URL (unless explicitly set) and EXPORT it so the published port, the
 # heartbeat target, and the persisted .env all agree. An explicit :port in APP_URL
@@ -346,6 +370,58 @@ if [[ -z "${APP_PORT:-}" ]]; then
 fi
 [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
 export APP_PORT
+
+# Persist the settings + secrets to .env (0600) so every later run/update reuses the
+# SAME values (esp. the DB password Postgres baked into its volume at first init).
+# Single writer so first-install and reconfigure stay in lock-step.
+write_env() {
+  ( umask 077; cat >"${ENV_FILE}" <<EOF
+POSTGRES_USER=${POSTGRES_USER}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=${POSTGRES_DB}
+APPLICANT_INTERNAL_TOKEN=${APPLICANT_INTERNAL_TOKEN}
+SEARXNG_SECRET=${SEARXNG_SECRET}
+APP_URL=${APP_URL}
+APP_PORT=${APP_PORT}
+APPLICANT_REPO_DIR=${REPO_ROOT}
+EOF
+  )
+}
+
+# When a prior install is detected AND we're interactive, offer to change the safe,
+# published settings (URL / port) before rebuilding. Secrets are deliberately left
+# alone — changing POSTGRES_* against an already-initialized volume breaks auth. On
+# a non-TTY run (cloud-init) or a fresh box this is a silent no-op, so the zero-prompt
+# install path is unchanged (NFR-ZEROCLI-1).
+maybe_reconfigure() {
+  [[ "${APPLY}" -eq 1 ]] || return 0
+  [[ "${UI_RICH}" -eq 1 ]] || return 0     # need a TTY to prompt
+  local detected=0
+  [[ -f "${ENV_FILE}" ]] && detected=1
+  if [[ "${detected}" -eq 0 ]] && command -v docker >/dev/null 2>&1; then
+    docker volume ls --quiet 2>/dev/null | grep -qE '(^|_)pgdata$' && detected=1
+  fi
+  [[ "${detected}" -eq 1 ]] || return 0
+
+  _rule
+  ui_warn "Existing Applicant installation detected."
+  printf '    %-10s %s\n' "APP_URL"  "$(_display_url)"
+  printf '    %-10s %s\n' "APP_PORT" "${APP_PORT}"
+  local ans="" new=""
+  printf '  %sReconfigure these settings before continuing? [y/N]:%s ' "${CB}" "${C0}"
+  read -r ans || true
+  if [[ ! "${ans}" =~ ^[Yy] ]]; then ui_step "Keeping the current configuration."; _rule; return 0; fi
+
+  printf '  APP_URL  [%s]: ' "${APP_URL}"; read -r new || true; [[ -n "${new}" ]] && APP_URL="${new}"
+  printf '  APP_PORT [%s]: ' "${APP_PORT}"; read -r new || true
+  if [[ -n "${new}" ]]; then
+    if [[ "${new}" =~ ^[0-9]+$ ]]; then APP_PORT="${new}"; else ui_warn "Invalid port '${new}' — keeping ${APP_PORT}."; fi
+  fi
+  export APP_URL APP_PORT
+  write_env
+  ui_ok "Configuration updated and saved to ${ENV_FILE}."
+  _rule
+}
 
 # ============================================================================
 #  Generic helpers: sudo, retries, run wrappers, docker plumbing
@@ -638,6 +714,7 @@ esac
 #  Install / update / dry-run flow
 # ============================================================================
 ui_banner
+maybe_reconfigure
 show_config
 
 # --- Phase 1: preflight packages + ensure docker ----------------------------
@@ -694,17 +771,7 @@ fi
 # password Postgres baked into its volume at first init.
 if [[ "${APPLY}" -eq 1 && ! -f "${ENV_FILE}" ]]; then
   ui_step "Persisting credentials to ${ENV_FILE} (re-used by every update)…"
-  ( umask 077; cat >"${ENV_FILE}" <<EOF
-POSTGRES_USER=${POSTGRES_USER}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-POSTGRES_DB=${POSTGRES_DB}
-APPLICANT_INTERNAL_TOKEN=${APPLICANT_INTERNAL_TOKEN}
-SEARXNG_SECRET=${SEARXNG_SECRET}
-APP_URL=${APP_URL}
-APP_PORT=${APP_PORT}
-APPLICANT_REPO_DIR=${REPO_ROOT}
-EOF
-  )
+  write_env
   ui_ok "Credentials persisted (0600)."
 fi
 
