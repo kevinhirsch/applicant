@@ -448,6 +448,12 @@ const DEFAULT_GLASS_TIER = 'frosted';
 export function applyGlassTier(tier) {
   const t = GLASS_TIERS.includes(tier) ? tier : DEFAULT_GLASS_TIER;
   document.body.classList.toggle('house-theme', t !== 'off');
+  // Match the upstream wiring: frosted AND full both set `theme-frosted` (the
+  // class the light-glass treatment — light frosted chrome + dark ink — is scoped
+  // to); `glass-full` additionally layers the SVG refraction. Without theme-frosted
+  // the chrome stayed dark; this is what makes the frosted default read as the
+  // light Apple glass over the content, not a dark panel.
+  document.body.classList.toggle('theme-frosted', t === 'frosted' || t === 'full');
   document.body.classList.toggle('glass-full', t === 'full');
 }
 
