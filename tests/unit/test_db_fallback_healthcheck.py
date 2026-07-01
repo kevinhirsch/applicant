@@ -49,13 +49,19 @@ def test_build_storage_marks_unreachable_db_as_fallback(caplog):
     # is weakened — the warning + credential-redaction checks below are unchanged.
     storage_logger = logging.getLogger("applicant.storage")
     prev_level = storage_logger.level
+    prev_disable = logging.root.manager.disable
     storage_logger.addHandler(caplog.handler)
     storage_logger.setLevel(logging.WARNING)
+    # A prior full-suite test can leave a process-global ``logging.disable(...)`` set,
+    # which suppresses records BEFORE any handler (even ours) runs. Clear it for the
+    # duration so the emitted warning is not dropped, then restore it.
+    logging.disable(logging.NOTSET)
     try:
         engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
     finally:
         storage_logger.removeHandler(caplog.handler)
         storage_logger.setLevel(prev_level)
+        logging.disable(prev_disable)
 
     assert engine is None
     assert isinstance(storage, InMemoryStorage)
