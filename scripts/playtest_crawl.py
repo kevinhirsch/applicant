@@ -58,6 +58,8 @@ SURFACES = [
      None, "Put two+ applications/postings side-by-side to see where they differ"),
     ("gallery", "window.applicantGalleryModule && window.applicantGalleryModule.openApplicantGallery && window.applicantGalleryModule.openApplicantGallery()",
      None, "Applicant gallery surface"),
+    ("results", "window.openApplicantResults && window.openApplicantResults()",
+     "#applicant-results-modal", "Non-admin Results: outcome funnel, per-source conversion, learned 'what converts for you' signature"),
     ("onboarding", "window.launchApplicantSetup && window.launchApplicantSetup()",
      "#applicant-onboarding-overlay", "OOBE wizard: Connect a model -> Your profile"),
     ("settings", "CLICK:#user-bar-settings", "#settings-modal", "Settings: AI, sandbox, tools, services, notifications, fonts, account, etc."),
@@ -160,7 +162,21 @@ async def crawl_surface(context, name, opener, root_sel, purpose, viewport_tag="
                 sel = opener.split("CLICK:", 1)[1]
                 el = await page.query_selector(sel)
                 if el:
-                    await el.click()
+                    # Resilient opener click: a not-yet-visible/off-screen control
+                    # must not hang the default 30s or FATAL the whole surface — try
+                    # to scroll it in, then click with a short timeout, then force,
+                    # and record a note on failure so the surface still screenshots.
+                    try:
+                        await el.scroll_into_view_if_needed(timeout=2000)
+                    except Exception:
+                        pass
+                    try:
+                        await el.click(timeout=4000)
+                    except Exception:
+                        try:
+                            await el.click(timeout=2000, force=True)
+                        except Exception as e:
+                            rec["notes"].append(f"opener click failed: {str(e).splitlines()[0][:120]}")
                 else:
                     rec["notes"].append(f"opener selector {sel} not found")
             else:
