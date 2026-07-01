@@ -17,7 +17,6 @@ Feature: Chat stream JSON parsing tolerates malformed chunks
     When the chunk parse failure handling is inspected
     Then the parse failure is logged instead of crashing the handler
 
-  @pending
   Scenario: No fetch in the chat module silently discards its error
     Given the chat browser module
     When the module is scanned for empty catch handlers

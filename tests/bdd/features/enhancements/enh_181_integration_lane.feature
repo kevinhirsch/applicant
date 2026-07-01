@@ -16,7 +16,6 @@ Feature: The real-adapter integration tests actually run in a CI lane
     When its dependency preflight is inspected
     Then a missing renderer or browser binary aborts the lane instead of silently skipping
 
-  @pending
   Scenario: Each skipped real-adapter boundary is recorded as an un-exercised gap
     Given the integration coverage ledger
     When the suite skips a real-adapter test for a missing dependency

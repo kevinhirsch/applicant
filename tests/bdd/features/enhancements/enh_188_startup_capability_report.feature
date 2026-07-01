@@ -15,7 +15,6 @@ Feature: The engine reports which capabilities are real versus stubbed at startu
     When the readiness probe evaluates the database check
     Then a degraded result is reported instead of a false green
 
-  @pending
   Scenario: A startup report names each external binary and whether it is real or stubbed
     Given the engine's capability self-report
     When the report is generated at boot

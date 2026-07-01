@@ -383,9 +383,12 @@ class SetupService:
     def get_quiet_hours(self) -> dict[str, Any]:
         """Return the persisted quiet-hours window for the UI (no secrets).
 
-        Shape: ``{"enabled": bool, "start": "HH:MM", "end": "HH:MM", "tz": str}``.
-        ``enabled=False`` is 24/7 mode (always notify). Defaults are a sensible
-        overnight window so enabling it once is one click.
+        Shape: ``{"enabled": bool, "start": "HH:MM", "end": "HH:MM", "tz": str,
+        "channels": {"discord": bool, "email": bool}}``. ``enabled=False`` is 24/7
+        mode (always notify). Defaults are a sensible overnight window so enabling it
+        once is one click. ``channels`` is the per-channel preference (FR-NOTIF-5):
+        ``True`` = the channel respects quiet hours; ``False`` = it still delivers
+        overnight. Both default to True (respect quiet hours).
         """
         chan = self.get_channels()
         return {
@@ -393,6 +396,24 @@ class SetupService:
             "start": chan.get("quiet_hours_start", "22:00"),
             "end": chan.get("quiet_hours_end", "07:00"),
             "tz": chan.get("quiet_hours_tz", ""),
+            "channels": {
+                "discord": bool(chan.get("quiet_hours_discord", True)),
+                "email": bool(chan.get("quiet_hours_email", True)),
+            },
+        }
+
+    def get_quiet_hours_channels(self) -> dict[str, bool]:
+        """The per-channel quiet-hours map keyed by notifier channel value (#302).
+
+        Maps the transport channel names the notifier uses (``"discord"``,
+        ``"email"``) to whether they respect quiet hours. A channel mapped ``False``
+        is exempt (delivers overnight). Returned in the shape the live notifier's
+        ``configure(quiet_hours_channels=...)`` consumes.
+        """
+        chan = self.get_channels()
+        return {
+            "discord": bool(chan.get("quiet_hours_discord", True)),
+            "email": bool(chan.get("quiet_hours_email", True)),
         }
 
     def set_quiet_hours(
@@ -402,6 +423,8 @@ class SetupService:
         start: str = "22:00",
         end: str = "07:00",
         tz: str = "",
+        discord_respects: bool | None = None,
+        email_respects: bool | None = None,
     ) -> None:
         """Persist the quiet-hours window (FR-NOTIF-5).
 
@@ -411,6 +434,10 @@ class SetupService:
         lives in the notifier and is independent of this setting. Times are validated
         to HH:MM; the window is stored alongside the channel config so it travels with
         it. Secrets are not involved.
+
+        ``discord_respects`` / ``email_respects`` (#302) set the per-channel quiet
+        preference: ``False`` exempts that channel so it still delivers overnight.
+        ``None`` leaves the persisted value untouched.
         """
         start = validate_hhmm(start, field="Quiet-hours start")
         end = validate_hhmm(end, field="Quiet-hours end")
@@ -419,6 +446,10 @@ class SetupService:
         rec["quiet_hours_start"] = start or "22:00"
         rec["quiet_hours_end"] = end or "07:00"
         rec["quiet_hours_tz"] = (tz or "").strip()
+        if discord_respects is not None:
+            rec["quiet_hours_discord"] = bool(discord_respects)
+        if email_respects is not None:
+            rec["quiet_hours_email"] = bool(email_respects)
         self._store.set(_CHANNELS_KEY, rec)
         log.info(
             "quiet_hours_configured",
@@ -426,6 +457,8 @@ class SetupService:
             start=rec["quiet_hours_start"],
             end=rec["quiet_hours_end"],
             tz=bool(rec["quiet_hours_tz"]),
+            discord_respects=bool(rec.get("quiet_hours_discord", True)),
+            email_respects=bool(rec.get("quiet_hours_email", True)),
         )
 
     # --- sandbox connection (native Proxmox Windows VM, FR-OOBE, FR-VAULT-3) --

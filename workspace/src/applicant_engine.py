@@ -514,6 +514,10 @@ class ApplicantEngineClient:
             "POST", f"/api/notifications/{notification_id}/seen"
         )
 
+    async def deliver_notifications_now(self) -> Any:
+        """Force-flush notifications held back by quiet hours (#302)."""
+        return await self._request("POST", "/api/notifications/deliver-now")
+
     # -- digest / notifications (Lane D) ---------------------------------
 
     async def digest(self, campaign_id: str) -> Any:

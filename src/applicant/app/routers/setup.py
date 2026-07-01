@@ -70,6 +70,10 @@ class QuietHoursIn(BaseModel):
     start: str = "22:00"
     end: str = "07:00"
     tz: str = ""
+    #: Per-channel quiet preference (#302): ``True`` = the channel respects quiet
+    #: hours; ``False`` = it still delivers overnight. ``None`` leaves the saved value.
+    discord_respects_quiet: bool | None = None
+    email_respects_quiet: bool | None = None
 
 
 class SandboxConnectionIn(BaseModel):
@@ -272,7 +276,12 @@ def configure_quiet_hours(body: QuietHoursIn, container=Depends(get_container)) 
     """
     try:
         container.setup_service.set_quiet_hours(
-            enabled=body.enabled, start=body.start, end=body.end, tz=body.tz
+            enabled=body.enabled,
+            start=body.start,
+            end=body.end,
+            tz=body.tz,
+            discord_respects=body.discord_respects_quiet,
+            email_respects=body.email_respects_quiet,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -281,6 +290,9 @@ def configure_quiet_hours(body: QuietHoursIn, container=Depends(get_container)) 
         container.notification.configure(
             quiet_hours=(qh["start"], qh["end"]) if qh["enabled"] else None,
             quiet_tz=qh["tz"],
+            # #302: push the per-channel quiet preference to the live notifier so
+            # "hold Discord overnight, let email through" takes effect with no restart.
+            quiet_hours_channels=container.setup_service.get_quiet_hours_channels(),
             always_on=not qh["enabled"],
         )
 

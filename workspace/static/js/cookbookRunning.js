@@ -156,7 +156,7 @@ async function _removeEndpointByUrl(baseUrl) {
       await fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' });
       _refreshModelsAfterEndpointChange();
     }
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 }
 
 function _refreshModelsAfterEndpointChange() {
@@ -379,7 +379,7 @@ function _refreshDepsAfterInstall(task) {
   if (!task || task.type !== 'download' || !task.payload?._dep) return;
   try {
     _refreshDependencies?.({ host: task.remoteHost || '', port: task.sshPort || '', venv: task.payload?.env_path || '' });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 }
 
 export function _removeTask(sessionId) {
@@ -400,6 +400,23 @@ function _animateOutThenRemove(el, sessionId) {
   setTimeout(() => _removeTask(sessionId), 360);
 }
 
+// ── Shell-safety helpers ──
+
+// POSIX single-quote escaping: wrap the value in single quotes and escape any
+// embedded single quote as '\'' so a user-controlled task field (remote host,
+// session id) cannot break out of its quoting and inject extra shell tokens.
+export function shellQuote(value) {
+  const s = value == null ? '' : String(value);
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Session ids flow into tmux target/window names and powershell file paths.
+// Restrict them to a safe character class so they can never carry shell or
+// powershell metacharacters into the remote command line.
+function _safeSessionId(sessionId) {
+  return String(sessionId == null ? '' : sessionId).replace(/[^A-Za-z0-9._-]/g, '');
+}
+
 // ── tmux / Windows session commands ──
 
 export function _tmuxCmd(task, tmuxArgs) {
@@ -407,16 +424,18 @@ export function _tmuxCmd(task, tmuxArgs) {
     return _winSessionCmd(task, tmuxArgs);
   }
   if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux ${tmuxArgs}' 2>/dev/null`;
+    return `ssh ${_sshPrefix(_getPort(task))}${shellQuote(task.remoteHost)} 'tmux ${tmuxArgs}' 2>/dev/null`;
   }
   return `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
 function _winSessionCmd(task, tmuxArgs) {
   const sd = '$env:TEMP\\applicant-sessions';
-  const sid = task.sessionId;
+  const sid = _safeSessionId(task.sessionId);
   const pf = _sshPrefix(_getPort(task));
-  const host = task.remoteHost;
+  // Shell-quote the user-controlled remote host before it is embedded in the
+  // `ssh ${pf}${host} ...` command so it cannot inject extra shell tokens.
+  const host = shellQuote(task.remoteHost);
   if (tmuxArgs.includes('capture-pane')) {
     const lines = tmuxArgs.match(/-S\s*-?(\d+)/)?.[1] || '200';
     const ps = `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`;
@@ -440,15 +459,19 @@ function _winSessionCmd(task, tmuxArgs) {
 function _tmuxGracefulKill(task) {
   if (_isWindows(task)) {
     const sd = '$env:TEMP\\applicant-sessions';
-    const sid = task.sessionId;
+    const sid = _safeSessionId(task.sessionId);
     const pf = _sshPrefix(_getPort(task));
     const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${task.remoteHost} "powershell -Command \\"${ps}\\""`;
+    return `ssh ${pf}${shellQuote(task.remoteHost)} "powershell -Command \\"${ps}\\""`;
   }
   if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
+    const _sid = _safeSessionId(task.sessionId);
+    return `ssh ${_sshPrefix(_getPort(task))}${shellQuote(task.remoteHost)} 'tmux send-keys -t ${_sid} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${_sid} 2>/dev/null'`;
   }
-  return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
+  {
+    const _sid = _safeSessionId(task.sessionId);
+    return `tmux send-keys -t ${_sid} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${_sid} 2>/dev/null`;
+  }
 }
 
 // ── Wave animation ──
@@ -613,13 +636,13 @@ function _syncToServer() {
         env: _envState,
         serveState: null,
       };
-      try { state.serveState = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)); } catch {}
+      try { state.serveState = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)); } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
       await fetch('/api/cookbook/state', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(_stripStateSecrets(state)),
       });
-    } catch {}
+    } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
   }, 400);
 }
 
@@ -708,7 +731,7 @@ async function _retryTask(el, task) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
     });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
   _removeTask(task.sessionId);
   if (task.payload) {
     if (task.type === 'serve' && task.payload._cmd) {
@@ -780,7 +803,7 @@ export async function _serveAutoFix(panel, envVar) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: killCmd }),
     });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -845,7 +868,7 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
     });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -882,7 +905,7 @@ export async function _serveAutoRetryRemove(panel, flag) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
     });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -915,7 +938,7 @@ export async function _serveAutoRetry(panel, flag) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
     });
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 
   _animateOutThenRemove(taskEl, taskId);
 
@@ -1030,12 +1053,12 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ command: _tmuxGracefulKill(_t) }),
             });
-          } catch {}
+          } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
           _removeTask(_t.sessionId);
         }
       }
     }
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
   // Capture the env + GPU pin used for THIS launch BEFORE building the request.
   // The serve panel sets _envState.env/envPath/gpus, calls us, then restores them
   // synchronously — and our payload is built after an `await`, so reading
@@ -1111,7 +1134,7 @@ export function _renderRunningTab() {
   try {
     const _activeTasks = _loadTasks().filter(t => t.status === 'running' || t.status === 'queued' || t.status === 'error');
     if (!_activeTasks.length) _clearCookbookNotif();
-  } catch {}
+  } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
 
   const body = document.querySelector('#cookbook-modal .cookbook-body');
   if (!body) return;
@@ -1525,7 +1548,7 @@ export function _renderRunningTab() {
         _lpTimer = setTimeout(() => {
           if (_lpCanceled) return;
           _lpCanceled = true;  // suppress the subsequent click-through
-          try { menuBtn.click(); } catch {}
+          try { menuBtn.click(); } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
         }, 500);
       };
       const _lpCancel = () => {
@@ -1592,7 +1615,7 @@ export function _renderRunningTab() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
               });
-            } catch {}
+            } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
             _removeTask(task.sessionId);
             // Relaunch on the task's OWN host, not the current global selection.
             _launchServeTask(task.name, task.payload.repo_id, newCmd, task.payload._fields, task.remoteHost || '');
@@ -1649,7 +1672,8 @@ export function _renderRunningTab() {
         }
         if (_isWindows(task)) {
           const sd = '$env:TEMP\\applicant-sessions';
-          const logCmd = `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`;
+          const _sid = _safeSessionId(task.sessionId);
+          const logCmd = `ssh ${_sshPrefix(_getPort(task))}${shellQuote(task.remoteHost)} "powershell -Command \\"Get-Content '${sd}\\${_sid}.log' -Wait\\""`;
           items.push({ label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
             _copyText(logCmd);
           }});
@@ -1790,7 +1814,7 @@ export function _renderRunningTab() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
         });
-      } catch {}
+      } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
       // ...then smoothly fade/slide the card out and auto-remove it — no manual
       // ⋮ → Remove needed.
       _animateOutThenRemove(el, task.sessionId);
@@ -2020,7 +2044,7 @@ async function _reconnectTask(el, task) {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
                 });
-              } catch {}
+              } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
               try {
                 // Reuse original payload so the full repo_id (e.g. "Qwen/Qwen3.5-...")
                 // is preserved — rebuilding from task.repo/task.name drops the org prefix.
@@ -2048,7 +2072,7 @@ async function _reconnectTask(el, task) {
                   badge.className = 'cookbook-task-status cookbook-task-running';
                   continue;
                 }
-              } catch {}
+              } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
               badge.textContent = 'stale — restart failed';
               badge.className = 'cookbook-task-status cookbook-task-error';
               _showCookbookNotif(true);
@@ -2112,7 +2136,7 @@ async function _reconnectTask(el, task) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
                   });
-                } catch {}
+                } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
                 _removeTask(task.sessionId);
                 setTimeout(() => { _retryDownload(_nm, _p); }, 8000);
                 break;
@@ -2701,7 +2725,7 @@ export function initRunning(shared) {
   (async () => {
     try {
       await _syncFromServer();
-    } catch {}
+    } catch (e) { console.debug('cookbook: non-fatal step failed', e); }
     _startBackgroundMonitor();
   })();
 }

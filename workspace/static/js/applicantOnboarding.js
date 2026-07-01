@@ -42,6 +42,7 @@ import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 
 const SETUP = '/api/applicant/setup';
 const OPS = '/api/applicant/ops';  // one-click update (FR-OOBE-4 / FR-INSTALL-2)
+const PORTAL = '/api/applicant/portal';  // notification center + deliver-now (FR-NOTIF-5)
 
 let _overlay = null;
 let _overlayA11yCleanup = null;
@@ -530,12 +531,31 @@ async function _renderChannels() {
             <label class="settings-label">Time zone ${_tip('Optional. An IANA name like America/Phoenix or Europe/London. Leave blank to use UTC.')}</label>
             <input id="ao-qh-tz" class="settings-select" type="text" placeholder="UTC" value="${esc(qh.tz || '')}" />
           </div>
+          <div class="settings-row">
+            <label class="settings-label">During quiet hours ${_tip('Choose per channel. Set one to "anytime" to keep it delivering overnight — e.g. hold Discord but still let email through.')}</label>
+            <select id="ao-qh-discord" class="settings-select">
+              <option value="hold"${(qh.channels && qh.channels.discord === false) ? '' : ' selected'}>Hold Discord overnight</option>
+              <option value="send"${(qh.channels && qh.channels.discord === false) ? ' selected' : ''}>Send Discord anytime</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <label class="settings-label">&nbsp;</label>
+            <select id="ao-qh-email" class="settings-select">
+              <option value="hold"${(qh.channels && qh.channels.email === false) ? '' : ' selected'}>Hold email overnight</option>
+              <option value="send"${(qh.channels && qh.channels.email === false) ? ' selected' : ''}>Send email anytime</option>
+            </select>
+          </div>
         </div>
       </div>
       <div id="ao-qh-msg" style="margin-top:6px;"></div>
       <div class="settings-row" style="margin-top:8px;">
         <span id="ao-qh-save-msg" style="font-size:11px;"></span>
         <button class="admin-btn-add" id="ao-qh-save" style="margin-left:auto;">Save quiet hours</button>
+      </div>
+      <div class="admin-toggle-sub" style="margin-top:10px;margin-bottom:6px;">Want what is being held right now? Release every notification quiet hours is holding back, immediately.</div>
+      <div class="settings-row">
+        <span id="ao-qh-deliver-msg" style="font-size:11px;"></span>
+        <button class="cal-btn" id="ao-qh-deliver" style="margin-left:auto;">Deliver now</button>
       </div>
     </div>
     <div class="admin-card">
@@ -618,11 +638,16 @@ async function _renderChannels() {
   const qhSaveMsg = document.getElementById('ao-qh-save-msg');
   if (qhSave) qhSave.onclick = async () => {
     const enabled = qhMode.value === 'quiet';
+    const discordSel = document.getElementById('ao-qh-discord');
+    const emailSel = document.getElementById('ao-qh-email');
     const body = {
       enabled,
       start: (document.getElementById('ao-qh-start').value || '22:00'),
       end: (document.getElementById('ao-qh-end').value || '07:00'),
       tz: (document.getElementById('ao-qh-tz').value || '').trim(),
+      // #302 per-channel quiet: "hold" = respects quiet hours, "send" = anytime.
+      discord_respects_quiet: discordSel ? discordSel.value === 'hold' : true,
+      email_respects_quiet: emailSel ? emailSel.value === 'hold' : true,
     };
     qhSave.disabled = true;
     qhSaveMsg.textContent = 'Saving…'; qhSaveMsg.className = '';
@@ -634,6 +659,28 @@ async function _renderChannels() {
       qhSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); qhSaveMsg.className = 'admin-error';
     } finally {
       qhSave.disabled = false;
+    }
+  };
+
+  // Deliver now (FR-NOTIF-5): force-release every notification quiet hours is
+  // currently holding back. Same save-then-status button shape as the Test card.
+  const qhDeliver = document.getElementById('ao-qh-deliver');
+  const qhDeliverMsg = document.getElementById('ao-qh-deliver-msg');
+  if (qhDeliver) qhDeliver.onclick = async () => {
+    qhDeliver.disabled = true;
+    qhDeliverMsg.textContent = 'Releasing…'; qhDeliverMsg.className = '';
+    try {
+      const res = await _post(`${PORTAL}/notifications/deliver-now`, {});
+      const n = (res && typeof res.count === 'number') ? res.count : 0;
+      qhDeliverMsg.textContent = n > 0
+        ? `Released ${n} held notification${n === 1 ? '' : 's'}.`
+        : 'Nothing was being held.';
+      qhDeliverMsg.className = 'admin-success';
+      _toast(qhDeliverMsg.textContent);
+    } catch (e) {
+      qhDeliverMsg.textContent = 'Failed: ' + (e.message || 'Could not deliver.'); qhDeliverMsg.className = 'admin-error';
+    } finally {
+      qhDeliver.disabled = false;
     }
   };
 

@@ -288,13 +288,17 @@ export function markInboxAsSeen() {
         const emails = data.emails || [];
         if (emails.length > 0) {
           const maxUid = Math.max(...emails.map(e => parseInt(e.uid, 10) || 0));
-          localStorage.setItem('applicant-email-last-seen-uid', String(maxUid));
+          try {
+            localStorage.setItem('applicant-email-last-seen-uid', String(maxUid));
+          } catch (e) {
+            console.warn('Failed to persist last-seen email UID:', e);
+          }
         }
         const dot = document.getElementById('email-unread-dot');
         if (dot) dot.style.display = 'none';
       })
       .catch(e => console.error('Failed to mark inbox as seen:', e));
-  } catch (e) {}
+  } catch (e) { console.error('Failed to mark inbox as seen:', e); }
 }
 
 export async function loadEmails(append = false) {

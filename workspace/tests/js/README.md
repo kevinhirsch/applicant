@@ -38,6 +38,22 @@ node workspace/tests/js/runner.js
 Expected last line: `45 passed, 0 failed` (exit code 0; non-zero on any failure).
 No npm install, no dependencies — just Node with ES-module support.
 
+### Via the configured test runner (`npm test`)
+
+The suite is also wired into Node's built-in test runner (`node:test`, declared as
+the runner in `workspace/package.json`). `front_door.test.js` is a thin `node:test`
+wrapper that imports and runs the same `runner.js` assertions, so the suite is
+discoverable by `node --test` and therefore by `npm test`:
+
+```bash
+cd workspace && npm test          # -> node --test tests/js/*.test.js
+```
+
+`node:test` is built into Node (no package download), so this still needs no
+`npm install` — `runner.js` remains the single source of truth that also runs in
+the browser. CI invokes `npm test` for the front-door alongside the existing
+`node --check` syntax gate.
+
 Syntax-check every harness file (mirrors the existing front-door `node --check`
 gate):
 

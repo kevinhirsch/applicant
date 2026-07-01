@@ -19,7 +19,6 @@ Feature: A runnable end-to-end harness drives the whole pipeline to the stop-bou
     When the engine attempts to fill an ordinary field
     Then the field-fill step is allowed
 
-  @pending
   Scenario: A seeded campaign runs end-to-end and stops at the human-review gate
     Given a seeded campaign and an assembled end-to-end pipeline harness
     When the harness runs discovery through pre-fill with faked external boundaries

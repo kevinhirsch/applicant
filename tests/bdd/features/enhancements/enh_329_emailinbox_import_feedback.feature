@@ -16,7 +16,6 @@ Feature: Email inbox surfaces dynamic UI-module load failures
     When the lazy ui.js imports are scanned
     Then none of them end in an empty catch handler
 
-  @pending
   Scenario: Persisting the last-seen UID is guarded against storage errors
     Given the email inbox browser module
     When the last-seen UID write is inspected

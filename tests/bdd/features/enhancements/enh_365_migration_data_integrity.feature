@@ -13,7 +13,6 @@ Feature: Forward migration on a populated database preserves data and matches th
     When each revision id length is checked
     Then no revision id exceeds the alembic_version column width
 
-  @pending
   Scenario: Upgrading a populated prior-revision database keeps data intact and schema in sync
     Given a database stamped at a prior revision and seeded with representative rows
     When the database is upgraded to head

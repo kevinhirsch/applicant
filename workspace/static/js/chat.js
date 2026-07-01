@@ -62,10 +62,10 @@ import createResearchSynapse from './researchSynapse.js';
     if (_researchSynapse) {
       // Mark complete first so the user briefly sees the "done" state,
       // then tear it down on next tick.
-      try { _researchSynapse.complete(); } catch {}
+      try { _researchSynapse.complete(); } catch (e) { console.debug('research synapse complete failed', e); }
       const s = _researchSynapse;
       _researchSynapse = null;
-      setTimeout(() => { try { s.destroy(); } catch {} }, 800);
+      setTimeout(() => { try { s.destroy(); } catch (e) { console.debug('research synapse destroy failed', e); } }, 800);
     }
     _researchStartTime = 0;
     _researchAvgDuration = null;
@@ -440,7 +440,7 @@ import createResearchSynapse from './researchSynapse.js';
           const dcRes = await fetch('/api/default-chat');
           dc = await dcRes.json();
           if (dc && dc.endpoint_url && dc.model) {
-            try { window.__applicantDefaultChat = dc; } catch (_) {}
+            try { window.__applicantDefaultChat = dc; } catch (e) { console.debug('cache default chat config failed', e); }
           }
         } catch (_) {
           dc = (typeof window !== 'undefined' && window.__applicantDefaultChat) || null;
@@ -521,7 +521,7 @@ import createResearchSynapse from './researchSynapse.js';
         processingProbeTimer = null;
       }
       if (processingProbeAbort) {
-        try { processingProbeAbort.abort(); } catch (_) {}
+        try { processingProbeAbort.abort(); } catch (e) { console.debug('processing probe abort failed', e); }
         processingProbeAbort = null;
       }
     };
@@ -588,7 +588,7 @@ import createResearchSynapse from './researchSynapse.js';
         try {
           messageInput.setAttribute('readonly', 'readonly');
           messageInput.blur();
-          const _dropReadonly = () => { try { messageInput.removeAttribute('readonly'); } catch {} };
+          const _dropReadonly = () => { try { messageInput.removeAttribute('readonly'); } catch (e) { console.debug('drop readonly failed', e); } };
           setTimeout(() => {
             // If the blur stuck, the input is no longer the active element —
             // safe to drop readonly now so the next message can be typed.
@@ -605,7 +605,7 @@ import createResearchSynapse from './researchSynapse.js';
               _dropReadonly();
             }
           }, 120);
-        } catch {}
+        } catch (e) { console.debug('readonly input setup failed', e); }
       }
 
       let ids = [];
@@ -928,7 +928,7 @@ import createResearchSynapse from './researchSynapse.js';
           const m = errBody.match(/"message"\s*:\s*"([^"]+)"/);
           if (m) errText = m[1].replace(/\\"/g, '"');
           else if (errBody.length < 200) errText = errBody;
-        } catch {}
+        } catch (e) { console.debug('parse error body failed', e); }
         // Auto-switch to chat mode for tool-related errors
         if (errText.includes('tool') || errText.includes('auto')) {
           errText = 'This model doesn\'t support agent tools — switched to Chat mode. Try again.';
@@ -2170,7 +2170,7 @@ import createResearchSynapse from './researchSynapse.js';
                 _removeThinkingSpinner();
                 // Finalize any in-flight bubble so the takeover banner
                 // separates student attempt from teacher attempt.
-                if (spinner && spinner.element) { try { spinner.destroy(); } catch(_){} spinner = null; }
+                if (spinner && spinner.element) { try { spinner.destroy(); } catch (e) { console.debug('spinner destroy failed', e); } spinner = null; }
                 const chatBox = document.getElementById('chat-history');
                 const banner = document.createElement('div');
                 banner.className = 'teacher-takeover-banner';
@@ -2290,7 +2290,7 @@ import createResearchSynapse from './researchSynapse.js';
             _stall.appendChild(_cont);
             (holder.querySelector('.body') || holder).appendChild(_stall);
           }
-        } catch (_) {}
+        } catch (e) { console.debug('render stall indicator failed', e); }
 
         // Clear streaming minHeight lock
         const _streamContent = roundHolder.querySelector('.stream-content');
@@ -2744,7 +2744,7 @@ import createResearchSynapse from './researchSynapse.js';
               _box.appendChild(_timeoutMsg);
               uiModule.scrollHistory();
             }
-          } catch(_te) {}
+          } catch (e) { console.debug('takeover banner timer failed', e); }
         }, 5 * 60 * 1000);
         // Cancel timeout if user sends a message
         var _origSubmit = window._researchTimeoutTimer;
@@ -2787,7 +2787,7 @@ import createResearchSynapse from './researchSynapse.js';
         if (_sid) {
           fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(e => console.error('Failed to stop chat:', e));
         }
-      } catch (_) {}
+      } catch (e) { console.debug('resolve session for stop failed', e); }
     }
   }
 
@@ -2816,7 +2816,7 @@ import createResearchSynapse from './researchSynapse.js';
       try {
         holder.querySelector('.body').innerHTML =
           markdownModule.processWithThinking(markdownModule.squashOutsideCode(accumulated));
-      } catch (_) {}
+      } catch (e) { console.debug('render accumulated markdown failed', e); }
     }
     _pendingContinue = holder || null;   // merge the continuation into the same bubble
     _hideUserBubble = true;              // no user bubble for the handshake
@@ -2922,7 +2922,7 @@ import createResearchSynapse from './researchSynapse.js';
     const sid = sessionModule.getCurrentSessionId();
     if (sid) {
       let modelName = '';
-      try { modelName = sessionModule.getCurrentModel?.() || ''; } catch {}
+      try { modelName = sessionModule.getCurrentModel?.() || ''; } catch (e) { console.debug('read current model failed', e); }
       // Fallback: pull from the holder's existing meta (the streaming
       // placeholder usually has the model set in the header already).
       if (!modelName) {
@@ -3551,7 +3551,7 @@ import createResearchSynapse from './researchSynapse.js';
     const oldRaw = aiMsgElement.dataset.raw || aiMsgElement.querySelector('.body')?.textContent || '';
     const oldHtml = aiMsgElement.querySelector('.body')?.innerHTML || '';
     let variants = [];
-    try { variants = JSON.parse(aiMsgElement.dataset.variants || '[]'); } catch(_) {}
+    try { variants = JSON.parse(aiMsgElement.dataset.variants || '[]'); } catch (e) { console.debug('parse variants dataset failed', e); }
     if (variants.length === 0) {
       // First regen — save the original as variant 0
       variants.push({ raw: oldRaw, html: oldHtml, label: 'original' });
@@ -4204,7 +4204,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Save current response as a variant
     let variants = [];
-    try { variants = JSON.parse(aiMsgElement.dataset.variants || '[]'); } catch(_) {}
+    try { variants = JSON.parse(aiMsgElement.dataset.variants || '[]'); } catch (e) { console.debug('parse variants dataset failed', e); }
     if (variants.length === 0) {
       variants.push({ raw: oldRaw, html: oldHtml, label: 'original' });
     }
@@ -4226,7 +4226,7 @@ import createResearchSynapse from './researchSynapse.js';
     }
     // Stop + detach the spinner (called once real content starts rendering, and
     // on the failure path so it never spins forever).
-    const _killRwSpin = () => { if (_rwSpin) { try { _rwSpin.destroy(); } catch (_) {} _rwSpin = null; } };
+    const _killRwSpin = () => { if (_rwSpin) { try { _rwSpin.destroy(); } catch (e) { console.debug('rewrite spinner destroy failed', e); } _rwSpin = null; } };
 
     try {
       const res = await fetch(`${API_BASE}/api/rewrite`, {
@@ -4326,7 +4326,7 @@ import createResearchSynapse from './researchSynapse.js';
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ metadata: { variants: variants, variantIndex: variants.length - 1 } }),
           });
-        } catch (_) {}
+        } catch (e) { console.debug('persist variant metadata failed', e); }
 
         // Re-render variant navigation
         _renderVariantNav(aiMsgElement, variants, variants.length - 1);
@@ -4405,7 +4405,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Need a session to attach the doc to (bare-session fallback, same as compose).
     let sid = '';
-    try { sid = sessionModule.getCurrentSessionId() || ''; } catch (_) {}
+    try { sid = sessionModule.getCurrentSessionId() || ''; } catch (e) { console.debug('read current session id failed', e); }
     if (!sid) {
       try {
         const _fd = new FormData();
@@ -4413,7 +4413,7 @@ import createResearchSynapse from './researchSynapse.js';
         _fd.append('skip_validation', 'true');
         const r = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
         if (r.ok) { const d = await r.json(); if (d && d.id) { sid = d.id; if (sessionModule.loadSessions) await sessionModule.loadSessions(); } }
-      } catch (_) {}
+      } catch (e) { console.debug('create bare session for attachment failed', e); }
     }
 
     try {

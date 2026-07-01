@@ -23,7 +23,6 @@ Feature: Quiet hours silence non-critical notifications instead of firing 24/7
     When a normal approval is queued and the ladder is advanced past the email timeout
     Then Discord and email both fired even though a quiet window was configured
 
-  @pending
   Scenario: A critical action overrides quiet hours without being a generic error
     Given a notifier configured with a quiet-hours window covering the current time
     When a critical action is queued that must reach the user during quiet hours

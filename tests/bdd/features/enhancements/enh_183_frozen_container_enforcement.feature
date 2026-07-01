@@ -10,7 +10,6 @@ Feature: The frozen port and container contract is enforced, not just commented
     When their freeze markers are inspected
     Then each declares that its definitions are frozen for downstream agents
 
-  @pending
   Scenario: A drift in a frozen port signature is caught by a contract test
     Given a recorded baseline of the driven and driving port signatures
     When a port Protocol method signature drifts from that baseline
