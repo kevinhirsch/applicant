@@ -163,8 +163,14 @@ COPY scripts ./scripts
 # camoufox fetch, uv sync into /app/.venv), so create the user LAST and hand it the
 # whole app tree — incl. the venv, the camoufox binary, and the XDG cache/data dirs
 # pinned under /app above, which the renderer/browser write to at runtime.
-RUN groupadd --system --gid 10001 applicant \
-    && useradd --system --uid 10001 --gid applicant --home-dir /app --shell /usr/sbin/nologin applicant \
+# NOTE: no --system here. --system is for accounts in the low system-UID range
+# (<= SYS_UID_MAX, default 999); pairing it with our deliberately high fixed UID
+# 10001 makes useradd/groupadd warn ("uid 10001 is greater than SYS_UID_MAX 999").
+# We want a stable, well-known UID (predictable volume ownership on the host), not a
+# system-range one, so drop --system. The account is still non-login: no password,
+# a nologin shell, and no home is created (Debian's CREATE_HOME defaults to no).
+RUN groupadd --gid 10001 applicant \
+    && useradd --uid 10001 --gid applicant --no-create-home --home-dir /app --shell /usr/sbin/nologin applicant \
     && mkdir -p /app/.cache /app/.local/share /app/.config \
     && chown -R applicant:applicant /app
 USER applicant
