@@ -15,7 +15,9 @@
 
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import {
+  esc, _toast, _fetchJSON, _post, errText, loadingHTML, gatedHTML,
+} from './applicantCore.js';
 // Chat Hint kit (FR-UIKIT-2): the ONE above-composer guidance affordance. The
 // assistant's "ask me what needs your attention" guardrail tip is routed through
 // the kit instead of being hand-rolled, so it shares the kit's chrome/anchor and
@@ -76,7 +78,7 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Job Assistant
         </h4>
-        <button class="close-btn" id="applicant-chat-close" title="Close">✖</button>
+        <button class="close-btn" id="applicant-chat-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div class="modal-body" id="applicant-chat-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
@@ -103,16 +105,14 @@ function _close() {
 // ── Empty / offline state ────────────────────────────────────────────────────
 
 function _renderOffline(body) {
-  body.innerHTML = `
-    <div style="padding:28px 18px;text-align:center;opacity:0.75;">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:10px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <div style="font-size:14px;margin-bottom:6px;">The Job Assistant isn't connected yet</div>
-      <div style="font-size:12px;max-width:420px;margin:0 auto;">
-        Connect a model in Settings to activate the assistant. Once a model is
-        connected it can answer questions about your applications and surface
-        anything that needs your input.
-      </div>
-    </div>`;
+  // Not connected yet is a GATE, not an error — route it through the kit's gated
+  // affordance with a clear CTA hint instead of a wall of prose (quick-wins #18).
+  body.innerHTML = gatedHTML(
+    'Connect a model in Settings to activate the Job Assistant. Once a model is '
+      + 'connected it can answer questions about your applications and surface '
+      + 'anything that needs your input.',
+    '<span style="font-size:12px;opacity:0.85;">Open Settings → Connect a model</span>',
+  );
 }
 
 function _renderNoCampaign(body) {
@@ -175,6 +175,7 @@ function _renderConversation() {
     <div id="applicant-suggested-card" style="margin-bottom:10px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:none;"></div>
     <div id="applicant-pending" style="margin-bottom:12px;"></div>
     <div id="applicant-thread" class="chat-history" style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
+    <div id="applicant-starters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
     <div id="applicant-composer" class="chat-input-bar" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
                 style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
@@ -198,7 +199,12 @@ function _renderConversation() {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
   });
+  // Gate the Send button on non-empty input (quick-wins #10): dim + disable until
+  // there's something to send, and keep it in sync as the user types.
+  input.addEventListener('input', _syncSendEnabled);
+  _syncSendEnabled();
 
+  _renderStarters();
   _renderThreadIntro();
   _loadPending();
   input.focus();
@@ -217,6 +223,51 @@ function _renderThreadIntro(seq) {
   _appendMessage('assistant',
     'Hi — I can help with your job search. Ask me what needs your attention, ' +
     "or tell me about your preferences and I'll keep them up to date.");
+}
+
+// Enable/disable the Send button based on whether there's typed content, so an
+// empty composer can't fire an empty send (quick-wins #10).
+function _syncSendEnabled() {
+  if (!_modalEl) return;
+  const input = _modalEl.querySelector('#applicant-input');
+  const sendBtn = _modalEl.querySelector('#applicant-send');
+  if (!input || !sendBtn) return;
+  if (_sending) return; // _send owns the button label/state while a request is live
+  const hasText = Boolean((input.value || '').trim());
+  sendBtn.disabled = !hasText;
+  sendBtn.style.opacity = hasText ? '' : '0.55';
+  sendBtn.style.cursor = hasText ? '' : 'not-allowed';
+}
+
+// Prefill the composer with a starter prompt and focus it, leaving the send under
+// the user's control (we don't auto-send — they can tweak first).
+function _prefillComposer(text) {
+  if (!_modalEl) return;
+  const input = _modalEl.querySelector('#applicant-input');
+  if (!input) return;
+  input.value = text;
+  input.focus();
+  try { input.setSelectionRange(text.length, text.length); } catch { /* no-op */ }
+  _syncSendEnabled();
+}
+
+// A few tappable starter prompts so a blank composer reads as an invitation, not a
+// dead end (delight #10 / quick-wins #18). Tapping one prefills the composer.
+const _STARTER_PROMPTS = [
+  "Tell me what you're looking for",
+  'What have you found so far?',
+  'Change my criteria',
+];
+
+function _renderStarters() {
+  const host = _modalEl && _modalEl.querySelector('#applicant-starters');
+  if (!host) return;
+  host.innerHTML = _STARTER_PROMPTS.map((p) =>
+    `<button type="button" class="cal-btn applicant-starter" style="font-size:12px;">${esc(p)}</button>`
+  ).join('');
+  host.querySelectorAll('.applicant-starter').forEach((btn) => {
+    btn.addEventListener('click', () => _prefillComposer(btn.textContent || ''));
+  });
 }
 
 // Lifted from chatRenderer.addMessage (workspace/static/js/chatRenderer.js,
@@ -343,7 +394,9 @@ async function _send(text) {
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
   if (input) input.value = '';
   _appendMessage('user', message);
-  const thinking = _appendMessage('assistant', '<span style="opacity:0.6;">thinking…</span>', { markdown: false });
+  // A calm "thinking" pill instead of a bare word, so the wait reads as work, not a
+  // hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
+  const thinking = _appendMessage('assistant', loadingHTML('Thinking…'), { markdown: false });
   try {
     const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message });
     const reply = res.message || '(no reply)';
@@ -360,11 +413,22 @@ async function _send(text) {
   } catch (e) {
     if (thinking) {
       const b = thinking.querySelector('.body');
-      if (b) b.innerHTML = `<span style="opacity:0.8;">Couldn't reach the assistant: ${esc(e.message || 'unknown error')}</span>`;
+      if (b) {
+        b.innerHTML = `<span style="opacity:0.8;">${esc(errText(e))}</span> `
+          + '<button type="button" class="cal-btn applicant-chat-retry" '
+          + 'style="margin-left:6px;">Retry</button>';
+        const retry = b.querySelector('.applicant-chat-retry');
+        if (retry) retry.addEventListener('click', () => {
+          // Drop the failed bubble and resend the same message.
+          try { thinking.remove(); } catch { /* no-op */ }
+          _send(message);
+        });
+      }
     }
   } finally {
     _sending = false;
     if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send'; }
+    _syncSendEnabled();
     if (input) input.focus();
   }
 }

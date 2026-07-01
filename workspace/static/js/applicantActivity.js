@@ -22,7 +22,10 @@
 // .hwfit-loading / .applicant-status-strip).
 
 import uiModule from './ui.js';
-import { esc, _fetchJSON } from './applicantCore.js';
+import {
+  esc, _fetchJSON, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
+  wireRetry, pollVisible,
+} from './applicantCore.js';
 
 const API = '/api/applicant/activity';
 // Slow poll for the always-visible strip — mirrors the Portal's BADGE_POLL_MS.
@@ -30,7 +33,7 @@ const STATUS_POLL_MS = 45000;
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
-let _statusPollIv = null;
+let _statusPollStop = null;
 let _runsLoading = false;
 
 
@@ -121,13 +124,31 @@ function _renderStrip(data) {
   _setActivityVisible(true);
 }
 
+// A transient fetch failure used to HIDE the strip, which reads as "the assistant
+// is dead". Instead, if the strip is already on screen, keep it and show a neutral
+// "· reconnecting…" note so a blip reads as a hiccup, not a death. Only hide when
+// the strip was never shown (nothing to reconnect to yet).
+function _renderReconnecting() {
+  const strip = _stripEl();
+  const text = _stripTextEl();
+  if (!strip || !text) return false;
+  const visible = strip.style.display && strip.style.display !== 'none';
+  if (!visible) return false;
+  strip.classList.remove('is-live');
+  strip.classList.add('is-paused');
+  text.textContent = 'Applicant is: reconnecting…';
+  strip.title = 'Reconnecting to your assistant — open Activity';
+  return true;
+}
+
 async function refreshStatus() {
   try {
     const data = await _fetchJSON(`${API}/status`);
     _renderStrip(data);
   } catch {
-    // Proxy/engine error — hide rather than show a broken strip.
-    _hideStrip();
+    // Proxy/engine error — keep a visible strip in a neutral "reconnecting" state
+    // rather than vanishing (which reads as dead). Hide only if never shown.
+    if (!_renderReconnecting()) _hideStrip();
   }
 }
 
@@ -150,7 +171,7 @@ function _ensureModalEl() {
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="cal-btn" id="applicant-activity-refresh" title="Refresh the activity feed">Refresh</button>
-          <button class="close-btn" id="applicant-activity-close" title="Close">✖</button>
+          <button class="close-btn" id="applicant-activity-close" title="Close" aria-label="Close">✖</button>
         </div>
       </div>
       <div id="applicant-activity-snapshot" style="flex:0 0 auto;"></div>
@@ -253,11 +274,13 @@ function _renderGated(host, data) {
 }
 
 function _renderEmpty(host) {
-  host.innerHTML = `
-    <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.75;">
-      No activity yet. Once your assistant starts working on your job search, what it
-      does will show up here.
-    </div>`;
+  // A hopeful first-run heartbeat rather than a flat "nothing here" — the assistant
+  // is warming up, not idle.
+  host.innerHTML = emptyHTML(
+    'Warming up',
+    'No activity yet — your assistant is getting ready. As soon as it starts '
+      + 'working on your job search, everything it does shows up here.',
+  );
 }
 
 // Friendly one-line summary from a run's stats block, e.g.
@@ -311,7 +334,7 @@ async function _loadRuns(showSpinner) {
   if (_runsLoading) return;
   _runsLoading = true;
   const host = _body();
-  if (host && showSpinner) host.innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  if (host && showSpinner) host.innerHTML = loadingHTML('Loading activity…');
   try {
     const data = await _fetchJSON(`${API}/runs`);
     if (!host) return;
@@ -319,8 +342,11 @@ async function _loadRuns(showSpinner) {
     if (data && data.engine_available === false) { _renderOffline(host); return; }
     const items = (data && data.items) || [];
     _renderRuns(host, items);
-  } catch {
-    if (host) _renderOffline(host);
+  } catch (e) {
+    if (host) {
+      host.innerHTML = errorHTML(errText(e));
+      wireRetry(host, () => _loadRuns(true));
+    }
   } finally {
     _runsLoading = false;
   }
@@ -364,10 +390,11 @@ function _boot() {
     const stripWired = _stripEl()?._applicantActivityWired;
     if ((railWired && stripWired) || tries > 20) clearInterval(iv);
   }, 500);
-  // Seed the strip, then keep it fresh on a slow poll.
-  refreshStatus();
-  if (_statusPollIv) clearInterval(_statusPollIv);
-  _statusPollIv = setInterval(refreshStatus, STATUS_POLL_MS);
+  // Keep the strip fresh on a slow poll — but only while the tab is visible, so a
+  // backgrounded tab doesn't keep hitting the proxy (quick-wins #1). pollVisible
+  // fires once immediately, so it also seeds the strip.
+  if (_statusPollStop) _statusPollStop();
+  _statusPollStop = pollVisible(refreshStatus, STATUS_POLL_MS);
 }
 
 if (document.readyState === 'loading') {
