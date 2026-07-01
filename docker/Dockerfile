@@ -54,24 +54,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lmodern \
     && rm -rf /var/lib/apt/lists/*
 
-# Warm the xelatex/lualatex font + format cache at BUILD time. The first compile
-# otherwise has to build this cache, which aborts (producing NO PDF, so the render
-# silently degrades to an approximate preview) when the runtime user has no writable
-# HOME/TEXMFVAR. Building it now — into a world-readable cache + a writable fallback —
-# means the first real onboarding compile produces a true PDF. Best-effort: a failure
-# here must not fail the image build (the adapter also points the cache at a writable
-# scratch dir per compile).
-RUN mkdir -p /tmp/texwarm \
-    && printf '%s\n' \
-        '\documentclass[11pt,a4paper,sans]{moderncv}' \
-        '\moderncvstyle{banking}\moderncvcolor{blue}' \
-        '\name{Test}{User}' \
-        '\begin{document}\makecvtitle\section{Skills}\cvitem{}{Python}\end{document}' \
-        > /tmp/texwarm/warm.tex \
-    && (cd /tmp/texwarm && lualatex -interaction=nonstopmode -halt-on-error warm.tex || true) \
-    && (cd /tmp/texwarm && xelatex  -interaction=nonstopmode -halt-on-error warm.tex || true) \
-    && rm -rf /tmp/texwarm
-
 # Camoufox runtime libraries (FR-PREFILL-1, FR-STEALTH-1). Camoufox is the DEFAULT
 # browser engine (BROWSER_ENGINE=camoufox) — a Firefox-based anti-detect browser the
 # engine drives for ALL outbound automation traffic. The browser binary itself is
@@ -105,6 +87,46 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# --- Create the runtime user, then build AS that user (#161) -------------------
+# Run the API as a dedicated non-root user instead of root, so a compromised app
+# process has no root inside the container. We create the user HERE — BEFORE the
+# heavy dependency + browser layers — and switch to it immediately, so the venv,
+# the camoufox binary, and the Chromium bundle are written already owned by the
+# runtime user. That deliberately avoids a final `chown -R /app` over the finished
+# tree: that tree is multiple GB (venv + two browser bundles + texlive caches), and
+# a recursive chown on the overlay filesystem is both slow (it hung many builds) and
+# wasteful (it rewrites every file into a new layer, ~doubling the image size).
+# Root-created files above (apt into system dirs, uv at /bin) stay world-readable,
+# so the non-root user can still execute them.
+# No --system: it targets the low system-UID range (<= SYS_UID_MAX, default 999),
+# so pairing it with our deliberately high fixed UID 10001 (stable, predictable
+# volume ownership on the host) makes useradd/groupadd warn. The account is still
+# non-login: no password, a nologin shell, and no home is created (Debian's
+# CREATE_HOME defaults to no). /app is near-empty here, so this chown is cheap.
+RUN groupadd --gid 10001 applicant \
+    && useradd --uid 10001 --gid applicant --no-create-home --home-dir /app --shell /usr/sbin/nologin applicant \
+    && mkdir -p /app/.cache /app/.local/share /app/.config \
+    && chown -R applicant:applicant /app
+USER applicant
+
+# Warm the xelatex/lualatex font + format cache at BUILD time. The first compile
+# otherwise has to build this cache, which aborts (producing NO PDF, so the render
+# silently degrades to an approximate preview) when the runtime user has no writable
+# HOME/TEXMFVAR. We run this AS the runtime user (after USER above) so the cache is
+# built under its own HOME/XDG (/app, owned by it) and is guaranteed writable at
+# runtime — no chown needed. Best-effort: a failure here must not fail the image
+# build (the adapter also points the cache at a writable scratch dir per compile).
+RUN mkdir -p /tmp/texwarm \
+    && printf '%s\n' \
+        '\documentclass[11pt,a4paper,sans]{moderncv}' \
+        '\moderncvstyle{banking}\moderncvcolor{blue}' \
+        '\name{Test}{User}' \
+        '\begin{document}\makecvtitle\section{Skills}\cvitem{}{Python}\end{document}' \
+        > /tmp/texwarm/warm.tex \
+    && (cd /tmp/texwarm && lualatex -interaction=nonstopmode -halt-on-error warm.tex || true) \
+    && (cd /tmp/texwarm && xelatex  -interaction=nonstopmode -halt-on-error warm.tex || true) \
+    && rm -rf /tmp/texwarm
+
 # --- Dependency layer (cache-stable) ------------------------------------------
 # Install ONLY third-party dependencies first, from the lockfile, WITHOUT the
 # project's own source. This is the expensive layer (the full dep tree, plus the
@@ -115,7 +137,7 @@ WORKDIR /app
 # unconditionally (container.py) can launch a browser. --no-install-project:
 # resolve+install deps but skip building/installing the local `applicant` package
 # (that needs the source, copied in the cheap layer below).
-COPY pyproject.toml uv.lock* README.md ./
+COPY --chown=applicant:applicant pyproject.toml uv.lock* README.md ./
 RUN uv sync --no-dev --extra browser --frozen --no-install-project \
     || uv sync --no-dev --extra browser --no-install-project
 
@@ -135,8 +157,9 @@ RUN uv run --no-sync camoufox fetch
 # bundle that MATCHES the installed patchright/playwright revision — patchright
 # `install chromium` pulls exactly that matched revision, which avoids the
 # "bundled chromium vs driver" revision mismatch a hand-pinned download would risk.
-# Anchored under /app via PLAYWRIGHT_BROWSERS_PATH so the binary lands in the tree
-# chowned to the non-root runtime user (same rationale as the camoufox fetch).
+# Anchored under /app via PLAYWRIGHT_BROWSERS_PATH so the binary lands under the
+# runtime user's HOME, already owned by it (we switched USER above; same rationale
+# as the camoufox fetch).
 # Like camoufox, this is integration-only and not exercised by CI (which does not
 # build images) — first run at deploy `compose up --build`. Must confirm there:
 # the download succeeds and the engine launches chromium without falling back.
@@ -146,34 +169,17 @@ RUN uv run --no-sync patchright install chromium
 # Now copy the engine source and install just the local `applicant` package on top
 # of the already-installed deps. A code change busts only this fast layer — no apt,
 # no dependency reinstall, no camoufox re-fetch.
-COPY src ./src
+COPY --chown=applicant:applicant src ./src
 RUN uv sync --no-dev --extra browser --frozen || uv sync --no-dev --extra browser
 
 # App code + workspace static + LaTeX/docx templates (loaded at runtime as
 # parents[4]/templates by the resume-render engines — must be in the image).
-COPY alembic.ini ./
-COPY frontend ./frontend
-COPY workspace/static ./workspace/static
-COPY templates ./templates
-COPY scripts ./scripts
-
-# --- Drop privileges (#161) ---------------------------------------------------
-# Run the API as a dedicated non-root user instead of root, so a compromised app
-# process has no root inside the container. Everything above ran as root (apt, the
-# camoufox fetch, uv sync into /app/.venv), so create the user LAST and hand it the
-# whole app tree — incl. the venv, the camoufox binary, and the XDG cache/data dirs
-# pinned under /app above, which the renderer/browser write to at runtime.
-# NOTE: no --system here. --system is for accounts in the low system-UID range
-# (<= SYS_UID_MAX, default 999); pairing it with our deliberately high fixed UID
-# 10001 makes useradd/groupadd warn ("uid 10001 is greater than SYS_UID_MAX 999").
-# We want a stable, well-known UID (predictable volume ownership on the host), not a
-# system-range one, so drop --system. The account is still non-login: no password,
-# a nologin shell, and no home is created (Debian's CREATE_HOME defaults to no).
-RUN groupadd --gid 10001 applicant \
-    && useradd --uid 10001 --gid applicant --no-create-home --home-dir /app --shell /usr/sbin/nologin applicant \
-    && mkdir -p /app/.cache /app/.local/share /app/.config \
-    && chown -R applicant:applicant /app
-USER applicant
+# --chown so these land owned by the runtime user we already switched to above.
+COPY --chown=applicant:applicant alembic.ini ./
+COPY --chown=applicant:applicant frontend ./frontend
+COPY --chown=applicant:applicant workspace/static ./workspace/static
+COPY --chown=applicant:applicant templates ./templates
+COPY --chown=applicant:applicant scripts ./scripts
 
 EXPOSE 8000
 
