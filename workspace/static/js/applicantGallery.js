@@ -19,7 +19,7 @@
 // offline/empty state if opened while the engine is unreachable.
 
 import uiModule from './ui.js';
-import { esc, _fetchJSON } from './applicantCore.js';
+import { esc, _fetchJSON, errText, loadingHTML, emptyHTML, errorHTML, wireRetry } from './applicantCore.js';
 
 const GALLERY = '/api/applicant/gallery';
 
@@ -44,7 +44,7 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
           Gallery
         </h4>
-        <button class="close-btn" id="applicant-gallery-close" title="Close">✖</button>
+        <button class="close-btn" id="applicant-gallery-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
@@ -54,7 +54,7 @@ function _ensureModalEl() {
         <span id="applicant-gallery-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
       </div>
       <div class="modal-body" id="applicant-gallery-body" style="flex:1;overflow-y:auto;padding:14px;">
-        <div class="hwfit-loading">Loading…</div>
+        ${loadingHTML('Loading…')}
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -83,6 +83,37 @@ function _body() { return _modalEl.querySelector('#applicant-gallery-body'); }
 
 function _empty(msg) {
   return `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'Nothing here yet.')}</div>`;
+}
+
+// A "create a job search" button that routes forward out of a dead-end empty
+// state. Prefers the onboarding/setup opener; falls back to the assistant so the
+// user always has a real next step rather than a disabled picker.
+function _createSearchCTA() {
+  return `<button class="cal-btn cal-btn-primary" id="applicant-gallery-cta">Create a job search</button>`;
+}
+
+function _wireCreateSearchCTA() {
+  const btn = _body() && _body().querySelector('#applicant-gallery-cta');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    try {
+      if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); return; }
+      if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
+        window.applicantChatModule.openApplicantChat(); _close(); return;
+      }
+    } catch { /* fall through to no-op */ }
+  });
+}
+
+// Map a kit error (with .kind) to a plain-language line for the retry card.
+function _errLine(err) {
+  if (err && err.kind === 'gated') {
+    return 'Finish setup (connect a model and your profile) to enable this view.';
+  }
+  if (err && (err.kind === 'offline' || err.kind === 'network')) {
+    return 'The Applicant engine is not reachable right now. This gallery will fill in once it is connected.';
+  }
+  return errText(err);
 }
 
 // ── Campaign chooser ────────────────────────────────────────────────────────
@@ -154,22 +185,31 @@ function _grid(cards) {
 
 async function _renderGallery() {
   if (!_campaignId) {
-    _body().innerHTML = _empty('Pick a job search above to see its gallery.');
+    _body().innerHTML = emptyHTML(
+      'No job searches yet',
+      'Create a job search to start capturing screenshots and materials here.',
+      _createSearchCTA());
+    _wireCreateSearchCTA();
     return;
   }
-  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  _body().innerHTML = loadingHTML('Loading…');
   let data;
   try {
     data = await _fetchJSON(`${GALLERY}/${encodeURIComponent(_campaignId)}`);
-  } catch {
-    _body().innerHTML = _empty('The Applicant engine is not reachable right now. This gallery will fill in once it is connected.');
+  } catch (err) {
+    _body().innerHTML = errorHTML(_errLine(err));
+    wireRetry(_body(), _renderGallery);
     return;
   }
   const shots = (data && data.screenshots && Array.isArray(data.screenshots.items)) ? data.screenshots.items : [];
   const mats = (data && data.materials && Array.isArray(data.materials.items)) ? data.materials.items : [];
 
   if (!shots.length && !mats.length) {
-    _body().innerHTML = _empty('No screenshots or materials captured for this job search yet.');
+    _body().innerHTML = emptyHTML(
+      'Nothing captured yet',
+      'This job search has no screenshots or generated materials yet — they appear here as the agent works.',
+      _createSearchCTA());
+    _wireCreateSearchCTA();
     return;
   }
 
@@ -187,14 +227,15 @@ export async function openApplicantGallery() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
     const badge = modal.querySelector('#applicant-gallery-engine');
     if (badge) badge.textContent = up ? '' : 'Engine offline';
     await _renderGallery();
-  } catch {
-    _body().innerHTML = _empty('The Applicant engine is not reachable right now. This gallery will fill in once it is connected.');
+  } catch (err) {
+    _body().innerHTML = errorHTML(_errLine(err));
+    wireRetry(_body(), openApplicantGallery);
   }
 }
 

@@ -22,6 +22,9 @@
  * (static/js/compare/index.js, /api/compare). Different prefix, different nav.
  */
 
+import uiModule from './ui.js';
+import { _fetchJSON as _kitFetchJSON, errText, loadingHTML, emptyHTML, errorHTML, wireRetry } from './applicantCore.js';
+
 const API = `${window.location.origin}/api/applicant/compare`;
 
 let _modalEl = null;
@@ -32,18 +35,29 @@ function _esc(text) {
   return div.innerHTML;
 }
 
-async function _fetchJSON(path, opts) {
-  const res = await fetch(`${API}${path}`, {
-    credentials: 'same-origin',
-    ...(opts || {}),
-  });
-  let data = null;
-  try { data = await res.json(); } catch (_) { data = null; }
-  if (!res.ok) {
-    const detail = (data && (data.detail || data.error)) || `HTTP ${res.status}`;
-    throw new Error(typeof detail === 'string' ? detail : `HTTP ${res.status}`);
+// Prefix the compare API onto the kit fetch so callers keep passing bare paths;
+// the kit gives us .kind-tagged errors + errText() for the retry/error states.
+function _fetchJSON(path, opts) {
+  return _kitFetchJSON(`${API}${path}`, opts);
+}
+
+// Map a kit error (with .kind) to a plain-language line for the retry card.
+function _errLine(err) {
+  if (err && err.kind === 'gated') {
+    return 'Finish setup (connect a model and your profile) to enable comparisons.';
   }
-  return data;
+  if (err && (err.kind === 'offline' || err.kind === 'network')) {
+    return 'The Applicant engine is not reachable right now. Try again once it is connected.';
+  }
+  return errText(err);
+}
+
+// Copy a value to the clipboard, reusing the workspace copy helper when present.
+function _copy(text) {
+  try {
+    if (uiModule && typeof uiModule.copyToClipboard === 'function') { uiModule.copyToClipboard(text); return; }
+  } catch { /* fall through */ }
+  try { navigator.clipboard.writeText(text); } catch { /* no-op */ }
 }
 
 // ── Modal shell ─────────────────────────────────────────────────────────────
@@ -63,7 +77,7 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
           Compare
         </h4>
-        <button class="close-btn" id="applicant-compare-close" title="Close">✖</button>
+        <button class="close-btn" id="applicant-compare-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div class="modal-body" style="flex:1;overflow-y:auto;">
         <p style="opacity:0.75;font-size:12px;margin:0 0 12px;">
@@ -166,8 +180,8 @@ async function _runCompare() {
     _setStatus('Enter at least two ids to compare.', true);
     return;
   }
-  _setStatus('Comparing…', false);
-  result.innerHTML = '';
+  _setStatus('', false);
+  result.innerHTML = loadingHTML('Comparing…');
   runBtn.disabled = true;
   try {
     const path = kind === 'postings' ? '/postings' : '/applications';
@@ -179,7 +193,10 @@ async function _runCompare() {
     _setStatus('', false);
     _renderResult(result, data);
   } catch (e) {
-    _setStatus(e && e.message ? e.message : 'Compare failed.', true);
+    _setStatus('', false);
+    // Inline error + Retry so the user recovers without re-typing their ids.
+    result.innerHTML = errorHTML(_errLine(e));
+    wireRetry(result, _runCompare);
   } finally {
     runBtn.disabled = false;
   }
@@ -215,7 +232,9 @@ function _renderResult(container, data) {
   const thead = document.createElement('thead');
   let headRow = '<tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);">Dimension</th>';
   for (const id of entityIds) {
-    headRow += `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);">${_esc(labels[id] || id)}</th>`;
+    // Click-to-copy the raw id so it can be re-pasted into another compare /
+    // surface without hand-typing. The label stays visible; the id is the payload.
+    headRow += `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);"><button type="button" class="applicant-compare-copy-id" data-id="${_esc(id)}" title="Copy id — ${_esc(id)}" style="background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left;">${_esc(labels[id] || id)}</button></th>`;
   }
   headRow += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);">Difference</th></tr>';
   thead.innerHTML = headRow;
@@ -233,6 +252,9 @@ function _renderResult(container, data) {
   }
   table.appendChild(tbody);
   container.appendChild(table);
+  container.querySelectorAll('.applicant-compare-copy-id').forEach((b) => {
+    b.addEventListener('click', () => _copy(b.dataset.id || ''));
+  });
 }
 
 // ── Open / launchers / boot ──────────────────────────────────────────────────
@@ -242,6 +264,15 @@ export async function openApplicantCompare() {
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
   _setStatus('', false);
+  // Seed the (otherwise blank) result area with a plain-language empty state so
+  // the surface reads as ready, not broken, before the first comparison.
+  const result = modal.querySelector('#applicant-compare-result');
+  if (result && !result.innerHTML.trim()) {
+    result.innerHTML = emptyHTML(
+      'Nothing to compare yet',
+      'Pick applications or postings above, paste two or more ids, then Compare to see where they differ.',
+      '');
+  }
   await _loadCampaigns();
 }
 

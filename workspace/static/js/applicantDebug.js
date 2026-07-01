@@ -28,7 +28,7 @@
 // the engine is unreachable or the caller isn't an admin.
 
 import uiModule from './ui.js';
-import { esc, _toast, _fetchJSON, _post, _put } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, _put, errText, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
 
 const ADMIN = '/api/applicant/admin';
 const OPS = '/api/applicant/ops';
@@ -73,7 +73,7 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           Activity
         </h4>
-        <button class="close-btn" id="applicant-debug-close" title="Close">✖</button>
+        <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
@@ -88,7 +88,7 @@ function _ensureModalEl() {
         ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
       </div>
       <div class="modal-body" id="applicant-debug-body" style="flex:1;overflow-y:auto;padding:14px;">
-        <div class="hwfit-loading">Loading…</div>
+        ${loadingHTML('Loading…')}
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -227,17 +227,30 @@ async function _renderTab() {
     update: _renderUpdate,
   };
   const token = ++_renderToken;
-  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  _body().innerHTML = loadingHTML('Loading…');
   try {
     await (map[_activeTab] || _renderActivity)(token);
   } catch (e) {
     if (_renderIsStale(token)) return;
-    if (e && e.status === 403) {
+    if (e && (e.status === 403 || e.kind === 'forbidden')) {
+      // Admin gate: a Retry can't fix a permissions block, so show the message
+      // without a retry affordance (keeps the gate honest).
       _renderOffline('This view is available to admins only.');
     } else {
-      _renderOffline();
+      // Everything else dead-ended on error text before — give an inline Retry
+      // so the user recovers without closing the surface.
+      _body().innerHTML = errorHTML(_errLine(e));
+      wireRetry(_body(), _renderTab);
     }
   }
+}
+
+// Map a kit error (with .kind) to a plain-language line for the retry card.
+function _errLine(err) {
+  if (err && (err.kind === 'offline' || err.kind === 'network')) {
+    return 'The Applicant engine is not reachable right now. This view will fill in once it is connected.';
+  }
+  return errText(err);
 }
 
 function _needCampaign() {
@@ -314,7 +327,7 @@ async function _renderActivity(token) {
 async function _showAppDetail(appId) {
   const host = _body().querySelector('#applicant-debug-detail-host');
   if (!host || !appId) return;
-  host.innerHTML = '<div class="hwfit-loading">Loading details…</div>';
+  host.innerHTML = loadingHTML('Loading details…');
   let shots = { screenshots: [] }, wf = { steps: [] }, outcomes = { outcomes: [] };
   let anyErr = null;
   let snapshot = { has_snapshot: false };
@@ -442,7 +455,23 @@ async function _renderLogs() {
   if (data.engine_available === false) { _renderOffline(); return; }
   const entries = data.entries || [];
   if (!entries.length) { _body().innerHTML = _empty('No recent activity logs.'); return; }
-  _body().innerHTML = `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;margin:0;">${entries.map((e) => esc(typeof e === 'string' ? e : JSON.stringify(e))).join('\n')}</pre>`;
+  const raw = entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n');
+  _body().innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+      <button class="cal-btn" id="applicant-logs-copy" title="Copy these logs to the clipboard">Copy logs</button>
+    </div>
+    <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;margin:0;">${esc(raw)}</pre>`;
+  const copyBtn = _body().querySelector('#applicant-logs-copy');
+  if (copyBtn) copyBtn.addEventListener('click', () => _copy(raw));
+}
+
+// Copy a value to the clipboard, reusing the workspace copy helper (which shows
+// its own "Copied" toast) when present; otherwise fall back with our own toast.
+function _copy(text) {
+  try {
+    if (uiModule && typeof uiModule.copyToClipboard === 'function') { uiModule.copyToClipboard(text); return; }
+  } catch { /* fall through */ }
+  try { navigator.clipboard.writeText(text); _toast('Copied.'); } catch { _toast('Could not copy.'); }
 }
 
 async function _renderVariants() {
@@ -786,14 +815,15 @@ export async function openApplicantDebug() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  _body().innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
     const badge = modal.querySelector('#applicant-debug-engine');
     if (badge) badge.textContent = up ? '' : 'Engine offline';
     await _renderTab();
-  } catch {
-    _renderOffline();
+  } catch (err) {
+    _body().innerHTML = errorHTML(_errLine(err));
+    wireRetry(_body(), openApplicantDebug);
   }
 }
 
