@@ -27,11 +27,20 @@ function ensureGlassWallpaper(on) {
   }
   // Fixed, behind everything, non-interactive; a base color so the glass sampler
   // (which reads #__wp's computed background) has a value even before paint.
-  wp.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background-color:#15171c;';
+  wp.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;';
   wp.classList.add('glass-mesh-wp');
-  if (!wp.querySelector('.login-bg-gradient')) {
-    mountMeshGradient(wp, { preset: 'aurora', animate: true, speed: 34, intensity: 0.9 });
+  let meshEl = wp.querySelector('.login-bg-gradient');
+  if (!meshEl) {
+    // intensity 0.5 (the upstream glass default) keeps the mesh a contained glow,
+    // not a full-frame wash.
+    meshEl = mountMeshGradient(wp, { preset: 'aurora', animate: true, speed: 34, intensity: 0.5 });
   }
+  // Mirror the preset's OWN base onto #__wp (aurora's base is a deep teal ~#102a3a)
+  // so the glass sampler reads a dark base, not an arbitrary flat fill.
+  try {
+    const base = getComputedStyle(meshEl).getPropertyValue('--lbg-base').trim();
+    if (base) wp.style.backgroundColor = base;
+  } catch (_) { /* sampler falls back to the mesh child */ }
   document.body.classList.add('has-wallpaper');
 }
 
@@ -41,7 +50,7 @@ export const THEMES = {
   // is the OOBE default; combined with the frosted tier it gives glass-everywhere
   // (blur+saturate) without the SVG-refraction perf cost. Users can still pick the
   // hued themes below (dark/cyberpunk/…) from Settings.
-  glass:      { bg:'#15171c', fg:'#eef1f4', panel:'#1d2026', border:'#3a3f47', red:'#9aa3af', glassTier:'frosted', glass:true },
+  glass:      { bg:'#15171c', fg:'#eef1f4', panel:'#1d2026', border:'#3a3f47', red:'#9aa3af', glassTier:'full', glass:true },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -469,7 +478,7 @@ export const GLASS_TIERS = ['off', 'frosted', 'full'];
 // 'full' (adds the Chromium SVG refraction) and 'off' (flat panels) remain opt-in
 // via Settings. @supports gives a solid-panel fallback where backdrop-filter is
 // unavailable, and prefers-reduced-motion strips motion but keeps the frost.
-const DEFAULT_GLASS_TIER = 'frosted';
+const DEFAULT_GLASS_TIER = 'full';
 
 /** Apply a glass house-theme tier ('off' | 'frosted' | 'full'). Drives the
  *  `house-theme` and `glass-full` body classes that the shipped kit-themes.css
