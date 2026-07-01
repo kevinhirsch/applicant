@@ -6,6 +6,34 @@ import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
+import { mountMeshGradient } from './login_bg.js';
+
+// The fixed full-bleed wallpaper layer (z-index:-1) the glass chrome lenses and
+// appkitGlass/adaptiveGlass sample (they look up #__wp). The glass tiers paint the
+// aurora mesh-gradient here so the colorless glass has something rich to refract —
+// which is what actually sells the liquid-glass look. Tier 'off' removes it.
+const WALLPAPER_ID = '__wp';
+function ensureGlassWallpaper(on) {
+  let wp = document.getElementById(WALLPAPER_ID);
+  if (!on) {
+    if (wp) wp.remove();
+    document.body.classList.remove('has-wallpaper');
+    return;
+  }
+  if (!wp) {
+    wp = document.createElement('div');
+    wp.id = WALLPAPER_ID;
+    document.body.insertBefore(wp, document.body.firstChild);
+  }
+  // Fixed, behind everything, non-interactive; a base color so the glass sampler
+  // (which reads #__wp's computed background) has a value even before paint.
+  wp.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;background-color:#15171c;';
+  wp.classList.add('glass-mesh-wp');
+  if (!wp.querySelector('.login-bg-gradient')) {
+    mountMeshGradient(wp, { preset: 'aurora', animate: true, speed: 34, intensity: 0.9 });
+  }
+  document.body.classList.add('has-wallpaper');
+}
 
 export const THEMES = {
   // Glass — the vendored default. A fully NEUTRAL Apple-Liquid-Glass palette: even
@@ -455,6 +483,8 @@ export function applyGlassTier(tier) {
   // light Apple glass over the content, not a dark panel.
   document.body.classList.toggle('theme-frosted', t === 'frosted' || t === 'full');
   document.body.classList.toggle('glass-full', t === 'full');
+  // Paint (or remove) the aurora mesh wallpaper the glass lenses.
+  ensureGlassWallpaper(t !== 'off');
 }
 
 // Read current size multiplier for JS effects (canvas-based).
