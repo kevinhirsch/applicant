@@ -8,6 +8,12 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
+  // Glass — the vendored default. A fully NEUTRAL Apple-Liquid-Glass palette: even
+  // the accent (--red) is a neutral gray, so no brand hue lands on chrome text. This
+  // is the OOBE default; combined with the frosted tier it gives glass-everywhere
+  // (blur+saturate) without the SVG-refraction perf cost. Users can still pick the
+  // hued themes below (dark/cyberpunk/…) from Settings.
+  glass:      { bg:'#15171c', fg:'#eef1f4', panel:'#1d2026', border:'#3a3f47', red:'#9aa3af', glassTier:'frosted', glass:true },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -30,7 +36,7 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'dark';
+const DEFAULT_THEME = 'glass';
 const LS_KEY = 'applicant-theme';
 const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 
@@ -45,6 +51,7 @@ const MAX_CUSTOM_THEMES = 8;
 
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
+  glass:      'none',
   dark:       'none',
   light:      'dots',
   midnight:   'rain',
