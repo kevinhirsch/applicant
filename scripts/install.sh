@@ -212,7 +212,7 @@ heartbeat() {
   for ((i = 1; i <= tries; i++)); do
     if curl -fsS -o /dev/null "http://localhost:${port}/api/health" 2>/dev/null; then
       log "UI is up (/api/health 200)."
-      if docker compose -f "${COMPOSE_FILE}" exec -T api \
+      if dc -f "${COMPOSE_FILE}" exec -T api \
            python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=5).status==200 else 1)" 2>/dev/null; then
         log "Engine is healthy (/healthz). Stack is green."
       else
@@ -223,7 +223,7 @@ heartbeat() {
     sleep 5
   done
   echo "Heartbeat FAILED: UI did not become healthy on :${port} after $((tries * 5))s." >&2
-  docker compose -f "${COMPOSE_FILE}" ps || true
+  dc -f "${COMPOSE_FILE}" ps || true
   return 1
 }
 
@@ -261,9 +261,32 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- 1c. Ensure we can actually reach the Docker daemon ---------------------
+# Installing Docker adds the invoking user to the 'docker' group, but that
+# membership only applies to a NEW login — THIS shell (the one running the
+# one-liner) still can't reach /var/run/docker.sock, so the build/up steps below
+# would die with "permission denied while trying to connect to the docker API at
+# unix:///var/run/docker.sock". Detect that and transparently run docker via sudo
+# for the rest of this run; a fresh login afterward won't need it. All compose
+# calls below go through dc() so the elevation is applied consistently.
+DOCKER_PREFIX=()
+if ! docker info >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+    log "Can't reach the Docker socket as $(id -un) yet (group membership needs a re-login) — using sudo for this run."
+    DOCKER_PREFIX=(sudo)
+  else
+    echo "Cannot reach the Docker daemon at /var/run/docker.sock as $(id -un)." >&2
+    echo "Grant this user Docker access and start a NEW shell, then re-run:" >&2
+    echo "    sudo usermod -aG docker $(id -un) && newgrp docker" >&2
+    echo "…or re-run this installer as root (sudo)." >&2
+    exit 1
+  fi
+fi
+dc() { ${DOCKER_PREFIX[@]+"${DOCKER_PREFIX[@]}"} docker compose "$@"; }
+
 # --- 2. Validate the production compose file --------------------------------
 log "Validating compose file: ${COMPOSE_FILE}"
-docker compose -f "${COMPOSE_FILE}" config >/dev/null
+dc -f "${COMPOSE_FILE}" config >/dev/null
 
 # --- 2b. Persist the DB credentials so every later run/update reuses them ----
 # Write the .env ONCE (first apply). This is what keeps `update.sh` authenticating
@@ -287,7 +310,7 @@ fi
 # Build BOTH locally-built images (neither is published to a registry): the
 # front-door UI (built from ../workspace) and the engine api.
 log "Building the local images (front-door UI + engine api)…"
-run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
+run dc -f "${COMPOSE_FILE}" build applicant-ui api
 
 # --- 4. Migrate the schema BEFORE the api serves ----------------------------
 # The engine queries the app_config table AS IT BOOTS (container.py build_container
@@ -300,12 +323,12 @@ run docker compose -f "${COMPOSE_FILE}" build applicant-ui api
 # Postgres as a dependency and waits for its healthcheck; `alembic upgrade head` is
 # idempotent.
 log "Starting Postgres and migrating the schema (alembic upgrade head) BEFORE the api serves…"
-run docker compose -f "${COMPOSE_FILE}" up -d postgres
-run docker compose -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
+run dc -f "${COMPOSE_FILE}" up -d postgres
+run dc -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
 
 # --- 5. Bring up the full stack (api now boots against the migrated schema) --
 log "Bringing up the Applicant stack (UI + api + postgres + searxng + chromadb + ntfy, detached)…"
-run docker compose -f "${COMPOSE_FILE}" up -d
+run dc -f "${COMPOSE_FILE}" up -d
 
 # --- 6. Heartbeat: don't claim success until the stack is actually green -----
 if [[ "${APPLY}" -eq 1 ]]; then
