@@ -69,11 +69,14 @@ const LS_KEY = 'applicant-theme';
 const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 
 const FONT_MAP = {
+  // The Apple system font is the HIG default (matches the upstream glass build);
+  // mono/sans/serif remain user-selectable in Settings.
+  system: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', Inter, 'Segoe UI', Roboto, sans-serif",
   mono: "'Fira Code', monospace",
-  sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+  sans: "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
-const DEFAULT_FONT = 'mono';
+const DEFAULT_FONT = 'system';
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
