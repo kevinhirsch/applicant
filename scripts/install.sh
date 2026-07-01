@@ -388,11 +388,57 @@ EOF
   )
 }
 
-# When a prior install is detected AND we're interactive, offer to change the safe,
-# published settings (URL / port) before rebuilding. Secrets are deliberately left
-# alone — changing POSTGRES_* against an already-initialized volume breaks auth. On
-# a non-TTY run (cloud-init) or a fresh box this is a silent no-op, so the zero-prompt
-# install path is unchanged (NFR-ZEROCLI-1).
+# The web-server / network settings the operator can tune: HOW the app is reached
+# (address mode + host) and the PORT it is published on. APP_URL is DERIVED from
+# these so the published port and the printed URL can never disagree — the port-80
+# reconfigure that still printed :8000 was exactly that divergence.
+#
+# Current values are pre-filled as defaults; pressing Enter keeps each one. The host
+# is chosen as either the auto-detected IP (DHCP-style) or a manually entered static
+# IP / DNS hostname. This ONLY touches web-server settings — secrets are never
+# prompted (changing POSTGRES_* against an initialized volume would break auth).
+configure_web_server() {
+  printf '\n  %sWeb-server / network settings%s  %s(Enter keeps the default in [brackets])%s\n' \
+    "${CB}" "${C0}" "${CD}" "${C0}"
+
+  # 1) Address: how users reach Applicant.
+  printf '    %sAddress%s\n' "${CB}" "${C0}"
+  printf '      1) Automatic — use this host'"'"'s detected IP  %s(%s)%s  %s[default]%s\n' "${CD}" "${HOST_IP}" "${C0}" "${CD}" "${C0}"
+  printf '      2) Static — enter an IP or DNS hostname\n'
+  local mode="" host="${HOST_IP}"
+  printf '    Choice [1]: '; read -r mode || true
+  if [[ "${mode}" == "2" ]]; then
+    printf '    IP or hostname [%s]: ' "${HOST_IP}"; read -r host || true
+    [[ -n "${host}" ]] || host="${HOST_IP}"
+  fi
+
+  # 2) Port (80/443 are privileged but bound by the Docker daemon, so they just work).
+  local port="${APP_PORT}" new=""
+  printf '    %sPort%s [%s]  %s(e.g. 80, 443, 8000)%s: ' "${CB}" "${C0}" "${port}" "${CD}" "${C0}"
+  read -r new || true
+  if [[ -n "${new}" ]]; then
+    if [[ "${new}" =~ ^[0-9]+$ ]] && (( new >= 1 && new <= 65535 )); then
+      port="${new}"
+    else
+      ui_warn "Invalid port '${new}' — keeping ${port}."
+    fi
+  fi
+
+  # 3) Derive a single, consistent scheme://host[:port]. 80 → http (no port shown),
+  #    443 → https, anything else → http://host:port. APP_PORT is what compose
+  #    actually publishes; APP_URL is the display/heartbeat URL built from the same.
+  case "${port}" in
+    80)  APP_URL="http://${host}" ;;
+    443) APP_URL="https://${host}" ;;
+    *)   APP_URL="http://${host}:${port}" ;;
+  esac
+  APP_PORT="${port}"
+  export APP_URL APP_PORT
+}
+
+# When a prior install is detected AND we're interactive, offer to change the web-
+# server settings before rebuilding. On a non-TTY run (cloud-init) or a fresh box
+# this is a silent no-op, so the zero-prompt install path is unchanged (NFR-ZEROCLI-1).
 maybe_reconfigure() {
   [[ "${APPLY}" -eq 1 ]] || return 0
   [[ "${UI_RICH}" -eq 1 ]] || return 0     # need a TTY to prompt
@@ -405,21 +451,16 @@ maybe_reconfigure() {
 
   _rule
   ui_warn "Existing Applicant installation detected."
-  printf '    %-10s %s\n' "APP_URL"  "$(_display_url)"
-  printf '    %-10s %s\n' "APP_PORT" "${APP_PORT}"
-  local ans="" new=""
-  printf '  %sReconfigure these settings before continuing? [y/N]:%s ' "${CB}" "${C0}"
+  printf '    %-14s %s\n' "Current URL"  "$(_display_url)"
+  printf '    %-14s %s\n' "Published port" "${APP_PORT}"
+  local ans=""
+  printf '  %sReconfigure the web-server / network settings? [y/N]:%s ' "${CB}" "${C0}"
   read -r ans || true
   if [[ ! "${ans}" =~ ^[Yy] ]]; then ui_step "Keeping the current configuration."; _rule; return 0; fi
 
-  printf '  APP_URL  [%s]: ' "${APP_URL}"; read -r new || true; [[ -n "${new}" ]] && APP_URL="${new}"
-  printf '  APP_PORT [%s]: ' "${APP_PORT}"; read -r new || true
-  if [[ -n "${new}" ]]; then
-    if [[ "${new}" =~ ^[0-9]+$ ]]; then APP_PORT="${new}"; else ui_warn "Invalid port '${new}' — keeping ${APP_PORT}."; fi
-  fi
-  export APP_URL APP_PORT
+  configure_web_server
   write_env
-  ui_ok "Configuration updated and saved to ${ENV_FILE}."
+  ui_ok "Saved to ${ENV_FILE} — URL $(_display_url), publishing port ${APP_PORT}."
   _rule
 }
 
