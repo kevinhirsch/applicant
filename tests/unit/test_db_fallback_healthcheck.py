@@ -36,36 +36,46 @@ def test_normal_in_memory_reports_healthy():
     assert storage.healthcheck() is True
 
 
-def test_build_storage_marks_unreachable_db_as_fallback(caplog):
+def test_build_storage_marks_unreachable_db_as_fallback():
     # End-to-end through the real wiring site: an unreachable DB yields an in-memory
     # storage that reports unhealthy (the #312 signal is live, not dead code), and
     # the fallback is loud (warning naming the host, never the credentials).
-    # Capture robustly: another test that boots the full app configures the "applicant"
-    # logger with its own handler and ``propagate = False``, after which records from
-    # "applicant.storage" never reach caplog's ROOT handler — so caplog.text would be
-    # empty even though the warning IS emitted (the fallback still happens; only the
-    # capture is lost). Attach caplog's own handler DIRECTLY to the emitting logger for
-    # the duration so capture no longer depends on the propagation chain. No assertion
-    # is weakened — the warning + credential-redaction checks below are unchanged.
+    #
+    # We deliberately do NOT use pytest's ``caplog`` fixture here: in a full-suite run
+    # an earlier test that boots the whole app reconfigures the "applicant" logger
+    # (own handler, ``propagate = False``) and/or leaves a process-global
+    # ``logging.disable(...)`` set, and caplog's root-attached handler then never sees
+    # this warning even though it IS emitted — a capture artifact, not a product bug
+    # (the fallback still happens: engine is None, storage is a degraded InMemoryStorage).
+    # Instead we attach our OWN handler directly to the emitting logger and neutralize
+    # every suppression path (logger level + the global disable) for the capture window,
+    # then restore them — so the assertion is robust to ordering and pytest/Python
+    # version differences without weakening what it checks.
+    captured: list[str] = []
+
+    class _Grab(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
     storage_logger = logging.getLogger("applicant.storage")
     prev_level = storage_logger.level
     prev_disable = logging.root.manager.disable
-    storage_logger.addHandler(caplog.handler)
+    grab = _Grab()
+    grab.setLevel(logging.WARNING)
+    storage_logger.addHandler(grab)
     storage_logger.setLevel(logging.WARNING)
-    # A prior full-suite test can leave a process-global ``logging.disable(...)`` set,
-    # which suppresses records BEFORE any handler (even ours) runs. Clear it for the
-    # duration so the emitted warning is not dropped, then restore it.
     logging.disable(logging.NOTSET)
     try:
         engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
     finally:
-        storage_logger.removeHandler(caplog.handler)
+        storage_logger.removeHandler(grab)
         storage_logger.setLevel(prev_level)
         logging.disable(prev_disable)
 
+    text = "\n".join(captured)
     assert engine is None
     assert isinstance(storage, InMemoryStorage)
     assert storage.healthcheck() is False, "fallback must report degraded for #312"
     # Loud: a warning is emitted about the degrade, and credentials never leak.
-    assert "falling back to in-memory storage" in caplog.text
-    assert "s3cr3t" not in caplog.text
+    assert "falling back to in-memory storage" in text
+    assert "s3cr3t" not in text
