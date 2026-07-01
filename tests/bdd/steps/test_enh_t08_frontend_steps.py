@@ -357,13 +357,15 @@ def count_sections(t08ctx):
 
 @then("exactly eight sections are wired into the gating map")
 def eight_sections(t08ctx):
-    # 13 = the original 9 (documents, memory, chat, mind, email, debug,
+    # 14 = the original 9 (documents, memory, chat, mind, email, debug,
     # desktop_assist, multi_campaign_switcher, compare) plus the three README
     # front-door surfaces given real section defs in #201: update (#rail-update),
-    # takeover (#settings-open-remote) and vault (#settings-open-vault), plus the
-    # gallery surface added in #296 (#tool-applicant-gallery-btn / #rail-applicant-gallery).
+    # takeover (#settings-open-remote) and vault (#settings-open-vault), the
+    # gallery surface added in #296 (#tool-applicant-gallery-btn / #rail-applicant-gallery),
+    # and the non-admin Results surface (#rail-results) that reaches the engine's
+    # outcome/learning data through the /api/applicant/results proxy.
     # Each has a real greyable nav handler, so the gating map covers every such surface.
-    assert t08ctx["section_count"] == 13
+    assert t08ctx["section_count"] == 14
 
 
 @given("the README front-door surface list and the section map")

@@ -35860,3 +35860,11 @@ body.signin-entrance .chat-history {
 }
 
 /* ===== end vendored light-glass ===== */
+
+/* Reduce-motion: freeze the loading spinners (the shared applicantCore kit
+   reuses .spinner in loadingHTML). Stillness is the tell of a calm agent, and
+   this honours prefers-reduced-motion for the a11y acceptance criterion. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .btn-spinner { animation: none !important; }
+}

@@ -229,6 +229,22 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "requires": "llm_configured",
         "present_but_disabled": False,
     },
+    # Results (#1 audit finding) — a first-class, NON-admin window onto the
+    # outcome/learning data the engine computes (funnel matched→approved→submitted,
+    # per-source conversion, the learned "what converts for you" signature).
+    # Reachable via the /api/applicant/results proxy over the engine's learning
+    # summary, which is gated behind the engine LLM/setup gate — so this section
+    # lights up once a model is connected, like the other engine-backed surfaces.
+    # Its own rail entry (#rail-results), opened by applicantResults.js.
+    {
+        "key": "results",
+        "lane": None,
+        "title": "Results — your funnel & what converts",
+        "nav_ids": ["rail-results"],
+        "dormant_keys": [],
+        "requires": "llm_configured",
+        "present_but_disabled": False,
+    },
 )
 
 
