@@ -13,6 +13,13 @@ FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a
 # nodejs/npm provide npx for the optional built-in Browser MCP server.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
+# Optionally repoint apt at a faster Debian mirror when deb.debian.org's CDN node is
+# slow for the build host (APT_MIRROR is a HOSTNAME; default keeps the official CDN).
+ARG APT_MIRROR=deb.debian.org
+RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
+        sed -i "s|deb.debian.org|$APT_MIRROR|g" \
+            /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; \
+    fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \

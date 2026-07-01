@@ -93,6 +93,13 @@ export BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-plain}"
 # (slower, and wraps the image in a manifest list) with no value for a self-hosted
 # build that is never published to a registry.
 export BUILDX_NO_DEFAULT_ATTESTATIONS="${BUILDX_NO_DEFAULT_ATTESTATIONS:-1}"
+# Optional faster Debian apt mirror for the image builds. deb.debian.org is the
+# official Fastly CDN, but a bad edge node can crawl at ~80KB/s for a given host —
+# and the api image's texlive layer is ~700MB, so that turns a ~3-min build into
+# hours. Set APPLICANT_APT_MIRROR to a fast Debian mirror HOSTNAME (e.g.
+# cloudflaremirrors.com) to repoint the build; default keeps the official CDN.
+# Flows to the Dockerfiles via the compose build arg APT_MIRROR.
+export APT_MIRROR="${APPLICANT_APT_MIRROR:-deb.debian.org}"
 
 # --- Persisted settings: load any saved .env FIRST so re-runs and updates reuse
 # the SAME database password. Postgres bakes its password into the data volume on
@@ -279,7 +286,7 @@ if ! docker info >/dev/null 2>&1; then
     # exactly the vars the prod compose file needs without a default (the set the
     # installer generates) plus the two build-behaviour flags. These pass through the
     # environment (not argv), so the password is never exposed in the process list.
-    DOCKER_PREFIX=(sudo "--preserve-env=POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,APPLICANT_INTERNAL_TOKEN,SEARXNG_SECRET,APP_URL,APP_PORT,APPLICANT_REPO_DIR,BUILDKIT_PROGRESS,BUILDX_NO_DEFAULT_ATTESTATIONS")
+    DOCKER_PREFIX=(sudo "--preserve-env=POSTGRES_USER,POSTGRES_PASSWORD,POSTGRES_DB,APPLICANT_INTERNAL_TOKEN,SEARXNG_SECRET,APP_URL,APP_PORT,APPLICANT_REPO_DIR,APT_MIRROR,BUILDKIT_PROGRESS,BUILDX_NO_DEFAULT_ATTESTATIONS")
   else
     echo "Cannot reach the Docker daemon at /var/run/docker.sock as $(id -un)." >&2
     echo "Grant this user Docker access and start a NEW shell, then re-run:" >&2

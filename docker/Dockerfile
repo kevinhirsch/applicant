@@ -32,6 +32,15 @@ COPY --from=ghcr.io/astral-sh/uv@sha256:1e3808aa9023d0980e7c15b1fa7c1ac16ff35925
 #   * LaTeX (primary): xelatex/lualatex + fontspec / moderncv / fontawesome5
 #   * docx (fallback): LibreOffice headless (soffice --convert-to pdf)
 # Targeted texlive subset (not texlive-full) to keep the image ~2GB instead of ~4GB.
+# Optionally repoint apt at a faster Debian mirror when deb.debian.org's CDN node is
+# slow for the build host (APT_MIRROR is a HOSTNAME, e.g. cloudflaremirrors.com; the
+# default keeps the official CDN). Set via the compose build arg / install.sh env.
+# The texlive layer alone is ~700MB, so a bad mirror node turns a 3-min build into hours.
+ARG APT_MIRROR=deb.debian.org
+RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
+        sed -i "s|deb.debian.org|$APT_MIRROR|g" \
+            /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; \
+    fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-writer \
         fonts-liberation \
