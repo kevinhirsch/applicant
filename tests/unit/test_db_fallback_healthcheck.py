@@ -36,43 +36,32 @@ def test_normal_in_memory_reports_healthy():
     assert storage.healthcheck() is True
 
 
-def test_build_storage_marks_unreachable_db_as_fallback():
+def test_build_storage_marks_unreachable_db_as_fallback(monkeypatch):
     # End-to-end through the real wiring site: an unreachable DB yields an in-memory
     # storage that reports unhealthy (the #312 signal is live, not dead code), and
     # the fallback is loud (warning naming the host, never the credentials).
     #
-    # We deliberately do NOT use pytest's ``caplog`` fixture here: in a full-suite run
-    # an earlier test that boots the whole app reconfigures the "applicant" logger
-    # (own handler, ``propagate = False``) and/or leaves a process-global
-    # ``logging.disable(...)`` set, and caplog's root-attached handler then never sees
-    # this warning even though it IS emitted — a capture artifact, not a product bug
-    # (the fallback still happens: engine is None, storage is a degraded InMemoryStorage).
-    # Instead we attach our OWN handler directly to the emitting logger and neutralize
-    # every suppression path (logger level + the global disable) for the capture window,
-    # then restore them — so the assertion is robust to ordering and pytest/Python
-    # version differences without weakening what it checks.
-    captured: list[str] = []
-
-    class _Grab(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            captured.append(record.getMessage())
-
+    # Capturing the warning through pytest's ``caplog`` (or any handler) proved fragile
+    # in full-suite CI runs: a prior test that boots the whole app reconfigures logging
+    # (its own handlers, ``propagate = False``, a global ``logging.disable(...)``, or a
+    # ``dictConfig`` that flips ``logger.disabled``), any of which drops the record
+    # BEFORE a handler runs — so capture is empty even though the warning IS emitted and
+    # the fallback still happens (engine is None, degraded InMemoryStorage). Rather than
+    # chase every suppression path, intercept the ``warning()`` call on the exact logger
+    # ``_build_storage`` uses ("applicant.storage") directly. This bypasses logging's
+    # level/disabled/filter/handler/propagation machinery entirely and is independent of
+    # test order and pytest/Python version. No assertion is weakened.
+    recorded: list[str] = []
     storage_logger = logging.getLogger("applicant.storage")
-    prev_level = storage_logger.level
-    prev_disable = logging.root.manager.disable
-    grab = _Grab()
-    grab.setLevel(logging.WARNING)
-    storage_logger.addHandler(grab)
-    storage_logger.setLevel(logging.WARNING)
-    logging.disable(logging.NOTSET)
-    try:
-        engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
-    finally:
-        storage_logger.removeHandler(grab)
-        storage_logger.setLevel(prev_level)
-        logging.disable(prev_disable)
 
-    text = "\n".join(captured)
+    def _record_warning(msg, *args, **_kwargs):
+        recorded.append(msg % args if args else msg)
+
+    monkeypatch.setattr(storage_logger, "warning", _record_warning)
+
+    engine, _factory, storage = _build_storage(Settings(DATABASE_URL=UNREACHABLE_DSN))
+
+    text = "\n".join(recorded)
     assert engine is None
     assert isinstance(storage, InMemoryStorage)
     assert storage.healthcheck() is False, "fallback must report degraded for #312"
