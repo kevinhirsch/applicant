@@ -424,7 +424,14 @@ export function applyFrostedGlass(on) {
 //             appkitGlass.js consumes for the Chromium SVG refraction on top of
 //             the CSS glass material.
 export const GLASS_TIERS = ['off', 'frosted', 'full'];
-const DEFAULT_GLASS_TIER = 'off';
+// Frosted is the out-of-the-box default: glass everywhere via the CSS
+// blur+saturate+rim material (body.house-theme, kit-themes.css @supports block),
+// WITHOUT the glass-full-gated SVG refraction/lensing in appkitGlass.js — so the
+// whole front-door reads as Liquid Glass with no per-frame refraction perf cost.
+// 'full' (adds the Chromium SVG refraction) and 'off' (flat panels) remain opt-in
+// via Settings. @supports gives a solid-panel fallback where backdrop-filter is
+// unavailable, and prefers-reduced-motion strips motion but keeps the frost.
+const DEFAULT_GLASS_TIER = 'frosted';
 
 /** Apply a glass house-theme tier ('off' | 'frosted' | 'full'). Drives the
  *  `house-theme` and `glass-full` body classes that the shipped kit-themes.css

@@ -22,6 +22,17 @@
   --panel: #111;
   --border: #355a66;
   --red: #e06c75;
+  /* Apple system tokens (Liquid Glass / HIG discipline — see docs/design/):
+     glass on ⇒ chrome ink is NEUTRAL, never the theme accent; color tints
+     BACKGROUNDS / state fills only. --sys-blue is the sanctioned primary-action +
+     focus-ring color; --sys-red the Destructive role; --chrome-ink / -2 / -3 are
+     the neutral label ramp for chrome text (titles, tabs, nav) that must NOT
+     carry the brand hue. Content-layer color still uses --fg / --red. */
+  --sys-blue: #0a84ff;
+  --sys-red: #ff453a;
+  --chrome-ink: #f2f5f7;
+  --chrome-ink-2: rgba(242, 245, 247, 0.68);
+  --chrome-ink-3: rgba(242, 245, 247, 0.45);
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
@@ -565,7 +576,11 @@ body.bg-pattern-sparkles {
       font-size: 1rem;
       font-weight: 600;
       line-height: 1.35;
-      color: var(--brand-color, var(--red));
+      /* Wordmark in chrome = neutral ink by default; a white-label tenant can still
+         set --brand-color to carry its brand. The colored flame mark beside it
+         carries the brand hue, per HIG (a logo mark may be colored; the word stays
+         neutral on chrome). */
+      color: var(--brand-color, var(--chrome-ink));
       white-space: nowrap;
       user-select: none;
       position: relative;
@@ -1148,10 +1163,12 @@ body.bg-pattern-sparkles {
     .section-icon,
     .sidebar-action-icon {
       flex-shrink: 0;
-      stroke: var(--accent, var(--red));
+      /* Chrome symbols are neutral monochrome (HIG: symbols aren't brand-hued);
+         color lives in content, not the nav glyphs. */
+      stroke: var(--chrome-ink-2);
       position: relative;
       left: -1px;
-      color: var(--accent, var(--red));
+      color: var(--chrome-ink-2);
     }
     /* Shared notification dot for sidebar section titles. Single source of
        truth so chats / email / assistant / future-section dots all sit at
@@ -1224,7 +1241,7 @@ body.bg-pattern-sparkles {
       transition: opacity 0.08s, background 0.08s;
     }
     .section-header-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 7%, transparent); }
-    .section-header-btn.active { opacity: 0.9; color: var(--accent); }
+    .section-header-btn.active { opacity: 0.9; color: var(--chrome-ink); }
     .section-header-btn svg { width: 12px; height: 12px; }
 
     /* Chats library — grid icon, hover-reveal so the header only toggles collapse */
@@ -1441,8 +1458,8 @@ body.bg-pattern-sparkles {
     .list-item:focus { outline: none; }
     .list-item:focus-visible {
       outline: none;
-      border-color: var(--red, var(--color-error));
-      box-shadow: 0 0 0 1px var(--red, var(--color-error));
+      border-color: var(--sys-blue);
+      box-shadow: 0 0 0 2px var(--sys-blue);
     }
     /* Drag handles hidden by default, shown via body.rearrange-mode */
     .drag-handle, .item-drag-handle, .folder-drag-handle { display: none; }
@@ -2294,13 +2311,13 @@ body.bg-pattern-sparkles {
          override only kicks in if it's set to a non-white value — guards
          against ChatGPT-style themes where the stored override leaked
          to white and rendered the send button invisible. */
-      background: var(--send-btn-bg, var(--red));
+      background: var(--send-btn-bg, var(--sys-blue));
       color: #fff;
       border: none;
       border-radius: 8px;
-      min-width: 32px;
-      width: 32px;
-      height: 32px !important;
+      min-width: 44px;
+      width: 44px;
+      height: 44px !important;
       padding: 0;
       cursor: pointer;
       display: flex;
@@ -2496,7 +2513,7 @@ body.bg-pattern-sparkles {
     .mode-toggle-btn.active,
     .mode-toggle-btn.active:hover,
     .mode-toggle-btn.active:focus {
-      color: var(--fg) !important;
+      color: var(--chrome-ink) !important;
       background: none !important;
       border-color: transparent !important;
       cursor: default;
@@ -4733,7 +4750,7 @@ body.bg-pattern-sparkles {
       font-size:1rem;
       font-weight:600;
       letter-spacing:-0.03em;
-      color:var(--red);
+      color:var(--chrome-ink);
     }
     .close-btn,
     .modal-close {
@@ -4947,9 +4964,10 @@ body.bg-pattern-sparkles {
       opacity: 0 !important;
       pointer-events: none;
     }
-    /* Focus outline for accessibility */
+    /* Focus outline for accessibility — fixed Apple system-blue, deliberately
+       distinct from any theme accent so it never reads as a hued label. */
     :focus-visible {
-      outline: 2px solid var(--red);
+      outline: 2px solid var(--sys-blue);
       outline-offset: 2px;
     }
     /* Hamburger menu button */
@@ -7770,7 +7788,7 @@ textarea.memory-add-input {
     to right,
     transparent 0%,
     transparent calc(var(--sweep, -20%) - 8%),
-    color-mix(in srgb, var(--red) 85%, transparent) var(--sweep, -20%),
+    color-mix(in srgb, var(--chrome-ink) 55%, transparent) var(--sweep, -20%),
     transparent calc(var(--sweep, -20%) + 8%),
     transparent 100%
   );
@@ -7785,6 +7803,12 @@ textarea.memory-add-input {
 #memory-list .memory-item:nth-child(5n)::after { animation-duration: 9.3s; animation-delay: 4.7s; }
 #memory-list .memory-item:nth-child(7n)::after { animation-duration: 5.5s; animation-delay: 2.3s; }
 #memory-list .memory-item:hover::after { animation: none; opacity: 0; }
+/* Accessibility: the optics always yield to the user's settings — a perpetual
+   sweep is gratuitous peripheral motion, so kill it entirely under Reduce Motion
+   (HIG Motion / persona rule #9). The ring itself simply rests un-animated. */
+@media (prefers-reduced-motion: reduce) {
+  #memory-list .memory-item::after { animation: none !important; }
+}
 @property --sweep {
   syntax: '<percentage>';
   inherits: false;
@@ -8085,14 +8109,14 @@ textarea.memory-add-input {
 }
 
 .memory-cat-chip:hover {
-  border-color: var(--red);
-  color: var(--red);
+  border-color: var(--sys-blue);
+  color: var(--chrome-ink);
 }
 
 .memory-cat-chip.active {
-  background: color-mix(in srgb, var(--red) 15%, transparent);
-  border-color: color-mix(in srgb, var(--red) 40%, transparent);
-  color: var(--red);
+  background: color-mix(in srgb, var(--sys-blue) 18%, transparent);
+  border-color: color-mix(in srgb, var(--sys-blue) 45%, transparent);
+  color: var(--chrome-ink);
 }
 
 /* Sort select */
@@ -17792,8 +17816,8 @@ body.gallery-selecting .gallery-dl-btn,
 }
 
 .settings-nav-item.active {
-  background: color-mix(in srgb, var(--red) 12%, transparent);
-  color: var(--red);
+  background: color-mix(in srgb, var(--sys-blue) 16%, transparent);
+  color: var(--chrome-ink);
 }
 
 .settings-nav-item svg {
@@ -19260,8 +19284,8 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 .admin-tab:hover { color: var(--fg); }
 .lib-tab.active,
 .admin-tab.active {
-  color: var(--accent, var(--red));
-  border-bottom-color: var(--accent, var(--red));
+  color: var(--chrome-ink);
+  border-bottom-color: var(--sys-blue);
 }
 
 /* Cookbook tab count badge */
@@ -30752,11 +30776,11 @@ select.cal-input { appearance:auto; }
 textarea.cal-input { resize:vertical; font-family:inherit; }
 .cal-form-row { display:flex; gap:8px; align-items:center; }
 .cal-form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
-button.cal-btn { background:color-mix(in srgb, var(--fg) 8%, transparent); border:1px solid var(--border); color:var(--fg); border-radius:5px; padding:0 14px; height:28px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; transition:background 0.15s, border-color 0.15s; }
+button.cal-btn { background:color-mix(in srgb, var(--fg) 8%, transparent); border:1px solid var(--border); color:var(--chrome-ink); border-radius:5px; padding:0 14px; min-height:44px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; transition:background 0.15s, border-color 0.15s; }
 button.cal-btn:hover { background:color-mix(in srgb, var(--fg) 14%, transparent); }
-button.cal-btn.cal-btn-primary { background:var(--accent, var(--red)); color:var(--bg); border-color:var(--accent, var(--red)); }
-button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--accent, var(--red)); }
-button.cal-btn.cal-btn-danger { color:var(--accent, var(--red)); border-color:var(--accent, var(--red)); background:transparent; }
+button.cal-btn.cal-btn-primary { background:var(--sys-blue); color:#fff; border-color:var(--sys-blue); }
+button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--sys-blue); }
+button.cal-btn.cal-btn-danger { color:var(--sys-red); border-color:var(--sys-red); background:transparent; }
 button.cal-btn.cal-btn-danger:hover { background:var(--accent, var(--red)); color:var(--bg); }
 @media (max-width: 600px) {
   .cal-modal-container { max-width:100vw; width:100vw; border-radius:0; max-height:100vh; height:100vh; }
