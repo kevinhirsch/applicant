@@ -31,6 +31,9 @@ import digestModule from './emailLibrary/applicantDigest.js';
 import remoteModule from './applicantRemote.js';
 import { neverDoesList } from './applicantOnboarding.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import {
+  errText, loadingHTML, errorHTML, wireRetry, pollVisible,
+} from './applicantCore.js';
 
 const API = '/api/applicant/portal';
 const BADGE_POLL_MS = 60000;
@@ -48,7 +51,8 @@ let _items = [];
 // and clear when their action resolves, so folding them would double-track.
 let _notifs = [];
 let _loading = false;
-let _badgePollIv = null;
+// pollVisible's teardown handle — pauses the badge poll when the tab is hidden.
+let _badgePollStop = null;
 
 
 
@@ -57,6 +61,21 @@ async function _confirm(message, opts) {
     if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
   } catch { /* fall through */ }
   try { return window.confirm(message); } catch { return false; }
+}
+
+// A toast that carries a single clickable action (reuses ui.js showToast's
+// {action,onAction} slot). Falls back to a plain toast if the action slot is
+// unavailable, so messaging never regresses. `onAction` opens the target surface
+// directly instead of leaving the user with dead "go here" instruction text.
+function _toastAction(msg, actionLabel, onAction) {
+  try {
+    uiModule.showToast(msg, {
+      action: actionLabel,
+      onAction: () => { try { onAction(); } catch { /* best-effort */ } },
+    });
+    return;
+  } catch { /* fall through to a plain toast */ }
+  _toast(msg);
 }
 
 
@@ -282,11 +301,14 @@ function _ensureModalEl() {
           Pending
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-portal-refresh" title="Refresh the list">Refresh</button>
+          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What Applicant never does" title="What Applicant never does — its safety limits" style="font-size:11px;padding:2px 8px;opacity:0.8;">What it never does</button>
+          <button class="cal-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Refresh the list">Refresh</button>
           <button class="close-btn" id="applicant-portal-close" aria-label="Close" title="Close">✖</button>
         </div>
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
+        <div id="applicant-portal-greeting"></div>
+        <div id="applicant-portal-neverdoes-panel" style="display:none;"></div>
         <div id="applicant-portal-digest"></div>
         <div id="applicant-portal-pending"><div class="hwfit-loading">Loading…</div></div>
       </div>
@@ -294,9 +316,24 @@ function _ensureModalEl() {
   document.body.appendChild(modal);
   modal.querySelector('#applicant-portal-close').addEventListener('click', _close);
   modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); });
+  modal.querySelector('#applicant-portal-neverdoes').addEventListener('click', _toggleNeverDoesPanel);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
   return modal;
+}
+
+// Trust affordance (task #3): the "what Applicant never does" contract is always
+// one tap away from the header, even when the queue is full — not only on the
+// empty/gated view. Toggles a small inline panel that reuses _neverDoesHTML().
+function _toggleNeverDoesPanel() {
+  const panel = _modalEl && _modalEl.querySelector('#applicant-portal-neverdoes-panel');
+  if (!panel) return;
+  const showing = panel.style.display !== 'none';
+  if (showing) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+  const inner = _neverDoesHTML();
+  if (!inner) return; // no list available — leave the affordance inert rather than showing an empty box
+  panel.innerHTML = inner;
+  panel.style.display = '';
 }
 
 function _close() {
@@ -305,6 +342,36 @@ function _close() {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
   }
+}
+
+// ── Greeting (task #1) ────────────────────────────────────────────────────────
+//
+// A warm, time-aware, first-person line at the top of the home base. Calm,
+// on-your-side voice; neutral ink; no exclamation spam. Aware of the pending
+// count so it reassures when clear and orients when there's work waiting.
+
+function _partOfDay() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
+}
+
+function _greetingLine(pendingCount) {
+  const when = _partOfDay();
+  const n = Number(pendingCount) || 0;
+  if (n <= 0) return `Good ${when}. You're all clear — I'll bring anything that needs you right here.`;
+  if (n === 1) return `Good ${when}. One thing is waiting for you below.`;
+  return `Good ${when}. ${n} things are waiting for you below.`;
+}
+
+function _renderGreeting(pendingCount) {
+  const slot = _modalEl && _modalEl.querySelector('#applicant-portal-greeting');
+  if (!slot) return;
+  slot.innerHTML = `
+    <div style="font-size:13px;color:var(--fg);opacity:0.9;margin:2px 2px 10px;line-height:1.4;">
+      ${esc(_greetingLine(pendingCount))}
+    </div>`;
 }
 
 // ── Empty / offline states ────────────────────────────────────────────────────
@@ -351,13 +418,19 @@ function _neverDoesHTML() {
 }
 
 function _renderEmpty(body) {
+  // Warm, agency + reassurance empty state (task #2): first-person, on-your-side,
+  // with a quiet proof-of-life line so "clear" reads as "working" not "idle".
   body.innerHTML = `
-    <div style="padding:32px 18px;text-align:center;opacity:0.7;">
+    <div style="padding:32px 18px;text-align:center;opacity:0.8;">
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.55;margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
-      <div style="font-size:14px;margin-bottom:4px;">You're all caught up</div>
-      <div style="font-size:12px;max-width:380px;margin:0 auto;">
-        Nothing needs your attention right now. When a document is ready to review
-        or a detail is needed, it'll appear here.
+      <div style="font-size:14px;margin-bottom:4px;">You're all clear</div>
+      <div style="font-size:12px;max-width:400px;margin:0 auto;line-height:1.5;">
+        Applicant is working in the background — I'll bring anything that needs you
+        right here.
+      </div>
+      <div style="font-size:11px;opacity:0.65;margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--color-success,#4caf50);display:inline-block;"></span>
+        Searching and preparing applications for you
       </div>
       ${_neverDoesHTML()}
     </div>`;
@@ -640,7 +713,12 @@ function _openRedline(appId) {
       return;
     }
   } catch { /* fall through */ }
-  _toast('Open the Library → Applications tab to review');
+  // No direct opener available — offer a one-tap action that lands them on the
+  // Library surface instead of dead "go here" instruction text.
+  _toastAction('Applicant review is in your Library', 'Open Library', () => {
+    const rail = document.getElementById('rail-documents') || document.getElementById('rail-library');
+    if (rail) { rail.click(); _close(); }
+  });
 }
 
 function _openDigest() {
@@ -649,7 +727,11 @@ function _openDigest() {
     const railEmail = document.getElementById('rail-email');
     if (railEmail) { railEmail.click(); _close(); return; }
   } catch { /* fall through */ }
-  _toast('Open Email to review your matched roles');
+  // Fall back to a clickable toast that opens Email directly.
+  _toastAction('Your matched roles are in Email', 'Open Email', () => {
+    const railEmail = document.getElementById('rail-email');
+    if (railEmail) { railEmail.click(); _close(); }
+  });
 }
 
 function _openSession(appId, url) {
@@ -673,6 +755,7 @@ function _removeRow(host, id) {
   if (row) row.remove();
   _items = _items.filter((it) => String(it.id) !== String(id));
   _setBadge(_items.length + _infoNotifs().length);
+  _renderGreeting(_items.length);
   if (!host.querySelector('.applicant-portal-row') && !host.querySelector('.applicant-portal-notif')) {
     _renderEmpty(host);
   }
@@ -1136,16 +1219,18 @@ async function _load(showSpinner) {
   if (_loading) return;
   _loading = true;
   const body = _modalEl && _modalEl.querySelector('#applicant-portal-pending');
-  if (body && showSpinner) body.innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  if (body && showSpinner) body.innerHTML = loadingHTML('Loading your pending items…');
   try {
     const data = await _fetchJSON(`${API}/pending`);
     if (data && data.gated === true) {
       if (body) _renderGated(body, data);
+      _renderGreeting(0);
       _setBadge(0);
       return;
     }
     if (data && data.engine_available === false) {
       if (body) _renderOffline(body);
+      _renderGreeting(0);
       _setBadge(0);
       return;
     }
@@ -1154,10 +1239,24 @@ async function _load(showSpinner) {
     // toast any genuinely-new ones. Independent of the pending fetch, so a slow
     // inbox never blocks the action rows.
     await _loadNotifs();
+    _renderGreeting(_items.length);
     _setBadge(_items.length + _infoNotifs().length);
     if (body) _renderList(body);
   } catch (e) {
-    if (body) _renderOffline(body);
+    // A down/unreachable engine (network/timeout) is a normal "not connected yet"
+    // state, not an error — keep the friendly offline copy. An actual HTTP/auth
+    // failure is a real error: surface the plain-language reason (branched by
+    // err.kind via errText) with a one-tap retry instead of a silent catch.
+    const kind = e && e.kind;
+    if (body) {
+      if (kind === 'network' || kind === 'timeout') {
+        _renderOffline(body);
+      } else {
+        body.innerHTML = errorHTML(errText(e), { retry: true });
+        wireRetry(body, () => _load(true));
+      }
+    }
+    _renderGreeting(0);
   } finally {
     _loading = false;
   }
@@ -1208,10 +1307,12 @@ function _boot() {
       clearInterval(iv);
     }
   }, 500);
-  // Seed the badge, then keep it fresh on a slow poll.
+  // Seed the badge, then keep it fresh on a slow poll. pollVisible pauses the
+  // interval while the tab is backgrounded (no wasted fetches) and resumes —
+  // with an immediate refresh — when it comes back to the foreground.
   refreshBadge();
-  if (_badgePollIv) clearInterval(_badgePollIv);
-  _badgePollIv = setInterval(refreshBadge, BADGE_POLL_MS);
+  if (_badgePollStop) { _badgePollStop(); _badgePollStop = null; }
+  _badgePollStop = pollVisible(refreshBadge, BADGE_POLL_MS);
 }
 
 if (document.readyState === 'loading') {
