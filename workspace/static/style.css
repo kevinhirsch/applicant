@@ -18,7 +18,11 @@
 :root {
   /* Core palette */
   --bg: #282c34;
-  --fg: #9cdef2;
+  /* HIG-strict neutral ink (was #9cdef2 cyan). Liquid Glass keeps chrome AND
+     content ink neutral — color lives in system state fills + one CTA, not in the
+     base text. Aligned with the kit's own adaptive light ink (appkitGlass
+     HERO_INK_LIGHT #eef1f4) so chrome and glass agree. */
+  --fg: #eef1f4;
   --panel: #111;
   --border: #355a66;
   --red: #e06c75;
