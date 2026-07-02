@@ -194,6 +194,14 @@ async def ingest_base_resume(
             for c in conflicts
         ],
         "requires_confirmation": bool(conflicts),
+        # Resume-health self-check at upload (activation backlog §7.5): the same
+        # ats_parseability rule used to gate submission of the GENERATED resume,
+        # run here against the UPLOADED resume's own text so a formatting risk is
+        # visible immediately instead of only at submit time.
+        "resume_health": {
+            "parseable": getattr(result, "parseable", True),
+            "issues": list(getattr(result, "parseability_issues", None) or []),
+        },
     }
 
 

@@ -85,6 +85,15 @@ class ReconciliationResult:
     auto_applied: list[str] = field(default_factory=list)
     conflicts: list[ReconciliationConflict] = field(default_factory=list)
     attribute_count: int = 0
+    # Resume-health self-check (issue #370's ats_parseability rule, reused at
+    # upload time rather than only pre-submission): whether the uploaded
+    # resume's own extractable text is ATS-recoverable, and why not if it
+    # isn't. Surfaced immediately at upload so a formatting problem (a
+    # text-as-image render, a missing contact line, no recognizable section
+    # headers) is an instant, actionable signal rather than a silent
+    # downstream failure.
+    parseable: bool = True
+    parseability_issues: list[str] = field(default_factory=list)
 
 
 @runtime_checkable

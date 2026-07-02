@@ -258,6 +258,45 @@ function _err(html) {
   return `<p class="admin-error" role="alert" style="font-size:0.86rem;margin:8px 0;">${html}</p>`;
 }
 
+// Resume-health at upload: renders the `resume_health` block the engine's
+// base-resume ingest now returns (the existing ats_parseability self-check —
+// previously run only on the GENERATED render right before submission — reused
+// here against the resume the user just uploaded). Friendlier phrasing for the
+// couple of known issue strings; anything unrecognized falls back to the raw
+// engine message so a wording change upstream never goes silent.
+const _RESUME_HEALTH_HINTS = [
+  [
+    'no recoverable text layer',
+    "We couldn't pull readable text out of this file, so application systems may see a blank resume. If it's a scanned image or uses text boxes/graphics for layout, try exporting a plain text-based PDF or Word doc instead.",
+  ],
+  [
+    'contact email is not recoverable',
+    "Your email address isn't detectable in the text — some systems may fail to capture it. Check that it isn't inside a text box, header/footer image, or icon-only contact block.",
+  ],
+  [
+    'no recognizable section headers',
+    'We didn’t find standard section headers (e.g. "Experience", "Education", "Skills") — using conventional headers helps automated systems parse your resume correctly.',
+  ],
+];
+
+function _friendlyResumeHealthIssue(issue) {
+  const hit = _RESUME_HEALTH_HINTS.find(([needle]) => issue.includes(needle));
+  return hit ? hit[1] : issue;
+}
+
+function _resumeHealthHTML(res) {
+  const health = (res && res.resume_health) || {};
+  const issues = Array.isArray(health.issues) ? health.issues : [];
+  if (health.parseable !== false && !issues.length) {
+    return '<p class="admin-success" style="font-size:0.82rem;margin:2px 0 8px;">Resume health: looks good — this resume should read cleanly in most application-tracking systems.</p>';
+  }
+  const items = issues.map((i) => `<li>${esc(_friendlyResumeHealthIssue(i))}</li>`).join('');
+  return `
+    <p style="font-size:0.82rem;margin:2px 0 2px;opacity:0.85;">Resume health: a couple of things some application systems may struggle with —</p>
+    <ul style="font-size:0.82rem;margin:0 0 8px 18px;opacity:0.85;">${items}</ul>
+  `;
+}
+
 // Help marker. Uses the SAME `?` help-icon the rest of the workspace uses
 // (`preset-hint-icon`, a native-`title` hover icon — see Settings → Presets) so
 // the wizard's tooltips actually show on hover and look identical to the app.
@@ -1584,7 +1623,7 @@ function _renderBaseResume(saved) {
       try {
         _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
       } catch { /* keep last-known intake; prefill is best-effort */ }
-      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Read ${res.attribute_count || 0} details from your resume — we’ve filled in the next steps for you to review.</p>`;
+      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Read ${res.attribute_count || 0} details from your resume — we’ve filled in the next steps for you to review.</p>${_resumeHealthHTML(res)}`;
       if (res.requires_confirmation && (res.conflicts || []).length) {
         _renderConflicts(res.conflicts);
       } else {
