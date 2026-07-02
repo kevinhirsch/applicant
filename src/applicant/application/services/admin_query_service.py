@@ -10,13 +10,23 @@ port + the logging ring buffer:
   steps and whether the workflow is pending recovery (FR-OBS-2 / FR-DUR-1);
 * ``logs`` — recent, already-redacted structured log entries (FR-LOG-3);
 * ``variant_library`` — resume variants with lineage / scores / approval state,
-  reusing the Phase 3 variant data (FR-UI-6 / FR-RESUME-6).
+  reusing the Phase 3 variant data (FR-UI-6 / FR-RESUME-6), plus a per-variant
+  usage count and (where the data supports it) interview rate (design-audit
+  Top-25 #19).
 
 This is a query-only service (no mutation), so it can never regress live state.
 """
 
 from __future__ import annotations
 
+# Reuse the SAME "submitted" state set and positive-signal outcome types the
+# tracker board already uses (post_submission_service, #4 of the design audit)
+# rather than redefining them here, so the variant scoreboard's notion of
+# "used"/"converted" never drifts from the tracker's.
+from applicant.application.services.post_submission_service import (
+    POSITIVE_SIGNAL_TYPES,
+    TRACKER_STATES,
+)
 from applicant.core.ids import ApplicationId, CampaignId
 from applicant.observability.logging import recent_logs
 
@@ -188,15 +198,59 @@ class AdminQueryService:
                 d += 1
             return d
 
-        return [
-            {
-                "variant_id": str(v.id),
-                "parent_id": str(v.parent_id) if v.parent_id else None,
-                "is_root": v.is_root,
-                "lineage_depth": depth(v),
-                "approved": v.approved,
-                "targeted_jd_signature": v.targeted_jd_signature,
-                "fit_scores": dict(v.fit_scores or {}),
-            }
-            for v in variants
-        ]
+        uses_by_variant, positives_by_variant = self._variant_usage_stats(campaign_id)
+
+        rows = []
+        for v in variants:
+            vid = str(v.id)
+            uses = uses_by_variant.get(vid, 0)
+            positives = positives_by_variant.get(vid, 0)
+            rows.append(
+                {
+                    "variant_id": vid,
+                    "parent_id": str(v.parent_id) if v.parent_id else None,
+                    "is_root": v.is_root,
+                    "lineage_depth": depth(v),
+                    "approved": v.approved,
+                    "targeted_jd_signature": v.targeted_jd_signature,
+                    "fit_scores": dict(v.fit_scores or {}),
+                    # design-audit Top-25 #19 (per-variant A/B scoreboard): usage is
+                    # always countable (real ``Application.resume_variant_id`` FK),
+                    # rounded-percent interview rate is derived from the SAME
+                    # outcome-event trail the tracker board reads and is ``None``
+                    # (never a fabricated 0%) until the variant has at least one
+                    # tracked use.
+                    "uses": uses,
+                    "interview_rate": (
+                        round(100.0 * positives / uses, 1) if uses > 0 else None
+                    ),
+                }
+            )
+        return rows
+
+    def _variant_usage_stats(
+        self, campaign_id: CampaignId
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """Per-variant use count + positive-signal count (design-audit Top-25 #19).
+
+        "Used" means an application carrying that variant's id
+        (``Application.resume_variant_id``) actually reached a submitted/
+        post-submission state (``TRACKER_STATES`` — the same set the tracker board
+        uses), not merely that a variant was picked during drafting. "Positive
+        signal" reuses ``POSITIVE_SIGNAL_TYPES`` (``interview_invited``/``offer``)
+        from the outcome trail so this number can never diverge from what the
+        tracker board itself shows for the same application.
+        """
+        apps = self._storage.applications.list_for_campaign(campaign_id)
+        outcomes_by_app = self._batch_outcomes(campaign_id, apps)
+        uses: dict[str, int] = {}
+        positives: dict[str, int] = {}
+        for a in apps:
+            if a.resume_variant_id is None or a.status not in TRACKER_STATES:
+                continue
+            vid = str(a.resume_variant_id)
+            uses[vid] = uses.get(vid, 0) + 1
+            events = outcomes_by_app.get(str(a.id), [])
+            if any(e.type in POSITIVE_SIGNAL_TYPES for e in events):
+                positives[vid] = positives.get(vid, 0) + 1
+        return uses, positives

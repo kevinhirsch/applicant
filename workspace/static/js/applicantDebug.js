@@ -631,16 +631,49 @@ function _downloadText(text, filename) {
   }
 }
 
+// A short, plain-language label for a variant row — shared by the row list and
+// the A/B nudge so both name the same variant the same way.
+function _variantLabel(v) {
+  return v.is_root ? 'Base resume' : (v.variant_id || v.id || 'Variant');
+}
+
+// design-audit Top-25 #19 (per-variant A/B scoreboard): when two-or-more
+// variants have enough tracked uses to compare AND one is clearly converting
+// to interviews more often than another, surface a one-line plain-language
+// nudge. Deliberately conservative — both sides need at least 2 tracked uses
+// and the gap must be at least 20 percentage points — so a single lucky/unlucky
+// application can't produce a confident-sounding claim from noise. Returns ''
+// when there isn't a clean enough signal to say anything.
+function _variantNudge(variants) {
+  const comparable = variants.filter((v) => (v.uses || 0) >= 2 && v.interview_rate != null);
+  if (comparable.length < 2) return '';
+  const sorted = [...comparable].sort((a, b) => b.interview_rate - a.interview_rate);
+  const best = sorted[0];
+  const worst = sorted[sorted.length - 1];
+  if (best.interview_rate - worst.interview_rate < 20) return '';
+  const bestLabel = esc(_variantLabel(best));
+  const worstLabel = esc(_variantLabel(worst));
+  const msg = worst.interview_rate > 0
+    ? `${bestLabel} converts to interviews ${(best.interview_rate / worst.interview_rate).toFixed(1)}x more often than ${worstLabel} — consider using it more.`
+    : `${bestLabel} is converting to interviews while ${worstLabel} hasn't yet — consider using ${bestLabel} more.`;
+  return `<div class="admin-toggle-sub" style="opacity:0.85;margin:2px 0 10px;padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--color-success, #4caf50) 12%, transparent);">${msg}</div>`;
+}
+
 // #100: was one bordered `.admin-card` tile per variant (same glass-on-glass
 // stacking as the #93 Sources/Tools toggle rows) — one flat list with
 // hairline row dividers instead, self-contained (this tab renders straight
 // to _body(), so it owns its own `.applicant-debug-list` box).
+// design-audit Top-25 #19: each row now also shows how many times the variant
+// was actually submitted and, once the outcome trail has enough data, its
+// interview rate — plus a top-of-tab nudge (`_variantNudge`) when one variant
+// is clearly outperforming another.
 async function _renderVariants() {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${ADMIN}/variants/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const variants = data.variants || [];
   if (!variants.length) { _body().innerHTML = _empty('No resume variants built for this job search yet.'); return; }
+  const nudge = _variantNudge(variants);
   const rows = variants.map((v) => {
     const id = v.variant_id || v.id || 'Variant';
     const scores = v.fit_scores || {};
@@ -649,16 +682,22 @@ async function _renderVariants() {
       ? `best fit ${esc(Math.max(...scoreVals.map(Number)).toFixed(2))}`
       : (v.score != null ? `score ${esc(v.score)}` : 'not scored');
     const approved = v.approved === true ? 'approved' : (v.approval_state || 'awaiting review');
+    const uses = v.uses || 0;
+    const usesText = uses === 1 ? '1 use' : `${esc(uses)} uses`;
+    const rateText = v.interview_rate != null ? `${esc(v.interview_rate)}% interview rate` : 'not enough data yet';
     return `<div class="applicant-debug-list-row">
     <div style="min-width:0;">
       <div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>
       <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
         ${esc(scoreText)} · ${esc(approved)}${v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : ''}${v.parent_id ? ` · from ${esc(v.parent_id)}` : ''}
       </div>
+      <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
+        ${usesText} · ${rateText}
+      </div>
     </div>
   </div>`;
   }).join('');
-  _body().innerHTML = `<div class="applicant-debug-list">${rows}</div>`;
+  _body().innerHTML = `${nudge}<div class="applicant-debug-list">${rows}</div>`;
 }
 
 const RUN_MODES = [
