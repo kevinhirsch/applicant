@@ -62,7 +62,8 @@ SURFACES = [
      "#applicant-results-modal", "Non-admin Results: outcome funnel, per-source conversion, learned 'what converts for you' signature"),
     ("onboarding", "window.launchApplicantSetup && window.launchApplicantSetup()",
      "#applicant-onboarding-overlay", "OOBE wizard: Connect a model -> Your profile"),
-    ("settings", "CLICK:#user-bar-settings", "#settings-modal", "Settings: AI, sandbox, tools, services, notifications, fonts, account, etc."),
+    ("settings", "var b=document.getElementById('user-bar-settings')||document.getElementById('rail-settings'); b&&b.click()",
+     "#settings-modal", "Settings: AI, sandbox, tools, services, notifications, fonts, account, etc."),
 ]
 
 # URL-routed vendored pages (open via goto, not a JS seam)
