@@ -54,8 +54,12 @@ def test_settings_modal_header_no_longer_followed_by_a_generic_subtitle_div():
     closes, then straight into the tabbed layout) rather than merely that the
     string is absent somewhere unrelated in the file."""
     html = _read(INDEX_HTML)
+    # Anchored on the settings close button's aria-label (added in a later
+    # round-2 a11y pass) so this still targets the Settings modal's specific
+    # close button rather than the first `.close-btn` in the file.
     m = re.search(
-        r'<button type="button" class="close-btn">✖</button>\s*\n\s*</div>\s*\n\s*(<div[^>]*>)',
+        r'<button type="button" class="close-btn" aria-label="Close settings modal">'
+        r'✖</button>\s*\n\s*</div>\s*\n\s*(<div[^>]*>)',
         html,
     )
     assert m, "expected to find the modal-header close button followed by the next container"
