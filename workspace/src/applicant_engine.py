@@ -409,6 +409,14 @@ class ApplicantEngineClient:
         """Rename / archive / re-tune a campaign's run config (#301, FR-CRIT-4)."""
         return await self._request("PATCH", f"/api/campaigns/{campaign_id}", json=body)
 
+    async def delete_campaign(self, campaign_id: str) -> Any:
+        """Delete a campaign and PURGE all its associated data (#363, FR-CRIT-4,
+        NFR-PRIV-1) -- résumés/variants, parsed PII, EEO answers, generated
+        materials, attributes, application-scoped children, and banked
+        credentials. Irreversible; the engine itself refuses to delete the
+        reserved system campaign."""
+        return await self._request("DELETE", f"/api/campaigns/{campaign_id}")
+
     # -- discovery sources (#301, FR-DISC-2/5) ---------------------------
 
     async def list_discovery_sources(self, campaign_id: str) -> Any:

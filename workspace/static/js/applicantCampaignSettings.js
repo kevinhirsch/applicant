@@ -12,11 +12,16 @@
 //   * daily throughput target (how many roles a day to work, capped engine-side)
 //   * exploration budget (how much to try new sources vs. proven ones)
 //   * discovery sources with their learned yield stats + a quick on/off toggle
+//   * Danger zone — permanently delete the campaign (dark-engine audit item 17):
+//     the engine already purges every store on delete (résumés, PII, generated
+//     materials, application history, banked credentials); this just gives the
+//     owner a confirmed, reachable way to trigger it.
 //
 // Mounted lazily by settings.js when the Campaign tab opens, into
 // #ao-settings-campaign. Re-renders fresh each open so it reflects saved state.
 
 import { esc, _toast, _fetchJSON, _post, _put } from './applicantCore.js';
+import uiModule from './ui.js';
 
 const BASE = '/api/applicant/campaigns';
 
@@ -114,6 +119,15 @@ function _campaignCard(c) {
         <div class="admin-toggle-sub" style="margin:10px 0 6px">Discovery sources</div>
         <div class="cs-sources-list" style="font-size:0.85rem;opacity:0.7">Loading…</div>
       </div>
+      <div class="cs-danger-zone" style="margin-top:14px;padding-top:10px;border-top:1px solid color-mix(in srgb, var(--color-danger, #e06c75) 30%, transparent)">
+        <div class="admin-toggle-label" style="color:#e55">Danger zone</div>
+        <div class="admin-toggle-sub" style="margin-bottom:8px">
+          Permanently deletes this campaign and everything in it — résumés, applications,
+          discovery sources, and learned criteria. This cannot be undone.
+        </div>
+        <button type="button" class="cal-btn cal-btn-danger cs-delete" data-cs-id="${id}"
+                title="Permanently delete this campaign and purge its data">Delete this campaign</button>
+      </div>
     </div>`;
 }
 
@@ -199,6 +213,25 @@ async function _wireCard(host, card) {
       btn.disabled = false;
     }
   });
+  card.querySelector('.cs-delete')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+    const ok = await _confirm(
+      `Permanently delete "${name}"? Its résumés, applications, discovery sources, and learned ` +
+        'criteria will be purged and cannot be recovered.',
+      { confirmText: 'Delete permanently', cancelText: 'Keep campaign', danger: true },
+    );
+    if (!ok) return;
+    btn.disabled = true;
+    try {
+      await _del(`${BASE}/${encodeURIComponent(id)}`);
+      _toast('Campaign deleted');
+      await mountApplicantCampaignSettings(host); // re-render fresh without it
+    } catch (e) {
+      _toast(`Could not delete campaign: ${e.message || e}`);
+      btn.disabled = false;
+    }
+  });
   await _wireSources(host, id);
 }
 
@@ -209,6 +242,20 @@ function _patch(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
   });
+}
+
+// DELETE convenience (applicantCore only exports _post/_put).
+function _del(url) {
+  return _fetchJSON(url, { method: 'DELETE' });
+}
+
+// Same async confirm shape as applicantVault.js's `_confirm()` / applicantRemote.js's
+// `_confirm()`: uiModule.styledConfirm with a window.confirm fallback.
+async function _confirm(message, opts) {
+  try {
+    if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
+  } catch { /* fall through */ }
+  try { return window.confirm(message); } catch { return false; }
 }
 
 async function _wireCreate(host) {
