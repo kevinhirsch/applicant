@@ -110,6 +110,7 @@ function _filterPool(start, end) {
 async function _fetchEvents(start, end, force) {
   if (!force && _rangeIsCached(start, end)) {
     _events = _filterPool(start, end);
+    _eventsError = null;
     return;
   }
   // Render from pool immediately if we have any cached data
@@ -127,11 +128,21 @@ async function _fetchEvents(start, end, force) {
       (data.events || []).forEach(ev => { _allEvents[ev.uid] = ev; });
       _fetchedRanges.push([start, end]);
       _events = _filterPool(start, end);
+      _eventsError = null;
       if (typeof _saveCache === 'function') _saveCache();
       // Re-render in background when new data arrives (if calendar still open)
       if (_open && hasCache) _render();
     })
-    .catch(e => { console.error('Calendar: failed to fetch events', e); });
+    .catch(e => {
+      console.error('Calendar: failed to fetch events', e);
+      // Previously silent: a failed fetch left `_events` at whatever it was
+      // before (often empty on a first-ever load) with zero indication to
+      // the user, so the grid rendered as if the month genuinely had no
+      // events. Track the failure so the toolbar can surface an inline
+      // "couldn't refresh" banner + Retry instead.
+      _eventsError = e.message || 'Failed to load events';
+      if (_open && hasCache) _render();
+    });
   // If we have cache, don't block on fetch — return immediately so render is instant
   if (hasCache) return;
   // No cache — must await the fetch
@@ -170,6 +181,11 @@ function _prefetchAdjacent() {
 }
 
 let _calendarsError = null;
+// Set when the visible range's event fetch fails; cleared on the next
+// successful fetch (cache-hit or network). Surfaced as an inline banner in
+// the toolbar (see _eventsErrorBannerHTML) rather than swallowed — a failed
+// events fetch previously left the grid looking like a genuinely empty month.
+let _eventsError = null;
 // Guard so we only trigger an on-open CalDAV pull once per page load —
 // every list/render path calls _fetchCalendars, but we only want to
 // hit the remote server lazily on the first user open.
@@ -790,11 +806,30 @@ function _isoWeekNumber(d) {
   return Math.ceil(((tgt - yearStart) / 86400000 + 1) / 7);
 }
 
+// Inline "couldn't refresh events" banner — rendered inside the toolbar
+// (shared by month/week/agenda/year via _headerHTML) whenever the last
+// events fetch for the visible range failed. Distinct from _renderEmpty's
+// error state (that one covers the calendar LIST fetch / "no calendars set
+// up"; this one covers the EVENTS fetch for an otherwise-configured
+// calendar) so a transient network blip reads as "couldn't refresh" rather
+// than "no calendars".
+function _eventsErrorBannerHTML() {
+  if (!_eventsError) return '';
+  const hasCached = Object.keys(_allEvents).length > 0;
+  const msg = hasCached
+    ? `Couldn't refresh events — showing cached data. (${_e(_eventsError)})`
+    : `Couldn't load events. (${_e(_eventsError)})`;
+  return `<div class="cal-events-error" role="alert" style="display:flex;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;padding:6px 12px;margin-bottom:6px;font-size:12px;color:var(--fg-muted);background:var(--bg-secondary, rgba(220,50,50,0.08));border-radius:8px;">
+    <span>${msg}</span>
+    <button class="cal-btn" id="cal-events-retry" type="button" style="padding:2px 10px;">Retry</button>
+  </div>`;
+}
+
 function _headerHTML() {
   const weekSuffix = _view === 'week'
     ? ` <span class="cal-week-no">W${_isoWeekNumber(_currentDate)}</span>`
     : '';
-  return `<div class="cal-toolbar">
+  return `${_eventsErrorBannerHTML()}<div class="cal-toolbar">
     <div class="cal-toolbar-nav">
       <button class="cal-nav" id="cal-prev">&larr;</button>
       <button class="cal-nav cal-today-btn" id="cal-today">Today</button>
@@ -2040,6 +2075,17 @@ function _wireAll(body) {
       else document.getElementById('cal-prev')?.click();
     }, { passive: true });
   }
+
+  document.getElementById('cal-events-retry')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Retrying…';
+    const range = (_view === 'year')
+      ? [`${_currentDate.getFullYear()}-01-01`, `${_currentDate.getFullYear() + 1}-01-01`]
+      : (_view === 'week') ? _weekRange(_currentDate) : _monthRange(_currentDate);
+    await _fetchEvents(range[0], range[1], /*force*/ true);
+    _render();
+  });
 
   document.getElementById('cal-prev')?.addEventListener('click', () => {
     _slideDir = -1;
