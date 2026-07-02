@@ -417,6 +417,23 @@ class JobPostingRepo:
         ).all()
         return [_posting_to_entity(r) for r in rows]
 
+    def count_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Cheap posting count for the campaign (perf audit #6 digest-cache fingerprint).
+
+        ``DigestCache`` (digest_service.py) uses this as a per-request freshness
+        check: a single indexed ``COUNT(*)`` instead of the full ``SELECT *`` +
+        N ``score_fn`` calls ``list_for_campaign`` + scoring costs. When the count
+        for a campaign changes (a new posting landed via the discovery tick), the
+        cached digest payload is stale and gets rebuilt on the next GET.
+        """
+        from sqlalchemy import func
+
+        result = self._s.execute(
+            select(func.count()).select_from(m.JobPostingModel)
+            .where(m.JobPostingModel.campaign_id == campaign_id)
+        ).scalar()
+        return result or 0
+
 
 class ApplicationRepo:
     def __init__(self, session: Session) -> None:

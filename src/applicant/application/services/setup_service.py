@@ -14,6 +14,7 @@ plaintext config table (FR-VAULT-3, NFR-PRIV-1).
 from __future__ import annotations
 
 import ipaddress
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
@@ -142,6 +143,65 @@ _SANDBOX_CONN_KEY = "sandbox.proxmox_windows"
 _SANDBOX_TOKEN_REF = "sandbox.proxmox_token_secret"
 _SANDBOX_RDP_REF = "sandbox.proxmox_rdp_password"
 _DEFAULT_MAX_TIERS = 10
+#: Defensive backstop TTL for the in-process tier-ladder cache (perf item #7).
+#: ``_save_tiers`` invalidates the cache synchronously on every write made through
+#: this class (the ONLY writer of ``_LADDER_KEY`` in the codebase), so in practice
+#: the cache is never stale — this TTL only guards against a write reaching the
+#: underlying store through some path other than this instance (e.g. a second
+#: process). Kept short so such a write is still picked up almost immediately.
+_TIER_LADDER_CACHE_TTL_S = 5.0
+
+#: Default TTL for :class:`TTLCachedGate` when wrapping the automated-work
+#: onboarding gate (perf item #8). Campaign readiness (criteria + résumé) is a
+#: rare, user-driven event, not something that needs sub-second freshness, so a
+#: few seconds of staleness is an acceptable trade for turning "scan every
+#: campaign + recompute readiness" from a per-poll cost into a per-5s cost. Kept
+#: short because this specifically backs ``require_automated_work``: it must
+#: never authorize work for long past the moment it should have closed again.
+DEFAULT_ONBOARDING_GATE_CACHE_TTL_S = 5.0
+
+
+class TTLCachedGate:
+    """Memoize an expensive boolean gate closure behind a short TTL (perf item #8).
+
+    Built for closures like the container's ``_onboarding_gate`` — it scans
+    EVERY campaign and computes full apply-readiness (criteria load + résumé
+    check) per campaign — which back ``require_automated_work`` and are
+    therefore re-run on every 45-60s poll from ``agent_status``, digest, and
+    agent-runs. Wrapping the closure (not :meth:`SetupService.is_automated_work_
+    allowed`) is deliberate: unit tests construct a bare ``SetupService`` with
+    their own real-time gate closure and assert the gate flips the instant the
+    underlying data changes (see ``tests/unit/test_apply_readiness_gate.py``) —
+    wrapping inside ``SetupService`` itself would make those assertions flaky.
+    Only the container's real (expensive, rarely-changing) closure is wrapped.
+
+    Safety note: this cache backs a gate that BLOCKS automated work, never one
+    that self-authorizes it beyond what the underlying data says. A TTL means a
+    "not yet ready" can read stale for up to ``ttl_seconds`` after work becomes
+    ready (a harmless extra delay) and, symmetrically, a "ready" can read stale
+    for up to ``ttl_seconds`` after something regresses — bounded to the same
+    short window, not indefinite. ``invalidate()`` is provided for any future
+    write path that wants an immediate recheck without waiting out the TTL.
+    """
+
+    def __init__(self, fn: Callable[[], bool], ttl_seconds: float) -> None:
+        self._fn = fn
+        self._ttl = ttl_seconds
+        self._value: bool | None = None
+        self._at = 0.0
+
+    def __call__(self) -> bool:
+        now = time.monotonic()
+        if self._value is not None and (now - self._at) < self._ttl:
+            return self._value
+        self._value = bool(self._fn())
+        self._at = now
+        return self._value
+
+    def invalidate(self) -> None:
+        """Drop the cached value so the next call re-runs the wrapped closure."""
+        self._value = None
+        self._at = 0.0
 
 
 class SetupService:
@@ -182,6 +242,16 @@ class SetupService:
         # cached (initially-empty) ladder so the next completion re-reads the new tiers.
         # Empty by default ⇒ behavior unchanged when nothing is registered.
         self._llm_config_change_hooks: list[Callable[[], None]] = []
+        # In-process cache of the persisted LLM tier ladder (perf item #7):
+        # ``is_setup_gate_open``/``is_automated_work_allowed`` are evaluated by
+        # ``require_llm_configured``/``require_automated_work`` on nearly every
+        # request — including every 45-60s poll from every surface — and were
+        # each paying a real SELECT against the shared boot Session. The ladder
+        # changes only when an operator explicitly (re)configures it, so cache the
+        # loaded value and invalidate it synchronously in ``_save_tiers`` (the sole
+        # write path) rather than re-reading on every gate check.
+        self._tiers_cache: list[dict[str, Any]] | None = None
+        self._tiers_cache_at: float = 0.0
 
     def register_llm_config_change_hook(self, hook: Callable[[], None]) -> None:
         """Register a callback fired after the LLM ladder is (re)configured.
@@ -250,13 +320,31 @@ class SetupService:
 
     # --- persistence helpers ---------------------------------------------
     def _load_tiers(self) -> list[dict[str, Any]]:
+        """Return the persisted tier ladder, cached in-process (perf item #7).
+
+        Cache-hit path does zero store access. A hit requires both a populated
+        cache AND freshness within the defensive TTL — cache invalidation on the
+        write side (``_save_tiers``) is what actually keeps this correct; the TTL
+        is only a backstop (see its docstring).
+        """
+        now = time.monotonic()
+        if (
+            self._tiers_cache is not None
+            and (now - self._tiers_cache_at) < _TIER_LADDER_CACHE_TTL_S
+        ):
+            return list(self._tiers_cache)
         rec = self._store.get(_LADDER_KEY)
-        if not rec:
-            return []
-        return list(rec.get("tiers", []))
+        tiers = list(rec.get("tiers", [])) if rec else []
+        self._tiers_cache = tiers
+        self._tiers_cache_at = now
+        return list(tiers)
 
     def _save_tiers(self, tiers: list[dict[str, Any]]) -> None:
         self._store.set(_LADDER_KEY, {"tiers": tiers})
+        # Write-through: the next read reflects this write immediately, with no
+        # window where a caller could observe a stale ladder after a real write.
+        self._tiers_cache = list(tiers)
+        self._tiers_cache_at = time.monotonic()
 
     def _steps_complete(self) -> set[str]:
         rec = self._store.get(_STEPS_KEY)

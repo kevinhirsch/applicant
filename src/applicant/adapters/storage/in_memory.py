@@ -128,6 +128,10 @@ class _PostingRepo:
             key=lambda p: str(p.id),
         )
 
+    def count_for_campaign(self, cid: CampaignId) -> int:
+        """Mirrors ``JobPostingRepo.count_for_campaign`` (perf audit #6)."""
+        return sum(1 for p in self._d.values() if p.campaign_id == cid)
+
     def delete_for_campaign(self, cid: CampaignId) -> int:
         stale = [k for k, p in self._d.items() if p.campaign_id == cid]
         for k in stale:

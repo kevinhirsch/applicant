@@ -60,7 +60,11 @@ from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.pending_actions_service import PendingActionsService
 from applicant.application.services.retention_service import RetentionService
 from applicant.application.services.scoring_service import ScoringService
-from applicant.application.services.setup_service import SetupService
+from applicant.application.services.setup_service import (
+    DEFAULT_ONBOARDING_GATE_CACHE_TTL_S,
+    SetupService,
+    TTLCachedGate,
+)
 from applicant.application.workflows import application_pipeline
 
 
@@ -456,6 +460,17 @@ def build_container(settings: Settings | None = None) -> Container:
         "eligibility_enabled": settings.presubmit_eligibility_enabled,
     }
 
+    # Perf audit #6: ONE process-lived DigestCache for the whole process, shared
+    # across EVERY DigestService construction below (main / per-tick / per-request).
+    # DigestService is rebuilt every request (CONC-REQ-1) and every scheduler tick
+    # (container._build_tick_services), so a cache living on `self` would reset on
+    # every single call — exactly like resume_ledger/digest_ledger below, which is
+    # why this is built here (once) and threaded through, not constructed inside
+    # DigestService.__init__.
+    from applicant.application.services.digest_service import DigestCache
+
+    digest_cache = DigestCache()
+
     engine, session_factory, storage = _build_storage(settings)
 
     # Browser adapter imported lazily (Phase 2 heavy deps not required at boot).
@@ -497,6 +512,20 @@ def build_container(settings: Settings | None = None) -> Container:
                 return True
         return False
 
+    # Perf item #8: ``_onboarding_gate`` scans every campaign and computes full
+    # apply-readiness (criteria load + résumé check) per campaign, and it backs
+    # ``require_automated_work`` — polled by agent_status, digest, and agent-runs
+    # every 45-60s from every surface. Wrap it in a short-TTL memo (see
+    # ``TTLCachedGate`` for the safety reasoning) so the expensive scan runs at
+    # most once per TTL window instead of once per poll. Wrapping the closure
+    # here — rather than caching inside ``SetupService.is_automated_work_allowed``
+    # — keeps unit tests that build a bare ``SetupService`` with their own
+    # real-time gate closure unaffected (they must keep seeing changes
+    # immediately); only this real, expensive, container-wired closure is cached.
+    _onboarding_gate_cached = TTLCachedGate(
+        _onboarding_gate, DEFAULT_ONBOARDING_GATE_CACHE_TTL_S
+    )
+
     # The matching "what's still missing" reporter for the gate: the FIRST campaign's
     # readiness drives the setup-status payload + chat copy so the front door can say
     # "I can't start applying until I know: ..." with the real remaining items. Reads
@@ -527,7 +556,7 @@ def build_container(settings: Settings | None = None) -> Container:
         llm_configured=settings.llm_configured,
         config_store=config_store,
         credentials=credentials,
-        onboarding_gate=_onboarding_gate,
+        onboarding_gate=_onboarding_gate_cached,
         sandbox_backend=settings.sandbox_backend,
     )
     setup_service.set_apply_readiness_reporter(_apply_readiness)
@@ -814,6 +843,7 @@ def build_container(settings: Settings | None = None) -> Container:
         notification_service=notification_service,
         pending_actions=pending_actions_service,
         presubmit_safety_params=presubmit_safety_params,
+        digest_cache=digest_cache,
     )
     attribute_cloud_service = AttributeCloudService(
         storage,
@@ -943,6 +973,40 @@ def build_container(settings: Settings | None = None) -> Container:
     # #6: seed initial criteria at campaign creation (campaign_service is built before
     # criteria_service, so wire it additively here).
     campaign_service.set_criteria_service(criteria_service)
+
+    # Perf item #8 (correctness): the TTL cache on ``_onboarding_gate`` above must
+    # never paper over a genuine readiness change for longer than the TTL — and
+    # the P0 zero-CLI acceptance scenario (tests/bdd/features/p0_oobe_gate.feature,
+    # "automated work may begin" right after onboarding finishes) requires the
+    # gate to open the INSTANT the required-to-apply essentials are saved, not
+    # after a TTL delay. Invalidate the cache immediately after each write path
+    # that can flip campaign readiness — onboarding-section saves, onboarding
+    # completion, résumé ingestion, and criteria edits — so the common "just
+    # finished onboarding" case never waits out the TTL. ``onboarding_service``
+    # is always the container singleton (``deps.get_onboarding_service`` never
+    # per-request-rebuilds it, unlike ``criteria_service``), so this reliably
+    # covers onboarding/résumé writes in both the hermetic and real-DB lanes; the
+    # TTL remains the defensive backstop for any write path this misses (e.g. a
+    # per-request ``criteria_service`` rebuild under a real DB, FastAPI's
+    # CONC-REQ-1 Session isolation, see ``_build_request_services`` below).
+    def _invalidate_gate_after(bound_method):
+        def _wrapped(*args, **kwargs):
+            result = bound_method(*args, **kwargs)
+            _onboarding_gate_cached.invalidate()
+            return result
+
+        return _wrapped
+
+    criteria_service.edit_criteria = _invalidate_gate_after(criteria_service.edit_criteria)
+    criteria_service.apply_learned_adjustment = _invalidate_gate_after(
+        criteria_service.apply_learned_adjustment
+    )
+    onboarding_service.ingest_base_resume = _invalidate_gate_after(
+        onboarding_service.ingest_base_resume
+    )
+    onboarding_service.complete = _invalidate_gate_after(onboarding_service.complete)
+    onboarding_service.save_section = _invalidate_gate_after(onboarding_service.save_section)
+
     from applicant.application.services.material_service import MaterialService
 
     material_service = MaterialService(
@@ -1165,6 +1229,7 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=pas,
             presubmit_safety_params=presubmit_safety_params,
+            digest_cache=digest_cache,
         )
         from applicant.application.services.post_submission_service import PostSubmissionService
         post_sub = PostSubmissionService(tick_storage, notification_service, learning=ls)
@@ -1293,6 +1358,7 @@ def build_container(settings: Settings | None = None) -> Container:
             notification_service=notification_service,
             pending_actions=rs_pas,
             presubmit_safety_params=presubmit_safety_params,
+            digest_cache=digest_cache,
         )
         rs_attr = AttributeCloudService(
             req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
