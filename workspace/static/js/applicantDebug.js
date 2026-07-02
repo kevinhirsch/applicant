@@ -106,7 +106,6 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
-  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   const overflowBtn = modal.querySelector('#applicant-debug-overflow-btn');
   const overflowMenu = modal.querySelector('#applicant-debug-overflow-menu');
   const closeOverflow = () => {
@@ -114,10 +113,13 @@ function _ensureModalEl() {
     overflowMenu.classList.add('hidden');
     if (overflowBtn) overflowBtn.setAttribute('aria-expanded', 'false');
   };
-  modal.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    // Escape closes the overflow popover first (if open), the whole modal next —
-    // mirrors how a menu/modal stack normally unwinds one layer at a time.
+  // Escape closes the overflow popover first (if open), the whole modal next —
+  // mirrors how a menu/modal stack normally unwinds one layer at a time. Routed
+  // through initModalA11y's closeFn (rather than a second local `keydown`
+  // listener) so this modal also gets topmost-only Escape arbitration against
+  // any other open modal/dialog (design-audit item #17) — the whole-modal
+  // branch below only actually runs when this modal is the topmost overlay.
+  _modalA11yCleanup = uiModule.initModalA11y(modal, () => {
     if (overflowMenu && !overflowMenu.classList.contains('hidden')) { closeOverflow(); return; }
     _close();
   });
@@ -512,13 +514,16 @@ async function _renderInsights() {
       </div>`
     : '';
 
+  // #100: was one bordered `.admin-card` tile per source (same glass-on-glass
+  // stacking as the #93 Sources/Tools toggle rows) — one flat list with
+  // hairline row dividers instead.
   let sourcesCard;
   if (!sources.length) {
     sourcesCard = `<div class="admin-card"><div style="font-weight:600;">Best sources</div>${_empty('No source results recorded for this job search yet.')}</div>`;
   } else {
     const rows = sources.map((src) => {
       const rate = src.conversion_rate != null ? `${esc(src.conversion_rate)}% convert` : 'no rate yet';
-      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+      return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
         <div style="min-width:0;">
           <div style="font-weight:600;">${esc(src.source)}</div>
           ${_statGrid([
@@ -530,7 +535,7 @@ async function _renderInsights() {
         <div class="admin-toggle-sub" style="opacity:0.75;flex-shrink:0;">${esc(rate)}</div>
       </div>`;
     }).join('');
-    sourcesCard = `<div class="admin-toggle-sub" style="opacity:0.7;margin:10px 0 6px;">Best sources (ranked by how well they convert)</div>${rows}`;
+    sourcesCard = `<div class="admin-toggle-sub" style="opacity:0.7;margin:10px 0 6px;">Best sources (ranked by how well they convert)</div><div class="applicant-debug-list">${rows}</div>`;
   }
 
   _body().innerHTML = summaryCard + rolesCard + budgetCard + sourcesCard;
@@ -617,13 +622,17 @@ function _downloadText(text, filename) {
   }
 }
 
+// #100: was one bordered `.admin-card` tile per variant (same glass-on-glass
+// stacking as the #93 Sources/Tools toggle rows) — one flat list with
+// hairline row dividers instead, self-contained (this tab renders straight
+// to _body(), so it owns its own `.applicant-debug-list` box).
 async function _renderVariants() {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${ADMIN}/variants/${encodeURIComponent(_campaignId)}`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const variants = data.variants || [];
   if (!variants.length) { _body().innerHTML = _empty('No resume variants built for this job search yet.'); return; }
-  _body().innerHTML = variants.map((v) => {
+  const rows = variants.map((v) => {
     const id = v.variant_id || v.id || 'Variant';
     const scores = v.fit_scores || {};
     const scoreVals = Object.values(scores);
@@ -631,13 +640,16 @@ async function _renderVariants() {
       ? `best fit ${esc(Math.max(...scoreVals.map(Number)).toFixed(2))}`
       : (v.score != null ? `score ${esc(v.score)}` : 'not scored');
     const approved = v.approved === true ? 'approved' : (v.approval_state || 'awaiting review');
-    return `<div class="admin-card">
-    <div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>
-    <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
-      ${esc(scoreText)} · ${esc(approved)}${v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : ''}${v.parent_id ? ` · from ${esc(v.parent_id)}` : ''}
+    return `<div class="applicant-debug-list-row">
+    <div style="min-width:0;">
+      <div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>
+      <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
+        ${esc(scoreText)} · ${esc(approved)}${v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : ''}${v.parent_id ? ` · from ${esc(v.parent_id)}` : ''}
+      </div>
     </div>
   </div>`;
   }).join('');
+  _body().innerHTML = `<div class="applicant-debug-list">${rows}</div>`;
 }
 
 const RUN_MODES = [
@@ -828,13 +840,19 @@ async function _renderSources(host) {
     _wireExploreBudget(host);
     return;
   }
-  host.innerHTML = budgetCard + items.map((s) => {
+  // #93: one flat list with hairline row dividers (`.applicant-debug-list-row`)
+  // instead of one bordered `.admin-card` tile per source. The host is already
+  // hosted inside _renderConfig's own `.applicant-debug-list` section box, so
+  // the rows render directly (no second nested list box) — the exploration
+  // budget above stays its own standalone card (a distinct input+button
+  // control, not a toggle row in the list).
+  const rows = items.map((s) => {
     const ys = s.yield_stats || {};
     const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
     const stat = hasFunnel
       ? `${ys.matches != null ? ys.matches : 0} matched · ${ys.approvals != null ? ys.approvals : 0} approved · ${ys.submissions != null ? ys.submissions : 0} submitted`
       : 'no yield data yet';
-    return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    return `<div class="applicant-debug-list-row">
       <div style="min-width:0;">
         <div style="font-weight:600;">${esc(s.source_key)}</div>
         <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(stat)}</div>
@@ -845,6 +863,7 @@ async function _renderSources(host) {
       </label>
     </div>`;
   }).join('');
+  host.innerHTML = budgetCard + rows;
   host.querySelectorAll('.applicant-source-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
       try {
@@ -893,12 +912,17 @@ async function _renderTools(host) {
   if (data.engine_available === false) { _renderOffline(undefined, host); return; }
   const tools = data.tools || [];
   if (!tools.length) { host.innerHTML = _empty('No tools reported by the engine.'); return; }
+  // #93: one flat list with hairline row dividers (`.applicant-debug-list-row`)
+  // instead of one bordered `.admin-card` tile per tool — mirrors the Sources
+  // fix above. The host is already hosted inside _renderConfig's own
+  // `.applicant-debug-list` section box, so the rows render directly (no
+  // second nested list box).
   host.innerHTML =
     `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn the assistant's tools on or off. Disabled tools are never used while it works.</div>` +
     tools.map((t) => {
       const key = t.key != null ? t.key : '';
       const label = t.label || key;
-      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      return `<div class="applicant-debug-list-row">
       <div style="min-width:0;">
         <div style="font-weight:600;">${esc(label)}</div>
         ${t.description ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(t.description)}</div>` : ''}

@@ -32755,18 +32755,29 @@ body.theme-frosted #applicant-vault-modal .modal-content {
   color: var(--fg-muted, color-mix(in srgb, var(--fg) 55%, transparent));
 }
 
-/* ===== Applicant Chat (applicantChat.js) — item #46, lower-risk half ========
+/* ===== Applicant Chat (applicantChat.js) — item #46 ==========================
    Full ask: dock the conversation INLINE in the content plane instead of a
-   centered `.modal` slab (applicantChat.js:64-95) — a real structural change
+   centered `.modal` slab (applicantChat.js:64-95). A full inline re-dock
    (re-parenting the stream, composer, thinking indicator, send-gating and
-   retry-without-duplicate-bubble wiring out of the modal lifecycle) that risks
-   the recent chat bugfixes; left as a follow-up rather than attempted here.
-   What IS fixed: the "glass-on-glass-on-content" stacking this causes today.
-   `.modal-content` is already one frosted glass plane; the composer bar inside
-   it (`.chat-input-bar`, shared with the native chat) carries its OWN frost on
-   top — a second glass panel nested inside the first. Flatten the nested one so
-   the modal reads as a single content plane. Scoped to this modal only — the
-   native chat composer keeps its own glass untouched. */
+   retry-without-duplicate-bubble wiring OUT of the modal lifecycle entirely)
+   is still judged too risky to attempt in one pass — see the long comment at
+   the top of `_ensureModalEl` in applicantChat.js for the full reasoning.
+   What IS done here, within the modal's existing lifecycle:
+   1. (lower-risk half, pre-existing) the "glass-on-glass-on-content" stacking
+      this causes: `.modal-content` is already one frosted glass plane; the
+      composer bar inside it (`.chat-input-bar`, shared with the native chat)
+      carried its OWN frost on top — a second glass panel nested inside the
+      first. Flattened below so the modal reads as a single content plane.
+   2. (this pass) the panel now DOCKS to the bottom of the content plane — the
+      real composer's band — instead of floating as a vertically centered
+      slab over the welcome screen; its width matches the real composer's own
+      800px max-width (applicantChat.js `--window-w:800px`) so the two line
+      up; and the real page composer is dimmed for as long as the panel is
+      open (applicantChat.js `_setComposerDimmed`) so the two don't visually
+      double up underneath it. Desktop only — the mobile bottom sheet is
+      already bottom-anchored (see the mobile-first `.modal` base rules).
+   Scoped to this modal only — the native chat composer/modal machinery keeps
+   its own look untouched. */
 body.theme-frosted #applicant-chat-modal .chat-input-bar,
 body.glass-full #applicant-chat-modal .chat-input-bar {
   background: transparent !important;
@@ -32774,6 +32785,16 @@ body.glass-full #applicant-chat-modal .chat-input-bar {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
+}
+@media (min-width: 769px) {
+  /* Overrides the shared desktop tool-window rule (`.modal { align-items:
+     center; }`, set where #applicant-chat-modal is also given its chat-area
+     left/width offsets) — id specificity wins over that class rule, scoped to
+     this modal only. */
+  #applicant-chat-modal {
+    align-items: flex-end;
+    padding-bottom: 16px;
+  }
 }
 
 /* Item #88: the Run-controls status dot used to carry a perpetual expanding-ring

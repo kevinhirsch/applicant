@@ -50,6 +50,37 @@ let _campaigns = [];
 let _activeCampaignId = null;
 let _sending = false;
 
+// Item #46: once the panel is docked to the bottom of the content plane (see
+// the CSS notes at "#applicant-chat-modal" in style.css), it sits directly
+// over the REAL page composer's band. Mirror Portal's own composer-dimming
+// (`_setComposerDimmed` in applicantPortal.js, audit #32) here rather than
+// importing it — this module is deliberately additive/self-contained (see
+// the file banner) — so the two composers don't visually double up while
+// this panel is open. Scoped to the real page composer only: `#chat-container
+// > .chat-input-bar` is that element's exact position in index.html, which
+// does NOT match this modal's own composer (`#applicant-composer`, appended
+// to `document.body`, not `#chat-container`).
+let _composerDimmed = false;
+let _composerPrevStyle = null;
+function _setComposerDimmed(on) {
+  let bar;
+  try { bar = document.querySelector('#chat-container > .chat-input-bar'); } catch { bar = null; }
+  if (!bar) return;
+  if (on) {
+    if (_composerDimmed) return; // already dimmed — don't clobber the saved prior style
+    _composerDimmed = true;
+    _composerPrevStyle = bar.getAttribute('style');
+    bar.style.transition = 'opacity 0.15s ease';
+    bar.style.opacity = '0.35';
+    bar.style.pointerEvents = 'none';
+  } else if (_composerDimmed) {
+    _composerDimmed = false;
+    if (_composerPrevStyle === null) bar.removeAttribute('style');
+    else bar.setAttribute('style', _composerPrevStyle);
+    _composerPrevStyle = null;
+  }
+}
+
 
 
 
@@ -63,40 +94,59 @@ let _sending = false;
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 //
-// Design-audit item #46: this stream renders as a centered `.modal` slab over
-// the live composer/welcome rather than docked inline in the content plane.
-// A true inline re-dock (re-parenting the thread/composer out of the modal
-// lifecycle) is a real structural change and risks the thinking-indicator,
+// Design-audit item #46: this stream used to render as a centered `.modal`
+// slab over the live composer/welcome. A full inline re-dock (re-parenting
+// the thread/composer out of the modal lifecycle entirely, so they become
+// literal siblings of the real composer in the DOM) is still judged too
+// risky to attempt in one pass here: it would touch the thinking-indicator,
 // send-gating, composer-clear-on-success, and retry-without-duplicate-bubble
-// fixes that live in this file today — left as a larger follow-up rather than
-// attempted as a surgical pass. The lower-risk half IS done: the composer bar
-// inside the modal used to carry its own nested frosted-glass layer on top of
-// the modal's own glass ("glass-on-glass-on-content"); style.css now flattens
-// that inner layer so the panel reads as one content plane (search
-// "item #46" in style.css).
+// wiring that all assume this modal's current lifecycle — real, working
+// behavior that a re-parent could silently break. Instead this panel now
+// makes a real, verifiable structural move within its EXISTING lifecycle:
+// - it docks to the BOTTOM of the content plane (the real composer's band)
+//   instead of floating vertically centered mid-screen over the welcome
+//   text (`#applicant-chat-modal { align-items: flex-end; }`, desktop-only,
+//   in style.css — the mobile bottom sheet was already bottom-anchored);
+// - its width now matches the real composer's own 800px max-width (below,
+//   `--window-w:800px`) so the two line up instead of the modal reading as
+//   an unrelated, differently-sized card;
+// - the real page composer is dimmed for as long as this panel is open
+//   (`_setComposerDimmed`, above — mirrors Portal's own composer-dimming)
+//   so the two don't visually double up underneath the docked panel.
+// The lower-risk half from the prior pass IS done and untouched here: the
+// composer bar inside the modal used to carry its own nested frosted-glass
+// layer on top of the modal's own glass ("glass-on-glass-on-content");
+// style.css flattens that inner layer so the panel reads as one content
+// plane (search "item #46" in style.css).
+//
+// Design-audit item #64: the header now composes the shared AppkitWindow kit
+// chrome (`.ow-window` / `.ow-titlebar` / `.ow-controls` / `.ow-close`) so its
+// titlebar matches every other window's traffic-light controls, mirroring
+// the exact pattern applicantPortal.js adopted (audit #25). The close button
+// keeps `.modal-close` + `.tap-exempt` alongside the new `.ow-close`: dropping
+// `.modal-close` would break the mobile swipe-to-dismiss handoff (the shared
+// mobile-sheet rule hides the desktop close-X via that class), and dropping
+// `.tap-exempt` would pull it into the global coarse-pointer 44px tap-target
+// floor and blow out the titlebar — the same subtlety Portal's batch found.
 
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
   const modal = document.createElement('div');
   modal.id = 'applicant-chat-modal';
-  modal.className = 'modal hidden';
+  modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-label', 'Job Assistant');
   modal.innerHTML = `
-    <div class="modal-content" style="--window-w:720px;display:flex;flex-direction:column;max-height:86vh;">
-      <div class="modal-header">
-        <h4>
+    <div class="modal-content" style="--window-w:800px;display:flex;flex-direction:column;max-height:86vh;">
+      <div class="modal-header ow-titlebar">
+        <div class="ow-controls">
+          <button type="button" class="ow-close modal-close tap-exempt" id="applicant-chat-close" aria-label="Close" title="Close">&times;</button>
+        </div>
+        <h4 class="ow-title">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Job Assistant
         </h4>
-        <!-- Design-audit item #64 (nit): render via `.ow-window` so the titlebar
-             matches every other window's traffic-light controls. Left as-is here:
-             adopting the AppkitWindow kit is the same scale of change as item #46's
-             full inline re-dock (a new mount lifecycle around this modal's a11y/
-             thinking/send-gating/retry wiring), already tracked as the audit's
-             systemic theme #1 ("adopt the kit") rather than a per-surface nit fix. -->
-        <button class="close-btn" id="applicant-chat-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div class="modal-body" id="applicant-chat-body" style="flex:1;overflow-y:auto;">
         ${loadingHTML()}
@@ -104,8 +154,9 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
+  // Escape is handled by initModalA11y above (topmost-modal arbiter,
+  // design-audit item #17) — do not add a second local Escape listener here.
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
   modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -118,6 +169,7 @@ function _close() {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
   }
+  _setComposerDimmed(false);
 }
 
 // ── Empty / offline state ────────────────────────────────────────────────────
@@ -595,6 +647,9 @@ export async function openApplicantChat() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  // Item #46: the panel is now docked over the real composer's band (see the
+  // scaffold comments above) — dim the real composer for as long as it's open.
+  _setComposerDimmed(true);
   const body = modal.querySelector('#applicant-chat-body');
   // Item #56: reuse the same spinner/pill the "thinking" reply already uses
   // instead of a bare text node, so opening the panel reads as work in
