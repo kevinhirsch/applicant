@@ -462,6 +462,14 @@ async function _markSubmitted(appId, btn) {
   }
 }
 
+// #102: an aligned key/value mini-grid instead of dot-joined prose ("N matched
+// · N approved…") so the numbers compare down a column. `pairs` is
+// [[label, value], …].
+function _statGrid(pairs) {
+  return `<div class="applicant-debug-statgrid">${pairs.map(([k, v]) => `
+    <span class="applicant-debug-statgrid-k">${esc(k)}</span><span class="applicant-debug-statgrid-v">${esc(v)}</span>`).join('')}</div>`;
+}
+
 // Insights — a read-only window onto what the system has learned for this job
 // search: overall conversion, each source's funnel ranked by how well it
 // converts, the roles that actually convert, and the exploration knob. Plain
@@ -477,10 +485,12 @@ async function _renderInsights() {
 
   const summaryCard = `<div class="admin-card">
     <div style="font-weight:600;">Conversion so far</div>
-    <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
-      ${esc(num(s.total_matched))} matched · ${esc(num(s.total_approved))} approved · ${esc(num(s.total_submitted))} submitted
-      across ${esc(num(s.sources_seen))} source${num(s.sources_seen) === 1 ? '' : 's'}.
-    </div>
+    ${_statGrid([
+      ['Matched', num(s.total_matched)],
+      ['Approved', num(s.total_approved)],
+      ['Submitted', num(s.total_submitted)],
+      ['Sources seen', num(s.sources_seen)],
+    ])}
     <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">This is what the system uses to decide which sources and roles to favour next.</span>
   </div>`;
 
@@ -498,7 +508,7 @@ async function _renderInsights() {
         <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
           ${esc(Number(data.exploration_budget))} — share of effort spent trying new or under-used sources instead of the proven ones.
         </div>
-        <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this on the Sources tab.</span>
+        <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this under Config → Sources.</span>
       </div>`
     : '';
 
@@ -508,12 +518,14 @@ async function _renderInsights() {
   } else {
     const rows = sources.map((src) => {
       const rate = src.conversion_rate != null ? `${esc(src.conversion_rate)}% convert` : 'no rate yet';
-      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
         <div style="min-width:0;">
           <div style="font-weight:600;">${esc(src.source)}</div>
-          <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
-            ${esc(num(src.matched))} matched · ${esc(num(src.approved))} approved · ${esc(num(src.submitted))} submitted
-          </div>
+          ${_statGrid([
+            ['Matched', num(src.matched)],
+            ['Approved', num(src.approved)],
+            ['Submitted', num(src.submitted)],
+          ])}
         </div>
         <div class="admin-toggle-sub" style="opacity:0.75;flex-shrink:0;">${esc(rate)}</div>
       </div>`;
@@ -524,19 +536,58 @@ async function _renderInsights() {
   _body().innerHTML = summaryCard + rolesCard + budgetCard + sourcesCard;
 }
 
+// Best-effort split of one raw log entry into { time, level, message } so it can
+// render as a structured row. Falls back to putting the whole thing in
+// `message` when the shape/format isn't recognized — never throws or drops data.
+function _parseLogEntry(e) {
+  if (e && typeof e === 'object') {
+    const time = e.timestamp || e.time || e.ts || e.created_at || '';
+    const level = e.level || e.lvl || e.severity || '';
+    const message = e.message || e.msg || e.text || JSON.stringify(e);
+    return { time: String(time), level: String(level).toUpperCase(), message: String(message) };
+  }
+  const line = String(e == null ? '' : e);
+  const m = line.match(/^([\d:\-.TZ+]{8,32})\s*[[(]?(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL)[\])]?\s*[:\-]?\s*(.*)$/i);
+  if (m) return { time: m[1].trim(), level: m[2].toUpperCase(), message: (m[3] || '').trim() || line };
+  return { time: '', level: '', message: line };
+}
+
+function _logLevelColor(level) {
+  const l = String(level || '').toLowerCase();
+  if (l === 'error' || l === 'critical') return 'var(--color-error, #ff4444)';
+  if (l === 'warn' || l === 'warning') return 'var(--color-warning, #f0ad4e)';
+  return 'var(--color-muted, #888)';
+}
+
+// #95: logs used to render as one raw `<pre>` blob. Structured rows (time ·
+// level chip · plain message) instead — the raw text is still one click away
+// via Download, for anyone who wants to grep/attach the whole thing.
 async function _renderLogs() {
   const data = await _fetchJSON(`${ADMIN}/logs?limit=100`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const entries = data.entries || [];
   if (!entries.length) { _body().innerHTML = _empty('No recent activity logs.'); return; }
   const raw = entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n');
+  const rows = entries.map((e) => {
+    const { time, level, message } = _parseLogEntry(e);
+    const when = time ? (_relWhen(time) || time) : '';
+    const color = _logLevelColor(level);
+    const chip = level
+      ? `<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;color:${color};background:color-mix(in srgb, ${color} 15%, transparent);">${esc(level)}</span>`
+      : '';
+    return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
+      <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;min-width:60px;">${esc(when)}</span>
+      ${chip}
+      <span style="flex:1;min-width:0;word-break:break-word;">${esc(message)}</span>
+    </div>`;
+  }).join('');
   _body().innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-      <button class="cal-btn" id="applicant-logs-copy" title="Copy these logs to the clipboard">Copy logs</button>
+      <button class="cal-btn" id="applicant-logs-download" title="Download the raw logs as a text file">Download logs</button>
     </div>
-    <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;margin:0;">${esc(raw)}</pre>`;
-  const copyBtn = _body().querySelector('#applicant-logs-copy');
-  if (copyBtn) copyBtn.addEventListener('click', () => _copy(raw));
+    <div class="applicant-debug-list">${rows}</div>`;
+  const downloadBtn = _body().querySelector('#applicant-logs-download');
+  if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadText(raw, `applicant-logs-${_campaignId || 'engine'}.txt`));
 }
 
 // Copy a value to the clipboard, reusing the workspace copy helper (which shows
@@ -546,6 +597,24 @@ function _copy(text) {
     if (uiModule && typeof uiModule.copyToClipboard === 'function') { uiModule.copyToClipboard(text); return; }
   } catch { /* fall through */ }
   try { navigator.clipboard.writeText(text); _toast('Copied.'); } catch { _toast('Could not copy.'); }
+}
+
+// Download a plain-text blob — used by Logs (#95) to keep the raw text one
+// click away even though the visible view is now structured rows.
+function _downloadText(text, filename) {
+  try {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    _toast('Could not download the logs right now.');
+  }
 }
 
 async function _renderVariants() {
@@ -596,19 +665,20 @@ function _relWhen(iso) {
 
 // A coloured live-status chip (Running / Idle / Paused / Setup needed) for the
 // Run controls tab, built from the engine status payload (FR-AGENT-7/FR-OBS-2).
+// #88: the label itself carries no colour (neutral ink) — only the dot does,
+// and it's a plain system-token fill now, no raw hex and no perpetual pulse.
 function _statusChip(status) {
   const sched = status.scheduler || {};
   let label;
   let color;
-  let pulse = false;
   if (status.paused === true || status.active === false) {
-    label = 'Paused'; color = '#d29922';
+    label = 'Paused'; color = 'var(--color-warning, #f0ad4e)';
   } else if (sched.running === true) {
-    label = 'Working now'; color = '#3fb950'; pulse = true;
+    label = 'Working now'; color = 'var(--color-success, #4caf50)';
   } else {
-    label = 'Idle'; color = '#8b949e';
+    label = 'Idle'; color = 'var(--color-muted, #8b949e)';
   }
-  const dot = `<span aria-hidden="true" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;${pulse ? 'box-shadow:0 0 0 0 ' + color + ';animation:applicantPulse 1.4s infinite;' : ''}"></span>`;
+  const dot = `<span aria-hidden="true" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;"></span>`;
   const bits = [];
   if (sched.last_tick) bits.push(`last run ${esc(_relWhen(sched.last_tick))}`);
   if (sched.next_tick && status.paused !== true) bits.push(`next ${esc(_relWhen(sched.next_tick))}`);
@@ -660,7 +730,7 @@ async function _renderRun() {
     <div class="admin-card">
       <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">How it runs
-        <select id="applicant-run-mode" class="settings-select" style="display:block;margin-top:4px;min-width:220px;">
+        <select id="applicant-run-mode" class="ow-select" style="display:block;margin-top:4px;min-width:220px;">
           ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(curMode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
       </label>

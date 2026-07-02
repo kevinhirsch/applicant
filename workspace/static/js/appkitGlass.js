@@ -58,8 +58,10 @@
   //              = stronger lensing at the rim. The article's sweet spot is modest;
   //              we keep it low so center text never smears.
   // RADIUS     — corner radius (px) the squircle profile is built around; tracks the
-  //              Apple-tuned --ow-glass-radius (22px) so the lens band hugs the real
-  //              very-rounded corner (slightly under, to sit inside the visible radius).
+  //              Apple-tuned --ow-glass-radius (style.css, now 26px — bumped from the
+  //              22px this was originally tuned against, "very rounded, Apple") so the
+  //              lens band hugs the real very-rounded corner (slightly under, to sit
+  //              inside the visible radius, not outside it).
   // EDGE       — width (px) of the refraction band inward from each edge. Beyond
   //              this the map is neutral (128,128) → crisp, undistorted center.
   // SQUIRCLE_N — squircle exponent for the edge falloff surface profile (the
@@ -86,7 +88,9 @@
   // the rim clearly bends the backdrop, the center stays crisp.
   var SCALE = 58;            // px max displacement at the rim — REFRACTION 1.00 (strong lensing)
   var SCALE_REDUCED = 30;    // calmer lensing under prefers-reduced-motion
-  var RADIUS = 18;           // corner radius the lens hugs (≥ kit --win-radius)
+  var RADIUS = 22;           // corner radius the lens hugs — tracks style.css --ow-glass-radius
+                             // (26px); kept slightly under so the band sits INSIDE the visible
+                             // corner rather than outside it (was 18, stale against the old 22px).
   var EDGE = 26;             // refraction band width inward from each edge (px) — a touch wider
                              // so the stronger displacement has room to ramp (no hard interior seam)
   var SQUIRCLE_N = 4;        // squircle exponent (4 ⇒ the article's convex profile)

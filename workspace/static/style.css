@@ -7779,8 +7779,30 @@ textarea.memory-add-input {
   align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
   max-height: 200px;
   flex-shrink: 0;        /* memory-list is a flex column; without this, items get squeezed to fit */
+  transition: all 0.15s;
+}
+/* #122/#134/#143: .memory-item is a generic row/card class shared far beyond
+   Memory (cookbook, sessions, group/model picker, entities, slash commands,
+   the applicant Activity/Mind/Results screens, Library, Tasks…), so the base
+   rule above is left exactly as it was for all of those. Surfaces that opt
+   into the flat separator-row primitive (Memory's own list, Task cards,
+   Library's chat/archive/research rows) add `ow-list-row` alongside it —
+   this compound selector then wins on specificity and flattens just those
+   rows, leaving every other `.memory-item` consumer untouched. */
+.memory-item.ow-list-row {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.memory-item:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
 .memory-item-title {
@@ -12394,8 +12416,20 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s, opacity 0.3s, max-height 0.3s ease;
+  transition: background-color 0.15s, border-color 0.15s, opacity 0.3s, max-height 0.3s ease;
   position: relative;
+}
+/* #134/#143/#146: general Library rows (documents grid + chat/archive/
+   research rows in documentLibrary.js) opt into the flat .ow-list-row
+   separator treatment instead of a bordered/tinted tile — the tile look is
+   reserved for the expanded reader (.doclib-card-expanded further below
+   re-asserts the full card chrome, and wins by source order). The applicant
+   materials card (documentLibrary.js `_applicantCard`) never carries the
+   `ow-list-row` class, so it keeps its existing tile appearance untouched. */
+.doclib-card.ow-list-row {
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 .doclib-card.doclib-card-deleting {
   opacity: 0;
@@ -12418,12 +12452,14 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .memory-item:has(.memory-select-cb:checked),
 .doclib-card:has(.memory-select-cb:checked),
 .doclib-chat-row:has(.memory-select-cb:checked) {
-  border-color: color-mix(in srgb, var(--red) 40%, transparent);
-  background: color-mix(in srgb, var(--red) 4%, transparent);
+  /* #135: selection is a system state, not a content/brand color — use the
+     sanctioned system-blue, not the theme's red accent. */
+  border-color: color-mix(in srgb, var(--sys-blue) 40%, transparent);
+  background: color-mix(in srgb, var(--sys-blue) 6%, transparent);
   /* 2px accent outline overlaid on the 1px border — reads as a thicker
      selected border without shifting layout (every card would otherwise
      need a 2px transparent border to keep the same width). */
-  outline: 2px solid var(--accent-primary, var(--red));
+  outline: 2px solid var(--sys-blue);
   outline-offset: -1px;
 }
 .doclib-card-header {
