@@ -370,6 +370,14 @@ function _calColor(ev) {
   return c?.color || 'var(--accent)';
 }
 
+// #128: multiday/all-day bars — a low-alpha tint + a solid colored left
+// edge instead of painting the whole bar with the raw saturated calendar
+// color under hard-to-read white text.
+function _calBarStyle(ev) {
+  const c = _calColor(ev);
+  return `background:color-mix(in srgb, ${c} 24%, var(--bg));border-left:3px solid ${c};color:var(--fg);`;
+}
+
 // Extra inline style for an event row when the event has a custom BG image.
 // Returns '' for normal solid-color events.
 function _calItemBgStyle(ev) {
@@ -993,7 +1001,7 @@ async function _renderMonth() {
       const startColInt = Math.round(startCol);
       const endColInt = Math.round(endCol);
       const span = endColInt - startColInt + 1;
-      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};background:${_calColor(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
+      h += `<div class="cal-multiday" style="--col:${startColInt};--span:${span};--slot:${barSlot};${_calBarStyle(md)}" draggable="true" data-uid="${_e(md.uid)}" title="${_e(md.summary)}">${_e(md.summary)}</div>`;
       barSlot++;
     }
     h += '</div>';
@@ -1159,7 +1167,7 @@ async function _renderWeek() {
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
-      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="background:${_calColor(ev)};" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
+      colsHtml += `<div class="cal-wk-allday-event" data-uid="${_e(ev.uid)}" style="${_calBarStyle(ev)}" title="${_e(ev.summary)}">${_e(ev.summary)}</div>`;
     }
     colsHtml += `</div>`;
     // Hour-grid body
@@ -1559,8 +1567,10 @@ async function _renderAgenda() {
       }
       for (const ev of evs) {
         const t = ev.all_day ? 'All day' : _fmtTime(ev.dtstart) + ' – ' + _fmtTime(ev.dtend);
+        // #126: monochrome label ink — the type hue lives on a small
+        // leading dot instead of washing the tag's text + border.
         const _typeTag = ev.event_type
-          ? `<span class="cal-event-tag" style="color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other};border-color:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other}">#${_e(ev.event_type)}</span>`
+          ? `<span class="cal-event-tag"><span class="cal-event-tag-dot" style="background:${_TYPE_PALETTE[ev.event_type] || _TYPE_PALETTE.other}"></span>#${_e(ev.event_type)}</span>`
           : '';
         const _impMark = ev.importance === 'critical' ? '<span style="color:var(--red);margin-right:4px" title="critical">!!</span>'
                        : ev.importance === 'high' ? '<span style="color:var(--orange,#e5a33a);margin-right:4px" title="high">!</span>' : '';

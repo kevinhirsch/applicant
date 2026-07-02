@@ -438,10 +438,7 @@ function _renderList() {
   }
 
   if (_emails.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'email-loading';
-    empty.textContent = _senderFilter ? `No emails from ${_senderFilterLabel || _senderFilter}` : 'No emails';
-    list.appendChild(empty);
+    list.appendChild(_buildEmailEmptyState());
     return;
   }
 
@@ -452,6 +449,47 @@ function _renderList() {
   const loadMore = document.getElementById('email-load-more');
   if (loadMore) {
     loadMore.style.display = (_emails.length < _total) ? '' : 'none';
+  }
+}
+
+// #141: a first-class empty state (symbol + guidance + real actions)
+// instead of reusing the plain `.email-loading` text row for "no emails".
+function _buildEmailEmptyState() {
+  const wrap = document.createElement('div');
+  wrap.className = 'email-empty-state';
+  if (_senderFilter) {
+    wrap.innerHTML = `
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="email-empty-icon"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+      <div class="email-empty-title">No emails from ${_esc(_senderFilterLabel || _senderFilter)}</div>`;
+    return wrap;
+  }
+  wrap.innerHTML = `
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="email-empty-icon"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+    <div class="email-empty-title">No emails yet</div>
+    <div class="email-empty-msg">Connect an account in Settings, or start a new message.</div>
+    <div class="email-empty-actions">
+      <button type="button" class="cal-btn cal-btn-primary" id="email-empty-compose">Compose</button>
+      <button type="button" class="cal-btn" id="email-empty-connect">Connect account</button>
+    </div>`;
+  wrap.querySelector('#email-empty-compose')?.addEventListener('click', () => _composeNew());
+  wrap.querySelector('#email-empty-connect')?.addEventListener('click', () => _openIntegrationsSettings());
+  return wrap;
+}
+
+// Same "jump to Settings › Integrations" fallback chain calendar.js uses for
+// its own empty-state CalDAV link — reused here rather than re-invented.
+function _openIntegrationsSettings() {
+  if (window.adminModule && typeof window.adminModule.open === 'function') {
+    try { window.adminModule.open('integrations'); return; } catch (_) {}
+  }
+  if (window.settingsModule && typeof window.settingsModule.open === 'function') {
+    try { window.settingsModule.open('integrations'); return; } catch (_) {}
+  }
+  const modal = document.getElementById('settings-modal');
+  if (modal) {
+    modal.classList.remove('hidden');
+    const tab = modal.querySelector('[data-settings-tab="integrations"]');
+    if (tab) tab.click();
   }
 }
 
@@ -471,7 +509,7 @@ function _clearSenderFilter() {
 
 function _createEmailItem(em) {
   const item = document.createElement('div');
-  item.className = 'list-item email-item' + (em.is_spam_verdict ? ' email-item-spam' : '');
+  item.className = 'list-item email-item ow-list-row' + (em.is_spam_verdict ? ' email-item-spam' : '');
   item.setAttribute('role', 'option');
   item.setAttribute('data-uid', em.uid);
 
@@ -497,11 +535,12 @@ function _createEmailItem(em) {
     ? '<span title="Has attachments" style="opacity:0.6;display:inline-flex;flex-shrink:0;margin-left:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>'
     : '';
 
-  // Per-row dot tint: if the urgency scanner flagged this UID, override the
-  // per-sender pastel with red (3) / orange (2). Look up by any cached key
-  // ending in `:<uid>` since the per_uid map is keyed `<account_id>:<uid>`
-  // and the inbox list doesn't surface the account id per row.
-  let _unreadColor = color;
+  // #142: the base unread dot is a single system-blue dot (was the per-
+  // sender pastel `color`, which made the "unread" signal read as a
+  // decorative rainbow instead of a consistent state indicator). The
+  // urgency override below is a distinct, meaningful signal (needs-reply
+  // priority) and is kept — only the default hue is standardized.
+  let _unreadColor = 'var(--sys-blue)';
   let _unreadTitle = 'Unread';
   try {
     const us = window._emailUrgencyState;
