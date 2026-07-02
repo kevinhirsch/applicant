@@ -62,6 +62,25 @@ _W_SUBMISSION = 12.0
 _FEATURE_STATS_CAP = 200
 _RAW_FEEDBACK_PREFIX = "free_text:"
 
+#: The key prefix ``ingest_decline_feedback`` folds each decline-feedback word under
+#: (``feedback:{token}``) — read back by :meth:`LearningService.decline_reasons`.
+_DECLINE_FEEDBACK_PREFIX = "feedback:"
+#: Common connector words that would otherwise dominate a decline-reason rollup
+#: without saying anything about WHY a role was declined. Filtered at read time only
+#: (the underlying stored counts, and the tokens scoring biases on, are untouched) —
+#: this is a display-layer narrowing, not a new capture point or invented taxonomy.
+_DECLINE_REASON_STOPWORDS = frozenset(
+    {
+        "this", "that", "with", "does", "want", "have", "just", "really", "because",
+        "would", "could", "should", "like", "much", "very", "also", "some", "than",
+        "then", "into", "your", "about", "there", "these", "those", "been", "being",
+        "from", "they", "them", "here", "what", "when", "where", "which", "while",
+        "will", "role", "roles", "position", "posting", "dont", "wont", "isnt",
+        "cant", "didnt", "doesnt", "wasnt", "arent", "were", "was", "not", "for",
+        "and", "the", "but", "its", "it's", "too", "any", "who",
+    }
+)
+
 
 def cap_feature_stats(
     stats: dict[str, dict], *, cap: int = _FEATURE_STATS_CAP
@@ -309,6 +328,9 @@ class LearningService:
             "converting_samples": int(model.converting_samples),
             # 0-1 explore/exploit knob (read-only here; editable on the Sources tab).
             "exploration_budget": float(model.exploration_budget),
+            # Words that come up most in the user's OWN decline feedback (FR-FB-1),
+            # ranked by count; [] when nothing declined yet (never fabricated).
+            "decline_reasons": self.decline_reasons(model),
         }
 
     def source_ranking(self, model: LearningModel) -> list[str]:
@@ -386,6 +408,45 @@ class LearningService:
     def converting_titles(self, model: LearningModel) -> list[str]:
         """Titles of roles that actually converted, for discovery bias (FR-LEARN-5)."""
         return list(model.converting_role_signature.get("titles", []))
+
+    # --- decline-reason rollup (learning-story backlog) --------------------
+    def decline_reasons(self, model: LearningModel, *, limit: int = 6) -> list[dict]:
+        """Most common words from the user's OWN decline feedback, ranked by count.
+
+        FR-FB-1 makes decline feedback (``Decision.feedback_text``) mandatory, and
+        ``ingest_decline_feedback`` already folds it into ``feature_stats`` under a
+        ``feedback:{token}`` key (one entry per word longer than 3 characters,
+        counted against a ``{token}:decline`` label — see that method). This is a
+        pure READ over data the engine already persists for scoring bias; it adds no
+        new capture point and invents no semantic categories the raw text didn't
+        state — it surfaces the words the user themselves used most often when
+        passing on a role (e.g. "onsite", "salary"), so "what tends to come up when
+        you decline" is grounded in the user's own language rather than a guessed
+        taxonomy. A handful of common connector words that would otherwise dominate
+        (and say nothing) are filtered at read time; the underlying stored counts are
+        untouched. Returns ``[]`` when no decline carried feedback yet (never
+        fabricated).
+        """
+        counts: dict[str, int] = {}
+        for key, slot in model.feature_stats.items():
+            if not key.startswith(_DECLINE_FEEDBACK_PREFIX) or not isinstance(slot, dict):
+                continue
+            token = key[len(_DECLINE_FEEDBACK_PREFIX):]
+            if not token or token in _DECLINE_REASON_STOPWORDS:
+                continue
+            total = 0
+            for label, count in slot.items():
+                if not str(label).endswith(":decline"):
+                    continue
+                try:
+                    total += int(count)
+                except (TypeError, ValueError):
+                    continue
+            if total > 0:
+                counts[token] = counts.get(token, 0) + total
+        # Highest count first; alphabetical tie-break for a deterministic order.
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(0, int(limit))]
+        return [{"reason": token, "count": count} for token, count in ranked]
 
     # --- approve/decline taste bias (FR-LEARN-1/3, #237) ------------------
     def taste_bias(self, model: LearningModel, text: str) -> float:
