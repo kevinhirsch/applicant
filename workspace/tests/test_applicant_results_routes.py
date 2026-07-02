@@ -281,3 +281,62 @@ def test_results_hits_exact_engine_paths(monkeypatch):
     assert body["campaign_name"] == "Search"
     assert body["has_data"] is True
     assert body["sources"][0]["source"] == "greenhouse"
+
+
+# --- owner isolation: one owner's request never surfaces another's data -----
+#
+# The engine is single-tenant per deployment (no ``owner_id`` anywhere in its
+# storage models — see ``src/applicant/adapters/storage/models.py``), so this
+# proxy's ONLY scoping mechanism is: never accept a caller-supplied campaign id,
+# and derive the campaign to read purely from THIS request's own
+# ``list_campaigns()`` call (mirrors ``applicant_control_routes.
+# test_only_owner_scoped_campaigns_are_touched``). This test proves that two
+# requests presenting different campaign/learning state (standing in for two
+# different owners) never cross-contaminate: owner A's campaign id, name, and
+# learning numbers must never leak into owner B's response, and vice versa.
+
+
+def test_owner_isolation_two_owners_never_cross_contaminate(client):
+    # -- "owner A" ---------------------------------------------------------
+    FakeEngine.campaigns = [{"id": "owner-a-campaign", "name": "Alice's Search"}]
+    FakeEngine.learning = {
+        "owner-a-campaign": _learning_payload("owner-a-campaign"),
+    }
+    r_a = client.get("/api/applicant/results")
+    assert r_a.status_code == 200
+    body_a = r_a.json()
+    assert body_a["campaign_id"] == "owner-a-campaign"
+    assert body_a["campaign_name"] == "Alice's Search"
+
+    # -- "owner B" (a completely disjoint campaign/learning universe) ------
+    FakeEngine.campaigns = [{"id": "owner-b-campaign", "name": "Bob's Search"}]
+    FakeEngine.learning = {
+        "owner-b-campaign": {
+            "campaign_id": "owner-b-campaign",
+            "summary": {"total_matched": 5, "total_approved": 1, "total_submitted": 1},
+            "sources": [{"source": "indeed", "matched": 5, "approved": 1, "submitted": 1, "conversion_rate": 20.0}],
+            "converting_roles": ["Data Analyst"],
+            "converting_samples": 1,
+        }
+    }
+    r_b = client.get("/api/applicant/results")
+    assert r_b.status_code == 200
+    body_b = r_b.json()
+
+    # Owner B's response must be entirely B's own data — none of A's.
+    assert body_b["campaign_id"] == "owner-b-campaign"
+    assert body_b["campaign_name"] == "Bob's Search"
+    assert body_b["campaign_id"] != body_a["campaign_id"]
+    assert body_b["campaign_name"] != body_a["campaign_name"]
+    assert body_b["summary"]["total_matched"] == 5
+    assert body_b["sources"][0]["source"] == "indeed"
+    assert body_b["converting_roles"] == ["Data Analyst"]
+    # None of owner A's identifiers appear anywhere in B's payload.
+    assert "owner-a-campaign" not in str(body_b)
+    assert "Alice's Search" not in str(body_b)
+    assert "greenhouse" not in str(body_b)  # A's source, must not leak into B
+    # The engine was never asked for A's campaign while resolving B's request
+    # (only the campaign ids each request's own list_campaigns() returned).
+    b_learning_calls = [c for c in FakeEngine.calls if isinstance(c, tuple) and c[0] == "admin_learning"]
+    assert ("admin_learning", "owner-a-campaign") not in b_learning_calls[-1:]
+    assert b_learning_calls[-1] == ("admin_learning", "owner-b-campaign")
