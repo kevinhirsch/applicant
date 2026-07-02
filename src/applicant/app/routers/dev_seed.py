@@ -28,7 +28,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from applicant.app.deps import get_storage
+from applicant.app.deps import get_onboarding_service, get_setup_service, get_storage
 from applicant.application.services import dev_seed
 
 
@@ -71,7 +71,12 @@ class SeedResetIn(BaseModel):
 
 
 @router.post("")
-def seed(body: SeedIn = SeedIn(), storage=Depends(get_storage)) -> dict:
+def seed(
+    body: SeedIn = SeedIn(),
+    storage=Depends(get_storage),
+    setup_service=Depends(get_setup_service),
+    onboarding_service=Depends(get_onboarding_service),
+) -> dict:
     """Insert (or replace, on re-seed) the coherent demo dataset for one campaign.
 
     Every row is written through the real repositories (``dev_seed.persist``),
@@ -81,13 +86,31 @@ def seed(body: SeedIn = SeedIn(), storage=Depends(get_storage)) -> dict:
     session, a submission snapshot, outcome events, and six heterogeneous
     Portal pending-actions. Idempotent — every repo ``add`` upserts by id, so
     re-seeding replaces rather than duplicates the demo rows.
+
+    Also opens the two setup gates when they aren't already satisfied, so the
+    seeded surfaces actually render instead of 409'ing — the seed's whole point
+    is an operable end-to-end demo:
+
+    * ``ensure_demo_llm`` opens the LLM gate (``require_llm_configured``) so most
+      read surfaces (Portal, tracker, learning) render.
+    * ``ensure_demo_apply_ready`` writes the demo campaign's base-résumé intake so
+      the hard apply-gate (``require_automated_work``, behind which the digest
+      sits) opens too.
+
+    Both are non-destructive: a real, already-configured LLM / a campaign that is
+    already apply-ready is left untouched.
     """
+    llm_gate_opened = dev_seed.ensure_demo_llm(setup_service)
     bundle = dev_seed.build_demo_bundle(body.campaign_id)
     counts = dev_seed.persist(storage, bundle)
+    # After the campaign row exists, satisfy the apply-gate (base-résumé intake).
+    apply_gate_opened = dev_seed.ensure_demo_apply_ready(onboarding_service, body.campaign_id)
     return {
         "seeded": True,
         "campaign_id": body.campaign_id,
         "counts": counts,
+        "llm_gate_opened": llm_gate_opened,
+        "apply_gate_opened": apply_gate_opened,
         "pending_action_kinds": sorted({a.kind for a in bundle.pending_actions}),
     }
 

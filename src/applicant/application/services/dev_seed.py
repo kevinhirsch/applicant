@@ -133,6 +133,15 @@ def build_demo_campaign(campaign_id: str = DEMO_CAMPAIGN_ID) -> Campaign:
             "locations": ["Remote (US)", "New York, NY"],
             "work_modes": ["remote", "hybrid"],
             "salary_floor": "$180,000",
+            # ``keywords`` + a free-text statement are the last two apply-readiness
+            # essentials (alongside a base résumé, seeded via ``ensure_demo_apply_ready``);
+            # with them the demo campaign satisfies the hard apply-gate so
+            # ``require_automated_work`` surfaces (the digest) render instead of 409'ing.
+            "keywords": ["Python", "Postgres", "distributed systems", "Kubernetes"],
+            "human_readable": (
+                "Senior/staff backend roles, remote-first, Python + Postgres "
+                "distributed-systems depth, $180k+ floor."
+            ),
         },
     )
 
@@ -655,6 +664,83 @@ def persist(storage, bundle: DemoBundle) -> dict[str, int]:
 
     storage.commit()
     return counts
+
+
+#: The demo LLM tier the seed installs so the gated read surfaces open. It points
+#: at a local placeholder endpoint (never actually called for the seeded read
+#: surfaces, which read persisted rows) purely to satisfy ``require_llm_configured``
+#: (``is_setup_gate_open`` → a non-empty tier ladder). Kept local/private so it
+#: passes the operator-URL SSRF guard.
+_DEMO_LLM = {
+    "provider": "ollama",
+    "base_url": "http://127.0.0.1:11434",
+    "api_key": "",
+    "model": "demo-local-model",
+}
+
+
+def ensure_demo_llm(setup_service) -> bool:
+    """Open the LLM gate so the seeded surfaces actually render (not 409).
+
+    Every seeded read surface (digest, tracker, Portal pending-actions,
+    post-submission, learning) sits behind ``require_llm_configured``, which is
+    satisfied by a non-empty tier ladder. Without this, a freshly seeded demo
+    still shows "Connect an AI model first" on every surface instead of the
+    populated daily loop — defeating the seed's whole purpose.
+
+    Non-destructive + idempotent: if the gate is ALREADY open (a real user has
+    configured their own LLM, or a prior seed ran), this is a no-op and returns
+    ``False`` — it never clobbers a genuine tier ladder. Only when the gate is
+    closed does it install the local placeholder demo tier and return ``True``.
+    """
+    from applicant.ports.driving.setup_wizard import LLMSettings
+
+    if setup_service.is_setup_gate_open():
+        return False
+    setup_service.configure_llm(LLMSettings(**_DEMO_LLM))
+    return True
+
+
+#: The demo base-résumé intake payload. ``has_base_resume`` only checks for
+#: ``document_path``/``parsed`` in the BASE_RESUME intake section, and the
+#: fabrication guard reads ``raw_text`` as ground truth — so a coherent snippet
+#: keeps the demo self-consistent with the seeded material.
+_DEMO_BASE_RESUME_TEXT = (
+    "Senior backend engineer, 8+ years. Python, Postgres, distributed systems, "
+    "Kubernetes. Led platform reliability work reducing p99 latency 40%; owned a "
+    "1B-events/day ingestion pipeline."
+)
+
+
+def ensure_demo_apply_ready(onboarding_service, campaign_id: str = DEMO_CAMPAIGN_ID) -> bool:
+    """Satisfy the hard apply-gate for the demo campaign so ``require_automated_work``
+    surfaces (the digest) render instead of 409'ing "Automated work is blocked".
+
+    The apply-gate (``OnboardingService.is_ready_to_apply``) needs the search-criteria
+    essentials — seeded onto ``campaign.criteria`` in ``build_demo_campaign`` — PLUS a
+    base résumé. This writes that base-résumé intake section through the REAL
+    ``save_section`` port (never hand-rolled config), so the gate reads it back exactly
+    as it would for a genuine upload.
+
+    Non-destructive + idempotent: if the demo campaign already has a base résumé (a
+    prior seed ran), this is a no-op returning ``False``. Scoped to the demo campaign
+    id, so it can never touch a real campaign's onboarding state.
+    """
+    from applicant.ports.driving.onboarding import IntakeSection
+
+    if onboarding_service.has_base_resume(campaign_id):
+        return False
+    onboarding_service.save_section(
+        campaign_id,
+        IntakeSection.BASE_RESUME,
+        {
+            "document_path": "demo/base-resume.pdf",
+            "parsed": True,
+            "raw_text": _DEMO_BASE_RESUME_TEXT,
+            "detected_fonts": [],
+        },
+    )
+    return True
 
 
 def purge(storage, campaign_id: str = DEMO_CAMPAIGN_ID) -> dict[str, int]:
