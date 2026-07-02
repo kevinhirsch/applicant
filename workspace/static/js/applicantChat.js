@@ -24,6 +24,7 @@ import {
 // per-user dismiss persistence. It mounts above the composer's `.chat-input-bar`
 // (the composer carries that hook class) via the AppkitNotice kit.
 import appkitChatHint from './appkitChatHint.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/chat';
 
@@ -180,6 +181,15 @@ function _close() {
     _modalEl.style.display = '';
   }
   _setComposerDimmed(false);
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('chat');
+}
+
+// Exported so other modules/tests can close the Job Assistant without
+// reaching into its private state, mirroring openApplicantChat's public
+// export.
+export function closeApplicantChat() {
+  _close();
 }
 
 // ── Empty / offline state ────────────────────────────────────────────────────
@@ -653,10 +663,11 @@ async function _loadCampaigns() {
   return data;
 }
 
-export async function openApplicantChat() {
+export async function openApplicantChat(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('chat');
   // Item #46: the panel is now docked over the real composer's band (see the
   // scaffold comments above) — dim the real composer for as long as it's open.
   _setComposerDimmed(true);
@@ -719,7 +730,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantChatModule = { openApplicantChat };
+// Hash routing (audit #7): '#chat' deep-links straight into the Job
+// Assistant — a refresh/shared-link/back-forward on that hash opens/closes
+// it. Registered at module-eval time (runs as soon as app.js's dynamic
+// import resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('chat', { open: openApplicantChat, close: _close });
+
+const applicantChatModule = { openApplicantChat, closeApplicantChat };
 
 // Expose for deep-links / other modules without creating import coupling.
 try { window.applicantChatModule = applicantChatModule; } catch { /* no-op */ }

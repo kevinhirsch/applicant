@@ -250,7 +250,7 @@ def test_empty_state_renders_pulse_text_span_wired_to_agent_pulse_line():
 
 def test_load_fires_load_agent_pulse_alongside_the_recap():
     src = _portal_src()
-    block = _slice_between(src, "async function _load(showSpinner) {", "export async function openApplicantPortal()")
+    block = _slice_between(src, "async function _load(showSpinner) {", "export async function openApplicantPortal(opts)")
     assert "_loadAgentPulse();" in block, (
         "_load should fire _loadAgentPulse() on every successful pending-list load, "
         "the same fire-and-forget shape as _loadRecap()"

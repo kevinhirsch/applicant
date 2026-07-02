@@ -33,6 +33,7 @@ from applicant.app.routers import (
     onboarding,
     outcomes,
     pending_actions,
+    post_submission,
     remote,
     research,
     setup,
@@ -62,6 +63,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(chat.router)
     app.include_router(remote.router)
     app.include_router(outcomes.router)
+    app.include_router(post_submission.router)
     app.include_router(compare.router)
     app.include_router(credentials.router)
     app.include_router(pending_actions.router)

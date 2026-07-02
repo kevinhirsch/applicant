@@ -20,6 +20,7 @@
 
 import uiModule from './ui.js';
 import { esc, _fetchJSON, errText, loadingHTML, emptyHTML, errorHTML, wireRetry } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const GALLERY = '/api/applicant/gallery';
 
@@ -78,6 +79,14 @@ function _close() {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';
   }
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('gallery');
+}
+
+// Exported so other modules/tests can close Gallery without reaching into
+// its private state, mirroring openApplicantGallery's public export.
+export function closeApplicantGallery() {
+  _close();
 }
 
 function _body() { return _modalEl.querySelector('#applicant-gallery-body'); }
@@ -224,10 +233,11 @@ async function _renderGallery() {
 
 // ── Open + launcher ─────────────────────────────────────────────────────────
 
-export async function openApplicantGallery() {
+export async function openApplicantGallery(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('gallery');
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
@@ -271,6 +281,12 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantGalleryModule = { openApplicantGallery };
+// Hash routing (audit #7): '#gallery' deep-links straight into the Gallery
+// page — a refresh/shared-link/back-forward on that hash opens/closes it.
+// Registered at module-eval time (runs as soon as app.js's dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('gallery', { open: openApplicantGallery, close: _close });
+
+const applicantGalleryModule = { openApplicantGallery, closeApplicantGallery };
 window.applicantGalleryModule = applicantGalleryModule;
 export default applicantGalleryModule;

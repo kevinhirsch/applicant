@@ -1412,7 +1412,22 @@ function initializeEventListeners() {
   // and opens its own modal), aggregates across the owner's campaigns, and is NOT
   // gated by the Applicant feature layer — the strip + nav entry reveal themselves
   // only when the engine reports there's activity. Imported unconditionally.
-  import('./js/applicantActivity.js').catch(() => null);
+  const _activityReady = import('./js/applicantActivity.js').catch(() => null);
+
+  // Hash routing (audit #7 — "16 transient modals, zero URL routing"): both
+  // Portal and Activity self-register a hash token ('portal' / 'activity')
+  // at their own module-eval time (see applicantPortal.js / applicantActivity.js
+  // bottom), so by the time these two dynamic imports resolve, both
+  // registrations have already happened. Wait for the registry to be ready,
+  // then hand it to the onboarding-chain below (which needs to know whether
+  // a deep link claims a *different* surface than the default Portal
+  // landing) and start listening for hashchange / apply the boot-time hash.
+  // Extending routing to another surface (Debug, Vault, ...) is just one
+  // more registerRoute() call in that surface's own file — nothing here
+  // needs to change.
+  const _hashRouterReady = import('./js/hashRouter.js')
+    .then(async (router) => { await Promise.all([_portalReady, _activityReady]); return router; })
+    .catch(() => null);
 
   // Update surface: the #rail-update sidebar entry + the one-click update modal.
   // Like the Portal and Activity, it self-boots (wires the #rail-update launcher
@@ -1432,10 +1447,27 @@ function initializeEventListeners() {
     .then(m => (m.maybeLaunchOnboarding ? m.maybeLaunchOnboarding() : false))
     .then(async (wizardShown) => {
       if (wizardShown) return; // wizard is the setup-incomplete surface; it wins.
+      const router = await _hashRouterReady;
+      // A deep-link hash for a DIFFERENT already-registered surface (e.g. a
+      // shared '#activity' link) names where to land instead of the default
+      // Portal home base — let the hash router below open that one so the
+      // user doesn't get Portal stacked on top of the surface they followed
+      // a link to. '#portal' (or no hash) falls through to the normal landing.
+      const hashToken = router ? router.currentHashToken() : '';
+      if (router && hashToken && hashToken !== 'portal' && router.hasRoute(hashToken)) {
+        router.initHashRouting();
+        return;
+      }
       const portal = await _portalReady;
       if (portal && typeof portal.openApplicantPortal === 'function') {
-        try { await portal.openApplicantPortal(); } catch { /* non-fatal */ }
+        // skipHashUpdate: this is the automatic "land on home base" open,
+        // not a user action — leave location.hash (a session id, a stray
+        // #email= deep link, etc.) exactly as the page loaded with it.
+        try { await portal.openApplicantPortal({ skipHashUpdate: true }); } catch { /* non-fatal */ }
       }
+      // Idempotent — also covers the "no hash at all" / "#portal" cases so
+      // hashchange listening (back/forward, later deep links) is always live.
+      if (router) router.initHashRouting();
     })
     .catch(() => {});
 

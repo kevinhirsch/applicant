@@ -227,6 +227,19 @@ def get_admin_query_service(
     return _resolved(services, container, "admin_query_service")
 
 
+def get_post_submission_service(
+    container: Container = Depends(get_container),
+    services: dict | None = Depends(get_request_services),
+):
+    """The post-submission tracker service (G16/#190), per-request Session-bound.
+
+    Backs the tracker board read + the owner's manual "record what happened"
+    write (CONC-REQ-1: the per-request rebuild keeps a mutation on this
+    request's own isolated Session, same pattern as ``get_submission_service``).
+    """
+    return _resolved(services, container, "post_submission_service")
+
+
 def get_prefill_service(
     container: Container = Depends(get_container),
     services: dict | None = Depends(get_request_services),

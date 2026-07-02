@@ -311,6 +311,12 @@ class Settings(BaseSettings):
     # periodic string (e.g. ``daily``) opts in. Read through Settings like its
     # siblings rather than a raw ``os.getenv`` so the deploy surface stays uniform.
     status_update_schedule: str = Field(default="off", alias="STATUS_UPDATE_SCHEDULE")
+    # Cadence of the weekly recap (Top-25 #18: applications sent + best-performing
+    # source over the trailing 7 days), pushed through the SAME notification fan-out
+    # the daily digest already uses. ``off`` (default) keeps it dormant; a periodic
+    # string (e.g. ``weekly``) opts in to a once-per-(campaign, ISO week) push. Read
+    # through Settings like its daily siblings rather than a raw ``os.getenv``.
+    weekly_recap_schedule: str = Field(default="off", alias="WEEKLY_RECAP_SCHEDULE")
     # Model id for the (cheaper) background curation pass (FR-MIND-7/-13). Empty =>
     # reuse the main configured model.
     curation_model: str = Field(default="", alias="CURATION_MODEL")

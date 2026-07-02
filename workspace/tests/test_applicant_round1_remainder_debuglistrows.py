@@ -200,7 +200,10 @@ def test_variants_rows_use_list_row_not_admin_card():
         "found the old per-variant .admin-card tile pattern still present"
     )
     assert '<div class="applicant-debug-list">' in fn
-    assert "_body().innerHTML = `<div class=\"applicant-debug-list\">${rows}</div>`;" in fn
+    # design-audit Top-25 #19 prepends an optional plain-language "use this
+    # variant more" nudge (`${nudge}`) ahead of the same list wrapper — the
+    # wrapper itself (and its ${rows} content) is unchanged.
+    assert "_body().innerHTML = `${nudge}<div class=\"applicant-debug-list\">${rows}</div>`;" in fn
 
 
 def test_no_remaining_stacked_admin_card_map_join_pattern_in_debug_js():

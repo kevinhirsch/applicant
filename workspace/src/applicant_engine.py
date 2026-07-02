@@ -637,6 +637,23 @@ class ApplicantEngineClient:
             "GET", f"/api/outcomes/applications/{application_id}/snapshot"
         )
 
+    # -- post-submission tracker (engine routers/post_submission.py, G16/#190,
+    #    design-audit Top-25 #4) -------------------------------------------
+    # The applied -> awaiting response -> interview/offer signals -> rejected /
+    # ghosted / archived board, plus the owner's manual "record what happened".
+
+    async def tracker_board(self, campaign_id: str) -> Any:
+        """Tracker-board rows for one campaign, newest first."""
+        return await self._request("GET", f"/api/post-submission/{campaign_id}")
+
+    async def tracker_record_outcome(self, application_id: str, outcome_type: str) -> Any:
+        """Manually record an outcome (interview/offer/rejected/ghosted/...)."""
+        return await self._request(
+            "POST",
+            f"/api/post-submission/applications/{application_id}/outcome",
+            json={"outcome_type": outcome_type},
+        )
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:

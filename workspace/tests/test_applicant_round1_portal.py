@@ -183,7 +183,7 @@ def _composer_dimmed_block() -> str:
 
 def test_set_composer_dimmed_wired_on_open_and_close():
     src = _portal_src()
-    open_block = _slice_between(src, "export async function openApplicantPortal()", "\n}\n")
+    open_block = _slice_between(src, "export async function openApplicantPortal(opts)", "\n}\n")
     assert "_setComposerDimmed(true)" in open_block, (
         "openApplicantPortal should dim the composer while the Portal is open"
     )

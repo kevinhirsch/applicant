@@ -1270,10 +1270,11 @@ function _collectForm(formEl) {
 // is sent as `{ entries: [...] }` rather than a single flat object.
 
 // Normalizes whatever is currently saved for a repeat section into an array of
-// entries to render. Handles three shapes: the new `{entries: [...]}` shape
-// this file now saves, the OLDER flat single-object shape the engine's
-// resume-parse prefill still writes (onboarding_service._prefill_sections_from_parse
-// seeds only the most-recent role/degree as a flat dict), and nothing saved yet.
+// entries to render. Handles three shapes: the `{entries: [...]}` shape this file
+// saves back (and the engine's resume-parse prefill now also writes, carrying
+// EVERY parsed role/degree — not just the most recent), an older flat
+// single-object shape (a pre-fix prefill record, or any other single-object
+// write), and nothing saved yet.
 function _repeatEntries(saved) {
   if (saved && Array.isArray(saved.entries) && saved.entries.length) return saved.entries;
   if (saved && Object.keys(saved).length && !Array.isArray(saved.entries)) return [saved];

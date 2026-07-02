@@ -883,6 +883,17 @@ app.include_router(setup_applicant_compare_routes())
 from routes.applicant_results_routes import setup_applicant_results_routes
 app.include_router(setup_applicant_results_routes())
 
+# Post-submission tracker (design-audit Top-25 #4) — owner-scoped proxy over the
+# engine's PostSubmissionService state machine (/api/post-submission ->
+# /api/applicant/tracker). Surfaces the applied -> awaiting response ->
+# interview/offer signals -> rejected/ghosted/archived board, plus the owner's
+# manual "record what happened" write. Aggregates across the owner's own
+# campaigns (fanned out via list_campaigns()); the write additionally validates
+# the application id against that same fan-out before forwarding. Auth-protected,
+# owner-scoped.
+from routes.applicant_tracker_routes import setup_applicant_tracker_routes
+app.include_router(setup_applicant_tracker_routes())
+
 # Global pause / kill-switch — owner-scoped proxy (/api/applicant/control) that
 # fans the engine's per-campaign agent-run pause/resume across all of the owner's
 # campaigns, so the always-visible status strip carries a one-tap supervisory brake

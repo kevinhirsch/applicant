@@ -130,6 +130,7 @@ class Container:
     # Phase 2 services (sandbox concurrency, final-approval gate, submission log).
     capacity_service: Any = None
     final_approval_service: Any = None
+    post_submission_service: Any = None
     submission_service: Any = None
     prefill_service: Any = None
     material_service: Any = None
@@ -1410,6 +1411,7 @@ def build_container(settings: Settings | None = None) -> Container:
             "chat_service": rs_chat,
             "admin_query_service": rs_admin,
             "submission_service": rs_submission,
+            "post_submission_service": rs_post_sub,
             "prefill_service": rs_prefill,
             "material_service": rs_material,
             "criteria_service": rs_criteria,
@@ -1493,6 +1495,10 @@ def build_container(settings: Settings | None = None) -> Container:
         # configured cadence (default ``off`` => dormant, byte-identical hermetic behavior).
         essentials_nudge_service=essentials_nudge_service,
         essentials_nudge_schedule=settings.essentials_nudge_schedule,
+        # Top-25 #18: the weekly recap (applications sent + best-performing source) on
+        # the configured cadence (default ``off`` => dormant, byte-identical hermetic
+        # behavior). Reuses the already-wired ``digest_service`` above — no new service.
+        weekly_recap_schedule=settings.weekly_recap_schedule,
         # #363: PII retention sweep — prunes stored PII/EEO older than the configured
         # window once per UTC day (default ``off`` => dormant, byte-identical behavior).
         retention_service=RetentionService(
@@ -1554,6 +1560,7 @@ def build_container(settings: Settings | None = None) -> Container:
         admin_query_service=admin_query_service,
         capacity_service=capacity_service,
         final_approval_service=final_approval_service,
+        post_submission_service=post_submission_service,
         submission_service=submission_service,
         prefill_service=prefill_service,
         material_service=material_service,
