@@ -321,14 +321,105 @@ function _applyNoticeKitChrome(el, severity) {
   } catch (_) { /* fail-open: keep the legacy toast look */ }
 }
 
+// ── Toast auto-hide + pause-on-interact ──────────────────────────────────
+// Design-audit item #21 ("clickable toasts instead of 'go find it' text"):
+// showToast() already has a clickable action slot (see the JSDoc above it),
+// but a fixed-duration auto-hide timer that keeps counting down while the
+// user is hovering the toast or has Tab-focused its action/Dismiss button
+// undermines that — a keyboard user (or anyone slower than a mouse flick)
+// can lose the toast before they finish reaching it. `_hasAction` toasts
+// (the only ones with anything to click besides "read it") pause their
+// countdown for as long as the pointer is over the toast OR focus is inside
+// it, and resume with whatever time was left the moment both let go. Plain
+// status toasts are untouched — same fire-and-forget timing as before.
+function _hideToastNow(el) {
+  el.classList.add('exiting');
+  el.classList.remove('show');
+  // Reset pointer-events so an action-toast (which sets it to 'auto' for its
+  // clickable button) doesn't leave the toast intercepting clicks after it's
+  // slid away.
+  el.style.pointerEvents = '';
+}
+
+function _armToastAutoHide(el, ms) {
+  clearTimeout(el._hideTimer);
+  el._hideTimer = null;
+  el._hideRemaining = ms;
+  el._hideStartedAt = Date.now();
+  if (ms <= 0) { _hideToastNow(el); return; }
+  el._hideTimer = setTimeout(() => _hideToastNow(el), ms);
+}
+
+function _pauseToastAutoHide(el) {
+  if (!el._hideTimer) return; // not armed, or already paused
+  const elapsed = Date.now() - (el._hideStartedAt || Date.now());
+  el._hideRemaining = Math.max(0, (el._hideRemaining || 0) - elapsed);
+  clearTimeout(el._hideTimer);
+  el._hideTimer = null;
+}
+
+function _resumeToastAutoHide(el) {
+  if (el._hideTimer) return;               // not currently paused
+  if (!el.classList.contains('show')) return; // already dismissed — nothing to resume
+  _armToastAutoHide(el, el._hideRemaining || 0);
+}
+
+function _wireToastPauseOnInteract(el) {
+  if (!el || el._pauseWired) return;
+  el._pauseWired = true;
+  let hovered = false;
+  const maybeResume = () => {
+    if (!el._hasAction || hovered || el.contains(document.activeElement)) return;
+    _resumeToastAutoHide(el);
+  };
+  el.addEventListener('mouseenter', () => { hovered = true; if (el._hasAction) _pauseToastAutoHide(el); });
+  el.addEventListener('mouseleave', () => { hovered = false; maybeResume(); });
+  // Capture phase + delegated: focus can land on either the action button or
+  // the × dismiss button (both live inside `el`), and moving focus BETWEEN
+  // them fires focusout-then-focusin — the setTimeout on focusout lets the
+  // new focusin (if any) land first so that Tab-ing from one toast button to
+  // the other doesn't resume-then-immediately-repause the timer.
+  el.addEventListener('focusin', () => { if (el._hasAction) _pauseToastAutoHide(el); });
+  el.addEventListener('focusout', () => { setTimeout(maybeResume, 0); });
+}
+
 /**
- * Show success toast message
+ * Show a toast message, optionally with a single clickable action.
+ *
+ * @param {string} msg
+ * @param {number|Object} [durationOrOpts] - either a plain ms duration
+ *   (legacy call shape, default 1200ms), or an options object:
+ *   @param {number}   [durationOrOpts.duration=5000]   - ms before auto-hide.
+ *   @param {string}   [durationOrOpts.action]           - label for a clickable
+ *     action button. Requires `onAction` too — a label with no handler (or a
+ *     handler with no label) is treated as "no action" and silently ignored.
+ *   @param {Function} [durationOrOpts.onAction]         - called on click (or
+ *     Enter/Space while focused — it's a real `<button>`, keyboard activation
+ *     is native, nothing extra to wire). Use this to open the surface the
+ *     toast is about directly (e.g. `onAction: () => openApplicantPortal()`)
+ *     instead of leaving the user with "go check the Portal" instruction
+ *     text — the whole point of this slot. Not a URL: if you need to open a
+ *     link, do it inside the callback (`onAction: () => window.open(url)`).
+ *   @param {string}   [durationOrOpts.actionHint]        - short keyboard-shortcut
+ *     hint (e.g. "Ctrl+Z") shown under the button on desktop only.
+ *   @param {string}   [durationOrOpts.actionIcon]        - trusted inline SVG
+ *     string prepended to the action label. Internal-only — never pass
+ *     caller/user-controlled HTML here, it is not escaped.
+ *   @param {'check'|'spinner'} [durationOrOpts.leadingIcon] - icon shown before
+ *     the message text.
+ *
+ * An action toast also gets a small "×" Dismiss button, flips the toast's
+ * `pointer-events` back on (plain toasts stay click-through), and pauses its
+ * auto-hide timer while hovered or focused (see _wireToastPauseOnInteract
+ * above) so a keyboard user has a real chance to reach the action before it
+ * disappears.
  */
 export function showToast(msg, durationOrOpts) {
   if (!toastEl) {
     toastEl = document.getElementById('toast');
   }
   _wireToastSwipe(toastEl);
+  _wireToastPauseOnInteract(toastEl);
   _applyNoticeKitChrome(toastEl, 'info');
   toastEl.textContent = '';
   toastEl.classList.remove('error');
@@ -368,6 +459,11 @@ export function showToast(msg, durationOrOpts) {
     stack.style.cssText = 'display:inline-flex;flex-direction:column;align-items:center;gap:1px;margin-left:10px;line-height:1;';
 
     const btn = document.createElement('button');
+    // Explicit type — without it a bare <button> defaults to type="submit",
+    // which would submit an ancestor <form> on click/Enter if the toast host
+    // element is ever nested inside one. The × Dismiss button below already
+    // does this; match it here for the same reason.
+    btn.type = 'button';
     // If the caller supplied an SVG icon, prepend it. We trust the icon string
     // (only set internally) — never accept caller-controlled HTML otherwise.
     if (actionIcon) {
@@ -385,7 +481,9 @@ export function showToast(msg, durationOrOpts) {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      toastEl.classList.remove('show');
+      clearTimeout(toastEl._hideTimer);
+      toastEl._hideTimer = null;
+      _hideToastNow(toastEl);
       onAction();
     });
     stack.appendChild(btn);
@@ -415,6 +513,7 @@ export function showToast(msg, durationOrOpts) {
       e.stopPropagation();
       e.preventDefault();
       clearTimeout(toastEl._hideTimer);
+      toastEl._hideTimer = null;
       toastEl.classList.add('exiting');
       toastEl.classList.remove('show');
     });
@@ -426,26 +525,21 @@ export function showToast(msg, durationOrOpts) {
     toastEl.style.pointerEvents = '';
   }
 
+  // Whether this toast has a real clickable action — gates the pause-on-
+  // hover/focus behavior in _wireToastPauseOnInteract above (plain status
+  // toasts keep their original fixed-timing, fire-and-forget behavior).
+  toastEl._hasAction = !!(actionLabel && onAction);
+
   // Pin to top-right via CSS — clear any legacy inline overrides so the
   // slide-in-from-right / slide-out-to-left transition can run cleanly.
   toastEl.style.left = '';
   toastEl.style.transform = '';
   toastEl.classList.remove('exiting');
   toastEl.classList.add('show');
-  clearTimeout(toastEl._hideTimer);
-  toastEl._hideTimer = setTimeout(() => {
-    // Add `exiting` so the CSS rule slides it off to the LEFT instead of
-    // back to the right (where it came from). We piggyback on the same
-    // .toast base; .exiting overrides the resting transform.
-    toastEl.classList.add('exiting');
-    toastEl.classList.remove('show');
-    // Reset pointer-events so an action-toast (which sets it to 'auto'
-    // for its clickable button) doesn't leave the toast intercepting
-    // clicks after it's slid away. Was previously only cleared on the
-    // NEXT plain toast, so a lingering action-toast could appear to
-    // "lock" interaction near the top-right.
-    toastEl.style.pointerEvents = '';
-  }, duration);
+  // Adds `exiting` (slides off to the LEFT, instead of back to the right it
+  // came from) and resets pointer-events once `duration` elapses — pauses/
+  // resumes around hover+focus for action toasts, see _armToastAutoHide.
+  _armToastAutoHide(toastEl, duration);
 }
 
 /**
