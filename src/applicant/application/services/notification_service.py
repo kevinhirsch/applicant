@@ -40,6 +40,12 @@ class NotificationService:
         # read-modify-write of ``_digest_ready_sent`` must be guarded against two
         # overlapping ticks racing the same per-day marker.
         self._digest_ready_lock = threading.Lock()
+        # outcome-event id -> notification handle already sent for it (design-audit
+        # Top-25 #5). Same shared-across-ticks/requests instance as above, so this
+        # is the single source of truth that makes a retry/replay of the SAME
+        # OutcomeEvent id a no-op rather than a second celebratory ping.
+        self._positive_outcome_sent: dict[str, str] = {}
+        self._positive_outcome_lock = threading.Lock()
 
     def dedup_key(self, decision_ref: str) -> str:
         """Stable cross-channel idempotency key for a decision (FR-NOTIF-3)."""
@@ -265,6 +271,61 @@ class NotificationService:
                 dedup_key=f"weekly_recap:{campaign_id}:{week_start.isoformat()}",
             )
         )
+
+    # --- positive-outcome celebration (design-audit Top-25 #5) ------------
+    def notify_positive_outcome(
+        self,
+        outcome_event_id: str,
+        *,
+        outcome_type: str,
+        company: str | None = None,
+        deep_link: str | None = None,
+    ) -> str | None:
+        """The product's emotional peak: "you got an interview" / "you got an offer".
+
+        Fires through the EXACT SAME ``NotificationPort.notify()`` fan-out as the
+        daily digest / weekly recap (in-app inbox always, Discord/email for
+        whatever the user has opted into) -- NOT a parallel delivery pipeline.
+        Reachable from either recording path (the owner's manual tracker tap OR
+        the automated email-scan detector), since both funnel through
+        ``PostSubmissionService._record_outcome_event``.
+
+        Deduped on ``outcome_event_id``: a retry/replay that calls this again for
+        the SAME already-notified event is a no-op (returns ``None``), so a crash-
+        and-retry around the recording step can't double-fire the celebration.
+        Unrecognized ``outcome_type``s are silently ignored (defensive -- callers
+        should only ever pass ``interview_invited``/``offer``, but this method
+        must never be the thing that breaks outcome recording).
+        """
+        key = str(outcome_event_id)
+        with self._positive_outcome_lock:
+            if key in self._positive_outcome_sent:
+                return None
+        if outcome_type == "interview_invited":
+            company_name = company or "the company"
+            title = "🎉 Interview invitation!"
+            body = f"You got an interview at {company_name}!"
+        elif outcome_type == "offer":
+            company_name = company or "the company"
+            title = "🎉 Offer!"
+            body = f"{company_name} made you an offer!"
+        else:
+            return None
+        handle = self._notification.notify(
+            Notification(
+                title=title,
+                body=body,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+                dedup_key=f"positive_outcome:{key}",
+            )
+        )
+        with self._positive_outcome_lock:
+            existing = self._positive_outcome_sent.get(key)
+            if existing is not None:
+                return existing
+            self._positive_outcome_sent[key] = handle
+        return handle
 
     # --- in-app notification center (FR-UI-3 feed) ------------------------
     def list_inbox(self, *, include_seen: bool = False) -> list:
