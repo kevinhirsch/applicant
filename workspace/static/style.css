@@ -32755,6 +32755,37 @@ body.theme-frosted #applicant-vault-modal .modal-content {
   outline-offset: 2px;
 }
 
+/* backlog "mobile Remote iframe": the live-session iframe's inline sizing
+   (min-height:40dvh / height:40dvh, up to max-height:72dvh) is fine on the
+   desktop floating window, but on the mobile bottom sheet (capped at 85dvh
+   total, shared by every modal) it ate roughly HALF the sheet's whole height
+   before the "Resume after a step you did yourself" / "Let the assistant
+   help on the desktop" / "Finish the application" cards even start — pushing
+   the "I'll submit it myself" / "Authorize the assistant to finish" decision
+   pair well over a full extra screen of scrolling below the fold. Verified
+   against the real markup + stylesheet in headless Chrome at 375x667: before
+   this rule the decision pair sat ~965px into a ~1214px-tall scroll body
+   with only ~500px visible at a time. Shrink the iframe's footprint on
+   narrow viewports only (still a real, usable live-session preview — "Open
+   in new tab" remains available for full detail) so far more of the sheet's
+   limited height is left for the actionable rows beneath it. Desktop/tablet
+   (min-width:769px, the floating window) is untouched.
+   !important: the wrap/iframe carry the 40dvh/72dvh sizing as an INLINE
+   style (applicantRemote.js), which otherwise outranks any plain stylesheet
+   rule regardless of selector specificity — same reason the shared mobile
+   sheet authority block (`.modal-content` @media max-width:768px) above
+   uses !important. */
+@media (max-width: 768px) {
+  #applicant-remote-frame-wrap {
+    min-height: 22dvh !important;
+    max-height: 40dvh !important;
+  }
+  #applicant-remote-frame {
+    height: 22dvh !important;
+    max-height: 40dvh !important;
+  }
+}
+
 /* #117: the engine-captured Gallery's screenshot/material tiles ARE the
    content — flat cells (no nested card border/shadow); they already sit
    inside the modal's own frame. */
