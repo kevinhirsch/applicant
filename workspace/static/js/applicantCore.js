@@ -59,12 +59,18 @@ export async function _fetchJSON(url, opts = {}) {
   return data || {};
 }
 
-/** POST JSON convenience wrapper. */
-export function _post(url, body) {
+/**
+ * POST JSON convenience wrapper. `opts` is optional and merges into the
+ * underlying _fetchJSON call (e.g. `{ timeoutMs }` to override the 15s
+ * default for a call known to legitimately run longer, such as an
+ * LLM-backed turn — see applicantChat.js's `/message` send).
+ */
+export function _post(url, body, opts = {}) {
   return _fetchJSON(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
+    ...opts,
   });
 }
 
