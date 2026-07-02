@@ -31,6 +31,7 @@ from applicant.app.deps import (
 from applicant.application.services.material_service import MaterialService
 from applicant.core.errors import NotFound, ReviewRequired
 from applicant.core.ids import GeneratedDocumentId, ResumeVariantId
+from applicant.core.rules.jd_match import compute_jd_match  # product-gaps #23
 from applicant.core.rules.truthfulness import BANNED_PHRASES  # CRIT-profile
 
 router = APIRouter(
@@ -193,6 +194,56 @@ def list_for_application(
         ],
         "all_approved": all(d.approved for d in docs) if docs else True,
     }
+
+
+@router.get("/jd-match/{application_id}")
+def jd_match(
+    application_id: str,
+    material=Depends(get_material_service),
+    storage=Depends(get_storage),
+) -> dict:
+    """Résumé <-> job-posting keyword match explainer (product-gaps backlog #23).
+
+    Pure, deterministic, extractive scoring (``core.rules.jd_match`` — no LLM, no
+    fabrication risk): which of the posting's high-signal keywords already show up
+    in the candidate's true résumé/profile text, and which are missing. A small,
+    dedicated read-model rather than piggybacking on ``POST /redline`` — the
+    redline endpoint only knows a variant's ``base_source``/``new_source`` strings
+    (no application/posting context), while the JD match needs the APPLICATION's
+    target posting, so a lookup keyed by ``application_id`` is the natural shape.
+
+    ``resume_text`` is the same flattened true-attribute-cloud + base-résumé text
+    ``MaterialService.true_attribute_text`` already treats as the candidate's
+    ground truth elsewhere (voice corpus, fabrication checks) -- résumé variants
+    themselves are stored as rendered LaTeX/docx files, not plain text, so this is
+    the best available plain-text stand-in for "what's on the résumé".
+
+    404 when the application does not exist. An application with no resolvable
+    posting degrades to an all-zero result (never fabricates a score) rather than
+    404ing, since the application itself is real.
+    """
+    try:
+        app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    except Exception:
+        app = None
+    if app is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No such application."
+        )
+    posting = None
+    posting_id = getattr(app, "posting_id", None)
+    if posting_id is not None:
+        try:
+            posting = storage.postings.get(posting_id)
+        except Exception:
+            posting = None
+    posting_text = (getattr(posting, "description", "") or "") if posting else ""
+    try:
+        resume_text = material.true_attribute_text(app.campaign_id)
+    except Exception:  # pragma: no cover - defensive; never break the read
+        resume_text = ""
+    result = compute_jd_match(resume_text, posting_text)
+    return {"application_id": application_id, **result}
 
 
 def _provenance_payload(provenance) -> list[dict]:

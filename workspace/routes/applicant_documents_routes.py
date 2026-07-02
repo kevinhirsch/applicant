@@ -35,17 +35,22 @@ Design notes:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, engine_base_url
 from src.auth_helpers import require_privilege, require_user
 
 logger = logging.getLogger(__name__)
+
+#: Timeout for the standalone JD-match GET below — mirrors
+#: ``applicant_engine._DEFAULT_TIMEOUT`` (a short, in-network read; deliberately
+#: NOT imported from there since that constant is private to the module).
+_JD_MATCH_TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=3.0)
 
 
 async def _owner_campaign_ids(engine: ApplicantEngineClient) -> Optional[set]:
@@ -171,6 +176,46 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
     )
 
 
+async def _fetch_jd_match(application_id: str) -> Any:
+    """Inline GET of the engine's résumé <-> JD keyword-match score (#23).
+
+    ``applicant_engine.py`` is CONCURRENTLY LOCKED by another lane, so this is a
+    deliberately small, self-contained httpx call mirroring
+    ``ApplicantEngineClient._request``'s own timeout/error-normalization shape
+    (timeout / connection failure -> :class:`EngineError` with ``status=None``;
+    an HTTP error response -> :class:`EngineError` carrying the engine's status
+    + detail) rather than a new method on the shared client. A small, acceptable
+    duplication that keeps the two files independently editable.
+    """
+    url = f"{engine_base_url()}/api/documents/jd-match/{application_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_JD_MATCH_TIMEOUT) as client:
+            resp = await client.get(url)
+    except httpx.TimeoutException as exc:
+        raise EngineError(
+            f"Engine request timed out: GET {url}", is_timeout=True
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise EngineError(f"Engine request failed: GET {url}: {exc}") from exc
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except ValueError:
+            detail = resp.text
+        raise EngineError(
+            f"Engine returned HTTP {resp.status_code} for GET {url}",
+            status=resp.status_code,
+            detail=detail,
+        )
+    if resp.status_code == 204 or not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text
+
+
 def setup_applicant_documents_routes() -> APIRouter:
     """Build the Applicant documents proxy router (mounted in ``app.py``)."""
     router = APIRouter(prefix="/api/applicant/documents", tags=["applicant-documents"])
@@ -200,6 +245,25 @@ def setup_applicant_documents_routes() -> APIRouter:
                 data = await engine.documents_for_application(application_id)
         except EngineError as exc:
             logger.info("applicant documents for application unavailable: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.get("/jd-match/{application_id}")
+    async def jd_match(application_id: str, request: Request) -> JSONResponse:
+        """Résumé <-> job-posting keyword match score for the redline surface
+        (product-gaps backlog #23; engine ``GET /api/documents/jd-match/{id}``).
+
+        Plain-language ``{score, matched, missing}``: which of the posting's
+        keywords already show up in the candidate's résumé, and the
+        highest-signal ones that don't. Pure/deterministic on the engine side —
+        this proxy is a plain read, same auth tier as ``application_documents``
+        above (the materials for an application are visible to any logged-in
+        user of this single-tenant deployment)."""
+        require_user(request)
+        try:
+            data = await _fetch_jd_match(application_id)
+        except EngineError as exc:
+            logger.info("applicant jd-match unavailable: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
