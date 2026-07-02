@@ -799,9 +799,21 @@ function _headerHTML() {
           `<button class="cal-view-btn${_view === v ? ' active' : ''}" data-view="${v}">${v[0].toUpperCase() + v.slice(1)}</button>`
         ).join('')}
       </div>
-      <button class="cal-nav" id="cal-settings" title="Calendar settings" style="position:relative;top:-3px;"><svg width="13" height="13" style="position:relative;top:2px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.68 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-      <button class="cal-nav${window._calSyncing ? ' cal-syncing' : ''}${window._calSyncDone ? ' cal-sync-done' : ''}" id="cal-sync" title="Refresh from database" style="position:relative;top:-3px;">${window._calSyncDone ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>'}</button>
-      ${_filtersToggleHTML()}
+      <!-- #129: settings / refresh / filters collapsed into one overflow menu
+           so the toolbar reads as 3 groups (nav | view-segment | +New)
+           instead of 5+ mixed icon/text controls in a row. IDs are
+           unchanged so the existing per-button wiring below still applies
+           — only where they render changed. -->
+      <div class="cal-more-wrap">
+        <button class="cal-nav cal-more-btn" id="cal-more-toggle" title="More" aria-haspopup="true" aria-expanded="false">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        </button>
+        <div class="cal-more-menu hidden" id="cal-more-menu">
+          <button class="cal-more-menu-item" id="cal-settings" title="Calendar settings"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.68 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Calendar settings</span></button>
+          <button class="cal-more-menu-item${window._calSyncing ? ' cal-syncing' : ''}${window._calSyncDone ? ' cal-sync-done' : ''}" id="cal-sync" title="Refresh from database">${window._calSyncDone ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>'}<span>Refresh</span></button>
+          ${_filtersToggleHTML()}
+        </div>
+      </div>
       <button class="cal-add-btn cal-add-btn-text" id="cal-add" title="New event"><span class="cal-add-plus">+</span><span class="cal-add-label">New</span></button>
     </div>
   </div>
@@ -851,10 +863,11 @@ function _filtersData() {
 }
 
 function _filtersToggleHTML() {
-  // Inline toolbar button only. The chip row renders separately below.
+  // #129: lives inside the toolbar's overflow menu now, styled like its
+  // sibling menu items. The chip row itself still renders separately below.
   const { calFilters, typeFilters } = _filtersData();
   if (!calFilters && !typeFilters) return '';
-  return `<button class="cal-filter-toggle" id="cal-filter-toggle" title="${_filtersCollapsed ? 'Show filters' : 'Hide filters'}">${_filtersCollapsed ? '+ tags' : '− tags'}</button>`;
+  return `<button class="cal-more-menu-item cal-filter-toggle" id="cal-filter-toggle" title="${_filtersCollapsed ? 'Show filters' : 'Hide filters'}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg><span>${_filtersCollapsed ? 'Show tags' : 'Hide tags'}</span></button>`;
 }
 
 function _filtersRowHTML() {
@@ -951,7 +964,7 @@ async function _renderMonth() {
           const _impMark = ev.importance === 'critical' ? '<span style="color:var(--red);margin-right:2px" title="critical">!!</span>'
                          : ev.importance === 'high' ? '<span style="color:var(--orange,#e5a33a);margin-right:2px" title="high">!</span>' : '';
           const _typeBadge = ev.event_type ? `<span class="cal-event-type-badge" data-type="${_e(ev.event_type)}" title="${_e(ev.event_type)}"></span>` : '';
-          h += `<div class="cal-event-row" draggable="true" data-uid="${_e(ev.uid)}" title="${_e(ev.summary)}${ev.event_type ? ' · ' + ev.event_type : ''}${ev.importance && ev.importance !== 'normal' ? ' · ' + ev.importance : ''}">
+          h += `<div class="cal-event-row" tabindex="0" draggable="true" data-uid="${_e(ev.uid)}" title="${_e(ev.summary)}${ev.event_type ? ' · ' + ev.event_type : ''}${ev.importance && ev.importance !== 'normal' ? ' · ' + ev.importance : ''}">
             <span class="cal-event-row-dot" style="background:${_calColor(ev)}"></span>
             ${_typeBadge}
             ${t ? `<span class="cal-event-row-time">${t}</span>` : ''}
@@ -2080,6 +2093,36 @@ function _wireAll(body) {
       if (uiModule?.showToast) uiModule.showToast('Calendar refreshed');
     }
   });
+  // #129: toolbar overflow menu (Settings / Refresh / Filters). Toggle open
+  // on the "⋯" button, close on an item click or an outside click.
+  const _moreToggle = document.getElementById('cal-more-toggle');
+  const _moreMenu = document.getElementById('cal-more-menu');
+  if (_moreToggle && _moreMenu) {
+    _moreToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = _moreMenu.classList.contains('hidden');
+      _moreMenu.classList.toggle('hidden', !willOpen);
+      _moreToggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    _moreMenu.addEventListener('click', (e) => {
+      if (e.target.closest('button')) _moreMenu.classList.add('hidden');
+    });
+  }
+  // The outside-click listener lives on `document`, which outlives every
+  // re-render — wire it once per #cal-body (same guarded pattern the "Q"
+  // quick-add shortcut below uses) instead of stacking a fresh listener,
+  // each closing over a stale detached menu, on every render.
+  if (!body._calMoreWired) {
+    body._calMoreWired = true;
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('cal-more-menu');
+      const toggle = document.getElementById('cal-more-toggle');
+      if (menu && !menu.classList.contains('hidden') && !e.target.closest('.cal-more-wrap')) {
+        menu.classList.add('hidden');
+        toggle?.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
   // Brief spin on the "+" glyph before the new-event form opens. The
   // glyph already rotates on hover (desktop). On mobile there's no
   // hover, so play the rotation on tap as a quick affordance.
@@ -2248,6 +2291,16 @@ function _wireAll(body) {
     if (ev) _showEventForm(ev);
   }));
   _wireQuickDelete(body);
+
+  // #130: month-cell event rows are now keyboard-focusable — Enter/Space
+  // triggers the same behavior a mouse click would (it bubbles to the day
+  // cell's own click handler), so this doesn't duplicate any selection
+  // logic, just gives it a keyboard equivalent.
+  body.querySelectorAll('.cal-event-row[tabindex]').forEach(el => {
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+  });
 
   // Drag
   body.querySelectorAll('[draggable="true"][data-uid]').forEach(el => {

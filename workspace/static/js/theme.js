@@ -622,6 +622,8 @@ export function save(name, colors, opts) {
     if (opts.frosted) obj.frosted = true;
     if (opts.glassTier && opts.glassTier !== 'off') obj.glassTier = opts.glassTier;
     if (opts.meshPreset && opts.meshPreset !== DEFAULT_MESH_PRESET) obj.meshPreset = opts.meshPreset;
+    if (opts.meshSpeed !== undefined && opts.meshSpeed !== DEFAULT_MESH_SPEED) obj.meshSpeed = opts.meshSpeed;
+    if (opts.meshIntensity !== undefined && opts.meshIntensity !== DEFAULT_MESH_INTENSITY) obj.meshIntensity = opts.meshIntensity;
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -840,6 +842,11 @@ export function initThemeUI() {
     if (gt) opts.glassTier = gt.value;
     const mp = document.getElementById('theme-mesh-preset-select');
     if (mp) opts.meshPreset = mp.value;
+    // Speed/intensity are read from the live module state (already-clamped, already
+    // applied by applyGlassMeshTuning) rather than re-deriving from the slider's
+    // inverted 0-100 "energy" position — one conversion, not two.
+    opts.meshSpeed = _glassMeshSpeed;
+    opts.meshIntensity = _glassMeshIntensity;
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -1110,18 +1117,23 @@ export function initThemeUI() {
       applyFrostedGlass(false);
       applyGlassTier(DEFAULT_GLASS_TIER);
       applyGlassMeshPreset(DEFAULT_MESH_PRESET);
+      applyGlassMeshTuning(DEFAULT_MESH_SPEED, DEFAULT_MESH_INTENSITY);
       const fs = document.getElementById('theme-font-select');
       const ds = document.getElementById('theme-density-select');
       const ps = document.getElementById('theme-bg-pattern-select');
       const gt = document.getElementById('theme-glass-select');
       const fr = document.getElementById('theme-frosted-toggle');
       const mp = document.getElementById('theme-mesh-preset-select');
+      const mss = document.getElementById('theme-mesh-speed');
+      const mis = document.getElementById('theme-mesh-intensity');
       if (fs) fs.value = DEFAULT_FONT;
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
       if (gt) gt.value = DEFAULT_GLASS_TIER;
       if (fr) fr.checked = false;
       if (mp) mp.value = DEFAULT_MESH_PRESET;
+      if (mss) mss.value = String(Math.round(100 - ((DEFAULT_MESH_SPEED - 8) / (60 - 8)) * 100));
+      if (mis) mis.value = String(Math.round(((DEFAULT_MESH_INTENSITY - 0.4) / (1.4 - 0.4)) * 100));
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
       const darkSwatch = grid.querySelector('[data-theme="dark"]');
       if (darkSwatch) darkSwatch.classList.add('active');
@@ -1285,10 +1297,13 @@ export function initThemeUI() {
   const _initMeshPreset = (saved && MESH_PRESETS.includes(saved.meshPreset))
     ? saved.meshPreset
     : DEFAULT_MESH_PRESET;
+  const _initMeshSpeed = (saved && saved.meshSpeed !== undefined) ? saved.meshSpeed : DEFAULT_MESH_SPEED;
+  const _initMeshIntensity = (saved && saved.meshIntensity !== undefined) ? saved.meshIntensity : DEFAULT_MESH_INTENSITY;
   applyFontDensity(_initFont, _initDensity);
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
+  applyGlassMeshTuning(_initMeshSpeed, _initMeshIntensity);
   applyGlassMeshPreset(_initMeshPreset);
   applyFrostedGlass(_initFrosted);
   applyGlassTier(_initGlassTier);
@@ -1405,6 +1420,30 @@ export function initThemeUI() {
         const s = getSaved(); if (s) _saveFull(s.name, s.colors);
       });
     }
+  }
+
+  // Mesh drift speed / intensity — same two knobs the login screen's admin config
+  // exposes (login_bg.js), now user-adjustable for the in-app wallpaper too (#15).
+  // Speed is seconds/cycle (lower = faster); the slider reads inverted 0-100 "energy"
+  // for a more intuitive control, mapped to the 8-60s range mountMeshGradient clamps to.
+  const meshSpeedSlider = document.getElementById('theme-mesh-speed');
+  if (meshSpeedSlider) {
+    meshSpeedSlider.value = String(Math.round(100 - ((_initMeshSpeed - 8) / (60 - 8)) * 100));
+    meshSpeedSlider.addEventListener('input', () => {
+      const energy = parseFloat(meshSpeedSlider.value) / 100;
+      const seconds = 60 - energy * (60 - 8);
+      applyGlassMeshTuning(seconds, undefined);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+  const meshIntensitySlider = document.getElementById('theme-mesh-intensity');
+  if (meshIntensitySlider) {
+    meshIntensitySlider.value = String(Math.round(((_initMeshIntensity - 0.4) / (1.4 - 0.4)) * 100));
+    meshIntensitySlider.addEventListener('input', () => {
+      const pct = parseFloat(meshIntensitySlider.value) / 100;
+      applyGlassMeshTuning(undefined, 0.4 + pct * (1.4 - 0.4));
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
   }
 
   // --- Color Harmony Generator (inside Advanced section) ---

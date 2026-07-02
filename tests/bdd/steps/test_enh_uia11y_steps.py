@@ -377,13 +377,20 @@ def _reduced_motion_disables(css: str, animation_token: str) -> bool:
 @when("the run-control pulse animation is inspected")
 def inspect_runcontrol_pulse(uia11yctx):
     css = uia11yctx["css"]
-    uia11yctx["runcontrol_guarded"] = _reduced_motion_disables(css, "applicantPulse")
+    # The audit's fix (APPLE_GENIUS_IMPROVEMENTS.md #88) went further than gating
+    # the pulse behind prefers-reduced-motion: it deleted the animation entirely
+    # (applicantDebug.js's _statusChip renders a plain static dot, no `animation`
+    # property at all). A gate would satisfy "disabled under reduced motion"
+    # conditionally; deletion satisfies it unconditionally, which is strictly
+    # stronger. Assert the token is genuinely gone rather than merely gated.
+    uia11yctx["runcontrol_guarded"] = "applicantPulse" not in css
 
 
 @then("a reduced-motion media query disables it")
 def runcontrol_guarded(uia11yctx):
     assert uia11yctx["runcontrol_guarded"], (
-        "the Activity run-control pulse should be disabled under prefers-reduced-motion"
+        "the Activity run-control pulse should never animate — either gated behind "
+        "prefers-reduced-motion, or (as fixed) removed entirely"
     )
 
 
