@@ -20,7 +20,7 @@
 
 import uiModule from './ui.js';
 import { updateStateView, formatLogTail } from './applicantUpdateView.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, pollVisible } from './applicantCore.js';
 
 const OPS = '/api/applicant/ops';
 // While an update is running, re-poll status on this cadence so the live log
@@ -29,7 +29,7 @@ const POLL_MS = 3000;
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
-let _pollIv = null;
+let _pollStop = null;
 
 
 
@@ -85,7 +85,7 @@ function _close() {
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-update-body'); }
 
 function _stopPolling() {
-  if (_pollIv) { clearInterval(_pollIv); _pollIv = null; }
+  if (_pollStop) { _pollStop(); _pollStop = null; }
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
@@ -136,27 +136,34 @@ async function _refresh() {
   }
 }
 
-// Poll status while running; render each tick (live log tail) and stop on a
+// One poll tick: fetch the update status, render it, and stop the loop on a
 // terminal state (success/failed) or when the engine drops out.
+async function _pollTick() {
+  let status;
+  try {
+    status = await _fetchJSON(`${OPS}/update`);
+  } catch {
+    _stopPolling();
+    _renderError();
+    return;
+  }
+  _render(status);
+  const state = status && status.state;
+  if (state !== 'running') {
+    _stopPolling();
+    if (state === 'success') _toast('Update complete — Applicant is up to date.');
+    else if (state === 'failed') _toast(status.message || "Update didn't finish. You can try again.");
+  }
+}
+
+// Poll status while running; render each tick (live log tail) and stop on a
+// terminal state (success/failed) or when the engine drops out. Uses the
+// shared pollVisible helper so the 3s loop pauses while the tab is hidden and
+// resumes with an immediate refresh (not a stale wait) when it's visible again
+// — a backgrounded tab shouldn't keep hitting the proxy every 3 seconds.
 function _startPolling() {
   _stopPolling();
-  _pollIv = setInterval(async () => {
-    let status;
-    try {
-      status = await _fetchJSON(`${OPS}/update`);
-    } catch {
-      _stopPolling();
-      _renderError();
-      return;
-    }
-    _render(status);
-    const state = status && status.state;
-    if (state !== 'running') {
-      _stopPolling();
-      if (state === 'success') _toast('Update complete — Applicant is up to date.');
-      else if (state === 'failed') _toast(status.message || "Update didn't finish. You can try again.");
-    }
-  }, POLL_MS);
+  _pollStop = pollVisible(_pollTick, POLL_MS);
 }
 
 async function _trigger() {
