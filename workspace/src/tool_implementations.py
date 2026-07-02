@@ -2719,6 +2719,23 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     ("DELETE", "/api/calendar/events"),
 )
 
+# SUFFIX-matched (method, path) pairs — for endpoints whose consequential
+# segment sits AFTER a dynamic {id} in the path, so a prefix match (above)
+# can't express it (the id varies per call). Used for the applicant engine's
+# two terminal stop-boundary controls, mounted at
+# /api/applicant/remote/applications/{application_id}/<action>
+# (workspace/routes/applicant_remote_routes.py): submitting the application
+# or authorizing the engine to click final-submit. The engine's own
+# server-side stop-boundary is the primary gate and cannot be self-authorized
+# regardless — this just keeps the chat LLM from being able to reach the
+# button at all via the generic loopback. Read-only + non-terminal remote
+# actions (sessions, takeover, resume-*, continue-two-factor,
+# request-final-approval) stay reachable.
+_APP_API_BLOCKLIST_METHOD_SUFFIX = (
+    ("POST", "/submit-self"),
+    ("POST", "/authorize-engine-finish"),
+)
+
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     """Generic loopback to any internal Applicant API endpoint. Lets the
@@ -2768,6 +2785,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
                 if method.lower() not in ("get", "post", "put", "patch", "delete"):
                     continue
                 if any(method.upper() == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
+                    continue
+                if any(method.upper() == m and path.endswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_SUFFIX):
                     continue
                 summary = (op or {}).get("summary") or (op or {}).get("description") or ""
                 if isinstance(summary, str):

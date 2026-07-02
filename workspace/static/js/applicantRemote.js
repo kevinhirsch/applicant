@@ -278,9 +278,12 @@ async function _onToggleDesktopAssist() {
     _toast('Open a live session first');
     return;
   }
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-toggle');
+  if (btn && btn.disabled) return; // already in flight — can't double-fire
   const sid = _activeSession.session_id;
   const turningOn = !(_desktopState && _desktopState.enabled);
   _busy = true;
+  const orig = _setButtonBusy(btn, turningOn ? 'Turning on…' : 'Turning off…');
   try {
     const data = await _post(
       `${API}/sessions/${encodeURIComponent(sid)}/desktop/${turningOn ? 'enable' : 'disable'}`,
@@ -293,6 +296,9 @@ async function _onToggleDesktopAssist() {
     _toast(e.message || 'Could not change desktop help');
   } finally {
     _busy = false;
+    // `orig` is discarded: `_renderDesktopAssist()` recomputes the correct
+    // label/disabled state from the (possibly just-changed) desktop state.
+    _clearButtonBusy(btn, orig);
     _renderDesktopAssist();
   }
 }
@@ -364,9 +370,42 @@ function _needSession() {
   return true;
 }
 
+// ── busy-button guard ──────────────────────────────────────────────────────
+//
+// Bug fix: the shared `_busy` module flag alone doesn't stop a fast double-click,
+// because the DOM buttons themselves were never disabled — and any handler that
+// threw before its `finally` could strand `_busy=true` forever. Every consequential
+// button now (a) disables itself SYNCHRONOUSLY at click time, before any `await`
+// (including a confirm dialog), so a second click physically cannot fire the
+// request again, and (b) is always re-enabled in a `finally`, so a thrown error
+// can never leave it permanently stuck. Mirrors the disable/restore-on-error
+// pattern already used for the Portal's row buttons (applicantPortal.js `_wireRows`).
+function _setButtonBusy(btn, busyText) {
+  if (!btn) return null;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'wait';
+  if (busyText) btn.textContent = busyText;
+  return orig;
+}
+
+function _clearButtonBusy(btn, orig) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.removeAttribute('aria-busy');
+  btn.style.opacity = '';
+  btn.style.cursor = '';
+  if (orig != null) btn.textContent = orig;
+}
+
 async function _onTakeover() {
   if (_busy || !_needSession()) return;
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-takeover');
+  if (btn && btn.disabled) return; // already in flight — can't double-fire
   _busy = true;
+  const orig = _setButtonBusy(btn, 'Taking control…');
   try {
     await _post(`${API}/sessions/${encodeURIComponent(_activeSession.session_id)}/takeover`);
     _toast('You now have control of the session');
@@ -375,6 +414,7 @@ async function _onTakeover() {
     _toast(e.message || 'Could not take control');
   } finally {
     _busy = false;
+    _clearButtonBusy(btn, orig);
   }
 }
 
@@ -385,10 +425,21 @@ function _onOpenTab() {
   }
 }
 
+// Maps each resume step to its DOM button, so the busy-button guard can disable
+// the specific control the user clicked.
+const _RESUME_BUTTON_IDS = {
+  'resume-account-step': 'applicant-remote-resume-account',
+  'resume-detection-step': 'applicant-remote-resume-detection',
+};
+
 async function _resume(step) {
   if (_busy || !_needSession()) return;
+  const btnId = _RESUME_BUTTON_IDS[step];
+  const btn = btnId && _modalEl && _modalEl.querySelector('#' + btnId);
+  if (btn && btn.disabled) return; // already in flight — can't double-fire
   const appId = _activeSession.application_id;
   _busy = true;
+  const orig = _setButtonBusy(btn, 'Continuing…');
   let resp = null;
   try {
     resp = await _post(`${API}/applications/${encodeURIComponent(appId)}/${step}`);
@@ -397,6 +448,7 @@ async function _resume(step) {
     _toast(e.message || 'Could not continue');
   } finally {
     _busy = false;
+    _clearButtonBusy(btn, orig);
   }
   // The account step is where the user just signed in / created an account in the
   // live session. Offer to SAVE that sign-in so the engine can reuse it next time
@@ -483,38 +535,54 @@ function _submitSelfConfirmMessage(ctx) {
 
 async function _onSubmitSelf() {
   if (_busy || !_needSession()) return;
-  const ok = await _confirm(
-    'Mark this application as submitted by you? Do this after you have clicked '
-    + 'submit in the live session.',
-    { confirmText: 'Yes, I submitted it', cancelText: 'Not yet' });
-  if (!ok) return;
-  const appId = _activeSession.application_id;
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-submit-self');
+  if (btn && btn.disabled) return; // already in flight — can't double-fire
+  // Bug fix: disable the button (and claim `_busy`) BEFORE the confirm dialog, not
+  // after — a fast double-click could otherwise open two confirms and, if both were
+  // accepted, fire two POSTs before either `finally` ran.
   _busy = true;
+  const orig = _setButtonBusy(btn);
   try {
+    const ok = await _confirm(
+      'Mark this application as submitted by you? Do this after you have clicked '
+      + 'submit in the live session.',
+      { confirmText: 'Yes, I submitted it', cancelText: 'Not yet' });
+    if (!ok) return;
+    if (btn) btn.textContent = 'Recording…';
+    const appId = _activeSession.application_id;
     await submitSelf(appId);
     _toast('Recorded — thanks for finishing it yourself');
   } catch (e) {
     _toast(e.message || 'Could not record the submission');
   } finally {
     _busy = false;
+    _clearButtonBusy(btn, orig);
   }
 }
 
 async function _onAuthorizeFinish() {
   if (_busy || !_needSession()) return;
-  const ok = await _confirm(
-    _authorizeConfirmMessage(_activeSession),
-    { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
-  if (!ok) return;
-  const appId = _activeSession.application_id;
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-authorize');
+  if (btn && btn.disabled) return; // already in flight — can't double-fire
+  // Bug fix: disable the button (and claim `_busy`) BEFORE the confirm dialog — see
+  // `_onSubmitSelf` above. This is the control that authorizes the engine to click
+  // the employer's real final-submit button, so closing this race matters most.
   _busy = true;
+  const orig = _setButtonBusy(btn);
   try {
+    const ok = await _confirm(
+      _authorizeConfirmMessage(_activeSession),
+      { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
+    if (!ok) return;
+    if (btn) btn.textContent = 'Authorizing…';
+    const appId = _activeSession.application_id;
     await authorizeEngineFinish(appId);
     _toast('Authorized — the assistant submitted the application');
   } catch (e) {
     _toast(e.message || 'Could not authorize the submission');
   } finally {
     _busy = false;
+    _clearButtonBusy(btn, orig);
   }
 }
 
