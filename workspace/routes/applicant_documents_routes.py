@@ -281,6 +281,51 @@ def setup_applicant_documents_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.get("/variants/{variant_id}/download")
+    async def download_variant(variant_id: str, request: Request):
+        """Download the compiled résumé PDF for a variant (dark-engine audit item
+        16; engine ``GET /api/documents/variants/{variant_id}/download``).
+
+        The engine route takes only a bare ``variant_id`` (no campaign to check
+        directly), so this proxy fans out over the caller's OWN
+        ``list_campaigns()`` -> ``list_variants()`` results and only forwards the
+        download when the variant turns up under one of them -- mirrors
+        ``_owner_campaign_ids``'s isolation boundary elsewhere in this file."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            found = False
+            for cid in owned:
+                try:
+                    data = await engine.list_variants(cid)
+                except EngineError:
+                    continue
+                variants = data.get("variants") if isinstance(data, dict) else None
+                if isinstance(variants, list) and any(
+                    isinstance(v, dict) and str(v.get("variant_id")) == variant_id
+                    for v in variants
+                ):
+                    found = True
+                    break
+            if not found:
+                raise HTTPException(status_code=404, detail="No such résumé variant.")
+            try:
+                resp = await engine.download_variant_pdf(variant_id)
+            except EngineError as exc:
+                logger.info("applicant variant download failed: %s", exc)
+                return _engine_error_response(exc)
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.content,
+            media_type=resp.headers.get("content-type", "application/pdf"),
+            headers={
+                "Content-Disposition": f"attachment; filename=resume-{variant_id}.pdf"
+            },
+        )
+
     # ── on-demand generation (FR-RESUME-10, FR-ANSWER-1) ─────────────────
 
     @router.post("/cover-letter")

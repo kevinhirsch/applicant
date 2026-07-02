@@ -2283,6 +2283,36 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           }
         });
         actions.appendChild(approveBtn);
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        downloadBtn.textContent = 'Download PDF';
+        downloadBtn.title = 'Save the compiled resume PDF for this variant.';
+        downloadBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          downloadBtn.disabled = true;
+          const original = downloadBtn.textContent;
+          downloadBtn.textContent = 'Downloading…';
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(item.id)}/download`, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `resume-${item.id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            if (uiModule) uiModule.showError(err.message || String(err));
+          } finally {
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = original;
+          }
+        });
+        actions.appendChild(downloadBtn);
       } else {
         const reviewBtn = document.createElement('button');
         reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn';

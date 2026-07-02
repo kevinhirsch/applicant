@@ -493,6 +493,17 @@ class ApplicantEngineClient:
     async def approve_variant(self, variant_id: str) -> Any:
         return await self._request("POST", f"/api/documents/variants/{variant_id}/approve")
 
+    async def download_variant_pdf(self, variant_id: str) -> Any:
+        """Download the compiled résumé PDF for a variant (dark-engine audit item
+        16), mirroring the ``audit_log_*_export`` binary-passthrough convention:
+        returns the raw ``httpx.Response`` rather than trying to JSON-decode a
+        binary body."""
+        return await self._request(
+            "GET",
+            f"/api/documents/variants/{variant_id}/download",
+            expect_json=False,
+        )
+
     async def set_document_aggressiveness(self, aggressiveness: Any) -> Any:
         return await self._request(
             "POST", "/api/documents/aggressiveness", json={"aggressiveness": aggressiveness}
