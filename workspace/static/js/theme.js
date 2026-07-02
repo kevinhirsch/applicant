@@ -403,6 +403,9 @@ export function applyColors(colors) {
 
   // Update favicon to match theme accent color
   _updateFavicon(colors.red || '#e06c75');
+
+  // Invalidate the canvas-wallpaper CSS-var cache (--bg/--fg changed above).
+  _bumpBgVarsCache();
 }
 
 // Per-route SVG shape registry — kept in sync with the inline favicon
@@ -512,18 +515,21 @@ const _CANVAS_PATTERNS = { synapse: _initSynapse, rain: _initRain, constellation
 
 export function applyBgEffectColor(color) {
   document.documentElement.style.setProperty('--bg-effect-color', color || '');
+  _bumpBgVarsCache();
 }
 
 export function applyBgEffectIntensity(v) {
   // v is 0..1. Default 1 (full intensity) when missing.
   const n = (v === undefined || v === null || isNaN(v)) ? 1 : Math.max(0, Math.min(1, Number(v)));
   document.documentElement.style.setProperty('--bg-effect-intensity', String(n));
+  _bumpBgVarsCache();
 }
 
 export function applyBgEffectSize(v) {
   // v is a multiplier 0.3..2.5. Default 1 when missing.
   const n = (v === undefined || v === null || isNaN(v)) ? 1 : Math.max(0.2, Math.min(3, Number(v)));
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
+  _bumpBgVarsCache();
 }
 
 /** Legacy "Frosted" checkbox (Settings > Font & Layout). ONE gate now owns the
@@ -577,10 +583,69 @@ export function applyGlassTier(tier) {
   ensureGlassWallpaper(t !== 'off');
 }
 
+// ── Cached CSS-var reads for the canvas wallpaper loops (perf #16) ──────
+// The 7 canvas patterns below (_initSynapse/_initRain/_initConstellations/
+// _initPerlinFlow/_initPetals/_initSparkles/_initEmbers) each used to call
+// getComputedStyle(document.documentElement) — a synchronous style-recalc —
+// on EVERY animation frame just to re-read --bg-effect-color/--fg/--bg/
+// --bg-effect-intensity/--bg-effect-size, even though those vars only change
+// when the user actually edits a theme/effect setting. Read them once and
+// cache the raw strings; invalidate by bumping a generation counter from the
+// handful of setters that actually write these vars (applyColors,
+// applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize) — the same
+// "one dispatcher, cheap invalidation" spirit as the mesh-preset body-class
+// hook above, adapted to a frame-driven cache instead of a MutationObserver.
+let _bgVarsGen = 0;
+let _bgVarsCacheGen = -1;
+let _bgVarsCache = null;
+function _bumpBgVarsCache() { _bgVarsGen++; }
+function _readBgVars() {
+  if (_bgVarsCacheGen !== _bgVarsGen) {
+    const s = getComputedStyle(document.documentElement);
+    const sizeV = parseFloat(s.getPropertyValue('--bg-effect-size'));
+    const intenV = parseFloat(s.getPropertyValue('--bg-effect-intensity'));
+    _bgVarsCache = {
+      effectColor: s.getPropertyValue('--bg-effect-color').trim(),
+      fg: s.getPropertyValue('--fg').trim(),
+      bg: s.getPropertyValue('--bg').trim(),
+      size: isNaN(sizeV) ? 1 : sizeV,
+      intensity: isNaN(intenV) ? 1 : intenV,
+    };
+    _bgVarsCacheGen = _bgVarsGen;
+  }
+  return _bgVarsCache;
+}
+
 // Read current size multiplier for JS effects (canvas-based).
 function _getEffectSize() {
-  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-size'));
-  return isNaN(v) ? 1 : v;
+  return _readBgVars().size;
+}
+
+// ── Visibility-paused rAF scheduler for the canvas wallpaper loops ──────
+// Same spirit as applicantCore.js's pollVisible() (pause while the tab is
+// hidden, resume cleanly on visibilitychange) adapted for a frame-driven
+// (not interval-driven) loop: a backgrounded tab should not keep painting +
+// compositing a full-viewport canvas every frame. `step()` is called once
+// per frame while visible; return `false` from it to stop the loop for good
+// (e.g. the pattern was switched away) — the scheduler then also detaches
+// the visibilitychange listener so nothing lingers.
+function _rafLoop(step) {
+  let handle = null;
+  const tick = () => {
+    handle = null;
+    if (document.hidden) return; // resumed by the visibilitychange listener below
+    if (step() === false) { teardown(); return; }
+    handle = requestAnimationFrame(tick);
+  };
+  const onVis = () => {
+    if (!document.hidden && handle == null) handle = requestAnimationFrame(tick);
+  };
+  function teardown() {
+    if (handle != null) { cancelAnimationFrame(handle); handle = null; }
+    document.removeEventListener('visibilitychange', onVis);
+  }
+  document.addEventListener('visibilitychange', onVis);
+  handle = requestAnimationFrame(tick);
 }
 
 // Patterns where the intensity/size sliders have no visible effect.
@@ -1788,8 +1853,8 @@ function _initSynapse() {
   window.addEventListener('resize', _onResize);
 
   function getColor() {
-    const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    const v = _readBgVars();
+    return v.effectColor || v.fg || '#9cdef2';
   }
 
   function spawnPulse() {
@@ -1805,13 +1870,12 @@ function _initSynapse() {
     }
   }
 
-  function draw() {
+  _rafLoop(() => {
     if (!document.body.classList.contains('bg-pattern-synapse')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
-      return;
+      return false;
     }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
 
@@ -1849,8 +1913,7 @@ function _initSynapse() {
     }
 
     ctx.globalAlpha = 1;
-  }
-  draw();
+  });
 }
 
 // ── Rain — thin vertical streaks falling ──
@@ -1876,8 +1939,8 @@ function _initRain() {
   window.addEventListener('resize', _onResize);
 
   function getColor() {
-    const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    const v = _readBgVars();
+    return v.effectColor || v.fg || '#9cdef2';
   }
 
   function spawn() {
@@ -1886,18 +1949,16 @@ function _initRain() {
     drops.push({ x: Math.random() * W, y: -len, len, speed, alpha: 0.32 + Math.random() * 0.28 });
   }
 
-  function draw() {
+  _rafLoop(() => {
     if (!document.body.classList.contains('bg-pattern-rain')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
-      return;
+      return false;
     }
-    requestAnimationFrame(draw);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     // Intensity also controls rain speed + spawn rate (feels slower/lighter when dim)
-    const intenCss = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity'));
-    const inten = isNaN(intenCss) ? 1 : intenCss;
+    const inten = _readBgVars().intensity;
     const speedMult = 0.35 + inten * 0.65;
     const sizeMult = _getEffectSize();
 
@@ -1921,8 +1982,7 @@ function _initRain() {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
-  }
-  draw();
+  });
 }
 
 // ── Constellations — static dots that slowly form/dissolve connecting lines ──
@@ -1964,18 +2024,17 @@ function _initConstellations() {
   window.addEventListener('resize', _onResize);
 
   function getColor() {
-    const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2';
+    const v = _readBgVars();
+    return v.effectColor || v.fg || '#9cdef2';
   }
 
   let t = 0;
-  function draw() {
+  _rafLoop(() => {
     if (!document.body.classList.contains('bg-pattern-constellations')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
-      return;
+      return false;
     }
-    requestAnimationFrame(draw);
     t += 0.01;
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
@@ -2015,8 +2074,7 @@ function _initConstellations() {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-  }
-  draw();
+  });
 }
 
 // ── Noise helper for Perlin effects ──
@@ -2048,8 +2106,8 @@ function _initPerlinFlow() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
-  function getBg() { return getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#282c34'; }
+  function getColor() { const v = _readBgVars(); return v.effectColor || v.fg || '#9cdef2'; }
+  function getBg() { return _readBgVars().bg || '#282c34'; }
   let _cachedBg = '', _fadeStyle = '';
   function getFade() {
     const bg = getBg();
@@ -2062,9 +2120,8 @@ function _initPerlinFlow() {
     }
     return _fadeStyle;
   }
-  function draw() {
-    if (!document.body.classList.contains('bg-pattern-perlin-flow')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+  _rafLoop(() => {
+    if (!document.body.classList.contains('bg-pattern-perlin-flow')) { window.removeEventListener('resize', _onResize); canvas.remove(); return false; }
     ctx.fillStyle = getFade();
     ctx.fillRect(0, 0, W, H);
     const c = getColor();
@@ -2079,8 +2136,7 @@ function _initPerlinFlow() {
     });
     ctx.globalAlpha = 1;
     t++;
-  }
-  draw();
+  });
 }
 
 // ── Petals — gentle falling flower petals ──
@@ -2112,10 +2168,9 @@ function _initPetals() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
-  function draw() {
-    if (!document.body.classList.contains('bg-pattern-petals')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+  function getColor() { const v = _readBgVars(); return v.effectColor || v.fg || '#9cdef2'; }
+  _rafLoop(() => {
+    if (!document.body.classList.contains('bg-pattern-petals')) { window.removeEventListener('resize', _onResize); canvas.remove(); return false; }
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sz = _getEffectSize();
@@ -2133,8 +2188,7 @@ function _initPetals() {
       ctx.restore();
     });
     ctx.globalAlpha = 1;
-  }
-  draw();
+  });
 }
 
 // ── Sparkles — twinkling star-shaped sparkles ──
@@ -2160,7 +2214,7 @@ function _initSparkles() {
   resize();
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
-  function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
+  function getColor() { const v = _readBgVars(); return v.effectColor || v.fg || '#9cdef2'; }
   function drawStar(x, y, r, c, alpha) {
     ctx.save(); ctx.translate(x, y); ctx.fillStyle = c; ctx.globalAlpha = alpha;
     // 4-point star
@@ -2172,9 +2226,8 @@ function _initSparkles() {
     ctx.fill();
     ctx.restore();
   }
-  function draw() {
-    if (!document.body.classList.contains('bg-pattern-sparkles')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+  _rafLoop(() => {
+    if (!document.body.classList.contains('bg-pattern-sparkles')) { window.removeEventListener('resize', _onResize); canvas.remove(); return false; }
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sizeMult = _getEffectSize();
@@ -2188,8 +2241,7 @@ function _initSparkles() {
       if (s.phase > Math.PI * 6) Object.assign(s, makeSpark());
     });
     ctx.globalAlpha = 1;
-  }
-  draw();
+  });
 }
 
 // ── Embers — warm particles rising with glow and occasional spark bursts ──
@@ -2228,27 +2280,46 @@ function _initEmbers() {
   const _onResize = () => resize();
   window.addEventListener('resize', _onResize);
   function getColor() {
-    const s = getComputedStyle(document.documentElement);
-    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#c9a95a';
+    const v = _readBgVars();
+    return v.effectColor || v.fg || '#c9a95a';
   }
   function rgba(hex, a) {
     const h = hex.replace('#', '');
     const n = parseInt(h, 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
-  function draw() {
+  // A single UNIT-radius (0..1, centered at local origin) radial gradient,
+  // reused for every ember on every frame via ctx.translate/scale instead of
+  // baking a fresh world-space CanvasGradient per ember per frame (perf #16
+  // — this used to allocate a brand-new radial gradient inside the per-ember
+  // loop, once per particle per frame.
+  // Per-ember size is applied with ctx.scale(r*4, r*4) and per-ember fade
+  // with ctx.globalAlpha, so the SAME gradient object paints every ember;
+  // it's only rebuilt when the resolved color string actually changes.
+  let _emberGradColor = null, _emberGrad = null;
+  function getEmberGradient(color) {
+    if (_emberGrad && _emberGradColor === color) return _emberGrad;
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    g.addColorStop(0, rgba(color, 1));
+    g.addColorStop(0.4, rgba(color, 0.3));
+    g.addColorStop(1, rgba(color, 0));
+    _emberGrad = g;
+    _emberGradColor = color;
+    return g;
+  }
+  _rafLoop(() => {
     if (!document.body.classList.contains('bg-pattern-embers')) {
       window.removeEventListener('resize', _onResize);
       canvas.remove();
-      return;
+      return false;
     }
-    requestAnimationFrame(draw);
     // Fade previous frame (destination-out keeps canvas transparent where no embers)
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fillRect(0, 0, W, H);
     ctx.globalCompositeOperation = 'lighter';
     const color = getColor();
+    const grad = getEmberGradient(color);
     for (let i = embers.length - 1; i >= 0; i--) {
       const e = embers[i];
       e.wobble += 0.03;
@@ -2266,12 +2337,16 @@ function _initEmbers() {
       const sz = _getEffectSize();
       const r = e.r * (e.spark ? 2.4 : 1) * sz;
       const a = (e.spark ? 0.9 : 0.55) * fade;
-      const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, r * 4);
-      g.addColorStop(0, rgba(color, a));
-      g.addColorStop(0.4, rgba(color, a * 0.3));
-      g.addColorStop(1, rgba(color, 0));
-      ctx.fillStyle = g;
-      ctx.fillRect(e.x - r * 4, e.y - r * 4, r * 8, r * 8);
+      // Position + size the shared unit gradient via the transform instead
+      // of allocating a new gradient at (e.x, e.y, r*4) — globalAlpha = a
+      // reproduces the per-ember fade the old per-ember color stops baked in.
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(e.x, e.y);
+      ctx.scale(r * 4, r * 4);
+      ctx.fillStyle = grad;
+      ctx.fillRect(-1, -1, 2, 2);
+      ctx.restore();
       ctx.fillStyle = rgba('#ffffff', a * 0.6);
       ctx.beginPath();
       ctx.arc(e.x, e.y, r * 0.5, 0, Math.PI * 2);
@@ -2289,8 +2364,7 @@ function _initEmbers() {
       }
     }
     ctx.globalCompositeOperation = 'source-over';
-  }
-  draw();
+  });
 }
 
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,

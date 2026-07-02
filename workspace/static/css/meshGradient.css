@@ -44,7 +44,16 @@
    blur radius on a real layer) without blurring the diagonal ray, and scale it
    up past the viewport so the blur edges never show. The blobs are LARGE and
    reach near-full opacity so they fill the frame and overlap into a rich mesh
-   (rather than small dots floating on a dark base). */
+   (rather than small dots floating on a dark base).
+
+   PERF (round-3 audit #10): the gradient background + blur() are STATIC —
+   never animated — so the browser rasterizes the blur exactly once and then
+   promotes the layer to the compositor (will-change: transform). Only
+   `transform: translate()/scale()` animates below (login-mesh-drift), which
+   the compositor can move/scale as an already-blurred bitmap with no repaint
+   and no gaussian re-rasterization per frame. Previously this animated the
+   background's paint offset directly, which forced a full paint + 54px
+   gaussian blur on every single frame, continuously, on every surface. */
 .login-bg-gradient { background: var(--lbg-base); }
 .login-bg-gradient::before {
   content: ""; position: absolute; inset: -25%;
@@ -55,7 +64,7 @@
     radial-gradient(64vmax 64vmax at 20% 86%, color-mix(in srgb, var(--lbg-c4) calc(90% * var(--lbg-intensity)), transparent), transparent 80%);
   background-size: 150% 150%;
   filter: blur(54px) saturate(1.55) brightness(1.14);
-  will-change: background-position;
+  will-change: transform;
 }
 /* A drifting diagonal "aurora ray" of brighter light streaking across. */
 .login-bg-gradient::after {
@@ -73,10 +82,14 @@
 .login-bg-gradient.is-animated::after {
   animation: login-ray-sweep calc(var(--lbg-speed, 26s) * 1.6) ease-in-out infinite alternate;
 }
+/* Compositor-only drift: translate/scale the whole pre-blurred layer instead
+   of re-positioning the individual gradient blobs (which would repaint). The
+   -25% inset margin above gives ample overflow room so these offsets never
+   reveal a hard edge. */
 @keyframes login-mesh-drift {
-  0%   { background-position: 0% 50%,   100% 40%,  80% 100%, 20% 0%;   }
-  50%  { background-position: 70% 10%,  20% 90%,   30% 40%,  90% 70%;  }
-  100% { background-position: 100% 60%, 0% 50%,    60% 0%,   0% 100%;  }
+  0%   { transform: translate(-5%, 4%)  scale(1);     }
+  50%  { transform: translate(6%, -5%)  scale(1.05);  }
+  100% { transform: translate(-4%, 6%)  scale(1);     }
 }
 @keyframes login-ray-sweep {
   0%   { transform: translateX(-12%) translateY(6%);  opacity: 0.7; }
