@@ -74,7 +74,7 @@ function _ensureModalEl() {
                   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock"
                   referrerpolicy="no-referrer"></iframe>
           <div id="applicant-remote-empty"
-               style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;opacity:0.7;">
+               style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;opacity:0.7;color:#f2f5f7;">
             No live session is open yet.
           </div>
         </div>
