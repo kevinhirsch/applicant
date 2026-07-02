@@ -654,6 +654,19 @@ class ApplicantEngineClient:
             json={"outcome_type": outcome_type},
         )
 
+    async def tracker_scan_email(self, application_id: str, subject: str, body: str) -> Any:
+        """Run one pasted email's subject/body through the engine's outcome
+        detectors (rejection/interview/offer, design-audit Top-25 #5) for a
+        SPECIFIC application the owner has already identified — this is the
+        deliberately manual, zero-ambiguity sibling of automatic inbox
+        matching (out of scope; a mis-attributed email could record a fake
+        outcome against the wrong application)."""
+        return await self._request(
+            "POST",
+            f"/api/post-submission/applications/{application_id}/scan-email",
+            json={"subject": subject, "body": body},
+        )
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:
