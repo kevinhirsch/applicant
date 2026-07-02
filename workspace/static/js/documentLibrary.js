@@ -2114,12 +2114,42 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       // there is at least one material; the honest empty-state copy below
       // covers the truly-empty case.
       const gateOk = items.length > 0 && !!(data && data.all_approved);
+      // Kill the "All approved" dead end (Top-25 #13): once every material for
+      // this application has cleared review there is nowhere left to go on this
+      // surface — the actual next step is the submit decision, which lives in
+      // the Portal (final_approval / request_final_approval rows render there;
+      // see applicantPortal.js `_renderFinal`). Reuse the SAME cross-lane seam
+      // applicantChat.js's own "Open Pending" CTA uses
+      // (`window.applicantPortalModule.openApplicantPortal()`, falling back to a
+      // synthetic click on the `#rail-portal` launcher) rather than inventing a
+      // new one.
       head.innerHTML =
         `<span class="memory-count" style="opacity:0.7;">${items.length} item${items.length === 1 ? '' : 's'}</span>` +
         `<span class="doclib-applicant-gate" title="${gateOk ? 'All materials for this application have been approved.' : 'Some materials still need your approval before this application can be sent.'}" ` +
           `style="font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);opacity:0.85;">` +
-          `${gateOk ? 'All approved' : 'Needs review'}</span>`;
+          `${gateOk ? 'All approved' : 'Needs review'}</span>` +
+        (gateOk
+          ? `<button type="button" class="cal-btn cal-btn-primary doclib-applicant-continue-submit" ` +
+              `style="margin-left:auto;font-size:11px;padding:2px 10px;" ` +
+              `title="Everything is approved — head to the submit step in your Pending home base">Continue to submit &rarr;</button>`
+          : '');
       results.appendChild(head);
+
+      if (gateOk) {
+        const continueBtn = head.querySelector('.doclib-applicant-continue-submit');
+        if (continueBtn) {
+          continueBtn.addEventListener('click', () => {
+            try {
+              if (window.applicantPortalModule && typeof window.applicantPortalModule.openApplicantPortal === 'function') {
+                window.applicantPortalModule.openApplicantPortal();
+                return;
+              }
+            } catch { /* fall through */ }
+            const rail = document.getElementById('rail-portal');
+            if (rail) rail.click();
+          });
+        }
+      }
 
       if (!items.length) {
         const empty = document.createElement('div');
