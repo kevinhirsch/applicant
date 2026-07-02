@@ -135,3 +135,83 @@
 47. **Audit-trail writes can drop an ActionEvent (logged, but the FR-LOG trail has a hole)** — [VALUE: med · EFFORT: M] — `_persist_isolated` logs the failure but the event is still lost (`src/applicant/application/services/audit_log_service.py:112-127`); for a product whose trust story is "every action, in order," a failed audit write should at least be counted/surfaced, ideally buffered and retried.
 
 48. **Boot continues past every startup-step failure** — [VALUE: med · EFFORT: S] — Durable-recovery re-drive, DB healthcheck, dormant-surface seeding, audit-log start, and system-campaign seed are each individually `except Exception: log.warning` (`src/applicant/app/lifespan.py:259-328`). Any one failing (e.g. audit-log service never starts) yields a healthy-looking engine missing a core subsystem — no aggregate "boot degraded" flag reaches `/healthz` or the front-door.
+
+---
+
+## Tier 7 — Poll-vs-action races & re-render input loss (front-door)
+
+49. **Portal refresh rebuilds the list mid-typing — every draft answer in every row is wiped** — [VALUE: high · EFFORT: M] — `_load(true)` re-renders via `body.innerHTML = …` (`workspace/static/js/applicantPortal.js:859-881`); the header "Refresh" button (`:338`) and — worse — the *automatic* Google-2FA timeout handler (`:1127`) both call it. A user typing an answer into one row while a 2FA wait in another row times out loses everything they typed, with no warning. Preserve draft values across re-render (read textareas before rebuild, restore after) or re-render per-row.
+
+50. **Resolving a row the engine already resolved shows a raw error and strands a dead row** — [VALUE: med · EFFORT: S] — If another tab/the engine resolved the action first, `_doResolve`'s catch just re-enables the button and toasts `e.message` verbatim (`workspace/static/js/applicantPortal.js:944-946`, `:960-964`); the defunct row stays until manual refresh. Treat already-resolved as success: fade the row with "already handled." (Pairs with engine-side #27: today the engine returns 204 for a duplicate resolve, so this path only triggers on other errors — but neither layer tells the user the truth.)
+
+51. **The 60s badge poll correctly leaves the open list DOM alone (anti-finding)** — [VALUE: low · EFFORT: S] — `refreshBadge` only refetches counts/notifications (`workspace/static/js/applicantPortal.js:1275-1290`) — background polling alone does not destroy typed input. Documenting so nobody "fixes" it into a re-render; the destruction paths are the explicit `_load(true)` callers in #49.
+
+---
+
+## Tier 8 — Session expiry & draft loss mid-flow (front-door)
+
+52. **The onboarding wizard has zero draft persistence — a 401/reload mid-section loses typed profile data** — [VALUE: high · EFFORT: M] — No localStorage/sessionStorage/beforeunload anywhere in the wizard; state is `_intakeIndex` plus per-section POSTs on advance (`workspace/static/js/applicantOnboarding.js:1520-1539` and throughout). A session expiring mid-section (the longest typing surface in the product) throws away the current section's fields; the user re-logs-in to a wizard that forgot where they were. Persist a per-step draft (sessionStorage) and restore on relaunch.
+
+53. **Digest decline reason is destroyed if the POST fails** — [VALUE: med · EFFORT: S] — The mandatory "why are you passing" reason is captured via `styledPrompt`, whose modal is gone by the time `decline` fails; the catch only re-enables buttons (`workspace/static/js/emailLibrary/applicantDigest.js:373-383`, `:397-400`), so the typed reason must be re-typed from memory. Retry with the captured value, or re-open the prompt pre-filled.
+
+54. **Redline "ask for a change" instruction lives only in the DOM** — [VALUE: med · EFFORT: S] — The free-text change request survives a failed turn POST but not a re-render (`_loadApplicantMaterials`/`_renderApplicantReview`) or reload (`workspace/static/js/documentLibrary.js:2324-2331`, `:2368`). Mid-review refreshes (or a second surface triggering a reload of materials) silently discard the user's editorial instruction.
+
+55. **Chat composer clears before the send succeeds** — [VALUE: med · EFFORT: S] — `input.value=''` runs before the POST resolves (`workspace/static/js/applicantChat.js:395`, `:421-424`); on failure the text is recoverable only via the verbatim Retry button (not editable) and is gone entirely on reload. Clear on success, or restore into the composer on failure.
+
+56. **Vault secret survives a failed save but not the 401 that likely caused it** — [VALUE: low · EFFORT: M] — On save error the password input is left intact (good — `workspace/static/js/applicantVault.js:204-209`, `:221`), but a session-expiry-forced reload loses the typed secret. Deliberately do NOT draft-persist secrets; instead detect `kind==='auth'` and offer an in-place re-auth so the modal (and the typed secret) survives.
+
+---
+
+## Tier 9 — Live view, long ops & abandonment (front-door)
+
+57. **The live-session iframe has no error/health detection — a dead sandbox renders a browser error page forever** — [VALUE: high · EFFORT: M] — `_setActiveSession` just sets `frame.src` with no `onload`/`onerror` and no session-status poll (`workspace/static/js/applicantRemote.js:203-213`, `:91`); nothing re-validates `_activeSession` over time (`:316-336`). If the engine restarts or the sandbox dies while the user watches (the highest-tension moment in the product), the frame silently dies until they think to click "Refresh sessions." Poll session liveness and overlay a "session ended — reconnecting/reload" state.
+
+58. **"Waiting for your phone…" can stick disabled forever** — [VALUE: med · EFFORT: S] — `continueTwoFactor` is awaited with no cancel or client-side deadline (`workspace/static/js/applicantPortal.js:1114-1116`); if the engine hangs past the proxy timeout the button stays disabled with the waiting label and no way out short of a full refresh (which then triggers #49's input wipe via `:1127`).
+
+59. **Résumé-conversion preview hangs with no cancel, and closing the wizard orphans it** — [VALUE: med · EFFORT: M] — `_buildPreview` awaits `conversion/preview` with no client deadline (`workspace/static/js/applicantOnboarding.js:1481-1518`); a stalled build leaves "Building a polished version…" forever, closing the overlay abandons the op invisibly, and reopening re-fires a fresh build rather than attaching to the in-progress one — double work on the engine, no progress truth for the user.
+
+60. **Chat "Thinking…" and digest deep-research have no timeout/cancel/abandon UX** — [VALUE: med · EFFORT: M] — `_send` awaits a single buffered `/message` POST (`workspace/static/js/applicantChat.js:399-401`) and `_onResearch` awaits `research/run` with the button stuck on "Researching…" (`workspace/static/js/emailLibrary/applicantDigest.js:412-439`); closing the panel mid-run orphans the operation (the report only opens on success). Combined with the 30s proxy read cap (#10), long research *cannot* succeed — the user gets a spinner, then an error, and the engine work is discarded.
+
+61. **Run-now offers no progress and no cancel** — [VALUE: low · EFFORT: S] — Debug run-now awaits its POST showing only "Running…" (`workspace/static/js/applicantDebug.js:620-642`); a stalled engine leaves the admin surface stuck with no way to abandon or observe the run's actual state.
+
+---
+
+## Tier 10 — Two tabs, storage corruption & clock skew (front-door)
+
+62. **Two tabs double-toast every notification and race the seen-marker** — [VALUE: med · EFFORT: M] — Each tab polls independently and runs `_toastNew` (`workspace/static/js/applicantPortal.js:135-156`), so both pop the same toasts; both write `NOTIF_SEEN_KEY` last-writer-wins (`:111-120`), so one tab can advance the marker past notifications the other never displayed — permanently un-seen items. Use a `storage` event or BroadcastChannel to elect one toasting tab.
+
+63. **"While you were away" recap window is clobbered by a second tab** — [VALUE: med · EFFORT: S] — `_captureRecapSince` reads `RECAP_SEEN_KEY` then immediately overwrites it with `Date.now()` (`workspace/static/js/applicantPortal.js:415-423`); a second tab opened moments later computes a near-empty recap window. The overnight-recap feature degrades to noise for anyone who opens two tabs.
+
+64. **One background tab's blur marks the user absent for the engine** — [VALUE: med · EFFORT: S] — The digest presence heartbeat sends `present:false` on `blur`/`visibilitychange` (`workspace/static/js/emailLibrary/applicantDigest.js:893-916`, `:902`) even while another tab is focused — the engine then re-enables push/chat fan-out duplicates for a user who is actually looking at the app.
+
+65. **Seen-marker corruption silently re-toasts the entire backlog** — [VALUE: low · EFFORT: S] — Marker writes are wrapped in empty `catch` (quota errors mean it never persists — `workspace/static/js/applicantPortal.js:119`, `:422`) and a corrupt value goes through `Number()` → `0`/`NaN` (`:113-115`), which re-classifies every historical notification as new on next load. Validate the parsed marker and re-seed to newest on nonsense.
+
+66. **All "new/since" math trusts the client clock against engine timestamps** — [VALUE: med · EFFORT: M] — Recap totals include runs with `_runTs > _recapSince` where `_recapSince` is client `Date.now()` (`workspace/static/js/applicantPortal.js:437-451`, `:415-423`); notification newness compares engine `created_at` to the client-stored marker (`:122-125`, `:145-148`); relative ages use `Date.now() - engineTs` with negatives collapsing to "just now" (`workspace/static/js/applicantActivity.js:57-67`). A self-hosted box with drift (common on home servers without NTP) over/under-counts the recap and mis-toasts. Anchor markers to engine-supplied `server_now` instead.
+
+67. **Digest feature-gate memoized for the whole page session** — [VALUE: med · EFFORT: S] — `_featurePromise` caches whether the digest section is active (`workspace/static/js/emailLibrary/applicantDigest.js:30`, `:79-93`); after the user finishes setup (or the engine restarts into a different state) the panel stays stale until a full page reload — the classic "it says locked but I just configured it" support ticket.
+
+---
+
+## Tier 11 — Payload robustness & remaining edges
+
+68. **Onboarding conflict-apply throws on an unanswered conflict radio** — [VALUE: med · EFFORT: S] — `wrap.querySelector('input[name="ao-conf-…"]:checked').value` null-derefs when the user leaves a conflict unanswered (`workspace/static/js/applicantOnboarding.js:1468`), surfacing as the generic "Could not apply choices" toast instead of "please pick an option for each conflict" — a validation gap masquerading as an engine failure.
+
+69. **Redline injects engine `rendered_html` unsanitized** — [VALUE: med · EFFORT: M] — `redline.innerHTML = rl.rendered_html` (`workspace/static/js/documentLibrary.js:2274-2281`) trusts the engine's HTML wholesale (there is a fallback when the field is absent, so no blank surface). Any upstream content that survives engine templating (posting text, LLM output) renders live in the front-door — sanitize or render into a shadow root with a strict allowlist. *(Trust-lens #12 flagged the annotation-layer angle; this is the injection/robustness angle.)*
+
+70. **`ui_control` highlight trusts an engine-supplied CSS selector** — [VALUE: low · EFFORT: S] — `document.querySelector(uiData.selector)` throws on malformed selectors and is swallowed by the outer catch (`workspace/static/js/chatStream.js:111`, `:193-195`) — a silent no-op that makes assistant-driven UI guidance flaky with no trace.
+
+71. **Most renderers degrade gracefully on partial payloads (anti-finding)** — [VALUE: low · EFFORT: S] — Portal rows coalesce missing `payload` fields (`applicantPortal.js:669`, `:726`, `:1421`), digest rows fall back on `row.title||row.summary` (`emailLibrary/applicantDigest.js:250-252`), remote snapshot type-checks answers/materials (`applicantRemote.js:614-618`), results/activity numeric-guard (`applicantResults.js:43-53`, `applicantActivity.js:362-380`). Keep this bar: the two regressions to fix are #68 and #69.
+
+72. **Optimistic pause toggle correctly rolls back (anti-finding)** — [VALUE: low · EFFORT: S] — `_applyPauseOptimistic` paints the new state, reverts on error, then reconciles via `refreshStatus` (`workspace/static/js/applicantActivity.js:104-113`, `:129-135`); Portal/digest/documents all remove rows only *after* the awaited POST resolves (`applicantPortal.js:957-959`, `emailLibrary/applicantDigest.js:357-360`, `documentLibrary.js:2390-2393`). This is the pattern to standardize on, not a gap.
+
+---
+
+## The shape of the fix (read this before picking items)
+
+Five systemic moves close most of the list:
+
+1. **Make degraded modes first-class data.** One engine "health & capabilities" payload (persistence fallback #1–2, capability stubs #3/#5/#38, boot-step failures #48, per-source discovery health #4) surfaced through setup-status → `applicant_features.py` → a persistent front-door banner. Everything in Tier 1 collapses into this.
+2. **Guard the irreversible click server-side.** A submitted/submitting state-check *before* `click_final_submit` (#25) plus an already-resolved guard on integral-change (#26) and an honest "already handled" contract (#27/#50). Client disables (#29/#29a) are defense-in-depth, not the fix.
+3. **Persist the loop's memory.** Move the resume/give-up ledger (#30), add a start-path failure cap + per-app isolation (#31/#32), lease TTL (#34), and widen the prefill recovery boundary (#37). These five turn "restart = retry storm + stuck workflows" into "restart = resume."
+4. **One timeout ladder.** Client draft-preserving re-render (#49) + per-operation timeouts that are *longer at each outer layer* (engine op < proxy read < middleware < UI), fixing #10/#11/#59/#60 in one policy.
+5. **Retry-or-record for outbound side effects.** Notifications (#45), workspace callbacks (#8/#24), follow-ups (#44), outcome transitions (#42/#43): either retry with backoff or write a durable "failed, will retry / needs attention" record. Never log-and-forget an action the user is counting on.

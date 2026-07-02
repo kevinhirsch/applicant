@@ -80,3 +80,76 @@
 29. **Engine setup `/status` recomputes readiness + channels + tiers + suggested attributes per poll** — [VALUE: med · EFFORT: S] — `get_status` → `_status_dict` re-runs config reads, `apply_readiness()` campaign scans, and the suggested-attributes reporter (which invokes advanced-learning suggestion logic) on every call (`src/applicant/app/routers/setup.py:125-134`, `container.py:759-771`). Polled, rarely changing — memoize with short TTL, invalidate on config writes.
 
 30. **Digest build hydrates full posting `description` Text blobs it never emits** — [VALUE: med · EFFORT: M] — `list_for_campaign` loads whole `JobPostingModel` rows including `description` (`models.py:159`, `repositories.py:388-394`) though `build_digest` emits only title/company/url/score (`digest_service.py:109-118`). Thousands of rows × multi-KB descriptions of wasted IO per build. Use a column-projected query on the digest path.
+
+31. **Engine DB pool left at defaults (5 + 10 overflow) vs a 40-thread request pool** — [VALUE: med · EFFORT: S] — `make_engine` sets `pool_pre_ping` but no `pool_size`/`max_overflow`/`pool_recycle` (`src/applicant/adapters/storage/session.py:24-30`), while per-request sessions (Starlette threadpool ≈ 40 workers), the scheduler tick session, the boot Session, and audit-log emissions all draw from it. Under load, checkouts stall behind 15 connections. Size the pool to the threadpool.
+
+32. **Digest `deliver` materializes N pending actions with a dedup SELECT + commit each** — [VALUE: med · EFFORT: S] — `deliver` loops rows calling `digest_approval` per row (`digest_service.py:257-269`); each `materialize` runs `find_open_by_dedup` then `commit()` (`pending_actions_service.py:57-73`) — N SELECTs + N commits in one request. Batch-insert in a single transaction.
+
+33. **Scheduler rebuilds the full ~25-service graph every tick** — [VALUE: med · EFFORT: M] — `_build_tick_services` reconstructs the whole Learning/Scoring/Discovery/Digest/Prefill/Material/Submission/AgentLoop wiring against a fresh session each interval (`src/applicant/app/container.py:1123-1250`, invoked `scheduler.py:182`). Per-tick Session isolation is by design (CLAUDE.md), but the session-*independent* construction can be cached and only the storage-bound repos rebound per tick.
+
+34. **`appkitGlass` MutationObserver re-scans the whole document during chat streaming** — [VALUE: med · EFFORT: M] — `watchMounts` observes all body subtree additions (`workspace/static/js/appkitGlass.js:929`); each batch schedules `collectTargets` → `document.querySelectorAll` over 8 selectors (`:844`) with a `getComputedStyle(el)` visibility check per candidate (`:853`). Token streaming = hundreds of insertions = repeated full-document scans + forced style reads. Narrow the observer to mount roots and use `offsetParent` for visibility.
+
+35. **`getBoundingClientRect` on every `pointermove` over glass surfaces** — [VALUE: med · EFFORT: S] — the specular-rim tracker reads `el.getBoundingClientRect()` per pointermove (`appkitGlass.js:1051`); writes are rAF-batched (`:1057-1058`) but the read can force layout while streaming dirties styles. Cache the rect on pointerenter/scroll/resize.
+
+36. **Sticky headers carrying `backdrop-filter` re-composite the scroll every frame** — [VALUE: med · EFFORT: S] — the chat top bar carries the glass backdrop (`style.css:32535/:34542`) and ~15 `position: sticky` sites sit over scrolling content (e.g. `:17625`, `:20029`, `:30039`). A sticky element with a backdrop-filter must re-sample the moving content beneath it per scrolled frame. Swap to an opaque/solid fill while scrolling.
+
+37. **`transition: all` ×60 on dense interactive rows/buttons** — [VALUE: med · EFFORT: M] — 60 occurrences, mostly `0.15s` on list rows and buttons (`style.css:6753/:6799/:6928/:6950/:6997/:23676/:25463/:25490`). `all` animates any property change — including layout-affecting ones — and blocks the compositor fast-path. Enumerate the real properties (`background, color, opacity, transform`).
+
+38. **Transitions/hints on layout-triggering properties** — [VALUE: med · EFFORT: M] — transitions animate geometry in hot spots: `width/opacity/padding` (`style.css:409`), `left/top/width/height` (`:859`), `width…padding…border-radius` (`:2333/:2408`), `max-width/margin-left` (`:2438`), `top` (`:1799/:9759`); and `will-change: padding` (`:11687`) wastes a layer on an uncompositable property. Prefer `transform`+`opacity`; move `will-change` to the transform-animated layers.
+
+39. **Infinite `box-shadow` pulse/breathe keyframes repaint per frame** — [VALUE: med · EFFORT: S] — several always-on animations animate `box-shadow` (paint-bound): rail-notes pulse (`style.css:753-754`), notification pulse (`:15242-15246`), status pulse (`:32200`), plus unread-breathe/reminder-glow variants. Replace with an `opacity`-animated pseudo-element ring (composite-only).
+
+40. **`background-attachment: fixed` full-bleed layers defeat scroll compositing** — [VALUE: med · EFFORT: S] — 3 sites: the tiled dots patterns (`style.css:227/:233`, 20–24 px tiles repainted full-viewport on scroll) and a wallpaper-region rule (`:35069`). Use a `position: fixed; z-index:-1` layer instead.
+
+41. **4-layer stacked box-shadows on every glass window re-rasterize during drag** — [VALUE: med · EFFORT: S] — the shared chrome rule stacks a rim + two inset rims + the two-shadow float var on every `.ow-window/.modal-content/.admin-card/.toast` (`style.css:32857-32861`, `--ow-glass-float` `:32819`). Promote dragged windows to their own layer or collapse to one float shadow during drag.
+
+42. **Per-window exact-fit SVG displacement filters — cap concurrent refracted surfaces** — [VALUE: med · EFFORT: M] — each eligible surface gets its own feImage→feDisplacementMap(→blur→colorMatrix→specular feBlend) chain via inline `backdrop-filter: url(#…)` (`appkitGlass.js:612-764`, applied `:800`). Maps are correctly cached per size bucket and only re-built on a debounced ResizeObserver (`:482/:906` — good), but every unique large window is still its own offscreen refraction pass. Lower `activeMaxSurfaces` so background windows fall back to plain frost.
+
+43. **Inter fonts not preloaded → FOUT + first-paint layout shift** — [VALUE: med · EFFORT: S] — the three `@font-face` declarations use `font-display: swap` (`index.html:195-197`) but there is no `<link rel="preload" as="font">` (only 5 JS `modulepreload`s at `:229-233`), so fonts are discovered after CSS parse and the page visibly reflows from fallback to Inter. Preload the 400/600 woff2s.
+
+44. **Workspace boot-critical HTML depends on third-party CDN (KaTeX/Mermaid)** — [VALUE: low · EFFORT: S] — `index.html:204-205` pulls KaTeX + Mermaid from jsdelivr (async, integrity-pinned — good), but on a self-hosted LAN box these stall or 404 offline and contend with first-paint network. Self-host under `/static/lib/` (highlight.js already is, `:192`) and lazy-load only when a math/diagram block renders.
+
+45. **Timeout middleware wraps every request — including static 304s — in `asyncio.wait_for`** — [VALUE: low · EFFORT: M] — `_RequestTimeoutMiddleware` creates a task + 45 s timer per request including `/static` (`workspace/app.py:147-161`), stacked with 3 more pure-Python `BaseHTTPMiddleware` layers (`:100/:119/:406`). With ~165 asset revalidations per load (#12) that's measurable pure overhead. Exempt `/static` and cheap GETs, or go ASGI-native.
+
+46. **CSP nonce generated for every static/API request that never uses it** — [VALUE: low · EFFORT: S] — `SecurityHeadersMiddleware` runs `secrets.token_hex(16)` per request including `/static/*` (`workspace/core/middleware.py:107-113`). Skip nonce generation for static paths.
+
+47. **Auth middleware does two locked session lookups per request** — [VALUE: low · EFFORT: S] — the cookie path calls `validate_token` then `get_username_for_token` (`workspace/app.py:396/:402`), each taking the sessions lock and re-running expiry checks (`core/auth.py:427-450/:452-475`). Merge into one `resolve(token) → username|None`. (Verified: no DB/bcrypt on the cookie hot path — already good.)
+
+48. **Generated-image route runs a DB ownership query per image request** — [VALUE: low · EFFORT: S] — `serve_generated_image` opens a fresh `SessionLocal` and queries the gallery row per image (`workspace/app.py:450-460`); a grid of N thumbnails = N sessions + N queries on open (mitigated by the `immutable` cache header on repeat views, `:476-480`). Batch-authorize per gallery load or cache filename→owner briefly.
+
+49. **No pagination passthrough on proxied history/log reads** — [VALUE: med · EFFORT: S] — the engine client hardcodes `limit=200` for application history and `limit=100` for logs with no client-driven paging (`workspace/src/applicant_engine.py:576/:593`), and the portal feed concatenates all campaigns' items unbounded (`applicant_portal_routes.py:278-290`). Add limit/offset passthrough so polled surfaces stop re-downloading full histories.
+
+50. **LLM keepalive loop opens fresh clients to up to 5 endpoints every 60 s forever** — [VALUE: low · EFFORT: S] — `_keepalive_loop` → `_warmup_endpoints` builds a new `httpx.AsyncClient(timeout=5.0)` per endpoint per cycle (`workspace/app.py:1058-1086`). Reuse one client; make the cadence configurable.
+
+51. **Update log poll re-fetches the whole status+log payload every 3 s** — [VALUE: low · EFFORT: S] — the update surface polls `${OPS}/update` at `POLL_MS = 3000` and re-renders the full response each tick (`workspace/static/js/applicantUpdate.js:28/:142-158`); as the log grows the payload grows quadratically over the run. Send a `since`/offset param and append only the tail. (Poll correctly stops on terminal states — good.)
+
+52. **Adaptive-ink pass interleaves computed-style reads with streaming writes** — [VALUE: low · EFFORT: M] — the veil/ink sampler reads `getComputedStyle` per adaptive element (`theme.js:1727/:1747/:1815/:1884`), debounced (`appkitGlass.js:1808` pattern) but still interleaving reads with token-streaming DOM writes → read-write-read thrash. Batch all reads before any writes per pass.
+
+53. **Engine startup re-drives durable workflows synchronously before serving** — [VALUE: low · EFFORT: M] — lifespan runs `_redrive_pending` inline plus two full capability reports before `yield` (`src/applicant/app/lifespan.py:157-184/:225-261`), delaying `/healthz` green. Move recovery to a post-startup background task.
+
+54. **Missing ORDER BY indexes on campaign-wide joined reads** — [VALUE: low · EFFORT: S] — `screenshots.list_for_campaign` orders by unindexed `captured_at` (`repositories.py:727-755`, `models.py:227-234`), `outcomes` by `created_at` (`:665-692`), `detection_events` by `timestamp` (`:1026-1036`) — each joins through applications then sorts in-memory. Add composite indexes or LIMITs before these grow.
+
+55. **Redundant single-column indexes shadowed by composites** — [VALUE: low · EFFORT: S] — `ix_agent_runs_campaign_id` (`adapters/storage/alembic/versions/0001_initial.py:85`) is fully covered by `ix_agent_runs_campaign_timestamp` (`0004_indexes.py:76-81`); same pattern on applications/pending_actions. Pure write amplification on insert-heavy tables — drop the shadowed singletons.
+
+56. **Discovery-sources query runs on every digest build, not just the empty-day branch** — [VALUE: low · EFFORT: S] — `_searched_summary` calls `discovery_sources.list_for_campaign` on every digest payload (`digest_service.py:156-171`), adding a query to the already-hot path (#6) even when rows exist. Compute lazily for the empty branch only.
+
+57. **No stale-while-revalidate on any Applicant surface — every open is a cold spinner** — [VALUE: med · EFFORT: M] — Portal/digest/results all render `loadingHTML` then replace on fetch (`applicantPortal.js:1402`); none keep the last-known payload (memory or `localStorage`) for an instant paint with a background refresh. The service worker already does SWR for HTML (`sw.js:3-4`) — apply the same pattern in-app: paint cached rows immediately, tag "updated Ns ago", swap when fresh data lands. Biggest perceived-speed win on the daily loop.
+
+58. **No prefetch-on-intent for the Portal/Activity data** — [VALUE: low · EFFORT: S] — the rail launchers are wired click-only (`applicantPortal.js:1478-1484`); a `pointerenter`/`focus` prefetch of `/pending` (and `/features` at boot) would hide the whole proxy+engine fan-out latency (~2M+1 hops, #4) behind the user's hover. One shared `prefetch(url)` helper in `applicantCore.js`.
+
+59. **Portal open fires 4 independent proxy chains — no aggregate bootstrap endpoint** — [VALUE: med · EFFORT: M] — `openApplicantPortal` kicks `_loadDigest`, `_loadMomentum`, `_load` (pending), then `_loadNotifs` + `_loadRecap` (`applicantPortal.js:1455-1468`) — 5 workspace requests, each opening its own engine client (#3) and several fanning per-campaign (#4). One `GET /api/applicant/portal/bootstrap` returning `{pending, notifications, digest, momentum, recap}` in a single engine round-trip would collapse open latency to one hop.
+
+60. **The single `?v=` cache-buster is inconsistent with the no-cache strategy** — [VALUE: low · EFFORT: S] — exactly one module carries a version query (`chat.js?v=20260520m`, `index.html:2595`) while all others rely on `no-cache` revalidation (#12) and the SW's manual `CACHE_NAME` bump (`sw.js:11`). Three competing invalidation schemes; pick one (mtime/content-hash query appended at serve time would also unlock long `max-age`, killing #12 entirely).
+
+61. **Service worker precache list is hand-maintained and network-first for code** — [VALUE: low · EFFORT: M] — `sw.js` precaches a hand-synced subset of the module list (`sw.js:16-42`) but serves JS/CSS network-first (`:5-6`), so precache only helps offline, never latency; drift between the list and `index.html` silently erodes offline too. Generate the precache list from `index.html` at startup and move JS/CSS to SWR keyed on ETag once #60's versioning lands.
+
+62. **Boot-time launcher-wiring polls also gate first meaningful render of Applicant surfaces** — [VALUE: low · EFFORT: S] — 8+ modules retry launcher wiring on 500 ms `setInterval`s for up to ~10 s (`applicantPortal.js:1492`, `applicantActivity.js:466`, `applicantChat.js:591`, `applicantGallery.js:258`, `applicantMind.js:306`, `applicantResults.js:284`, `applicantDebug.js:844`, `applicantCompare.js:294`, `applicantUpdate.js:212`). Beyond the known duplication, the polls add steady main-thread wakeups during the busiest boot window; a single shared `MutationObserver`-based `whenReady(ids)` in `applicantCore.js` fires once, immediately, with zero timers.
+
+---
+
+## Where to start (sequencing)
+
+- **This week (S-effort, product-wide):** #1 gzip · #5 badge-count endpoint · #17 unblock Portal first paint · #21 idle backoff in `pollVisible` · #37/#39 targeted CSS property fixes · #43 font preload.
+- **Next (M-effort, biggest structural wins):** #2 lazy-load rare-surface modules · #3 shared engine client · #4/#59 portal aggregate endpoint · #6/#7/#8 engine gate+digest caching · #9/#13/#14 glass layering + containment · #57 stale-while-revalidate kit.
+- **Foundational:** #60 one asset-versioning scheme unlocks #12 and #61 together; #19/#33 container build caching pays on every request and every tick.
+
