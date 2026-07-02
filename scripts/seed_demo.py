@@ -58,6 +58,31 @@ def _build_storage():
     return storage
 
 
+def _build_gate_services(storage):
+    """Minimal ``SetupService`` + ``OnboardingService`` over the SAME session.
+
+    Only used to open the two setup gates (``ensure_demo_llm`` /
+    ``ensure_demo_apply_ready``) so the seeded surfaces render instead of 409'ing
+    behind ``require_llm_configured`` / ``require_automated_work``. Both reuse the
+    storage session's ``SqlAlchemyAppConfigStore`` so the tier ladder + base-résumé
+    intake they write are the exact ones the running engine reads — no divergence
+    between what the CLI seeds and what the ``api`` service serves.
+    """
+    from applicant.adapters.resume_parser.resume_parser import ResumeParser
+    from applicant.adapters.storage.app_config_store import SqlAlchemyAppConfigStore
+    from applicant.application.services.onboarding_service import OnboardingService
+    from applicant.application.services.setup_service import SetupService
+
+    config_store = SqlAlchemyAppConfigStore(storage._session)
+    setup_service = SetupService(config_store=config_store)
+    onboarding_service = OnboardingService(
+        storage=storage,
+        config_store=config_store,
+        resume_parser=ResumeParser(),
+    )
+    return setup_service, onboarding_service
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Gated behind ``APPLICANT_ALLOW_SEED=1``."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -80,10 +105,22 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {key:24s}: {count}")
         return 0
 
+    setup_service, onboarding_service = _build_gate_services(storage)
+    llm_opened = dev_seed.ensure_demo_llm(setup_service)
     bundle = dev_seed.build_demo_bundle()
     counts = dev_seed.persist(storage, bundle)
+    # After the campaign row exists, satisfy the apply-gate (base-résumé intake).
+    apply_opened = dev_seed.ensure_demo_apply_ready(onboarding_service)
 
     print(f"Seeded demo dataset for campaign '{bundle.campaign.id}' ({bundle.campaign.name}):")
+    print(
+        "  llm gate           : "
+        + ("opened (installed demo tier)" if llm_opened else "already open (left untouched)")
+    )
+    print(
+        "  apply gate         : "
+        + ("opened (seeded base résumé)" if apply_opened else "already open (left untouched)")
+    )
     for key in (
         "campaign",
         "postings",
