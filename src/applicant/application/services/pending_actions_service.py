@@ -199,6 +199,18 @@ class PendingActionsService:
         paired.sort(key=lambda pair: (-pair[1]["priority"], pair[0].created_at, str(pair[0].id)))
         return paired
 
+    def count_pending(self, campaign_id: CampaignId, *, include_snoozed: bool = False) -> int:
+        """Just the open-pending COUNT for the campaign — a lightweight badge read.
+
+        Backs the badge-poll perf fix (exhaustive2 lens 03, item #5): the same
+        indexed ``(campaign_id, resolved)`` query :meth:`list_pending` already runs
+        (``PendingActionRepository.list_open``), but the caller skips the per-item
+        task-metadata derivation (:mod:`applicant.core.task_metadata`) and the full
+        row serialization the ``GET /{campaign_id}`` list endpoint pays for on
+        every poll — only an integer crosses the wire.
+        """
+        return len(self.list_pending(campaign_id, include_snoozed=include_snoozed))
+
     def resolve(self, action_id: PendingActionId) -> None:
         self._storage.pending_actions.resolve(action_id)
         self._storage.commit()

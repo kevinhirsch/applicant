@@ -1603,10 +1603,13 @@ async function _loadNotifs() {
 async function refreshBadge() {
   // Poll both feeds so new notifications toast and the badge reflects everything
   // waiting (open actions + undismissed informational notifications), even when
-  // the modal is closed.
+  // the modal is closed. Perf lens 03 item #5: this used to call the full
+  // `/pending` aggregate (shaped rows + the onboarding-gap fan-out) just to read
+  // an integer — call the lightweight `/pending/count` sibling instead and
+  // reserve the full fetch for an actually-open Portal (`_load`).
   let pendingCount = 0;
   try {
-    const data = await _fetchJSON(`${API}/pending`);
+    const data = await _fetchJSON(`${API}/pending/count`);
     if (data && data.engine_available === false) { _setBadge(0); return; }
     pendingCount = (data && data.count) || 0;
   } catch {
@@ -1748,13 +1751,20 @@ async function _load(showSpinner) {
     }
     _items = (data && data.items) || [];
     _lastPendingCount = _items.length;
-    // Fold the informational notifications in alongside the action rows, and
-    // toast any genuinely-new ones. Independent of the pending fetch, so a slow
-    // inbox never blocks the action rows.
-    await _loadNotifs();
     _renderGreeting(_items.length);
     _setBadge(_items.length + _infoNotifs().length);
+    // Render the action rows the user opened Portal for RIGHT NOW — don't wait
+    // on the notifications fetch first (audit item #17: first paint was
+    // serialized behind it despite a comment claiming independence). Notifications
+    // fold in asynchronously, the same fire-and-forget "render now, enrich later"
+    // shape as _loadRecap/_loadAgentPulse below: _loadNotifs resolves, then we
+    // re-render the list (now including any informational rows) and refresh the
+    // badge to match.
     if (body) _renderList(body);
+    _loadNotifs().then(() => {
+      _setBadge(_items.length + _infoNotifs().length);
+      if (body) _renderList(body);
+    });
     // The "while you were away" recap needs the fresh pending count for its tail;
     // fire it now (independent async fetch of the run history — never blocks).
     _loadRecap();

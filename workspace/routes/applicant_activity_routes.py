@@ -43,7 +43,12 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 
-from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
+from src.applicant_engine import (
+    ApplicantEngineClient,
+    EngineError,
+    shared_engine_http_client,
+    soft_degrade,
+)
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -109,7 +114,11 @@ def setup_applicant_activity_routes() -> APIRouter:
         false`` — both keep the body well-formed so the strip just hides.
         """
         _require_user(request)
-        async with ApplicantEngineClient() as engine:
+        # Proof-of-concept for perf lens #3 (shared httpx client): this is the
+        # always-visible status strip's poll, one of the hottest reads in the
+        # app — ride the app-lifetime pooled connection (workspace/app.py's
+        # ``app.state.http_client``) instead of opening a fresh one per tick.
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
                 return campaigns
@@ -172,7 +181,8 @@ def setup_applicant_activity_routes() -> APIRouter:
         renders its empty state.
         """
         _require_user(request)
-        async with ApplicantEngineClient() as engine:
+        # Proof-of-concept for perf lens #3 — see the note on ``/status`` above.
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             campaigns = await _owner_campaigns(engine)
             if not isinstance(campaigns, list):
                 return {**campaigns, "count": 0, "items": []}

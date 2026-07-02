@@ -46,13 +46,19 @@ Design notes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from src.applicant_engine import ApplicantEngineClient, EngineError, soft_degrade
+from src.applicant_engine import (
+    ApplicantEngineClient,
+    EngineError,
+    shared_engine_http_client,
+    soft_degrade,
+)
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -157,20 +163,31 @@ async def _onboarding_gap_item(
     yields one synthetic pending item naming those specific steps. Returns
     ``None`` when every campaign is complete (so the row clears on its own) or
     when there is no campaign / the engine can't answer.
+
+    Perf lens 03, item #4: the per-campaign ``onboarding_state`` reads are fanned
+    out with ``asyncio.gather`` instead of one-at-a-time awaits. The loop bodies
+    are independent (each campaign's state is fetched and evaluated on its own —
+    the only cross-iteration coupling was "return the first incomplete one",
+    which is a short-circuit *optimization*, not a data dependency), so gathering
+    every campaign first and then picking the first incomplete one in the
+    original ``campaign_list`` order yields the identical result deterministically.
     """
-    for campaign in campaign_list:
-        if not isinstance(campaign, dict):
-            continue
-        cid = campaign.get("id")
-        if not cid:
-            continue
-        cid = str(cid)
-        try:
-            state = await engine.onboarding_state(cid)
-        except EngineError as exc:
+    candidates = [
+        (campaign, str(campaign.get("id")))
+        for campaign in campaign_list
+        if isinstance(campaign, dict) and campaign.get("id")
+    ]
+    if not candidates:
+        return None
+    states = await asyncio.gather(
+        *(engine.onboarding_state(cid) for _campaign, cid in candidates),
+        return_exceptions=True,
+    )
+    for (campaign, cid), state in zip(candidates, states):
+        if isinstance(state, BaseException):
             # Onboarding state is best-effort context for the gap row; a single
             # failure must not sink the feed. Skip this campaign and try the next.
-            logger.debug("portal: onboarding state failed for %s: %s", cid, exc)
+            logger.debug("portal: onboarding state failed for %s: %s", cid, state)
             continue
         if not isinstance(state, dict):
             continue
@@ -244,7 +261,13 @@ def setup_applicant_portal_routes() -> APIRouter:
         A single campaign that errors is skipped, not fatal.
         """
         _require_user(request)
-        async with ApplicantEngineClient() as engine:
+        # Proof-of-concept for perf lens #3 (shared httpx client): this is the
+        # highest-traffic proxy route (the Portal badge poll + open), fanning
+        # out over every campaign — ride the app-lifetime pooled connection
+        # (workspace/app.py's ``app.state.http_client``) instead of a fresh
+        # pool per poll. `shared_engine_http_client` returns None (⇒ unchanged
+        # private-pool behaviour) when the shared client isn't set up.
+        async with ApplicantEngineClient(client=shared_engine_http_client(request)) as engine:
             try:
                 campaigns = await engine.list_campaigns()
             except EngineError as exc:
@@ -256,28 +279,36 @@ def setup_applicant_portal_routes() -> APIRouter:
 
             campaign_list = campaigns if isinstance(campaigns, list) else []
             items: list[dict] = []
-            for campaign in campaign_list:
-                if not isinstance(campaign, dict):
-                    continue
-                cid = campaign.get("id")
-                if not cid:
-                    continue
-                cid = str(cid)
-                cname = _campaign_label(campaign)
-                try:
-                    data = await engine.list_pending_actions(cid)
-                except EngineError as exc:
-                    # One campaign failing must not sink the whole feed.
-                    logger.debug("portal: pending fetch failed for %s: %s", cid, exc)
-                    continue
-                raw_items = []
-                if isinstance(data, dict):
-                    raw_items = data.get("items") or []
-                elif isinstance(data, list):
-                    raw_items = data
-                for raw in raw_items:
-                    if isinstance(raw, dict):
-                        items.append(_shape_item(raw, campaign_id=cid, campaign_name=cname))
+            # Perf lens 03, item #4: this was a SEQUENTIAL `await` per campaign
+            # (M serial engine hops on the highest-traffic route). The loop bodies
+            # are independent — each campaign's pending list is fetched and shaped
+            # on its own, with no ordering dependency between iterations — so fan
+            # them out with asyncio.gather. gather() preserves result order to
+            # match the input order, so the merged `items` list comes out in the
+            # exact same campaign-by-campaign order the old sequential loop produced.
+            candidates = [
+                (str(campaign.get("id")), _campaign_label(campaign))
+                for campaign in campaign_list
+                if isinstance(campaign, dict) and campaign.get("id")
+            ]
+            if candidates:
+                results = await asyncio.gather(
+                    *(engine.list_pending_actions(cid) for cid, _cname in candidates),
+                    return_exceptions=True,
+                )
+                for (cid, cname), data in zip(candidates, results):
+                    if isinstance(data, BaseException):
+                        # One campaign failing must not sink the whole feed.
+                        logger.debug("portal: pending fetch failed for %s: %s", cid, data)
+                        continue
+                    raw_items = []
+                    if isinstance(data, dict):
+                        raw_items = data.get("items") or []
+                    elif isinstance(data, list):
+                        raw_items = data
+                    for raw in raw_items:
+                        if isinstance(raw, dict):
+                            items.append(_shape_item(raw, campaign_id=cid, campaign_name=cname))
 
             # One persistent "finish your profile" row when the owner's intake is
             # incomplete, naming the SPECIFIC missing steps. It clears on its own
@@ -288,6 +319,63 @@ def setup_applicant_portal_routes() -> APIRouter:
                 items.insert(0, gap)
 
         return {"engine_available": True, "count": len(items), "items": items}
+
+    # -- lightweight badge count -------------------------------------------
+
+    @router.get("/pending/count")
+    async def pending_count(request: Request) -> dict:
+        """Just the total pending count across the owner's campaigns.
+
+        Perf lens 03, item #5: the badge poll (every 60s, `applicantPortal.js`
+        ``refreshBadge``) used to call ``GET /pending`` — the full aggregated
+        feed (shaped rows + the onboarding-gap fan-out) — just to read
+        ``count``. This calls the engine's sibling ``GET
+        /api/pending-actions/{campaign_id}/count`` (an integer-only response)
+        concurrently across campaigns via ``asyncio.gather`` and sums them.
+
+        Deliberately skips the onboarding-gap detection walk
+        (``_onboarding_gap_item``'s per-campaign ``onboarding_state`` reads) —
+        that is exactly the fan-out this endpoint exists to avoid paying every
+        60s. A "finish your profile" gap (if any) still surfaces the moment the
+        owner opens the full Portal via ``GET /pending``, so the badge undercounts
+        by at most that one synthetic row while unconfigured, never after.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                campaigns = await engine.list_campaigns()
+            except EngineError as exc:
+                logger.debug(
+                    "portal: campaigns read failed for badge count (status=%s): %s",
+                    exc.status,
+                    exc,
+                )
+                return soft_degrade(exc, {"count": 0})
+
+            campaign_list = campaigns if isinstance(campaigns, list) else []
+            cids = [
+                str(campaign.get("id"))
+                for campaign in campaign_list
+                if isinstance(campaign, dict) and campaign.get("id")
+            ]
+            if not cids:
+                return {"engine_available": True, "count": 0}
+
+            results = await asyncio.gather(
+                *(engine._request("GET", f"/api/pending-actions/{cid}/count") for cid in cids),
+                return_exceptions=True,
+            )
+
+        total = 0
+        for cid, result in zip(cids, results):
+            if isinstance(result, BaseException):
+                logger.debug("portal: pending count fetch failed for %s: %s", cid, result)
+                continue
+            n = result.get("count") if isinstance(result, dict) else None
+            if isinstance(n, int):
+                total += n
+
+        return {"engine_available": True, "count": total}
 
     # -- resolve ----------------------------------------------------------
 

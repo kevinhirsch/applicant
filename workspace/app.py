@@ -25,9 +25,11 @@ import secrets
 from datetime import datetime
 from typing import Dict
 
+import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -407,6 +409,18 @@ if AUTH_ENABLED:
     logger.info("Auth middleware enabled (AUTH_ENABLED=true)")
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+
+# ========= RESPONSE COMPRESSION =========
+# Added LAST (after CORS/SecurityHeaders/RequestTimeout/Auth above) so it is the
+# OUTERMOST middleware layer: Starlette wraps each `add_middleware` call around
+# everything registered before it, so the most-recently-added middleware sees
+# the request first and the response last. GZip needs to be that outermost
+# wrapper so it compresses the FINAL response body every inner layer produced
+# (including whatever headers/body Auth or SecurityHeaders assembled), not an
+# intermediate one. Cuts wire size ~5-8x for the uncompressed text this app
+# ships today: 1.24 MB style.css, 232 KB index.html, ~5.9 MB of JS modules, and
+# every polled proxy JSON payload (perf lens finding #1).
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -1018,6 +1032,17 @@ async def runtime_info() -> Dict[str, object]:
 async def startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
+
+    # One app-lifetime httpx.AsyncClient for every workspace -> engine proxy
+    # call (perf lens finding #3). ~180 routes previously did
+    # `async with ApplicantEngineClient()` per request, each opening a brand
+    # new connection pool (fresh TCP/TLS handshake, zero keep-alive reuse).
+    # Routes that resolve this via `src.applicant_engine.shared_engine_http_client(
+    # request)` and pass it in as `ApplicantEngineClient(client=...)` now ride
+    # this single pooled client instead; closed once, below, in shutdown_event.
+    from src.applicant_engine import build_shared_http_client
+    app.state.http_client = build_shared_http_client()
+
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Strong refs to fire-and-forget startup tasks. Without this, Python may
     # GC tasks created with `asyncio.create_task(...)` before they finish.
@@ -1226,6 +1251,16 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
+    # Close the shared engine-proxy client opened in startup_event. Individual
+    # ApplicantEngineClient instances built with `client=app.state.http_client`
+    # never close it themselves (see ApplicantEngineClient.aclose) — this is
+    # the one place its lifecycle actually ends.
+    http_client = getattr(app.state, "http_client", None)
+    if http_client is not None:
+        try:
+            await http_client.aclose()
+        except Exception as e:
+            logger.warning(f"Shared engine http_client shutdown error: {e}")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:

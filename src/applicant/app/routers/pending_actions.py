@@ -97,6 +97,29 @@ def list_pending(
     }
 
 
+@router.get("/{campaign_id}/count")
+def count_pending(
+    campaign_id: str,
+    include_snoozed: bool = False,
+    pending_actions=Depends(get_pending_actions_service),
+) -> dict:
+    """Just the open-pending count for the campaign (perf lens 03, item #5).
+
+    A sibling of ``GET /{campaign_id}`` for callers that only need an integer —
+    e.g. the workspace badge poll, which previously downloaded the full pending
+    payload (shaped rows + task metadata) every 60s just to set a count. This
+    route skips the per-item :mod:`applicant.core.task_metadata` derivation and
+    full-row serialization; reserve the full list for when the portal is
+    actually opened.
+    """
+    return {
+        "campaign_id": campaign_id,
+        "count": pending_actions.count_pending(  # type: ignore[arg-type]
+            campaign_id, include_snoozed=include_snoozed
+        ),
+    }
+
+
 @router.post("/{campaign_id}/resolve-bulk")
 def resolve_bulk(
     campaign_id: str,
