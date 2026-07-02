@@ -384,19 +384,14 @@ function _renderCriteriaActions(actions) {
     </div>`;
 }
 
-async function _send(text) {
-  const message = (text || '').trim();
-  if (!message || _sending) return;
-  if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
+// Does the actual POST + response/error rendering into an existing "thinking"
+// bubble, WITHOUT appending a new user bubble. Shared by the initial send and
+// by Retry, so retrying never duplicates the user's message in the thread.
+async function _sendToBubble(message, thinking) {
   const input = _modalEl.querySelector('#applicant-input');
   const sendBtn = _modalEl.querySelector('#applicant-send');
   _sending = true;
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
-  if (input) input.value = '';
-  _appendMessage('user', message);
-  // A calm "thinking" pill instead of a bare word, so the wait reads as work, not a
-  // hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
-  const thinking = _appendMessage('assistant', loadingHTML('Thinking…'), { markdown: false });
   try {
     const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message });
     const reply = res.message || '(no reply)';
@@ -410,6 +405,9 @@ async function _send(text) {
       _wireProposalButtons(thinking, res.proposed_changes || []);
       _wireCriteriaButtons(thinking, controls);
     }
+    // Only clear the composer once the request actually succeeded — on
+    // failure the typed text must survive so the user isn't forced to retype.
+    if (input && input.value === message) input.value = '';
   } catch (e) {
     if (thinking) {
       const b = thinking.querySelector('.body');
@@ -419,9 +417,10 @@ async function _send(text) {
           + 'style="margin-left:6px;">Retry</button>';
         const retry = b.querySelector('.applicant-chat-retry');
         if (retry) retry.addEventListener('click', () => {
-          // Drop the failed bubble and resend the same message.
-          try { thinking.remove(); } catch { /* no-op */ }
-          _send(message);
+          // Resend the same message against the SAME bubble — do not append
+          // another user bubble, and reset it back to "thinking" first.
+          b.innerHTML = loadingHTML('Thinking…');
+          _sendToBubble(message, thinking);
         });
       }
     }
@@ -431,6 +430,17 @@ async function _send(text) {
     _syncSendEnabled();
     if (input) input.focus();
   }
+}
+
+async function _send(text) {
+  const message = (text || '').trim();
+  if (!message || _sending) return;
+  if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
+  _appendMessage('user', message);
+  // A calm "thinking" pill instead of a bare word, so the wait reads as work, not a
+  // hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
+  const thinking = _appendMessage('assistant', loadingHTML('Thinking…'), { markdown: false });
+  await _sendToBubble(message, thinking);
 }
 
 function _wireProposalButtons(container, proposals) {

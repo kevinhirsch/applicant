@@ -14,7 +14,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
+
+from applicant.app.deps import require_llm_configured
 
 logger = logging.getLogger(__name__)
 
@@ -194,9 +196,12 @@ def mount_mcp(app: FastAPI) -> None:
     # APIRoutes with a ``/mcp`` path — discoverable by clients and reachability
     # checks alike.
     if not any("/mcp/tools" in getattr(r, "path", "") for r in app.routes):
-        app.add_api_route("/mcp/tools", mcp_tools_list, methods=["GET"], tags=["mcp"])
-        app.add_api_route("/mcp/tools/list", mcp_tools_list, methods=["POST"], tags=["mcp"])
-        app.add_api_route("/mcp/tools/call", mcp_tools_call, methods=["POST"], tags=["mcp"])
+        # Gate the surface the same way every other router in this codebase does
+        # (FR-UI-5) — unauthenticated/pre-setup requests get a 409, not real data.
+        mcp_deps = [Depends(require_llm_configured)]
+        app.add_api_route("/mcp/tools", mcp_tools_list, methods=["GET"], tags=["mcp"], dependencies=mcp_deps)
+        app.add_api_route("/mcp/tools/list", mcp_tools_list, methods=["POST"], tags=["mcp"], dependencies=mcp_deps)
+        app.add_api_route("/mcp/tools/call", mcp_tools_call, methods=["POST"], tags=["mcp"], dependencies=mcp_deps)
         logger.info("Native MCP tool surface mounted at /mcp/tools")
 
     if not _fastapi_mcp_available:

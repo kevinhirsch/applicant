@@ -43,6 +43,21 @@ router = APIRouter(
     dependencies=[Depends(require_llm_configured)],
 )
 
+#: §7 states that mean "the terminal decision for this application has already been
+#: delivered" — reached only via ``authorize-engine-finish``/``submit-self``.
+_ALREADY_SUBMITTED_STATES = frozenset(
+    {ApplicationState.SUBMITTED_BY_USER, ApplicationState.FINISHED_BY_ENGINE}
+)
+
+# Bug fix: a process-lived guard against a double-click (or the same row open in two
+# tabs) firing TWO real physical clicks against the employer's live submit button.
+# ``app.status`` alone can't close the race — both requests can read
+# AWAITING_FINAL_APPROVAL before either finishes recording the decision — so this
+# in-flight set is checked/claimed BEFORE the click, mirroring the container's
+# process-lived ``desktop_assist_sessions`` set (FR-CUA-4) but scoped to this module
+# since it only needs to span one in-flight authorize-finish call.
+_finish_in_progress: set[str] = set()
+
 
 class OpenSessionIn(BaseModel):
     application_id: str
@@ -337,24 +352,45 @@ def authorize_engine_finish(
     # Reject a bogus/stale application id up front (404) before touching the browser
     # or the durable gate — recording an outcome for a non-existent app would FK-crash
     # (-> 500) at record_submission on a real DB. Mirrors the other handoff endpoints.
-    if storage.applications.get(application_id) is None:  # type: ignore[arg-type]
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
-    try:
-        ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
-    except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    # FR-PREFILL-5: actually CLICK the final submit (boundary-gated, authorized) before
-    # delivering the decision — otherwise the real driver would mark a submission
-    # without ever performing the click.
-    try:
-        container.browser.click_final_submit(  # type: ignore[arg-type]
-            application_id, engine_submit_authorized=True
+    # Bug fix: state-guard BEFORE the click. A prior decision already landed for this
+    # application (e.g. the first of two rapid clicks already finished) — never click
+    # the employer's real submit button again.
+    if app.status in _ALREADY_SUBMITTED_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application has already been submitted.",
         )
-    except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    event = _deliver_decision(
-        container, storage, submission, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
-    )
+    # Bug fix: claim the in-flight guard before the click so a second, near-simultaneous
+    # request (double-click / the same row open in two tabs) can't race the state check
+    # above and click a second time while the first click is still in flight.
+    if application_id in _finish_in_progress:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application is already being submitted.",
+        )
+    _finish_in_progress.add(application_id)
+    try:
+        try:
+            ensure_action_allowed(StepKind.FINAL_SUBMIT, engine_submit_authorized=True)
+        except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        # FR-PREFILL-5: actually CLICK the final submit (boundary-gated, authorized) before
+        # delivering the decision — otherwise the real driver would mark a submission
+        # without ever performing the click.
+        try:
+            container.browser.click_final_submit(  # type: ignore[arg-type]
+                application_id, engine_submit_authorized=True
+            )
+        except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        event = _deliver_decision(
+            container, storage, submission, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
+        )
+    finally:
+        _finish_in_progress.discard(application_id)
     return {
         "application_id": application_id,
         "result": "finished_by_engine",

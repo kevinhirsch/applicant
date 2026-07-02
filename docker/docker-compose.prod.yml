@@ -104,6 +104,15 @@ services:
     # Build locally; never try to PULL this name from a registry (it is not published).
     # Without this, `docker compose up` fails with "pull access denied for applicant/api".
     pull_policy: build
+    # Optional so `docker compose config` validates before the first install writes the
+    # repo-root .env (mirrors applicant-ui above). Without this, the ~50 engine vars
+    # documented in .env.example that aren't ALSO explicitly interpolated below (egress
+    # mode, PROXMOX_* fallbacks, etc.) are silently dead in production — they only ever
+    # reached the applicant-ui container, never the engine. Explicit `environment:`
+    # entries below still take precedence over anything the same key holds in .env.
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-applicant}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (install.sh/proxmox-deploy.sh generate a strong one)}@postgres:5432/${POSTGRES_DB:-applicant}
       APP_STATIC_DIR: workspace/static

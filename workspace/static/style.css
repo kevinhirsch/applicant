@@ -32148,6 +32148,27 @@ body.theme-frosted .modal {
 #rail-portal .rail-notes-badge { background: var(--red); }
 /* CRIT-portal end */
 
+/* Redline diff (document review, static/js/documentLibrary.js
+   `.doclib-applicant-redline`). The engine's own review UI renders this same
+   `rendered_html` (`frontend/static/applicant/applicant.css`) with
+   `.redline-add`/`.redline-sub`/`.redline-eq` classes on `<ins>`/`<del>`
+   tags; the workspace inserts that HTML as-is but never defined the classes,
+   so it fell back to a bare unstyled underline/strikethrough. Ported here,
+   theme-aware via the shared color tokens instead of the engine's hardcoded
+   light-mode hex. */
+.redline-add, ins.redline-add {
+  background: color-mix(in srgb, var(--color-success) 22%, transparent);
+  color: var(--color-success);
+  text-decoration: none;
+}
+.redline-sub, del.redline-sub {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  color: var(--red);
+  text-decoration: line-through;
+}
+.redline-eq { color: var(--fg); opacity: 0.75; }
+#redline-view { white-space: pre-wrap; font-family: var(--code-font, ui-monospace, monospace); line-height: 1.5; }
+
 /* Agent status strip (static/js/applicantActivity.js). A compact, always-visible
    "Applicant is: <current action>" pill in the chat top bar with a live/paused
    dot. Hidden until there's activity; clicking opens the Activity page. Reuses the
