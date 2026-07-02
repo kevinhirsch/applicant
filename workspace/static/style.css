@@ -1904,6 +1904,9 @@ body.bg-pattern-sparkles {
       margin-bottom:10px;
     }
     .welcome-boat {
+      /* Hero-scale brand mark — deliberately larger than --icon-size (the
+         standard UI glyph token defined at :root); this is the one wordmark
+         icon, not a functional control, so it keeps its own explicit size. */
       width: 1.8rem;
       height: 1.8rem;
       margin-right: 0.4rem;
@@ -7855,6 +7858,17 @@ textarea.memory-add-input {
   border-radius: 0;
   background: transparent;
   transition: background-color 0.15s, border-color 0.15s;
+}
+/* #134: Library's chat/archive/research rows (.doclib-chat-row) only ever
+   carry `.memory-item`, never `.doclib-card` — so unlike the Documents grid
+   (where `.doclib-card.doclib-card-expanded` already re-asserts full tile
+   chrome on its own), they need their own "card only for the expanded
+   reader" override here, at higher specificity than `.memory-item.ow-list-row`
+   above so expanding one regains real card framing. */
+.memory-item.ow-list-row.doclib-card-expanded {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
 .memory-item:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
@@ -26672,7 +26686,10 @@ body.notes-drag-mode .note-card-pin svg {
      scroll. Keeping natural height makes the list overflow → scrollable. */
   flex-shrink: 0;
 }
-.note-card:hover:not([class*="note-color-"]) {
+/* #139: colored notes now share the same neutral body as uncolored ones
+   (color lives on the top-edge stripe only), so the hover fill no longer
+   needs to special-case them out. */
+.note-card:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 .note-card { position: relative; }
@@ -26713,27 +26730,20 @@ body.notes-drag-mode .note-card-pin svg {
       0 0 18px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
   }
 }
-/* Sticky outside glow — applied to the exact note whose reminder fired.
-   It stays until the user interacts with that card. */
+/* #140: the persistent "reminder due" marker for the exact note whose
+   reminder fired — was a perpetual `infinite` glow animation (kept looping
+   until the user interacted with the card). Item asks for a one-shot
+   highlight (the .note-card-reminder-fired pulse above already is one) and
+   a STATIC border for the ongoing/persistent state, so this is now a fixed
+   outline with no animation — it still stays until the user interacts with
+   the card, it just no longer breathes forever while it waits. */
 .note-card.note-card-reminder-fired-sticky {
   position: relative;
-  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 36%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
   outline-offset: 2px;
-  animation: note-reminder-glow 1.6s ease-in-out infinite;
-}
-@keyframes note-reminder-glow {
-  0%, 100% {
-    box-shadow:
-      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
-      0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 14%, transparent),
-      0 0 14px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
-  }
-  50% {
-    box-shadow:
-      inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
-      0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 22%, transparent),
-      0 0 26px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
-  }
+  box-shadow:
+    inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
 }
 .note-card-selected {
   outline: 2px solid var(--accent);
@@ -28711,13 +28721,12 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   font-weight: 600;
 }
 
-/* Color classes — theme-aware via color-mix with --panel */
-.note-color-red    { background: color-mix(in srgb, var(--red) 18%, var(--panel)); border-color: color-mix(in srgb, var(--red) 30%, var(--border)); }
-.note-color-orange { background: color-mix(in srgb, #d19a66 18%, var(--panel)); border-color: color-mix(in srgb, #d19a66 30%, var(--border)); }
-.note-color-yellow { background: color-mix(in srgb, var(--hl-string) 18%, var(--panel)); border-color: color-mix(in srgb, var(--hl-string) 30%, var(--border)); }
-.note-color-green  { background: color-mix(in srgb, #98c379 18%, var(--panel)); border-color: color-mix(in srgb, #98c379 30%, var(--border)); }
-.note-color-blue   { background: color-mix(in srgb, var(--hl-function) 18%, var(--panel)); border-color: color-mix(in srgb, var(--hl-function) 30%, var(--border)); }
-.note-color-purple { background: color-mix(in srgb, var(--hl-keyword) 18%, var(--panel)); border-color: color-mix(in srgb, var(--hl-keyword) 30%, var(--border)); }
+/* #139: note cards no longer paint a full pastel body tile per color — the
+   body stays neutral (.note-card's own background below) and the color
+   lives solely on the thin top-edge stripe underneath. (.note-form, the
+   editing surface, intentionally keeps its own live pastel preview further
+   down — that's active color-picking feedback, not a list of "sticky
+   notes".) */
 
 /* 3D top-edge highlight — an inset 2px stripe inside every note card that
    reads as a lifted "glassy" lip. Each colored note gets a stronger stripe
