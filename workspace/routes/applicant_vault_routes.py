@@ -12,6 +12,9 @@ Security:
 * **Owner-scoped + auth-gated.** Every route requires an authenticated session;
   the mutating banking/capture routes additionally require ``can_use_documents``
   (the privilege that gates driving the owner's real application materials).
+  Master-key rotation is the heaviest mutation this vault offers (it touches
+  every stored secret at once), so it MIRRORS that same ``can_use_documents``
+  gate rather than inventing a separate one.
 * **Never logs secrets.** Handlers never log the request body. The engine seals
   secrets with libsodium at rest and NEVER returns plaintext from the list
   endpoint — only tenant keys are surfaced — so this proxy passes through a
@@ -170,5 +173,20 @@ def setup_applicant_vault_routes() -> APIRouter:
             logger.info("applicant vault account store failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
+
+    @router.post("/rotate-key")
+    async def rotate_key(request: Request) -> JSONResponse:
+        """Rotate the vault's master encryption key, re-sealing every stored
+        credential under a fresh one (engine ``POST /api/credentials/rotate-key``).
+        Vault-hygiene action — gated the same as the other mutating vault routes
+        (``can_use_documents``); no secrets are returned, only the re-sealed count."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.vault_rotate_key()
+        except EngineError as exc:
+            logger.info("applicant vault key rotation failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
 
     return router
