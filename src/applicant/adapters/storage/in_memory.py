@@ -27,6 +27,7 @@ from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.pending_action import PendingAction
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
+from applicant.core.entities.screening_answer_library import ScreeningAnswerLibraryEntry
 from applicant.core.events import ApplicationStateChanged, event_bus
 from applicant.core.ids import (
     AgentRunId,
@@ -520,6 +521,34 @@ class _DiscoverySourceRepo:
         return len(stale)
 
 
+class _ScreeningAnswerLibraryRepo:
+    """Reusable, campaign-scoped screening-answer library (product-gaps #20)."""
+
+    def __init__(self) -> None:
+        self._d: dict[str, ScreeningAnswerLibraryEntry] = {}
+
+    @staticmethod
+    def _k(cid: CampaignId, key: str) -> str:
+        return f"{cid}:{key}"
+
+    def upsert(self, entry: ScreeningAnswerLibraryEntry) -> None:
+        self._d[self._k(entry.campaign_id, entry.question_key)] = entry
+
+    def get(
+        self, cid: CampaignId, key: str
+    ) -> ScreeningAnswerLibraryEntry | None:
+        return self._d.get(self._k(cid, key))
+
+    def list_for_campaign(self, cid: CampaignId) -> list[ScreeningAnswerLibraryEntry]:
+        return [e for e in self._d.values() if e.campaign_id == cid]
+
+    def delete_for_campaign(self, cid: CampaignId) -> int:
+        stale = [k for k, e in self._d.items() if e.campaign_id == cid]
+        for k in stale:
+            del self._d[k]
+        return len(stale)
+
+
 class _AgentRunRepo:
     def __init__(self) -> None:
         self._d: dict[str, AgentRun] = {}
@@ -920,6 +949,7 @@ class InMemoryStorage:
         self.pending_actions = _PendingRepo()
         self.field_mappings = _FieldMappingRepo()
         self.discovery_sources = _DiscoverySourceRepo()
+        self.screening_answer_library = _ScreeningAnswerLibraryRepo()
         self.agent_runs = _AgentRunRepo()
         self.detection_events = _DetectionEventRepo(self.applications)
         self.onboarding_profiles = _OnboardingProfileRepo()
@@ -948,6 +978,7 @@ class InMemoryStorage:
         self.pending_actions = _StageProxy(self.pending_actions, s)
         self.field_mappings = _StageProxy(self.field_mappings, s)
         self.discovery_sources = _StageProxy(self.discovery_sources, s)
+        self.screening_answer_library = _StageProxy(self.screening_answer_library, s)
         self.agent_runs = _StageProxy(self.agent_runs, s)
         self.detection_events = _StageProxy(self.detection_events, s)
         self.onboarding_profiles = _StageProxy(self.onboarding_profiles, s)
@@ -1006,6 +1037,7 @@ class InMemoryStorage:
             "postings": self.postings.delete_for_campaign(cid),
             "field_mappings": self.field_mappings.delete_for_campaign(cid),
             "discovery_sources": self.discovery_sources.delete_for_campaign(cid),
+            "screening_answer_library": self.screening_answer_library.delete_for_campaign(cid),
             "agent_runs": self.agent_runs.delete_for_campaign(cid),
             "pending_actions": self.pending_actions.delete_for_campaign(cid),
             "campaigns": self.campaigns.delete(cid),

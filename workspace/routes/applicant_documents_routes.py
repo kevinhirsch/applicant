@@ -35,9 +35,10 @@ Design notes:
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -45,6 +46,24 @@ from src.applicant_engine import ApplicantEngineClient, EngineError
 from src.auth_helpers import require_privilege, require_user
 
 logger = logging.getLogger(__name__)
+
+
+async def _owner_campaign_ids(engine: ApplicantEngineClient) -> Optional[set]:
+    """The owner's campaign ids, or ``None`` when the engine is unreachable.
+
+    Mirrors ``applicant_campaigns_routes._owner_campaign_ids``: the engine has no
+    owner concept of its own (single-tenant per deployment, CLAUDE.md), so this
+    request's own ``list_campaigns()`` fan-out is the ONLY scoping boundary for the
+    screening-answer library -- never trust a caller-supplied ``campaign_id``.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("documents: campaigns read failed: %s", exc)
+        return None
+    if not isinstance(campaigns, list):
+        return set()
+    return {str(c.get("id")) for c in campaigns if isinstance(c, dict) and c.get("id")}
 
 #: A redline revision turn is HEAVY writing — the engine runs the escalation (L2/pro)
 #: tier, whose per-call budget is ~60s and which may escalate, so the default 30s read
@@ -102,6 +121,15 @@ class ScreeningAnswerIn(BaseModel):
     application_id: str
     question: str
     essay: bool | None = None
+
+
+class ScreeningAnswerReuseIn(BaseModel):
+    """Reuse a saved library answer for a NEW application (product-gaps #20)
+    instead of regenerating it fresh."""
+
+    campaign_id: str
+    application_id: str
+    question: str
 
 
 def _engine_error_response(exc: EngineError) -> JSONResponse:
@@ -217,6 +245,56 @@ def setup_applicant_documents_routes() -> APIRouter:
         except EngineError as exc:
             logger.info("applicant screening-answer generation failed: %s", exc)
             return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
+
+    # ── screening-answer library (product-gaps backlog #20) ─────────────
+
+    @router.get("/screening-answer-library/{campaign_id}")
+    async def screening_answer_library(campaign_id: str, request: Request) -> dict:
+        """The owner's saved screening-answer library for ONE OF THEIR OWN
+        campaigns (engine ``GET /api/documents/screening-answer-library/{id}``).
+
+        ``campaign_id`` is validated against this request's own ``list_campaigns()``
+        fan-out BEFORE the read is forwarded -- mirrors
+        ``applicant_campaigns_routes``'s owner-scoping (the engine itself has no
+        owner concept, so this check is the only isolation boundary)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                return {"engine_available": False, "campaign_id": campaign_id, "items": []}
+            if campaign_id not in owned:
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+            try:
+                data = await engine.screening_answer_library(campaign_id)
+            except EngineError as exc:
+                logger.debug("documents: screening-answer library read failed: %s", exc)
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+        out = data if isinstance(data, dict) else {}
+        items = out.get("items") if isinstance(out.get("items"), list) else []
+        return {"engine_available": True, "campaign_id": campaign_id, "items": items}
+
+    @router.post("/screening-answer-library/reuse")
+    async def reuse_screening_answer(
+        body: ScreeningAnswerReuseIn, request: Request
+    ) -> JSONResponse:
+        """Reuse a saved library answer for a NEW application instead of
+        regenerating it (engine ``POST /api/documents/screening-answer-library/
+        reuse``). ``campaign_id`` is validated against this request's own owned
+        campaigns BEFORE the write is forwarded -- a caller cannot reuse a library
+        answer, or create a document, under a campaign that is not their own."""
+        require_privilege(request, "can_use_documents")
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if body.campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                data = await engine.reuse_screening_answer(body.model_dump())
+            except EngineError as exc:
+                logger.info("applicant screening-answer reuse failed: %s", exc)
+                return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
 
     # ── review / change loop ────────────────────────────────────────────

@@ -236,4 +236,40 @@ def setup_applicant_tracker_routes() -> APIRouter:
                 ) from exc
         return result if isinstance(result, dict) else {}
 
+    @router.get("/applications/{application_id}/interview-prep")
+    async def interview_prep(request: Request, application_id: str) -> dict:
+        """A plain-language interview-prep brief for ONE OF THE OWNER'S OWN
+        applications (product-gaps backlog #30; engine ``GET /api/documents/
+        interview-prep/{campaign_id}/{application_id}``).
+
+        ``application_id`` is validated against this request's own tracker-board
+        fan-out BEFORE the read is forwarded -- the exact same owner-isolation
+        guard ``record_outcome``/``scan_email`` use above (never trust a
+        caller-supplied id). The engine independently enforces the
+        ``interview_invited`` gate itself from its own outcome trail (never a
+        caller-supplied flag) -- this route only decides WHOSE application it is,
+        the SAME company-research-backed brief either way.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            rows = await _owner_tracker_rows(engine)
+            if not isinstance(rows, list):
+                return {**rows, "generated": False}
+            row = next(
+                (r for r in rows if str(r.get("application_id")) == application_id), None
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="No such application.")
+            campaign_id = str(row.get("campaign_id") or "")
+            try:
+                data = await engine.interview_prep(campaign_id, application_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: interview_prep failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return data if isinstance(data, dict) else {"generated": False}
+
     return router

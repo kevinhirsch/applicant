@@ -35,6 +35,7 @@ from applicant.core.entities.portfolio_attachment import PortfolioAttachment
 from applicant.core.entities.rejection_signal import RejectionSignal
 from applicant.core.entities.resume_variant import ResumeVariant
 from applicant.core.entities.revision_session import RevisionSession
+from applicant.core.entities.screening_answer_library import ScreeningAnswerLibraryEntry
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
     AgentRunId,
@@ -273,6 +274,29 @@ class DiscoverySourceRepository(Protocol):
 
 
 @runtime_checkable
+class ScreeningAnswerLibraryRepository(Protocol):
+    """Reusable, campaign-scoped screening-answer library (product-gaps #20).
+
+    Keyed by the NORMALIZED question text (``core.rules.materials.
+    normalize_screening_question``) so a re-asked question (same wording, minor
+    variation) resolves to the same entry. ``upsert`` mirrors
+    ``DiscoverySourceRepository`` -- the newest generation for a given question
+    replaces the stored one, so the library always reflects the latest voice.
+    """
+
+    def upsert(self, entry: ScreeningAnswerLibraryEntry) -> None: ...
+    def get(
+        self, campaign_id: CampaignId, question_key: str
+    ) -> ScreeningAnswerLibraryEntry | None: ...
+    def list_for_campaign(
+        self, campaign_id: CampaignId
+    ) -> list[ScreeningAnswerLibraryEntry]: ...
+    def delete_for_campaign(self, campaign_id: CampaignId) -> int:
+        """Purge every library entry for ``campaign_id`` (#363 purge parity)."""
+        ...
+
+
+@runtime_checkable
 class AgentRunRepository(Protocol):
     """Per-run intent + run-control snapshot (FR-AGENT-1/2/7)."""
 
@@ -332,6 +356,7 @@ class StoragePort(Protocol):
     pending_actions: PendingActionRepository
     field_mappings: FieldMappingRepository
     discovery_sources: DiscoverySourceRepository
+    screening_answer_library: ScreeningAnswerLibraryRepository
     agent_runs: AgentRunRepository
     detection_events: DetectionEventRepository
     onboarding_profiles: OnboardingProfileRepository

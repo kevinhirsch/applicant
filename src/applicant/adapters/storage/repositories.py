@@ -42,6 +42,7 @@ from applicant.core.entities.revision_session import (
     RevisionStatus,
     RevisionTurn,
 )
+from applicant.core.entities.screening_answer_library import ScreeningAnswerLibraryEntry
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.events import ApplicationStateChanged as _AppStateChanged
 from applicant.core.events import event_bus
@@ -59,6 +60,7 @@ from applicant.core.ids import (
     PendingActionId,
     ResumeVariantId,
     RevisionSessionId,
+    ScreeningAnswerLibraryEntryId,
     ScreenshotId,
     new_id,
 )
@@ -258,6 +260,19 @@ def _discovery_source_to_entity(row: m.DiscoverySourceModel) -> DiscoverySource:
         source_key=row.source_key,
         enabled=row.enabled,
         yield_stats=dict(row.yield_stats or {}),
+    )
+
+
+def _screening_answer_library_to_entity(
+    row: m.ScreeningAnswerLibraryModel,
+) -> ScreeningAnswerLibraryEntry:
+    return ScreeningAnswerLibraryEntry(
+        id=ScreeningAnswerLibraryEntryId(row.id),
+        campaign_id=CampaignId(row.campaign_id),
+        question_key=row.question_key,
+        question_text=row.question_text,
+        answer_text=row.answer_text,
+        essay=row.essay,
     )
 
 
@@ -886,6 +901,53 @@ class DiscoverySourceRepo:
         return [_discovery_source_to_entity(r) for r in rows]
 
 
+class ScreeningAnswerLibraryRepo:
+    """Reusable, campaign-scoped screening-answer library (product-gaps #20)."""
+
+    def __init__(self, session: Session) -> None:
+        self._s = session
+
+    def upsert(self, entry: ScreeningAnswerLibraryEntry) -> None:
+        self._s.merge(
+            m.ScreeningAnswerLibraryModel(
+                id=entry.id,
+                campaign_id=entry.campaign_id,
+                question_key=entry.question_key,
+                question_text=entry.question_text,
+                answer_text=entry.answer_text,
+                essay=entry.essay,
+            )
+        )
+
+    def get(
+        self, campaign_id: CampaignId, question_key: str
+    ) -> ScreeningAnswerLibraryEntry | None:
+        row = self._s.scalars(
+            select(m.ScreeningAnswerLibraryModel)
+            .where(m.ScreeningAnswerLibraryModel.campaign_id == campaign_id)
+            .where(m.ScreeningAnswerLibraryModel.question_key == question_key)
+        ).first()
+        return _screening_answer_library_to_entity(row) if row else None
+
+    def list_for_campaign(
+        self, campaign_id: CampaignId
+    ) -> list[ScreeningAnswerLibraryEntry]:
+        rows = self._s.scalars(
+            select(m.ScreeningAnswerLibraryModel).where(
+                m.ScreeningAnswerLibraryModel.campaign_id == campaign_id
+            )
+        ).all()
+        return [_screening_answer_library_to_entity(r) for r in rows]
+
+    def delete_for_campaign(self, campaign_id: CampaignId) -> int:
+        return int(
+            self._s.query(m.ScreeningAnswerLibraryModel)
+            .filter(m.ScreeningAnswerLibraryModel.campaign_id == campaign_id)
+            .delete(synchronize_session=False)
+            or 0
+        )
+
+
 class AgentRunRepo:
     def __init__(self, session: Session) -> None:
         self._s = session
@@ -1345,6 +1407,7 @@ class SqlAlchemyStorage:
         self.pending_actions = PendingActionRepo(session)
         self.field_mappings = FieldMappingRepo(session)
         self.discovery_sources = DiscoverySourceRepo(session)
+        self.screening_answer_library = ScreeningAnswerLibraryRepo(session)
         self.agent_runs = AgentRunRepo(session)
         self.detection_events = DetectionEventRepo(session)
         self.onboarding_profiles = OnboardingProfileRepo(session)
@@ -1459,6 +1522,10 @@ class SqlAlchemyStorage:
         )
         counts["discovery_sources"] = _del(
             m.DiscoverySourceModel, m.DiscoverySourceModel.campaign_id == scid
+        )
+        counts["screening_answer_library"] = _del(
+            m.ScreeningAnswerLibraryModel,
+            m.ScreeningAnswerLibraryModel.campaign_id == scid,
         )
         counts["agent_runs"] = _del(
             m.AgentRunModel, m.AgentRunModel.campaign_id == scid

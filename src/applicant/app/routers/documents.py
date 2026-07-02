@@ -86,6 +86,14 @@ class ScreeningAnswerIn(BaseModel):
     explicit_answer: str | None = None
 
 
+class ScreeningAnswerReuseIn(BaseModel):
+    # Product-gaps backlog #20: reuse a previously-generated library answer for a
+    # NEW application instead of regenerating fresh.
+    campaign_id: str
+    application_id: str
+    question: str
+
+
 class DeferredEssayIn(BaseModel):
     # #4: resolve a deferred essay screening question pre-fill recorded during the
     # FR-PREFILL-3 walk — generate + route the answer to review.
@@ -260,6 +268,75 @@ def generate_screening_answer(
         explicit_answer=body.explicit_answer,
     )
     return {"id": doc.id, "type": doc.type.value, "approved": doc.approved, "content": doc.content}
+
+
+@router.get(
+    "/screening-answer-library/{campaign_id}",
+    dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
+)
+def screening_answer_library(campaign_id: str, material=Depends(get_material_service)) -> dict:
+    """The saved screening-answer library for a campaign (product-gaps #20).
+
+    Screening answers are generated per-application (FR-ANSWER-1) through review,
+    but common questions ("Why do you want to work here?", "Notice period?") get
+    asked over and over. This surfaces the reusable answer bank a prior generation
+    quietly built (see ``MaterialService.generate_screening_answer``'s
+    ``_save_to_screening_library`` call) so the UI can browse it.
+    """
+    items = material.list_screening_answer_library(campaign_id)  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "items": items}
+
+
+@router.post(
+    "/screening-answer-library/reuse",
+    status_code=201,
+    dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
+)
+def reuse_screening_answer(
+    body: ScreeningAnswerReuseIn, material=Depends(get_material_service)
+) -> dict:
+    """Reuse a library answer for a NEW application instead of regenerating it
+    (product-gaps #20). ``found: false`` when no library entry matches the
+    (normalized) question -- the caller falls back to ``/screening-answer``. A
+    match is still routed through review like any other generated material; reuse
+    only skips the LLM call, never the truthfulness/review gates.
+    """
+    doc = material.reuse_screening_answer(
+        body.campaign_id,  # type: ignore[arg-type]
+        body.application_id,  # type: ignore[arg-type]
+        body.question,
+    )
+    if doc is None:
+        return {"found": False}
+    return {
+        "found": True,
+        "id": doc.id,
+        "type": doc.type.value,
+        "approved": doc.approved,
+        "content": doc.content,
+    }
+
+
+@router.get(
+    "/interview-prep/{campaign_id}/{application_id}",
+    dependencies=[Depends(require_tool_enabled("screening_answer_generation"))],
+)
+def interview_prep(
+    campaign_id: str, application_id: str, material=Depends(get_material_service)
+) -> dict:
+    """A plain-language interview-prep brief (product-gaps #30).
+
+    Gated on the application having reached the ``interview_invited`` outcome
+    signal; returns ``generated: false`` (never a fabricated brief) when it
+    hasn't. Reuses the SAME company-research channel cover-letter generation
+    already draws on, plus the posting's own stated requirements.
+    """
+    brief = material.generate_interview_prep(
+        campaign_id, application_id  # type: ignore[arg-type]
+    )
+    if brief is None:
+        return {"generated": False}
+    return {"generated": True, **brief}
 
 
 @router.post(

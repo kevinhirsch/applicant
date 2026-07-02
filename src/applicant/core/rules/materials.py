@@ -18,6 +18,7 @@ definition and the truthfulness guardrail can never be gamed by the dial.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 
 from applicant.core.rules.sensitive_fields import is_sensitive_field
@@ -148,6 +149,32 @@ def classify_screening_question(question: str) -> ScreeningKind:
     if len(words) <= 8 and text.endswith("?"):
         return ScreeningKind.FACTUAL
     return ScreeningKind.ESSAY
+
+
+# === screening-answer library key (product-gaps backlog #20) ===============
+
+#: Trailing punctuation collapsed by normalization -- keeps "Why this company?"
+#: and "Why this company??" (or a trailing period) hitting the same library key.
+_TRAILING_PUNCT_RE = re.compile(r"[?.!\s]+$")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def normalize_screening_question(question: str) -> str:
+    """Normalize a screening question into a stable library lookup key (#20).
+
+    Pure + deterministic: lowercase, collapse internal whitespace, and strip
+    trailing punctuation, so "Why do you want to work here?" and "why do you
+    want to work here" resolve to the SAME reusable library entry while staying
+    a plain string (no hashing) that is cheap to inspect/debug. Returns ``""``
+    for a blank/whitespace-only question so callers can treat that as "no key"
+    rather than accidentally colliding on an empty string somewhere upstream.
+    """
+    text = (question or "").strip().lower()
+    if not text:
+        return ""
+    text = _WHITESPACE_RE.sub(" ", text)
+    text = _TRAILING_PUNCT_RE.sub("", text)
+    return text.strip()
 
 
 # === aggressiveness dial (FR-RESUME-9, dormant per FR-UI-2) ================

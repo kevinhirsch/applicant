@@ -31,6 +31,9 @@ import {
 } from './applicantCore.js';
 
 const API = '/api/applicant/tracker';
+//: Product-gaps backlog #20 — the reusable screening-answer library lives on
+//: the Documents proxy (campaign-scoped), not the tracker's own API base.
+const LIBRARY_API = '/api/applicant/documents/screening-answer-library';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -139,9 +142,11 @@ function _optionsHTML(currentStatus) {
 
 function _renderRow(app) {
   const id = esc(String(app.application_id || ''));
+  const campaignId = esc(String(app.campaign_id || ''));
   const campaign = app.campaign_name ? `<span style="opacity:0.5;">· ${esc(app.campaign_name)}</span>` : '';
   const busy = _busyIds.has(String(app.application_id));
   const label = esc(_roleLabel(app));
+  const signals = Array.isArray(app.signals) ? app.signals : [];
   return `
     <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 4px;">
       <div style="flex:1;min-width:0;">
@@ -153,7 +158,36 @@ function _renderRow(app) {
         ${_optionsHTML(app.status)}
       </select>
       ${_scanEmailHTML(id, label)}
+      ${_screeningAnswersHTML(id, campaignId, label)}
+      ${signals.includes('interview_invited') ? _interviewPrepHTML(id, label) : ''}
     </div>`;
+}
+
+// A per-row, collapsed-by-default disclosure over the reusable screening-
+// answer library (product-gaps backlog #20): screening answers generated in
+// Documents for THIS campaign are saved there automatically (parallel to the
+// résumé variant library, FR-RESUME-6), so a common question ("Why do you
+// want to work here?") can be reused for THIS application instead of
+// regenerated from scratch. Lazy — the library is only fetched the first time
+// an owner actually opens the disclosure, never eagerly for every row.
+function _screeningAnswersHTML(id, campaignId, label) {
+  return `
+    <details class="ow-list-row" data-tracker-screening="${id}" data-screening-campaign="${campaignId}" style="flex-basis:100%;margin:2px 0 0;">
+      <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">Screening answers</summary>
+      <div data-screening-body="${id}" style="margin:8px 0 4px;font-size:11px;opacity:0.7;">Loading…</div>
+    </details>`;
+}
+
+// A per-row disclosure that only renders once the row has actually recorded
+// an interview_invited signal (product-gaps backlog #30) — never fabricates a
+// brief for an application that was never invited to interview; the engine
+// enforces that gate independently, this is just the reachable UI for it.
+function _interviewPrepHTML(id, label) {
+  return `
+    <details class="ow-list-row" data-tracker-prep="${id}" style="flex-basis:100%;margin:2px 0 0;">
+      <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">Interview prep</summary>
+      <div data-prep-body="${id}" style="margin:8px 0 4px;font-size:11px;opacity:0.7;">Loading…</div>
+    </details>`;
 }
 
 // A per-row, collapsed-by-default disclosure so an owner can paste in one
@@ -208,6 +242,12 @@ function _renderBoard(host, applications) {
   });
   host.querySelectorAll('[data-scan-submit]').forEach((btn) => {
     btn.addEventListener('click', () => _scanEmail(btn));
+  });
+  host.querySelectorAll('[data-tracker-screening]').forEach((details) => {
+    details.addEventListener('toggle', () => _onScreeningToggle(details), { once: true });
+  });
+  host.querySelectorAll('[data-tracker-prep]').forEach((details) => {
+    details.addEventListener('toggle', () => _onPrepToggle(details), { once: true });
   });
 }
 
@@ -330,6 +370,109 @@ async function _scanEmail(btn) {
     _busyIds.delete(id);
     btn.disabled = false;
   }
+}
+
+// ── Screening-answer library (product-gaps backlog #20) ────────────────────
+// Lazy per-row disclosure over the reusable, campaign-scoped answer bank a
+// generation in Documents quietly builds over time (MaterialService's
+// generate_screening_answer -> _save_to_screening_library). Loaded ONLY the
+// first time a row's "Screening answers" section is opened, never eagerly for
+// every row (same lazy-on-demand shape as the "Check an email" disclosure and
+// the digest's Research brief).
+
+async function _onScreeningToggle(details) {
+  if (!details.open) return; // 'toggle' also fires on close; only load on open
+  const id = details.getAttribute('data-tracker-screening');
+  const campaignId = details.getAttribute('data-screening-campaign');
+  const body = details.querySelector(`[data-screening-body="${id}"]`);
+  if (!body) return;
+  if (!campaignId) {
+    body.textContent = 'No campaign on this application yet.';
+    return;
+  }
+  try {
+    const data = await _fetchJSON(`${LIBRARY_API}/${encodeURIComponent(campaignId)}`);
+    _renderScreeningBody(body, id, data && data.items);
+  } catch (e) {
+    body.textContent = errText(e);
+  }
+}
+
+function _renderScreeningBody(body, id, items) {
+  if (!items || !items.length) {
+    body.textContent = 'No saved answers yet — answers you generate in Documents are saved here automatically.';
+    return;
+  }
+  body.innerHTML = items.map((it, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border,rgba(255,255,255,0.08));">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(it.question)}</span>
+      <button class="cal-btn" type="button" data-screening-reuse="${id}" data-screening-idx="${i}" style="font-size:10.5px;">Reuse</button>
+    </div>
+    <div data-screening-result="${id}-${i}" style="font-size:10.5px;opacity:0.7;"></div>`).join('');
+  body.querySelectorAll('[data-screening-reuse]').forEach((btn, i) => {
+    btn.addEventListener('click', () => _reuseScreeningAnswer(btn, items[i].question));
+  });
+}
+
+async function _reuseScreeningAnswer(btn, question) {
+  const id = btn.getAttribute('data-screening-reuse');
+  const idx = btn.getAttribute('data-screening-idx');
+  const details = btn.closest('[data-tracker-screening]');
+  const campaignId = details ? details.getAttribute('data-screening-campaign') : '';
+  const resultEl = details ? details.querySelector(`[data-screening-result="${id}-${idx}"]`) : null;
+  if (!id || !question || !campaignId) return;
+  btn.disabled = true;
+  if (resultEl) resultEl.textContent = 'Reusing…';
+  try {
+    const data = await _post(`${LIBRARY_API}/reuse`, {
+      campaign_id: campaignId, application_id: id, question,
+    });
+    if (data && data.found) {
+      _toast('Reused — ready for review in Documents.');
+      if (resultEl) resultEl.textContent = 'Added to Documents for your review.';
+    } else if (resultEl) {
+      resultEl.textContent = 'Could not reuse that answer.';
+    }
+  } catch (e) {
+    if (resultEl) resultEl.textContent = errText(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Interview prep (product-gaps backlog #30) ───────────────────────────────
+// Only rendered on a row that has already recorded an interview_invited
+// signal (see _renderRow); the engine independently re-enforces that gate, so
+// this is purely the reachable UI for a brief that already exists to generate.
+
+async function _onPrepToggle(details) {
+  if (!details.open) return;
+  const id = details.getAttribute('data-tracker-prep');
+  const body = details.querySelector(`[data-prep-body="${id}"]`);
+  if (!body) return;
+  try {
+    const data = await _fetchJSON(`${API}/applications/${encodeURIComponent(id)}/interview-prep`);
+    _renderPrepBody(body, data);
+  } catch (e) {
+    body.textContent = errText(e);
+  }
+}
+
+function _renderPrepBody(body, data) {
+  if (!data || data.generated !== true) {
+    body.textContent = "Prep notes aren't ready yet.";
+    return;
+  }
+  const notes = Array.isArray(data.notes) ? data.notes : [];
+  const reqs = Array.isArray(data.key_requirements) ? data.key_requirements : [];
+  const parts = notes.map((n) => `<div style="margin:2px 0;">${esc(n)}</div>`);
+  if (reqs.length) {
+    parts.push(`<ul style="margin:4px 0 4px 16px;padding:0;">${reqs.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>`);
+  }
+  if (data.company_research) {
+    parts.push(`<div style="margin-top:6px;opacity:0.85;white-space:pre-wrap;">${esc(data.company_research)}</div>`);
+  }
+  body.innerHTML = parts.join('') || 'Nothing more to add yet.';
 }
 
 export async function openApplicantTracker() {

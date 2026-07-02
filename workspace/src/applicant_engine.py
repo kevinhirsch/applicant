@@ -373,6 +373,32 @@ class ApplicantEngineClient:
         """Generate a screening answer on demand; routed to review (FR-ANSWER-1)."""
         return await self._request("POST", "/api/documents/screening-answer", json=body)
 
+    async def screening_answer_library(self, campaign_id: str) -> Any:
+        """The reusable, campaign-scoped screening-answer library (product-gaps
+        backlog #20): common questions answered once, that a prior generation
+        quietly saved (see engine ``MaterialService._save_to_screening_library``),
+        surfaced so the UI can browse and reuse them."""
+        return await self._request(
+            "GET", f"/api/documents/screening-answer-library/{campaign_id}"
+        )
+
+    async def reuse_screening_answer(self, body: Any) -> Any:
+        """Reuse a library answer for a NEW application instead of regenerating it
+        (#20). ``found: false`` when no library entry matches the question."""
+        return await self._request(
+            "POST", "/api/documents/screening-answer-library/reuse", json=body
+        )
+
+    async def interview_prep(self, campaign_id: str, application_id: str) -> Any:
+        """A plain-language interview-prep brief (product-gaps backlog #30).
+
+        ``generated: false`` until the application has reached the
+        ``interview_invited`` outcome signal -- the engine enforces that gate
+        itself, never trusting a caller-supplied flag."""
+        return await self._request(
+            "GET", f"/api/documents/interview-prep/{campaign_id}/{application_id}"
+        )
+
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
 
