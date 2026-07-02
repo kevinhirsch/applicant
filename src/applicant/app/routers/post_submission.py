@@ -11,6 +11,15 @@ happened (an interview invite, an offer, a rejection the automated detectors
 never caught, or simple silence). This router is that surface -- a read-only
 tracker-board query per campaign, plus one owner-triggered write.
 
+``/applications/{id}/scan-email`` (design-audit Top-25 #5) is the newer
+addition: it finally gives the long-dead ``scan_email_for_rejection`` (and its
+new siblings, ``scan_email_for_interview``/``scan_email_for_offer``) a real
+caller. Automatic inbox-to-application matching stays out of scope here (a
+mis-attributed email could record a fake outcome against the wrong
+application) -- this endpoint just makes the detection capability reachable
+for a human, a test, or a future bridge to call with subject/body already
+resolved to the right application.
+
 Gated behind the LLM-settings gate (FR-UI-5), like every other driving-port
 router (see ``admin.py`` / ``campaigns.py`` / ``outcomes.py``).
 """
@@ -33,6 +42,11 @@ router = APIRouter(
 
 class RecordOutcomeIn(BaseModel):
     outcome_type: str
+
+
+class ScanEmailIn(BaseModel):
+    subject: str = ""
+    body: str = ""
 
 
 @router.get("")
@@ -84,3 +98,31 @@ def record_outcome(
         "type": event.type,
         "source": event.source.value,
     }
+
+
+@router.post("/applications/{application_id}/scan-email")
+def scan_email(
+    application_id: str,
+    body: ScanEmailIn,
+    svc=Depends(get_post_submission_service),
+) -> dict:
+    """Run one inbound email's subject/body through all three outcome detectors
+    (rejection / offer / interview-invite -- design-audit Top-25 #5) and record
+    whatever confidently matched.
+
+    This finally makes the email-scanning capability (``scan_email_for_rejection``
+    et al.) reachable via a real endpoint. Nothing calls it automatically yet --
+    matching a raw inbox to the right application is a deliberately separate,
+    higher-risk piece of work (a false match would record a fake outcome against
+    the wrong application) -- but a human, a test, or a future automated bridge
+    now CAN call this. Gated the same as every other route on this router
+    (``require_llm_configured``); 404s for an application that does not exist.
+    """
+    result = svc.scan_email(ApplicationId(application_id), subject=body.subject, body=body.body)
+    if result is None:
+        # Either the application does not exist, or nothing matched at all --
+        # distinguish the two so the caller gets a real 404 for the former.
+        if svc.poll_status(ApplicationId(application_id)) is None:
+            raise HTTPException(status_code=404, detail="No such application.")
+        return {"application_id": application_id, "detected": False}
+    return {"application_id": application_id, "detected": True, **result}

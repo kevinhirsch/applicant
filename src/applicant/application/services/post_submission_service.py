@@ -62,9 +62,16 @@ _MANUAL_OUTCOME_STATUS: dict[str, ApplicationState] = {
 
 
 class PostSubmissionService:
-    def __init__(self, storage, notification_service=None):
+    def __init__(self, storage, notification_service=None, *, learning=None):
         self._storage = storage
         self._notification = notification_service
+        # Optional (design-audit Top-25 #5 nice-to-have): when supplied, a
+        # positive post-submission outcome (interview/offer) folds a positive
+        # taste signal the same way DigestService._learn_from_approval does for
+        # an approve decision. ``None`` (the default) fully degrades -- every
+        # existing caller that constructs this service without a learning
+        # collaborator behaves byte-identical to before.
+        self._learning = learning
 
     def enter_post_submission(self, application, *, snapshot=None):
         """Transition the application to POST_SUBMISSION.
@@ -127,6 +134,46 @@ class PostSubmissionService:
             self._storage.commit()
         return signal
 
+    #: Confidence threshold above which a keyword match auto-records/transitions
+    #: an outcome rather than just leaving an ambiguous, unconfirmed trace. Shared
+    #: by the rejection path (via ``process_rejection_signal``) and the interview/
+    #: offer paths below, so all three email detectors agree on how sure is sure.
+    AUTO_RECORD_CONFIDENCE = 0.8
+
+    #: Design-audit Top-25 #5: keyword lists for the two POSITIVE email signals,
+    #: siblings of the rejection keywords above. Kept deliberately non-overlapping
+    #: with the rejection list AND with each other -- e.g. "interview" alone is
+    #: never enough to out-rank a rejection email that happens to reference a past
+    #: interview ("Unfortunately, following your interview...regret to inform you
+    #: ..."), which is why ``scan_email`` below checks rejection FIRST and only
+    #: falls through to offer/interview when rejection did not confidently match.
+    INTERVIEW_KEYWORDS = [
+        "would like to schedule",
+        "schedule a call",
+        "schedule an interview",
+        "phone screen",
+        "next steps",
+        "interview",
+        "set up a time to chat",
+    ]
+    OFFER_KEYWORDS = [
+        "pleased to offer",
+        "offer letter",
+        "excited to extend",
+        "job offer",
+        "extend an offer",
+        "welcome to the team",
+    ]
+
+    @staticmethod
+    def _matched_keywords(email_subject, email_body, keywords):
+        combined = (email_subject + " " + email_body).lower()
+        return [kw for kw in keywords if kw in combined]
+
+    @staticmethod
+    def _keyword_confidence(matched):
+        return min(0.5 + 0.1 * len(matched), 0.95)
+
     def scan_email_for_rejection(self, email_subject, email_body, application_id):
         keywords = [
             "unfortunately",
@@ -137,11 +184,10 @@ class PostSubmissionService:
             "position has been filled",
             "will not be proceeding",
         ]
-        combined = (email_subject + " " + email_body).lower()
-        matched = [kw for kw in keywords if kw in combined]
+        matched = self._matched_keywords(email_subject, email_body, keywords)
         if not matched:
             return None
-        confidence = min(0.5 + 0.1 * len(matched), 0.95)
+        confidence = self._keyword_confidence(matched)
         return self.process_rejection_signal(
             application_id,
             source=RejectionSource.EMAIL,
@@ -149,6 +195,111 @@ class PostSubmissionService:
             confidence=confidence,
             detail={"subject": email_subject, "matched_keywords": matched},
         )
+
+    def _scan_email_for_positive_signal(self, email_subject, email_body, application_id, *, keywords, outcome_type):
+        """Shared body for the two positive-signal detectors (interview/offer).
+
+        Unlike rejection, there is no dedicated audit-trail entity for these two
+        types (``RejectionSignal`` is rejection-specific by name/shape -- see the
+        module docstring / #5 report for why it was not force-generalized), so a
+        confident match records the ``OutcomeEvent`` directly and a sub-threshold
+        match is simply dropped (no partial/ambiguous row is persisted). Returns
+        the recorded ``OutcomeEvent``, or ``None`` when nothing confident matched.
+        """
+        matched = self._matched_keywords(email_subject, email_body, keywords)
+        if not matched:
+            return None
+        confidence = self._keyword_confidence(matched)
+        if confidence < self.AUTO_RECORD_CONFIDENCE:
+            return None
+        app = self._storage.applications.get(application_id)
+        if app is None:
+            return None
+        event = self._record_outcome_event(app, outcome_type)
+        self._storage.commit()
+        return event
+
+    def scan_email_for_interview(self, email_subject, email_body, application_id):
+        """Detect a confident interview-invite signal in an inbound email (#5).
+
+        Mirrors ``scan_email_for_rejection``'s keyword-confidence shape. Records
+        ``interview_invited`` directly (``OutcomeSource.AUTO``) on a confident
+        match; does not touch ``Application.status`` (no §7 state for this type,
+        same as the manual path -- see ``POSITIVE_SIGNAL_TYPES``).
+        """
+        return self._scan_email_for_positive_signal(
+            email_subject,
+            email_body,
+            application_id,
+            keywords=self.INTERVIEW_KEYWORDS,
+            outcome_type="interview_invited",
+        )
+
+    def scan_email_for_offer(self, email_subject, email_body, application_id):
+        """Detect a confident offer signal in an inbound email (#5).
+
+        Mirrors ``scan_email_for_rejection``'s keyword-confidence shape. Records
+        ``offer`` directly (``OutcomeSource.AUTO``) on a confident match; does not
+        touch ``Application.status`` (see ``POSITIVE_SIGNAL_TYPES``).
+        """
+        return self._scan_email_for_positive_signal(
+            email_subject,
+            email_body,
+            application_id,
+            keywords=self.OFFER_KEYWORDS,
+            outcome_type="offer",
+        )
+
+    def scan_email(self, application_id, *, subject="", body=""):
+        """Run one inbound email through all three detectors (#5).
+
+        Precedence -- rejection, then offer, then interview -- so a single email
+        records AT MOST ONE outcome even when its language brushes more than one
+        keyword list (e.g. an offer email that recaps "following your interview
+        ..." must not also fire an interview signal). Rejection is checked first
+        and, when it confidently matches, short-circuits the rest: a rejection is
+        the authoritative/terminal signal and must never be shadowed by a stray
+        positive keyword the same email happens to contain.
+
+        Returns a dict describing what was detected (and whether it was confident
+        enough to actually be RECORDED), or ``None`` when nothing matched at all
+        and the application does not exist / no keyword matched anything.
+        """
+        app = self._storage.applications.get(application_id)
+        if app is None:
+            return None
+        rejection_signal = self.scan_email_for_rejection(subject, body, application_id)
+        if rejection_signal is not None and rejection_signal.confidence >= self.AUTO_RECORD_CONFIDENCE:
+            return {
+                "outcome_type": "rejected",
+                "recorded": True,
+                "confidence": rejection_signal.confidence,
+                "matched_keywords": list(rejection_signal.detail.get("matched_keywords", [])),
+            }
+        offer_event = self.scan_email_for_offer(subject, body, application_id)
+        if offer_event is not None:
+            return {
+                "outcome_type": "offer",
+                "recorded": True,
+                "outcome_id": str(offer_event.id),
+            }
+        interview_event = self.scan_email_for_interview(subject, body, application_id)
+        if interview_event is not None:
+            return {
+                "outcome_type": "interview_invited",
+                "recorded": True,
+                "outcome_id": str(interview_event.id),
+            }
+        if rejection_signal is not None:
+            # Some rejection language present but too thin to act on -- report the
+            # ambiguity rather than silently dropping it.
+            return {
+                "outcome_type": "rejected",
+                "recorded": False,
+                "confidence": rejection_signal.confidence,
+                "matched_keywords": list(rejection_signal.detail.get("matched_keywords", [])),
+            }
+        return None
 
     def check_ghosting(self, campaign_id, *, sla_days=DEFAULT_SLA_DAYS, now=None):
         now = now or datetime.now(UTC)
@@ -283,7 +434,95 @@ class PostSubmissionService:
                 reason=f"post-submission: {outcome_type}",
             )
         )
+        if outcome_type in POSITIVE_SIGNAL_TYPES:
+            # Design-audit Top-25 #5, the "emotional peak": fires for BOTH the
+            # manual tracker path (record_manual_outcome) and the auto email-scan
+            # path (scan_email_for_interview/offer) since both funnel through this
+            # one method -- one celebratory notification, one place it can fire.
+            self._notify_positive_outcome(application, event)
+            self._learn_from_positive_outcome(application)
         return event
+
+    def _learn_from_positive_outcome(self, application):
+        """Up-weight the source/role signature for a positive outcome (#5, nice-to-have).
+
+        Mirrors ``DigestService._learn_from_approval`` (FR-LEARN-2): an interview
+        invite or an offer is real-world positive taste evidence, so it folds the
+        SAME per-feature ``role:``/``work_mode:``/``source:`` buckets through the
+        shared per-campaign-locked atomic fold (``fold_decision_atomic``). Purely
+        additive and best-effort -- a ``None`` learning collaborator (every
+        existing caller that hasn't opted in) or a resolve failure is a silent
+        no-op, never allowed to break outcome recording.
+        """
+        if self._learning is None:
+            return
+        atomic = getattr(self._learning, "fold_decision_atomic", None)
+        if atomic is None:
+            return
+        try:
+            posting = (
+                self._storage.postings.get(application.posting_id)
+                if application.posting_id is not None
+                else None
+            )
+            if posting is None:
+                return
+            features = self._posting_features(posting)
+            if not features:
+                return
+            atomic(application.campaign_id, approved=True, features=features)
+        except Exception:
+            log.warning("post_submission_learning_hook_failed", exc_info=True)
+
+    @staticmethod
+    def _posting_features(posting) -> dict:
+        """Cheap, deterministic taste features for a posting (mirrors
+        ``DigestService._posting_features``, FR-LEARN-2/7)."""
+        features: dict[str, str] = {}
+        title = (getattr(posting, "title", None) or "").strip().lower()
+        if title:
+            features[f"role:{title}"] = title
+        work_mode = (getattr(posting, "work_mode", None) or "").strip().lower()
+        if work_mode:
+            features[f"work_mode:{work_mode}"] = work_mode
+        source_key = (getattr(posting, "source_key", None) or "").strip().lower()
+        if source_key:
+            features[f"source:{source_key}"] = source_key
+        return features
+
+    def _notify_positive_outcome(self, application, event):
+        """Fire the celebratory notification for a positive outcome (#5).
+
+        Best-effort and never allowed to break outcome recording itself (a
+        notifier hiccup must not un-record an interview/offer). Company name is
+        resolved the same way other notification copy does (``digest_service``'s
+        ``posting.company``): via the application's posting, falling back to a
+        generic phrase when the posting cannot be resolved. Dedup lives on the
+        notification service (keyed by this event's id) so a retry/replay of this
+        method for the same event can't double-notify -- see
+        ``NotificationService.notify_positive_outcome``.
+        """
+        if self._notification is None:
+            return
+        notify = getattr(self._notification, "notify_positive_outcome", None)
+        if notify is None:
+            return
+        company = None
+        try:
+            if application.posting_id is not None:
+                posting = self._storage.postings.get(application.posting_id)
+                company = getattr(posting, "company", None) if posting is not None else None
+        except Exception:
+            company = None
+        try:
+            notify(
+                str(event.id),
+                outcome_type=event.type,
+                company=company,
+                deep_link=f"/applications/{application.id}",
+            )
+        except Exception:
+            log.warning("post_submission_celebration_notify_failed", exc_info=True)
 
     # --- tracker board (design-audit Top-25 #4) -----------------------------
 

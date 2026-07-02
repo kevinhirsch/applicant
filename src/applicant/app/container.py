@@ -866,7 +866,9 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
     from applicant.application.services.post_submission_service import PostSubmissionService
-    post_submission_service = PostSubmissionService(storage, notification_service)
+    post_submission_service = PostSubmissionService(
+        storage, notification_service, learning=learning_service
+    )
     submission_service = SubmissionService(
         storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
         post_submission=post_submission_service,
@@ -1156,7 +1158,7 @@ def build_container(settings: Settings | None = None) -> Container:
             pending_actions=pas,
         )
         from applicant.application.services.post_submission_service import PostSubmissionService
-        post_sub = PostSubmissionService(tick_storage, notification_service)
+        post_sub = PostSubmissionService(tick_storage, notification_service, learning=ls)
         sub = SubmissionService(
             tick_storage, browser, learning=ls, advanced_learning=adv,
             post_submission=post_sub,
@@ -1349,7 +1351,7 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         rs_chat._scheduler = scheduler
         from applicant.application.services.post_submission_service import PostSubmissionService
-        rs_post_sub = PostSubmissionService(req_storage, notification_service)
+        rs_post_sub = PostSubmissionService(req_storage, notification_service, learning=rs_ls)
         rs_submission = SubmissionService(
             req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,
             post_submission=rs_post_sub,
