@@ -260,7 +260,10 @@ function _dimDiffers(dim, entityIds, values) {
 function _renderResult(container, data, kind, campaignId) {
   container.innerHTML = '';
   if (!data) {
-    container.innerHTML = '<div style="opacity:0.7;">No comparison returned.</div>';
+    container.innerHTML = emptyHTML(
+      'No comparison came back',
+      'The engine did not return a result for that comparison. Try again, or adjust the ids and re-run.',
+      '');
     return;
   }
   const entityIds = Array.isArray(data.entity_ids) ? data.entity_ids : [];

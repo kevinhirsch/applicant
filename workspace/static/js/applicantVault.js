@@ -79,7 +79,7 @@ function _ensureModalEl() {
           </div>
           <div id="applicant-vault-list" style="display:flex;flex-direction:column;gap:6px;"></div>
           <div id="applicant-vault-empty" style="opacity:0.5;font-size:13px;padding:6px 0;">
-            No sign-ins saved yet.
+            No sign-ins saved yet — add one below and the assistant will use it to sign in automatically.
           </div>
         </div>
 
@@ -249,7 +249,10 @@ async function _loadTenants() {
   if (!listEl) return;
   if (!_campaignId) {
     listEl.innerHTML = '';
-    if (emptyEl) { emptyEl.textContent = 'Choose a job search first.'; emptyEl.style.display = ''; }
+    if (emptyEl) {
+      emptyEl.textContent = 'No job search yet — sign-ins are saved per job search, so create one first and they will show up here.';
+      emptyEl.style.display = '';
+    }
     _setVaultCount(0);
     return;
   }
@@ -270,7 +273,10 @@ async function _loadTenants() {
   _setVaultCount(tenants.length);
   if (!tenants.length) {
     listEl.innerHTML = '';
-    if (emptyEl) { emptyEl.textContent = 'No sign-ins saved yet.'; emptyEl.style.display = ''; }
+    if (emptyEl) {
+      emptyEl.textContent = 'No sign-ins saved yet — add one below and the assistant will use it to sign in automatically.';
+      emptyEl.style.display = '';
+    }
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
