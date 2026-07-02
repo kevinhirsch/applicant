@@ -937,11 +937,25 @@ class PrefillService:
                         campaign_id=app.campaign_id,
                         application_id=app.id,
                         kind="blocked_detection",
-                        data={"signal_type": reason, "url": state.url},
+                        title="Detection blocker — take over",
+                        payload={"signal_type": reason, "url": state.url},
                     )
                     if self._notification:
+                        from applicant.ports.driven.notification import (
+                            Notification,
+                            NotificationUrgency,
+                        )
+
                         try:
-                            self._notification.notify_pending(pending_action)
+                            self._notification.notify(
+                                Notification(
+                                    title="Detection blocker — take over",
+                                    body=f"Application {app.id} is blocked by a detection signal ({reason}) and needs you.",
+                                    deep_link=result.sandbox_session_url,
+                                    urgency=NotificationUrgency.CRITICAL,
+                                    dedup_key=ping_dedup_key(app.id, "blocked_detection"),
+                                )
+                            )
                         except Exception:  # noqa: BLE001
                             pass
                     result.pending_action_id = pending_action.id
@@ -1951,13 +1965,20 @@ class PrefillService:
         self._storage.pending_actions.add(action)
         self._storage.commit()
         if self._notification is not None:
-            from applicant.ports.driven.notification import Notification
+            from applicant.ports.driven.notification import (
+                Notification,
+                NotificationUrgency,
+            )
 
             self._notification.notify(
                 Notification(
                     title=title,
                     body=f"Application {app.id} needs you.",
                     deep_link=None,
+                    # A blocked/pending state the agent cannot proceed past without the
+                    # human — CRITICAL so it reaches the user even during quiet hours
+                    # (FR-NOTIF-5), not silently deferred until morning.
+                    urgency=NotificationUrgency.CRITICAL,
                     # #7: consistent ``decision:prefill:{ref}`` key so resolving the
                     # blocked state can expire this ping via
                     # ``NotificationService.acted(f"prefill:{ref}")`` — the un-prefixed
@@ -2081,13 +2102,20 @@ class PrefillService:
         self._storage.pending_actions.add(action)
         self._storage.commit()
         if self._notification is not None:
-            from applicant.ports.driven.notification import Notification
+            from applicant.ports.driven.notification import (
+                Notification,
+                NotificationUrgency,
+            )
 
             self._notification.notify(
                 Notification(
                     title=title,
                     body=f"Application {application.id} awaits you.",
                     deep_link=session_url,
+                    # Every waiting state here (2FA / detection / account hand-off /
+                    # emergency hand-off, §7) blocks the agent on the human — CRITICAL
+                    # so it is never silently deferred by quiet hours (FR-NOTIF-5).
+                    urgency=NotificationUrgency.CRITICAL,
                     # #7: consistent ``decision:prefill:{ref}`` key so the resolution
                     # path expires this ping via ``NotificationService.acted``.
                     dedup_key=ping_dedup_key(application.id, kind),

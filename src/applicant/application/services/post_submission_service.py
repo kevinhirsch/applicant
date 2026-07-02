@@ -18,7 +18,11 @@ from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
-DEFAULT_SLA_DAYS = 14
+#: Days of total silence after which a submitted application is considered likely
+#: ghosted (single source of truth, shared with SilenceService — #192/#190). 14 days
+#: is aggressive for large-company pipelines; 30 is defensible but slow to flag a
+#: small-company no-response. 21 is the unified middle ground.
+DEFAULT_SLA_DAYS = 21
 THANK_YOU_DELAY_HOURS = 2
 CHECK_IN_DELAY_DAYS = 7
 
@@ -112,7 +116,7 @@ class PostSubmissionService:
             detail={"subject": email_subject, "matched_keywords": matched},
         )
 
-    def check_ghosting(self, campaign_id, *, sla_days=14, now=None):
+    def check_ghosting(self, campaign_id, *, sla_days=DEFAULT_SLA_DAYS, now=None):
         now = now or datetime.now(UTC)
         signals = []
         for app in self._storage.applications.list_by_status(
@@ -143,7 +147,13 @@ class PostSubmissionService:
     def _submission_age(self, application, now):
         for ev in self._storage.outcomes.list_for_application(application.id):
             if ev.type == "submitted":
-                return timedelta(0)
+                snapshot = self._storage.submission_snapshots.get_for_application(application.id)
+                if snapshot is None:
+                    return None
+                submitted_at = snapshot.captured_at
+                if submitted_at.tzinfo is None:
+                    submitted_at = submitted_at.replace(tzinfo=UTC)
+                return now - submitted_at
         return None
 
     def schedule_follow_up(self, application_id, *, template, delay_hours=None, subject="", body=""):
@@ -172,7 +182,8 @@ class PostSubmissionService:
         for fup in self._storage.follow_ups.list_due(now):
             if self._notification:
                 try:
-                    self._notification.notify(
+                    self._notification.notify_decision(
+                        str(fup.id),
                         title=fup.subject,
                         body=fup.body,
                         deep_link=f"/applications/{fup.application_id}",

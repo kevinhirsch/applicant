@@ -15,10 +15,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-#: Days of total silence after which an application is considered likely ghosted.
-#: ~30 days is the common "no response means no" horizon for job applications; a
-#: conservative default so a still-in-review application is not prematurely closed.
-DEFAULT_GHOST_SLA_DAYS = 30
+# Single source of truth for the ghosting SLA (#192/#190): defined once on
+# PostSubmissionService and re-exported here under this module's existing public
+# name so this service and PostSubmissionService.check_ghosting never diverge.
+from applicant.application.services.post_submission_service import (
+    DEFAULT_SLA_DAYS as DEFAULT_GHOST_SLA_DAYS,
+)
 
 
 class SilenceService:

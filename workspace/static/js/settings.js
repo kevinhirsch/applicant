@@ -1681,7 +1681,7 @@ function syncPrivacyCheckboxes() {
 
 const SHORTCUT_DEFAULTS = {
   search:         'ctrl+k',
-  toggle_sidebar: 'ctrl+b',
+  toggle_sidebar: 'ctrl+alt+b',
   new_session:    'ctrl+alt+n',
   fav_session:    'ctrl+alt+f',
   delete_session: 'ctrl+alt+d',

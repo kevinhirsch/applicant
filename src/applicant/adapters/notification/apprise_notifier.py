@@ -439,21 +439,23 @@ class AppriseNotifier:
         live-takeover actions must reach the user any hour).
 
         #302 per-channel preference: when ``_quiet_hours_channels`` names this channel,
-        it takes precedence over the time window — ``True`` holds the channel while
-        quiet hours are configured (so "hold Discord overnight" is deterministic) and
-        ``False`` exempts it so it delivers even inside the window ("let email
-        through"). When the channel is not named, the time-window check governs.
+        ``False`` exempts it so it always delivers, even inside the window ("let email
+        through") — that bypass IS independent of the instant. ``True`` ("hold Discord
+        overnight") does NOT mean "hold this channel 24/7" — it means the channel
+        respects the configured window like any other push channel, so it still falls
+        through to the actual time-window check and is only held while `when` is
+        really inside quiet hours. When the channel is not named, the time-window
+        check governs the same way.
         """
         if notification.urgency is not NotificationUrgency.NORMAL:
             return False  # IMMEDIATE / CRITICAL never deferred
         if channel == NotificationChannel.IN_APP.value:
             return False  # the silent home-base sink always surfaces
         pref = self._quiet_hours_channels.get(channel)
-        if pref is not None:
-            # Explicit per-channel preference governs (independent of the instant): a
-            # respected channel is held whenever a quiet window is configured; an
-            # exempt channel is never held.
-            return bool(pref) and self._quiet_hours is not None and not self._always_on
+        if pref is False:
+            # Explicit "let it through" preference — never deferred, independent of
+            # the instant.
+            return False
         return self._in_quiet_hours(when)
 
     # --- dispatch ---------------------------------------------------------
