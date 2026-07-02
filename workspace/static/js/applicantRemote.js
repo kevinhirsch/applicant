@@ -134,12 +134,20 @@ function _ensureModalEl() {
                     title="See the exact answers, documents, and posting that will be submitted before you authorize">
               Review exactly what will be sent</button>
           </div>
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
+          <div id="applicant-remote-finish-actions" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
             <button id="applicant-remote-submit-self" class="cal-btn"
                     title="You will click submit yourself in the live session">I'll submit it myself</button>
             <span aria-hidden="true" style="opacity:0.5;font-size:11px;font-style:italic;">or</span>
             <button id="applicant-remote-authorize" class="cal-btn cal-btn-danger"
                     title="Let the assistant click the final submit, just this once">Authorize the assistant to finish</button>
+          </div>
+          <div id="applicant-remote-authorize-hold" hidden
+               style="display:none;flex-wrap:wrap;align-items:center;gap:12px;border:1px solid color-mix(in srgb, var(--danger, #e5484d) 45%, transparent);
+                      background:color-mix(in srgb, var(--danger, #e5484d) 10%, transparent);border-radius:8px;padding:10px 12px;">
+            <span id="applicant-remote-authorize-hold-text" role="status" aria-live="assertive"
+                  style="font-weight:600;font-size:13px;"></span>
+            <button id="applicant-remote-authorize-hold-cancel" type="button" class="memory-toolbar-btn"
+                    title="Stop now — nothing will be sent to the assistant">Cancel</button>
           </div>
           <p style="margin:0;opacity:0.55;font-size:11px;">
             The assistant can only click the final submit when you authorize it
@@ -569,6 +577,92 @@ async function _onSubmitSelf() {
   }
 }
 
+// ── authorize hold/cancel window (Top-25 #12) ────────────────────────────
+//
+// The text-confirm dialog above is the user's explicit decision; this is an
+// ADDITIONAL layer that sits strictly BETWEEN that decision and the guarded
+// call to `authorizeEngineFinish` — the single most irreversible action in
+// the product (it physically clicks a real employer's submit button). After
+// the user confirms, nothing is sent to the engine yet: a visible
+// "Submitting in N… [Cancel]" hold runs for AUTHORIZE_HOLD_SECONDS, during
+// which a keyboard-reachable Cancel aborts the whole action with zero side
+// effects. Only when the hold completes uncanceled does the existing
+// double-click-guarded flow proceed to call the engine, exactly as before.
+const AUTHORIZE_HOLD_SECONDS = 5;
+
+// Set only while a hold window is in flight; `closeRemoteSession()` calls it
+// to cancel a pending hold if the modal is torn down mid-countdown, so the
+// timer can never fire the engine call after the surface it belongs to is
+// gone (no detached/orphaned timer survives modal teardown).
+let _holdCancelResolve = null;
+let _holdTimerId = null;
+let _holdCancelBtnHandler = null; // wired via addEventListener, removed on every teardown
+
+function _holdEls() {
+  const row = _modalEl && _modalEl.querySelector('#applicant-remote-authorize-hold');
+  const text = _modalEl && _modalEl.querySelector('#applicant-remote-authorize-hold-text');
+  const cancelBtn = _modalEl && _modalEl.querySelector('#applicant-remote-authorize-hold-cancel');
+  const actions = _modalEl && _modalEl.querySelector('#applicant-remote-finish-actions');
+  return { row, text, cancelBtn, actions };
+}
+
+function _clearHold() {
+  if (_holdTimerId != null) { clearTimeout(_holdTimerId); _holdTimerId = null; }
+  const { row, cancelBtn, actions } = _holdEls();
+  if (row) { row.hidden = true; row.style.display = 'none'; }
+  if (cancelBtn && _holdCancelBtnHandler) cancelBtn.removeEventListener('click', _holdCancelBtnHandler);
+  _holdCancelBtnHandler = null;
+  if (actions) actions.style.display = '';
+  _holdCancelResolve = null;
+}
+
+/** Cancel any hold window in flight (called on modal teardown). Resolves the
+ *  pending `_holdBeforeAuthorize()` promise to `false` — the caller reads
+ *  that as "don't proceed" and returns before ever calling the engine. */
+function _cancelPendingHold() {
+  if (!_holdCancelResolve) return;
+  const resolve = _holdCancelResolve;
+  _clearHold();
+  resolve(false);
+}
+
+// Renders the "Submitting in N… [Cancel]" hold and resolves once it either
+// completes (true — proceed) or is canceled/torn down (false — abort).
+// Text-only countdown (no color/motion animation), so there is nothing that
+// needs to respect prefers-reduced-motion; the Cancel button is a real,
+// focusable `<button type="button">` reachable by keyboard, and is focused
+// as soon as the hold appears.
+function _holdBeforeAuthorize() {
+  return new Promise((resolve) => {
+    const { row, text, cancelBtn, actions } = _holdEls();
+    if (!row || !text || !cancelBtn) { resolve(true); return; } // defensive: markup missing
+    let remaining = AUTHORIZE_HOLD_SECONDS;
+    _holdCancelResolve = resolve;
+    const render = () => {
+      text.textContent = `Submitting in ${remaining}… `
+        + 'Nothing has been sent yet — you can still cancel.';
+    };
+    if (actions) actions.style.display = 'none';
+    row.hidden = false;
+    row.style.display = 'flex';
+    render();
+    const finish = (proceed) => {
+      _clearHold();
+      resolve(proceed);
+    };
+    _holdCancelBtnHandler = () => finish(false);
+    cancelBtn.addEventListener('click', _holdCancelBtnHandler);
+    cancelBtn.focus();
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) { finish(true); return; }
+      render();
+      _holdTimerId = setTimeout(tick, 1000);
+    };
+    _holdTimerId = setTimeout(tick, 1000);
+  });
+}
+
 async function _onAuthorizeFinish() {
   if (_busy || !_needSession()) return;
   const btn = _modalEl && _modalEl.querySelector('#applicant-remote-authorize');
@@ -583,6 +677,11 @@ async function _onAuthorizeFinish() {
       _authorizeConfirmMessage(_activeSession),
       { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
     if (!ok) return;
+    // Hold/cancel window: one more, undoable pause before anything is sent to
+    // the engine. Canceling here returns to the pre-confirm state with no
+    // side effects — `authorizeEngineFinish` below is simply never reached.
+    const proceed = await _holdBeforeAuthorize();
+    if (!proceed) { _toast('Canceled — nothing was submitted'); return; }
     if (btn) btn.textContent = 'Authorizing…';
     const appId = _activeSession.application_id;
     await authorizeEngineFinish(appId);
@@ -783,6 +882,11 @@ export async function openApplicantRemoteSession(applicationId, sessionUrl) {
 }
 
 export function closeRemoteSession() {
+  // A pending "Submitting in N… [Cancel]" hold must never survive the modal
+  // being dismissed mid-countdown — cancel it before anything else so its
+  // timer is cleared and the guarded `authorizeEngineFinish` call it was
+  // waiting on is never reached.
+  _cancelPendingHold();
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
