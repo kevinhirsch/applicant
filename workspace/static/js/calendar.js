@@ -1538,15 +1538,16 @@ async function _renderAgenda() {
   const dates = [...byDate.keys()].sort();
 
   if (!dates.length) {
-    // Empty-state mirrors the email panel: short message + a Settings ›
-    // Integrations link to set up CalDAV, OR a quick "Create event" action.
-    h += '<div class="cal-empty" style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">' +
+    // #136: a proper button for the primary action (Create event) — was
+    // accent-red underlined link text pretending to be one. "Settings ›
+    // Integrations" is genuinely secondary/navigational, so it stays a
+    // plain link, just off the theme-red accent.
+    h += '<div class="cal-empty" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:12px 0;">' +
       '<span>No upcoming events</span>' +
-      '<span style="opacity:0.7;font-size:11px;">' +
-        '<a href="#" data-cal-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
-        ' &middot; ' +
-        '<a href="#" data-cal-create-event="1" style="color:var(--accent,var(--red));text-decoration:underline;">Create event</a>' +
-      '</span>' +
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;">' +
+        '<button type="button" class="cal-btn cal-btn-primary" data-cal-create-event="1">Create event</button>' +
+        '<a href="#" data-cal-open-settings="integrations" style="color:var(--sys-blue);font-size:11px;text-decoration:none;">Settings &rsaquo; Integrations</a>' +
+      '</div>' +
     '</div>';
   } else {
     for (const date of dates) {

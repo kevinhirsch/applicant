@@ -126,6 +126,47 @@
   --ow-spec-y: 0.5;                            /* glass pointer-specular Y  */
   --ow-fly-x: 0;                               /* window fly-in origin X    */
   --ow-fly-y: 0;                               /* window fly-in origin Y    */
+
+  /* ── Tap target floor (WCAG 2.5.5) ──────────────────────────────────────
+     Was a copy-pasted `44px` literal at every touch-control site (a couple
+     already read `var(--tap-min, 44px)` with no real token behind the
+     fallback) — define it for real so it's one source of truth going
+     forward, not a fallback-only convention. */
+  --tap-min: 44px;
+
+  /* ── Motion tokens ───────────────────────────────────────────────────────
+     Durations/easing were ad-hoc literals (.08s/.2s/.3s, a mix of `ease`,
+     `ease-in-out` and several near-duplicate cubic-beziers) scattered across
+     the sheet. These three durations + the standard curve already in
+     informal use (cubic-bezier(0.4,0,0.2,1), used across several hot paths)
+     are the tokenized version — new/updated transitions should reference
+     these rather than another one-off literal. */
+  --dur-fast: 0.08s;
+  --dur-base: 0.2s;
+  --dur-slow: 0.3s;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Type scale (HIG Large Title / Title / Body / Caption) ─────────────
+     Sizes were ad-hoc; headings didn't map to a named ramp. The AppKit kit
+     surfaces already have their own --ow-fs-* ramp (caption/label/heading/
+     body/title) — this is the general-purpose equivalent for CHROME headings
+     outside the kit (page/section titles, not kit windows/cards), named
+     distinctly so it doesn't collide with the kit's own token contract. */
+  --text-large-title: 1.75rem;
+  --text-title: 1.25rem;
+  --text-body: 0.875rem;
+  --text-caption: 0.75rem;
+
+  /* ── Icon tokens ─────────────────────────────────────────────────────────
+     Iconography is inconsistent across the app (a hand-rolled brand mark,
+     mixed inline glyphs at different sizes/stroke-weights) with no shared
+     token. A repo-wide sprite/token migration touches every surface's own
+     icons and is out of scope here; this defines the token pair so the one
+     brand mark this pass owns (the welcome-hero SVG, index.html) — and any
+     future icon work — has a real default to converge on instead of another
+     one-off literal. */
+  --icon-size: 1.25rem;
+  --icon-stroke: 2;
 }
 
 :root.light {
@@ -832,6 +873,16 @@ body.bg-pattern-sparkles {
     @keyframes rail-min-pulse {
       0%,100% { opacity: 1; }
       50%     { opacity: 0.4; }
+    }
+    /* #144: both rail pulses above run `infinite` and were ungated — honor
+       Reduce Motion by resting each at its non-animated peak state instead
+       of looping forever. */
+    @media (prefers-reduced-motion: reduce) {
+      .rail-notes-badge.fired,
+      .tool-notes-dot,
+      .rail-minimized::after {
+        animation: none;
+      }
     }
     /* Compact `_` minimize button for modal headers — matches the close
        button's bordered square so the two read as a paired control. The
