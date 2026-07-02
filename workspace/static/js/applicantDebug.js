@@ -359,6 +359,11 @@ async function _downloadAuditLog() {
   }
 }
 
+// #93/#94/#100: was one bordered `.admin-card` tile per application (glass-on-
+// glass stacking) with two equally-weighted buttons. Now one flat list with
+// hairline row dividers; "Details" (navigation) is the primary action, "I
+// submitted this" (an infrequent, secondary action) is demoted to a plain
+// text-style affordance.
 async function _renderActivity(token) {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${ADMIN}/history/${encodeURIComponent(_campaignId)}`);
@@ -371,20 +376,20 @@ async function _renderActivity(token) {
     const id = a.application_id || a.id || '';
     const title = a.role_name || a.job_title || id || 'Application';
     const shots = a.screenshot_count != null ? a.screenshot_count : (a.screenshots || []).length;
-    return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    return `<div class="applicant-debug-list-row">
       <div style="min-width:0;">
         <div style="font-weight:600;">${esc(title)}</div>
         <div class="admin-toggle-sub" style="margin:2px 0 0;opacity:0.7;">
           ${esc(a.status || 'unknown')} · ${esc(a.work_mode || '—')} · ${esc(shots)} screenshots${(a.outcomes || []).length ? ` · ${esc((a.outcomes || []).map((o) => o.type).join(', '))}` : ''}
         </div>
       </div>
-      <div style="display:flex;gap:6px;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+        <button type="button" class="applicant-debug-row-secondary applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
         <button class="admin-btn-sm applicant-debug-detail" data-app="${esc(id)}">Details</button>
-        <button class="admin-btn-sm applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
       </div>
     </div>`;
   }).join('');
-  _body().innerHTML = `<div id="applicant-debug-detail-host"></div>${rows}`;
+  _body().innerHTML = `<div id="applicant-debug-detail-host"></div><div class="applicant-debug-list">${rows}</div>`;
   _body().querySelectorAll('.applicant-debug-detail').forEach((b) => {
     b.addEventListener('click', () => _showAppDetail(b.dataset.app));
   });
@@ -880,6 +885,22 @@ async function _renderUpdate() {
 
 // ── Open / launcher ─────────────────────────────────────────────────────────
 
+// #87: the "Engine offline" note used to be a header-row badge (one more group
+// crowding an already-packed row) — it now lives as a banner just above the
+// tab strip, in the body area, separate from the header's leading/trailing
+// controls.
+function _setEngineBanner(modal, up) {
+  const banner = modal.querySelector('#applicant-debug-engine-banner');
+  if (!banner) return;
+  if (up) {
+    banner.style.display = 'none';
+    banner.textContent = '';
+  } else {
+    banner.textContent = 'Engine offline — this view will fill in once it is connected.';
+    banner.style.display = 'block';
+  }
+}
+
 export async function openApplicantDebug() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
@@ -887,12 +908,40 @@ export async function openApplicantDebug() {
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
-    const badge = modal.querySelector('#applicant-debug-engine');
-    if (badge) badge.textContent = up ? '' : 'Engine offline';
+    _setEngineBanner(modal, up);
     await _renderTab();
   } catch (err) {
     _body().innerHTML = errorHTML(_errLine(err));
     wireRetry(_body(), openApplicantDebug);
+  }
+}
+
+// #98: lets another surface (Compare) deep-link a specific application into the
+// Debug/Activity detail drill-in instead of dead-ending on a bare id. Opens the
+// modal, selects the given campaign (when known) and jumps straight to that
+// application's detail card on the Activity tab.
+export async function openApplicantDebugDetail(campaignId, appId) {
+  const modal = _ensureModalEl();
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  _body().innerHTML = loadingHTML('Loading…');
+  try {
+    const up = await _loadCampaigns();
+    _setEngineBanner(modal, up);
+    if (campaignId) {
+      _campaignId = campaignId;
+      const sel = modal.querySelector('#applicant-debug-campaign');
+      if (sel) sel.value = campaignId;
+    }
+    _activeTab = 'activity';
+    modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => {
+      x.classList.toggle('active', x.dataset.tab === 'activity');
+    });
+    await _renderTab();
+    if (appId) await _showAppDetail(appId);
+  } catch (err) {
+    _body().innerHTML = errorHTML(_errLine(err));
+    wireRetry(_body(), () => openApplicantDebugDetail(campaignId, appId));
   }
 }
 
@@ -925,7 +974,7 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantDebugModule = { openApplicantDebug };
+const applicantDebugModule = { openApplicantDebug, openApplicantDebugDetail };
 try { window.applicantDebugModule = applicantDebugModule; } catch { /* no-op */ }
 
 // Exported so the submission-record drill-in renderer (#372) is unit-renderable.
