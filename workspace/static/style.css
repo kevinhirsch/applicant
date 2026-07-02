@@ -301,7 +301,7 @@ body.bg-pattern-sparkles {
       transform: translateY(calc(-50% - 2px));
       font-size: 0.75em;
       line-height: 1;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       white-space: nowrap;
       display: flex;
       align-items: center;
@@ -2050,7 +2050,7 @@ body.bg-pattern-sparkles {
       border-radius: 6px;
       padding: 12px;
       text-align: center;
-      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       font-size: 11px;
       cursor: pointer;
       transition: border-color 0.2s;
@@ -2061,7 +2061,7 @@ body.bg-pattern-sparkles {
     }
     .msg .timestamp {
       font-size: 10px;
-      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       margin-top: 4px;
       text-align: right;
       opacity: 0.7;
@@ -2491,7 +2491,7 @@ body.bg-pattern-sparkles {
     .mode-toggle-btn {
       background: none;
       border: none;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       cursor: pointer;
       /* Center the label in the 28px pill. Without an explicit flex box +
          line-height the 11px text fell to the default baseline near the
@@ -2565,7 +2565,7 @@ body.bg-pattern-sparkles {
       background: none;
       border: 1px solid transparent;
       border-radius: 4px;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -5266,7 +5266,7 @@ body.bg-pattern-sparkles {
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      color: color-mix(in srgb, var(--fg) 58%, transparent);
     }
     .vis-icon-text {
       font-size: 10px;
@@ -7350,7 +7350,7 @@ textarea.memory-add-input {
   line-height: 1.4;
 }
 .memory-add-input::placeholder {
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 
 .memory-add-input:focus {
@@ -11304,7 +11304,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-ep-info { flex: 1; overflow: hidden; }
 .admin-ep-name { color: var(--fg); font-weight: 500; }
 .admin-ep-detail {
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -11321,7 +11321,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
 .admin-warn { color: var(--color-warning, #f0ad4e); font-size: 11px; margin-top: 4px; }
 .admin-empty {
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   font-size: 12px;
   padding: 10px 0;
   text-align: center;
@@ -11355,7 +11355,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   color: var(--fg);
 }
 .admin-rag-item-meta {
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   font-size: 10px;
   margin: 0 6px;
   flex-shrink: 0;
@@ -13170,7 +13170,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   font-size: 9px;
   font-family: monospace;
   white-space: nowrap;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 .skill-conf { font-weight: 700; }
 .skill-verified,
@@ -13428,7 +13428,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   pointer-events: none;
   font-size: 12px;
   line-height: 1.2;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Textarea: align the hint to the first line instead of vertical-centering. */
@@ -13467,7 +13467,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 8px;
   padding: 28px 16px;
   font-size: 12px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 .doclib-load-more {
   display: block;
@@ -15252,7 +15252,7 @@ body.gallery-selecting .gallery-dl-btn,
   height: 22px !important;
   border-radius: 6px !important;
   border: 1px solid var(--border) !important;
-  color: color-mix(in srgb, var(--fg) 40%, transparent) !important;
+  color: color-mix(in srgb, var(--fg) 58%, transparent) !important;
   opacity: 1 !important;
   background: none !important;
 }
@@ -15577,7 +15577,7 @@ body.gallery-selecting .gallery-dl-btn,
   height: 22px !important;
   border-radius: 6px !important;
   border: 1px solid var(--border) !important;
-  color: color-mix(in srgb, var(--fg) 40%, transparent) !important;
+  color: color-mix(in srgb, var(--fg) 58%, transparent) !important;
   opacity: 1 !important;
   background: none !important;
 }
@@ -16893,7 +16893,7 @@ body.gallery-selecting .gallery-dl-btn,
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -16924,7 +16924,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-remove-instance-btn {
   background: transparent;
   border: none;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   font-size: 12px;
   cursor: pointer;
   padding: 0 4px;
@@ -17882,7 +17882,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 2px 8px;
   border: 1px dashed var(--border);
   border-radius: 4px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 .shortcut-key-unset:hover .shortcut-unset { border-color: var(--accent, var(--red)); color: var(--fg); }
 .shortcut-key kbd {
@@ -27203,7 +27203,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   padding: 6px 0;
 }
 .notes-quick-input::placeholder {
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 /* Blinking text caret hint before the placeholder so empty + unfocused
    reads as a live input. Sits on the wrapper because <input> elements
@@ -27279,7 +27279,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .notes-quick-type-pill {
   background: none;
   border: none;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   cursor: pointer;
   padding: 0 11px;
   font-family: inherit;
@@ -27673,7 +27673,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-form-type-pill {
   background: none;
   border: none;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   cursor: pointer;
   padding: 0 12px;
   font-size: 13px;
@@ -32040,7 +32040,7 @@ body.theme-frosted .modal {
 .research-section-clear {
   font-size: 10px; padding: 0 8px; height: 22px;
   border-radius: 6px; border: 1px solid var(--border);
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
   background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
   font-family: inherit; white-space: nowrap; transition: all 0.15s;
   position: relative; top: -2px;
