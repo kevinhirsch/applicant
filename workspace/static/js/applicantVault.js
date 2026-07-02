@@ -25,10 +25,22 @@ import { esc, _toast, _fetchJSON, _post, errText, loadingHTML, errorHTML, wireRe
 
 const API = '/api/applicant/vault';
 
+// localStorage marker: the campaign (job search) the user last had the vault
+// open for, so the picker doesn't reset to the first campaign every time the
+// modal reopens without an explicit campaignId — mirrors the `applicant_` key
+// convention already used for small UI-state markers (see applicantPortal.js's
+// NOTIF_SEEN_KEY / RECAP_SEEN_KEY).
+const LAST_CAMPAIGN_KEY = 'applicant_vault_last_campaign_id';
+
 let _modalEl = null;
 let _modalA11yCleanup = null;
 let _campaignId = '';
 let _busy = false;
+// True once the user has typed/changed anything in the vault modal since it was
+// last opened (or since the last successful save) — i.e. unsaved credential
+// input a stray X / Escape / backdrop-click / swipe-dismiss would silently
+// discard. Mirrors applicantOnboarding.js's `_formDirty` tracking.
+let _vaultDirty = false;
 
 
 
@@ -137,15 +149,54 @@ function _wire(modal) {
     const node = modal.querySelector('#' + id);
     if (node) node.addEventListener(ev, fn);
   };
-  on('applicant-vault-close', 'click', closeApplicantVault);
+  on('applicant-vault-close', 'click', _maybeCloseVault);
   on('applicant-vault-save', 'click', _onSave);
   on('applicant-vault-google-save', 'click', () => _onSaveAccount('google'));
   on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
   on('applicant-vault-refresh', 'click', () => _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e)));
   modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeApplicantVault();
+    if (e.target === modal) _maybeCloseVault();
   });
+  // Track unsaved input so a stray close doesn't silently discard a typed-but-
+  // unsaved credential (see _maybeCloseVault / _setVaultDirty below).
+  modal.addEventListener('input', () => _setVaultDirty(true));
+  modal.addEventListener('change', () => _setVaultDirty(true));
   _wireSaveProminence(modal);
+}
+
+// Sets the dirty flag AND toggles `data-no-swipe-dismiss` on the modal-content
+// (the same opt-out hook applicantOnboarding.js's overlay uses statically — see
+// ui.js's touchstart handler, which only engages swipe-dismiss when the
+// attribute is absent). Here it's toggled dynamically: swipe-to-dismiss stays
+// available while the form is clean, and is blocked the moment there's unsaved
+// input, so a mobile swipe can't bypass the confirm-before-discard below (that
+// gesture hides the modal directly via ui.js, never calling closeApplicantVault).
+function _setVaultDirty(dirty) {
+  _vaultDirty = dirty;
+  const content = _modalEl && _modalEl.querySelector('.modal-content');
+  if (content) {
+    if (dirty) content.setAttribute('data-no-swipe-dismiss', '');
+    else content.removeAttribute('data-no-swipe-dismiss');
+  }
+}
+
+// Same async confirm shape as applicantPortal.js's `_confirm()` / applicantRemote.js's
+// `_confirm()`: uiModule.styledConfirm with a window.confirm fallback.
+async function _confirm(message, opts) {
+  try {
+    if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
+  } catch { /* fall through */ }
+  try { return window.confirm(message); } catch { return false; }
+}
+
+// Confirm-before-discard for the X button / Escape / backdrop click. Closes
+// immediately when there's nothing unsaved to lose.
+async function _maybeCloseVault() {
+  if (!_vaultDirty) { closeApplicantVault(); return; }
+  const ok = await _confirm(
+    'Discard the sign-in details you just typed? They have not been saved yet.',
+    { confirmText: 'Discard', cancelText: 'Keep editing', danger: true });
+  if (ok) closeApplicantVault();
 }
 
 // #105: three co-equal "Save …" primaries read as competing CTAs. All three
@@ -249,6 +300,7 @@ async function _save({ tenantKey, username, secret }) {
       secret,
     });
     _toast('Sign-in saved');
+    _setVaultDirty(false);
     await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
     return true;
   } catch (e) {
@@ -311,6 +363,7 @@ async function _onSaveAccount(kind) {
     await _post(`${API}/account`, { kind, username, secret });
     _toast('Sign-in saved');
     if (secretEl) secretEl.value = ''; // clear the password from the DOM after save
+    _setVaultDirty(false);
     await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
   } catch (e) {
     _toast(e.message || 'Could not save the sign-in');
@@ -330,9 +383,27 @@ async function _resolveDefaultCampaign() {
   try {
     const list = await _fetchJSON('/api/applicant/setup/campaigns');
     const arr = Array.isArray(list) ? list : (list && list.campaigns) || [];
-    if (arr.length && arr[0] && arr[0].id) _campaignId = String(arr[0].id);
+    if (arr.length) {
+      // Prefer the campaign the user last had the vault open for (persisted
+      // across opens/reloads); fall back to the first campaign when nothing is
+      // remembered OR the remembered one no longer exists (e.g. deleted).
+      let last = null;
+      try { last = window.localStorage.getItem(LAST_CAMPAIGN_KEY); } catch { last = null; }
+      const match = last && arr.find((c) => c && String(c.id) === last);
+      const chosen = match || arr[0];
+      if (chosen && chosen.id) _campaignId = String(chosen.id);
+    }
   } catch { /* leave unset; UI shows the choose-a-job-search note */ }
   return _campaignId;
+}
+
+// Best-effort persistence of the "last used" campaign so the next vault open
+// without an explicit campaignId (e.g. the Settings "Saved sign-ins" entry)
+// remembers the user's choice instead of always resetting to the first
+// campaign in the list.
+function _rememberCampaign(id) {
+  if (!id) return;
+  try { window.localStorage.setItem(LAST_CAMPAIGN_KEY, String(id)); } catch { /* no-op */ }
 }
 
 /** Open the vault UI. Account sign-ins (Google / default new-account) are global;
@@ -341,10 +412,13 @@ export async function openApplicantVault(campaignId, opts) {
   if (campaignId) _campaignId = String(campaignId);
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
+  // A fresh open starts clean — nothing typed yet this session to lose.
+  _setVaultDirty(false);
   if (_modalA11yCleanup) _modalA11yCleanup();
-  _modalA11yCleanup = uiModule.initModalA11y(modal, closeApplicantVault);
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _maybeCloseVault);
   await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
   if (!_campaignId) await _resolveDefaultCampaign();
+  _rememberCampaign(_campaignId);
   await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
   // Pre-fill the "add a sign-in" form for a known site — e.g. opened right after
   // the user created an account during a live takeover (FR-VAULT-2), so they only
