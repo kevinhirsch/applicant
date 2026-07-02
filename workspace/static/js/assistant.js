@@ -110,8 +110,9 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
+  // Escape is handled by initModalA11y above (topmost-modal arbiter,
+  // design-audit item #17) — do not add a second local Escape listener here.
   _modalA11yCleanup = uiModule.initModalA11y(modal, _closeModal);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeModal(); });
   modal.querySelector('#assistant-settings-close').addEventListener('click', _closeModal);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _closeModal();

@@ -28,6 +28,7 @@ import { _fetchJSON as _kitFetchJSON, errText, loadingHTML, emptyHTML, errorHTML
 const API = `${window.location.origin}/api/applicant/compare`;
 
 let _modalEl = null;
+let _modalA11yCleanup = null;
 // The in-flight compare request's abort controller + a flag so the catch handler
 // can tell a user-triggered Cancel apart from a real network/engine error.
 let _compareController = null;
@@ -118,7 +119,11 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  // Tab-trap + Escape-to-close + focus-restore, and (design-audit item #17)
+  // topmost-only Escape arbitration against any other open modal/dialog —
+  // reuse ui.js's initModalA11y rather than a bespoke local Escape listener.
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-compare-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelector('#applicant-compare-run').addEventListener('click', _runCompare);
@@ -127,6 +132,7 @@ function _ensureModalEl() {
 }
 
 function _close() {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = '';
