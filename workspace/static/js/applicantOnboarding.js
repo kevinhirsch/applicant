@@ -56,6 +56,12 @@ let _busy = false;
 // whenever a step re-renders (_setBody) — including right after a successful
 // save, since the freshly-rendered next step starts clean.
 let _formDirty = false;
+// Audit Top-25 #17 / §7 item 3 (Journey Beat 2 "first light"): set only when
+// _finish() reaches the genuine "You're all set!" screen (llm_configured, i.e.
+// the wizard has nothing left gating it), so _dismiss() can tell a real
+// completion hand-off apart from an Escape/cancel out of a still-incomplete
+// wizard. Consumed (and reset) the moment _dismiss() reads it.
+let _justCompletedSetup = false;
 
 // Ordered wizard steps. `done(status)` reads the engine status to decide if the
 // step is already satisfied (drives resume + the progress rail).
@@ -1757,6 +1763,10 @@ async function _finish() {
       : `Applicant is set up. Before it starts applying it still needs: ${esc(applyMissing.join(', '))} — just tell it in chat or add a résumé any time, and it'll begin automatically.`;
     _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p></div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
+    // First-light payoff: this is the ONE screen that means setup is genuinely
+    // done (llm_configured, nothing left gating it) — mark it so _dismiss() knows
+    // to hand off to the Portal home base rather than just closing quietly.
+    _justCompletedSetup = true;
     document.getElementById('ao-finish').onclick = _dismiss;
     const nav = document.getElementById('ao-nav');
     if (nav) nav.innerHTML = '';
@@ -1811,6 +1821,33 @@ async function _maybeDismiss() {
   if (ok) _dismiss();
 }
 
+// Audit Top-25 #17 / §7 item 3 (Journey Beat 2 "first light"): kill the dead air
+// right after setup completes. The engine's always-on 24/7 scheduler (agent_loop.py
+// _run_discovery, driven by app/lifespan.py's _scheduler_loop) already ticks on its
+// own cadence — no separate client-side kickoff is needed to START discovery, it
+// picks campaigns up the moment criteria are ready. What's missing is the user
+// SEEING that: left on the bare chat shell, first light reads as dead. Hand off
+// straight to the Portal — the established post-login home base and notification
+// center (Journey Map Beat 2/4, `applicantPortal.js` openApplicantPortal) — with a
+// short "you're set, here's what's next" toast, matching the honest, low-key voice
+// of the models.js welcome-card work rather than a hard silent auto-navigation.
+function _openHomeBaseAfterSetup() {
+  try {
+    if (window.uiModule && typeof window.uiModule.showToast === 'function') {
+      window.uiModule.showToast(
+        'You’re all set — Applicant is getting to work. Here’s your home base.',
+        { duration: 6000 });
+    } else {
+      _toast('You’re all set — Applicant is getting to work.');
+    }
+  } catch { /* the toast is a nice-to-have; never let it block the hand-off */ }
+  try {
+    if (window.applicantPortalModule && typeof window.applicantPortalModule.openApplicantPortal === 'function') {
+      window.applicantPortalModule.openApplicantPortal();
+    }
+  } catch { /* best-effort — a missing/broken Portal module must never break finishing setup */ }
+}
+
 function _dismiss() {
   // Tear down a11y bindings before removing the overlay from the DOM.
   if (_overlayA11yCleanup) { _overlayA11yCleanup(); _overlayA11yCleanup = null; }
@@ -1819,14 +1856,23 @@ function _dismiss() {
   _restoreEndpointManager();
   if (_overlay && _overlay.parentNode) _overlay.parentNode.removeChild(_overlay);
   _overlay = null;
+  // Consume the "we just reached the genuine finish screen" flag once, however
+  // this dismiss was triggered (Get started click or Escape) — a mid-wizard
+  // Escape/cancel never sets it, so this stays scoped to real completions.
+  const justCompleted = _justCompletedSetup;
+  _justCompletedSetup = false;
   // Re-run the feature-activation layer so the job sections light up now that the
   // engine gate is open. app.js exposes the refresh; fall back to a reload.
   try {
     if (typeof window.refreshApplicantFeatures === 'function') {
       window.refreshApplicantFeatures();
+      if (justCompleted) _openHomeBaseAfterSetup();
       return;
     }
   } catch { /* fall through */ }
+  // No refresh hook (defensive path only — app.js always defines it in practice):
+  // a reload would wipe any Portal we open now, so skip the hand-off here and let
+  // the reloaded page's own boot sequence stand up the nav fresh.
   try { window.location.reload(); } catch { /* no-op */ }
 }
 
