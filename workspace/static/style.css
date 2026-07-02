@@ -658,6 +658,14 @@ body.bg-pattern-sparkles {
     .hamburger-btn:hover {
       opacity: 1;
     }
+    /* Global sidebar toggle — the base rule above sets outline:none unconditionally
+       (killing the site-wide :focus-visible fallback too), so keyboard focus had no
+       visible ring at all. Restore it explicitly. */
+    .hamburger-btn:focus-visible {
+      outline: 2px solid var(--sys-blue);
+      outline-offset: 2px;
+      opacity: 1;
+    }
     /* Icon rail — mini sidebar that replaces the wide .sidebar when it's
        hidden (mutually exclusive — see sidebar-layout.js:57). Fullscreen
        panels reserve this strip of width via `left: var(--icon-rail-w)`
@@ -1915,7 +1923,9 @@ body.bg-pattern-sparkles {
       margin-right: 8px;
       background: var(--user-bubble-bg, color-mix(in srgb, var(--fg) 8%, var(--bg)));
       border: 1px solid var(--bubble-border, var(--border));
-      border-radius: 18px 18px 0 18px;
+      /* Item #53: a hard 0px tail corner reads as a clipped-off edge, not a tail —
+         Apple's bubble tail is a small non-zero radius. */
+      border-radius: 18px 18px 6px 18px;
       align-self: flex-end;
       width: fit-content;
       max-width: 85%;
@@ -1930,9 +1940,13 @@ body.bg-pattern-sparkles {
       margin-left: 8px;
       background: var(--ai-bubble-bg, var(--panel));
       border: 1px solid var(--bubble-border, var(--border));
-      border-radius: 18px 18px 18px 0;
+      /* Item #53: matching non-zero tail radius (was a hard 0px corner). */
+      border-radius: 18px 18px 18px 6px;
       align-self: flex-start;
-      width: 85%;
+      /* Item #54: hug the text like the user bubble instead of pinning to a fixed
+         85% (that was previously only fixed for the frosted tier — default it here
+         so every tier hugs short replies instead of stretching them). */
+      width: fit-content;
       max-width: 85%;
       min-width: 80px;
       word-wrap: break-word;
@@ -1976,7 +1990,11 @@ body.bg-pattern-sparkles {
       font-size: 0.95em;
       margin: 0;
       overflow: hidden;
-      max-width: 100%;
+      /* Item #55: reading-measure cap — a bubble in a very wide window could
+         stretch far past a comfortable line length; cap it like the rest of the
+         app's prose. The bubble's own 85% max-width still applies first on
+         narrower viewports, so this only kicks in on wide ones. */
+      max-width: 68ch;
     }
     .msg .body > * {
       margin-top: 8px;
@@ -7207,19 +7225,7 @@ details a:hover {
   font-size: 12px;
   overflow: hidden;   /* clip both axes; the inner .memory-modal-body owns scrolling.
                          (overflow-x alone promotes overflow-y to `auto` → a stray vertical scrollbar) */
-  /* Subtle synapse-pulse — a soft radial glow that breathes in/out.
-     Layered over the existing modal bg so it shows through without
-     overpowering content. */
   position: relative;
-  isolation: isolate;
-}
-.memory-modal-content::before { content: none; }
-@keyframes memory-synapse-pulse {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50%      { opacity: 0.65; transform: scale(1.02); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .memory-modal-content::before { animation: none; opacity: 0.4; }
 }
 .memory-modal-content .modal-header h4 {
   font-size: 1rem;
@@ -7749,17 +7755,32 @@ textarea.memory-add-input {
   border-color: color-mix(in srgb, var(--orange, #ff9800) 40%, transparent);
   background: color-mix(in srgb, var(--orange, #ff9800) 12%, transparent);
 }
+/* ── Shared list-row primitive ──
+   .ow-list-row is the single flat-row treatment adopted across every
+   hand-rolled "card" list in the app (Memory, Tasks, Library, Email): a
+   hairline bottom separator instead of a bordered/tinted tile, a
+   hover-only fill, a ≥44px minimum height, and a system-blue
+   focus-visible ring. Consumers keep their own flex layout/spacing —
+   this class only owns the framing. */
+.ow-list-row {
+  min-height: 44px;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.ow-list-row:last-child { border-bottom-color: transparent; }
+.ow-list-row:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.ow-list-row:focus-visible { outline: 2px solid var(--sys-blue); outline-offset: -2px; }
+
 .memory-item {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--fg) 3%, transparent);
   max-height: 200px;
   flex-shrink: 0;        /* memory-list is a flex column; without this, items get squeezed to fit */
-  transition: all 0.15s;
 }
 
 .memory-item-title {
@@ -7770,71 +7791,13 @@ textarea.memory-add-input {
   white-space: nowrap;
 }
 
-.memory-item:hover {
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-  border-color: color-mix(in srgb, var(--fg) 16%, transparent);
-}
-/* Synapse pulse — a brief horizontal light sweep runs left → right across
-   each memory like a signal traversing a neural pathway. Per-item stagger
-   via nth-child + varied durations keeps the list shimmering rather than
-   pulsing in sync. */
-#memory-list .memory-item {
-  position: relative;
-  overflow: hidden;
-}
-#memory-list .memory-item::after {
-  /* Sweep highlight rides the border ring only — gradient-fill + mask cutout
-     keeps the bright pulse on the 1px stroke instead of washing the body. */
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  pointer-events: none;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    transparent calc(var(--sweep, -20%) - 8%),
-    color-mix(in srgb, var(--chrome-ink) 55%, transparent) var(--sweep, -20%),
-    transparent calc(var(--sweep, -20%) + 8%),
-    transparent 100%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  animation: memory-synapse-sweep 6.2s linear infinite;
-  animation-delay: 0.4s;
-}
-#memory-list .memory-item:nth-child(2n)::after { animation-duration: 7.4s; animation-delay: 1.6s; }
-#memory-list .memory-item:nth-child(3n)::after { animation-duration: 8.8s; animation-delay: 3.2s; }
-#memory-list .memory-item:nth-child(5n)::after { animation-duration: 9.3s; animation-delay: 4.7s; }
-#memory-list .memory-item:nth-child(7n)::after { animation-duration: 5.5s; animation-delay: 2.3s; }
-#memory-list .memory-item:hover::after { animation: none; opacity: 0; }
-/* Accessibility: the optics always yield to the user's settings — a perpetual
-   sweep is gratuitous peripheral motion, so kill it entirely under Reduce Motion
-   (HIG Motion / persona rule #9). The ring itself simply rests un-animated. */
-@media (prefers-reduced-motion: reduce) {
-  #memory-list .memory-item::after { animation: none !important; }
-}
-@property --sweep {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: -20%;
-}
-@keyframes memory-synapse-sweep {
-  /* Sweep traverses left → right in the first ~12% of the cycle (≈0.7s of
-     a 6.2s loop), then waits offscreen. */
-  0%   { --sweep: -20%; }
-  12%  { --sweep: 120%; }
-  13%, 100% { --sweep: 120%; }
-}
-@media (prefers-reduced-motion: reduce) {
-  #memory-list .memory-item::after { animation: none; opacity: 0; }
-}
+/* #123: the synapse-sweep ::after (per-row infinite light sweep, staggered
+   via nth-child) and its @property/@keyframes have been removed outright —
+   a prior pass only gated it behind prefers-reduced-motion, which still left
+   a perpetual animation running for everyone else. Memory rows now rely on
+   .ow-list-row for hover/focus affordance instead of any per-row motion. */
 .memory-pinned:hover {
-  background: color-mix(in srgb, var(--red) 4%, transparent);
-  border-color: var(--border);
-  border-left-color: var(--red);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
 .memory-item-content {
@@ -8077,10 +8040,10 @@ textarea.memory-add-input {
   background: var(--red);
   opacity: 1;
 }
+/* #125: pinned state is conveyed by the neutral pin glyph (.memory-pin-dot)
+   staying visible/filled, not by tinting the whole row red. */
 .memory-pinned {
-  border-left: 3px solid var(--red);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--red) 4%, transparent);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .memory-pinned .memory-item-actions {
   opacity: 1;
@@ -11327,13 +11290,17 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   text-align: center;
 }
 /* Endpoint-list empty states ("No endpoints configured" / "None") get a
-   left-aligned, accent-colored treatment so they read as "this row is your
-   placeholder, click Add" rather than a centered "nothing here" grey blob. */
+   left-aligned treatment so they read as "this row is your placeholder, click
+   Add" rather than a centered "nothing here" grey blob. D70: `--accent-primary`
+   and `--accent` aren't theme tokens that are actually set, so this fell
+   through to `--red` — a plain informational "None yet" painted as if it were
+   an error. Reserve red for `.admin-error`; use the same muted secondary-label
+   tone as the base `.admin-empty` rule. */
 #adm-epList-local .admin-empty,
 #adm-epList-api .admin-empty {
   text-align: left;
   padding: 8px 4px;
-  color: var(--accent-primary, var(--accent, var(--red)));
+  color: color-mix(in srgb, var(--fg) 58%, transparent);
 }
 
 /* RAG directory list items */
@@ -14018,6 +13985,13 @@ body.gallery-selecting .gallery-dl-btn,
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
+/* #137: a photo tile IS the content — flat gutter grid, no border chrome.
+   (The upload-affordance tile is a control, not content, so it's excluded
+   here and keeps inheriting var(--border) from the base rule above for its
+   own dashed-border look.) */
+.gallery-card:not(.gallery-card-upload) {
+  border-color: transparent;
+}
 /* Upload-affordance tile pinned to the top-left of the Photos grid. Matches
    the Upload album tile in the Albums tab — dashed border, centered icon. */
 .gallery-card-upload {
@@ -14206,10 +14180,11 @@ body.gallery-selecting .gallery-dl-btn,
   font-weight: 500;
   opacity: 0.8;
 }
+/* #137: flat hover — a subtle neutral ring, not a colored border+shadow+lift.
+   (Selection below already reads via a ring; hover echoes that language
+   instead of introducing a separate lift/shadow/hue treatment.) */
 .gallery-card:hover {
-  border-color: var(--red);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--red) 15%, transparent);
-  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
 }
 .gallery-select-dot {
   position: absolute; top: 6px; left: 6px; z-index: 2;
@@ -17791,12 +17766,14 @@ body.gallery-selecting .gallery-dl-btn,
 }
 
 .settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+/* D71: the markup already spells the section label title-case ("Admin") — this
+   was force-uppercasing it to "ADMIN". Drop the transform so it renders as
+   written; keep the small/quiet caption treatment. */
 .settings-sidebar-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  opacity: 0.35;
+  letter-spacing: 0.2px;
+  opacity: 0.5;
   padding: 4px 12px 2px;
 }
 .settings-nav-item {
@@ -18792,6 +18769,11 @@ select.task-form-input { text-overflow: ellipsis; }
      the card off-screen on mobile. */
   min-width: 0;
   max-width: 100%;
+  /* D67: was padding:5px 8px with no min-height — well under the 44px tap
+     floor. box-sizing keeps the extra height from also inflating the width
+     the padding already accounts for. */
+  min-height: 44px;
+  box-sizing: border-box;
   padding: 5px 8px;
   font-family: inherit;
   font-size: 12px;
@@ -18799,7 +18781,7 @@ select.task-form-input { text-overflow: ellipsis; }
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--fg);
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: textfield;
@@ -18811,9 +18793,15 @@ input.settings-select::-webkit-inner-spin-button {
   margin: 0;
 }
 input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
+/* D66: focused fields painted a RED border with no ring at all — read as a
+   validation error on every field the instant it was focused, and gave no
+   accessible focus indicator. Neutral system-blue ring, matching the
+   sanctioned focus-ring color used everywhere else (`:focus-visible` at the
+   top of this file); red stays reserved for actual errors (`.admin-error`). */
 .settings-select:focus {
   outline: none;
-  border-color: var(--red);
+  border-color: var(--sys-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sys-blue) 35%, transparent);
 }
 
 /* Default-chat fallback chain editor. Each row mirrors the primary
@@ -32257,22 +32245,61 @@ body.theme-frosted .modal {
   width: min(640px, 96vw);
   max-height: 92vh;
 }
-/* UNIQUE: the step rail builds on `.admin-tabs`/`.admin-tab` but its steps are
-   status indicators, not clickable tabs — mark complete steps and disable the
-   tab hover affordance. */
+/* D84: the sheet itself stays 640px (room for the endpoint manager / repeat
+   fieldsets), but the step BODY reads calmer capped to a single column instead
+   of every row/card stretching edge-to-edge across the full width. */
+#applicant-onboarding-overlay #ao-body { max-width: 560px; margin: 0 auto; }
+/* UNIQUE: the step rail builds on `.admin-tabs`/`.admin-tab`, but D75: these
+   are progress indicators, not clickable tabs — nothing here has a click
+   handler, and `aria-disabled` (see _renderRail) says so to assistive tech.
+   Drop the tab hover affordance so sighted users get the same non-interactive
+   read instead of a strip that looks clickable. */
 #applicant-onboarding-overlay .admin-tab { cursor: default; }
 #applicant-onboarding-overlay .admin-tab.done { color: var(--color-success); }
 #applicant-onboarding-overlay .admin-tab.done:hover,
 #applicant-onboarding-overlay .admin-tab:hover { color: inherit; }
 #applicant-onboarding-overlay .admin-tab.done:hover { color: var(--color-success); }
-/* UNIQUE: footer action row pinned to the bottom of the modal body. */
+/* D76: "Connect a model" is the one step that actually gates beginning — call
+   it out in the rail instead of presenting all three steps as equal weight. */
+#applicant-onboarding-overlay .ao-rail-req {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  margin-left: 4px; opacity: 0.85; color: var(--sys-blue);
+}
+/* D74: a narrow phone could truncate a step title in the tab strip ("3. Your
+   pro…"). `.ao-rail-compact` is a single always-legible "Step N of M · Title"
+   line that swaps in for the tab strip under the narrow breakpoint. */
+#applicant-onboarding-overlay .ao-rail-compact { display: none; }
+@media (max-width: 480px) {
+  #applicant-onboarding-overlay .ao-rail-compact {
+    display: block; padding: 4px 2px 8px; font-size: 0.78rem; font-weight: 600; color: var(--chrome-ink);
+  }
+  #applicant-onboarding-overlay .ao-rail-step { display: none; }
+}
+/* D69: Back/Skip and the step's own primary action used to be two stacked
+   full-width rows, each with its own top border/margin — read as two
+   competing calls to action (worst on Welcome, where "Let's get started" sat
+   directly above a separate "Skip for now" row). One shared terminal action
+   bar instead: secondary actions grouped left, the primary action right,
+   sharing a single hairline separator. */
+#applicant-onboarding-overlay .ao-actionbar {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+  padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border);
+}
 #applicant-onboarding-overlay .ao-foot {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  padding-top: 14px;
-  margin-top: 14px;
-  border-top: 1px solid var(--border);
+  display: flex; gap: 10px; justify-content: flex-end; margin: 0; padding: 0; border: none;
+  flex: 0 0 auto;
+}
+/* D77: secondary actions (Back/Skip/etc.) matched the primary CTA's exact
+   44px pill size and sat directly adjacent to it, competing for attention.
+   Quiet them down so the one `.cal-btn-primary` per step still reads as the
+   one thing to do. */
+#applicant-onboarding-overlay .cal-btn:not(.cal-btn-primary) {
+  min-height: 36px;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#applicant-onboarding-overlay .cal-btn:not(.cal-btn-primary):hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 /* UNIQUE: the wizard's resume / font file inputs reuse fileHandler's `.attach-strip`
    chips; un-cap the chat strip's max-width inside the narrower wizard body. */
@@ -32282,6 +32309,36 @@ body.theme-frosted .modal {
 #applicant-onboarding-overlay .ao-step-title { font-size: 1.05rem; font-weight: 600; margin: 8px 0 4px; }
 #applicant-onboarding-overlay .ao-step-desc { margin: 0 0 14px; opacity: 0.78; font-size: 0.9rem; }
 #applicant-onboarding-overlay .ao-intake-progress { font-size: 0.78rem; opacity: 0.6; margin: 6px 0; }
+/* D68/D81: Welcome used to stack two bordered `.admin-card` boxes (an ordered
+   list + a dense paragraph, then a second card with a 4-item list) ahead of
+   any action — a lot to read before the one CTA. A flattened, hairline-
+   separated group replaces the first card so the step reads as one plane, and
+   calls out the one actually-required step (D76) instead of listing both
+   items at equal weight. */
+#applicant-onboarding-overlay .ao-hairline-group { border-top: 1px solid var(--border); margin: 10px 0 4px; }
+#applicant-onboarding-overlay .ao-hairline-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 10px 2px; border-bottom: 1px solid var(--border); font-size: 0.86rem;
+}
+#applicant-onboarding-overlay .ao-hairline-text { opacity: 0.88; }
+#applicant-onboarding-overlay .ao-step-badge {
+  flex: 0 0 auto; text-transform: uppercase;
+  font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em;
+  padding: 2px 8px; border-radius: 999px;
+}
+#applicant-onboarding-overlay .ao-step-badge-required {
+  background: color-mix(in srgb, var(--sys-blue) 18%, transparent); color: var(--sys-blue);
+}
+#applicant-onboarding-overlay .ao-step-badge-optional {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+/* D81: the "what Applicant never does" trust list (same NEVER_DOES wording
+   the Portal empty state reuses, D39) is collapsed behind a disclosure — a
+   beat away rather than a wall of reading before the CTA. Reuses `.ao-adv`'s
+   summary treatment below. */
+#applicant-onboarding-overlay .ao-welcome-trust { margin-top: 14px; }
+#applicant-onboarding-overlay .ao-trust-list { margin: 8px 0 0 18px; padding: 0; font-size: 0.84rem; line-height: 1.5; opacity: 0.85; }
 /* UNIQUE: the `?` help marker layers onto the workspace-standard
    `.preset-hint-icon` (see _tip()); only the inline placement is wizard-local. */
 #applicant-onboarding-overlay .ao-tip { cursor: help; margin-left: 4px; vertical-align: middle; position: relative; }
@@ -32292,15 +32349,22 @@ body.theme-frosted .modal {
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
   width: max-content; max-width: 280px; white-space: normal; text-align: left;
-  background: var(--popover-bg, var(--card-bg, #20232a)); color: var(--text, #e8e8e8);
+  /* D78: `--popover-bg`/`--card-bg`/`--text` are never actually set anywhere in
+     this theme, so this always fell through to the hard-coded dark literals
+     regardless of theme — a light theme got a near-black tooltip. Use the real
+     theme tokens (`--panel`/`--fg`) so the bubble tracks the active theme. */
+  background: var(--panel); color: var(--fg);
   border: 1px solid var(--border, #444); border-radius: 6px; padding: 7px 9px;
   font-size: 11px; font-weight: 400; line-height: 1.4; letter-spacing: normal;
   box-shadow: 0 6px 18px rgba(0,0,0,0.38); z-index: 10001; pointer-events: none;
 }
-/* Persistent Back / Skip bar — always present so no step traps the user. */
+/* Persistent Back / Skip bar — always present so no step traps the user.
+   D69: now a left-aligned button cluster living inside the shared
+   `.ao-actionbar` row (see above) alongside the step's own primary action,
+   rather than a second full-width row with its own border underneath it. */
 #applicant-onboarding-overlay .ao-nav {
-  display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border, #444);
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: none;
+  flex: 1 1 auto;
 }
 /* Inline how-to cards (e.g. the Notifications setup help). */
 #applicant-onboarding-overlay .ao-help { font-size: 12px; line-height: 1.5; }
@@ -32341,7 +32405,11 @@ body.theme-frosted .modal {
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
   width: max-content; max-width: 280px; white-space: normal; text-align: left;
-  background: var(--popover-bg, var(--card-bg, #20232a)); color: var(--text, #e8e8e8);
+  /* D78: `--popover-bg`/`--card-bg`/`--text` are never actually set anywhere in
+     this theme, so this always fell through to the hard-coded dark literals
+     regardless of theme — a light theme got a near-black tooltip. Use the real
+     theme tokens (`--panel`/`--fg`) so the bubble tracks the active theme. */
+  background: var(--panel); color: var(--fg);
   border: 1px solid var(--border, #444); border-radius: 6px; padding: 7px 9px;
   font-size: 11px; font-weight: 400; line-height: 1.4; letter-spacing: normal;
   box-shadow: 0 6px 18px rgba(0,0,0,0.38); z-index: 10001; pointer-events: none;
@@ -32374,18 +32442,154 @@ body.theme-frosted .modal {
   max-width: 100%;
 }
 
-/* Live "working now" status dot in the Activity → Run controls tab: a gentle
-   expanding-ring pulse so the agent's running state reads at a glance. The dot
-   degrades to a solid colour where the animation is unsupported. Honors reduced
-   motion. */
-@keyframes applicantPulse {
-  0%   { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.55); }
-  70%  { box-shadow: 0 0 0 7px rgba(63, 185, 80, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); }
+/* ===== Apple Genius audit §F/§G — Vault / Remote / Gallery (#104-121, #137-138) === */
+
+/* #104/#106: the Vault holds secrets — one opaque plane, edged by a neutral
+   hairline (not the shared teal-hued --border stroke every modal carries),
+   pinned fully opaque under every glass tier so a credential sheet never lets
+   whatever's behind it show through the frost. */
+#applicant-vault-modal .modal-content {
+  border-color: color-mix(in srgb, var(--fg) 14%, transparent);
 }
-@media (prefers-reduced-motion: reduce) {
-  [style*="applicantPulse"] { animation: none !important; }
+body.theme-frosted #applicant-vault-modal .modal-content {
+  background-color: var(--panel) !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-color: color-mix(in srgb, var(--fg) 14%, transparent) !important;
 }
+
+/* #107: the Vault's three top-level sections aren't concentric with the sheet
+   (outer --window-radius 10px minus --window-pad 10px rounds to a square
+   inner radius) — drop the nested card chrome for a flat, hairline-separated
+   layout, matching the divider convention the Vault already uses internally
+   for its own Google / default sign-in sub-sections. */
+#applicant-vault-modal .modal-body > .admin-card {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 14px 0 0;
+  margin-bottom: 0;
+}
+#applicant-vault-modal .modal-body > .admin-card:first-child {
+  padding-top: 0;
+}
+#applicant-vault-modal .modal-body > .admin-card + .admin-card {
+  border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+/* #108: a plain neutral text field for credentials — NOT `.settings-select`
+   (dropdown/picker chrome), so a password field never looks like a <select>. */
+#applicant-vault-modal input.applicant-field {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+}
+#applicant-vault-modal input.applicant-field::placeholder {
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+#applicant-vault-modal input.applicant-field:focus {
+  border-color: var(--sys-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sys-blue) 30%, transparent);
+}
+
+/* #112: the irreversible final-submit carries the Destructive role at FULL
+   weight (a filled system-red plate) — louder than the shared outline
+   `.cal-btn-danger` used for routine deletes elsewhere (e.g. calendar's
+   "Delete"), so its gravity next to the calmer decision-pair is unmistakable.
+   Scoped to this one button by id; the shared .cal-btn-danger rule (and every
+   other surface that uses it) is untouched. */
+#applicant-remote-authorize.cal-btn-danger {
+  background: var(--sys-red);
+  color: #fff;
+  border-color: var(--sys-red);
+}
+#applicant-remote-authorize.cal-btn-danger:hover {
+  background: color-mix(in srgb, var(--sys-red) 85%, black);
+  border-color: color-mix(in srgb, var(--sys-red) 85%, black);
+  color: #fff;
+}
+#applicant-remote-authorize.cal-btn-danger:focus-visible {
+  outline: 2px solid var(--sys-blue);
+  outline-offset: 2px;
+}
+
+/* #119: grow the close control's hit region to >=44px (a real tap target)
+   with a dedicated system-blue focus ring — scoped to Vault/Remote/Gallery.
+   Every other surface's shared .close-btn/.modal-close (24px) is untouched. */
+#applicant-vault-modal .modal-close,
+#applicant-remote-modal .modal-close,
+#applicant-gallery-modal .close-btn,
+#applicant-gallery-modal .modal-close {
+  width: 44px;
+  height: 44px;
+}
+#applicant-vault-modal .modal-close:focus-visible,
+#applicant-remote-modal .modal-close:focus-visible,
+#applicant-gallery-modal .close-btn:focus-visible,
+#applicant-gallery-modal .modal-close:focus-visible {
+  outline: 2px solid var(--sys-blue);
+  outline-offset: 2px;
+}
+
+/* #117: the engine-captured Gallery's screenshot/material tiles ARE the
+   content — flat cells (no nested card border/shadow); they already sit
+   inside the modal's own frame. */
+#applicant-gallery-modal .applicant-gallery-tile {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 0 10px;
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+/* ===== Applicant Mind (applicantMind.js) — items #49/#50 ====================
+   The shared `.memory-empty` state (native Brain modal + this panel) is
+   center-aligned italic gray, which floats an empty-state hint away from its
+   left-aligned section header and reads as decorative rather than a plain
+   secondary label. Scoped to the Mind panel only — the native Brain modal's
+   own `.memory-empty` look is untouched. */
+#applicant-mind-modal .memory-empty {
+  font-style: normal;
+  text-align: left;
+  color: var(--fg-muted, color-mix(in srgb, var(--fg) 55%, transparent));
+}
+
+/* ===== Applicant Chat (applicantChat.js) — item #46, lower-risk half ========
+   Full ask: dock the conversation INLINE in the content plane instead of a
+   centered `.modal` slab (applicantChat.js:64-95) — a real structural change
+   (re-parenting the stream, composer, thinking indicator, send-gating and
+   retry-without-duplicate-bubble wiring out of the modal lifecycle) that risks
+   the recent chat bugfixes; left as a follow-up rather than attempted here.
+   What IS fixed: the "glass-on-glass-on-content" stacking this causes today.
+   `.modal-content` is already one frosted glass plane; the composer bar inside
+   it (`.chat-input-bar`, shared with the native chat) carries its OWN frost on
+   top — a second glass panel nested inside the first. Flatten the nested one so
+   the modal reads as a single content plane. Scoped to this modal only — the
+   native chat composer keeps its own glass untouched. */
+body.theme-frosted #applicant-chat-modal .chat-input-bar,
+body.glass-full #applicant-chat-modal .chat-input-bar {
+  background: transparent !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+/* Item #88: the Run-controls status dot used to carry a perpetual expanding-ring
+   pulse (`applicantPulse`, dropped from applicantDebug.js's `_statusChip`) —
+   removed along with its keyframes; the dot's colour alone (now a system token,
+   not raw hex) is enough to read "working now" without decorative motion. */
 
 /* Update modal (#applicant-update-modal) live log tail: a monospace, scrollable
    panel showing the updater's recent output while it runs. Reuses theme vars so
@@ -35956,3 +36160,325 @@ body.signin-entrance .chat-history {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APPKIT — Sheet / Status Panel / Slots / Gadget Rail kits
+   (design-audit "missing kit" findings #3-#6, docs/design/audits/APPLE_GENIUS_IMPROVEMENTS.md §A)
+
+   New, additive-only rules for the four kit primitives:
+     workspace/static/js/appkitSheet.js       — the ".ow-sheet-*" extras below
+     workspace/static/js/appkitStatusPanel.js — ".osp-*"
+     workspace/static/js/appkitSlots.js       — ".appkit-slot*"
+     workspace/static/js/appkitGadgetRail.js  — "#gadget-rail" / ".gadget-rail-*"
+   Each kit's JS also carries its own ensureCss() runtime twin (the same lock-step
+   convention the existing ".ow-sheet" family earlier in this file already documents) so a
+   kit still renders correctly if it mounts before this stylesheet has parsed. Tokens are
+   reused from the shared :root scale (--chrome-ink / --sys-blue / --sys-green / --border /
+   --ow-fs-* / --ow-space-* / --ow-glass-radius / --ow-ios-blue) — no new hue introduced.
+   These kits are not yet wired into any surface (future work); this block only defines
+   the primitives themselves.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Sheet kit — additive extras beyond the existing ".ow-sheet" family above ────────── */
+.ow-sheet-close:focus-visible {
+  outline: 3px solid var(--ow-ios-blue, #0a84ff);
+  outline-offset: 2px;
+}
+body.ow-sheet-open { overflow: hidden; }
+@media (min-width: 769px) {
+  .ow-sheet.ow-sheet-popover-desktop {
+    left: 50%; top: 50%; bottom: auto; right: auto;
+    transform: translate(-50%, -50%);
+    width: min(480px, 92vw); max-width: 480px; max-height: 80vh;
+    border-radius: var(--ow-glass-radius, 14px);
+    border-bottom: 1px solid var(--win-border, var(--border, #355a66));
+  }
+  .ow-sheet.ow-sheet-popover-desktop .ow-sheet-grabber { display: none; }
+  @keyframes ow-sheet-popover-in {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(.96); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes ow-sheet-popover-out {
+    from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    to   { opacity: 0; transform: translate(-50%, -50%) scale(.96); }
+  }
+  .ow-sheet.ow-sheet-popover-desktop.ow-sheet-anim-in { animation: ow-sheet-popover-in .18s ease-out both; }
+  .ow-sheet.ow-sheet-popover-desktop.ow-sheet-anim-out { animation: ow-sheet-popover-out .16s ease-in both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ow-sheet.ow-sheet-popover-desktop.ow-sheet-anim-in,
+  .ow-sheet.ow-sheet-popover-desktop.ow-sheet-anim-out { animation: none !important; }
+}
+
+/* ── Status Panel kit (appkitStatusPanel.js) — .osp-* ─────────────────────────────────── */
+.osp-panel {
+  display: block; max-width: 340px;
+  padding: var(--ow-space-3, 12px);
+  border-radius: var(--ow-glass-radius-inner, 12px);
+  background: color-mix(in srgb, var(--panel, #111) 70%, transparent);
+  border: 1px solid var(--border, #355a66);
+  color: var(--chrome-ink, var(--fg, #eef1f4));
+  font-family: var(--ow-ui-font, sans-serif);
+  font-size: var(--ow-fs-body, .875rem);
+  line-height: 1.45;
+}
+.osp-head { display: flex; align-items: center; gap: var(--ow-space-2, 8px); margin-bottom: var(--ow-space-1, 4px); }
+.osp-dot {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--chrome-ink-3, var(--border, #355a66));
+}
+.osp-dot.osp-dot-live { background: var(--sys-green, #30d158); }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes osp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .osp-dot.osp-dot-live { animation: osp-pulse 1.8s ease-in-out infinite; }
+}
+.osp-title {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--ow-fs-heading, .8125rem); font-weight: var(--ow-fw-semibold, 600);
+  letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.osp-refresh { flex: 0 0 auto; }
+.osp-status-line { font-size: var(--ow-fs-body, .875rem); font-weight: var(--ow-fw-semibold, 600); }
+.osp-detail { margin-top: 2px; font-size: var(--ow-fs-label, .8125rem); color: var(--chrome-ink-2, rgba(238, 241, 244, .68)); }
+.osp-detail:empty { display: none; }
+.osp-meta { margin-top: var(--ow-space-2, 8px); font-size: var(--ow-fs-caption, .75rem); color: var(--chrome-ink-3, rgba(238, 241, 244, .45)); }
+.osp-meta:empty { display: none; }
+@media (prefers-reduced-transparency: reduce) {
+  .osp-panel { background: var(--panel, #111) !important; backdrop-filter: none !important; }
+}
+@media (prefers-contrast: more), (forced-colors: active) {
+  .osp-panel { border-width: 2px !important; border-color: var(--fg, CanvasText) !important; }
+  .osp-dot { outline: 1px solid var(--fg, CanvasText); }
+}
+
+/* ── Slot kit (appkitSlots.js) — layout-agnostic; only an empty-slot affordance ───────── */
+.appkit-slot:empty { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .appkit-slot[data-appkit-slot-animate] { transition: opacity .15s ease; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .appkit-slot { transition: none !important; }
+}
+
+/* ── Gadget Rail kit (appkitGadgetRail.js) — #gadget-rail / .gadget-rail-* ────────────── */
+/* Control-Center model (docs/design/liquid-glass/README.md "Glass-on-glass removed"): the
+   rail is a TRANSPARENT layout container — the .og-card gadgets are the single glass tiles;
+   this kit never paints its own glass fill, only spacing/scroll/safe-area layout. */
+#gadget-rail, .gadget-rail {
+  position: fixed; z-index: 900; background: transparent;
+  display: flex; pointer-events: none;
+}
+#gadget-rail *, .gadget-rail * { pointer-events: auto; }
+.gadget-rail-vertical {
+  top: calc(60px + env(safe-area-inset-top, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: min(280px, 88vw);
+  flex-direction: column;
+}
+.gadget-rail-vertical.gadget-rail-side-right { right: 10px; }
+.gadget-rail-vertical.gadget-rail-side-left { left: 10px; }
+.gadget-rail-horizontal {
+  left: 10px; right: 10px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  height: min(220px, 40vh);
+  flex-direction: row;
+}
+.gadget-rail-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--ow-space-2, 8px);
+  padding: 0 var(--ow-space-1, 4px) var(--ow-space-2, 8px);
+}
+.gadget-rail-title {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--ow-ui-font, sans-serif);
+  font-size: var(--ow-fs-heading, .8125rem); font-weight: var(--ow-fw-semibold, 600);
+  letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gadget-rail-rearrange { flex: 0 0 auto; }
+.gadget-rail-body {
+  flex: 1 1 auto; display: flex; gap: var(--ow-space-2, 8px); overflow: auto;
+  -webkit-overflow-scrolling: touch; min-height: 0;
+}
+.gadget-rail-vertical .gadget-rail-body { flex-direction: column; }
+.gadget-rail-horizontal .gadget-rail-body { flex-direction: row; }
+#gadget-rail.gadget-rail-empty { display: none; }
+.gadget-rail-rearranging .og-card { cursor: grab; }
+.gadget-rail-rearranging .og-card:active { cursor: grabbing; }
+.gadget-rail-card-dragging { opacity: .45; }
+@media (prefers-reduced-transparency: reduce) {
+  #gadget-rail, .gadget-rail { background: transparent !important; }
+}
+@media (max-width: 768px) {
+  /* The mobile drawer/sheet host owns this real estate (0054 contract) — the fixed-rail
+     presentation is desktop-only, matching the slot engine's own narrow stand-down. */
+  .gadget-rail-vertical { display: none; }
+}
+
+/* =====================================================================
+   Observability audit (§E, items #85-#103) — applicantDebug.js /
+   applicantActivity.js / applicantCompare.js. Scoped to those three
+   modals only; does NOT touch the shared `.admin-tab`/`.admin-card` base
+   rules used elsewhere (Library/Cookbook/Memory/Settings/Onboarding),
+   which stay untouched so this pass can't regress surfaces it doesn't
+   own. ===================================================================== */
+
+/* #85: the active-tab underline carried a hued accent (`--sys-blue`) inside
+   the Debug modal specifically. Neutral ink/pill — blue stays reserved for the
+   Run/Update CTAs. Scoped override (not the shared `.admin-tab.active` rule,
+   which other surfaces still use as-is). */
+#applicant-debug-modal .admin-tab.active {
+  border-bottom-color: var(--chrome-ink-3, var(--fg));
+}
+
+/* #87: the header controls row used to pack a picker + status text + two text
+   buttons (4+ groups). Leading = the job-search picker; trailing = ONE
+   overflow control housing the two former buttons (Download log / Ask the
+   assistant). A small anchored popover — not the composer's `.overflow-menu`
+   (that one is `position:fixed` and driven by app.js's own placement math; a
+   self-contained popover here avoids coupling to a surface this pass doesn't
+   own). */
+#applicant-debug-modal .applicant-debug-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  z-index: 20;
+}
+#applicant-debug-modal .applicant-debug-overflow-menu.hidden { display: none; }
+#applicant-debug-modal .applicant-debug-overflow-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+}
+#applicant-debug-modal .applicant-debug-overflow-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* #93/#94/#100: Sources/Tools toggles and the per-application Activity rows
+   each stacked a fully bordered+radius'd `.admin-card` per row (glass-on-glass
+   tiling). One flat list with hairline row separators instead — the
+   Debug-scoped equivalent of the still-missing app-wide `.ow-list-row`
+   primitive (systemic theme #2), kept local to this modal only. */
+#applicant-debug-modal .applicant-debug-list {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+#applicant-debug-modal .applicant-debug-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#applicant-debug-modal .applicant-debug-list-row:last-child { border-bottom: none; }
+#applicant-debug-modal .applicant-debug-list-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+/* #94: one primary action per row (Details), the other (I submitted this) demoted
+   to a plain/text affordance instead of a second equally-weighted button. */
+#applicant-debug-modal .applicant-debug-row-secondary {
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+#applicant-debug-modal .applicant-debug-row-secondary:hover { opacity: 0.9; }
+
+/* #102: Insights funnels read as dot-joined prose ("N matched · N approved…") —
+   an aligned key/value mini-grid so the numbers compare down a column. */
+#applicant-debug-modal .applicant-debug-statgrid {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin-top: 4px;
+}
+#applicant-debug-modal .applicant-debug-statgrid-k {
+  font-size: 11px;
+  opacity: 0.7;
+}
+#applicant-debug-modal .applicant-debug-statgrid-v {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* #89/#97/#98: the Compare diff used to be a hand-rolled `<table>` with inline
+   per-cell borders sitting directly on the modal glass. A bounded
+   content-material panel + a stylesheet-driven table instead; differing rows
+   get a neutral-ink weight/bg flag (not opacity/hue) instead of relying on
+   dimmed "—" text alone. */
+#applicant-compare-modal .applicant-compare-result-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  overflow-x: auto;
+}
+#applicant-compare-modal .applicant-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+#applicant-compare-modal .applicant-compare-table th,
+#applicant-compare-modal .applicant-compare-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#applicant-compare-modal .applicant-compare-table tbody tr:last-child td {
+  border-bottom: none;
+}
+#applicant-compare-modal .applicant-compare-diff-cell { opacity: 0.8; }
+#applicant-compare-modal .applicant-compare-row-diff {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#applicant-compare-modal .applicant-compare-row-diff td { font-weight: 600; }
+#applicant-compare-modal .applicant-compare-row-diff .applicant-compare-diff-cell {
+  opacity: 1;
+}
+#applicant-compare-modal .applicant-compare-copy-id {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+#applicant-compare-modal .applicant-compare-open-detail {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 2px;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--sys-blue, #0a84ff);
+  cursor: pointer;
+  text-align: left;
+}
+#applicant-compare-modal .applicant-compare-open-detail:hover { text-decoration: underline; }

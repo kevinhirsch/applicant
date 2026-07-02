@@ -18,9 +18,12 @@
 //   • Variants   — the resume-variant library (lineage / score / approval).
 //   • Run        — run mode + daily target controls and the latest plain-language
 //                  "what the agent is doing right now" intent (writes config).
-//   • Sources    — turn each job-discovery source on/off + see its yield.
-//   • Tools      — enable/disable the engine's tools (engine-wide; writes).
-//   • Update     — a one-click Update button with confirm + status.
+//   • Config     — Sources (turn each job-discovery source on/off + see its
+//                  yield), Tools (enable/disable the engine's tools, engine-
+//                  wide; writes) and Update (a one-click Update button with
+//                  confirm + status) as sub-sections of one pane (item #86 —
+//                  these were 3 separate top-level tabs, pushing the tab strip
+//                  to 8; grouped so the strip stays within the 5-7 ceiling).
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports it's configured
@@ -47,16 +50,19 @@ let _busySubmit = false; // re-entry guard for mark-submitted
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 
+// #86: collapsed from 8 tabs (Activity/Insights/Logs/Variants/Run/Sources/
+// Tools/Update) to 6 — Sources/Tools/Update now render as sub-sections of one
+// Config pane (see _renderConfig) instead of three separate top-level tabs.
 const TABS = [
   ['activity', 'Activity'],
   ['insights', 'Insights'],
   ['logs', 'Logs'],
   ['variants', 'Variants'],
   ['run', 'Run controls'],
-  ['sources', 'Sources'],
-  ['tools', 'Tools'],
-  ['update', 'Update'],
+  ['config', 'Config'],
 ];
+
+const CLOSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
@@ -73,17 +79,24 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           Activity
         </h4>
-        <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">✖</button>
+        <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">${CLOSE_SVG}</button>
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
           Job search
-          <select id="applicant-debug-campaign" class="settings-select" style="min-width:180px;"></select>
+          <select id="applicant-debug-campaign" class="ow-select" style="min-width:180px;"></select>
         </label>
-        <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
-        <button class="cal-btn" id="applicant-debug-download-log" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
-        <button class="cal-btn" id="applicant-debug-chat" title="Open the assistant beside this so you can ask about what the agent is doing" style="margin-left:auto;">Ask the assistant</button>
+        <div class="applicant-debug-overflow-wrap" style="margin-left:auto;position:relative;">
+          <button class="cal-btn" type="button" id="applicant-debug-overflow-btn" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px;"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+          </button>
+          <div class="applicant-debug-overflow-menu hidden" id="applicant-debug-overflow-menu" role="menu">
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-download-log" role="menuitem" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the assistant beside this so you can ask about what the agent is doing">Ask the assistant</button>
+          </div>
+        </div>
       </div>
+      <div id="applicant-debug-engine-banner" class="admin-toggle-sub" style="padding:0 14px;margin-top:4px;opacity:0.7;display:none;"></div>
       <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
         ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
       </div>
@@ -94,7 +107,20 @@ function _ensureModalEl() {
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
+  const overflowBtn = modal.querySelector('#applicant-debug-overflow-btn');
+  const overflowMenu = modal.querySelector('#applicant-debug-overflow-menu');
+  const closeOverflow = () => {
+    if (!overflowMenu) return;
+    overflowMenu.classList.add('hidden');
+    if (overflowBtn) overflowBtn.setAttribute('aria-expanded', 'false');
+  };
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // Escape closes the overflow popover first (if open), the whole modal next —
+    // mirrors how a menu/modal stack normally unwinds one layer at a time.
+    if (overflowMenu && !overflowMenu.classList.contains('hidden')) { closeOverflow(); return; }
+    _close();
+  });
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
@@ -109,15 +135,44 @@ function _ensureModalEl() {
     _campaignId = e.target.value || null;
     _renderTab();
   });
+
+  // #87: the header used to pack picker + status text + two text buttons (4+
+  // groups). Now: leading = the job-search picker, trailing = ONE overflow
+  // control housing the two former actions; the engine-offline note moved to
+  // its own banner in the body instead of a header-row badge.
+  if (overflowBtn && overflowMenu) {
+    overflowBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = overflowMenu.classList.contains('hidden');
+      if (willOpen) {
+        // #101: gate "Ask the assistant" on the module actually being present
+        // each time the menu opens, instead of always showing it and no-oping
+        // to a toast on click.
+        const chatItem = overflowMenu.querySelector('#applicant-debug-chat');
+        if (chatItem) {
+          const hasChat = !!(window.applicantChatModule && typeof window.applicantChatModule.openApplicantChat === 'function');
+          chatItem.style.display = hasChat ? '' : 'none';
+        }
+      }
+      overflowMenu.classList.toggle('hidden', !willOpen);
+      overflowBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    document.addEventListener('click', (e) => {
+      if (!overflowMenu.classList.contains('hidden') && e.target !== overflowBtn && !overflowMenu.contains(e.target)) {
+        closeOverflow();
+      }
+    });
+  }
   // Download activity log (JSON) — one-click export of the full action trail.
   const downloadBtn = modal.querySelector('#applicant-debug-download-log');
-  if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadAuditLog());
+  if (downloadBtn) downloadBtn.addEventListener('click', () => { closeOverflow(); _downloadAuditLog(); });
 
   // Dual view: open the Job Assistant beside this window (both are scrim-less,
   // draggable tool windows, so they sit side by side) — watch the agent on one
   // side, ask it questions on the other.
   const chatBtn = modal.querySelector('#applicant-debug-chat');
   if (chatBtn) chatBtn.addEventListener('click', () => {
+    closeOverflow();
     try {
       if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
         window.applicantChatModule.openApplicantChat();
@@ -133,22 +188,27 @@ function _close() {
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';
+    const overflowMenu = _modalEl.querySelector('#applicant-debug-overflow-menu');
+    if (overflowMenu) overflowMenu.classList.add('hidden');
   }
 }
 
 function _body() { return _modalEl.querySelector('#applicant-debug-body'); }
 
-function _renderOffline(msg) {
-  _body().innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
+// `host` defaults to the whole tab body; the Config pane's sub-sections pass
+// their own sub-host so one section's offline/gated state doesn't blank out
+// its siblings (#86).
+function _renderOffline(msg, host) {
+  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
 }
 
 // A GATED response (engine is UP, but setup is incomplete / a precondition isn't
 // met) is NOT offline. Show the engine's own plain-language setup message so the
 // owner knows what to finish, instead of the misleading "not reachable" copy.
-function _renderGated(data) {
+function _renderGated(data, host) {
   const msg = (data && data.message)
     || 'Finish onboarding and configure your model and notification channels to enable automated work.';
-  _body().innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
+  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
 }
 
 // True only for a genuine transport-offline soft-degrade (engine unreachable),
@@ -222,9 +282,7 @@ async function _renderTab() {
     logs: _renderLogs,
     variants: _renderVariants,
     run: _renderRun,
-    sources: _renderSources,
-    tools: _renderTools,
-    update: _renderUpdate,
+    config: _renderConfig,
   };
   const token = ++_renderToken;
   _body().innerHTML = loadingHTML('Loading…');
@@ -256,6 +314,17 @@ function _errLine(err) {
 function _needCampaign() {
   if (!_campaignId) {
     _body().innerHTML = _empty('Pick a job search above to see its activity.');
+    return false;
+  }
+  return true;
+}
+
+// Host-scoped variant of _needCampaign — for the Config pane's Sources
+// sub-section, which needs a campaign while its Tools/Update siblings don't, so
+// a missing campaign can't blank out the whole pane.
+function _needCampaignIn(host) {
+  if (!_campaignId) {
+    host.innerHTML = _empty('Pick a job search above to see its sources.');
     return false;
   }
   return true;

@@ -322,21 +322,31 @@ function _ensureModalEl() {
   if (_modalEl) return _modalEl;
   const modal = document.createElement('div');
   modal.id = 'applicant-portal-modal';
-  modal.className = 'modal hidden';
+  // FR-UIKIT-2-style adoption (audit #25): compose the vendored Window kit's
+  // `ow-window` alongside the legacy `.modal`, mirroring the established pattern
+  // in applicantRemote.js (`modal.className = 'modal hidden ow-window'`). The
+  // class lands on the actual painted dialog so the shared kit chrome (frame /
+  // radius / shadow / font) applies; existing `.modal hidden`/`.modal-content`
+  // rules, handlers and the focus trap are preserved unchanged.
+  modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-label', 'Pending');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
-      <div class="modal-header">
-        <h4>
+      <div class="modal-header ow-titlebar">
+        <div class="ow-controls">
+          <button type="button" class="ow-close modal-close tap-exempt" id="applicant-portal-close" aria-label="Close" title="Close">&times;</button>
+        </div>
+        <h4 class="ow-title">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           Pending
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What Applicant never does" title="What Applicant never does — its safety limits" style="font-size:11px;padding:2px 8px;opacity:0.8;">What it never does</button>
-          <button class="cal-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Refresh the list">Refresh</button>
-          <button class="close-btn" id="applicant-portal-close" aria-label="Close" title="Close">✖</button>
+          <button type="button" class="memory-toolbar-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Refresh the list" style="width:26px;height:26px;padding:0;flex-shrink:0;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
         </div>
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
@@ -371,12 +381,41 @@ function _toggleNeverDoesPanel() {
   panel.style.display = '';
 }
 
+// Audit #32: the composer sits in the same chat-area band the window is
+// centered over, and on shorter viewports the window's bottom edge can reach
+// the composer row (glass-on-glass in a steady state, clipping its text).
+// Rather than editing the shared composer chrome (owned by the main chat
+// surface, not Portal), Portal dims + neutralizes it ONLY while its own
+// window is open, restoring the exact prior inline style on close so no
+// other surface is left touched.
+let _composerDimmed = false;
+let _composerPrevStyle = null;
+function _setComposerDimmed(on) {
+  let bar;
+  try { bar = document.querySelector('.chat-input-bar'); } catch { bar = null; }
+  if (!bar) return;
+  if (on) {
+    if (_composerDimmed) return; // already dimmed — don't clobber the saved prior style
+    _composerDimmed = true;
+    _composerPrevStyle = bar.getAttribute('style');
+    bar.style.transition = 'opacity 0.15s ease';
+    bar.style.opacity = '0.35';
+    bar.style.pointerEvents = 'none';
+  } else if (_composerDimmed) {
+    _composerDimmed = false;
+    if (_composerPrevStyle === null) bar.removeAttribute('style');
+    else bar.setAttribute('style', _composerPrevStyle);
+    _composerPrevStyle = null;
+  }
+}
+
 function _close() {
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
   }
+  _setComposerDimmed(false);
 }
 
 // ── Greeting (task #1) ────────────────────────────────────────────────────────
@@ -589,12 +628,35 @@ function _renderOffline(body) {
 function _renderGated(body, data) {
   const msg = (data && data.message)
     || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+  // Audit #28/#29/#30/#39: a gated state is a HEALTHY unconfigured state, not a
+  // warning, so it gets the same neutral inbox mark the header/offline states
+  // use (not a warning circle+!). The copy is Semibold + left-aligned within a
+  // centered column (not thin/centered/blanket-opacity), a real "Finish setup"
+  // CTA closes the dead end, and the trust list renders beneath the gate so it's
+  // reachable even before there's anything to review. 24pt-rhythm padding.
   body.innerHTML = `
-    <div style="padding:28px 18px;text-align:center;opacity:0.85;">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:10px;"><path d="M12 8v4"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="10"/></svg>
-      <div style="font-size:14px;margin-bottom:6px;">Finish setup to begin</div>
-      <div style="font-size:12px;max-width:420px;margin:0 auto;">${esc(msg)}</div>
+    <div style="padding:48px 24px 24px;text-align:center;">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:14px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <div style="max-width:400px;margin:0 auto;text-align:left;">
+        <div style="font-size:14px;font-weight:600;color:var(--fg);margin-bottom:6px;">Finish setup to begin</div>
+        <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb, var(--fg) 68%, transparent);">${esc(msg)}</div>
+        <button type="button" class="cal-btn cal-btn-primary" id="applicant-portal-gated-setup" style="margin-top:14px;">Finish setup</button>
+      </div>
+      ${_neverDoesHTML()}
     </div>`;
+  const setupBtn = body.querySelector('#applicant-portal-gated-setup');
+  if (setupBtn) {
+    setupBtn.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') {
+          window.launchApplicantSetup();
+          _close();
+          return;
+        }
+      } catch { /* fall through */ }
+      _toast('Open Settings to finish setting up Applicant');
+    });
+  }
 }
 
 function _neverDoesHTML() {
@@ -615,17 +677,24 @@ function _neverDoesHTML() {
 function _renderEmpty(body) {
   // Warm, agency + reassurance empty state (task #2): first-person, on-your-side,
   // with a quiet proof-of-life line so "clear" reads as "working" not "idle".
+  // Audit #42/#44: hierarchy comes from real per-element tokens (a Semibold
+  // heading at full ink, secondary copy via a color-mix tint) instead of a
+  // blanket wrapper `opacity` that also washes out the status dot; copy is
+  // left-aligned within a centered column, and padding follows a 24pt rhythm
+  // (matches the gated state so the two read as one family).
   body.innerHTML = `
-    <div style="padding:32px 18px;text-align:center;opacity:0.8;">
-      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.55;margin-bottom:10px;"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
-      <div style="font-size:14px;margin-bottom:4px;">You're all clear</div>
-      <div style="font-size:12px;max-width:400px;margin:0 auto;line-height:1.5;">
-        Applicant is working in the background — I'll bring anything that needs you
-        right here.
-      </div>
-      <div style="font-size:11px;opacity:0.65;margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
-        <span style="width:7px;height:7px;border-radius:50%;background:var(--color-success,#4caf50);display:inline-block;"></span>
-        Searching and preparing applications for you
+    <div style="padding:48px 24px 24px;text-align:center;">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.55;margin-bottom:14px;"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+      <div style="max-width:400px;margin:0 auto;text-align:left;">
+        <div style="font-size:14px;font-weight:600;color:var(--fg);margin-bottom:4px;">You're all clear</div>
+        <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb, var(--fg) 68%, transparent);">
+          Applicant is working in the background — I'll bring anything that needs you
+          right here.
+        </div>
+        <div style="font-size:11px;color:color-mix(in srgb, var(--fg) 65%, transparent);margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
+          <span style="width:7px;height:7px;border-radius:50%;background:var(--color-success,#4caf50);display:inline-block;"></span>
+          Searching and preparing applications for you
+        </div>
       </div>
       ${_neverDoesHTML()}
     </div>`;
@@ -1471,6 +1540,7 @@ export async function openApplicantPortal() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  _setComposerDimmed(true);
   // Keyboard a11y: trap focus, Escape to close, restore on close.
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);

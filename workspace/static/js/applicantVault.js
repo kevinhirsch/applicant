@@ -50,12 +50,26 @@ function _ensureModalEl() {
         <h4>Saved sign-ins</h4>
         <button id="applicant-vault-close" class="modal-close" aria-label="Close" title="Close">×</button>
       </div>
-      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;overflow:auto;">
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:20px;overflow:auto;">
         <p style="margin:0;opacity:0.75;font-size:13px;">
           Save the username and password for a job site so the assistant can sign
           in for you. Passwords are encrypted and are never shown again or sent
           back to this screen.
         </p>
+
+        <!-- #109: lead with the trust payoff (what's already saved), not the
+             forms — this card was last, below three forms; move it first. -->
+        <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <h3 style="margin:0;font-size:0.95em;flex:1;">Sites with a saved sign-in
+              <span id="applicant-vault-count" style="font-weight:400;opacity:0.6;"></span></h3>
+            <button id="applicant-vault-refresh" class="memory-toolbar-btn" title="Reload">Refresh</button>
+          </div>
+          <div id="applicant-vault-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <div id="applicant-vault-empty" style="opacity:0.5;font-size:13px;padding:6px 0;">
+            No sign-ins saved yet.
+          </div>
+        </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
           <h3 style="margin:0;font-size:0.95em;">Account sign-ins (used everywhere)</h3>
@@ -70,11 +84,11 @@ function _ensureModalEl() {
               Google sign-in
               <span id="applicant-vault-google-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
             </div>
-            <input id="applicant-vault-google-username" class="settings-select" type="text" autocomplete="off"
+            <input id="applicant-vault-google-username" class="applicant-field" type="text" autocomplete="off"
                    placeholder="you@gmail.com" style="width:100%;">
-            <input id="applicant-vault-google-secret" class="settings-select" type="password" autocomplete="new-password"
+            <input id="applicant-vault-google-secret" class="applicant-field" type="password" autocomplete="new-password"
                    placeholder="Google password" style="width:100%;">
-            <button id="applicant-vault-google-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
+            <button id="applicant-vault-google-save" class="cal-btn" style="align-self:flex-start;"
                     title="Encrypt and save your Google sign-in">Save Google sign-in</button>
           </div>
 
@@ -83,11 +97,11 @@ function _ensureModalEl() {
               Default sign-in for new accounts
               <span id="applicant-vault-default-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
             </div>
-            <input id="applicant-vault-default-username" class="settings-select" type="text" autocomplete="off"
+            <input id="applicant-vault-default-username" class="applicant-field" type="text" autocomplete="off"
                    placeholder="you@example.com" style="width:100%;">
-            <input id="applicant-vault-default-secret" class="settings-select" type="password" autocomplete="new-password"
+            <input id="applicant-vault-default-secret" class="applicant-field" type="password" autocomplete="new-password"
                    placeholder="Password to use for new accounts" style="width:100%;">
-            <button id="applicant-vault-default-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
+            <button id="applicant-vault-default-save" class="cal-btn" style="align-self:flex-start;"
                     title="Encrypt and save the default sign-in used when a site needs a new account">Save default sign-in</button>
           </div>
         </div>
@@ -95,31 +109,20 @@ function _ensureModalEl() {
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <h3 style="margin:0;font-size:0.95em;">A specific site sign-in</h3>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Site / employer
-            <input id="applicant-vault-tenant" class="settings-select" type="text" placeholder="acme.workday.com"
+            <input id="applicant-vault-tenant" class="applicant-field" type="text" placeholder="acme.workday.com"
                    title="The job site or employer tenant this sign-in is for"
                    style="width:100%;margin-top:4px;">
           </label>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Username or email
-            <input id="applicant-vault-username" class="settings-select" type="text" autocomplete="off"
+            <input id="applicant-vault-username" class="applicant-field" type="text" autocomplete="off"
                    placeholder="you@example.com" style="width:100%;margin-top:4px;">
           </label>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Password
-            <input id="applicant-vault-secret" class="settings-select" type="password" autocomplete="new-password"
+            <input id="applicant-vault-secret" class="applicant-field" type="password" autocomplete="new-password"
                    placeholder="••••••••" style="width:100%;margin-top:4px;">
           </label>
-          <button id="applicant-vault-save" class="cal-btn cal-btn-primary" style="align-self:flex-start;"
+          <button id="applicant-vault-save" class="cal-btn" style="align-self:flex-start;"
                   title="Encrypt and save this sign-in">Save sign-in</button>
-        </div>
-
-        <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <h3 style="margin:0;font-size:0.95em;flex:1;">Sites with a saved sign-in</h3>
-            <button id="applicant-vault-refresh" class="memory-toolbar-btn" title="Reload">Refresh</button>
-          </div>
-          <div id="applicant-vault-list" style="display:flex;flex-direction:column;gap:6px;"></div>
-          <div id="applicant-vault-empty" style="opacity:0.5;font-size:13px;padding:6px 0;">
-            No sign-ins saved yet.
-          </div>
         </div>
       </div>
     </div>`;
@@ -142,9 +145,42 @@ function _wire(modal) {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) closeApplicantVault();
   });
+  _wireSaveProminence(modal);
+}
+
+// #105: three co-equal "Save …" primaries read as competing CTAs. All three
+// save buttons start neutral (no `.cal-btn-primary` in the markup); typing
+// into a section's fields promotes ONLY that section's save button to
+// prominent (and demotes the others), so at most one primary shows at a time
+// and it tracks the card the user is actually filling in.
+const _SAVE_GROUPS = [
+  { save: 'applicant-vault-google-save', fields: ['applicant-vault-google-username', 'applicant-vault-google-secret'] },
+  { save: 'applicant-vault-default-save', fields: ['applicant-vault-default-username', 'applicant-vault-default-secret'] },
+  { save: 'applicant-vault-save', fields: ['applicant-vault-tenant', 'applicant-vault-username', 'applicant-vault-secret'] },
+];
+
+function _promoteSaveGroup(modal, activeSaveId) {
+  _SAVE_GROUPS.forEach((g) => {
+    const btn = modal.querySelector('#' + g.save);
+    if (btn) btn.classList.toggle('cal-btn-primary', g.save === activeSaveId);
+  });
+}
+
+function _wireSaveProminence(modal) {
+  _SAVE_GROUPS.forEach((g) => {
+    g.fields.forEach((fid) => {
+      const el = modal.querySelector('#' + fid);
+      if (el) el.addEventListener('input', () => _promoteSaveGroup(modal, g.save));
+    });
+  });
 }
 
 // ── list / save ─────────────────────────────────────────────────────────────
+
+function _setVaultCount(n) {
+  const el = _modalEl && _modalEl.querySelector('#applicant-vault-count');
+  if (el) el.textContent = n > 0 ? `(${n})` : '';
+}
 
 async function _loadTenants() {
   const listEl = _modalEl && _modalEl.querySelector('#applicant-vault-list');
@@ -153,6 +189,7 @@ async function _loadTenants() {
   if (!_campaignId) {
     listEl.innerHTML = '';
     if (emptyEl) { emptyEl.textContent = 'Choose a job search first.'; emptyEl.style.display = ''; }
+    _setVaultCount(0);
     return;
   }
   // Show a loading state while fetching so the list is never ambiguously blank.
@@ -164,9 +201,11 @@ async function _loadTenants() {
   } catch (e) {
     listEl.innerHTML = '';
     if (emptyEl) { emptyEl.textContent = e.message || 'Could not load saved sign-ins.'; emptyEl.style.display = ''; }
+    _setVaultCount(0);
     return;
   }
   const tenants = (data && Array.isArray(data.tenants)) ? data.tenants : [];
+  _setVaultCount(tenants.length);
   if (!tenants.length) {
     listEl.innerHTML = '';
     if (emptyEl) { emptyEl.textContent = 'No sign-ins saved yet.'; emptyEl.style.display = ''; }
