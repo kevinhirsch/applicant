@@ -1975,10 +1975,11 @@ class PrefillService:
                     title=title,
                     body=f"Application {app.id} needs you.",
                     deep_link=None,
-                    # A blocked/pending state the agent cannot proceed past without the
-                    # human — CRITICAL so it reaches the user even during quiet hours
-                    # (FR-NOTIF-5), not silently deferred until morning.
-                    urgency=NotificationUrgency.CRITICAL,
+                    # Unlike _emit_waiting, this backs agent_question/error — a queued
+                    # item for the Portal (a screening question, a soft field failure),
+                    # not the agent frozen mid-flow. Default/NORMAL urgency: it should
+                    # land in the queue, not wake the user through quiet hours.
+                    urgency=NotificationUrgency.NORMAL,
                     # #7: consistent ``decision:prefill:{ref}`` key so resolving the
                     # blocked state can expire this ping via
                     # ``NotificationService.acted(f"prefill:{ref}")`` — the un-prefixed
