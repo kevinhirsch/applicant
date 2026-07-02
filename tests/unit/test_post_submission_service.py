@@ -259,3 +259,122 @@ class TestCheckGhosting:
 
         assert signals == []
         assert storage.applications.get(app.id).status == ApplicationState.AWAITING_RESPONSE
+
+
+# --- tracker board (design-audit Top-25 #4) ---------------------------------
+#
+# Round 2 wires PostSubmissionService to a new front-door router/proxy/surface.
+# These pin down the two additions that back it: a pure read (list_tracker_rows)
+# and the owner-triggered manual write (record_manual_outcome).
+
+
+@pytest.mark.unit
+class TestListTrackerRows:
+    def test_lists_only_tracker_states_newest_first(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        early_stage = _app(cid, status=ApplicationState.PREFILLING)
+        awaiting = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        rejected = _app(cid, status=ApplicationState.REJECTED)
+        storage.applications.add(early_stage)
+        storage.applications.add(awaiting)
+        storage.applications.add(rejected)
+        _seed_submitted(storage, awaiting, days_ago=5)
+        _seed_submitted(storage, rejected, days_ago=10)
+        service = PostSubmissionService(storage)
+
+        rows = service.list_tracker_rows(cid)
+
+        ids = [r["application_id"] for r in rows]
+        # The still-prefilling application has nothing to track yet.
+        assert str(early_stage.id) not in ids
+        assert str(awaiting.id) in ids
+        assert str(rejected.id) in ids
+        # Newest submission (5 days ago) sorts before the older one (10 days ago).
+        assert ids.index(str(awaiting.id)) < ids.index(str(rejected.id))
+        awaiting_row = next(r for r in rows if r["application_id"] == str(awaiting.id))
+        assert awaiting_row["status"] == "AWAITING_RESPONSE"
+        assert awaiting_row["signals"] == []
+
+    def test_positive_signals_layer_onto_the_row_without_changing_status(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=2)
+        service = PostSubmissionService(storage)
+
+        service.record_manual_outcome(app.id, "interview_invited")
+        rows = service.list_tracker_rows(cid)
+
+        row = next(r for r in rows if r["application_id"] == str(app.id))
+        assert row["status"] == "AWAITING_RESPONSE"  # unchanged: no §7 state for this
+        assert row["signals"] == ["interview_invited"]
+
+    def test_empty_campaign_returns_empty_list(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = PostSubmissionService(storage)
+
+        assert service.list_tracker_rows(cid) == []
+
+
+@pytest.mark.unit
+class TestRecordManualOutcome:
+    def test_rejected_transitions_status_and_records_manual_event(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage)
+
+        event = service.record_manual_outcome(app.id, "rejected")
+
+        assert event.type == "rejected"
+        assert event.source.value == "manual"
+        assert storage.applications.get(app.id).status == ApplicationState.REJECTED
+
+    def test_interview_invited_records_event_without_changing_status(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage)
+
+        event = service.record_manual_outcome(app.id, "interview_invited")
+
+        assert event.type == "interview_invited"
+        assert event.source.value == "manual"
+        # No §7 state exists for "interview invited" -- status is untouched.
+        assert storage.applications.get(app.id).status == ApplicationState.AWAITING_RESPONSE
+
+    def test_unrecognized_outcome_type_raises_value_error(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage)
+
+        with pytest.raises(ValueError):
+            service.record_manual_outcome(app.id, "not-a-real-outcome")
+
+    def test_unknown_application_returns_none(self):
+        storage = InMemoryStorage()
+        service = PostSubmissionService(storage)
+
+        assert service.record_manual_outcome(ApplicationId(new_id()), "rejected") is None
+
+    def test_illegal_transition_is_swallowed_but_event_still_recorded(self):
+        # ARCHIVED is a terminal §7 state with no outgoing transitions -- a stale
+        # "mark rejected" tap on an already-archived application must not raise,
+        # and the outcome trail still records that the owner reported it.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.ARCHIVED)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage)
+
+        event = service.record_manual_outcome(app.id, "rejected")
+
+        assert event.type == "rejected"
+        assert storage.applications.get(app.id).status == ApplicationState.ARCHIVED

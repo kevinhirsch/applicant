@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from applicant.core.entities.follow_up import FollowUp, FollowUpTemplate
 from applicant.core.entities.ghosting_signal import GhostingSignal
-from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource
+from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource, is_recognized_outcome
 from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
 from applicant.core.events import OutcomeRecorded, event_bus
 from applicant.core.ids import (
@@ -25,6 +25,40 @@ log = get_logger(__name__)
 DEFAULT_SLA_DAYS = 21
 THANK_YOU_DELAY_HOURS = 2
 CHECK_IN_DELAY_DAYS = 7
+
+#: The §7 states shown on the front-door tracker board (#4 of the design audit
+#: Top-25): the terminal-submit states before the tracker/scheduler has pivoted
+#: them to POST_SUBMISSION, plus the full post-submission lifecycle itself. An
+#: application still earlier in the pipeline (DISCOVERED..AWAITING_FINAL_APPROVAL)
+#: has nothing to track yet and is intentionally excluded.
+TRACKER_STATES: frozenset[ApplicationState] = frozenset(
+    {
+        ApplicationState.SUBMITTED_BY_USER,
+        ApplicationState.FINISHED_BY_ENGINE,
+        ApplicationState.POST_SUBMISSION,
+        ApplicationState.AWAITING_RESPONSE,
+        ApplicationState.FOLLOWING_UP,
+        ApplicationState.REJECTED,
+        ApplicationState.GHOSTED,
+        ApplicationState.ARCHIVED,
+    }
+)
+
+#: Manually-recordable outcomes that carry a positive "signal" badge on the
+#: tracker board. Both are recognized ``OutcomeEvent.type`` values (see
+#: ``core/entities/outcome_event.py``) but have no dedicated §7 state of their
+#: own -- they are layered onto whatever waiting state the application is
+#: actually in (see ``record_manual_outcome``).
+POSITIVE_SIGNAL_TYPES: frozenset[str] = frozenset({"interview_invited", "offer"})
+
+#: Manual outcome types that DO drive a §7 status transition, mapped to the
+#: target state. Kept minimal and explicit -- a type absent from this mapping
+#: (e.g. the positive signals above, or "submitted"/"converted") never touches
+#: ``Application.status``, only the outcome trail.
+_MANUAL_OUTCOME_STATUS: dict[str, ApplicationState] = {
+    "rejected": ApplicationState.REJECTED,
+    "ghosted": ApplicationState.GHOSTED,
+}
 
 
 class PostSubmissionService:
@@ -233,20 +267,87 @@ class PostSubmissionService:
         except Exception:
             return None
 
-    def _record_outcome_event(self, application, outcome_type):
+    def _record_outcome_event(self, application, outcome_type, *, source=OutcomeSource.AUTO):
         event = OutcomeEvent(
             id=OutcomeEventId(new_id()),
             application_id=application.id,
             type=outcome_type,
-            source=OutcomeSource.AUTO,
+            source=source,
         )
         self._storage.outcomes.add(event)
         event_bus.emit(
             OutcomeRecorded(
                 application_id=application.id,
                 outcome_type=outcome_type,
-                source="auto",
+                source=source.value,
                 reason=f"post-submission: {outcome_type}",
             )
         )
+        return event
+
+    # --- tracker board (design-audit Top-25 #4) -----------------------------
+
+    def list_tracker_rows(self, campaign_id):
+        """One row per in-flight/closed application, newest first (the tracker board).
+
+        Reads straight off ``Application.status`` for the row's bucket (applied /
+        awaiting response / following up / rejected / ghosted / archived) and layers
+        on any recorded positive signal (``interview_invited`` / ``offer``) from the
+        outcome trail, since those have no dedicated §7 state of their own. Pure
+        read -- no state is mutated. Applications earlier than the terminal-submit
+        states (still being matched/prefilled/reviewed) are not tracker rows.
+        """
+        rows = []
+        for app in self._storage.applications.list_for_campaign(campaign_id):
+            if app.status not in TRACKER_STATES:
+                continue
+            events = list(self._storage.outcomes.list_for_application(app.id))
+            signals = sorted({e.type for e in events if e.type in POSITIVE_SIGNAL_TYPES})
+            snapshot = self._storage.submission_snapshots.get_for_application(app.id)
+            submitted_at = snapshot.captured_at if snapshot is not None else None
+            rows.append(
+                {
+                    "application_id": str(app.id),
+                    "status": app.status.value,
+                    "role_name": app.role_name,
+                    "job_title": app.job_title,
+                    "signals": signals,
+                    "submitted_at": submitted_at.isoformat() if submitted_at else None,
+                    "created_at": app.created_at.isoformat() if app.created_at else None,
+                }
+            )
+        rows.sort(key=lambda r: r["submitted_at"] or r["created_at"] or "", reverse=True)
+        return rows
+
+    def record_manual_outcome(self, application_id, outcome_type):
+        """Owner-triggered "record what happened" write for the tracker board.
+
+        The manual sibling of the automated detection paths (``detect_outcome`` /
+        ``process_rejection_signal`` / ``check_ghosting``, which only ever record
+        ``OutcomeSource.AUTO``). Only a recognized ``OUTCOME_TYPES`` value is
+        accepted. When the type maps to a §7 status (``rejected`` -> REJECTED,
+        ``ghosted`` -> GHOSTED via ``_MANUAL_OUTCOME_STATUS``), the application
+        transitions too -- best-effort: an illegal transition from the
+        application's CURRENT status (e.g. it was already ARCHIVED) is swallowed
+        rather than raised, so a stale tap can never corrupt the state machine; the
+        outcome event is still recorded either way. Positive signals
+        (``interview_invited`` / ``offer``) never touch status -- see
+        ``POSITIVE_SIGNAL_TYPES``. Returns ``None`` when the application does not
+        exist (caller maps that to 404); raises ``ValueError`` for an unrecognized
+        ``outcome_type`` so the router can 422 instead of silently no-op'ing.
+        """
+        if not is_recognized_outcome(outcome_type):
+            raise ValueError(f"Unrecognized outcome type: {outcome_type!r}")
+        app = self._storage.applications.get(application_id)
+        if app is None:
+            return None
+        target_status = _MANUAL_OUTCOME_STATUS.get(outcome_type)
+        if target_status is not None and app.status != target_status:
+            try:
+                app = app.with_status(target_status)
+                self._storage.applications.update(app)
+            except Exception:
+                pass
+        event = self._record_outcome_event(app, outcome_type, source=OutcomeSource.MANUAL)
+        self._storage.commit()
         return event
