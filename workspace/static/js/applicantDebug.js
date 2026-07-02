@@ -802,11 +802,12 @@ async function _renderRun() {
   });
 }
 
-async function _renderSources() {
-  if (!_needCampaign()) return;
+async function _renderSources(host) {
+  host = host || _body();
+  if (!_needCampaignIn(host)) return;
   const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
-  if (_isGated(data)) { _renderGated(data); return; }
-  if (_isOffline(data)) { _renderOffline(); return; }
+  if (_isGated(data)) { _renderGated(data, host); return; }
+  if (_isOffline(data)) { _renderOffline(undefined, host); return; }
   const items = data.items || [];
   // Exploration budget (FR-LEARN-6): the explore/exploit knob. Shown above the
   // source list. Editable when the engine reports it; read-only note otherwise.
@@ -823,11 +824,11 @@ async function _renderSources() {
       </div>`
     : '';
   if (!items.length) {
-    _body().innerHTML = budgetCard + _empty('No job-discovery sources available for this job search.');
-    _wireExploreBudget();
+    host.innerHTML = budgetCard + _empty('No job-discovery sources available for this job search.');
+    _wireExploreBudget(host);
     return;
   }
-  _body().innerHTML = budgetCard + items.map((s) => {
+  host.innerHTML = budgetCard + items.map((s) => {
     const ys = s.yield_stats || {};
     const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
     const stat = hasFunnel
@@ -844,7 +845,7 @@ async function _renderSources() {
       </label>
     </div>`;
   }).join('');
-  _body().querySelectorAll('.applicant-source-toggle').forEach((cb) => {
+  host.querySelectorAll('.applicant-source-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
       try {
         await _put(`${OPS}/discovery/${encodeURIComponent(_campaignId)}/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
@@ -855,13 +856,14 @@ async function _renderSources() {
       }
     });
   });
-  _wireExploreBudget();
+  _wireExploreBudget(host);
 }
 
-function _wireExploreBudget() {
-  const input = _body().querySelector('#applicant-explore-budget');
-  const btn = _body().querySelector('#applicant-explore-save');
-  const msg = _body().querySelector('#applicant-explore-msg');
+function _wireExploreBudget(host) {
+  host = host || _body();
+  const input = host.querySelector('#applicant-explore-budget');
+  const btn = host.querySelector('#applicant-explore-save');
+  const msg = host.querySelector('#applicant-explore-msg');
   if (!input || !btn) return; // read-only / not exposed by the engine
   btn.addEventListener('click', async () => {
     const val = parseFloat(input.value);
@@ -883,14 +885,15 @@ function _wireExploreBudget() {
   });
 }
 
-async function _renderTools() {
+async function _renderTools(host) {
+  host = host || _body();
   // Engine-wide tool registry (not campaign-scoped): list every tool with an
   // on/off switch. Mirrors the Sources tab's switch rendering.
   const data = await _fetchJSON(`${ADMIN}/tools`);
-  if (data.engine_available === false) { _renderOffline(); return; }
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
   const tools = data.tools || [];
-  if (!tools.length) { _body().innerHTML = _empty('No tools reported by the engine.'); return; }
-  _body().innerHTML =
+  if (!tools.length) { host.innerHTML = _empty('No tools reported by the engine.'); return; }
+  host.innerHTML =
     `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn the assistant's tools on or off. Disabled tools are never used while it works.</div>` +
     tools.map((t) => {
       const key = t.key != null ? t.key : '';
@@ -906,7 +909,7 @@ async function _renderTools() {
       </label>
     </div>`;
     }).join('');
-  _body().querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
+  host.querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
       try {
         await _post(`${ADMIN}/tools/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
@@ -919,11 +922,12 @@ async function _renderTools() {
   });
 }
 
-async function _renderUpdate() {
+async function _renderUpdate(host) {
+  host = host || _body();
   let status = { engine_available: true };
   try { status = await _fetchJSON(`${OPS}/update`); } catch { status = { engine_available: false }; }
-  if (status.engine_available === false) { _renderOffline(); return; }
-  _body().innerHTML = `
+  if (status.engine_available === false) { _renderOffline(undefined, host); return; }
+  host.innerHTML = `
     <div class="admin-card">
       <div style="font-weight:600;">Update Applicant</div>
       <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
@@ -933,13 +937,13 @@ async function _renderUpdate() {
       <button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
       <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
     </div>`;
-  const updateBtn = _body().querySelector('#applicant-update-go');
+  const updateBtn = host.querySelector('#applicant-update-go');
   if (updateBtn) updateBtn.addEventListener('click', async () => {
     const ok = await _confirm(
       'Update now? Your data is backed up first, then the latest version is applied and the app restarts.',
       { confirmText: 'Update now', cancelText: 'Cancel' });
     if (!ok) return;
-    const out = _body().querySelector('#applicant-update-result');
+    const out = host.querySelector('#applicant-update-result');
     updateBtn.disabled = true;
     if (out) out.textContent = 'Working…';
     try {
@@ -951,6 +955,42 @@ async function _renderUpdate() {
       updateBtn.disabled = false;
     }
   });
+}
+
+// #86: the Config pane hosts the former Sources/Tools/Update top-level tabs as
+// three independently-rendered sub-sections, each with its own host element so
+// one section's error/offline/gated state can't blank out its siblings.
+async function _renderConfig() {
+  const host = _body();
+  host.innerHTML = `
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Sources</div>
+      <div id="applicant-config-sources">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Tools</div>
+      <div id="applicant-config-tools">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list">
+      <div style="font-weight:600;margin-bottom:8px;">Update</div>
+      <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
+    </div>`;
+  const sourcesHost = host.querySelector('#applicant-config-sources');
+  const toolsHost = host.querySelector('#applicant-config-tools');
+  const updateHost = host.querySelector('#applicant-config-update');
+  const sections = [
+    [sourcesHost, _renderSources],
+    [toolsHost, _renderTools],
+    [updateHost, _renderUpdate],
+  ];
+  for (const [sectionHost, renderFn] of sections) {
+    try {
+      await renderFn(sectionHost);
+    } catch (e) {
+      sectionHost.innerHTML = errorHTML(_errLine(e));
+      wireRetry(sectionHost, () => renderFn(sectionHost));
+    }
+  }
 }
 
 // ── Open / launcher ─────────────────────────────────────────────────────────
