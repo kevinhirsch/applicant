@@ -926,6 +926,233 @@ def service_result(app):
     return PrefillResult(application_id=app.id, state=app.status)
 
 
+# === Regression: cautious-mode / blocked-detection notifications actually send,
+# === and urgency is scoped correctly (CRITICAL for blocking waits, NORMAL for
+# === queued portal items). ==================================================
+class _NotifySpy:
+    """Spy for the raw NotificationPort (``notify``/``expire``/``is_configured``).
+
+    Only implements the REAL port methods — if a caller regressed to a
+    nonexistent ``notify_pending(...)`` (the old bug), it would raise
+    ``AttributeError`` right through to the caller (these sites don't swallow
+    it the way ``send_scheduled_follow_ups`` does), which pytest reports as a
+    test failure/error.
+    """
+
+    def __init__(self):
+        self.calls: list = []
+
+    def notify(self, notification):
+        self.calls.append(notification)
+        return "handle"
+
+    def expire(self, dedup_key):
+        pass
+
+    def is_configured(self):
+        return True
+
+
+@pytest.mark.unit
+class TestCautiousModeDetectionNotification:
+    def test_blocked_detection_constructs_valid_pending_action(self):
+        # Regression: the PendingAction constructed for the cautious-mode pause
+        # used to pass a wrong kwarg (`data=` instead of `payload=`) and omit
+        # `title=`, raising TypeError. It must now construct cleanly with both.
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        service._browser.advance(app.id)  # account -> first app page
+        service._browser.inject_page_signals(
+            app.id, body="Checking your browser before accessing — Cloudflare"
+        )
+        resumed = (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        result = service._continue_pages(
+            resumed, _full_answers(cid), service_result(app), cautious=True
+        )
+        assert result.state == ApplicationState.BLOCKED_DETECTION
+        pending = storage.pending_actions.list_open(cid)
+        blockers = [p for p in pending if p.kind == "detection_blocker"]
+        assert blockers, "cautious-mode pause -> a real pending action, not a TypeError"
+        assert blockers[0].title  # title= was populated (not omitted)
+        assert blockers[0].payload.get("signal_type") == "cloudflare"
+        assert blockers[0].application_id == app.id
+
+    def test_blocked_detection_calls_the_real_notify_method(self):
+        # Regression: this path used to call a nonexistent `notify_pending(...)`.
+        # It must call the real NotificationPort.notify(...) with a Notification.
+        from applicant.ports.driven.notification import Notification
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        service._browser.advance(app.id)
+        service._browser.inject_page_signals(app.id, status=403)
+        resumed = (
+            app.with_status(ApplicationState.SANDBOX_PROVISIONING)
+            .with_status(ApplicationState.ACCOUNT_PREFILL)
+            .with_status(ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP)
+            .with_status(ApplicationState.PREFILLING)
+        )
+        spy.calls.clear()  # drop the earlier account-hand-off notification
+        service._continue_pages(
+            resumed, _full_answers(cid), service_result(app), cautious=True
+        )
+        assert len(spy.calls) == 1
+        assert isinstance(spy.calls[0], Notification)
+
+
+@pytest.mark.unit
+class TestNotificationUrgencyScoping:
+    """urgency must be scoped: CRITICAL for blocking hand-offs the agent is
+    frozen on, NORMAL for queued portal items the agent keeps working past."""
+
+    def test_emit_waiting_uses_critical_urgency(self):
+        # _emit_waiting backs 2FA / detection / account-handoff / emergency —
+        # the agent is frozen mid-flow, so this must be CRITICAL (never
+        # deferred by quiet hours).
+        from applicant.ports.driven.notification import NotificationUrgency
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        app = _app(cid)
+        service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+        assert spy.calls, "account hand-off emits a notification via _emit_waiting"
+        assert spy.calls[0].urgency == NotificationUrgency.CRITICAL
+
+    def test_emit_pending_uses_normal_urgency_not_critical(self):
+        # Regression: _emit_pending (backs agent_question/error — a queued
+        # Portal item, not a frozen-agent wait) must be NORMAL, NOT CRITICAL.
+        # An earlier draft of the fix incorrectly applied CRITICAL here too.
+        from applicant.ports.driven.notification import NotificationUrgency
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        _resume_full(service, _app(cid), _full_answers(cid))
+        # The essay screening question ("#q-why") drives an agent_question
+        # pending action via _emit_pending/_emit_agent_question.
+        agent_question_calls = [
+            n for n in spy.calls if "Question needs your input" in n.title
+        ]
+        assert agent_question_calls, "agent_question notification was sent"
+        assert all(
+            n.urgency == NotificationUrgency.NORMAL for n in agent_question_calls
+        )
+        assert all(
+            n.urgency != NotificationUrgency.CRITICAL for n in agent_question_calls
+        )
+
+    def test_emit_error_uses_normal_urgency_not_critical(self):
+        # Same regression as above, exercised via the `error` pending-action
+        # producer (a soft fill failure), not `agent_question`.
+        from applicant.ports.driven.notification import NotificationUrgency
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+
+        class FlakyBrowser:
+            def __init__(self):
+                self._inner = PatchrightBrowser()
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def fill_field(self, aid, selector, value):
+                if selector == "#first-name":
+                    raise RuntimeError("element detached")
+                return self._inner.fill_field(aid, selector, value)
+
+        service = PrefillService(
+            storage=storage,
+            browser=FlakyBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        _resume_full(service, _app(cid), _full_answers(cid))
+        error_calls = [n for n in spy.calls if "Could not fill field" in n.title]
+        assert error_calls, "error-producer notification was sent"
+        assert all(n.urgency == NotificationUrgency.NORMAL for n in error_calls)
+
+    def test_planner_path_blocked_detection_uses_critical_urgency(self):
+        # The CAPTCHA/oauth detection-block site in the planner op-execution
+        # path (kind="blocked_detection") is also a frozen-agent hand-off, so
+        # it must be CRITICAL like _emit_waiting, not NORMAL like _emit_pending.
+        from applicant.core.entities.plan import Plan, StopOp
+        from applicant.ports.driven.browser_automation import PageState
+        from applicant.ports.driven.notification import NotificationUrgency
+
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        spy = _NotifySpy()
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+            notification=spy,
+        )
+        app = _app(cid)
+        state = PageState(url=f"{WORKDAY_URL}/apply", fields=())
+        plan = Plan(ops=(StopOp(reason="captcha"),))
+        result = service_result(app)
+
+        terminal, reflection, _steps = service._run_plan_ops(app, state, plan, {}, result)
+
+        assert reflection is None
+        assert terminal is not None
+        assert terminal.state == ApplicationState.BLOCKED_DETECTION
+        assert terminal.detection_signal == "captcha"
+        assert len(spy.calls) == 1
+        assert spy.calls[0].urgency == NotificationUrgency.CRITICAL
+
+
 # === #7: prefill blocked-state pings use a ref NotificationService can expire =
 @pytest.mark.unit
 def test_resolving_prefill_block_expires_its_ping():
