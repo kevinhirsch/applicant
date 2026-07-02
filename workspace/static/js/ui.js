@@ -608,9 +608,12 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay = document.createElement('div');
       overlay.id = 'styled-confirm-overlay';
       overlay.className = 'modal';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'styled-confirm-title');
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box">' +
-          '<div class="modal-header"><h4>Confirm</h4></div>' +
+          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -633,37 +636,38 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
+    // Tab-trap + Escape-to-close + focus-restore-on-cleanup, reusing the same
+    // trap the full modal system uses (initModalA11y below) rather than a
+    // bespoke implementation.
+    const a11yCleanup = initModalA11y(overlay, () => cleanup(false));
+    okBtn.focus();
+
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
-      document.removeEventListener('keydown', onKey);
+      overlay.removeEventListener('keydown', onArrowKey);
+      a11yCleanup();
       resolve(result);
     }
     function onOk() { cleanup(true); }
     function onCancel() { cleanup(false); }
     function onBackdrop(e) { if (e.target === overlay) cleanup(false); }
-    function onKey(e) {
+    function onArrowKey(e) {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const active = document.activeElement;
         if (active === okBtn) cancelBtn.focus();
         else okBtn.focus();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        cleanup(false);
       }
     }
 
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onBackdrop);
-    document.addEventListener('keydown', onKey);
-    okBtn.focus();
+    overlay.addEventListener('keydown', onArrowKey);
   });
 }
 
@@ -685,6 +689,9 @@ export function styledPrompt(message, {
       overlay = document.createElement('div');
       overlay.id = 'styled-prompt-overlay';
       overlay.className = 'modal';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'styled-prompt-title');
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box styled-prompt-box">' +
           '<div class="modal-header"><h4 id="styled-prompt-title"></h4></div>' +
@@ -718,27 +725,24 @@ export function styledPrompt(message, {
     overlay.classList.remove('hidden');
     overlay.style.display = '';
 
+    // Tab-trap + Escape-to-close + focus-restore-on-cleanup, reusing the same
+    // trap the full modal system uses (initModalA11y below) rather than a
+    // bespoke implementation.
+    const a11yCleanup = initModalA11y(overlay, () => cleanup(null));
+
     function cleanup(result) {
       overlay.classList.add('hidden');
       overlay.style.display = 'none';
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onBackdrop);
-      document.removeEventListener('keydown', onKey);
       input.removeEventListener('keydown', onInputKey);
+      a11yCleanup();
       resolve(result);
     }
     function onOk() { cleanup((input.value || '').trim()); }
     function onCancel() { cleanup(null); }
     function onBackdrop(e) { if (e.target === overlay) cleanup(null); }
-    function onKey(e) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        cleanup(null);
-      }
-    }
     function onInputKey(e) {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -749,7 +753,6 @@ export function styledPrompt(message, {
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
     overlay.addEventListener('click', onBackdrop);
-    document.addEventListener('keydown', onKey);
     input.addEventListener('keydown', onInputKey);
 
     requestAnimationFrame(() => {
