@@ -342,7 +342,15 @@ body.bg-pattern-sparkles {
       transform: translateY(calc(-50% - 2px));
       font-size: 0.75em;
       line-height: 1;
-      color: color-mix(in srgb, var(--fg) 58%, transparent);
+      /* ITEM #41 (Apple Genius audit) — this is the "Applicant" title/wordmark
+         that sits directly over the (often dark) chat area. It had no explicit
+         font-weight (inheriting the ambient Regular ~400) and carried its whole
+         hierarchy on a low color-mix alpha (58%), which reads as a thin,
+         ghosted label rather than a present title. Floor the weight at Medium
+         (500) and raise the alpha floor so presence comes from a real color +
+         weight, not from opacity standing in for it. */
+      font-weight: 500;
+      color: color-mix(in srgb, var(--fg) 85%, transparent);
       white-space: nowrap;
       display: flex;
       align-items: center;
@@ -359,7 +367,7 @@ body.bg-pattern-sparkles {
       cursor: pointer;
     }
     .chat-meta-overlay:hover {
-      color: color-mix(in srgb, var(--fg) 75%, transparent);
+      color: var(--fg);
     }
     /* Offline model rows */
     .models-row-offline {
@@ -2272,7 +2280,23 @@ body.bg-pattern-sparkles {
       flex-wrap: nowrap;
       overflow: hidden;
       min-width: 0;
-      flex: 1;
+      /* ITEM #40 (Apple Genius audit) — the reference composer shows a single
+         attach control; this bar instead exposes the overflow/attach trigger,
+         the web-search toggle and the shell-access toggle as three separate
+         loose icons. A full merge behind one control would need to move the
+         web-search/shell-access click handlers into the overflow menu (JS
+         across composer/chat modules) — out of scope for a CSS-only pass and
+         risky to reachability if done half-way. Safe visual-only consolidation
+         instead: stop the row from stretching to fill the bar (was `flex:1`)
+         so it hugs its own content, then give it one shared pill surface below
+         so the icon cluster reads as ONE compact grouped control (matching the
+         `.mode-toggle` segmented-pill pattern already used elsewhere in this
+         bar) instead of several disconnected chips. Every button keeps its
+         existing click handler/tooltip — nothing here changes behavior. */
+      flex: 0 1 auto;
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      border-radius: 10px;
+      padding: 2px;
     }
     /* Collapsible buttons shrink away; collapsed ones disappear */
     .chat-input-left > .input-icon-btn {
@@ -35613,6 +35637,36 @@ body.theme-frosted .cp-popover,
 body.theme-frosted .model-picker-menu {
   overflow: hidden;
 }
+}
+/* ── ITEM #31 (Apple Genius audit) — sidebar material reads inverted ──────────
+   The shared fill above paints the sidebar with the exact same bright, near-white
+   kube glass as the windows/toasts/popovers (`--ow-glass-light-color` @ 0.60 alpha
+   + a white top-down lift). Over the desktop wallpaper — which defaults to a DARK
+   preset — that renders as a light floating panel over a dark desktop: backwards
+   from the reference render, where the sidebar is the heavier/more-opaque of the
+   two materials (HIG Color: "Liquid Glass appears more opaque in larger elements
+   like sidebars to preserve legibility over complex backgrounds"). Reconcile the
+   relative contrast by mixing the theme's own panel tone into the sidebar's fill —
+   reusing existing tokens (`--panel`/`--bg`, already adaptive per light/dark base
+   theme, exactly like `.ow-window` reuses `--ow-glass-light-color`) instead of a
+   hand-rolled color — so the sidebar reads as a darker, more opaque neutral glass
+   than the lighter windows/popovers floating over it. Same mechanism/family as
+   every other glass surface (still the light-glass gradient underneath), just
+   weighted heavier, so it stays internally consistent with the "one glass system"
+   rather than forking a second, unrelated dark material. Drop the extra white lift
+   image (it would wash the mixed tone back toward white) and let the box-shadow
+   rim above carry the specular edge instead — "the rim does the work" per the
+   canonical NEUTRAL FROST note earlier in this file. Ink is untouched (the
+   #16191f dark-ink rule right below still applies), so legibility carries over
+   unchanged. Scoped after the shared fill so it wins at equal specificity; kept
+   inside the same no-preference guard so the a11y reduced-transparency solid
+   fallback is unaffected. */
+@media (prefers-reduced-transparency: no-preference) {
+  body.theme-frosted #sidebar,
+  body.theme-frosted .icon-rail {
+    background-color: color-mix(in srgb, var(--panel, var(--bg)) 55%, var(--ow-glass-light-color) 45%) !important;
+    background-image: none !important;
+  }
 }
 /* Text on the LIGHT glass must be DARK to stay legible (Apple light sidebar reads dark
    ink on light glass). adaptiveGlass.js stands down under the glass theme now, so the
