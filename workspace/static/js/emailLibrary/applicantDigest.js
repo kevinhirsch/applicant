@@ -318,6 +318,105 @@ function _warningBadge(row) {
   });
 }
 
+// Referral nudge (product-gaps backlog: "referral/network prompt"). Purely
+// informational, client-side only — NOT a new integration (no LinkedIn/network-
+// graph scraping; that's explicitly out of scope). Referrals convert far better
+// than cold applications, so for a posting at a notably large/well-known company
+// (where the owner is statistically more likely to know someone there) we show a
+// small, dismissible reminder to check their network before applying cold.
+// Reuses the SAME warning/note-chip visual pattern `_warningBadge` above already
+// established (`applicant-portal-badge`, see applicantPortal.js `_urgencyBadge`)
+// rather than inventing new UI — just a different (informational, not warning)
+// semantic color token that already exists in style.css (`--color-accent`).
+//
+// Low-frequency/non-naggy by design: shown at most once per posting, and a
+// dismiss control persists per-posting in localStorage (`applicant_` prefix,
+// matching this session's key-naming convention — see applicantPortal.js's
+// `MILESTONES_SEEN_KEY` / `NOTIF_SEEN_KEY`) so a dismissed posting's nudge never
+// reappears, even across reloads/days.
+const REFERRAL_DISMISSED_KEY = 'applicant_digest_referral_dismissed';
+
+// A small heuristic list of notably large/well-known employers — where a
+// referral is most plausible because the owner is more likely to know someone
+// there. Deliberately just a client-side name match, not a data integration.
+const _REFERRAL_LIKELY_COMPANIES = [
+  'google', 'alphabet', 'amazon', 'microsoft', 'apple', 'meta', 'facebook',
+  'netflix', 'salesforce', 'oracle', 'ibm', 'adobe', 'nvidia', 'intel',
+  'cisco', 'sap', 'stripe', 'uber', 'lyft', 'airbnb', 'linkedin', 'spotify',
+  'tesla', 'goldman sachs', 'jpmorgan', 'morgan stanley', 'deloitte',
+  'accenture', 'mckinsey', 'pwc', 'kpmg', 'ernst & young', 'walmart',
+  'target', 'disney', 'samsung', 'sony', 'dell', 'hewlett packard',
+  'vmware', 'twitter', 'block inc', 'paypal', 'ebay', 'shopify',
+  'atlassian', 'servicenow', 'workday', 'twilio', 'snowflake', 'palantir',
+  'boeing', 'lockheed martin', 'general electric', 'johnson & johnson',
+  'pfizer', 'visa', 'mastercard', 'american express', 'wells fargo',
+  'bank of america', 'citigroup', 'capital one',
+];
+
+function _isNotablyLargeCompany(company) {
+  if (!company) return false;
+  const c = String(company).toLowerCase();
+  return _REFERRAL_LIKELY_COMPANIES.some((name) => c.indexOf(name) !== -1);
+}
+
+function _referralDismissedSet() {
+  try {
+    const raw = localStorage.getItem(REFERRAL_DISMISSED_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function _isReferralDismissed(id) {
+  if (!id) return false;
+  return _referralDismissedSet().has(id);
+}
+
+function _dismissReferralNudge(id) {
+  if (!id) return;
+  try {
+    const seen = _referralDismissedSet();
+    seen.add(id);
+    localStorage.setItem(REFERRAL_DISMISSED_KEY, JSON.stringify(Array.from(seen)));
+  } catch (_) { /* best-effort */ }
+}
+
+// Builds the dismissible referral-nudge row, or null when it shouldn't show
+// (no company, not a notably large one, no stable id to dismiss against, or
+// already dismissed for this posting). Never blocks/hides the row itself —
+// purely an optional extra line, same spirit as `_warningBadge`.
+function _referralNudge(row) {
+  const company = row.company || '';
+  const id = _rowActionId(row);
+  if (!id || !_isNotablyLargeCompany(company) || _isReferralDismissed(id)) return null;
+
+  const wrap = _el('div', {
+    cls: 'applicant-portal-badge applicant-digest-referral',
+    style: 'display:flex;align-items:center;gap:8px;margin-top:6px;padding:3px 8px;'
+      + 'border-radius:8px;background:var(--color-accent,#00aaff);color:#fff;'
+      + 'font-size:11px;font-weight:500;white-space:normal;',
+  });
+  wrap.appendChild(_el('span', {
+    text: `Know anyone at ${company}? A referral can significantly improve your odds — worth a quick check before applying.`,
+    style: 'flex:1;',
+  }));
+  const dismiss = _el('button', {
+    text: '×',
+    title: 'Dismiss this tip — it won’t show again for this posting',
+    attrs: { type: 'button', 'aria-label': 'Dismiss referral tip' },
+    style: 'flex:0 0 auto;background:none;border:none;color:inherit;cursor:pointer;'
+      + 'font-size:14px;line-height:1;padding:0 2px;opacity:0.85;',
+  });
+  dismiss.addEventListener('click', () => {
+    _dismissReferralNudge(id);
+    wrap.remove();
+  });
+  wrap.appendChild(dismiss);
+  return wrap;
+}
+
 export function buildDigestRow(row, ctx = {}) {
   const card = _el('div', {
     cls: 'doclib-card applicant-digest-row',
@@ -373,6 +472,9 @@ export function buildDigestRow(row, ctx = {}) {
       style: 'font-size:11px;opacity:0.72;margin-top:2px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;',
     }));
   }
+
+  const referralNudge = _referralNudge(row);
+  if (referralNudge) card.appendChild(referralNudge);
 
   const getCampaignId = typeof ctx.getCampaignId === 'function' ? ctx.getCampaignId : () => '';
   const onResolved = typeof ctx.onResolved === 'function' ? ctx.onResolved : null;
