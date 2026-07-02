@@ -427,17 +427,39 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 
 class _RevalidatingStatic(StaticFiles):
-    """Serve static assets normally, but force the browser to REVALIDATE
-    source files (.js/.css/.html) on every load instead of serving a stale
-    copy from disk cache. The app ships raw ES modules with no build step or
-    versioned URLs, so browsers were caching modules across deploys — a code
-    change wouldn't appear without a manual hard-refresh. `no-cache` keeps the
-    cached bytes but requires a conditional request; unchanged files still
-    return a cheap 304 (ETag/Last-Modified are preserved)."""
+    """Serve static assets normally, with a Cache-Control policy tuned per
+    file type so a no-build/no-versioned-URL app still avoids stale code
+    without paying a conditional-GET round-trip on every single load.
+
+    - `.js`/`.css`: `max-age=60`. Perf audit (round-3 lens #12) — blanket
+      `no-cache` forced ~162 modules + the stylesheet each through a
+      conditional-GET RTT on EVERY navigation; Starlette/browsers do turn
+      that into a cheap 304 (ETag/Last-Modified preserved), but the RTT
+      itself, times ~162, is the storm being collapsed here. A short
+      `max-age=60` lets the browser skip revalidation entirely for a code
+      change that's at most a minute old — acceptable staleness during dev
+      iteration (`workspace/app.py` re-reads `.js/.css/.html` from disk per
+      request; this only changes how long the BROWSER waits before asking
+      again, not whether the server serves fresh bytes when asked) — while
+      still self-healing within 60s of a real deploy, no manual hard-refresh
+      needed. `static/sw.js` is network-first for `.js`/`.css`
+      (`CACHE_NAME` precache + the `fetch` handler's network-first branch):
+      its `fetch()` calls still go through the browser's own HTTP cache, so
+      a `max-age=60` hit resolves those "network-first" fetches with ZERO
+      round-trip while still fresh, and only reverts to a real
+      conditional-GET after 60s — the SW strategy and this policy compose
+      rather than conflict.
+    - `.html`: kept on `no-cache` (unconditional revalidation) — the app
+      shell should never be stale for more than one reload, so it keeps
+      paying the conditional-GET RTT it always has; unchanged bytes still
+      return a cheap 304 (ETag/Last-Modified preserved).
+    """
 
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        if path.endswith((".js", ".css", ".html")):
+        if path.endswith((".js", ".css")):
+            resp.headers["Cache-Control"] = "max-age=60"
+        elif path.endswith(".html"):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
@@ -932,14 +954,23 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     that only absolutizes — it does not verify containment, so a future caller
     threading user input here would otherwise be a path-traversal sink. Reject
     anything that escapes the served-app root.
+
+    Perf (round-3 lens #11): the file's bytes are cached by mtime via
+    ``read_cached_html_parts`` (``src/app_helpers.py``) — split once around the
+    ``{{CSP_NONCE}}`` token and re-joined here with a FRESH nonce every call.
+    That keeps this a cheap ``str.join`` per request instead of a disk read +
+    full 232 KB scan-and-replace on every navigation (index.html is shared by
+    nine deep-link routes), while every response still gets its own unique
+    nonce — the cache never stores or reuses a nonce value, only the static
+    text either side of it.
     """
-    from src.app_helpers import serve_html_contained
+    from src.app_helpers import read_cached_html_parts
     try:
-        html = serve_html_contained(BASE_DIR, file_path)
+        parts = read_cached_html_parts(BASE_DIR, file_path)
     except ValueError:
         raise HTTPException(404, "not found")
     nonce = getattr(request.state, "csp_nonce", "")
-    html = html.replace("{{CSP_NONCE}}", nonce)
+    html = nonce.join(parts)
     return HTMLResponse(html)
 
 @app.get("/")

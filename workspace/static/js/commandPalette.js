@@ -84,10 +84,18 @@ const _SURFACES = [
   },
   {
     id: 'debug', label: 'Debug', keywords: 'diagnostics ops insights logs variants run controls config activity',
-    open: () => _callFirst(
-      window.applicantDebugModule && window.applicantDebugModule.openApplicantDebug,
-      window.openApplicantDebug,
-    ),
+    // Debug is one of the perf-audit's lazy-loaded rare surfaces
+    // (docs/design/audits/exhaustive2/03_performance.md #2) — its module may
+    // not be fetched yet if the user hasn't opened it via its own launcher
+    // or a #debug link. lazyLaunch.js's window.__applicantLazyOpen fallback
+    // dynamic-imports it on demand instead of this row silently no-oping.
+    open: () => {
+      if (_callFirst(
+        window.applicantDebugModule && window.applicantDebugModule.openApplicantDebug,
+        window.openApplicantDebug,
+      )) return;
+      if (window.__applicantLazyOpen) window.__applicantLazyOpen('debug');
+    },
   },
   {
     id: 'results', label: 'Results', keywords: 'funnel outcomes learning stats',
@@ -119,10 +127,14 @@ const _SURFACES = [
   },
   {
     id: 'gallery', label: 'Gallery', keywords: 'screenshots materials drafts',
-    open: () => _callFirst(
-      window.applicantGalleryModule && window.applicantGalleryModule.openApplicantGallery,
-      window.openApplicantGallery,
-    ),
+    // Lazy-loaded rare surface — see the 'debug' entry's comment above.
+    open: () => {
+      if (_callFirst(
+        window.applicantGalleryModule && window.applicantGalleryModule.openApplicantGallery,
+        window.openApplicantGallery,
+      )) return;
+      if (window.__applicantLazyOpen) window.__applicantLazyOpen('gallery');
+    },
   },
   {
     id: 'mind', label: 'Mind', keywords: 'memory playbooks learning what the assistant remembers',
@@ -133,10 +145,14 @@ const _SURFACES = [
   },
   {
     id: 'compare', label: 'Compare', keywords: 'diff applications postings side by side',
-    open: () => _callFirst(
-      window.applicantCompareModule && window.applicantCompareModule.openApplicantCompare,
-      window.openApplicantCompare,
-    ),
+    // Lazy-loaded rare surface — see the 'debug' entry's comment above.
+    open: () => {
+      if (_callFirst(
+        window.applicantCompareModule && window.applicantCompareModule.openApplicantCompare,
+        window.openApplicantCompare,
+      )) return;
+      if (window.__applicantLazyOpen) window.__applicantLazyOpen('compare');
+    },
   },
   {
     id: 'chat', label: 'Chat', keywords: 'assistant ask job agent',

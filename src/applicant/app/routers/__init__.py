@@ -22,6 +22,7 @@ from applicant.app.routers import (
     conversion,
     credentials,
     criteria,
+    dev_seed,
     digest,
     discovery_sources,
     documents,
@@ -74,5 +75,8 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(audit.router)
     app.include_router(gallery.router)
     app.include_router(update.router)
+    # Dev/demo seed (audit §6 quick-win #49): registered unconditionally, but every
+    # route on it self-gates 404 unless APPLICANT_ALLOW_SEED=1 — see dev_seed.py.
+    app.include_router(dev_seed.router)
     # The MCP surface is mounted by ``mount_mcp(app)`` (app/main.py) so the native
     # tool routes appear as flat /mcp APIRoutes (#308); not included here.

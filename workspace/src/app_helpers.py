@@ -89,6 +89,63 @@ def serve_html_contained(base_dir: str, file_path: str) -> str:
         return f.read()
 
 
+#: Module-level cache for ``read_cached_html_parts``: absolute file path ->
+#: (mtime, split-parts-list). Each served HTML file (index.html,
+#: backgrounds.html, login.html, ...) gets its own independent entry.
+_html_parts_cache: dict = {}
+
+
+def read_cached_html_parts(
+    base_dir: str,
+    file_path: str,
+    cache=None,
+    nonce_token: str = "{{CSP_NONCE}}",
+) -> list:
+    """Containment-checked HTML read, split around ``nonce_token``, cached by mtime.
+
+    Perf audit (round-3 lens #11): ``index.html`` is 232 KB and was re-read from
+    disk PLUS re-scanned with a full-string ``.replace()`` on every single
+    navigation (nine deep-link routes share ``serve_index``), with no ETag/304
+    support anywhere in the chain. Only the nonce substitution itself is
+    genuinely per-request — CSP requires a fresh, unique nonce on EVERY response
+    (see ``core/middleware.py``, ``secrets.token_hex(16)`` generated per request
+    before this function ever runs) — the disk read and the 232 KB scan are not.
+
+    This splits the file's contents on ``nonce_token`` once and caches the
+    resulting list of static segments keyed by the file's
+    ``os.stat().st_mtime``. As long as mtime is unchanged, repeat calls for the
+    same ``file_path`` skip the disk read AND the string-scan entirely; a
+    redeploy/edit that touches the file's mtime naturally busts the cache with
+    no manual invalidation needed. Callers reassemble the live response with
+    ``nonce.join(parts)`` — cheap regardless of file size — which is exactly
+    equivalent to ``content.replace(nonce_token, nonce)`` (same set of
+    occurrences, same replacement value); only the expensive scan is amortized
+    across every request that shares a file version.
+
+    Containment (``inside_base_dir``) is re-checked on every call — the cache
+    only stores already-validated paths' *contents*, never a decision that
+    would let a differently-shaped ``file_path`` skip the check. Raises
+    ``ValueError`` on an out-of-base path (callers translate to a 404) and lets
+    a genuine missing-file ``FileNotFoundError`` propagate, matching
+    ``serve_html_contained``.
+    """
+    if cache is None:
+        cache = _html_parts_cache
+    if not inside_base_dir(base_dir, file_path):
+        raise ValueError(
+            f"refusing to serve path outside base: {file_path!r} escapes {base_dir!r}"
+        )
+    mtime = os.stat(file_path).st_mtime  # raises FileNotFoundError if missing
+    cached = cache.get(file_path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    parts = content.split(nonce_token)
+    cache[file_path] = (mtime, parts)
+    return parts
+
+
 def safe_join(base_dir: str, *parts: str) -> str:
     """Join UNTRUSTED ``parts`` onto ``base_dir`` and return a contained realpath.
 
