@@ -55,6 +55,7 @@ class Scheduler:
         status_update_schedule: str = "off",
         essentials_nudge_service=None,
         essentials_nudge_schedule: str = "off",
+        weekly_recap_schedule: str = "off",
         retention_service=None,
         retention_schedule: str = "off",
         metrics: Metrics | None = None,
@@ -111,6 +112,20 @@ class Scheduler:
         # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same day
         # never re-pushes the nudge (mirrors the status-update per-day idempotency).
         self._essentials_nudge_days: dict[tuple[str, date], bool] = {}
+        # Top-25 #18: the weekly recap (applications sent + best-performing source over
+        # the trailing 7 days). Reuses ``digest_service`` (already injected above as
+        # ``self._digest``) and pushes through the SAME notification fan-out the daily
+        # digest already uses — no new service param, no second delivery pipeline.
+        # ``weekly_recap_schedule`` gates the cadence exactly like its daily siblings:
+        # ``off``/empty (default) keeps it dormant (byte-identical hermetic behavior);
+        # anything else opts in to a once-per-(campaign, ISO-week) push. The guard below
+        # is an in-memory "last sent" marker keyed by ISO (year, week) — the same
+        # ledger convention the daily/curation/essentials guards already use (no new
+        # persisted timestamp column needed).
+        self._weekly_recap_schedule = (weekly_recap_schedule or "off").strip().lower()
+        # (campaign_id, (iso_year, iso_week)) -> True. Once-per-week guard, pruned to the
+        # current week each tick so the map stays bounded over 24/7 operation.
+        self._weekly_recap_weeks: dict[tuple[str, tuple[int, int]], bool] = {}
         # #363: PII retention sweep. ``retention_service.prune_pii_older_than()`` removes
         # stored PII/EEO older than the configured window. ``retention_schedule`` gates
         # the cadence: ``off``/empty (default) disables it entirely; anything else opts
@@ -235,7 +250,12 @@ class Scheduler:
             #      (campaign, UTC day) (FR-NOTIF / FR-ONBOARD), gated + idempotent. Uses
             #      the SAME campaigns the loop ticked so a freshly-removed campaign gets none.
             essentials_nudged = self._run_essentials_nudges(storage, now)
-            # (b4) #363: run the PII retention sweep once per UTC day, gated +
+            # (b4) Top-25 #18: push the weekly recap (applications sent + best source)
+            #      once per (campaign, ISO week), gated + idempotent. Reuses the SAME
+            #      shared ``digest_service`` + notification fan-out the daily digest
+            #      already uses. Uses the SAME campaigns the loop ticked above.
+            weekly_recapped = self._run_weekly_recap(storage, now)
+            # (b5) #363: run the PII retention sweep once per UTC day, gated +
             #     idempotent. Prunes stored PII/EEO older than the configured window.
             retention_pruned = self._run_pii_retention(now)
         except Exception:
@@ -276,6 +296,7 @@ class Scheduler:
             curation_reviewed=curated.get("reviewed", 0),
             status_updates=len(status_pushed),
             essentials_nudges=len(essentials_nudged),
+            weekly_recaps=len(weekly_recapped),
         )
         return {
             "ticked": ticked,
@@ -293,6 +314,9 @@ class Scheduler:
             # nudge pushed this tick (empty when disabled / already-pushed / gate open /
             # nothing missing / blocked for some other reason).
             "essentials_nudges": essentials_nudged,
+            # Top-25 #18: campaign ids that got a weekly recap pushed this tick (empty
+            # when disabled / already-pushed this ISO week / gated / nothing to send).
+            "weekly_recaps": weekly_recapped,
             # #363: PII retention sweep — pruned count (0 when disabled/gated/already-run).
             "pii_retention": retention_pruned,
             # FR-OBS-2 / NFR-OPS: this tick's health (False when every attempted campaign
@@ -617,6 +641,52 @@ class Scheduler:
         """Keep the once-per-day essentials-nudge guard bounded over 24/7 operation."""
         self._essentials_nudge_days = {
             k: v for k, v in self._essentials_nudge_days.items() if k[1] == today
+        }
+
+    # --- weekly recap (Top-25 #18) -----------------------------------------
+    def _run_weekly_recap(self, storage, now: datetime) -> list[str]:
+        """Push the weekly recap at most once per (campaign, ISO week).
+
+        Fast no-op when (a) disabled (``WEEKLY_RECAP_SCHEDULE`` off / no digest
+        service wired), or (b) the automated-work gate is closed (mirrors the daily
+        status-update gating — a weekly recap of automated activity is meaningless
+        before onboarding/LLM/channels are satisfied). For each active campaign that
+        has not yet received this ISO week's recap, asks the SHARED ``digest_service``
+        to build + push it through the existing notification fan-out; a failure on one
+        campaign is logged and skipped rather than aborting the tick. Returns the
+        campaign ids actually pushed this tick.
+        """
+        if self._digest is None or self._weekly_recap_schedule in ("", "off"):
+            return []
+        if not self._automated_work_allowed():
+            return []
+        iso_year, iso_week, _ = now.isocalendar()
+        week_key = (iso_year, iso_week)
+        self._prune_weekly_recap_weeks(week_key)
+        pushed: list[str] = []
+        for campaign in self._active_campaigns(storage):
+            key = (str(campaign.id), week_key)
+            if self._weekly_recap_weeks.get(key):
+                continue
+            # Mark BEFORE pushing so a crash mid-send doesn't loop it the same week;
+            # the notifier's own per-(campaign, week-start) dedup key is the second
+            # line of defense (defense in depth, FR-NOTIF-3).
+            self._weekly_recap_weeks[key] = True
+            try:
+                handle = self._digest.deliver_weekly_recap(campaign.id, now=now)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(
+                    "weekly_recap_failed", campaign_id=str(campaign.id), error=str(exc)
+                )
+                continue
+            if handle:
+                pushed.append(str(campaign.id))
+        return pushed
+
+    def _prune_weekly_recap_weeks(self, week_key: tuple[int, int]) -> None:
+        """Keep the once-per-week recap guard bounded over 24/7 operation."""
+        self._weekly_recap_weeks = {
+            k: v for k, v in self._weekly_recap_weeks.items() if k[1] == week_key
         }
 
     # --- #363 PII retention sweep -----------------------------------------

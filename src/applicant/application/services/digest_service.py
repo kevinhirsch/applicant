@@ -20,6 +20,7 @@ approve/decline-with-feedback decisions that close the learning loop:
 from __future__ import annotations
 
 import html
+from datetime import UTC, datetime, timedelta
 
 from applicant.core.entities.application import Application
 from applicant.core.entities.decision import Decision, DecisionType
@@ -32,6 +33,14 @@ from applicant.observability.logging import get_logger
 log = get_logger(__name__)
 
 EMPTY_DAY_NOTE = "No new viable roles today — criteria unchanged, discovery still running."
+
+#: Rolling lookback window for the weekly recap (audit Top-25 #18): "applications
+#: sent" + "best-performing source" over the trailing 7 days, delivered through the
+#: SAME notification fan-out the daily digest already uses (reuse, not a second
+#: pipeline). Scheduling/idempotency for the weekly cadence live in the scheduler,
+#: mirroring the daily digest guard (IDEM-1) and the status-update/essentials-nudge
+#: per-day guards.
+RECAP_WINDOW_DAYS = 7
 
 #: Cap on how many role rows the digest EMAIL renders inline. A campaign can
 #: surface 1000+ viable roles; rendering one HTML row each makes a multi-MB email
@@ -569,3 +578,138 @@ class DigestService:
         except Exception:
             posting = None
         return posting.campaign_id if posting is not None else None
+
+    # --- weekly recap (Top-25 #18) -----------------------------------------
+    #
+    # Aggregates a trailing-7-day window: applications actually SENT (the durable
+    # submission-snapshot's ``captured_at`` — the stop-boundary evidence of a real
+    # submit, FR-LOG-4 — not a posting's discovery/creation time) and the campaign's
+    # best-performing discovery source (reusing ``LearningService.source_ranking``,
+    # the SAME conversion-weighted ranking that backs the operator-visible Insights
+    # "Best sources" surface — FR-DISC-5/FR-LEARN-6 — rather than a new stat).
+    #
+    # Interview/offer outcomes are DELIBERATELY OMITTED, not fabricated as zero:
+    # ``OutcomeEvent`` (core/entities/outcome_event.py) recognizes "interview_invited"
+    # and "offer" in its catalogue, but (a) nothing in the engine today ever records
+    # one — no route/service creates those outcome types, so they are always empty —
+    # and (b) the entity carries no timestamp, so even a manually-inserted one could
+    # not be windowed to "this week". Reporting "0 interviews" every week would imply
+    # a working tracker that silently never finds anything; omitting the line is the
+    # truthful degrade (mirrors StatusUpdateService's "absent source contributes
+    # nothing", FR-AGENT-5).
+    def build_weekly_recap(self, campaign_id: CampaignId, *, now: datetime | None = None) -> dict:
+        """Aggregate the trailing-7-day recap for ``campaign_id`` (read-only)."""
+        now = now or datetime.now(UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        window_start = now - timedelta(days=RECAP_WINDOW_DAYS)
+        applications_sent = self._applications_sent_between(campaign_id, window_start, now)
+        best_source = self._best_source_for_recap(campaign_id)
+        return {
+            "campaign_id": campaign_id,
+            "window_start": window_start,
+            "window_end": now,
+            "applications_sent": applications_sent,
+            "best_source": best_source,
+        }
+
+    def _applications_sent_between(
+        self, campaign_id: CampaignId, start: datetime, end: datetime
+    ) -> int:
+        """Count real submissions in ``[start, end)`` from the submission-snapshot log.
+
+        The snapshot is written once, at the stop-boundary, for every real submit
+        (auto-detected or one-tap mark-submitted) — the durable evidence of what was
+        actually sent (#372), unlike an ``Application`` row's ``created_at`` (set at
+        discovery/promotion time, before any submit).
+        """
+        try:
+            snapshots = self._storage.submission_snapshots.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive: recap must never 500/crash
+            return 0
+        count = 0
+        for snap in snapshots:
+            captured = getattr(snap, "captured_at", None)
+            if captured is None:
+                continue
+            if captured.tzinfo is None:
+                captured = captured.replace(tzinfo=UTC)
+            if start <= captured < end:
+                count += 1
+        return count
+
+    def _best_source_for_recap(self, campaign_id: CampaignId) -> str | None:
+        """The top-ranked discovery source with SOME recorded yield, or ``None``.
+
+        Reuses ``LearningService.source_ranking`` (FR-DISC-5) — the exact
+        conversion-weighted ranking the Insights "Best sources" surface reads
+        (``LearningService.build_summary``) — instead of computing a second,
+        divergent notion of "best". A source with zero recorded matches/approvals/
+        submissions is skipped rather than named "best" (no fabrication): a fresh
+        campaign with no funnel data yet yields ``None``.
+        """
+        if self._learning is None:
+            return None
+        try:
+            model = self._learning.load_model(campaign_id)
+            ranked = self._learning.source_ranking(model)
+        except Exception:  # pragma: no cover - defensive: recap must never 500/crash
+            return None
+        for key in ranked:
+            stats = model.source_yield_stats.get(key, {})
+            if any(int(stats.get(leg, 0) or 0) for leg in ("matches", "approvals", "submissions")):
+                return key
+        return None
+
+    def render_weekly_recap_message(
+        self, campaign_id: CampaignId, *, recap: dict | None = None
+    ) -> dict:
+        """Compose the plain-language, first-person weekly recap notification body."""
+        if recap is None:
+            recap = self.build_weekly_recap(campaign_id)
+        sent = int(recap["applications_sent"])
+        best_source = recap["best_source"]
+        if sent:
+            body = f"This week I sent {sent} application{'s' if sent != 1 else ''} on your behalf."
+        else:
+            body = "This week I didn't send any new applications on your behalf — I'm still searching."
+        if best_source:
+            body += f" Your best-performing source so far is {best_source}."
+        return {
+            "subject": "Your weekly recap",
+            "body": body,
+            "campaign_id": campaign_id,
+            "applications_sent": sent,
+            "best_source": best_source,
+        }
+
+    def deliver_weekly_recap(self, campaign_id: CampaignId, *, now: datetime | None = None) -> str | None:
+        """Build + push one weekly recap through the EXISTING notification fan-out.
+
+        Reuses ``NotificationService`` — the SAME in-app inbox + opt-in Discord/email
+        fan-out the daily digest ready-ping and email already flow through — not a
+        second delivery pipeline. Returns the notify handle, or ``None`` when no
+        notifier is wired (degrades to a no-op, mirrors ``StatusUpdateService.emit``).
+        Cadence/idempotency (once per campaign per week) live in the scheduler, which
+        calls this at most once per (campaign, ISO week) — this method itself is safe
+        to call repeatedly (each call just re-notifies; the notifier's own per-week
+        dedup key is a second line of defense, FR-NOTIF-3).
+        """
+        now = now or datetime.now(UTC)
+        recap = self.build_weekly_recap(campaign_id, now=now)
+        message = self.render_weekly_recap_message(campaign_id, recap=recap)
+        if self._notification_service is None:
+            return None
+        notify = getattr(self._notification_service, "notify_weekly_recap", None)
+        if notify is None:  # pragma: no cover - defensive (older notifier)
+            return None
+        try:
+            return notify(
+                str(campaign_id),
+                body=message["body"],
+                week_start=recap["window_start"].date(),
+                deep_link=f"/digest?campaign={campaign_id}",
+            )
+        except Exception:  # external send must not break the recap
+            log.warning("weekly_recap_deliver_failed", exc_info=True)
+            return None

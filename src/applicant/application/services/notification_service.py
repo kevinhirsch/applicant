@@ -238,6 +238,34 @@ class NotificationService:
             )
         )
 
+    # --- weekly recap (Top-25 #18 / FR-DIG-2 sibling) ----------------------
+    def notify_weekly_recap(
+        self,
+        campaign_id: str,
+        *,
+        body: str,
+        week_start: date,
+        deep_link: str | None = None,
+    ) -> str:
+        """Push the weekly recap through the EXISTING fan-out (Top-25 #18).
+
+        Reuses the SAME path as the daily digest ready-ping and the periodic status
+        update: in-app inbox always, Discord/email fan-out for whatever the user has
+        opted into — NOT a parallel channel. ``dedup_key`` is keyed per (campaign,
+        ISO-week-start) so a re-driven same-week push is a no-op at the notifier
+        (the scheduler already guards the weekly cadence; this is defense in depth,
+        FR-NOTIF-3, mirroring ``notify_status_update``'s per-day key).
+        """
+        return self._notification.notify(
+            Notification(
+                title="Your weekly recap",
+                body=body,
+                deep_link=deep_link,
+                urgency=NotificationUrgency.NORMAL,
+                dedup_key=f"weekly_recap:{campaign_id}:{week_start.isoformat()}",
+            )
+        )
+
     # --- in-app notification center (FR-UI-3 feed) ------------------------
     def list_inbox(self, *, include_seen: bool = False) -> list:
         """Current in-app notifications backing the notification center.
