@@ -121,12 +121,14 @@ async function _onPauseToggle() {
       && !window.confirm('Pause all automated work? Your assistant stops until you resume.')) {
     return;
   }
-  const action = wasRunning ? 'pause-all' : 'resume-all';
+  // Full path segments (leading slash) so the reachability contract sees the
+  // literal /pause-all + /resume-all consumers, not a runtime-concatenated path.
+  const action = wasRunning ? '/pause-all' : '/resume-all';
   _pauseBusy = true;
   btn.disabled = true;
   _applyPauseOptimistic(!wasRunning); // paused becomes the inverse of running
   try {
-    await _post(`${CONTROL_API}/${action}`);
+    await _post(`${CONTROL_API}${action}`);
     refreshStatus(); // reconcile with the engine's authoritative state
   } catch (e) {
     _applyPauseOptimistic(wasRunning); // revert
