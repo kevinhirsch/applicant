@@ -25,8 +25,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from playwright.async_api import async_playwright  # noqa: E402
 import playtest_crawl as C  # noqa: E402
+from playwright.async_api import async_playwright  # noqa: E402
 
 OUTDIR = Path(os.environ.get("CRAWL_OUT", "playtest-screens"))
 OUTDIR.mkdir(parents=True, exist_ok=True)
@@ -131,8 +131,8 @@ async def main():
             rec = {"surface": name, "viewport": "desktop", "console": 0, "pageerr": 0,
                    "http_5xx": 0, "rendered": None, "notes": []}
             console, perr = [], []
-            page.on("console", lambda m: console.append(m.text) if m.type == "error" else None)
-            page.on("pageerror", lambda e: perr.append(str(e)))
+            page.on("console", lambda m, _c=console: _c.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda e, _p=perr: _p.append(str(e)))
             try:
                 r = await page.goto(BASE + path, wait_until="domcontentloaded", timeout=20000)
                 await page.wait_for_timeout(1000)
