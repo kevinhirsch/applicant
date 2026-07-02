@@ -38,6 +38,7 @@ from applicant.core.entities.revision_session import (
     RevisionStatus,
     RevisionTurn,
 )
+from applicant.core.entities.screening_answer_library import ScreeningAnswerLibraryEntry
 from applicant.core.errors import (
     InvalidInput,
     NotFound,
@@ -52,6 +53,7 @@ from applicant.core.ids import (
     JobPostingId,
     ResumeVariantId,
     RevisionSessionId,
+    ScreeningAnswerLibraryEntryId,
     new_id,
 )
 from applicant.core.rules.materials import (
@@ -60,6 +62,7 @@ from applicant.core.rules.materials import (
     aggressiveness_directive,
     clamp_aggressiveness,
     classify_screening_question,
+    normalize_screening_question,
     should_generate_cover_letter,
 )
 from applicant.core.rules.prompt_injection import neutralize_untrusted_text
@@ -1107,6 +1110,109 @@ class MaterialService:
                 verify_source=check_source,
                 prose=(kind is ScreeningKind.ESSAY),
             )
+            # Product-gaps backlog #20: build the reusable screening-answer library
+            # over time. NEVER for SENSITIVE (EEO/demographic) answers -- those are
+            # policy-driven, never AI-guessed, and must never leak into a cross-
+            # application store (FR-ATTR-6, NFR-PRIV-1); the ``else`` branch above
+            # already excludes them.
+            self._save_to_screening_library(
+                campaign_id, question, report.text, essay=(kind is ScreeningKind.ESSAY)
+            )
+        self._announce_review_ready(doc, "Screening answer ready for review")
+        return doc
+
+    def _save_to_screening_library(
+        self, campaign_id: CampaignId, question: str, answer_text: str, *, essay: bool
+    ) -> None:
+        """Best-effort upsert into the reusable screening-answer library (#20).
+
+        Keyed by the NORMALIZED question text so re-asking the same question later
+        (in this or a future application) hits the same entry. A missing repo (an
+        adapter that hasn't wired ``screening_answer_library``) or any failure is a
+        silent no-op -- this is purely additive convenience on top of a generation
+        that already succeeded and was already persisted as a reviewable document;
+        it must never be able to break that.
+        """
+        repo = getattr(self._storage, "screening_answer_library", None)
+        if repo is None:
+            return
+        key = normalize_screening_question(question)
+        if not key:
+            return
+        try:
+            repo.upsert(
+                ScreeningAnswerLibraryEntry(
+                    id=ScreeningAnswerLibraryEntryId(new_id()),
+                    campaign_id=campaign_id,
+                    question_key=key,
+                    question_text=question.strip(),
+                    answer_text=answer_text,
+                    essay=essay,
+                )
+            )
+        except Exception:  # pragma: no cover - defensive; never break generation
+            self._note_silent_degradation("material_service.py")
+
+    def list_screening_answer_library(self, campaign_id: CampaignId) -> list[dict]:
+        """The saved screening-answer library for a campaign (#20), for the review/
+        Tracker UI to browse and reuse. Empty list when unwired or empty."""
+        repo = getattr(self._storage, "screening_answer_library", None)
+        if repo is None:
+            return []
+        try:
+            entries = repo.list_for_campaign(campaign_id)
+        except Exception:  # pragma: no cover - defensive
+            self._note_silent_degradation("material_service.py")
+            return []
+        return [
+            {
+                "question": e.question_text,
+                "answer": e.answer_text,
+                "essay": e.essay,
+            }
+            for e in sorted(entries, key=lambda e: e.question_text.lower())
+        ]
+
+    def reuse_screening_answer(
+        self, campaign_id: CampaignId, application_id: ApplicationId, question: str
+    ) -> GeneratedDocument | None:
+        """Reuse a previously-generated library answer for a NEW application (#20).
+
+        Looks the question up by its normalized key; when found, stores the SAME
+        answer text as a new reviewable document for ``application_id`` -- no fresh
+        LLM call. Reuse never bypasses truthfulness: the stored text is still
+        RE-VERIFIED against this application's own true source at the persistence
+        boundary (``_store_document``, NFR-TRUTH-1, fail-closed), same as a fresh
+        generation, so a stale library entry can never slip an unsupported claim
+        into a new application. Returns ``None`` when no library entry matches
+        (caller falls back to full generation via ``generate_screening_answer``).
+        """
+        repo = getattr(self._storage, "screening_answer_library", None)
+        if repo is None:
+            return None
+        key = normalize_screening_question(question)
+        if not key:
+            return None
+        try:
+            entry = repo.get(campaign_id, key)
+        except Exception:  # pragma: no cover - defensive
+            self._note_silent_degradation("material_service.py")
+            return None
+        if entry is None:
+            return None
+        self._ensure_voice_for(campaign_id)
+        true_source = self._resolve_true_source(campaign_id, "")
+        report = self.apply_post_filter(entry.answer_text)
+        check_source = self._with_application_context(true_source, application_id)
+        doc = self._store_document(
+            campaign_id,
+            application_id,
+            DocumentType.SCREENING_ANSWER,
+            report.text,
+            provenance=(),
+            verify_source=check_source,
+            prose=entry.essay,
+        )
         self._announce_review_ready(doc, "Screening answer ready for review")
         return doc
 
@@ -1134,6 +1240,100 @@ class MaterialService:
             essay=None,
             explicit_answer=explicit_answer,
         )
+
+    # === interview prep (product-gaps backlog #30) =========================
+    def _has_interview_signal(self, application_id: ApplicationId) -> bool:
+        """True once ``application_id`` has an ``interview_invited`` outcome event.
+
+        The gate for interview-prep generation: reads the SAME outcome trail the
+        post-submission tracker layers "signals" from (``PostSubmissionService.
+        list_tracker_rows``), enforced HERE server-side rather than trusted from a
+        caller-supplied flag (CLAUDE.md: never let a caller-supplied input opt a
+        gate in). Best-effort: an unreachable outcomes repo reads as "no signal
+        yet" rather than raising.
+        """
+        try:
+            events = self._storage.outcomes.list_for_application(application_id)
+        except Exception:  # pragma: no cover - defensive
+            return False
+        return any(getattr(e, "type", None) == "interview_invited" for e in events)
+
+    @staticmethod
+    def _extract_key_requirements(posting) -> list[str]:
+        """A short, PURELY EXTRACTIVE list of the posting's own stated requirements.
+
+        Never generated/summarized by an LLM -- it just splits the posting's own
+        description into short lines/sentences -- so it can never mis-describe the
+        role or introduce a claim about the candidate (nothing here touches the
+        truthfulness guardrail because nothing here is written ABOUT the candidate).
+        Bounded to a handful of entries so the brief stays skimmable.
+        """
+        if posting is None:
+            return []
+        desc = (getattr(posting, "description", "") or "").strip()
+        if not desc:
+            return []
+        parts = re.split(r"[\n\r]+|(?<=[.;])\s+", desc)
+        lines = [p.strip(" -*•\t") for p in parts]
+        return [ln for ln in lines if len(ln) >= 8][:8]
+
+    def generate_interview_prep(
+        self, campaign_id: CampaignId, application_id: ApplicationId
+    ) -> dict | None:
+        """A plain-language "things to review before your interview" brief (#30).
+
+        Gated on the application having actually reached the ``interview_invited``
+        signal (see ``_has_interview_signal``) -- returns ``None`` (the same "not
+        warranted yet" convention ``generate_cover_letter`` uses) rather than
+        fabricating a brief for an application that was never invited to interview.
+        Reuses the SAME capped/deduped/cached company-research channel cover-letter
+        generation already draws on (``_company_research_context`` -> the shared
+        ``ResearchService``, #299) -- no second research pipeline -- plus the
+        posting's own stated requirements (purely extractive, never generated).
+        This is advisory/informational, not submitted material, so it is returned
+        as a plain dict rather than a reviewable ``GeneratedDocument``: nothing here
+        needs the review gate.
+        """
+        if not self._has_interview_signal(application_id):
+            return None
+        try:
+            app = self._storage.applications.get(application_id)
+        except Exception:  # pragma: no cover - defensive
+            app = None
+        if app is None:
+            return None
+        posting = None
+        pid = getattr(app, "posting_id", None)
+        if pid is not None:
+            try:
+                posting = self._storage.postings.get(pid)
+            except Exception:  # pragma: no cover - defensive
+                posting = None
+        company, role = self._company_role_for(application_id)
+        research_ctx = self._company_research_context(campaign_id, application_id)
+        key_requirements = self._extract_key_requirements(posting)
+        if not company and not role and not key_requirements and not research_ctx:
+            # Nothing to build a brief FROM -- degrade to "not generated" rather
+            # than hand back an empty, useless shell.
+            return None
+        notes: list[str] = []
+        who = company or "the company"
+        if role:
+            notes.append(f"You're interviewing for {role} at {who}.")
+        else:
+            notes.append(f"You're interviewing with {who}.")
+        if key_requirements:
+            notes.append(
+                "The posting calls out these points -- be ready to speak to each "
+                "with a real example from your own history:"
+            )
+        return {
+            "company": company,
+            "role": role,
+            "notes": notes,
+            "key_requirements": key_requirements,
+            "company_research": research_ctx,
+        }
 
     # === interactive revision loop (FR-RESUME-8) ==========================
     def open_revision(self, document_id: GeneratedDocumentId) -> RevisionSession:

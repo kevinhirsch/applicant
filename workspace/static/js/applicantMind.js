@@ -107,8 +107,12 @@ function _renderMemory(snap) {
     return `<div class="memory-section" style="margin-bottom:14px;">
       <div style="font-weight:600;">${esc(title)}</div>${body}</div>`;
   };
-  return block('Lessons about the work', env, 'Nothing remembered yet.')
-    + block('Your preferences', usr, 'No preferences captured yet.');
+  return block('Lessons about the work', env,
+      'Nothing remembered about the work yet — as the assistant handles applications, '
+      + 'the lessons it picks up along the way will show up here.')
+    + block('Your preferences', usr,
+      'No preferences captured yet — tell the assistant what you like or want changed '
+      + 'as you go, and it will remember here.');
 }
 
 function _renderSkills(skills) {

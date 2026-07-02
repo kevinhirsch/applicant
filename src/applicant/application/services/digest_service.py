@@ -20,7 +20,9 @@ approve/decline-with-feedback decisions that close the learning loop:
 from __future__ import annotations
 
 import html
-from datetime import UTC, datetime, timedelta
+import threading
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 
 from applicant.core.entities.application import Application
 from applicant.core.entities.decision import Decision, DecisionType
@@ -66,6 +68,92 @@ def _safe_href(url) -> str:
     return "#"
 
 
+def _criteria_fingerprint(criteria: SearchCriteria | None) -> tuple | None:
+    """Cheap, hashable snapshot of the criteria fields a score depends on.
+
+    Pure in-memory comparison (no IO) so a mid-day criteria edit invalidates the
+    ``DigestCache`` entry on the very next call instead of serving scores built
+    against the old criteria until midnight.
+    """
+    if criteria is None:
+        return None
+    adjustments = getattr(criteria, "learned_adjustments", None) or {}
+    return (
+        criteria.human_readable,
+        criteria.titles,
+        criteria.locations,
+        criteria.work_modes,
+        criteria.salary_floor,
+        criteria.keywords,
+        tuple(sorted(adjustments.items())),
+    )
+
+
+@dataclass
+class DigestCache:
+    """Process-lived cache of BUILT digest rows, keyed per campaign (perf audit #6).
+
+    ``build_digest`` loops every posting in the campaign and scores each one —
+    the docstring on the row-building path itself anticipates "1000+ viable
+    roles" — on EVERY ``GET /api/digest/{campaign_id}``, which the Portal loads
+    on every open. Even when ``ScoringService.score_for_digest`` reuses a
+    persisted score (unchanged criteria), it still recomputes ``_learning_sig``
+    per posting, which loads the campaign's learning model from storage once per
+    ROW — an unbounded per-request query fan-out that scales with campaign size.
+
+    A digest does not need to be rebuilt more than once per campaign per day
+    under normal circumstances: new postings arrive via the scheduler's
+    discovery tick, not synchronously with a GET. This cache stores the scored
+    ``(posting, row-without-warnings)`` pairs for a campaign and reuses them
+    across calls within the SAME UTC day, for the SAME posting count, for the
+    SAME criteria — any of those changing (day rolls over, a new posting lands,
+    the user edits criteria) invalidates the entry and the next call rebuilds.
+
+    Deliberately EXCLUDES the presubmit-safety warnings (see
+    ``DigestService._presubmit_warnings``) — those are recomputed fresh on
+    every single call, cache hit or not, because they read OTHER mutable state
+    (the campaign's own applications) that can change intraday as the
+    autonomous loop submits approved roles; caching them could serve a stale
+    "no warning" and hide a real duplicate-application/scam signal.
+
+    ``DigestService`` is rebuilt every request (CONC-REQ-1,
+    ``container._build_request_services``) and every scheduler tick
+    (``container._build_tick_services``), so an instance attribute would reset
+    on every single call — the exact failure mode CLAUDE.md documents for the
+    resume backoff ledger (``ResumeLedger``) and the digest-delivery guard
+    (``DigestLedger``) in ``agent_loop.py``. Like those, ONE ``DigestCache``
+    lives for the whole process (built in ``container.py``) and is injected
+    into every ``DigestService`` construction site.
+    """
+
+    _entries: dict[str, tuple[date, int, tuple | None, list]] = field(default_factory=dict)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def get(
+        self, campaign_id, *, day: date, count: int, criteria_fp: tuple | None
+    ) -> list | None:
+        with self.lock:
+            entry = self._entries.get(str(campaign_id))
+        if entry is None:
+            return None
+        e_day, e_count, e_fp, pairs = entry
+        if e_day == day and e_count == count and e_fp == criteria_fp:
+            return pairs
+        return None
+
+    def put(
+        self,
+        campaign_id,
+        *,
+        day: date,
+        count: int,
+        criteria_fp: tuple | None,
+        pairs: list,
+    ) -> None:
+        with self.lock:
+            self._entries[str(campaign_id)] = (day, count, criteria_fp, pairs)
+
+
 class DigestService:
     def __init__(
         self,
@@ -77,6 +165,8 @@ class DigestService:
         criteria=None,
         notification_service=None,
         pending_actions=None,
+        presubmit_safety_params: dict | None = None,
+        digest_cache: DigestCache | None = None,
     ) -> None:
         self._storage = storage
         self._notification = notification
@@ -85,6 +175,20 @@ class DigestService:
         self._criteria = criteria
         self._notification_service = notification_service
         self._pending = pending_actions
+        # G07: same settings-driven thresholds AgentLoop's presubmit safety gate uses
+        # (container.py builds ONE dict and threads it to both) so a digest warning
+        # reflects the SAME operator-configured age/cooldown as the pipeline block —
+        # not a silently-stale hardcoded default. ``None`` (legacy/test callers that
+        # don't pass it) falls back to presubmit_safety's own module defaults.
+        self._presubmit_safety_params = presubmit_safety_params
+        # #6 (perf audit): container.py builds ONE process-lived DigestCache and
+        # threads it here so a cache hit survives the per-request/per-tick rebuild
+        # (see DigestCache's docstring). A caller that doesn't pass one (most unit
+        # tests, and any legacy construction site) gets a private instance-local
+        # cache — correct in isolation, it just can't be shared across separate
+        # DigestService instances, so those call sites see the pre-existing
+        # every-call-is-fresh behavior in practice.
+        self._digest_cache = digest_cache if digest_cache is not None else DigestCache()
 
     # --- digest assembly (FR-DIG-3/4) -------------------------------------
     def _resolve_criteria(
@@ -110,10 +214,71 @@ class DigestService:
     def build_digest(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None
     ) -> list[dict]:
-        """Assemble digest rows for every viable posting in the campaign."""
+        """Assemble digest rows for every viable posting in the campaign.
+
+        #6 (perf audit): the expensive part — fetching every posting and scoring
+        it — is cached per (campaign, day, posting count, criteria) via
+        ``DigestCache`` (see its docstring for why an instance attribute cannot
+        do this and why the cache key is what it is). A cache HIT skips
+        ``list_for_campaign`` and every ``score_fn`` call entirely.
+
+        The presubmit-safety ``warnings`` are the one part deliberately NOT
+        cached: they are recomputed fresh on every call, cache hit or not,
+        because ``check_duplicate_application`` reads the campaign's OTHER
+        applications, which can flip from "not a duplicate" to "duplicate"
+        intraday as the autonomous loop submits approved roles — caching a
+        "no warning" verdict could hide a real one for the rest of the day.
+        """
         criteria = self._resolve_criteria(campaign_id, criteria)
-        postings = self._storage.postings.list_for_campaign(campaign_id)
         rows: list[dict] = []
+        for posting, row in self._scored_pairs(campaign_id, criteria):
+            row = dict(row)
+            # Product-gaps backlog: the duplicate-application guard and the
+            # scam/ghost-job check already exist (presubmit_safety.py) but were only
+            # invoked by AgentLoop._process_approvals — AFTER the user approves, right
+            # before the pipeline starts — and only to silently skip. That is too late
+            # to inform the decision: surface the SAME checks here, read-only, so the
+            # digest row itself carries a plain-language warning BEFORE approval. A
+            # warning never excludes a row from the digest (unlike the pipeline block).
+            row["warnings"] = self._presubmit_warnings(campaign_id, posting)
+            rows.append(row)
+        return rows
+
+    def _scored_pairs(
+        self, campaign_id: CampaignId, criteria: SearchCriteria | None
+    ) -> list[tuple]:
+        """``(posting, row-without-warnings)`` pairs, cache-checked per campaign.
+
+        Falls back to an uncached rebuild whenever the storage adapter doesn't
+        expose ``postings.count_for_campaign`` (some lightweight test double) —
+        degrades to the pre-cache behavior rather than raising, since the
+        fingerprint is the cache's freshness check, not a correctness
+        requirement of the row-building logic itself.
+        """
+        cache = self._digest_cache
+        count_fn = (
+            getattr(self._storage.postings, "count_for_campaign", None)
+            if cache is not None
+            else None
+        )
+        if cache is None or count_fn is None:
+            return self._build_scored_pairs(campaign_id, criteria)
+        day = datetime.now(UTC).date()
+        count = count_fn(campaign_id)
+        criteria_fp = _criteria_fingerprint(criteria)
+        cached = cache.get(campaign_id, day=day, count=count, criteria_fp=criteria_fp)
+        if cached is not None:
+            return cached
+        pairs = self._build_scored_pairs(campaign_id, criteria)
+        cache.put(campaign_id, day=day, count=count, criteria_fp=criteria_fp, pairs=pairs)
+        return pairs
+
+    def _build_scored_pairs(
+        self, campaign_id: CampaignId, criteria: SearchCriteria | None
+    ) -> list[tuple]:
+        """Fetch + score every posting in the campaign (the actual hot-path cost)."""
+        postings = self._storage.postings.list_for_campaign(campaign_id)
+        pairs: list[tuple] = []
         for posting in postings:
             row = {
                 "posting_id": posting.id,
@@ -142,8 +307,47 @@ class DigestService:
                 # the digest hot path. The rationale still says scoring is pending.
                 row["viability_score"] = 0.0
                 row["why_suggested"] = "scoring pending"
-            rows.append(row)
-        return rows
+            pairs.append((posting, row))
+        return pairs
+
+    def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
+        """Human-readable presubmit-safety warnings for one digest row.
+
+        Reuses ``presubmit_safety.check_scam_or_ghost_job`` / ``check_duplicate_application``
+        unchanged (same reasons/thresholds AgentLoop enforces at pipeline-start) but
+        catches ``PresubmitBlock`` instead of letting it stop anything — a digest
+        warning informs, it does not block. Any unexpected failure degrades to "no
+        warning" rather than breaking the digest hot path (mirrors every other
+        best-effort branch in this file).
+        """
+        from applicant.application.services.presubmit_safety import (
+            PresubmitBlock,
+            check_duplicate_application,
+            check_scam_or_ghost_job,
+        )
+
+        params = self._presubmit_safety_params or {}
+        warnings: list[dict] = []
+        try:
+            check_scam_or_ghost_job(
+                posting, max_age_days=params.get("max_age_days", 90)
+            )
+        except PresubmitBlock as exc:
+            warnings.append({"check": exc.check, "message": exc.reason})
+        except Exception:  # pragma: no cover - defensive
+            log.warning("digest_presubmit_scam_check_failed", exc_info=True)
+        try:
+            check_duplicate_application(
+                campaign_id,
+                posting,
+                self._storage,
+                cooldown_days=params.get("duplicate_cooldown_days", 30),
+            )
+        except PresubmitBlock as exc:
+            warnings.append({"check": exc.check, "message": exc.reason})
+        except Exception:  # pragma: no cover - defensive
+            log.warning("digest_presubmit_duplicate_check_failed", exc_info=True)
+        return warnings
 
     def build_digest_payload(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None

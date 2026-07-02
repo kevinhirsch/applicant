@@ -37,6 +37,8 @@ PortfolioAttachmentId = NewType("PortfolioAttachmentId", str)
 RejectionSignalId = NewType("RejectionSignalId", str)
 # Audit log: append-only action trail.
 ActionEventId = NewType("ActionEventId", str)
+# Product-gaps backlog #20: reusable screening-answer library entries.
+ScreeningAnswerLibraryEntryId = NewType("ScreeningAnswerLibraryEntryId", str)
 
 
 #: Reserved sentinel campaign that scopes instance-level secrets (LLM keys, sandbox

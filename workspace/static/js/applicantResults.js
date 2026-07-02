@@ -14,6 +14,12 @@
 //      how well it converts (submitted per matched), as a readable bar.
 //   3. WHAT CONVERTS FOR YOU — the learned role signature: the kinds of roles that
 //      actually move forward, so you can see the bias the assistant applies.
+//   4. WHY YOU DECLINE — the words most common in your own decline feedback (every
+//      decline requires a short reason), so a pattern across many declines is
+//      visible without re-reading each one yourself.
+//
+// Each section leads with a narrated, plain-language sentence (not just a labeled
+// bar/number) so a glance reads as a takeaway, not a stat dump.
 //
 // This is ADDITIVE, self-contained, and surfacing-only. It talks to the engine only
 // through the workspace proxy at /api/applicant/results (it never reaches the engine
@@ -120,9 +126,19 @@ function _sectionHead(title, tip) {
     </div>`;
 }
 
-// The matched → approved → submitted funnel. Each step shows its count and, from
-// the second step on, the share of the PREVIOUS step it kept (the pass-through
-// rate) so the drop-off is visible at a glance.
+// A short, first-glance narrated sentence for a section — a real takeaway, not a
+// number to interpret. Rendered above the bars/chips so the section reads as prose
+// first, detail second.
+function _headline(text) {
+  return text
+    ? `<div style="font-size:12px;line-height:1.5;margin-bottom:10px;">${esc(text)}</div>`
+    : '';
+}
+
+// The matched → approved → submitted funnel. Leads with a narrated one-sentence
+// takeaway (counts + the overall conversion rate in plain language); each step
+// below still shows its count and, from the second step on, the share of the
+// PREVIOUS step it kept (the pass-through rate) so the drop-off is visible too.
 function _renderFunnel(summary) {
   const matched = _num(summary.total_matched);
   const approved = _num(summary.total_approved);
@@ -149,20 +165,38 @@ function _renderFunnel(summary) {
       </div>`;
   });
   const overall = matched > 0 ? _pct(submitted, matched) : '';
-  const overallLine = overall
-    ? `<div style="font-size:10.5px;opacity:0.6;margin-top:6px;">Overall, ${esc(overall)} of matched roles were submitted.</div>`
-    : '';
+  let headline = '';
+  if (matched > 0) {
+    headline = `You've had ${matched} role${matched === 1 ? '' : 's'} matched so far — `
+      + `you approved ${approved}, and ${submitted} ${submitted === 1 ? 'has' : 'have'} been submitted`
+      + (overall ? ` (${overall} of everything matched).` : '.');
+  }
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
       ${_sectionHead('Your funnel', 'How roles move from found, to approved by you, to submitted.')}
+      ${_headline(headline)}
       ${rows.join('')}
-      ${overallLine}
     </div>`;
 }
 
 // Per-source conversion: each place the assistant looks, ranked by how well it
 // converts (submitted per matched), as a readable bar. The engine already ranks
-// the list; we render it in order.
+// the list; we render it in order. Leads with a narrated sentence naming the
+// best-converting source with real counts, e.g. "You're converting best on
+// LinkedIn — 3 of 5 matched roles there were submitted." (audit: readable
+// prose, not just a bar + percentage to interpret).
+function _sourcesHeadline(sources) {
+  // The list is already ranked by conversion (source_ranking); the first entry
+  // with any actual submitted volume is the real standout, not a zero-data source
+  // that merely sorts first for lack of competition.
+  const top = sources.find((s) => _num(s.submitted) > 0);
+  if (!top) return '';
+  const rate = (top.conversion_rate == null) ? null : _num(top.conversion_rate);
+  const rateText = rate == null ? '' : ` (${rate}%)`;
+  return `You're converting best on ${top.source || 'this source'} — `
+    + `${_num(top.submitted)} of ${_num(top.matched)} matched roles there were submitted${rateText}.`;
+}
+
 function _renderSources(sources) {
   if (!sources.length) return '';
   const rows = sources.map((s) => {
@@ -185,6 +219,7 @@ function _renderSources(sources) {
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
       ${_sectionHead('Where your roles come from', 'Each source the assistant searches, ranked by how well it converts for you.')}
+      ${_headline(_sourcesHeadline(sources))}
       ${rows.join('')}
     </div>`;
 }
@@ -195,13 +230,37 @@ function _renderSignature(roles, samples) {
   if (!roles.length) return '';
   const chips = roles.map((r) => `
     <span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:12px;border:1px solid var(--border);font-size:11px;">${esc(String(r))}</span>`);
+  const headline = `Based on what's actually converted so far, you tend to move forward on roles like these:`;
   const sub = (samples != null && _num(samples) > 0)
     ? `<div style="font-size:10px;opacity:0.55;margin-bottom:8px;">Learned from ${esc(String(_num(samples)))} converting application${_num(samples) === 1 ? '' : 's'}.</div>`
     : '';
   return `
-    <div class="admin-card" style="margin:0 0 4px;padding:12px;">
+    <div class="admin-card" style="margin:0 0 12px;padding:12px;">
       ${_sectionHead('What converts for you', 'The kinds of roles that actually move forward — the bias the assistant learns and applies.')}
+      ${_headline(headline)}
       ${sub}
+      <div>${chips.join('')}</div>
+    </div>`;
+}
+
+// "Why you decline" — the words most common in your own decline feedback. Every
+// decline requires a short stated reason (FR-FB-1); this rolls those words up so a
+// pattern across many declines ("onsite", "salary"...) is visible at a glance
+// instead of re-reading each decline's feedback yourself. Grounded in the user's
+// own words (a plain frequency count), never a guessed/invented category — so the
+// label is honest about what it is ("words that come up most"), not a claim that
+// the engine has classified WHY in some richer sense.
+function _renderDeclines(reasons) {
+  if (!reasons.length) return '';
+  const top = reasons[0];
+  const headline = `Here's what comes up most when you decline a role — `
+    + `most often "${top.reason}" (${_num(top.count)} time${_num(top.count) === 1 ? '' : 's'}).`;
+  const chips = reasons.map((r) => `
+    <span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:12px;border:1px solid var(--border);font-size:11px;">${esc(String(r.reason))} <span style="opacity:0.55;">(${esc(String(_num(r.count)))})</span></span>`);
+  return `
+    <div class="admin-card" style="margin:0 0 4px;padding:12px;">
+      ${_sectionHead('Why you decline', 'Words that come up most in your own decline feedback — every decline asks you briefly why.')}
+      ${_headline(headline)}
       <div>${chips.join('')}</div>
     </div>`;
 }
@@ -210,10 +269,12 @@ function _renderResults(host, data) {
   const summary = (data && data.summary) || {};
   const sources = (data && data.sources) || [];
   const roles = (data && data.converting_roles) || [];
+  const declineReasons = (data && data.decline_reasons) || [];
   const parts = [
     _renderFunnel(summary),
     _renderSources(sources),
     _renderSignature(roles, data && data.converting_samples),
+    _renderDeclines(declineReasons),
   ].filter(Boolean);
   host.innerHTML = parts.join('');
 }

@@ -39,7 +39,9 @@ than fabricated numbers.
 Endpoint (one prefix, ``/api/applicant/results``):
 
 * ``GET /api/applicant/results`` — the funnel + per-source conversion + the learned
-  "what converts for you" signature for the owner's first campaign.
+  "what converts for you" signature + the decline-reason word rollup (words most
+  common in the owner's OWN mandatory decline feedback, FR-FB-1 — grounded in
+  their own language, never a guessed taxonomy) for the owner's first campaign.
 """
 
 from __future__ import annotations
@@ -124,7 +126,8 @@ def setup_applicant_results_routes() -> APIRouter:
         Proxies the engine's plain-language learning summary for the owner's first
         campaign: the overall funnel (``summary`` — matched/approved/submitted),
         each source's own funnel ranked by conversion (``sources``), the roles that
-        actually convert (``converting_roles``), and the exploration budget. Degrades
+        actually convert (``converting_roles``), the decline-reason word rollup
+        (``decline_reasons``), and the exploration budget. Degrades
         soft: an unreachable engine returns ``engine_available: false``; a setup gate
         returns ``gated: true`` with the engine's message; no campaign or no volume
         yet returns ``has_data: false`` with a well-formed empty body so the surface
@@ -135,6 +138,7 @@ def setup_applicant_results_routes() -> APIRouter:
             "summary": {},
             "sources": [],
             "converting_roles": [],
+            "decline_reasons": [],
         }
         async with ApplicantEngineClient() as engine:
             campaigns = await _owner_campaigns(engine)
@@ -166,6 +170,12 @@ def setup_applicant_results_routes() -> APIRouter:
         sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
         sources = [s for s in sources if isinstance(s, dict)]
         roles = payload.get("converting_roles") if isinstance(payload.get("converting_roles"), list) else []
+        decline_reasons = (
+            payload.get("decline_reasons") if isinstance(payload.get("decline_reasons"), list) else []
+        )
+        decline_reasons = [
+            r for r in decline_reasons if isinstance(r, dict) and r.get("reason")
+        ]
 
         out = {
             "engine_available": True,
@@ -177,6 +187,9 @@ def setup_applicant_results_routes() -> APIRouter:
             "converting_roles": [r for r in roles if r],
             "converting_samples": payload.get("converting_samples"),
             "exploration_budget": payload.get("exploration_budget"),
+            # Words most common in the user's own decline feedback (FR-FB-1), ranked
+            # by count; [] when nothing declined yet — surfacing-only, no new data.
+            "decline_reasons": decline_reasons,
         }
         return out
 

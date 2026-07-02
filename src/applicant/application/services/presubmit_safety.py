@@ -185,10 +185,25 @@ def check_duplicate_application(
         return
     from applicant.core.state_machine import ApplicationState
 
+    # BUGFIX: this set literal referenced ``ApplicationState.CONVERTED``, which has
+    # never existed on the enum (confirmed by a repo-wide grep — no other reference
+    # anywhere) — so building this set raised ``AttributeError`` on EVERY call,
+    # before the function could ever reach the comparison logic below. The guard
+    # has therefore never actually run. "Already applied" here means the
+    # application actually went out: SUBMITTED_BY_USER/FINISHED_BY_ENGINE plus
+    # every state reachable ONLY via one of those (the G16 post-submission
+    # lifecycle, state_machine.py) — an application that has since moved on to
+    # being tracked/rejected/ghosted/archived still counts as a duplicate, not
+    # just the instant right after submission.
     terminal_states = {
         ApplicationState.SUBMITTED_BY_USER,
         ApplicationState.FINISHED_BY_ENGINE,
-        ApplicationState.CONVERTED,
+        ApplicationState.POST_SUBMISSION,
+        ApplicationState.AWAITING_RESPONSE,
+        ApplicationState.REJECTED,
+        ApplicationState.GHOSTED,
+        ApplicationState.FOLLOWING_UP,
+        ApplicationState.ARCHIVED,
     }
     for app in storage.applications.list_for_campaign(campaign_id):
         existing_posting = storage.postings.get(app.posting_id)

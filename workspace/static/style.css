@@ -4731,6 +4731,11 @@ body.bg-pattern-sparkles {
       touch-action:pan-y;
       overscroll-behavior:contain;
       animation: sheet-enter 0.2s ease-out forwards;
+      /* Perf audit item #13: a modal body's internal churn (chat/list re-renders,
+         streaming content) shouldn't force layout/paint on the rest of the page —
+         it already clips overflow, so layout+paint containment is free to add and
+         keeps a modal's repaint local to itself. */
+      contain: layout paint;
     }
     /* Grab-handle pill at the top of the sheet (large invisible touch target). */
     .modal-content::before {
@@ -32755,6 +32760,37 @@ body.theme-frosted #applicant-vault-modal .modal-content {
   outline-offset: 2px;
 }
 
+/* backlog "mobile Remote iframe": the live-session iframe's inline sizing
+   (min-height:40dvh / height:40dvh, up to max-height:72dvh) is fine on the
+   desktop floating window, but on the mobile bottom sheet (capped at 85dvh
+   total, shared by every modal) it ate roughly HALF the sheet's whole height
+   before the "Resume after a step you did yourself" / "Let the assistant
+   help on the desktop" / "Finish the application" cards even start — pushing
+   the "I'll submit it myself" / "Authorize the assistant to finish" decision
+   pair well over a full extra screen of scrolling below the fold. Verified
+   against the real markup + stylesheet in headless Chrome at 375x667: before
+   this rule the decision pair sat ~965px into a ~1214px-tall scroll body
+   with only ~500px visible at a time. Shrink the iframe's footprint on
+   narrow viewports only (still a real, usable live-session preview — "Open
+   in new tab" remains available for full detail) so far more of the sheet's
+   limited height is left for the actionable rows beneath it. Desktop/tablet
+   (min-width:769px, the floating window) is untouched.
+   !important: the wrap/iframe carry the 40dvh/72dvh sizing as an INLINE
+   style (applicantRemote.js), which otherwise outranks any plain stylesheet
+   rule regardless of selector specificity — same reason the shared mobile
+   sheet authority block (`.modal-content` @media max-width:768px) above
+   uses !important. */
+@media (max-width: 768px) {
+  #applicant-remote-frame-wrap {
+    min-height: 22dvh !important;
+    max-height: 40dvh !important;
+  }
+  #applicant-remote-frame {
+    height: 22dvh !important;
+    max-height: 40dvh !important;
+  }
+}
+
 /* #117: the engine-captured Gallery's screenshot/material tiles ARE the
    content — flat cells (no nested card border/shadow); they already sit
    inside the modal's own frame. */
@@ -33366,6 +33402,19 @@ body.theme-frosted .ow-window > .ow-body .on-card {
     0px, calc(var(--ow-parent-radius) - var(--ow-parent-inset)));
   border-radius: var(--ow-radius-concentric) !important;
 }
+/* Perf audit item #14: an .admin-card nested inside an .ow-window (Settings /
+   Memory / Tasks / etc. — see the "admin cards live inside the Settings
+   .ow-window" note further down) otherwise re-samples the backdrop at its own
+   blur(22px) ON TOP OF the window's own blur(30px) — a redundant second glass
+   layer. Only the outermost surface in the chain (the window) should sample the
+   real backdrop; the card keeps its existing translucent tint fill (background-
+   color/background-image above, unchanged) so it still reads as glass, just
+   without its own compositing pass. Scoped to the nested case only — a
+   standalone .admin-card outside any window keeps its own blur. */
+body.theme-frosted .ow-window > .ow-body .admin-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
 
 /* The decision card in CHAT is a glass surface nested inside the chat scroll column
    (the conversation is its container). It derives its corner concentrically from the
@@ -33689,13 +33738,25 @@ body.theme-frosted .ow-btn-icon {
 
 /* ── SECONDARY (default) glass buttons: translucent disc/capsule, light glyph ──*/
 /* The idle-ref look: a subtle translucent fill + faint rim + a centered glyph.   */
+/* Perf audit item #14: `.ow-controls button` (the window traffic-light cluster)
+   is excluded from this backdrop-sampling group — it only ever renders inside an
+   `.ow-titlebar` that is itself always inside an already-glassed `.ow-window`
+   (appkitWindow.js owns the only markup that emits `.ow-controls`), so its own
+   blur re-sampled a backdrop the window already sampled a layer down. It keeps
+   its solid color-mix() disc fill (below) for its material look — the redundant
+   blur is dropped separately, further down. `.ow-dismiss` stays here: per
+   appkitWindow.js it also covers non-window dismissible surfaces (strips,
+   banners) that are NOT guaranteed to sit inside a glassed window. */
 body.theme-frosted .send-btn,
 body.theme-frosted .odec-confirm,
 body.theme-frosted .odec-opt,
-body.theme-frosted .ow-controls button,
 body.theme-frosted .ow-dismiss {
   -webkit-backdrop-filter: var(--ow-btn-glass);
   backdrop-filter: var(--ow-btn-glass);
+  transition: background-color .18s ease, box-shadow .18s ease,
+              transform .14s cubic-bezier(.34,1.56,.64,1), filter .18s ease, opacity .15s ease;
+}
+body.theme-frosted .ow-controls button {
   transition: background-color .18s ease, box-shadow .18s ease,
               transform .14s cubic-bezier(.34,1.56,.64,1), filter .18s ease, opacity .15s ease;
 }
@@ -35059,8 +35120,15 @@ body.theme-frosted .msg-ai {
      floor: dark frost + white ink clears APCA Lc 60 over a mid-tone wall, while a clear/dark wall
      still reads as glass (the wallpaper COLOR still blooms through the saturate). */
   --ai-scrim-alpha: 0.46;
-  -webkit-backdrop-filter: blur(22px) saturate(180%) !important;
-  backdrop-filter: blur(22px) saturate(180%) !important;
+  /* Perf audit item #9: a per-bubble backdrop-filter meant dozens of independent
+     offscreen backdrop composites per scrolled frame on a long transcript (the
+     most-repeated glass surface in the app). Bubbles no longer sample the real
+     backdrop at all — the flat translucent background-color below already reads
+     as glass (same rough tint, no blur), and the window chrome (.ow-window) is
+     the one surface in this stack that still does the real, single, per-window
+     backdrop sample. */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
   /* neutral translucent frost — the high saturate lets the wallpaper COLOR bloom
      through (Apple's bubbles pick up the wall), while the floored dark scrim keeps white
      text legible across any backdrop (over a DARK wall the wall does the work; over a
@@ -35071,8 +35139,11 @@ body.theme-frosted .msg-ai {
   box-shadow: none !important;
 }
 body.theme-frosted .msg-user {
-  -webkit-backdrop-filter: blur(22px) saturate(170%) !important;
-  backdrop-filter: blur(22px) saturate(170%) !important;
+  /* Perf audit item #9 (see .msg-ai above): flat tint instead of a per-bubble
+     backdrop sample — the fill below is already opaque enough (0.80 alpha) to
+     read as the sanctioned system-blue glass without compositing a blur. */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
   /* the iMessage system blue, translucent so the wallpaper still tints through — a flat
      fill (slightly more opaque now that there's no depth gradient), no rim. */
   background-color: rgba(10,132,255,0.80) !important;
@@ -35954,6 +36025,11 @@ body.theme-frosted .chat-input-bar .input-icon-btn.tool-indicator {
 .ow-window .ow-body {
   overflow: auto;                 /* (the kit already sets this; restated for the @supports) */
   scrollbar-gutter: auto;         /* explicitly DO NOT reserve track width                   */
+  /* Perf audit item #13: the scrollable window body is a natural containment
+     boundary (it already clips via overflow) — layout+paint containment keeps a
+     window's internal re-renders (chat/list updates) from invalidating anything
+     outside it. */
+  contain: layout paint;
 }
 @supports (overflow: overlay) {
   /* Chromium honours `overlay` → the bar truly floats and consumes zero layout width.
@@ -36027,6 +36103,47 @@ body.theme-frosted .chat-input-bar .input-icon-btn.tool-indicator {
     --ow-sb-thumb: rgba(var(--ow-sb-grey), 0.72);
     --ow-sb-thumb-hover: rgba(var(--ow-sb-grey), 0.92);
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   PERF: CSS CONTAINMENT (design-audit exhaustive2/03_performance.md item #13) —
+   0 hits for contain:/content-visibility in the whole file before this. Two
+   targets, deliberately scoped conservative:
+
+   1. BACKGROUND WINDOWS. `.ow-window` tracks a real focus-state class already
+      (`.ow-focused`, driven by appkitWindow.js's window stack — see the
+      traffic-light-color rules above) so "not the window the user is currently
+      reading/typing into" is a fact we can key off safely, unlike guessing at
+      viewport intersection alone. `:not(.ow-focused)` windows get
+      content-visibility:auto — the browser skips style/layout/paint for one
+      entirely once it stops intersecting the viewport (docked/minimized/behind
+      another window) and restores it automatically the moment it's queried or
+      scrolled back into view, so the always-visible, currently-focused window
+      is never affected (excluded outright, so no scroll-anchoring/measurement
+      risk on the surface the user is actually interacting with).
+
+   2. LONG SCROLL LISTS. The chat transcript (`.chat-history`) and the
+      `.ow-list-row`-based list containers (Memory + Tasks share `.memory-list`;
+      Library is `.doclib-grid`; Email is `.email-list`; Debug is
+      `.applicant-debug-list`) are containment boundaries at the CONTAINER level
+      only — not per-row. Per-row content-visibility was deliberately not used:
+      several of these rows are live-editable or streaming (an in-flight AI
+      reply, an inline-edited memory row), and the audit's own caution against
+      applying content-visibility to a "currently-visible/focused element"
+      applies most sharply to a row that's actively mutating. The container
+      still pays off whenever the list itself is scrolled out of view (e.g. a
+      background/docked window's list), without that risk. */
+.ow-window:not(.ow-focused) {
+  content-visibility: auto;
+  contain-intrinsic-size: 640px 480px;
+}
+.chat-history,
+.memory-list,
+.doclib-grid,
+.email-list,
+.applicant-debug-list {
+  content-visibility: auto;
+  contain-intrinsic-size: 600px 400px;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════

@@ -51,6 +51,50 @@ def engine_base_url() -> str:
     return (os.getenv("ENGINE_URL") or DEFAULT_ENGINE_URL).rstrip("/")
 
 
+def build_shared_http_client() -> httpx.AsyncClient:
+    """Build the ONE app-lifetime ``httpx.AsyncClient`` the workspace app holds
+    for the life of the process (``workspace/app.py``'s startup event stores it
+    as ``app.state.http_client``; the shutdown event calls ``aclose()`` on it).
+
+    Uses the exact same ``base_url``/``timeout`` defaults an un-injected
+    :class:`ApplicantEngineClient` would construct on its own, so passing this
+    client in via ``ApplicantEngineClient(client=...)`` is behaviourally
+    identical to today's per-call construction — just with a pooled,
+    keep-alive-reusing connection instead of a fresh one per request (perf
+    lens finding #3: ~180 call sites otherwise pay a new TCP/TLS handshake on
+    every single workspace→engine proxy hop).
+    """
+    return httpx.AsyncClient(base_url=engine_base_url(), timeout=_DEFAULT_TIMEOUT)
+
+
+def shared_engine_http_client(request: Any) -> Optional[httpx.AsyncClient]:
+    """Reusable per-request dependency: resolve the shared app-lifetime
+    ``httpx.AsyncClient`` a route should ride, or ``None`` when there isn't one.
+
+    ``request`` is a FastAPI/Starlette ``Request`` (typed ``Any`` here so this
+    module keeps its only hard dependency on ``httpx`` — see the module
+    docstring). Reads ``request.app.state.http_client`` (set up by
+    ``workspace/app.py``'s startup event via :func:`build_shared_http_client`).
+
+    Deliberately returns the raw client rather than wrapping it in an
+    :class:`ApplicantEngineClient` itself: call sites keep constructing
+    ``ApplicantEngineClient(client=shared_engine_http_client(request))``
+    through their OWN already-imported ``ApplicantEngineClient`` name. That
+    keeps this a pure one-kwarg, mechanical change per call site — safe to
+    land incrementally across the ~180 existing ``async with
+    ApplicantEngineClient()`` sites without touching their imports, and it
+    means any test that patches a route module's ``ApplicantEngineClient``
+    (the established convention — see e.g. ``test_applicant_portal_routes.py``)
+    keeps working unchanged, since the patched name is still what gets called.
+    Returns ``None`` (⇒ falls back to :class:`ApplicantEngineClient`'s own
+    private pool, unchanged behaviour) when ``app.state.http_client`` was never
+    set up — e.g. a bare test app that doesn't run the real startup event.
+    """
+    app_obj = getattr(request, "app", None)
+    state = getattr(app_obj, "state", None)
+    return getattr(state, "http_client", None) if state is not None else None
+
+
 class EngineError(Exception):
     """Any failure talking to the engine (timeout, connection, or HTTP 4xx/5xx).
 
@@ -132,6 +176,18 @@ class ApplicantEngineClient:
     Or share a single long-lived instance and call :meth:`aclose` on shutdown.
     The default ``base_url`` comes from ``ENGINE_URL`` so tests can inject a
     transport / override the URL without touching the environment.
+
+    **Shared-client mode.** Every route historically did ``async with
+    ApplicantEngineClient()``, which opens a brand-new connection pool (fresh
+    TCP/TLS handshake, zero keep-alive reuse) on *every single proxy hop* — the
+    dominant per-request cost for an in-network call. Pass ``client=`` (an
+    already-open ``httpx.AsyncClient``, typically the one app-lifetime instance
+    ``workspace/app.py`` builds via :func:`build_shared_http_client` and stores
+    on ``app.state.http_client``) to ride that pooled connection instead. This
+    instance then does NOT own the client's lifecycle — :meth:`aclose` becomes a
+    no-op — so the exact same ``async with ApplicantEngineClient(client=...) as
+    engine:`` pattern already used everywhere is a safe drop-in swap; nothing
+    else about the call site needs to change.
     """
 
     def __init__(
@@ -140,16 +196,26 @@ class ApplicantEngineClient:
         *,
         timeout: Optional[httpx.Timeout] = None,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self.base_url = (base_url or engine_base_url()).rstrip("/")
         self._timeout = timeout or _DEFAULT_TIMEOUT
-        # ``transport`` is the hermetic-test seam: pass an httpx.MockTransport to
-        # exercise this client with zero network (see tests/test_applicant_engine.py).
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=self._timeout,
-            transport=transport,
-        )
+        if client is not None:
+            # Shared, app-lifetime client injected by the caller — see
+            # "Shared-client mode" above. We don't own it, so we must never
+            # close it out from under other in-flight requests.
+            self._client = client
+            self._owns_client = False
+        else:
+            # ``transport`` is the hermetic-test seam: pass an httpx.MockTransport
+            # to exercise this client with zero network (see
+            # tests/test_applicant_engine.py).
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self._timeout,
+                transport=transport,
+            )
+            self._owns_client = True
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -160,7 +226,11 @@ class ApplicantEngineClient:
         await self.aclose()
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        # Only close a pool we opened ourselves; a shared/injected client
+        # outlives this instance and is closed once, by its owner, at app
+        # shutdown (see build_shared_http_client's caller in workspace/app.py).
+        if self._owns_client:
+            await self._client.aclose()
 
     # -- low-level request -------------------------------------------------
 
@@ -372,6 +442,32 @@ class ApplicantEngineClient:
     async def generate_screening_answer(self, body: Any) -> Any:
         """Generate a screening answer on demand; routed to review (FR-ANSWER-1)."""
         return await self._request("POST", "/api/documents/screening-answer", json=body)
+
+    async def screening_answer_library(self, campaign_id: str) -> Any:
+        """The reusable, campaign-scoped screening-answer library (product-gaps
+        backlog #20): common questions answered once, that a prior generation
+        quietly saved (see engine ``MaterialService._save_to_screening_library``),
+        surfaced so the UI can browse and reuse them."""
+        return await self._request(
+            "GET", f"/api/documents/screening-answer-library/{campaign_id}"
+        )
+
+    async def reuse_screening_answer(self, body: Any) -> Any:
+        """Reuse a library answer for a NEW application instead of regenerating it
+        (#20). ``found: false`` when no library entry matches the question."""
+        return await self._request(
+            "POST", "/api/documents/screening-answer-library/reuse", json=body
+        )
+
+    async def interview_prep(self, campaign_id: str, application_id: str) -> Any:
+        """A plain-language interview-prep brief (product-gaps backlog #30).
+
+        ``generated: false`` until the application has reached the
+        ``interview_invited`` outcome signal -- the engine enforces that gate
+        itself, never trusting a caller-supplied flag."""
+        return await self._request(
+            "GET", f"/api/documents/interview-prep/{campaign_id}/{application_id}"
+        )
 
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")

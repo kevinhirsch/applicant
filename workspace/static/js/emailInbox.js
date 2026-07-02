@@ -15,8 +15,6 @@ const _acct = () => window.__applicantActiveEmailAccount
   ? `&account_id=${encodeURIComponent(window.__applicantActiveEmailAccount)}`
   : '';
 
-const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
-
 // SVG icons matching sessions.js dropdown style
 const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
 const _archiveIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
@@ -339,8 +337,14 @@ export async function loadEmails(append = false) {
     console.error('Failed to load emails:', e);
     if (_listSpinner) { _listSpinner.destroy(); _listSpinner = null; }
     if (!append && list) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
-      list.innerHTML = `<div class="email-loading">${msg.replace(/&/g, '&amp;').replace(/</g, '&lt;')}${_emailSetupHint()}</div>`;
+      // Previously a static, unclickable "Setup: Settings > Integrations"
+      // text row — no working Retry, no working link, so a real fetch
+      // failure (network blip, account misconfigured) left the user with
+      // nothing they could actually click. Reuse the same first-class
+      // empty-state shell (#141) with real wired actions instead.
+      list.innerHTML = '';
+      const msg = e && e.message ? e.message : 'Failed to load';
+      list.appendChild(_buildEmailErrorState(msg));
     }
   } finally {
     _loading = false;
@@ -473,6 +477,27 @@ function _buildEmailEmptyState() {
     </div>`;
   wrap.querySelector('#email-empty-compose')?.addEventListener('click', () => _composeNew());
   wrap.querySelector('#email-empty-connect')?.addEventListener('click', () => _openIntegrationsSettings());
+  return wrap;
+}
+
+// Sibling of _buildEmailEmptyState() (#141) for the genuine fetch-failure
+// path: distinct copy ("Couldn't load" vs "No emails yet") plus a real,
+// wired Retry so a network/server error doesn't leave the user with a dead
+// end. "Connect account" stays offered too since a misconfigured/removed
+// account is a common real-world cause of a list load failing outright.
+function _buildEmailErrorState(msg) {
+  const wrap = document.createElement('div');
+  wrap.className = 'email-empty-state';
+  wrap.innerHTML = `
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="email-empty-icon" style="color:var(--color-error, var(--red));"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <div class="email-empty-title">Couldn't load emails</div>
+    <div class="email-empty-msg">${_esc(msg)}</div>
+    <div class="email-empty-actions">
+      <button type="button" class="cal-btn cal-btn-primary" id="email-error-retry">Try again</button>
+      <button type="button" class="cal-btn" id="email-error-connect">Connect account</button>
+    </div>`;
+  wrap.querySelector('#email-error-retry')?.addEventListener('click', () => loadEmails(false));
+  wrap.querySelector('#email-error-connect')?.addEventListener('click', () => _openIntegrationsSettings());
   return wrap;
 }
 

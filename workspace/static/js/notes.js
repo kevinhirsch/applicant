@@ -363,6 +363,12 @@ const COLOR_HEX = {
 // ---- API ----
 
 let _loading = false;
+// Set when the last _fetchNotes() call failed (network error or non-ok
+// response); cleared on the next success. _renderNotes() checks this before
+// falling back to the "No notes yet" empty message, so a genuine empty
+// list reads differently from "couldn't reach the server" — previously
+// both silently collapsed into the same empty-state copy.
+let _notesError = null;
 // Undo stack — most recent action is at the end. We cap it small because the
 // only entries that survive a panel reload are in-memory anyway.
 const _undoStack = [];
@@ -395,12 +401,14 @@ async function _fetchNotes() {
   try {
     const url = `${API_BASE}/api/notes${_showingArchived ? '?archived=true' : ''}`;
     const res = await fetch(url, { credentials: 'same-origin' });
-    if (!res.ok) { _notes = []; return; }
+    if (!res.ok) { _notes = []; _notesError = `HTTP ${res.status}`; return; }
     const data = await res.json();
     _notes = data.notes || data || [];
+    _notesError = null;
   } catch (e) {
     console.error('Failed to fetch notes:', e);
     _notes = [];
+    _notesError = e.message || 'Failed to load notes';
   } finally {
     _loading = false;
   }
@@ -1667,6 +1675,20 @@ function _animateReflow(prevPositions) {
   });
 }
 
+// Renders either the plain "No notes yet" empty copy, or — when the last
+// fetch actually failed — an error message + Retry so a network/server
+// failure doesn't masquerade as "you have no notes".
+function _notesEmptyMsgHTML(fallbackText) {
+  if (_notesError) {
+    return `<div class="notes-empty-msg notes-error-msg">
+      <div style="color:var(--color-error, var(--red));font-weight:600;">Couldn't load notes</div>
+      <div style="opacity:0.6;font-size:11px;margin-top:4px;">${_esc(_notesError)}</div>
+      <button type="button" class="cal-btn notes-retry-btn" style="margin-top:10px;padding:2px 12px;">Try again</button>
+    </div>`;
+  }
+  return `<div class="notes-empty-msg">${fallbackText} <span style="vertical-align:-3px;margin-left:4px;">${uiModule.emptyStateIcon('smiley')}</span></div>`;
+}
+
 function _renderNotes() {
   _updateRailBadge();
   const body = document.querySelector('#notes-pane .notes-pane-body');
@@ -1884,7 +1906,7 @@ function _renderNotes() {
     const next = [...body.children].filter(c => c !== existingForm);
     next.forEach(c => c.remove());
     if (sorted.length === 0) {
-      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
+      body.insertAdjacentHTML('beforeend', _notesEmptyMsgHTML('No notes'));
     } else {
       existingForm.insertAdjacentHTML('afterend', html);
     }
@@ -1893,11 +1915,16 @@ function _renderNotes() {
     _renderLabelsInto(body);
     _renderQuickAdd(body);
     if (sorted.length === 0) {
-      body.insertAdjacentHTML('beforeend', '<div class="notes-empty-msg">No notes yet <span style="vertical-align:-3px;margin-left:4px;">' + uiModule.emptyStateIcon('smiley') + '</span></div>');
+      body.insertAdjacentHTML('beforeend', _notesEmptyMsgHTML('No notes yet'));
     } else {
       body.insertAdjacentHTML('beforeend', html);
     }
   }
+
+  body.querySelector('.notes-retry-btn')?.addEventListener('click', async () => {
+    await _fetchNotes();
+    _renderNotes();
+  });
 
   _bindCardEvents(body);
   _animateReflow(prevPositions);

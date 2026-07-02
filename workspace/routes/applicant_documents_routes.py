@@ -35,16 +35,40 @@ Design notes:
 from __future__ import annotations
 
 import logging
+from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import ApplicantEngineClient, EngineError, engine_base_url
 from src.auth_helpers import require_privilege, require_user
 
 logger = logging.getLogger(__name__)
+
+#: Timeout for the standalone JD-match GET below — mirrors
+#: ``applicant_engine._DEFAULT_TIMEOUT`` (a short, in-network read; deliberately
+#: NOT imported from there since that constant is private to the module).
+_JD_MATCH_TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=5.0, pool=3.0)
+
+
+async def _owner_campaign_ids(engine: ApplicantEngineClient) -> Optional[set]:
+    """The owner's campaign ids, or ``None`` when the engine is unreachable.
+
+    Mirrors ``applicant_campaigns_routes._owner_campaign_ids``: the engine has no
+    owner concept of its own (single-tenant per deployment, CLAUDE.md), so this
+    request's own ``list_campaigns()`` fan-out is the ONLY scoping boundary for the
+    screening-answer library -- never trust a caller-supplied ``campaign_id``.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("documents: campaigns read failed: %s", exc)
+        return None
+    if not isinstance(campaigns, list):
+        return set()
+    return {str(c.get("id")) for c in campaigns if isinstance(c, dict) and c.get("id")}
 
 #: A redline revision turn is HEAVY writing — the engine runs the escalation (L2/pro)
 #: tier, whose per-call budget is ~60s and which may escalate, so the default 30s read
@@ -104,6 +128,15 @@ class ScreeningAnswerIn(BaseModel):
     essay: bool | None = None
 
 
+class ScreeningAnswerReuseIn(BaseModel):
+    """Reuse a saved library answer for a NEW application (product-gaps #20)
+    instead of regenerating it fresh."""
+
+    campaign_id: str
+    application_id: str
+    question: str
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
@@ -143,6 +176,46 @@ def _engine_error_response(exc: EngineError) -> JSONResponse:
     )
 
 
+async def _fetch_jd_match(application_id: str) -> Any:
+    """Inline GET of the engine's résumé <-> JD keyword-match score (#23).
+
+    ``applicant_engine.py`` is CONCURRENTLY LOCKED by another lane, so this is a
+    deliberately small, self-contained httpx call mirroring
+    ``ApplicantEngineClient._request``'s own timeout/error-normalization shape
+    (timeout / connection failure -> :class:`EngineError` with ``status=None``;
+    an HTTP error response -> :class:`EngineError` carrying the engine's status
+    + detail) rather than a new method on the shared client. A small, acceptable
+    duplication that keeps the two files independently editable.
+    """
+    url = f"{engine_base_url()}/api/documents/jd-match/{application_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_JD_MATCH_TIMEOUT) as client:
+            resp = await client.get(url)
+    except httpx.TimeoutException as exc:
+        raise EngineError(
+            f"Engine request timed out: GET {url}", is_timeout=True
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise EngineError(f"Engine request failed: GET {url}: {exc}") from exc
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except ValueError:
+            detail = resp.text
+        raise EngineError(
+            f"Engine returned HTTP {resp.status_code} for GET {url}",
+            status=resp.status_code,
+            detail=detail,
+        )
+    if resp.status_code == 204 or not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text
+
+
 def setup_applicant_documents_routes() -> APIRouter:
     """Build the Applicant documents proxy router (mounted in ``app.py``)."""
     router = APIRouter(prefix="/api/applicant/documents", tags=["applicant-documents"])
@@ -172,6 +245,25 @@ def setup_applicant_documents_routes() -> APIRouter:
                 data = await engine.documents_for_application(application_id)
         except EngineError as exc:
             logger.info("applicant documents for application unavailable: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.get("/jd-match/{application_id}")
+    async def jd_match(application_id: str, request: Request) -> JSONResponse:
+        """Résumé <-> job-posting keyword match score for the redline surface
+        (product-gaps backlog #23; engine ``GET /api/documents/jd-match/{id}``).
+
+        Plain-language ``{score, matched, missing}``: which of the posting's
+        keywords already show up in the candidate's résumé, and the
+        highest-signal ones that don't. Pure/deterministic on the engine side —
+        this proxy is a plain read, same auth tier as ``application_documents``
+        above (the materials for an application are visible to any logged-in
+        user of this single-tenant deployment)."""
+        require_user(request)
+        try:
+            data = await _fetch_jd_match(application_id)
+        except EngineError as exc:
+            logger.info("applicant jd-match unavailable: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
@@ -217,6 +309,56 @@ def setup_applicant_documents_routes() -> APIRouter:
         except EngineError as exc:
             logger.info("applicant screening-answer generation failed: %s", exc)
             return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
+
+    # ── screening-answer library (product-gaps backlog #20) ─────────────
+
+    @router.get("/screening-answer-library/{campaign_id}")
+    async def screening_answer_library(campaign_id: str, request: Request) -> dict:
+        """The owner's saved screening-answer library for ONE OF THEIR OWN
+        campaigns (engine ``GET /api/documents/screening-answer-library/{id}``).
+
+        ``campaign_id`` is validated against this request's own ``list_campaigns()``
+        fan-out BEFORE the read is forwarded -- mirrors
+        ``applicant_campaigns_routes``'s owner-scoping (the engine itself has no
+        owner concept, so this check is the only isolation boundary)."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                return {"engine_available": False, "campaign_id": campaign_id, "items": []}
+            if campaign_id not in owned:
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+            try:
+                data = await engine.screening_answer_library(campaign_id)
+            except EngineError as exc:
+                logger.debug("documents: screening-answer library read failed: %s", exc)
+                return {"engine_available": True, "campaign_id": campaign_id, "items": []}
+        out = data if isinstance(data, dict) else {}
+        items = out.get("items") if isinstance(out.get("items"), list) else []
+        return {"engine_available": True, "campaign_id": campaign_id, "items": items}
+
+    @router.post("/screening-answer-library/reuse")
+    async def reuse_screening_answer(
+        body: ScreeningAnswerReuseIn, request: Request
+    ) -> JSONResponse:
+        """Reuse a saved library answer for a NEW application instead of
+        regenerating it (engine ``POST /api/documents/screening-answer-library/
+        reuse``). ``campaign_id`` is validated against this request's own owned
+        campaigns BEFORE the write is forwarded -- a caller cannot reuse a library
+        answer, or create a document, under a campaign that is not their own."""
+        require_privilege(request, "can_use_documents")
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if body.campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                data = await engine.reuse_screening_answer(body.model_dump())
+            except EngineError as exc:
+                logger.info("applicant screening-answer reuse failed: %s", exc)
+                return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
 
     # ── review / change loop ────────────────────────────────────────────

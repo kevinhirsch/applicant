@@ -431,6 +431,30 @@ class ActionEventModel(Base):
     context: Mapped[dict] = mapped_column(JSONType, default=dict)
 
 
+# 20 --------------------------------------------------------------------
+class ScreeningAnswerLibraryModel(Base):
+    """Reusable, campaign-scoped screening-answer library (product-gaps #20).
+
+    Keyed by the NORMALIZED question text so re-asking the same question (minor
+    phrasing aside) hits the same entry; ``upsert`` replaces it with the latest
+    generation, mirroring ``DiscoverySourceModel``'s (campaign_id, key) shape.
+    """
+
+    __tablename__ = "screening_answer_library"
+    __table_args__ = (
+        UniqueConstraint(
+            "campaign_id", "question_key", name="uq_screening_answer_library_campaign_key"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), nullable=False, index=True)
+    question_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_text: Mapped[str] = mapped_column(Text, nullable=False)
+    essay: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 # derived -------------------------------------------------------------------
 class PendingActionModel(Base):
     __tablename__ = "pending_actions"
@@ -483,4 +507,5 @@ ALL_TABLES = [
     GhostingSignalModel,
     FollowUpModel,
     PortfolioAttachmentModel,
+    ScreeningAnswerLibraryModel,
 ]

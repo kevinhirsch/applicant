@@ -13,6 +13,12 @@ let _open = false;
 let _tasksCascadeNext = false;   // play the domino-in entrance on the next render
 let _tasks = [];
 let _tasksFetched = false;   // first-fetch sentinel — `false` → show loading row instead of "No tasks yet"
+// Set when the last _fetchTasks() call failed; cleared on the next success.
+// Lets _renderList() tell "genuinely no tasks yet" apart from "couldn't
+// reach the server" — previously both collapsed into the same "No tasks
+// yet. Create one to get started." message, which reads as if tasks were
+// deleted/never existed when the real cause was a network/server error.
+let _tasksError = null;
 let _escHandler = null;
 let _viewingRuns = null; // task id when viewing run history
 let _clockInterval = null;
@@ -24,11 +30,14 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 async function _fetchTasks() {
   try {
     const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     _tasks = data.tasks || [];
+    _tasksError = null;
   } catch (e) {
     console.error('Failed to fetch tasks:', e);
     _tasks = [];
+    _tasksError = e.message || 'Failed to load tasks';
   }
   _tasksFetched = true;
 }
@@ -146,7 +155,10 @@ async function _fetchRuns(taskId, limit = 10) {
   const res = await fetch(`${API_BASE}/api/tasks/${taskId}/runs?limit=${limit}`, {
     credentials: 'same-origin',
   });
-  if (!res.ok) return [];
+  // Previously a non-ok response quietly resolved to [], which _showRunHistory
+  // rendered as "No runs yet." — indistinguishable from a task that genuinely
+  // never ran. Throw so the caller can tell "empty" from "couldn't load".
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return data.runs || [];
 }
@@ -619,6 +631,16 @@ function _renderList() {
     // misleading "No tasks yet" message before the fetch completes.
     if (!_tasksFetched) {
       list.appendChild(spinnerModule.createLoadingRow('Loading…'));
+    } else if (_tasksError) {
+      list.innerHTML = `<div style="text-align:center;padding:24px 0;">
+        <div style="color:var(--color-error, var(--red));font-size:12px;font-weight:600;">Couldn't load tasks</div>
+        <div style="opacity:0.6;font-size:11px;margin-top:4px;">${uiModule && uiModule.esc ? uiModule.esc(_tasksError) : _tasksError}</div>
+        <button type="button" id="tasks-retry-btn" class="task-btn" style="margin-top:10px;">Try again</button>
+      </div>`;
+      document.getElementById('tasks-retry-btn')?.addEventListener('click', async () => {
+        await _fetchTasks();
+        _renderList();
+      });
     } else {
       list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No tasks yet. Create one to get started.</div>';
     }
@@ -1503,14 +1525,30 @@ async function _showRunHistory(taskId, taskName) {
   body.innerHTML = '';
   body.appendChild(spinnerModule.createLoadingRow('Loading…'));
 
-  const runs = await _fetchRuns(taskId);
+  // Previously an unhandled rejection here (e.g. a network error — _fetchRuns
+  // has no try/catch of its own) left the loading spinner spinning forever,
+  // since nothing ever replaced body.innerHTML. Now caught so the panel
+  // always resolves to a real state.
+  let runs = [];
+  let runsError = null;
+  try {
+    runs = await _fetchRuns(taskId);
+  } catch (e) {
+    runsError = e.message || 'Failed to load run history';
+  }
 
   let html = `<div class="task-history-header">
     <button id="task-history-back" class="task-btn">← Back</button>
     <span style="font-size:13px;opacity:0.7;">${_esc(taskName)} — Run history</span>
   </div>`;
 
-  if (runs.length === 0) {
+  if (runsError) {
+    html += `<div style="text-align:center;padding:24px 0;">
+      <div style="color:var(--color-error, var(--red));font-size:12px;font-weight:600;">Couldn't load run history</div>
+      <div style="opacity:0.6;font-size:11px;margin-top:4px;">${_esc(runsError)}</div>
+      <button type="button" id="task-runs-retry-btn" class="task-btn" style="margin-top:10px;">Try again</button>
+    </div>`;
+  } else if (runs.length === 0) {
     html += '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No runs yet.</div>';
   } else {
     html += '<div class="task-runs-list">';
@@ -1534,6 +1572,9 @@ async function _showRunHistory(taskId, taskName) {
   document.getElementById('task-history-back').addEventListener('click', () => {
     _viewingRuns = null;
     _renderMainView();
+  });
+  document.getElementById('task-runs-retry-btn')?.addEventListener('click', () => {
+    _showRunHistory(taskId, taskName);
   });
 
   // Click to expand/collapse result

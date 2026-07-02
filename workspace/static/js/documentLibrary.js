@@ -2083,6 +2083,51 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }).join('');
     }
 
+    // Résumé <-> job-posting keyword match explainer (product-gaps backlog
+    // #23): "Match score: 78/100 — you cover React, Python, AWS; consider
+    // adding: Kubernetes, GraphQL". Advisory only — a plain-language line under
+    // the materials header, never blocking the review/approve flow below it.
+    // Fetched separately from the materials list (its own small proxy read,
+    // engine `GET /api/documents/jd-match/{application_id}`) so a slow/failed
+    // score lookup never delays the materials themselves; failures are a
+    // silent no-op (the line just doesn't appear) rather than an error toast.
+    async function _loadJdMatch(appId, container) {
+      if (!container) return;
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/jd-match/${encodeURIComponent(appId)}`, { credentials: 'same-origin' });
+        if (!res.ok) return;
+        data = await res.json();
+      } catch { return; }
+      if (!data || typeof data.score !== 'number') return;
+      const matched = Array.isArray(data.matched) ? data.matched : [];
+      const missing = Array.isArray(data.missing) ? data.missing : [];
+      if (!matched.length && !missing.length) return; // nothing to report yet
+
+      const line = document.createElement('div');
+      line.className = 'doclib-applicant-jdmatch';
+      line.style.cssText = 'font-size:12px;opacity:0.85;padding:0 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+
+      // Reuses the SAME compact pill styling as the "All approved" / "Needs
+      // review" gate badge above (border + var(--border), no new visual system).
+      const scoreChip = document.createElement('span');
+      scoreChip.className = 'doclib-applicant-jdmatch-score';
+      scoreChip.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);font-weight:600;flex-shrink:0;';
+      scoreChip.title = 'How many of the posting’s keywords already show up in your resume — an estimate, not a hard requirement.';
+      scoreChip.textContent = `Match score: ${data.score}/100`;
+      line.appendChild(scoreChip);
+
+      const bits = [];
+      if (matched.length) bits.push(`you cover ${matched.slice(0, 6).join(', ')}`);
+      if (missing.length) bits.push(`consider adding: ${missing.slice(0, 6).join(', ')}`);
+      if (bits.length) {
+        const detail = document.createElement('span');
+        detail.textContent = bits.join('; ');
+        line.appendChild(detail);
+      }
+      container.appendChild(line);
+    }
+
     // Fetch + render the materials for one application id.
     async function _loadApplicantMaterials(appId, results) {
       if (!results) return;
@@ -2134,6 +2179,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               `title="Everything is approved — head to the submit step in your Pending home base">Continue to submit &rarr;</button>`
           : '');
       results.appendChild(head);
+
+      // Advisory keyword-match line (#23) — a fixed slot placed right under the
+      // header so the async fetch (which resolves after this synchronous render
+      // pass) fills in *in place* rather than appending after the material
+      // cards below once it eventually completes.
+      const jdMatchSlot = document.createElement('div');
+      jdMatchSlot.className = 'doclib-applicant-jdmatch-slot';
+      results.appendChild(jdMatchSlot);
+      if (items.length) _loadJdMatch(appId, jdMatchSlot);
 
       if (gateOk) {
         const continueBtn = head.querySelector('.doclib-applicant-continue-submit');

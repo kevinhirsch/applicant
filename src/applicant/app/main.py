@@ -11,6 +11,7 @@ import os
 import traceback
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
@@ -112,6 +113,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Applicant", version=__version__, lifespan=lifespan)
     app.state.container = container
+
+    # Response compression (perf lens finding #1). This is currently the only
+    # middleware on this app, so there is no ordering to get wrong yet — but
+    # per Starlette semantics (the LAST `add_middleware` call becomes the
+    # OUTERMOST wrapper, same as the ordering note in workspace/app.py), if any
+    # more middleware is added later it should be registered BEFORE this call
+    # so GZip stays outermost and compresses the final response every other
+    # layer produces, not an intermediate one.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     mount_static(app, settings.app_static_dir)
     register_routers(app)

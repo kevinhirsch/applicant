@@ -225,9 +225,11 @@ async function _renderGallery() {
 
   const sections = [];
   sections.push(`<h5 style="margin:0 0 8px;">Screenshots <span class="admin-toggle-sub" style="opacity:0.6;">${shots.length}</span></h5>`);
-  sections.push(shots.length ? _grid(shots.map(_shotCard)) : _empty('No screenshots yet.'));
+  sections.push(shots.length ? _grid(shots.map(_shotCard)) : _empty(
+    'No screenshots yet — these are captured automatically as the agent works through each page.'));
   sections.push(`<h5 style="margin:16px 0 8px;">Materials <span class="admin-toggle-sub" style="opacity:0.6;">${mats.length}</span></h5>`);
-  sections.push(mats.length ? _grid(mats.map(_matCard)) : _empty('No generated materials yet.'));
+  sections.push(mats.length ? _grid(mats.map(_matCard)) : _empty(
+    'No generated materials yet — resumes, cover letters, and screening answers will appear here as the agent drafts them.'));
   _body().innerHTML = sections.join('');
 }
 
