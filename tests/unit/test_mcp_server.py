@@ -12,6 +12,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from applicant.app.routers.mcp import (
     _fastapi_mcp_available,
@@ -226,3 +228,72 @@ class TestMCPToolsRegistration:
             assert isinstance(result, (list, dict)), (
                 f"Tool {tool['name']} returned unexpected type {type(result)}"
             )
+
+
+class TestMCPAuthGate:
+    """The native /mcp/tools surface requires ``require_llm_configured`` (security
+    hardening on top of #308): every consequential router in this codebase gates
+    on the LLM-configured setup step (FR-UI-5), and the MCP tool surface — which
+    lets an external MCP client list and invoke engine tools — is no exception.
+    Regression for the ``dependencies=[Depends(require_llm_configured)]`` wiring
+    on each ``add_api_route`` call in ``mount_mcp``: dropping it would make
+    ``/mcp/tools`` and ``/mcp/tools/call`` reachable before setup, like every
+    other gated router pre-#308-hardening.
+    """
+
+    @staticmethod
+    def _build_app(*, gate_open: bool) -> FastAPI:
+        container = MagicMock()
+        container.storage = MagicMock()
+        container.storage.campaigns.list.return_value = []
+        container.storage.attributes.list.return_value = []
+        container.storage.applications.list.return_value = []
+        container.storage.pending_actions.list_open.return_value = []
+        container.llm = MagicMock() if gate_open else None
+        container.setup_service.is_setup_gate_open.return_value = gate_open
+
+        app = FastAPI()
+        app.state.container = container
+        mount_mcp(app)
+        return app
+
+    def test_tools_get_rejected_when_llm_not_configured(self):
+        """GET /mcp/tools 409s before the LLM is connected — no tool listing leaks."""
+        app = self._build_app(gate_open=False)
+        with TestClient(app) as client:
+            resp = client.get("/mcp/tools")
+        assert resp.status_code == 409
+
+    def test_tools_list_post_rejected_when_llm_not_configured(self):
+        """POST /mcp/tools/list is gated the same as the GET alias."""
+        app = self._build_app(gate_open=False)
+        with TestClient(app) as client:
+            resp = client.post("/mcp/tools/list")
+        assert resp.status_code == 409
+
+    def test_tools_call_rejected_when_llm_not_configured(self):
+        """POST /mcp/tools/call is gated — a tool cannot be invoked pre-setup."""
+        app = self._build_app(gate_open=False)
+        with TestClient(app) as client:
+            resp = client.post("/mcp/tools/call", json={"name": "health"})
+        assert resp.status_code == 409
+
+    def test_tools_get_allowed_when_llm_configured(self):
+        """Once the gate is open, GET /mcp/tools serves the real tool listing."""
+        app = self._build_app(gate_open=True)
+        with TestClient(app) as client:
+            resp = client.get("/mcp/tools")
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()["tools"]}
+        assert "health" in names
+        assert "list_campaigns" in names
+
+    def test_tools_call_allowed_when_llm_configured(self):
+        """Once the gate is open, POST /mcp/tools/call actually invokes the tool."""
+        app = self._build_app(gate_open=True)
+        with TestClient(app) as client:
+            resp = client.post("/mcp/tools/call", json={"name": "health"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["isError"] is False
+        assert body["result"]["healthy"] is True
