@@ -49,6 +49,35 @@ function _esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Compact relative time ("just now", "5m ago", "3h ago", "2d ago") — same
+// phrasing convention used elsewhere in the workspace (e.g. the Activity feed's
+// `_relTime`). Kept local rather than imported since none of the existing
+// helpers are exported from their modules. Accepts an epoch-ms number (or
+// anything `Date.parse` understands); returns '' when unparseable so the
+// caller can omit the freshness line cleanly.
+function _relWhen(value) {
+  if (value == null || value === '') return '';
+  let ms = null;
+  if (typeof value === 'number') {
+    ms = value < 1e12 ? value * 1000 : value; // seconds vs ms heuristic
+  } else {
+    const t = Date.parse(value);
+    if (!Number.isNaN(t)) ms = t;
+  }
+  if (ms == null) return '';
+  const diff = Date.now() - ms;
+  if (!Number.isFinite(diff)) return '';
+  const s = Math.round(diff / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d}d ago`;
+  try { return new Date(ms).toLocaleDateString(); } catch (_e) { return ''; }
+}
+
 // True only for http(s) URLs — guards the posting "Open" link against
 // javascript:/data:/other schemes even though the value is trusted infra.
 function _isWebUrl(u) {
@@ -165,8 +194,10 @@ function _ensurePanel(modal) {
       <select class="memory-sort-select applicant-digest-campaign" id="applicant-digest-campaign"
               title="Choose which job search to show updates for"
               style="flex:0 1 auto;min-width:0;max-width:200px;"></select>
-      <button type="button" class="memory-toolbar-btn" id="applicant-digest-refresh" title="Check for new updates"
-              style="margin-left:auto;">
+      <span class="memory-count applicant-digest-freshness" id="applicant-digest-freshness"
+            title="How long ago this list was last refreshed"
+            style="margin-left:auto;font-size:10px;opacity:0.65;white-space:nowrap;"></span>
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-refresh" title="Check for new updates">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
         Refresh
       </button>
@@ -183,6 +214,16 @@ function _ensurePanel(modal) {
     <p class="memory-desc" style="margin:6px 0 4px;opacity:0.7;font-size:11px;">
       Roles your job-search assistant flagged today. The same summary is emailed to you; act on anything right here.
     </p>
+    <div class="applicant-digest-bulk-bar" id="applicant-digest-bulk-bar" style="display:none;align-items:center;gap:8px;margin:0 0 6px;">
+      <label class="memory-bulk-check-all"><input type="checkbox" id="applicant-digest-select-all"> All</label>
+      <span class="memory-count" id="applicant-digest-selected-count" style="font-size:11px;opacity:0.75;">0 selected</span>
+      <button type="button" class="memory-toolbar-btn applicant-digest-approve-selected" id="applicant-digest-approve-selected">
+        ${_ICON_CHECK}Approve selected
+      </button>
+      <button type="button" class="memory-toolbar-btn applicant-digest-decline-selected" id="applicant-digest-decline-selected">
+        ${_ICON_PASS}Decline selected
+      </button>
+    </div>
     <div class="applicant-digest-body" id="applicant-digest-body"></div>
   `;
   grid.parentNode.insertBefore(panel, grid);
@@ -204,6 +245,11 @@ function _renderDigest(panel, payload) {
   const body = panel.querySelector('#applicant-digest-body');
   if (!body) return;
   body.innerHTML = '';
+
+  // Every reload replaces the row set, so any prior selection can no longer
+  // point at an on-screen row — drop it and collapse the bulk-actions bar.
+  _selectionFor(panel).clear();
+  _updateBulkBar(panel);
 
   const rows = (payload && Array.isArray(payload.rows)) ? payload.rows : [];
   if (!rows.length) {
@@ -240,18 +286,40 @@ function _renderDigest(panel, payload) {
 // `onResolved(card, row)` hook fired after an approve/pass succeeds (the Portal
 // uses it to refresh its count). When omitted the row falls back to the
 // fade-out-in-place behaviour used inside the Email panel.
+//
+// Bulk selection (opt-in, quick-wins #4J "bulk digest actions") is threaded
+// through the same `ctx`: pass `selectable: true`, `isSelected` (bool), and
+// `onToggleSelect(id, checked)` to get a leading checkbox wired to the
+// caller's selection state. Callers that don't pass `selectable` (the Portal
+// embed) see no checkbox — this stays a strict opt-in so existing callers are
+// unaffected.
 export function buildDigestRow(row, ctx = {}) {
   const card = _el('div', {
     cls: 'doclib-card applicant-digest-row',
     style: 'padding:9px 10px;margin-bottom:6px;cursor:default;',
   });
-  card.dataset.actionId = _rowActionId(row);
+  const actionId = _rowActionId(row);
+  card.dataset.actionId = actionId;
 
   const title = row.title || row.summary || 'Untitled role';
   const company = row.company ? ` · ${row.company}` : '';
   const score = (row.viability_score != null) ? row.viability_score : null;
 
   const head = _el('div', { style: 'display:flex;align-items:baseline;gap:8px;' });
+
+  if (ctx.selectable && actionId) {
+    const cb = _el('input', {
+      cls: 'memory-select-cb applicant-digest-select',
+      attrs: { type: 'checkbox', 'aria-label': `Select ${title}${company}` },
+      style: 'flex:0 0 auto;',
+    });
+    cb.checked = !!ctx.isSelected;
+    cb.addEventListener('change', () => {
+      if (typeof ctx.onToggleSelect === 'function') ctx.onToggleSelect(actionId, cb.checked, card);
+    });
+    head.appendChild(cb);
+  }
+
   head.appendChild(_el('span', {
     text: title + company,
     style: 'font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
@@ -332,9 +400,50 @@ export function buildDigestRow(row, ctx = {}) {
   return card;
 }
 
-// Email-panel adapter: render a row bound to the panel's campaign selector.
+// --- bulk selection (Email-panel only; Portal's embed doesn't opt in) ------
+//
+// One selection Set per mounted panel (there is only ever one live email-lib
+// panel, but a WeakMap avoids a stale module-level singleton across
+// close/reopen cycles). Selection is cleared whenever the digest is reloaded
+// (new rows) so it can never reference a row that's no longer on screen.
+const _selectionByPanel = new WeakMap();
+
+function _selectionFor(panel) {
+  let sel = _selectionByPanel.get(panel);
+  if (!sel) { sel = new Set(); _selectionByPanel.set(panel, sel); }
+  return sel;
+}
+
+function _updateBulkBar(panel) {
+  const sel = _selectionFor(panel);
+  const bar = panel.querySelector('#applicant-digest-bulk-bar');
+  const count = panel.querySelector('#applicant-digest-selected-count');
+  const selectAll = panel.querySelector('#applicant-digest-select-all');
+  if (count) count.textContent = `${sel.size} selected`;
+  if (bar) bar.style.display = sel.size > 0 ? 'flex' : 'none';
+  if (selectAll && sel.size === 0) selectAll.checked = false;
+}
+
+// Email-panel adapter: render a row bound to the panel's campaign selector and
+// its bulk-selection state.
 function _buildRow(panel, row) {
-  return buildDigestRow(row, { getCampaignId: () => _currentCampaign(panel) });
+  const sel = _selectionFor(panel);
+  const id = _rowActionId(row);
+  return buildDigestRow(row, {
+    getCampaignId: () => _currentCampaign(panel),
+    selectable: true,
+    isSelected: id ? sel.has(id) : false,
+    onToggleSelect: (rowId, checked) => {
+      if (checked) sel.add(rowId); else sel.delete(rowId);
+      _updateBulkBar(panel);
+    },
+    // Keep the selection set (and the bulk-bar count) truthful when a row
+    // resolves via its own single-row Approve/Pass button too.
+    onResolved: (_card, resolvedRow) => {
+      const rid = _rowActionId(resolvedRow);
+      if (rid && sel.delete(rid)) _updateBulkBar(panel);
+    },
+  });
 }
 
 function _disableRow(card) {
@@ -397,6 +506,108 @@ async function _onPass(card, row, btn, onResolved) {
   } catch (e) {
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
     showToast(e.message || 'Could not save that right now.');
+  }
+}
+
+// --- bulk approve / decline (quick-wins #4J "bulk digest actions") ---------
+//
+// There is no bulk engine endpoint for actually approving/declining
+// applications (the pending-actions "resolve-bulk" route only clears Portal
+// to-do notifications; even the engine's own chat "approve all today's roles"
+// directive loops the per-posting approve call — see
+// `ChatService._do_approve_all`). So these loop the SAME per-row
+// `/applications/{id}/approve` / `/applications/{id}/decline` calls the
+// single-row buttons already use, one request per selected row.
+
+function _selectedRowCard(panel, id) {
+  return panel.querySelector(
+    `#applicant-digest-body .applicant-digest-row[data-action-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`,
+  );
+}
+
+function _setBulkBusy(panel, busy) {
+  ['#applicant-digest-approve-selected', '#applicant-digest-decline-selected', '#applicant-digest-select-all']
+    .forEach((sel) => {
+      const el = panel.querySelector(sel);
+      if (el) el.disabled = busy;
+    });
+}
+
+async function _onBulkApprove(panel) {
+  const sel = _selectionFor(panel);
+  if (!sel.size) return;
+  const ids = Array.from(sel);
+  _setBulkBusy(panel, true);
+  let ok = 0;
+  let fail = 0;
+  for (const id of ids) {
+    const card = _selectedRowCard(panel, id);
+    if (card) _disableRow(card);
+    try {
+      await _api(`/applications/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+      ok += 1;
+      sel.delete(id);
+      if (card) _fadeOutRow(card);
+    } catch (_e) {
+      fail += 1;
+      if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    }
+  }
+  _setBulkBusy(panel, false);
+  _updateBulkBar(panel);
+  if (ok) {
+    showToast(`Approved ${ok} role${ok === 1 ? '' : 's'}${fail ? ` — ${fail} couldn’t be approved.` : '.'}`);
+  } else {
+    showToast('Could not approve the selected roles.');
+  }
+}
+
+async function _onBulkDecline(panel) {
+  const sel = _selectionFor(panel);
+  if (!sel.size) return;
+  // Same mandatory-feedback rule as the single-row Pass: one shared reason
+  // covers the whole batch (the engine records it per application).
+  const reason = await styledPrompt(
+    `Why pass on these ${sel.size} role${sel.size === 1 ? '' : 's'}? A short reason teaches the assistant what to skip next time.`,
+    {
+      title: `Pass on ${sel.size} role${sel.size === 1 ? '' : 's'}`,
+      placeholder: 'e.g. too junior, wrong location, not my stack',
+      confirmText: 'Pass',
+      cancelText: 'Keep',
+      maxLength: 280,
+    },
+  );
+  if (reason == null) return;          // user cancelled
+  if (!reason.trim()) {
+    showToast('Add a short reason so the assistant can learn from it.');
+    return;
+  }
+  const ids = Array.from(sel);
+  _setBulkBusy(panel, true);
+  let ok = 0;
+  let fail = 0;
+  for (const id of ids) {
+    const card = _selectedRowCard(panel, id);
+    if (card) _disableRow(card);
+    try {
+      await _api(`/applications/${encodeURIComponent(id)}/decline`, {
+        method: 'POST',
+        body: { feedback_text: reason.trim(), criteria_delta: {} },
+      });
+      ok += 1;
+      sel.delete(id);
+      if (card) _fadeOutRow(card);
+    } catch (_e) {
+      fail += 1;
+      if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    }
+  }
+  _setBulkBusy(panel, false);
+  _updateBulkBar(panel);
+  if (ok) {
+    showToast(`Passed on ${ok} role${ok === 1 ? '' : 's'}${fail ? ` — ${fail} couldn’t be saved.` : ' — thanks, that helps the next round.'}`);
+  } else {
+    showToast('Could not save that right now.');
   }
 }
 
@@ -782,15 +993,35 @@ async function _onSurvey(panel, campaignId, btn) {
 
 // --- load + wire -----------------------------------------------------------
 
+// --- freshness indicator (quick-wins #4J "updated Ns ago") -----------------
+//
+// A small "Updated Ns ago" readout next to the campaign picker so the user
+// can tell at a glance how stale the on-screen list is, without having to
+// guess whether Refresh actually did anything. Updates on every successful
+// load, and otherwise ages forward on its own piggybacked on the presence
+// heartbeat's existing ~60s `setInterval` (see `_signalPresence` below) —
+// deliberately NOT a second interval loop, so this file keeps the single
+// content-poll-free heartbeat the hidden-tab-polling regression test pins.
+function _renderFreshness(panel) {
+  const el = panel.querySelector('#applicant-digest-freshness');
+  if (!el) return;
+  const ts = Number(panel.dataset.loadedAt || 0);
+  el.textContent = ts ? `Updated ${_relWhen(ts)}` : '';
+}
+
 async function _loadDigest(panel, campaignId) {
   if (!campaignId) {
     _renderMessage(panel, 'No job search yet. Set one up to start getting daily updates.');
+    panel.dataset.loadedAt = '';
+    _renderFreshness(panel);
     return;
   }
   _renderMessage(panel, 'Loading today’s updates…');
   try {
     const payload = await _api(`/digest/${encodeURIComponent(campaignId)}`);
     _renderDigest(panel, payload);
+    panel.dataset.loadedAt = String(Date.now());
+    _renderFreshness(panel);
   } catch (e) {
     _renderMessage(panel,
       e.status === 503 || e.status === 504
@@ -855,6 +1086,26 @@ function _wire(panel) {
   if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel), fb));
   const survey = panel.querySelector('#applicant-digest-survey');
   if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel), survey));
+
+  const selectAll = panel.querySelector('#applicant-digest-select-all');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      const sel = _selectionFor(panel);
+      const checked = selectAll.checked;
+      panel.querySelectorAll('#applicant-digest-body .applicant-digest-row').forEach((card) => {
+        const id = card.dataset.actionId;
+        if (!id) return;
+        if (checked) sel.add(id); else sel.delete(id);
+        const cb = card.querySelector('.applicant-digest-select');
+        if (cb) cb.checked = checked;
+      });
+      _updateBulkBar(panel);
+    });
+  }
+  const bulkApprove = panel.querySelector('#applicant-digest-approve-selected');
+  if (bulkApprove) bulkApprove.addEventListener('click', () => _onBulkApprove(panel));
+  const bulkDecline = panel.querySelector('#applicant-digest-decline-selected');
+  if (bulkDecline) bulkDecline.addEventListener('click', () => _onBulkDecline(panel));
 }
 
 // Web-presence heartbeat (FR-NOTIF-2). Tells the engine the user is verifiably
@@ -867,6 +1118,10 @@ function _wire(panel) {
 let _presenceTimer = null;
 let _presenceBound = false;
 let _lastActivityTs = 0;
+// The most recently mounted digest panel, so the presence heartbeat's
+// existing interval (below) can also age the "Updated Ns ago" freshness
+// label forward without a second setInterval loop.
+let _freshnessPanel = null;
 
 function _postPresence(present) {
   try {
@@ -912,7 +1167,14 @@ function _signalPresence() {
   }
   // Re-signal inside the engine's ~90s freshness window; each beat reflects whether
   // the user is still verifiably here, so presence lapses on its own when they go.
-  try { _presenceTimer = setInterval(() => _postPresence(_isVerifiablyHere()), 60000); } catch (_) {}
+  // Piggybacks the freshness-label tick onto this same beat (see `_freshnessPanel`
+  // above) instead of adding a second interval loop.
+  try {
+    _presenceTimer = setInterval(() => {
+      _postPresence(_isVerifiablyHere());
+      if (_freshnessPanel && document.body.contains(_freshnessPanel)) _renderFreshness(_freshnessPanel);
+    }, 60000);
+  } catch (_) {}
 }
 
 /**
@@ -934,6 +1196,7 @@ export async function mountApplicantDigest(modal) {
   const panel = _ensurePanel(modal);
   if (!panel) return;
   _wire(panel);
+  _freshnessPanel = panel;
   _signalPresence();
   const campaignId = await _populateCampaigns(panel);
   await _loadDigest(panel, campaignId);
