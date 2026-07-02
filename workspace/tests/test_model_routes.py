@@ -1,4 +1,6 @@
 """Tests for model route helper functions — pure logic, no server needed."""
+import os
+import subprocess
 import sys
 import types
 from unittest.mock import MagicMock
@@ -316,3 +318,131 @@ def test_generic_endpoint_error_message_preserves_probe_error():
     )
 
     assert msg == "No models found for that provider/key. Last probe error: HTTP 401."
+
+
+# ── GET /api/model-endpoints/available (non-admin OOBE picker, #new) ────────
+#
+# Runs in an isolated subprocess against a real temp SQLite DB, mirroring
+# tests/test_entity_store_owner_scope.py: importing the real `core.database`
+# runs init_db() at import time (needs a writable DB path) and this module's
+# own collection-time stubbing (above) replaces `core.database`/ModelEndpoint
+# with MagicMocks in *this* process, so the real ORM + route can only be
+# exercised safely in a fresh subprocess. Skips when app deps aren't installed.
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_AVAILABLE_ENDPOINTS_SCRIPT = r"""
+import os, sys, tempfile, json
+os.environ["DATABASE_URL"] = "sqlite:///" + tempfile.mkstemp(suffix=".db")[1]
+try:
+    from core.database import SessionLocal, ModelEndpoint
+    from fastapi import FastAPI, Request
+    from fastapi.testclient import TestClient
+    from routes.model_routes import setup_model_routes
+except ModuleNotFoundError as ex:
+    print("SKIP", ex)
+    sys.exit(0)
+
+
+class _FakeAuthManager:
+    is_configured = True
+
+    def __init__(self, admins):
+        self._admins = set(admins)
+
+    def is_admin(self, user):
+        return user in self._admins
+
+
+app = FastAPI()
+app.state.auth_manager = _FakeAuthManager({"root"})
+
+
+@app.middleware("http")
+async def _set_user(request: Request, call_next):
+    u = request.headers.get("X-Test-User")
+    if u:
+        request.state.current_user = u
+    return await call_next(request)
+
+
+app.include_router(setup_model_routes(object()))
+client = TestClient(app)
+
+# ── seed rows directly through the real ORM model ──
+db = SessionLocal()
+db.add_all([
+    ModelEndpoint(id="shared1", name="Shared", base_url="https://api.example.com/v1",
+                  is_enabled=True, cached_models=json.dumps(["m1", "m2"]), owner=None),
+    ModelEndpoint(id="alice1", name="AliceOwn", base_url="https://alice.example.com/v1",
+                  is_enabled=True, cached_models=json.dumps(["a1"]), owner="alice"),
+    ModelEndpoint(id="bob1", name="BobOwn", base_url="https://bob.example.com/v1",
+                  is_enabled=True, cached_models=json.dumps(["b1"]), owner="bob"),
+    ModelEndpoint(id="disabled1", name="Disabled", base_url="https://disabled.example.com/v1",
+                  is_enabled=False, cached_models=json.dumps(["d1"]), owner=None),
+    ModelEndpoint(id="empty1", name="Empty", base_url="https://empty.example.com/v1",
+                  is_enabled=True, cached_models=None, owner=None),
+])
+db.commit()
+db.close()
+
+# 1. anonymous / unauthenticated -> 401 (auth_manager is configured)
+r = client.get("/api/model-endpoints/available")
+assert r.status_code == 401, ("anon status", r.status_code, r.text)
+
+# 2. non-admin "alice" -> 200; sees the null-owner shared endpoint + her own,
+#    NOT bob's, NOT the disabled one, NOT the zero-models one.
+r = client.get("/api/model-endpoints/available", headers={"X-Test-User": "alice"})
+assert r.status_code == 200, r.text
+by_id = {row["id"]: row for row in r.json()}
+assert set(by_id) == {"shared1", "alice1"}, by_id
+assert by_id["alice1"]["models"] == ["a1"]
+assert by_id["shared1"]["models"] == ["m1", "m2"]
+
+# 3. admin "root" -> sees every enabled+has-models endpoint regardless of owner
+#    (including bob's, which alice cannot see), still excludes disabled/empty.
+r = client.get("/api/model-endpoints/available", headers={"X-Test-User": "root"})
+assert r.status_code == 200, r.text
+admin_ids = {row["id"] for row in r.json()}
+assert admin_ids == {"shared1", "alice1", "bob1"}, admin_ids
+
+# 4. admin result is a strict superset of the non-admin result
+alice_ids = set(by_id)
+assert alice_ids.issubset(admin_ids)
+assert admin_ids - alice_ids == {"bob1"}
+
+# 5. the pre-existing admin-only CRUD routes remain admin-gated for a non-admin
+for method, path, kwargs in [
+    ("GET", "/api/model-endpoints", {}),
+    ("POST", "/api/model-endpoints", {"data": {"base_url": "http://x"}}),
+    ("POST", "/api/model-endpoints/test", {"data": {"base_url": "http://x"}}),
+    ("PATCH", "/api/model-endpoints/shared1", {}),
+    ("DELETE", "/api/model-endpoints/shared1", {}),
+]:
+    resp = client.request(method, path, headers={"X-Test-User": "alice"}, **kwargs)
+    assert resp.status_code == 403, (method, path, resp.status_code, resp.text)
+
+# ...and an admin actually clears the require_admin gate on those same routes
+# (404 on a made-up id proves the handler body ran past require_admin, with no
+# network I/O involved).
+assert client.request("PATCH", "/api/model-endpoints/doesnotexist", headers={"X-Test-User": "root"}).status_code == 404
+assert client.request("DELETE", "/api/model-endpoints/doesnotexist", headers={"X-Test-User": "root"}).status_code == 404
+
+print("OK")
+"""
+
+
+def test_available_model_endpoints_non_admin_owner_scoped():
+    """Non-admin OOBE picker (#new): a non-admin gets a 200 with admin-configured
+    SHARED (null-owner) + own-owned enabled endpoints that have models; other
+    users' owned endpoints, disabled endpoints, and zero-model endpoints are
+    excluded. Anonymous is still rejected, admin sees a superset, and the
+    pre-existing admin-only CRUD routes are untouched by the change."""
+    p = subprocess.run(
+        [sys.executable, "-c", _AVAILABLE_ENDPOINTS_SCRIPT],
+        cwd=_ROOT, capture_output=True, text=True,
+    )
+    if "SKIP" in p.stdout:
+        pytest.skip("deps not installed: " + p.stdout.strip())
+    assert p.returncode == 0, (p.stdout + p.stderr)
+    assert "OK" in p.stdout, (p.stdout + p.stderr)

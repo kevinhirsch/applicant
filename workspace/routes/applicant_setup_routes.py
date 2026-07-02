@@ -121,10 +121,26 @@ class LadderIn(BaseModel):
 
 
 class ChannelsIn(BaseModel):
-    discord_webhook_url: str = ""
-    apprise_urls: str = ""
+    """Thin proxy body mirroring the engine's own ``ChannelsIn`` (setup.py).
+
+    Fields are ``Optional`` (default ``None``) rather than defaulting to ``""``
+    so we can tell "field entirely absent from the request" (leave the saved
+    value alone) apart from "field explicitly sent as an empty string" (the
+    caller is asking to clear it) — see ``configure_channels`` below, which
+    only forwards the fields the caller actually set (``exclude_unset``)
+    instead of always sending all four keys. NOTE: the engine's own
+    ``configure_channels`` (src/applicant/application/services/setup_service.py)
+    currently treats ANY falsy value — explicit "" included — as "leave
+    unchanged" (``if discord_webhook_url: ...``), so there is today no engine
+    contract for actually clearing a previously-configured channel; this proxy
+    forwards the caller's intent faithfully but cannot manufacture support the
+    engine doesn't have.
+    """
+
+    discord_webhook_url: str | None = None
+    apprise_urls: str | None = None
     #: ntfy push topic URL(s), comma-separated (e.g. ntfy://ntfy.sh/my-topic).
-    ntfy_url: str = ""
+    ntfy_url: str | None = None
     #: UI-configurable email-escalation delay in minutes (FR-NOTIF-2).
     email_timeout_minutes: int | None = None
 
@@ -141,6 +157,12 @@ class QuietHoursIn(BaseModel):
     start: str = "22:00"
     end: str = "07:00"
     tz: str = ""
+    #: Per-channel quiet preference (#302): ``True`` = the channel respects quiet
+    #: hours; ``False`` = it still delivers overnight. ``None`` leaves the saved
+    #: value. Mirrors the engine's own ``QuietHoursIn`` (setup.py) — must stay
+    #: declared here too, or pydantic silently strips these before forwarding.
+    discord_respects_quiet: bool | None = None
+    email_respects_quiet: bool | None = None
 
 
 class SectionIn(BaseModel):
@@ -354,11 +376,22 @@ def setup_applicant_setup_routes() -> APIRouter:
 
     @router.post("/channels")
     async def configure_channels(body: ChannelsIn, request: Request) -> JSONResponse:
-        """Save Discord and/or email notification channels."""
+        """Save Discord and/or email notification channels.
+
+        Only fields the caller actually included in the request body are
+        forwarded (``exclude_unset``) — a field left out entirely means "leave
+        the saved value alone", while an explicit ``""`` is a caller intent to
+        clear the channel and is forwarded as such rather than silently
+        dropped or coerced into "leave unchanged". Whether the engine actually
+        honors an explicit clear for a given field is up to its own contract
+        (see the ``ChannelsIn`` docstring above) — this proxy does not swallow
+        or reject the attempt either way.
+        """
         require_privilege(request, _CONFIG_PRIV)
+        payload = body.model_dump(exclude_unset=True)
         try:
             async with ApplicantEngineClient() as engine:
-                await engine.setup_configure_channels(body.model_dump())
+                await engine.setup_configure_channels(payload)
         except EngineError as exc:
             logger.info("applicant configure channels failed: %s", exc)
             return _engine_error_response(exc)

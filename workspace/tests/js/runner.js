@@ -101,6 +101,7 @@ async function loadSuites() {
     updateView,
     presets,
     modalSnap,
+    keyboardShortcuts,
   ] = await Promise.all([
     import(MOD('modelSort.js')),
     import(MOD('langIcons.js')),
@@ -110,6 +111,7 @@ async function loadSuites() {
     import(MOD('applicantUpdateView.js')),
     import(MOD('presets.js')),
     import(MOD('modalSnap.js')),
+    import(MOD('keyboard-shortcuts.js')),
   ]);
 
   describe('modelSort.js', () => {
@@ -223,6 +225,25 @@ async function loadSuites() {
       assertType(modalSnap.makeEdgeDockController, 'function', 'makeEdgeDockController');
       assertType(modalSnap.applyRightDock, 'function', 'applyRightDock');
       assertType(modalSnap.clearDockSide, 'function', 'clearDockSide');
+    });
+  });
+
+  describe('keyboard-shortcuts.js', () => {
+    it('exports initKeyboardShortcuts', () => {
+      assertType(keyboardShortcuts.initKeyboardShortcuts, 'function', 'initKeyboardShortcuts');
+    });
+    it('seeds window._applicantKeybinds.toggle_sidebar with ctrl+alt+b, matching the Settings panel default (regression: the sidebar-toggle default drifted out of sync between this file and settings.js SHORTCUT_DEFAULTS — ctrl+alt+b is the agreed value both were fixed to)', () => {
+      // initKeyboardShortcuts is a browser-oriented setup function (registers
+      // DOM listeners, fires a settings fetch), but the one line that actually
+      // encodes the bug we're guarding — seeding window._applicantKeybinds from
+      // the module-private _defaultKeybinds table — runs synchronously before
+      // any of that, so a minimal window/document stand-in (this harness has no
+      // DOM; see README) is enough to observe the real default without faking
+      // the assertion itself.
+      if (typeof globalThis.window === 'undefined') globalThis.window = {};
+      if (typeof globalThis.document === 'undefined') globalThis.document = { addEventListener: () => {} };
+      keyboardShortcuts.initKeyboardShortcuts({});
+      assertEqual(globalThis.window._applicantKeybinds.toggle_sidebar, 'ctrl+alt+b', 'toggle_sidebar default');
     });
   });
 }

@@ -112,6 +112,170 @@ def refused_not_on_allowlist(n1ctx):
 
 
 # ===========================================================================
+# #313 — app_api loopback: final-submit stop-boundary suffix fence
+# (_APP_API_BLOCKLIST_METHOD_SUFFIX) — regression coverage for the two
+# terminal controls (submit-self / authorize-engine-finish) that sit after a
+# dynamic {application_id} segment, so only a suffix match (not the prefix
+# allowlist/blocklist) can fence them off. Exercises the REAL do_app_api
+# "call" and "endpoints" code paths — the only stub is the network layer
+# (httpx.AsyncClient) and the header-building helper (_internal_headers),
+# which imports the vendored workspace's ``core`` package and would attempt a
+# real Postgres connection under the hermetic DATABASE_URL; neither stub
+# touches the security guard under test.
+# ===========================================================================
+class _FakeAppApiResponse:
+    """Minimal httpx.Response stand-in — no real socket touched."""
+
+    def __init__(self, status_code: int = 200, payload=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {"ok": True}
+        self.text = ""
+        self.headers = {"content-type": "application/json"}
+
+    def json(self):
+        return self._payload
+
+
+class _FakeAppApiAsyncClient:
+    """Records every dispatched request instead of opening a real socket."""
+
+    calls: list = []
+    openapi_payload: dict = {}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, **kwargs):
+        _FakeAppApiAsyncClient.calls.append(("GET", url))
+        if "openapi.json" in url:
+            return _FakeAppApiResponse(payload=_FakeAppApiAsyncClient.openapi_payload)
+        return _FakeAppApiResponse()
+
+    async def request(self, method, url, **kwargs):
+        _FakeAppApiAsyncClient.calls.append((method, url))
+        return _FakeAppApiResponse()
+
+
+@given("the app_api loopback tool's final-submit stop-boundary suffix fence")
+def app_api_suffix_fence_stubbed(n1ctx, monkeypatch):
+    _add_workspace_to_path()
+    ti = importlib.import_module("src.tool_implementations")
+    n1ctx["ti"] = ti
+    # Stub only the header-building helper (not part of the security gate) so
+    # importing it doesn't pull in the vendored workspace's `core` package,
+    # which attempts a real DB connection at import time.
+    monkeypatch.setattr(ti, "_internal_headers", lambda owner=None: {"X-Stub": "1"})
+    import httpx
+
+    _FakeAppApiAsyncClient.calls = []
+    _FakeAppApiAsyncClient.openapi_payload = {}
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAppApiAsyncClient)
+
+
+@when("a POST call to an application's submit-self path is attempted")
+def call_submit_self(n1ctx):
+    import json as _json
+
+    content = _json.dumps({
+        "action": "call",
+        "method": "POST",
+        "path": "/api/applicant/remote/applications/app-123/submit-self",
+    })
+    n1ctx["result"] = asyncio.run(n1ctx["ti"].do_app_api(content))
+
+
+@when("a POST call to an application's authorize-engine-finish path is attempted")
+def call_authorize_engine_finish(n1ctx):
+    import json as _json
+
+    content = _json.dumps({
+        "action": "call",
+        "method": "POST",
+        "path": "/api/applicant/remote/applications/app-123/authorize-engine-finish",
+    })
+    n1ctx["result"] = asyncio.run(n1ctx["ti"].do_app_api(content))
+
+
+@then("the call is refused with the final-submit stop-boundary error and no request reaches the network")
+def stop_boundary_refused(n1ctx):
+    res = n1ctx["result"]
+    assert res.get("exit_code") == 1
+    err = (res.get("error") or "").lower()
+    assert "stop-boundary" in err and "final-submit" in err
+    assert _FakeAppApiAsyncClient.calls == [], (
+        "do_app_api dispatched a network request despite the suffix block: "
+        f"{_FakeAppApiAsyncClient.calls!r}"
+    )
+
+
+@when("a call to a non-terminal applicant control path is attempted")
+def call_non_terminal_applicant_path(n1ctx):
+    import json as _json
+
+    # POST /api/applicant/control/pause-all — a real, still-reachable applicant
+    # control endpoint (workspace/routes/applicant_control_routes.py); it is on
+    # the /api/applicant/ allowlist and is neither prefix- nor method-path-
+    # blocked, so only the suffix fence under test could refuse it.
+    content = _json.dumps({
+        "action": "call",
+        "method": "POST",
+        "path": "/api/applicant/control/pause-all",
+    })
+    n1ctx["result"] = asyncio.run(n1ctx["ti"].do_app_api(content))
+
+
+@then("the call is not refused by the suffix fence and reaches the network dispatch stage")
+def not_refused_by_suffix_fence(n1ctx):
+    res = n1ctx["result"]
+    err = (res.get("error") or "").lower()
+    assert "stop-boundary" not in err and "final-submit" not in err, (
+        f"non-terminal path was wrongly refused by the stop-boundary fence: {res!r}"
+    )
+    assert _FakeAppApiAsyncClient.calls, (
+        "expected the non-terminal path to reach the (stubbed) network dispatch stage"
+    )
+
+
+@when("the endpoints discovery action is requested over a sample OpenAPI listing containing both stop-boundary paths")
+def request_endpoint_discovery(n1ctx):
+    import json as _json
+
+    _FakeAppApiAsyncClient.openapi_payload = {
+        "paths": {
+            "/api/applicant/remote/applications/{application_id}/submit-self": {
+                "post": {"summary": "Submit the application"},
+            },
+            "/api/applicant/remote/applications/{application_id}/authorize-engine-finish": {
+                "post": {"summary": "Authorize the engine to finish"},
+            },
+            "/api/applicant/control/pause-all": {
+                "post": {"summary": "Pause every campaign"},
+            },
+        }
+    }
+    n1ctx["result"] = asyncio.run(n1ctx["ti"].do_app_api(_json.dumps({"action": "endpoints"})))
+
+
+@then("the submit-self and authorize-engine-finish entries are excluded from the discovered endpoints")
+def discovered_endpoints_exclude_stop_boundary(n1ctx):
+    res = n1ctx["result"]
+    rows = res.get("endpoints") or []
+    assert rows, f"expected discovered endpoints, got: {res!r}"
+    paths = {r["path"] for r in rows}
+    assert not any(p.endswith("/submit-self") for p in paths)
+    assert not any(p.endswith("/authorize-engine-finish") for p in paths)
+    assert any(p.endswith("/control/pause-all") for p in paths), (
+        "the non-terminal sample path should still be discoverable"
+    )
+
+
+# ===========================================================================
 # #314 — vault_get: reason gate ships; masking is the gap
 # ===========================================================================
 @given("the vault_get tool with no reason supplied")

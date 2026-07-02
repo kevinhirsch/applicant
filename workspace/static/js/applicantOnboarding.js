@@ -51,6 +51,11 @@ let _status = null;        // engine setup status
 let _onboarding = null;    // engine onboarding state
 let _stepIndex = 0;        // active step in STEPS
 let _busy = false;
+// True once the user has typed/changed anything on the CURRENT step since it was
+// last rendered (i.e. unsaved input that a stray Escape would discard). Reset
+// whenever a step re-renders (_setBody) — including right after a successful
+// save, since the freshly-rendered next step starts clean.
+let _formDirty = false;
 
 // Ordered wizard steps. `done(status)` reads the engine status to decide if the
 // step is already satisfied (drives resume + the progress rail).
@@ -162,7 +167,7 @@ function _buildOverlay() {
   o.setAttribute('aria-modal', 'true');
   o.setAttribute('aria-label', 'Set up Applicant');
   o.innerHTML = `
-    <div class="modal-content">
+    <div class="modal-content" data-no-swipe-dismiss>
       <div class="modal-header" style="cursor:default;">
         <h4>Welcome — let's get you set up</h4>
       </div>
@@ -173,6 +178,15 @@ function _buildOverlay() {
     </div>`;
   // Swallow click-throughs to the app behind the overlay (no dismiss-on-backdrop).
   o.addEventListener('click', (ev) => { if (ev.target === o) ev.stopPropagation(); });
+  // `data-no-swipe-dismiss` on `.modal-content` above opts the WHOLE blocking
+  // wizard out of ui.js's mobile swipe-down-to-dismiss (it checks
+  // `e.target.closest('.cal-splitter, [data-no-swipe-dismiss]')` at touchstart) —
+  // this is the one surface that must never be swipe-dismissible, even from the
+  // header/grab-zone the generic handler otherwise allows.
+  // Track unsaved input so Escape (see _maybeDismiss) can confirm before
+  // discarding an in-progress section instead of silently wiping it.
+  o.addEventListener('input', () => { _formDirty = true; });
+  o.addEventListener('change', () => { _formDirty = true; });
   return o;
 }
 
@@ -200,6 +214,10 @@ let _footTarget = null;
 function _setBody(html) {
   const body = _bodyTarget || document.getElementById('ao-body');
   if (body) body.innerHTML = html;
+  // A fresh render means whatever was on screen is now either saved (we only
+  // get here after a save/step-advance, or on first paint of a step) or
+  // discarded intentionally — either way there's nothing unsaved left to lose.
+  _formDirty = false;
 }
 
 function _setFoot(html) {
@@ -1196,6 +1214,124 @@ function _collectForm(formEl) {
   return out;
 }
 
+// ── repeatable sections (work history / education / references) ────────────
+//
+// A `repeat: true` section spec (SECTION_FORMS.work_history/education/references)
+// can hold MULTIPLE entries (e.g. several jobs). Each entry renders as its own
+// `.admin-card` fieldset — the same card pattern the per-font install prompt
+// above already uses for a dynamic list (_renderInlineFontPrompt) — with a
+// "Remove" affordance (`.admin-btn-delete`, matching admin.js's list-item
+// remove buttons) so a mistakenly-added entry can be deleted again. Saved data
+// is sent as `{ entries: [...] }` rather than a single flat object.
+
+// Normalizes whatever is currently saved for a repeat section into an array of
+// entries to render. Handles three shapes: the new `{entries: [...]}` shape
+// this file now saves, the OLDER flat single-object shape the engine's
+// resume-parse prefill still writes (onboarding_service._prefill_sections_from_parse
+// seeds only the most-recent role/degree as a flat dict), and nothing saved yet.
+function _repeatEntries(saved) {
+  if (saved && Array.isArray(saved.entries) && saved.entries.length) return saved.entries;
+  if (saved && Object.keys(saved).length && !Array.isArray(saved.entries)) return [saved];
+  return [{}];
+}
+
+function _repeatEntryCard(spec, entry, idx) {
+  return `
+    <div class="admin-card ao-repeat-entry" data-idx="${idx}">
+      <div class="settings-row" style="justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <strong class="ao-repeat-label" style="font-size:0.86rem;opacity:0.75;">${esc(spec.title)} ${idx + 1}</strong>
+        <button type="button" class="admin-btn-delete ao-repeat-remove" style="font-size:11px;">Remove</button>
+      </div>
+      ${spec.fields.map((f) => _fieldHTML(f, entry[f.name])).join('')}
+    </div>`;
+}
+
+// Renumber the "<Section> N" labels and hide the last remaining Remove button
+// (always keep at least one fieldset on screen) after any add/remove.
+function _refreshRepeatUI(listEl, spec) {
+  const cards = listEl.querySelectorAll('.ao-repeat-entry');
+  cards.forEach((card, i) => {
+    const label = card.querySelector('.ao-repeat-label');
+    if (label) label.textContent = `${spec.title} ${i + 1}`;
+    const rm = card.querySelector('.ao-repeat-remove');
+    if (rm) rm.style.display = cards.length > 1 ? '' : 'none';
+  });
+}
+
+function _wireRepeatRemove(listEl, spec) {
+  listEl.querySelectorAll('.ao-repeat-remove').forEach((btn) => {
+    btn.onclick = () => {
+      if (listEl.querySelectorAll('.ao-repeat-entry').length <= 1) return;
+      _formDirty = true;
+      btn.closest('.ao-repeat-entry').remove();
+      _refreshRepeatUI(listEl, spec);
+    };
+  });
+}
+
+// Collects every rendered entry into an ARRAY (one object per fieldset), reusing
+// _collectForm per-entry since each `.ao-repeat-entry` card is itself a valid
+// collection root. Entries the user left entirely blank (e.g. an "Add another"
+// they didn't end up filling in) are dropped so an untouched repeat section
+// still correctly reads back as not-yet-filled.
+function _collectRepeatEntries(listEl) {
+  const out = [];
+  listEl.querySelectorAll('.ao-repeat-entry').forEach((entryEl) => {
+    const entry = _collectForm(entryEl);
+    if (Object.values(entry).some((v) => (v || '').toString().trim() !== '')) out.push(entry);
+  });
+  return out;
+}
+
+function _renderRepeatSection(key, spec, saved) {
+  const total = INTAKE_SECTIONS.length;
+  const entries = _repeatEntries(saved);
+  _setBody(`
+    <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
+    <h2 class="ao-step-title">${esc(spec.title)}</h2>
+    ${spec.desc ? `<p class="ao-step-desc">${esc(spec.desc)}</p>` : ''}
+    <div id="ao-repeat-list">${entries.map((e, i) => _repeatEntryCard(spec, e, i)).join('')}</div>
+    <button type="button" class="cal-btn" id="ao-repeat-add" style="margin-top:8px;">+ Add another ${esc(spec.title.toLowerCase())}</button>
+    <div id="ao-intake-msg"></div>
+  `);
+  _setFoot(`
+    ${_intakeIndex > 0 ? '<button class="cal-btn" id="ao-intake-back">Back</button>' : ''}
+    <button class="cal-btn cal-btn-primary" id="ao-intake-next">Save &amp; continue</button>
+  `);
+
+  const list = document.getElementById('ao-repeat-list');
+  _wireRepeatRemove(list, spec);
+  _refreshRepeatUI(list, spec);
+
+  document.getElementById('ao-repeat-add').onclick = () => {
+    const idx = list.querySelectorAll('.ao-repeat-entry').length;
+    list.insertAdjacentHTML('beforeend', _repeatEntryCard(spec, {}, idx));
+    _wireRepeatRemove(list, spec);
+    _refreshRepeatUI(list, spec);
+  };
+
+  const back = document.getElementById('ao-intake-back');
+  if (back) back.onclick = () => { _intakeIndex = Math.max(0, _intakeIndex - 1); _renderIntakeSection(); };
+
+  document.getElementById('ao-intake-next').onclick = async () => {
+    if (_busy) return;
+    _busy = true;
+    document.getElementById('ao-intake-next').disabled = true;
+    try {
+      const data = { entries: _collectRepeatEntries(list) };
+      _onboarding = await _post(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}/section`, {
+        section: key, data,
+      });
+      await _nextIntakeOrComplete();
+    } catch (e) {
+      document.getElementById('ao-intake-msg').innerHTML = _err(esc(e.message || 'Could not save.'));
+      document.getElementById('ao-intake-next').disabled = false;
+    } finally {
+      _busy = false;
+    }
+  };
+}
+
 async function _renderOnboarding() {
   await _ensureCampaign();
   _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
@@ -1233,6 +1369,8 @@ async function _renderIntakeSection() {
   if (key === 'base_resume') return _renderBaseResume(saved);
 
   const spec = SECTION_FORMS[key];
+  if (spec.repeat) return _renderRepeatSection(key, spec, saved);
+
   const fieldsHTML = spec.fields.map((f) => _fieldHTML(f, saved[f.name])).join('');
   _setBody(`
     <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
@@ -1328,11 +1466,16 @@ function _renderInlineFontPrompt(missing) {
     st.innerHTML = '<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Fonts installed — continuing to preview.</p>';
     // Refresh the font list so the engine cache is current.
     try { await _fetchJSON(`${SETUP}/fonts`); } catch { /* best-effort */ }
+    // The preview is a nice-to-have fidelity check, not a hard gate — a missing
+    // xelatex/LibreOffice on the deployed image (or any other preview failure)
+    // must never wedge the wizard. _buildPreview() already renders its own
+    // "Preview unavailable: …" message internally on failure; Continue is
+    // enabled in `finally` unconditionally so it's never left permanently
+    // disabled by a broken preview.
     try {
       await _buildPreview();
+    } finally {
       document.getElementById('ao-resume-next').disabled = false;
-    } catch (e) {
-      st.innerHTML = _err(esc(e.message || 'Could not build preview.'));
     }
   };
 }
@@ -1419,8 +1562,17 @@ function _renderBaseResume(saved) {
         }
       } catch { /* font detection is best-effort; continue to preview */ }
 
-      await _buildPreview();
-      document.getElementById('ao-resume-next').disabled = false;
+      // The preview is a nice-to-have fidelity check, not a hard gate — a missing
+      // xelatex/LibreOffice on the deployed image (or any other preview failure)
+      // must never wedge the wizard. _buildPreview() already renders its own
+      // "Preview unavailable: …" message internally on failure; Continue is
+      // enabled in `finally` unconditionally so it's never left permanently
+      // disabled by a broken preview (the resume itself still uploaded fine).
+      try {
+        await _buildPreview();
+      } finally {
+        document.getElementById('ao-resume-next').disabled = false;
+      }
     } catch (e) {
       st.innerHTML = _err(esc(e.message || 'Could not read the resume.'));
     }
@@ -1600,6 +1752,26 @@ async function _finish() {
   });
 }
 
+// Escape-key handler wired into initModalA11y below. The wizard is "always wins,
+// blocking" by design (see the CLAUDE.md working principles + the gate logic
+// above) — a bare Escape must never silently discard an in-progress, unsaved
+// section. When nothing has been typed since the step last rendered, Escape can
+// still close directly (there's nothing to lose). Reuses the SAME styled-confirm
+// pattern the Settings "Update Applicant" button above already uses
+// (window.uiModule.styledConfirm, falling back to window.confirm).
+async function _maybeDismiss() {
+  if (!_formDirty) { _dismiss(); return; }
+  let ok = false;
+  try {
+    ok = window.uiModule && typeof window.uiModule.styledConfirm === 'function'
+      ? await window.uiModule.styledConfirm(
+          'Discard your in-progress setup answers? Anything you typed on this step that hasn’t been saved will be lost.',
+          { confirmText: 'Discard', cancelText: 'Keep editing', danger: true })
+      : window.confirm('Discard your in-progress setup answers? Anything you typed on this step that hasn’t been saved will be lost.');
+  } catch { ok = false; }
+  if (ok) _dismiss();
+}
+
 function _dismiss() {
   // Tear down a11y bindings before removing the overlay from the DOM.
   if (_overlayA11yCleanup) { _overlayA11yCleanup(); _overlayA11yCleanup = null; }
@@ -1638,7 +1810,7 @@ export async function maybeLaunchOnboarding() {
   document.body.appendChild(_overlay);
   if (_overlayA11yCleanup) _overlayA11yCleanup();
   _overlayA11yCleanup = window.uiModule && window.uiModule.initModalA11y
-    ? window.uiModule.initModalA11y(_overlay, _dismiss)
+    ? window.uiModule.initModalA11y(_overlay, _maybeDismiss)
     : null;
   _stepIndex = _firstIncompleteStep();
   // Pre-create the campaign once the LLM gate is open so onboarding resumes cleanly.
@@ -1655,7 +1827,7 @@ export async function launchOnboarding() {
   document.body.appendChild(_overlay);
   if (_overlayA11yCleanup) _overlayA11yCleanup();
   _overlayA11yCleanup = window.uiModule && window.uiModule.initModalA11y
-    ? window.uiModule.initModalA11y(_overlay, _dismiss)
+    ? window.uiModule.initModalA11y(_overlay, _maybeDismiss)
     : null;
   try { await _refreshStatus(); } catch { /* engine down — still show the wizard */ }
   if (_status && _status.llm_configured) { try { await _ensureCampaign(); } catch { /* later */ } }

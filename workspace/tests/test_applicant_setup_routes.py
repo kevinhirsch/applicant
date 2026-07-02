@@ -285,6 +285,46 @@ def test_channels_get_and_save(monkeypatch):
     assert args[0]["ntfy_url"] == "ntfy://ntfy.sh/topic"
 
 
+def test_channels_save_omitted_field_not_forwarded(monkeypatch):
+    """Regression: configure_channels now does body.model_dump(exclude_unset=True)
+    instead of body.model_dump(), so a field left out of the request entirely is
+    NOT forwarded to the engine (its "leave the saved value alone" semantics) —
+    previously every field defaulted to "" and was always sent, so the engine
+    could not tell "omitted" from "explicitly cleared"."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels",
+        json={"discord_webhook_url": "https://d"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_channels"
+    payload = args[0]
+    assert payload == {"discord_webhook_url": "https://d"}
+    assert "apprise_urls" not in payload
+    assert "ntfy_url" not in payload
+    assert "email_timeout_minutes" not in payload
+
+
+def test_channels_save_explicit_empty_string_is_forwarded(monkeypatch):
+    """Regression: an explicit "" (caller intent to clear a channel) is
+    distinguished from omission and still forwarded to the engine, rather than
+    being silently dropped or coerced into "leave unchanged"."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels",
+        json={"discord_webhook_url": "", "apprise_urls": "https://a"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    payload = args[0]
+    assert "discord_webhook_url" in payload
+    assert payload["discord_webhook_url"] == ""
+    assert payload["apprise_urls"] == "https://a"
+    assert "ntfy_url" not in payload
+    assert "email_timeout_minutes" not in payload
+
+
 def test_channels_test(monkeypatch):
     _patch_engine(monkeypatch, result={"sent": True, "channels": ["discord"]})
     resp = _make_client().post("/api/applicant/setup/channels/test")
@@ -330,6 +370,51 @@ def test_quiet_hours_get_and_save(monkeypatch):
     assert args[0]["enabled"] is True
     assert args[0]["start"] == "22:30"
     assert args[0]["tz"] == "America/Phoenix"
+
+
+def test_quiet_hours_forwards_per_channel_respects_quiet(monkeypatch):
+    """#302 regression: QuietHoursIn now declares discord_respects_quiet /
+    email_respects_quiet, so they reach the engine payload. Previously the
+    model didn't declare these fields and pydantic silently stripped them
+    before the request ever left the proxy (the wizard's toggle was a no-op)."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={
+            "enabled": True,
+            "start": "22:00",
+            "end": "07:00",
+            "tz": "UTC",
+            "discord_respects_quiet": True,
+            "email_respects_quiet": False,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_configure_quiet_hours"
+    payload = args[0]
+    # the new per-channel fields actually reach the outbound payload
+    assert payload["discord_respects_quiet"] is True
+    assert payload["email_respects_quiet"] is False
+    # baseline fields still round-trip correctly (no regression there)
+    assert payload["enabled"] is True
+    assert payload["start"] == "22:00"
+    assert payload["end"] == "07:00"
+    assert payload["tz"] == "UTC"
+
+    # Omitting the new fields still forwards them (as None, the "leave saved
+    # value alone" default) rather than raising or dropping the whole request.
+    _patch_engine(monkeypatch, result=None)
+    resp2 = _make_client().post(
+        "/api/applicant/setup/channels/quiet-hours",
+        json={"enabled": False, "start": "22:00", "end": "07:00", "tz": ""},
+    )
+    assert resp2.status_code == 200
+    _, args2 = _FakeEngine.last_call
+    payload2 = args2[0]
+    assert payload2["discord_respects_quiet"] is None
+    assert payload2["email_respects_quiet"] is None
 
 
 def test_quiet_hours_engine_400_passed_through(monkeypatch):

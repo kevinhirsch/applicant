@@ -157,12 +157,27 @@ function _toastNew(notifs) {
 
 // Optional desktop notification, mirroring calendar.js/tasks.js: only when the
 // user has already granted permission. Never prompts, never blocks.
+// Android Chrome throws "Illegal constructor" for a page-created
+// `new Notification()` once a service worker is registered (index.html
+// always registers one) — route through the SW registration's
+// showNotification() when one is actually controlling the page, falling
+// back to the direct constructor otherwise (today's desktop-browser path).
 function _maybeDesktopNotify(n) {
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const body = (n.body && n.body !== n.title) ? String(n.body).slice(0, 140) : '';
+    const title = n.title || 'Applicant';
+    const options = body ? { body } : undefined;
+    const swReady = (navigator.serviceWorker && navigator.serviceWorker.controller)
+      ? navigator.serviceWorker.ready
+      : null;
+    if (swReady) {
+      swReady.then((reg) => reg.showNotification(title, options))
+        .catch(() => { try { new Notification(title, options); } catch { /* best-effort */ } });
+      return;
+    }
     // eslint-disable-next-line no-new
-    new Notification(n.title || 'Applicant', body ? { body } : undefined);
+    new Notification(title, options);
   } catch { /* desktop notifications are best-effort */ }
 }
 
@@ -1481,20 +1496,52 @@ function _wireLauncher() {
     if (!btn || btn._applicantPortalWired) return;
     btn._applicantPortalWired = true;
     btn.addEventListener('click', () => openApplicantPortal());
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        openApplicantPortal();
+      }
+    });
+  });
+}
+
+// #tool-applicant-gallery-btn is the same style of keyboard-unreachable
+// sidebar .list-item <div> (role="button" in index.html, no native
+// key-to-click behavior) but its click handler lives in applicantGallery.js,
+// not here — dispatch a synthetic click to reuse that handler instead of
+// duplicating it.
+const _KEYDOWN_ACTIVATE_ONLY_IDS = ['tool-applicant-gallery-btn'];
+
+function _wireKeydownActivation() {
+  _KEYDOWN_ACTIVATE_ONLY_IDS.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn || btn._applicantKeydownActivateWired) return;
+    btn._applicantKeydownActivateWired = true;
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        btn.click();
+      }
+    });
   });
 }
 
 function _boot() {
   _wireLauncher();
+  _wireKeydownActivation();
   // The rail button may be (re)rendered after boot; retry briefly so the
   // launcher always gets wired without a hard dependency on load order.
   let tries = 0;
   const iv = setInterval(() => {
     tries += 1;
     _wireLauncher();
+    _wireKeydownActivation();
     const allWired = _LAUNCHER_IDS.every((id) => {
       const btn = document.getElementById(id);
       return !btn || btn._applicantPortalWired;
+    }) && _KEYDOWN_ACTIVATE_ONLY_IDS.every((id) => {
+      const btn = document.getElementById(id);
+      return !btn || btn._applicantKeydownActivateWired;
     });
     if (allWired || tries > 20) {
       clearInterval(iv);

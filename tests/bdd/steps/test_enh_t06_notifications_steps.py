@@ -479,11 +479,16 @@ def tz_inside_window(t06ctx):
 
 @given("a notifier with per-channel quiet-hours preferences")
 def notifier_per_channel_quiet(t06ctx):
-    # PROBE: per-channel quiet-hours behaviour ("discord respects quiet hours, email
-    # anytime") is not supported. The constructor accepts no per-channel quiet config.
+    # Per-channel quiet-hours preference: Discord (True) respects the window and is
+    # held only while the clock is actually inside it; email (False) is exempt and
+    # always delivers. Use a fixed clock inside the configured window (22:00->07:00)
+    # so "during quiet hours" is deterministic, not dependent on wall-clock time.
+    clock = _Clock(hour=23)  # 23:00 UTC, inside a 22:00->07:00 window
+    t06ctx["clock"] = clock
     t06ctx["notifier"] = AppriseNotifier(
         discord_webhook_url="https://discord.test/wh",
         apprise_urls="mailto://u:p@smtp.test",
+        clock=clock,
         quiet_hours=(22, 7),
         quiet_hours_channels={_DISCORD: True, _EMAIL: False},
     )

@@ -145,7 +145,9 @@ async function _loadCampaigns() {
   try {
     const data = await _fetchJSON('/campaigns');
     const campaigns = (data && data.campaigns) || [];
-    // Keep the "All campaigns" default; append the engine's campaigns.
+    // Keep the "All campaigns" default; clear any previously-appended options
+    // first so reopening the modal doesn't duplicate every campaign name.
+    sel.querySelectorAll('option[value]:not([value=""])').forEach((opt) => opt.remove());
     for (const c of campaigns) {
       const id = c && (c.id != null ? c.id : c.campaign_id);
       if (id == null) continue;

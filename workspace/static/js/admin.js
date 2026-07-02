@@ -2151,7 +2151,16 @@ export async function getSelectedLlmEndpoint() {
   let data = [];
   try {
     const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    if (res.ok) data = await res.json();
+    if (res.ok) {
+      data = await res.json();
+    } else if (res.status === 403) {
+      // Non-admins can't hit the admin CRUD listing — fall back to the
+      // read-only picker (owner + shared endpoints only, no add/edit/delete/
+      // test) so onboarding's "Connect a model" step doesn't silently wall
+      // off every non-admin user.
+      const availRes = await fetch('/api/model-endpoints/available', { credentials: 'same-origin' });
+      if (availRes.ok) data = await availRes.json();
+    }
   } catch { return null; }
   if (!Array.isArray(data)) return null;
   const ep = data.find((e) =>

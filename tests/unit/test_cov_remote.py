@@ -277,6 +277,125 @@ def test_router_blocked_before_llm_gate(app):
         assert c.get("/api/remote").status_code == 409
 
 
+# ── authorize-engine-finish double-click / double-submit guard ───────────────
+#
+# Bug fix: a state-guard (``_ALREADY_SUBMITTED_STATES``) plus a process-lived
+# in-flight guard (``_finish_in_progress``) stop the physical
+# ``container.browser.click_final_submit(...)`` call from ever firing twice for the
+# same application, whether the second call arrives after the first has already
+# landed (state guard) or races in while the first is still mid-flight (in-flight
+# guard). See ``src/applicant/app/routers/remote.py::authorize_engine_finish``.
+
+
+def _spy_click_final_submit(container):
+    """Wrap the real (fake, no-op) ``click_final_submit`` with a call-count spy."""
+    calls: list[tuple[str, bool]] = []
+    orig_click = container.browser.click_final_submit
+
+    def spy(application_id, *, engine_submit_authorized=False):
+        calls.append((str(application_id), engine_submit_authorized))
+        return orig_click(application_id, engine_submit_authorized=engine_submit_authorized)
+
+    container.browser.click_final_submit = spy
+    return calls
+
+
+def test_authorize_engine_finish_already_submitted_409_no_reclick(client):
+    """A second authorize-finish call on an application ALREADY in a terminal
+    submitted state must 409 WITHOUT ever touching the browser again — the state
+    guard runs before the click (not after)."""
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.FINISHED_BY_ENGINE,
+        )
+    )
+    container.storage.commit()
+    clicks = _spy_click_final_submit(container)
+
+    res = client.post(f"/api/remote/applications/{aid}/authorize-engine-finish")
+
+    assert res.status_code == 409
+    assert "already been submitted" in res.json()["detail"]
+    assert clicks == []  # the real submit button was never clicked a second time
+
+
+def test_authorize_engine_finish_submitted_by_user_state_also_blocks(client):
+    """The state guard covers BOTH terminal states, not just the engine-finish one —
+    a user who already submitted themselves in the live session must also block a
+    stray authorize-engine-finish call."""
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.SUBMITTED_BY_USER,
+        )
+    )
+    container.storage.commit()
+    clicks = _spy_click_final_submit(container)
+
+    res = client.post(f"/api/remote/applications/{aid}/authorize-engine-finish")
+
+    assert res.status_code == 409
+    assert clicks == []
+
+
+def test_authorize_engine_finish_in_flight_guard_blocks_concurrent_click(client):
+    """Two near-simultaneous authorize-finish calls for the SAME application must
+    result in exactly ONE physical click. The in-flight guard is claimed BEFORE the
+    click, so a second request racing in while the first is still inside
+    ``click_final_submit`` is rejected 409 rather than clicking again.
+
+    Simulated by making the (synchronous, in-process) fake ``click_final_submit``
+    itself re-enter the endpoint for the same application id — exactly the race the
+    guard exists to close, since both requests would otherwise read the pre-decision
+    ``AWAITING_FINAL_APPROVAL`` state.
+    """
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    container.storage.commit()
+
+    clicks: list[str] = []
+    nested_responses = []
+    orig_click = container.browser.click_final_submit
+
+    def racing_click(application_id, *, engine_submit_authorized=False):
+        clicks.append(str(application_id))
+        # The in-flight guard must already be claimed at this point (it is added
+        # BEFORE the click), so this nested near-simultaneous call must be refused.
+        nested_responses.append(
+            client.post(
+                f"/api/remote/applications/{application_id}/authorize-engine-finish"
+            )
+        )
+        return orig_click(application_id, engine_submit_authorized=engine_submit_authorized)
+
+    container.browser.click_final_submit = racing_click
+
+    res = client.post(f"/api/remote/applications/{aid}/authorize-engine-finish")
+
+    assert res.status_code == 201
+    assert len(clicks) == 1  # only one physical click ever happened
+    assert len(nested_responses) == 1
+    assert nested_responses[0].status_code == 409
+    assert "already being submitted" in nested_responses[0].json()["detail"]
+
+
 # ── desktop assist (FR-CUA): opt-in, per-session, ships DORMANT ──────────────
 
 

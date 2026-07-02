@@ -320,6 +320,6 @@ def require_automated_work(container: Container = Depends(get_container)) -> Non
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "Automated work is blocked until onboarding is complete and the LLM + "
-                "notification channels are configured (FR-ONBOARD-2, FR-OOBE-3)."
+                "notification channels are configured."
             ),
         )

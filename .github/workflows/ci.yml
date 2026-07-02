@@ -67,10 +67,15 @@ jobs:
           # names UIColorWell / NSColorWell contain the substring "…(col)orwell…". It
           # carries no upstream codename, so it is excluded here like the hermes-agent
           # false positives below.
+          # workspace/tests/test_landing_page_content.py is also a genuine false
+          # positive: it defines the SAME denylist pattern (as a string literal) to
+          # reuse this exact check as a page-specific regression guard on
+          # landing.html — the pattern's own source text trips the repo-wide grep.
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
                -- ':!.github' ':!*.lock' ':!uv.lock' \
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
-               ':!docs/design/hig/color-wells.md'; then
+               ':!docs/design/hig/color-wells.md' \
+               ':!workspace/tests/test_landing_page_content.py'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi

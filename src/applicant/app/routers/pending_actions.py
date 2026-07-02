@@ -169,6 +169,7 @@ def resolve(
     action = pending_actions.get(aid)
     if (
         action is not None
+        and not action.resolved
         and action.kind == KIND_INTEGRAL_CHANGE
         and body is not None
         and body.apply

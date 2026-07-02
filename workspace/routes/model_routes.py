@@ -918,6 +918,81 @@ def setup_model_routes(model_discovery):
 
     # ---- Admin: model endpoints CRUD ----
 
+    @router.get("/model-endpoints/available")
+    def list_available_model_endpoints(request: Request) -> List[Dict[str, Any]]:
+        """Read-only, non-admin-accessible picker list: enabled endpoints with
+        at least one visible model, owner-scoped the same way as /api/models
+        (own + null-owner/shared rows; admins see everything). No add/edit/
+        delete/test here — those stay require_admin on /model-endpoints below.
+        Exists so a non-admin can finish onboarding's "Connect a model" step
+        by picking from what an admin already configured, instead of the
+        admin-only list 403ing and silently blocking them."""
+        from src.auth_helpers import get_current_user as _gcu
+        try:
+            owner = _gcu(request) or ""
+        except Exception:
+            logger.warning("Bare exception in model_routes.py")
+            owner = ""
+        try:
+            auth_mgr = getattr(request.app.state, "auth_manager", None)
+            if not owner and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
+                raise HTTPException(401, "Not authenticated")
+        except HTTPException:
+            raise
+        except Exception:
+            logger.warning("Bare exception in model_routes.py")
+            pass
+        _is_admin = False
+        try:
+            auth_mgr = getattr(request.app.state, "auth_manager", None)
+            if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
+                _is_admin = bool(auth_mgr.is_admin(owner))
+        except Exception:
+            logger.warning("Bare exception in model_routes.py")
+            _is_admin = False
+        db = SessionLocal()
+        try:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner and not _is_admin:
+                q = owner_filter(q, ModelEndpoint, owner)
+            rows = q.order_by(ModelEndpoint.created_at).all()
+            results = []
+            for r in rows:
+                all_models = []
+                if r.cached_models:
+                    try:
+                        all_models = json.loads(r.cached_models)
+                    except Exception:
+                        logger.warning("Bare exception in model_routes.py")
+                        pass
+                hidden = set()
+                if r.hidden_models:
+                    try:
+                        hidden = set(json.loads(r.hidden_models))
+                    except Exception:
+                        logger.warning("Bare exception in model_routes.py")
+                        pass
+                visible = [m for m in all_models if m not in hidden]
+                if not visible:
+                    continue  # nothing pickable — skip rather than show a dead entry
+                base = _normalize_base(r.base_url)
+                results.append({
+                    "id": r.id,
+                    "name": r.name,
+                    "base_url": r.base_url,
+                    "has_key": bool(r.api_key),
+                    "is_enabled": True,
+                    "models": visible,
+                    "online": True,
+                    "status": "online",
+                    "model_type": getattr(r, "model_type", None) or "llm",
+                    "provider": _detect_provider(base),
+                    "category": _classify_endpoint(base),
+                })
+            return results
+        finally:
+            db.close()
+
     @router.get("/model-endpoints")
     def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
         require_admin(request)
