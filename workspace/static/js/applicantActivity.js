@@ -26,6 +26,7 @@ import {
   esc, _fetchJSON, _post, _toast, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
   wireRetry, pollVisible,
 } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/activity';
 // Global pause / kill-switch — fans out over the owner's campaigns engine-side.
@@ -239,6 +240,7 @@ function _ensureModalEl() {
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
         <h4>
+          <button type="button" id="applicant-activity-back-portal" title="Back to Pending" aria-label="Back to Pending — everything across your job search that needs your attention" style="display:none;background:none;border:none;color:var(--accent, var(--red));font:inherit;font-size:11px;font-weight:600;cursor:pointer;padding:0;margin-right:8px;vertical-align:1px;">&larr; Pending</button>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Activity
         </h4>
@@ -263,9 +265,25 @@ function _ensureModalEl() {
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-activity-close').addEventListener('click', _close);
   modal.querySelector('#applicant-activity-refresh').addEventListener('click', () => { _loadSnapshot(); _loadRuns(true); });
+  // "← Back to Pending" (audit #7's reverse of the redline "Continue to
+  // submit" CTA): only shown when this page was reached via a deep link
+  // (see openApplicantActivity's `viaRoute` flag) — i.e. the user didn't
+  // navigate here from within the app, so Portal (the home base) isn't
+  // one click behind them the way it normally would be.
+  modal.querySelector('#applicant-activity-back-portal').addEventListener('click', () => {
+    _close();
+    if (window.applicantPortalModule && window.applicantPortalModule.openApplicantPortal) {
+      window.applicantPortalModule.openApplicantPortal();
+    }
+  });
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
   return modal;
+}
+
+function _setBackToPendingVisible(show) {
+  const btn = document.getElementById('applicant-activity-back-portal');
+  if (btn) btn.style.display = show ? '' : 'none';
 }
 
 function _close() {
@@ -273,6 +291,16 @@ function _close() {
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
+  // Hash routing (audit #7): only clears when the hash is actually ours —
+  // safe to call even when Activity closed for an unrelated reason while
+  // some other hash (a session id, a different route) is current.
+  clearHash('activity');
+}
+
+// Exported so other modules/tests can close Activity without reaching into
+// its private state, mirroring openApplicantActivity's public export.
+export function closeApplicantActivity() {
+  _close();
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-activity-body'); }
@@ -436,10 +464,19 @@ async function _loadRuns(showSpinner) {
   }
 }
 
-export async function openApplicantActivity() {
+// `opts.viaRoute` marks an open that came from the hash router (a deep
+// link/shared link/back-forward on '#activity', or a refresh landing on
+// that hash) rather than an in-app click — it shows the "← Back to
+// Pending" affordance, since the user didn't navigate here from Portal the
+// way an in-app click normally implies. `opts.skipHashUpdate` is for the
+// router's own registered `open` callback: the hash already equals
+// 'activity' by the time it fires, so there's nothing to update.
+export async function openApplicantActivity(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('activity');
+  _setBackToPendingVisible(!!(opts && opts.viaRoute));
   // The live "now / next" header and the "recently" history load together.
   _loadSnapshot();
   await _loadRuns(true);
@@ -494,7 +531,15 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantActivityModule = { openApplicantActivity, refreshStatus };
+// Hash routing (audit #7): '#activity' deep-links straight into the
+// Activity page — a refresh/shared-link/back-forward on that hash
+// opens/closes it. `viaRoute: true` flags the open as hash-driven so the
+// "← Back to Pending" affordance shows (see openApplicantActivity above).
+// Registered at module-eval time (runs as soon as app.js's dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('activity', { open: () => openApplicantActivity({ viaRoute: true }), close: _close });
+
+const applicantActivityModule = { openApplicantActivity, closeApplicantActivity, refreshStatus };
 
 // Expose for deep-links / other modules without import coupling.
 try { window.applicantActivityModule = applicantActivityModule; } catch { /* no-op */ }

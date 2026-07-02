@@ -34,6 +34,7 @@ import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 import {
   errText, loadingHTML, errorHTML, wireRetry, pollVisible,
 } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/portal';
 // Sibling owner-scoped proxies the home-base recap + momentum strip read from
@@ -428,6 +429,17 @@ function _close() {
     _modalEl.style.display = '';
   }
   _setComposerDimmed(false);
+  // Hash routing (audit #7): only clears when the hash is actually ours —
+  // safe to call unconditionally even when Portal closed for an unrelated
+  // reason (row action, click-outside) while some other hash (a session id,
+  // an in-flight #email= deep link) is current.
+  clearHash('portal');
+}
+
+// Exported so other modules/tests can close Portal without reaching into its
+// private state, mirroring openApplicantPortal's public export.
+export function closeApplicantPortal() {
+  _close();
 }
 
 // ── Greeting (task #1) ────────────────────────────────────────────────────────
@@ -1591,11 +1603,18 @@ async function _load(showSpinner) {
   }
 }
 
-export async function openApplicantPortal() {
+// `opts.skipHashUpdate` lets the one boot-time caller that auto-lands the
+// user here on every page load (app.js, "post-login home base") leave
+// location.hash untouched — every other caller (rail/sidebar launcher,
+// the chat pending-actions link, the redline "Continue to submit" CTA, the
+// hash router itself replaying a deep link) wants the URL to reflect that
+// Portal is open.
+export async function openApplicantPortal(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
   _setComposerDimmed(true);
+  if (!(opts && opts.skipHashUpdate)) setHash('portal');
   // Keyboard a11y: trap focus, Escape to close, restore on close.
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
@@ -1686,7 +1705,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantPortalModule = { openApplicantPortal, refreshBadge };
+// Hash routing (audit #7): '#portal' deep-links straight into Portal — a
+// refresh/shared-link/back-forward on that hash opens/closes it. Registered
+// at module-eval time (runs as soon as app.js's dynamic import resolves,
+// well before app.js calls hashRouter.initHashRouting()).
+registerRoute('portal', { open: openApplicantPortal, close: _close });
+
+const applicantPortalModule = { openApplicantPortal, closeApplicantPortal, refreshBadge };
 
 // Expose for deep-links / other modules without import coupling.
 try { window.applicantPortalModule = applicantPortalModule; } catch { /* no-op */ }
