@@ -1236,7 +1236,7 @@
       <div class="chat-meta-overlay"><span id="current-meta">Applicant</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
     <div id="welcome-screen">
       <div class="welcome-name"><svg class="welcome-boat" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2C16 7 11 9 11 14C11 16 9 16 9 13C7 16 6 19 6 21A10 10 0 0 0 26 21C26 14 19 13 18 4C17 7 15 8 16 11C17 7 16 4 16 2Z" fill="currentColor"/><path d="M16 13C16 16 13 17 13 21A3.5 3.5 0 0 0 20 21C20 18 18 17 18 14C17 16 15 16 16 13Z" fill="currentColor" opacity="0.6"/></svg>Applicant</div>
-      <div class="welcome-sub" id="welcome-sub">Welcome, type /setup to get started.</div>
+      <div class="welcome-sub" id="welcome-sub">Welcome to Applicant.</div>
       <div class="welcome-tip" id="welcome-tip"></div>
       <div id="welcome-setup" style="display:none"></div>
     </div>
@@ -1259,7 +1259,11 @@
       var tips = mobile ? phone : desktop;
       var el = document.getElementById('welcome-tip');
       if (el) {
-        el.textContent = 'Type /setup, then choose Local models or API.';
+        // Generic default tip while models.js's refreshModels() resolves the
+        // real state — it overwrites this (or hides it behind the designed
+        // welcome-setup card) as soon as it knows whether any model endpoint
+        // is configured, so this never has to mention setup itself.
+        el.textContent = tips[Math.floor(Math.random() * tips.length)];
       }
       fetch('/api/version').then(function(r){return r.json()}).then(function(d){
         if (d.version) window._appVersion = d.version;
