@@ -505,9 +505,14 @@ class OnboardingService:
 
         Only sections the user hasn't already filled are prefilled, so re-uploading
         never clobbers a hand-typed value. The work-history / education forms in the
-        wizard render a single flat entry, so the most-recent parsed entry is used to
-        prefill them; the user then corrects any parsing mistakes in-place and every
-        field stays editable.
+        wizard are REPEATABLE (a user can hold several jobs/degrees), so EVERY parsed
+        role/degree is carried over as an ``entries`` list — not just the most recent
+        one — otherwise a multi-job resume would still leave the user re-typing every
+        earlier role by hand, undercutting the whole point of parsing the resume
+        first. The wizard already understands this ``{"entries": [...]}`` shape (it's
+        the same shape it saves back after the user edits), so this needs no
+        front-door change. The user then corrects any parsing mistakes in-place and
+        every field stays editable.
         """
 
         def _empty(section_key: str) -> bool:
@@ -520,25 +525,33 @@ class OnboardingService:
             existing.setdefault("technical_skills", ", ".join(parsed.skills))
             intake[IntakeSection.KEY_ATTRIBUTES.value] = existing
 
-        # Most-recent role -> the (flat) work-history form.
+        # Every parsed role -> the work-history form's `entries` list.
         if parsed.work_history and _empty(IntakeSection.WORK_HISTORY.value):
-            w = parsed.work_history[0]
             intake[IntakeSection.WORK_HISTORY.value] = {
-                "title": w.title,
-                "company": w.company,
-                "location": w.location,
-                "start_date": w.start_date,
-                "end_date": w.end_date,
+                "entries": [
+                    {
+                        "title": w.title,
+                        "company": w.company,
+                        "location": w.location,
+                        "start_date": w.start_date,
+                        "end_date": w.end_date,
+                    }
+                    for w in parsed.work_history
+                ]
             }
 
-        # Most-recent degree -> the (flat) education form.
+        # Every parsed degree -> the education form's `entries` list.
         if parsed.education and _empty(IntakeSection.EDUCATION.value):
-            e = parsed.education[0]
             intake[IntakeSection.EDUCATION.value] = {
-                "degree": e.degree,
-                "institution": e.institution,
-                "start_year": e.start_year,
-                "end_year": e.end_year,
+                "entries": [
+                    {
+                        "degree": e.degree,
+                        "institution": e.institution,
+                        "start_year": e.start_year,
+                        "end_year": e.end_year,
+                    }
+                    for e in parsed.education
+                ]
             }
 
     # --- helpers -----------------------------------------------------------

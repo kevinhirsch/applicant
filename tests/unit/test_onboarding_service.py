@@ -196,13 +196,14 @@ def test_resume_first_prefills_editable_intake_fields(svc_and_storage, tmp_path)
     assert identity.get("email") == "jane@example.com"
     assert identity.get("phone")  # parsed from the resume
 
-    # Structured sections prefilled too (flat single-entry forms in the wizard).
-    wh = intake[IntakeSection.WORK_HISTORY.value]
-    assert wh.get("title") == "Senior Engineer"
-    assert wh.get("company") == "Acme Corp"
+    # Structured sections prefilled too, as the repeatable forms' `entries` list
+    # (every parsed role/degree, not just the most recent — round-2 #16 fix).
+    wh_entries = intake[IntakeSection.WORK_HISTORY.value]["entries"]
+    assert wh_entries[0].get("title") == "Senior Engineer"
+    assert wh_entries[0].get("company") == "Acme Corp"
 
-    edu = intake[IntakeSection.EDUCATION.value]
-    assert "Computer Science" in edu.get("degree", "") or edu.get("degree")
+    edu_entries = intake[IntakeSection.EDUCATION.value]["entries"]
+    assert "Computer Science" in edu_entries[0].get("degree", "") or edu_entries[0].get("degree")
 
     skills = intake[IntakeSection.KEY_ATTRIBUTES.value]
     assert "Python" in skills.get("technical_skills", "")
