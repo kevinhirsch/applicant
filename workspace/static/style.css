@@ -31831,6 +31831,26 @@ input.cp-swatch-input::selection { background: transparent; }
    tint over every panel/modal/sidebar/dropdown and blurs whatever is
    behind it, so the UI reads like layered glass.
    ───────────────────────────────────────────────────────────────────────── */
+
+/* LIGHT-ON-LIGHT ROOT FIX — the chrome-ink ramp is a NEAR-WHITE ink (#f2f5f7)
+   used for primary chrome text (active tabs, section headers, .cal-btn labels,
+   the wordmark, section icons). It is correct on the dark theme, but the default
+   is the LIGHT glass material, so every var(--chrome-ink) text site rendered
+   near-white on white — most visibly the ACTIVE wizard/admin tab, whose text
+   vanished while the inactive tabs (keyed off the mid-gray --fg-muted) stayed
+   legible (inverted legibility). Custom properties inherit, so redefining the
+   ramp to the same dark monochrome ink the rest of the light-glass treatment
+   uses (#16191f) flips ALL chrome-ink text to legible dark in one place. Text on
+   coloured fills is unaffected: primary buttons and the active settings-nav pill
+   paint a `#fff` LITERAL (not the token) at higher specificity, so they stay
+   white-on-blue. HIG: "color the background, not the label" + adaptive legibility
+   (small chrome elements flip dark on light surfaces). */
+body.theme-frosted {
+  --chrome-ink: #16191f;
+  --chrome-ink-2: rgba(22, 25, 31, 0.68);
+  --chrome-ink-3: rgba(22, 25, 31, 0.45);
+}
+
 body.theme-frosted #sidebar,
 body.theme-frosted .modal-content,
 body.theme-frosted .doclib-modal-content,
