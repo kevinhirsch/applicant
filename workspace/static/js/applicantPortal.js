@@ -71,6 +71,11 @@ let _badgePollStop = null;
 let _lastPendingCount = 0;
 let _recapSince = null;
 let _recapSinceReady = false;
+// The "I'm on it" empty-state proof-of-life line (task #10): the engine's own
+// now/next agent-status snapshot, so the copy can name something concrete (the
+// applied-today count, the next scheduled action) instead of a static sentence.
+// Null until loaded / when there's nothing concrete to report — never fabricated.
+let _agentPulse = null;
 
 
 
@@ -343,7 +348,7 @@ function _ensureModalEl() {
           Pending
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What Applicant never does" title="What Applicant never does — its safety limits" style="font-size:11px;padding:2px 8px;opacity:0.8;">What it never does</button>
+          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What Applicant never does" aria-expanded="false" aria-controls="applicant-portal-neverdoes-panel" title="What Applicant never does — its safety limits" style="font-size:11px;padding:2px 8px;opacity:0.8;">What it never does</button>
           <button type="button" class="memory-toolbar-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Refresh the list" style="width:26px;height:26px;padding:0;flex-shrink:0;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
@@ -372,13 +377,20 @@ function _ensureModalEl() {
 // empty/gated view. Toggles a small inline panel that reuses _neverDoesHTML().
 function _toggleNeverDoesPanel() {
   const panel = _modalEl && _modalEl.querySelector('#applicant-portal-neverdoes-panel');
+  const btn = _modalEl && _modalEl.querySelector('#applicant-portal-neverdoes');
   if (!panel) return;
   const showing = panel.style.display !== 'none';
-  if (showing) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+  if (showing) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    return;
+  }
   const inner = _neverDoesHTML();
   if (!inner) return; // no list available — leave the affordance inert rather than showing an empty box
   panel.innerHTML = inner;
   panel.style.display = '';
+  if (btn) btn.setAttribute('aria-expanded', 'true');
 }
 
 // Audit #32: the composer sits in the same chat-area band the window is
@@ -674,6 +686,46 @@ function _neverDoesHTML() {
     </div>`;
 }
 
+// ── Agent pulse (task #10 data half) ─────────────────────────────────────────
+//
+// The empty state's "I'm on it" line should be genuinely informative, not just
+// warmly worded. The owner-scoped activity snapshot proxy (`/api/applicant/
+// activity/snapshot`, NOT the admin surface) already assembles the engine's own
+// first-person now/next sentences — e.g. "Right now I'm working on your job
+// search. I've started 3 of today's 10 applications." — so we prefer that over a
+// static placeholder. Fetched independently (mirrors _loadRecap/_loadMomentum)
+// so a slow/offline snapshot never blocks the pending list; falls back to the
+// calm static line when there's nothing concrete yet (no campaign, engine
+// offline/gated, or the engine omitted every field) — never fabricates activity.
+
+function _agentPulseLine() {
+  const now = _agentPulse && _agentPulse.now;
+  const nowLine = (now && typeof now.sentence === 'string') ? now.sentence.trim() : '';
+  if (nowLine) return nowLine;
+  const next = _agentPulse && _agentPulse.next;
+  const nextLine = (next && typeof next.sentence === 'string') ? next.sentence.trim() : '';
+  if (nextLine) return nextLine;
+  return 'Searching and preparing applications for you';
+}
+
+// Updates the pulse line in place (no full re-render) so a slower snapshot fetch
+// never flashes/reflows the empty state that already painted with the fallback
+// line. A no-op when the empty state (or the modal) isn't currently showing.
+function _renderPulseLine() {
+  const el = _modalEl && _modalEl.querySelector('#applicant-portal-pulse-text');
+  if (el) el.textContent = _agentPulseLine();
+}
+
+async function _loadAgentPulse() {
+  try {
+    const data = await _fetchJSON(`${ACTIVITY_API}/snapshot`);
+    _agentPulse = (data && data.engine_available !== false && data.has_activity !== false) ? data : null;
+  } catch {
+    _agentPulse = null; // supplementary line — hide behind the static fallback on any read failure
+  }
+  _renderPulseLine();
+}
+
 function _renderEmpty(body) {
   // Warm, agency + reassurance empty state (task #2): first-person, on-your-side,
   // with a quiet proof-of-life line so "clear" reads as "working" not "idle".
@@ -693,7 +745,7 @@ function _renderEmpty(body) {
         </div>
         <div style="font-size:11px;color:color-mix(in srgb, var(--fg) 65%, transparent);margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
           <span style="width:7px;height:7px;border-radius:50%;background:var(--color-success,#4caf50);display:inline-block;"></span>
-          Searching and preparing applications for you
+          <span id="applicant-portal-pulse-text">${esc(_agentPulseLine())}</span>
         </div>
       </div>
       ${_neverDoesHTML()}
@@ -1514,6 +1566,9 @@ async function _load(showSpinner) {
     // The "while you were away" recap needs the fresh pending count for its tail;
     // fire it now (independent async fetch of the run history — never blocks).
     _loadRecap();
+    // The empty state's proof-of-life line (task #10): independent fetch, same
+    // fire-and-forget shape as the recap — it self-updates in place once loaded.
+    _loadAgentPulse();
   } catch (e) {
     // A down/unreachable engine (network/timeout) is a normal "not connected yet"
     // state, not an error — keep the friendly offline copy. An actual HTTP/auth

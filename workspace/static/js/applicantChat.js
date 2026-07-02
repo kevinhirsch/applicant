@@ -16,7 +16,7 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import {
-  esc, _toast, _fetchJSON, _post, errText, loadingHTML, gatedHTML,
+  esc, _toast, _fetchJSON, _post, errText, loadingHTML, errorHTML, gatedHTML, wireRetry,
 } from './applicantCore.js';
 // Chat Hint kit (FR-UIKIT-2): the ONE above-composer guidance affordance. The
 // assistant's "ask me what needs your attention" guardrail tip is routed through
@@ -26,6 +26,16 @@ import {
 import appkitChatHint from './appkitChatHint.js';
 
 const API = '/api/applicant/chat';
+
+// Design-audit #9: _fetchJSON's shared 15s default timeout is right for plain
+// CRUD calls, but a chat turn runs the engine's full agent loop server-side —
+// the workspace backend's own engine client already waits up to 30s (read
+// timeout, see ApplicantEngineClient._DEFAULT_TIMEOUT in
+// workspace/src/applicant_engine.py) for that reply. A 15s browser-side abort
+// would fire WHILE the backend is still legitimately waiting on the engine,
+// surfacing a false "timed out" error for a request that was still in flight.
+// Give this one call room to clear the backend's own timeout with margin.
+const MESSAGE_TIMEOUT_MS = 35000;
 
 // The single guardrail/guidance hint for the Job Assistant composer. Registered
 // once with the Chat Hint kit; `gameBuildOnly:false` so it is eligible here (this
@@ -476,7 +486,7 @@ async function _sendToBubble(message, thinking) {
   _sending = true;
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
   try {
-    const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message });
+    const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message }, { timeoutMs: MESSAGE_TIMEOUT_MS });
     const reply = res.message || '(no reply)';
     if (thinking) {
       const controls = res.control_actions || [];
@@ -661,8 +671,15 @@ export async function openApplicantChat() {
     if (!_campaigns.length) { _renderNoCampaign(body); return; }
     _renderConversation();
   } catch (e) {
-    // 401 etc. — but most commonly the engine is unreachable.
-    _renderOffline(body);
+    // The `/campaigns` route itself soft-degrades to `engine_available:false`
+    // (handled above) rather than throwing, so a thrown error here is a real
+    // transport/auth failure talking to the WORKSPACE backend (session
+    // expired, workspace unreachable, or the browser-side timeout) — not the
+    // "no model connected" gate. Surface it as a genuine, retryable error with
+    // errText's kind-aware messaging (401 vs network vs timeout) instead of
+    // collapsing every failure into the "connect a model" gated copy.
+    body.innerHTML = errorHTML(errText(e));
+    wireRetry(body, openApplicantChat);
   }
 }
 

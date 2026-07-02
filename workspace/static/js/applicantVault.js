@@ -21,7 +21,7 @@
 // (the list returns tenant keys only), and the password field is type=password.
 
 import uiModule from './ui.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, errText, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
 
 const API = '/api/applicant/vault';
 
@@ -182,6 +182,16 @@ function _setVaultCount(n) {
   if (el) el.textContent = n > 0 ? `(${n})` : '';
 }
 
+// Map a kit error (with .kind) to a plain-language line for the retry card,
+// mirroring the pattern established in applicantGallery.js / applicantCompare.js
+// so 401 (session expired) reads differently from the engine being unreachable.
+function _errLine(err) {
+  if (err && (err.kind === 'offline' || err.kind === 'network')) {
+    return 'The Applicant engine is not reachable right now. Saved sign-ins will load once it is connected.';
+  }
+  return errText(err);
+}
+
 async function _loadTenants() {
   const listEl = _modalEl && _modalEl.querySelector('#applicant-vault-list');
   const emptyEl = _modalEl && _modalEl.querySelector('#applicant-vault-empty');
@@ -193,14 +203,15 @@ async function _loadTenants() {
     return;
   }
   // Show a loading state while fetching so the list is never ambiguously blank.
-  listEl.innerHTML = '<span style="opacity:0.6;font-size:12px;">Loading…</span>';
+  listEl.innerHTML = loadingHTML('Loading…');
   if (emptyEl) emptyEl.style.display = 'none';
   let data;
   try {
     data = await _fetchJSON(`${API}/${encodeURIComponent(_campaignId)}/tenants`);
   } catch (e) {
-    listEl.innerHTML = '';
-    if (emptyEl) { emptyEl.textContent = e.message || 'Could not load saved sign-ins.'; emptyEl.style.display = ''; }
+    if (emptyEl) emptyEl.style.display = 'none';
+    listEl.innerHTML = errorHTML(_errLine(e));
+    wireRetry(listEl, _loadTenants);
     _setVaultCount(0);
     return;
   }
