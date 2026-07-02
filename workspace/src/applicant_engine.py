@@ -959,6 +959,11 @@ class ApplicantEngineClient:
         """Which global account credentials are set (no secrets returned)."""
         return await self._request("GET", "/api/credentials/account")
 
+    async def vault_rotate_key(self) -> Any:
+        """Rotate the vault's master encryption key — mints a fresh key and
+        re-seals every stored credential under it (no secrets returned)."""
+        return await self._request("POST", "/api/credentials/rotate-key")
+
     # -- manual deep-research trigger (engine routers/research.py) ----------
     # The agent auto-escalates to research already; these expose the engine's
     # SAME capped/deduped/cached path as an explicit, user-initiated run + a

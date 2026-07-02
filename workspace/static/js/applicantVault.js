@@ -136,6 +136,18 @@ function _ensureModalEl() {
           <button id="applicant-vault-save" class="cal-btn" style="align-self:flex-start;"
                   title="Encrypt and save this sign-in">Save sign-in</button>
         </div>
+
+        <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
+          <h3 style="margin:0;font-size:0.95em;">Encryption key</h3>
+          <p style="margin:0;opacity:0.7;font-size:12px;">
+            Re-encrypt every saved sign-in under a brand-new key. Use this if you
+            suspect the key that protects this vault may have been exposed. This
+            does not change any username or password — it only replaces the key
+            that protects them, and cannot be undone.
+          </p>
+          <button id="applicant-vault-rotate-key" class="cal-btn" style="align-self:flex-start;"
+                  title="Re-encrypt every saved sign-in under a new key">Rotate encryption key</button>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -154,6 +166,7 @@ function _wire(modal) {
   on('applicant-vault-google-save', 'click', () => _onSaveAccount('google'));
   on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
   on('applicant-vault-refresh', 'click', () => _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e)));
+  on('applicant-vault-rotate-key', 'click', _onRotateKey);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _maybeCloseVault();
   });
@@ -375,6 +388,38 @@ async function _onSaveAccount(kind) {
     _toast(e.message || 'Could not save the sign-in');
   } finally {
     _busy = false;
+  }
+}
+
+// ── master-key rotation ─────────────────────────────────────────────────────
+//
+// Heavy, destructive-adjacent: it re-seals EVERY saved sign-in (per-site and
+// account-level) under a brand-new key in one shot. Requires an explicit,
+// danger-styled confirm before it does anything — same async-confirm shape as
+// the discard-unsaved-input confirm above.
+
+async function _onRotateKey() {
+  const btn = _modalEl && _modalEl.querySelector('#applicant-vault-rotate-key');
+  if (_busy) return;
+  const ok = await _confirm(
+    'Re-encrypt every saved sign-in under a brand-new encryption key? '
+    + 'This cannot be undone.',
+    { confirmText: 'Rotate key', cancelText: 'Cancel', danger: true });
+  if (!ok) return;
+  _busy = true;
+  const prevLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Rotating…'; }
+  try {
+    const data = await _post(`${API}/rotate-key`);
+    const n = data && typeof data.records === 'number' ? data.records : null;
+    _toast(n !== null
+      ? `Encryption key rotated — ${n} sign-in${n === 1 ? '' : 's'} re-encrypted.`
+      : 'Encryption key rotated.');
+  } catch (e) {
+    _toast(e.message || 'Could not rotate the encryption key');
+  } finally {
+    _busy = false;
+    if (btn) { btn.disabled = false; btn.textContent = prevLabel || 'Rotate encryption key'; }
   }
 }
 
