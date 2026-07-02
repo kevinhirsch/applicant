@@ -141,17 +141,42 @@ function _renderRow(app) {
   const id = esc(String(app.application_id || ''));
   const campaign = app.campaign_name ? `<span style="opacity:0.5;">· ${esc(app.campaign_name)}</span>` : '';
   const busy = _busyIds.has(String(app.application_id));
+  const label = esc(_roleLabel(app));
   return `
-    <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;align-items:center;gap:10px;padding:8px 4px;">
+    <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 4px;">
       <div style="flex:1;min-width:0;">
-        <div style="font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(_roleLabel(app))} ${campaign}</div>
+        <div style="font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label} ${campaign}</div>
         <div style="margin-top:3px;">${_signalBadges(app)}</div>
       </div>
-      <select class="cal-btn" data-tracker-record="${id}" style="font-size:11px;" ${busy ? 'disabled' : ''} aria-label="Record what happened for ${esc(_roleLabel(app))}">
+      <select class="cal-btn" data-tracker-record="${id}" style="font-size:11px;" ${busy ? 'disabled' : ''} aria-label="Record what happened for ${label}">
         <option value="">Record what happened…</option>
         ${_optionsHTML(app.status)}
       </select>
+      ${_scanEmailHTML(id, label)}
     </div>`;
+}
+
+// A per-row, collapsed-by-default disclosure so an owner can paste in one
+// email (a rejection/interview/offer that arrived by mail and the automated
+// detectors never saw) and have it scanned against THIS specific application
+// — never an automatic, ambiguous inbox-to-application guess. Uses the native
+// <details>/<summary> disclosure (same pattern as the onboarding wizard's
+// "What Applicant never does" / "Advanced" sections) so it stays out of the
+// way until the owner actually wants it, with zero extra JS for the open/close
+// state itself.
+function _scanEmailHTML(id, label) {
+  return `
+    <details class="ow-list-row" data-tracker-scan="${id}" style="flex-basis:100%;margin:2px 0 0;">
+      <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">Check an email</summary>
+      <div style="margin:8px 0 4px;display:flex;flex-direction:column;gap:6px;">
+        <input type="text" class="cal-input" data-scan-subject="${id}" placeholder="Subject (optional)" style="font-size:11px;padding:5px 8px;" aria-label="Email subject for ${label}" />
+        <textarea class="cal-input" data-scan-body="${id}" placeholder="Paste the email text here…" rows="3" style="font-size:11px;padding:5px 8px;" aria-label="Email body for ${label}"></textarea>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <span data-scan-result="${id}" style="font-size:11px;flex:1;min-width:0;"></span>
+          <button class="cal-btn" type="button" data-scan-submit="${id}" style="font-size:11px;">Check email</button>
+        </div>
+      </div>
+    </details>`;
 }
 
 function _renderBucket(bucket, rows) {
@@ -180,6 +205,9 @@ function _renderBoard(host, applications) {
   );
   host.querySelectorAll('[data-tracker-record]').forEach((select) => {
     select.addEventListener('change', () => _recordOutcome(select));
+  });
+  host.querySelectorAll('[data-scan-submit]').forEach((btn) => {
+    btn.addEventListener('click', () => _scanEmail(btn));
   });
 }
 
@@ -247,6 +275,60 @@ async function _recordOutcome(select) {
     select.disabled = false;
   } finally {
     _busyIds.delete(applicationId);
+  }
+}
+
+// Plain-language labels for what `_scanEmail` may have detected — mirrors the
+// engine's own `outcome_type` values (see ScanEmailIn / scan_email in
+// post_submission.py) so the toast reads the same language as the "Record
+// what happened" dropdown above.
+const SCAN_OUTCOME_LABEL = {
+  rejected: 'a rejection',
+  interview_invited: 'an interview invite',
+  offer: 'an offer',
+};
+
+// The "Check an email" affordance's submit handler: paste-and-scan ONE email
+// against the specific application the owner already picked (the disclosure
+// this button lives inside is per-row, so there is never any ambiguity about
+// which application it applies to). Shows the plain-language result inline
+// and, only when the engine actually recorded something, re-renders the whole
+// board so the new signal/bucket shows up immediately — same pattern as
+// `_recordOutcome`.
+async function _scanEmail(btn) {
+  const id = btn.getAttribute('data-scan-submit');
+  const details = btn.closest('[data-tracker-scan]');
+  if (!id || !details || _busyIds.has(id)) return;
+  const subjectEl = details.querySelector('[data-scan-subject]');
+  const bodyEl = details.querySelector('[data-scan-body]');
+  const resultEl = details.querySelector('[data-scan-result]');
+  const subject = subjectEl ? subjectEl.value.trim() : '';
+  const body = bodyEl ? bodyEl.value.trim() : '';
+  if (!subject && !body) {
+    if (resultEl) resultEl.textContent = 'Paste some email text first.';
+    return;
+  }
+  _busyIds.add(id);
+  btn.disabled = true;
+  if (resultEl) resultEl.textContent = 'Checking…';
+  try {
+    const data = await _post(`${API}/applications/${encodeURIComponent(id)}/scan-email`, { subject, body });
+    if (data && data.detected && data.recorded) {
+      const label = SCAN_OUTCOME_LABEL[data.outcome_type] || 'an outcome';
+      _toast(`Found ${label} in that email — recorded.`);
+      await _load(false);
+      return; // the row this button lives on is about to be replaced
+    }
+    if (resultEl) {
+      resultEl.textContent = (data && data.detected)
+        ? 'Found some signal, but not confident enough to record automatically — use "Record what happened" above if you know for sure.'
+        : "Didn't recognize anything in that email.";
+    }
+  } catch (e) {
+    if (resultEl) resultEl.textContent = errText(e);
+  } finally {
+    _busyIds.delete(id);
+    btn.disabled = false;
   }
 }
 

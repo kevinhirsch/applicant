@@ -43,6 +43,14 @@ Endpoints (all under ``/api/applicant/tracker``):
   across every one of their campaigns, newest-submitted first.
 * ``POST /api/applicant/tracker/applications/{application_id}/outcome`` — record
   what happened (interview / offer / rejected / ghosted / ...).
+* ``POST /api/applicant/tracker/applications/{application_id}/scan-email`` —
+  the SAFE version of "close the loop": the owner pastes one email's
+  subject/body against a specific application THEY chose (never an
+  automatic inbox-to-application match, which risks recording an outcome
+  against the wrong application — see ``post_submission.py``'s
+  ``scan_email``); the engine's detectors classify it and record whatever
+  confidently matched. Owner-scoped with the EXACT same
+  ``_owner_application_ids`` guard as the outcome write below.
 """
 
 from __future__ import annotations
@@ -74,6 +82,11 @@ def _campaign_label(campaign: dict) -> str:
 
 class RecordOutcomeIn(BaseModel):
     outcome_type: str
+
+
+class ScanEmailIn(BaseModel):
+    subject: str = ""
+    body: str = ""
 
 
 async def _owner_tracker_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
@@ -182,6 +195,41 @@ def setup_applicant_tracker_routes() -> APIRouter:
             except EngineError as exc:
                 logger.debug(
                     "tracker: record_outcome failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
+
+    @router.post("/applications/{application_id}/scan-email")
+    async def scan_email(
+        request: Request, application_id: str, body: ScanEmailIn
+    ) -> dict:
+        """Scan one owner-pasted email against a SPECIFIC application the owner
+        themselves picked (this row's "Check an email" affordance) -- the safe
+        version of closing the loop: zero ambiguity about which application the
+        email applies to, since the owner is the one who chose it.
+
+        ``application_id`` is validated against this request's own
+        ``_owner_application_ids`` fan-out BEFORE the scan is forwarded -- the
+        exact same owner-isolation guard ``record_outcome`` uses above. A
+        caller cannot scan an email against an application that never appeared
+        in their own tracker board.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            try:
+                result = await engine.tracker_scan_email(
+                    application_id, body.subject, body.body
+                )
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: scan_email failed for %s: %s", application_id, exc
                 )
                 raise HTTPException(
                     status_code=exc.status or 502, detail=str(exc)

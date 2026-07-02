@@ -51,6 +51,7 @@ class FakeEngine:
     campaigns: list = []
     boards: dict = {}          # campaign_id -> {"applications": [...]}
     record_results: dict = {}  # application_id -> engine response dict
+    scan_results: dict = {}    # application_id -> engine response dict
     raises: dict = {}          # key -> EngineError
 
     def __init__(self, *a, **k):
@@ -89,6 +90,16 @@ class FakeEngine:
             },
         )
 
+    async def tracker_scan_email(self, application_id, subject, body):
+        FakeEngine.calls.append(("tracker_scan_email", application_id, subject, body))
+        key = ("tracker_scan_email", application_id)
+        if key in FakeEngine.raises:
+            raise FakeEngine.raises[key]
+        return FakeEngine.scan_results.get(
+            application_id,
+            {"application_id": application_id, "detected": False},
+        )
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -96,6 +107,7 @@ def _reset_fake():
     FakeEngine.campaigns = []
     FakeEngine.boards = {}
     FakeEngine.record_results = {}
+    FakeEngine.scan_results = {}
     FakeEngine.raises = {}
     yield
 
@@ -134,6 +146,16 @@ def test_unauthenticated_post_is_rejected(monkeypatch):
     r = c.post(
         "/api/applicant/tracker/applications/a-1/outcome",
         json={"outcome_type": "rejected"},
+    )
+    assert r.status_code == 401
+
+
+def test_unauthenticated_scan_email_is_rejected(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(authed=False))
+    r = c.post(
+        "/api/applicant/tracker/applications/a-1/scan-email",
+        json={"subject": "Update", "body": "..."},
     )
     assert r.status_code == 401
 
@@ -279,6 +301,100 @@ def test_record_outcome_forwards_engine_422_for_bad_outcome_type(client):
     assert r.status_code == 422
 
 
+# --- POST: owner-scoped "check an email" scan --------------------------------
+
+
+def test_scan_email_succeeds_for_owned_application(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.boards = {"c1": {"applications": [_row("a-1")]}}
+    FakeEngine.scan_results = {
+        "a-1": {
+            "application_id": "a-1",
+            "detected": True,
+            "outcome_type": "interview_invited",
+            "recorded": True,
+            "outcome_id": "oe-7",
+        }
+    }
+
+    r = client.post(
+        "/api/applicant/tracker/applications/a-1/scan-email",
+        json={"subject": "Interview?", "body": "We would like to schedule a call."},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["application_id"] == "a-1"
+    assert body["detected"] is True
+    assert body["recorded"] is True
+    assert body["outcome_type"] == "interview_invited"
+    assert (
+        "tracker_scan_email",
+        "a-1",
+        "Interview?",
+        "We would like to schedule a call.",
+    ) in FakeEngine.calls
+
+
+def test_scan_email_nothing_detected_still_200s(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.boards = {"c1": {"applications": [_row("a-1")]}}
+    # default FakeEngine.tracker_scan_email response: {"detected": False}
+
+    r = client.post(
+        "/api/applicant/tracker/applications/a-1/scan-email",
+        json={"subject": "Newsletter", "body": "Nothing relevant here."},
+    )
+
+    assert r.status_code == 200
+    assert r.json() == {"application_id": "a-1", "detected": False}
+
+
+def test_scan_email_rejects_application_not_in_owners_own_board(client):
+    # Mirrors test_record_outcome_rejects_application_not_in_owners_own_board:
+    # "a-1" belongs to campaign c1, which THIS request's own list_campaigns()
+    # fan-out returns. A caller-supplied id for an application that never
+    # showed up in that fan-out must 404 -- and the engine scan must never
+    # even be attempted (never trust a caller-supplied id to opt a safety
+    # check in).
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.boards = {"c1": {"applications": [_row("a-1")]}}
+
+    r = client.post(
+        "/api/applicant/tracker/applications/not-mine/scan-email",
+        json={"subject": "Update", "body": "..."},
+    )
+
+    assert r.status_code == 404
+    assert not any(c[0] == "tracker_scan_email" for c in FakeEngine.calls if isinstance(c, tuple))
+
+
+def test_scan_email_engine_unavailable_is_503(client):
+    FakeEngine.raises = {"list_campaigns": EngineError("down", status=None)}
+
+    r = client.post(
+        "/api/applicant/tracker/applications/a-1/scan-email",
+        json={"subject": "Update", "body": "..."},
+    )
+
+    assert r.status_code == 503
+
+
+def test_scan_email_forwards_engine_error(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.boards = {"c1": {"applications": [_row("a-1")]}}
+    FakeEngine.raises = {
+        ("tracker_scan_email", "a-1"): EngineError("gated", status=422, detail="bad input")
+    }
+
+    r = client.post(
+        "/api/applicant/tracker/applications/a-1/scan-email",
+        json={"subject": "Update", "body": "..."},
+    )
+
+    assert r.status_code == 422
+
+
 # --- owner isolation: one owner's request never surfaces or mutates another's --
 #
 # The engine is single-tenant per deployment (no ``owner_id`` anywhere in its
@@ -336,6 +452,31 @@ def test_owner_isolation_two_owners_never_cross_contaminate(client):
     assert r_own.status_code == 201
     assert ("tracker_record_outcome", "owner-b-app", "offer") in FakeEngine.calls
 
+    # Owner B cannot scan an email against owner A's application id either --
+    # same guard, same 404, the engine scan is never attempted for it.
+    r_scan_leak = client.post(
+        "/api/applicant/tracker/applications/owner-a-app/scan-email",
+        json={"subject": "Re: your application", "body": "Unfortunately..."},
+    )
+    assert r_scan_leak.status_code == 404
+    assert not any(
+        c[0] == "tracker_scan_email" and c[1] == "owner-a-app"
+        for c in FakeEngine.calls
+        if isinstance(c, tuple)
+    )
+
+    # Owner B CAN scan an email against their own application.
+    r_scan_own = client.post(
+        "/api/applicant/tracker/applications/owner-b-app/scan-email",
+        json={"subject": "Great news", "body": "We would like to extend an offer."},
+    )
+    assert r_scan_own.status_code == 200
+    assert any(
+        c[0] == "tracker_scan_email" and c[1] == "owner-b-app"
+        for c in FakeEngine.calls
+        if isinstance(c, tuple)
+    )
+
 
 # --- exact engine paths via a real client over MockTransport ----------------
 
@@ -370,6 +511,17 @@ def test_tracker_hits_exact_engine_paths(monkeypatch):
                 201,
                 json={"application_id": "a-9", "outcome_id": "oe-9", "type": "offer", "source": "manual"},
             )
+        if request.url.path == "/api/post-submission/applications/a-9/scan-email":
+            return httpx.Response(
+                200,
+                json={
+                    "application_id": "a-9",
+                    "detected": True,
+                    "outcome_type": "offer",
+                    "recorded": True,
+                    "outcome_id": "oe-10",
+                },
+            )
         return httpx.Response(404, json={"detail": "unexpected"})
 
     app, engine_cls = _mock_transport_app(handler)
@@ -390,3 +542,12 @@ def test_tracker_hits_exact_engine_paths(monkeypatch):
     assert r2.status_code == 201
     assert ("POST", "/api/post-submission/applications/a-9/outcome") in paths
     assert r2.json()["type"] == "offer"
+
+    r3 = c.post(
+        "/api/applicant/tracker/applications/a-9/scan-email",
+        json={"subject": "Offer", "body": "We are pleased to offer you the role."},
+    )
+    assert r3.status_code == 200
+    assert ("POST", "/api/post-submission/applications/a-9/scan-email") in paths
+    assert r3.json()["detected"] is True
+    assert r3.json()["outcome_type"] == "offer"
