@@ -145,11 +145,33 @@
 
 62. **Boot-time launcher-wiring polls also gate first meaningful render of Applicant surfaces** — [VALUE: low · EFFORT: S] — 8+ modules retry launcher wiring on 500 ms `setInterval`s for up to ~10 s (`applicantPortal.js:1492`, `applicantActivity.js:466`, `applicantChat.js:591`, `applicantGallery.js:258`, `applicantMind.js:306`, `applicantResults.js:284`, `applicantDebug.js:844`, `applicantCompare.js:294`, `applicantUpdate.js:212`). Beyond the known duplication, the polls add steady main-thread wakeups during the busiest boot window; a single shared `MutationObserver`-based `whenReady(ids)` in `applicantCore.js` fires once, immediately, with zero timers.
 
+63. **Cookbook family (~440 KB) eagerly loaded through one static import chain** — [VALUE: high · EFFORT: M] — `index.html:2596` loads `cookbook.js`, which statically imports `cookbook-diagnosis`, `cookbook-hwfit` (78 KB), `cookbookRunning` (134 KB → `cookbookServe` 92 KB) and `cookbookDownload` (`cookbook.js:10-27`). The local-model-serving surface is rarely opened; convert the launcher to a dynamic `import()` — the pattern already exists: Portal/Activity/Update/Onboarding are dynamically imported from `app.js:1377-1402`.
+
+64. **`document.js` (423 KB, largest module) rides to boot on `chat.js`'s static import** — [VALUE: high · EFFORT: M] — the full document editor is a hard static dependency of boot-loaded `chat.js` and `slashCommands.js` (255 KB, itself a lazy-on-first-`/` candidate), so it downloads on every load even when no document is opened (`index.html:2590/2595`). Split behind a dynamic import gated on editor open.
+
+65. **`gallery.js` statically imports the 160 KB image editor** — [VALUE: high · EFFORT: M] — `gallery.js:6` does `import { openEditor … } from './galleryEditor.js'`, pulling ~300 KB combined at boot (`index.html:2591`). Lazy-import `galleryEditor.js` on first edit.
+
+66. **`settings.js` (225 KB) + `admin.js` (115 KB) eager for every user, including non-admins** — [VALUE: med · EFFORT: M] — `index.html:2601-2602`; admin surfaces are unreachable for most users and settings is never the first interaction. Dynamic-import on panel open.
+
+67. **Onboarding module (93 KB) dynamically imported at boot for already-onboarded users** — [VALUE: med · EFFORT: S] — `app.js:1402` imports the whole module just to call `maybeLaunchOnboarding()`, which fetches status and immediately returns `false` for onboarded users (`applicantOnboarding.js:1634`). Do the cheap status fetch first; import the module only when setup is actually incomplete.
+
+68. **Assistant activation watcher polls at 1 s for 2 minutes and never early-exits** — [VALUE: med · EFFORT: S] — `assistant.js:453-462` keeps its `setInterval(…,1000)` alive until 120 retries and re-runs `_ensureHeaderAffordances` on every tick even after the affordances are installed. Clear the interval on success.
+
+69. **Digest presence heartbeat POSTs every 60 s forever — even when the user is verifiably absent** — [VALUE: low · EFFORT: S] — the presence timer (`emailLibrary/applicantDigest.js:896-915`) starts once and, when `_isVerifiablyHere()` is false, still fires the request with `present:false` instead of skipping the network call entirely. Skip the POST while hidden/absent; send one `false` beacon on transition.
+
+70. **Email inbox/digest list is a full `innerHTML` wipe-and-rebuild per refresh** — [VALUE: med · EFFORT: M] — `emailInbox.js:312/430/535` rebuild every row on each refresh with no windowing or row diffing — the dense daily-digest surface pays O(n) parse+layout per tick. Same fix class as #26: keyed row patching, or skip when the payload hash is unchanged.
+
+71. **Results funnel re-renders identical DOM on every 60 s tick** — [VALUE: low · EFFORT: S] — `applicantResults.js:266` runs `pollVisible(() => _load(false), 60000)` and `_load` rebuilds the modal body even when funnel numbers haven't moved. Compare payloads before replacing. (Close correctly stops the poll — `:97`.)
+
+72. **`applicantUpdate._render` re-parses the entire log `<pre>` every 3 s tick** — [VALUE: low · EFFORT: S] — `applicantUpdate.js:92-113` (called from the poll at `:151`) re-escapes and re-creates the whole modal — buttons included — per tick even when the log is unchanged; combined with #51's growing payload the cost compounds over a long update. Diff and append only new log lines.
+
+**Verified non-issues (checked, clean — don't chase):** the live takeover view is an iframe whose `src` is removed on close (`applicantRemote.js:713`) — no runaway stream or base64 frame payloads; `applicantMind` already parallelizes its three loads with `Promise.all` (`applicantMind.js:256-258`) — the pattern the Portal should copy; no read-write layout thrash and no scroll/resize handlers exist anywhere in `applicant*.js`; engine routers are sync `def` on the threadpool and the scheduler tick is `asyncio.to_thread`-offloaded (`src/applicant/app/lifespan.py:204`), so sync SQLAlchemy does **not** block the event loop; `/static` already serves ETag/Last-Modified/304 via Starlette; glass displacement maps are cached per size bucket and rebuilt only on a 140 ms-debounced ResizeObserver (`appkitGlass.js:482/:906`).
+
 ---
 
 ## Where to start (sequencing)
 
 - **This week (S-effort, product-wide):** #1 gzip · #5 badge-count endpoint · #17 unblock Portal first paint · #21 idle backoff in `pollVisible` · #37/#39 targeted CSS property fixes · #43 font preload.
-- **Next (M-effort, biggest structural wins):** #2 lazy-load rare-surface modules · #3 shared engine client · #4/#59 portal aggregate endpoint · #6/#7/#8 engine gate+digest caching · #9/#13/#14 glass layering + containment · #57 stale-while-revalidate kit.
+- **Next (M-effort, biggest structural wins):** #2/#63-#67 lazy-load rare-surface modules (cookbook, document editor, gallery editor, settings/admin, onboarding) · #3 shared engine client · #4/#59 portal aggregate endpoint · #6/#7/#8 engine gate+digest caching · #9/#13/#14 glass layering + containment · #57 stale-while-revalidate kit.
 - **Foundational:** #60 one asset-versioning scheme unlocks #12 and #61 together; #19/#33 container build caching pays on every request and every tick.
 

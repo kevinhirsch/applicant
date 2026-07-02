@@ -13,7 +13,9 @@
 > contract, recap + momentum, starter prompts, snapshot preview, global pause, Results)
 > are audited only for the wording of their *current* strings.
 >
-> Format: `N. **Title** — [VALUE · EFFORT] — before → after — file:line`. Ranked, high value first.
+> Format: `N. **Title** — [VALUE · EFFORT] — before → after — file:line`. **281 findings**,
+> numbered continuously, grouped by surface and ranked high-value-first within each section;
+> the five cross-cutting items at the top are the highest-leverage fixes overall.
 
 ## Cross-cutting (fix once, fixes dozens)
 
