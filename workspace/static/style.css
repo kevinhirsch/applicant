@@ -7795,7 +7795,12 @@ textarea.memory-add-input {
    this compound selector then wins on specificity and flattens just those
    rows, leaving every other `.memory-item` consumer untouched. */
 .memory-item.ow-list-row {
-  border: none;
+  /* Leave border-bottom alone — it's the hairline separator supplied by
+     .ow-list-row (and cleared on :last-child by that same rule); only drop
+     the other three sides + the tile radius/fill. */
+  border-top: none;
+  border-left: none;
+  border-right: none;
   border-radius: 0;
   background: transparent;
   transition: background-color 0.15s, border-color 0.15s;
@@ -12427,8 +12432,11 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
    materials card (documentLibrary.js `_applicantCard`) never carries the
    `ow-list-row` class, so it keeps its existing tile appearance untouched. */
 .doclib-card.ow-list-row {
+  /* Leave border-bottom alone — see .memory-item.ow-list-row above. */
   background: transparent;
-  border: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
   border-radius: 0;
 }
 .doclib-card.doclib-card-deleting {

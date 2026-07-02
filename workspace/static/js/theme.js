@@ -6,7 +6,7 @@ import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
-import { mountMeshGradient } from './login_bg.js';
+import { mountMeshGradient, prefersReducedMotion } from './login_bg.js';
 
 // The fixed full-bleed wallpaper layer (z-index:-1) the glass chrome lenses and
 // appkitGlass/adaptiveGlass sample (they look up #__wp). The glass tiers paint a
@@ -18,7 +18,16 @@ const WALLPAPER_ID = '__wp';
 // exposes, so the picker below (Settings) isn't limited to a hard-pinned 'aurora'.
 export const MESH_PRESETS = ['sunset', 'aurora', 'ocean', 'gold', 'lavender'];
 const DEFAULT_MESH_PRESET = 'aurora';
+// Drift-cycle seconds / blob intensity — mountMeshGradient/login_bg.js clamp these to
+// [8,60] and [0.4,1.4] respectively; the login screen exposes both as admin-configured
+// cosmetics but the in-app wallpaper had them hard-pinned (34s / 0.5). Match the same
+// two knobs here so a user who wants a calmer (near-static, OLED/low-power/distraction-
+// sensitive) or a punchier mesh isn't stuck with the one baked-in value.
+const DEFAULT_MESH_SPEED = 34;
+const DEFAULT_MESH_INTENSITY = 0.5;
 let _glassMeshPreset = DEFAULT_MESH_PRESET;
+let _glassMeshSpeed = DEFAULT_MESH_SPEED;
+let _glassMeshIntensity = DEFAULT_MESH_INTENSITY;
 function ensureGlassWallpaper(on) {
   let wp = document.getElementById(WALLPAPER_ID);
   if (!on) {
@@ -44,8 +53,19 @@ function ensureGlassWallpaper(on) {
   }
   if (!meshEl) {
     // intensity 0.5 (the upstream glass default) keeps the mesh a contained glow,
-    // not a full-frame wash.
-    meshEl = mountMeshGradient(wp, { preset: _glassMeshPreset, animate: true, speed: 34, intensity: 0.5 });
+    // not a full-frame wash. mountMeshGradient's own contract (login_bg.js) is that
+    // the CALL SITE must respect prefers-reduced-motion before requesting `animate`
+    // (it does not check the media query itself) — this used to always pass `true`,
+    // relying entirely on meshGradient.css's belt-and-braces !important override.
+    // Ask correctly at the source too (#14) so the drift/ray-sweep is never even
+    // started, not just visually frozen after the fact.
+    meshEl = mountMeshGradient(wp, { preset: _glassMeshPreset, animate: !prefersReducedMotion(), speed: _glassMeshSpeed, intensity: _glassMeshIntensity });
+  } else {
+    // Preset unchanged but speed/intensity may have — mountMeshGradient sets these as
+    // plain CSS custom properties on the element, so update them live in place rather
+    // than tearing the mesh down and losing its current animation phase.
+    meshEl.style.setProperty('--lbg-speed', _glassMeshSpeed + 's');
+    meshEl.style.setProperty('--lbg-intensity', String(_glassMeshIntensity));
   }
   // Mirror the preset's OWN base onto #__wp (aurora's base is a deep teal ~#102a3a)
   // so the glass sampler reads a dark base, not an arbitrary flat fill.
@@ -77,6 +97,21 @@ function ensureGlassWallpaper(on) {
  *  (GET /api/auth/login-background) and is untouched by this. */
 export function applyGlassMeshPreset(preset) {
   _glassMeshPreset = MESH_PRESETS.includes(preset) ? preset : DEFAULT_MESH_PRESET;
+  if (document.body.classList.contains('has-wallpaper')) ensureGlassWallpaper(true);
+}
+
+/** Set the in-app wallpaper's drift SPEED (seconds/cycle, 8-60 — lower is faster/more
+ *  restless) and blob INTENSITY (0.4-1.4). Either arg may be omitted to leave it
+ *  untouched. Repaints immediately if the wallpaper is on — a calmer, near-static mesh
+ *  is a legitimate OLED/low-power/distraction-sensitive preference short of the blanket
+ *  prefers-reduced-motion freeze. */
+export function applyGlassMeshTuning(speed, intensity) {
+  if (speed !== undefined && speed !== null && !isNaN(speed)) {
+    _glassMeshSpeed = Math.max(8, Math.min(60, Number(speed)));
+  }
+  if (intensity !== undefined && intensity !== null && !isNaN(intensity)) {
+    _glassMeshIntensity = Math.max(0.4, Math.min(1.4, Number(intensity)));
+  }
   if (document.body.classList.contains('has-wallpaper')) ensureGlassWallpaper(true);
 }
 
