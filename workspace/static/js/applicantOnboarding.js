@@ -76,13 +76,16 @@ const STEPS = [
   // auto-satisfied, not user-driven), so counting that as progress would skip Welcome
   // on a pristine instance — exclude it and only treat genuine user steps as progress.
   { key: 'welcome',    title: 'Welcome',          done: (s) => !!(s && (s.llm_configured || s.onboarding_complete || s.apply_ready || (Array.isArray(s.steps_complete) && s.steps_complete.some((k) => k !== 'sandbox')))) },
-  { key: 'llm',        title: 'Connect a model',  done: (s) => !!(s && s.llm_configured) },
+  // `required: true` marks the ONE step that actually gates beginning — the rail
+  // (_renderRail) and the Welcome step both surface this so the three steps don't
+  // read as equal weight when only one of them is load-bearing.
+  { key: 'llm',        title: 'Connect a model',  required: true, done: (s) => !!(s && s.llm_configured) },
   // "Your profile" is OPTIONAL — the only thing that strictly gates BEGINNING is a
   // connected model. Applicant gathers what it needs to apply over time (a résumé,
   // or just telling it in chat). The step is "done enough" once the agent has the
   // required-to-apply essentials (apply_ready), so the rail stops nagging once the
   // hard apply-gate would open; a brand-new user can also just Skip it.
-  { key: 'onboarding', title: 'Your profile',     done: (s) => !!(s && (s.apply_ready || s.onboarding_complete)) },
+  { key: 'onboarding', title: 'Your profile',     required: false, done: (s) => !!(s && (s.apply_ready || s.onboarding_complete)) },
 ];
 
 // Intake sub-sections (the comprehensive Workday-ready interview). Each renders a
@@ -173,8 +176,15 @@ function _buildOverlay() {
       </div>
       <div class="admin-tabs" id="ao-rail" role="list" aria-label="Setup progress"></div>
       <div class="modal-body" id="ao-body"></div>
-      <div class="ao-foot" id="ao-foot"></div>
-      <div class="ao-nav" id="ao-nav"></div>
+      <!-- D69: Back/Skip (persistent) and the per-step primary action used to be two
+           stacked rows (a full-width primary CTA row, then a second full-width nav
+           row directly under it) — read as two competing calls to action. They are
+           now one terminal action bar: secondary actions (Back/Skip) grouped left,
+           the step's primary action right, sharing a single hairline separator. -->
+      <div class="ao-actionbar" id="ao-actionbar">
+        <div class="ao-nav" id="ao-nav"></div>
+        <div class="ao-foot" id="ao-foot"></div>
+      </div>
     </div>`;
   // Swallow click-throughs to the app behind the overlay (no dismiss-on-backdrop).
   o.addEventListener('click', (ev) => { if (ev.target === o) ev.stopPropagation(); });
@@ -194,15 +204,28 @@ function _renderRail() {
   const rail = document.getElementById('ao-rail');
   if (!rail) return;
   // The step rail reuses `.admin-tabs`/`.admin-tab` (the same tab strip Settings
-  // and the libraries use). Steps aren't clickable — they show progress — so they
-  // carry `.done`/`.active` only; the CSS de-emphasises the hover affordance.
-  rail.innerHTML = STEPS.map((step, i) => {
+  // and the libraries use), but these steps are progress indicators, not
+  // clickable tabs: `aria-disabled` says so to assistive tech (there is no click
+  // handler either — nothing here is actually focusable/actionable), and the
+  // onboarding-scoped CSS drops the tab hover affordance. D76: "Connect a model"
+  // is the one step that actually gates beginning — the rail says so instead of
+  // presenting all three steps as equal weight (that's also spelled out in the
+  // Welcome copy).
+  const cur = STEPS[_stepIndex];
+  // D74: on a narrow phone the 3-item tab strip can truncate a title ("3. Your
+  // pro…"). `.ao-rail-compact` is a single "Step N of M · Title" line that CSS
+  // shows ONLY under the narrow breakpoint (swapping in for the tab strip, which
+  // is hidden there) — always legible regardless of how long a step title is.
+  const compact = `<span class="ao-rail-compact" aria-hidden="true">Step ${_stepIndex + 1} of ${STEPS.length} · ${esc(cur.title)}</span>`;
+  const steps = STEPS.map((step, i) => {
     const done = step.done(_status);
-    const cur = i === _stepIndex;
-    const cls = `admin-tab${done ? ' done' : ''}${cur ? ' active' : ''}`;
+    const isCur = i === _stepIndex;
+    const cls = `admin-tab ao-rail-step${done ? ' done' : ''}${isCur ? ' active' : ''}`;
     const mark = done ? '✓ ' : `${i + 1}. `;
-    return `<span class="${cls}" role="listitem" aria-current="${cur ? 'step' : 'false'}">${esc(mark)}${esc(step.title)}</span>`;
+    const badge = step.required ? ' <span class="ao-rail-req">Required</span>' : '';
+    return `<span class="${cls}" role="listitem" aria-disabled="true" aria-current="${isCur ? 'step' : 'false'}">${esc(mark)}${esc(step.title)}${badge}</span>`;
   }).join('');
+  rail.innerHTML = compact + steps;
 }
 
 // When a step renderer is reused OUTSIDE the wizard (Settings), these point at the
@@ -291,10 +314,11 @@ function _renderNav() {
   const nav = document.getElementById('ao-nav');
   if (!nav) return;
   const last = _stepIndex >= STEPS.length - 1;
+  // D69: nav is now a left-aligned button cluster inside the shared `.ao-actionbar`
+  // row (see _buildOverlay) rather than a full-width row of its own — no need for
+  // an empty spacer span to hold Back's place when it's absent.
   nav.innerHTML =
-    (_stepIndex > 0
-      ? '<button type="button" class="cal-btn" id="ao-back">← Back</button>'
-      : '<span></span>') +
+    (_stepIndex > 0 ? '<button type="button" class="cal-btn" id="ao-back">← Back</button>' : '') +
     `<button type="button" class="cal-btn" id="ao-skip">${last ? 'Finish' : 'Skip for now →'}</button>`;
   const back = document.getElementById('ao-back');
   if (back) back.onclick = () => { if (!_busy) _prevStep(); };
@@ -308,28 +332,35 @@ function _renderNav() {
 // Applicant never does. Reuses the shared `.admin-card` framing + `.ao-step-*`
 // classes so it matches every other step. The persistent Skip/Back nav already
 // lets the user move on; this step just adds an explicit "Let's go" foot button.
+//
+// D68/D81: this used to stack TWO bordered `.admin-card` boxes (an ordered list
+// + a dense paragraph, then a second card with a 4-item list) before the user
+// could do anything — a lot to read on the very first screen. Trimmed to the
+// one-line promise + a flattened hairline group that calls out the one actually
+// required step (D76); the "what Applicant never does" trust list is still here
+// verbatim (same NEVER_DOES the Portal empty state reuses — see D39) but
+// collapsed behind a `<details>` disclosure so it's a beat away, not a wall of
+// text ahead of the CTA.
 function _renderWelcome() {
   _setBody(`
     <h2 class="ao-step-title">Welcome to Applicant</h2>
-    <p class="ao-step-desc">
-      Just one thing to start: connect a model. Everything about your job search,
-      Applicant can learn as you go — drop in a résumé to jump-start it, or simply
-      tell it what you're looking for in chat.
-    </p>
-    <div class="admin-card">
-      <h2 style="margin:0 0 6px;font-size:0.95em;">What you'll set up</h2>
-      <ol style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
-        <li>Connect a model — a local model or a cloud provider. <em>(the only required step)</em></li>
-        <li>Your profile — optional. Add a résumé to speed things up, or skip it and tell Applicant in chat.</li>
-      </ol>
-      <p style="margin:8px 0 0;font-size:0.82rem;opacity:0.7;">Applicant won't start applying until it knows the essentials (target roles, work mode, locations, salary floor, key skills, and a résumé) — it'll ask for whatever's still missing. Notifications, fonts and the automation sandbox are optional too — set them up any time in Settings.</p>
+    <p class="ao-step-desc">Connect a model to get started — everything else, Applicant learns as you go.</p>
+    <div class="ao-hairline-group">
+      <div class="ao-hairline-row">
+        <span class="ao-step-badge ao-step-badge-required">Required</span>
+        <span class="ao-hairline-text">Connect a model — a local model or a cloud provider.</span>
+      </div>
+      <div class="ao-hairline-row">
+        <span class="ao-step-badge ao-step-badge-optional">Optional</span>
+        <span class="ao-hairline-text">Your profile — add a résumé to speed things up, or skip it and tell Applicant in chat. Notifications, fonts and the automation sandbox live in Settings any time.</span>
+      </div>
     </div>
-    <div class="admin-card">
-      <h2 style="margin:0 0 6px;font-size:0.95em;">How Applicant works — and what it never does</h2>
-      <ul style="margin:0 0 2px 18px;padding:0;font-size:0.88rem;line-height:1.5;">
+    <details class="ao-adv ao-welcome-trust">
+      <summary>What Applicant never does</summary>
+      <ul class="ao-trust-list">
         ${NEVER_DOES.map((t) => `<li>${esc(t)}</li>`).join('')}
       </ul>
-    </div>
+    </details>
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-welcome-next">Let's get started</button>`);
   const btn = document.getElementById('ao-welcome-next');
@@ -1177,6 +1208,14 @@ const SECTION_FORMS = {
 
 let _intakeIndex = 0; // index into INTAKE_SECTIONS currently shown
 
+// D83: the resumable intake's own sub-progress line. Worded as "section" (not
+// "step") so it reads as a finer-grained count WITHIN the rail's "Your profile"
+// step rather than a second, conflicting "step N of M" counter next to the
+// rail's own "Step N of 3" (see _renderRail).
+function _intakeProgressHTML(total) {
+  return `<div class="ao-intake-progress">Your profile — section ${_intakeIndex + 1} of ${total}</div>`;
+}
+
 // Intake fields reuse the shared `.settings-col`/`.settings-label`/
 // `.settings-select` form classes (same as Settings' field rows), so inputs,
 // selects and textareas match the rest of the app and track the theme.
@@ -1287,7 +1326,7 @@ function _renderRepeatSection(key, spec, saved) {
   const total = INTAKE_SECTIONS.length;
   const entries = _repeatEntries(saved);
   _setBody(`
-    <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
+    ${_intakeProgressHTML(total)}
     <h2 class="ao-step-title">${esc(spec.title)}</h2>
     ${spec.desc ? `<p class="ao-step-desc">${esc(spec.desc)}</p>` : ''}
     <div id="ao-repeat-list">${entries.map((e, i) => _repeatEntryCard(spec, e, i)).join('')}</div>
@@ -1373,7 +1412,7 @@ async function _renderIntakeSection() {
 
   const fieldsHTML = spec.fields.map((f) => _fieldHTML(f, saved[f.name])).join('');
   _setBody(`
-    <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
+    ${_intakeProgressHTML(total)}
     <h2 class="ao-step-title">${esc(spec.title)}</h2>
     ${spec.desc ? `<p class="ao-step-desc">${esc(spec.desc)}</p>` : ''}
     <form id="ao-intake-form">${fieldsHTML}</form>
@@ -1485,7 +1524,7 @@ function _renderInlineFontPrompt(missing) {
 function _renderBaseResume(saved) {
   const total = INTAKE_SECTIONS.length;
   _setBody(`
-    <div class="ao-intake-progress">Profile step ${_intakeIndex + 1} of ${total}</div>
+    ${_intakeProgressHTML(total)}
     ${_applyReadinessBanner()}
     <h2 class="ao-step-title">Start with your resume ${_tip('Applicant reads your resume and fills in the rest of your profile for you — you just review and fix anything it got wrong. After upload we also build a high-fidelity version and show you a preview to accept or reject.')}</h2>
     <p class="ao-step-desc">Optional but recommended: upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell Applicant what you want in chat. You can edit every field afterward.</p>

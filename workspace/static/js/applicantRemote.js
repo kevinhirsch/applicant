@@ -72,7 +72,7 @@ function _ensureModalEl() {
         </p>
 
         <div id="applicant-remote-frame-wrap"
-             style="position:relative;border:1px solid var(--border-color,#3334);border-radius:8px;overflow:hidden;background:#0b0b0b;min-height:40dvh;max-height:72dvh;">
+             style="position:relative;border-radius:8px;overflow:hidden;background:#0b0b0b;box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent);min-height:40dvh;max-height:72dvh;">
           <iframe id="applicant-remote-frame" title="Live session"
                   style="width:100%;height:40dvh;max-height:72dvh;border:0;display:block;background:#0b0b0b;"
                   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock"
@@ -84,7 +84,7 @@ function _ensureModalEl() {
         </div>
 
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-          <button id="applicant-remote-takeover" class="cal-btn cal-btn-primary"
+          <button id="applicant-remote-takeover" class="cal-btn"
                   title="Take live control of the browser to do a step yourself">Take control</button>
           <button id="applicant-remote-open-tab" class="memory-toolbar-btn"
                   title="Open the live session full-screen in a new tab">Open in new tab</button>
@@ -112,7 +112,7 @@ function _ensureModalEl() {
                     title="Let the assistant handle desktop steps the browser can't reach, like a file-upload dialog. You stay in control and approve each action.">
               Turn on</button>
           </div>
-          <p style="margin:0;opacity:0.7;font-size:12px;">
+          <p id="applicant-remote-desktop-desc" style="margin:0;opacity:0.7;font-size:12px;">
             For the parts that live outside the web page — a file-upload dialog or
             another desktop window. You stay in control: it never creates accounts,
             clears verifications, or submits, and it asks before each step.
@@ -122,7 +122,7 @@ function _ensureModalEl() {
           </p>
         </div>
 
-        <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;border-color:var(--accent-color,#5b8def);">
+        <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
           <h3 style="margin:0;font-size:0.95em;">Finish the application</h3>
           <p style="margin:0;opacity:0.75;font-size:12px;">
             The assistant has pre-filled everything and stopped before the final
@@ -134,9 +134,10 @@ function _ensureModalEl() {
                     title="See the exact answers, documents, and posting that will be submitted before you authorize">
               Review exactly what will be sent</button>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
             <button id="applicant-remote-submit-self" class="cal-btn"
                     title="You will click submit yourself in the live session">I'll submit it myself</button>
+            <span aria-hidden="true" style="opacity:0.5;font-size:11px;font-style:italic;">or</span>
             <button id="applicant-remote-authorize" class="cal-btn cal-btn-danger"
                     title="Let the assistant click the final submit, just this once">Authorize the assistant to finish</button>
           </div>
@@ -238,6 +239,7 @@ function _renderDesktopAssist() {
   const card = _modalEl && _modalEl.querySelector('#applicant-remote-desktop');
   const btn = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-toggle');
   const note = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-note');
+  const desc = _modalEl && _modalEl.querySelector('#applicant-remote-desktop-desc');
   if (!card || !btn || !note) return;
   const st = _desktopState || {};
   const available = !!st.available;
@@ -245,12 +247,19 @@ function _renderDesktopAssist() {
   btn.disabled = !available || !_activeSession || !_activeSession.session_id;
   if (!available) {
     // Locked / grayed: honest "available in a future update" copy (no codenames).
+    // #116: while dormant, collapse to a single disabled row (hide the
+    // descriptive paragraph) so this card doesn't push the irreversible
+    // "Finish the application" action further below the fold.
+    if (desc) desc.style.display = 'none';
+    if (card) { card.style.paddingTop = '8px'; card.style.paddingBottom = '8px'; }
     btn.textContent = 'Turn on';
     btn.classList.remove('cal-btn-primary');
     note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
     note.style.display = '';
     return;
   }
+  if (desc) desc.style.display = '';
+  if (card) { card.style.paddingTop = ''; card.style.paddingBottom = ''; }
   btn.textContent = enabled ? 'Turn off' : 'Turn on';
   btn.classList.toggle('cal-btn-primary', !enabled);
   note.textContent = enabled

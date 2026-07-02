@@ -31,16 +31,25 @@ function _ensureModalEl() {
   if (_modalEl) return _modalEl;
   const el = document.createElement('div');
   el.id = 'applicant-mind-modal';
+  // Item #48 (a11y-driven visual fix): `initModalA11y` (called from openApplicantMind)
+  // moves focus to the FIRST focusable node inside this element. Without a tabindex
+  // here, that node was the Close button (the first <button> in the markup, since the
+  // body content loads async) — so Close silently grabbed initial focus and picked up
+  // the shared system-blue focus-visible ring on every open, reading as the one
+  // primary CTA even though it's a dismiss. Giving the dialog itself a tabindex makes
+  // IT the first focusable node instead — a neutral outline on the panel, not a
+  // colored ring on Close.
   el.style.cssText = 'position:fixed;inset:0;z-index:1200;display:none;align-items:center;'
     + 'justify-content:center;background:rgba(0,0,0,0.45);';
   el.innerHTML = `
     <div class="admin-card" role="dialog" aria-modal="true" aria-label="What the assistant remembers"
+         tabindex="0"
          style="width:min(720px,94vw);max-height:88vh;overflow:auto;padding:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <h3 style="margin:0;font-size:16px;">What the assistant remembers</h3>
         <button type="button" class="cal-btn applicant-mind-close" aria-label="Close" title="Close">Close</button>
       </div>
-      <div class="applicant-mind-body" style="font-size:13px;"></div>
+      <div class="applicant-mind-body" style="font-size:13px;max-width:66ch;margin:0 auto;"></div>
     </div>`;
   document.body.appendChild(el);
   el.addEventListener('click', (ev) => { if (ev.target === el) _close(); });
@@ -263,7 +272,10 @@ export async function openApplicantMind() {
         ${_renderCuration(curation)}
       </div>
       <div class="memory-section" style="margin-bottom:18px;">
-        <h4 style="margin:0 0 6px;">What the assistant remembers</h4>
+        <!-- Item #62: was "What the assistant remembers" again — the dialog's own
+             title already says that; this inner section needs its own, distinct
+             label rather than repeating the header. -->
+        <h4 style="margin:0 0 6px;">Memory</h4>
         ${_renderMemory(snap)}
       </div>
       <div class="memory-section">

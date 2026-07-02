@@ -1331,6 +1331,10 @@ function initializeEventListeners() {
               e.title = e.dataset.applicantLockTitle;
               delete e.dataset.applicantLockTitle;
             }
+            // Design-audit #43: drop the lock glyph badge once the section
+            // unlocks — it was only ever a promise that setup would open this.
+            const lockBadge = e.querySelector('.applicant-lock-badge');
+            if (lockBadge) lockBadge.remove();
             // A control can flip active after having been locked on an earlier
             // tick (e.g. memory/mind share nav_ids — one section activates while
             // the other stays gated). If we leave the capture-phase guard in
@@ -1347,17 +1351,42 @@ function initializeEventListeners() {
               e.dataset.applicantLockTitle = e.title || '';
             }
             e.title = reason;
+            // Design-audit #43: a truly unlockable item (finish setup and it
+            // opens) previously looked identical to a present-but-disabled one
+            // (nothing you can do unlocks it) — same dimmed chrome, same generic
+            // toast. Give the unlockable case a small lock glyph so it reads as
+            // "finish setup to open this" rather than permanently dead chrome.
+            // Icon-only rail buttons get a corner badge (mirrors the existing
+            // .rail-notes-badge corner-pill pattern); text list-items get an
+            // inline glyph next to the label.
+            if (!section.present_but_disabled && !e.querySelector('.applicant-lock-badge')) {
+              const badge = document.createElement('span');
+              badge.className = 'applicant-lock-badge';
+              badge.setAttribute('aria-hidden', 'true');
+              badge.textContent = '🔒';
+              badge.style.cssText = e.classList.contains('icon-rail-btn')
+                ? 'position:absolute;bottom:-1px;right:-1px;font-size:9px;line-height:1;opacity:0.85;pointer-events:none;'
+                : 'margin-left:4px;font-size:10px;opacity:0.7;vertical-align:middle;pointer-events:none;';
+              e.appendChild(badge);
+            }
             // Capture-phase guard: stop the click before the element's own
             // launcher handler (registered in bubble phase) can run. CSS
             // pointer-events:none already blocks mouse clicks; this also covers
             // keyboard activation and any programmatic dispatch. Surface honest
             // feedback (a toast) instead of swallowing the click silently — a
-            // locked control that does nothing reads as broken.
+            // locked control that does nothing reads as broken. A genuinely
+            // unlockable item also routes the click to the setup wizard
+            // (design-audit #43); a present-but-disabled one has nothing to
+            // route to, so it only explains why.
             if (!e._applicantGuard) {
+              const disabledInBuild = !!section.present_but_disabled;
               e._applicantGuard = (ev) => {
                 ev.stopPropagation();
                 ev.preventDefault();
-                try { uiModule.showToast('Finish setup to unlock this'); } catch (_) {}
+                try { uiModule.showToast(reason); } catch (_) {}
+                if (!disabledInBuild) {
+                  try { if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup(); } catch (_) {}
+                }
               };
               e.addEventListener('click', e._applicantGuard, true);
             }

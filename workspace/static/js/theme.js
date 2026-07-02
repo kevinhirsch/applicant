@@ -6,13 +6,28 @@ import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
-import { mountMeshGradient } from './login_bg.js';
+import { mountMeshGradient, prefersReducedMotion } from './login_bg.js';
 
 // The fixed full-bleed wallpaper layer (z-index:-1) the glass chrome lenses and
-// appkitGlass/adaptiveGlass sample (they look up #__wp). The glass tiers paint the
-// aurora mesh-gradient here so the colorless glass has something rich to refract —
-// which is what actually sells the liquid-glass look. Tier 'off' removes it.
+// appkitGlass/adaptiveGlass sample (they look up #__wp). The glass tiers paint a
+// mesh-gradient here so the colorless glass has something rich to refract — which
+// is what actually sells the liquid-glass look. Tier 'off' removes it.
 const WALLPAPER_ID = '__wp';
+// Must match login_bg.js's own GRADIENT_PRESETS — the in-app wallpaper reuses the
+// exact same mesh renderer (mountMeshGradient) and preset catalog the login screen
+// exposes, so the picker below (Settings) isn't limited to a hard-pinned 'aurora'.
+export const MESH_PRESETS = ['sunset', 'aurora', 'ocean', 'gold', 'lavender'];
+const DEFAULT_MESH_PRESET = 'aurora';
+// Drift-cycle seconds / blob intensity — mountMeshGradient/login_bg.js clamp these to
+// [8,60] and [0.4,1.4] respectively; the login screen exposes both as admin-configured
+// cosmetics but the in-app wallpaper had them hard-pinned (34s / 0.5). Match the same
+// two knobs here so a user who wants a calmer (near-static, OLED/low-power/distraction-
+// sensitive) or a punchier mesh isn't stuck with the one baked-in value.
+const DEFAULT_MESH_SPEED = 34;
+const DEFAULT_MESH_INTENSITY = 0.5;
+let _glassMeshPreset = DEFAULT_MESH_PRESET;
+let _glassMeshSpeed = DEFAULT_MESH_SPEED;
+let _glassMeshIntensity = DEFAULT_MESH_INTENSITY;
 function ensureGlassWallpaper(on) {
   let wp = document.getElementById(WALLPAPER_ID);
   if (!on) {
@@ -30,10 +45,27 @@ function ensureGlassWallpaper(on) {
   wp.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;';
   wp.classList.add('glass-mesh-wp');
   let meshEl = wp.querySelector('.login-bg-gradient');
+  // Remount if there's no mesh yet, OR the mounted mesh is a stale preset (the
+  // user picked a different one in Settings after the wallpaper was first painted).
+  if (meshEl && meshEl.getAttribute('data-lbg-preset') !== _glassMeshPreset) {
+    meshEl.remove();
+    meshEl = null;
+  }
   if (!meshEl) {
     // intensity 0.5 (the upstream glass default) keeps the mesh a contained glow,
-    // not a full-frame wash.
-    meshEl = mountMeshGradient(wp, { preset: 'aurora', animate: true, speed: 34, intensity: 0.5 });
+    // not a full-frame wash. mountMeshGradient's own contract (login_bg.js) is that
+    // the CALL SITE must respect prefers-reduced-motion before requesting `animate`
+    // (it does not check the media query itself) — this used to always pass `true`,
+    // relying entirely on meshGradient.css's belt-and-braces !important override.
+    // Ask correctly at the source too (#14) so the drift/ray-sweep is never even
+    // started, not just visually frozen after the fact.
+    meshEl = mountMeshGradient(wp, { preset: _glassMeshPreset, animate: !prefersReducedMotion(), speed: _glassMeshSpeed, intensity: _glassMeshIntensity });
+  } else {
+    // Preset unchanged but speed/intensity may have — mountMeshGradient sets these as
+    // plain CSS custom properties on the element, so update them live in place rather
+    // than tearing the mesh down and losing its current animation phase.
+    meshEl.style.setProperty('--lbg-speed', _glassMeshSpeed + 's');
+    meshEl.style.setProperty('--lbg-intensity', String(_glassMeshIntensity));
   }
   // Mirror the preset's OWN base onto #__wp (aurora's base is a deep teal ~#102a3a)
   // so the glass sampler reads a dark base, not an arbitrary flat fill.
@@ -42,6 +74,45 @@ function ensureGlassWallpaper(on) {
     if (base) wp.style.backgroundColor = base;
   } catch (_) { /* sampler falls back to the mesh child */ }
   document.body.classList.add('has-wallpaper');
+  // #9 — re-run the appkitGlass adaptive-ink sampler whenever the wallpaper's ACTUAL
+  // painted content changes (first mount OR a later preset swap), not just on the
+  // generic resize/scroll cadence. appkitGlass.js's own MutationObserver already
+  // watches document.body's `class` attribute (no new event needed — the "one
+  // dispatcher" rule), so encoding the active preset into a body class is enough to
+  // trigger a resample; a same-value class toggle would be a no-op mutation, so only
+  // swap the class when the preset actually differs from what's already encoded.
+  const meshClass = 'mesh-preset-' + _glassMeshPreset;
+  if (!document.body.classList.contains(meshClass)) {
+    // Snapshot before removing — classList is a live collection.
+    Array.from(document.body.classList).forEach((c) => {
+      if (c.indexOf('mesh-preset-') === 0) document.body.classList.remove(c);
+    });
+    document.body.classList.add(meshClass);
+  }
+}
+
+/** Set the in-app glass wallpaper's mesh preset (one of MESH_PRESETS) and
+ *  repaint immediately if the wallpaper is currently on. Settings-only; the
+ *  login screen's own preset is a separate, admin-configured cosmetic
+ *  (GET /api/auth/login-background) and is untouched by this. */
+export function applyGlassMeshPreset(preset) {
+  _glassMeshPreset = MESH_PRESETS.includes(preset) ? preset : DEFAULT_MESH_PRESET;
+  if (document.body.classList.contains('has-wallpaper')) ensureGlassWallpaper(true);
+}
+
+/** Set the in-app wallpaper's drift SPEED (seconds/cycle, 8-60 — lower is faster/more
+ *  restless) and blob INTENSITY (0.4-1.4). Either arg may be omitted to leave it
+ *  untouched. Repaints immediately if the wallpaper is on — a calmer, near-static mesh
+ *  is a legitimate OLED/low-power/distraction-sensitive preference short of the blanket
+ *  prefers-reduced-motion freeze. */
+export function applyGlassMeshTuning(speed, intensity) {
+  if (speed !== undefined && speed !== null && !isNaN(speed)) {
+    _glassMeshSpeed = Math.max(8, Math.min(60, Number(speed)));
+  }
+  if (intensity !== undefined && intensity !== null && !isNaN(intensity)) {
+    _glassMeshIntensity = Math.max(0.4, Math.min(1.4, Number(intensity)));
+  }
+  if (document.body.classList.contains('has-wallpaper')) ensureGlassWallpaper(true);
 }
 
 export const THEMES = {
@@ -455,44 +526,51 @@ export function applyBgEffectSize(v) {
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
 }
 
-/** Toggle the global "frosted glass" look — applies a translucent + blurred
- *  treatment to every panel, sidebar, modal, dropdown, and popover via CSS
- *  rules scoped to `body.theme-frosted`. */
+/** Legacy "Frosted" checkbox (Settings > Font & Layout). ONE gate now owns the
+ *  `theme-frosted`/`glass-full` body classes — `applyGlassTier` below — so this
+ *  never touches classList directly; it re-derives the effective tier from the
+ *  checkbox request and the *current* tier and routes through applyGlassTier.
+ *  That closes the split-gate bug where this toggle could clear `theme-frosted`
+ *  (the CSS frost material, style.css `body.theme-frosted`) while `glass-full`
+ *  (the appkitGlass.js SVG refraction, gated on `glass-full` alone) stayed on —
+ *  refraction rendered with no frost fill underneath it. 'full' set via the
+ *  Glass tier picker always wins; unchecking Frosted only steps 'full'/'frosted'
+ *  down to 'off' when Full Glass isn't independently selected. */
 export function applyFrostedGlass(on) {
-  document.body.classList.toggle('theme-frosted', !!on);
+  const isFull = document.body.classList.contains('glass-full');
+  applyGlassTier(isFull ? 'full' : (on ? 'frosted' : 'off'));
 }
 
-// Glass house-theme tiers, mapped to the EXACT body classes kit-themes.css
-// targets:
-//   off     → no house classes (the solid default panels)
-//   frosted → body.house-theme  (the FROST @supports block:
-//             `body.house-theme .ow-window` / `.modal-content` / `#sidebar` …)
-//   full    → body.house-theme + body.glass-full, the Full-Glass tier
+// Glass tiers, mapped to the EXACT body classes style.css targets:
+//   off     → no glass classes (the solid default panels)
+//   frosted → body.theme-frosted  (the CSS blur+saturate+rim frost material —
+//             `body.theme-frosted .ow-window` / `.modal-content` / `#sidebar` …)
+//   full    → body.theme-frosted + body.glass-full, the Full-Glass tier
 //             appkitGlass.js consumes for the Chromium SVG refraction on top of
 //             the CSS glass material.
 export const GLASS_TIERS = ['off', 'frosted', 'full'];
 // Frosted is the out-of-the-box default: glass everywhere via the CSS
-// blur+saturate+rim material (body.house-theme, kit-themes.css @supports block),
-// WITHOUT the glass-full-gated SVG refraction/lensing in appkitGlass.js — so the
-// whole front-door reads as Liquid Glass with no per-frame refraction perf cost.
-// 'full' (adds the Chromium SVG refraction) and 'off' (flat panels) remain opt-in
-// via Settings. @supports gives a solid-panel fallback where backdrop-filter is
-// unavailable, and prefers-reduced-motion strips motion but keeps the frost.
+// blur+saturate+rim material (body.theme-frosted), WITHOUT the glass-full-gated
+// SVG refraction/lensing in appkitGlass.js — so the whole front-door reads as
+// Liquid Glass with no per-frame refraction perf cost. 'full' (adds the Chromium
+// SVG refraction) and 'off' (flat panels) remain opt-in via Settings. @supports
+// gives a solid-panel fallback where backdrop-filter is unavailable, and
+// prefers-reduced-motion strips motion but keeps the frost.
 const DEFAULT_GLASS_TIER = 'full';
 
-/** Apply a glass house-theme tier ('off' | 'frosted' | 'full'). Drives the
- *  `house-theme` and `glass-full` body classes that the shipped kit-themes.css
- *  frost rules (and the appkitGlass.js refraction) gate on. Deliberately leaves
- *  `theme-frosted` alone — that class is owned by the legacy Frosted toggle, an
- *  independent control, so the two never fight over the same class. */
+/** Apply a glass tier ('off' | 'frosted' | 'full'). The SOLE writer of the
+ *  `theme-frosted`/`glass-full` body classes that the style.css frost material
+ *  and the appkitGlass.js SVG refraction gate on — every other control
+ *  (including the legacy Frosted checkbox, `applyFrostedGlass` above) routes
+ *  through this function rather than touching classList itself, so the two
+ *  classes can never disagree (one tier gate, not two independent ones). */
 export function applyGlassTier(tier) {
   const t = GLASS_TIERS.includes(tier) ? tier : DEFAULT_GLASS_TIER;
-  document.body.classList.toggle('house-theme', t !== 'off');
-  // Match the upstream wiring: frosted AND full both set `theme-frosted` (the
-  // class the light-glass treatment — light frosted chrome + dark ink — is scoped
-  // to); `glass-full` additionally layers the SVG refraction. Without theme-frosted
-  // the chrome stayed dark; this is what makes the frosted default read as the
-  // light Apple glass over the content, not a dark panel.
+  // frosted AND full both set `theme-frosted` (the class the light-glass
+  // treatment — light frosted chrome + dark ink — is scoped to); `glass-full`
+  // additionally layers the SVG refraction. Without theme-frosted the chrome
+  // stayed dark; this is what makes the frosted default read as the light
+  // Apple glass over the content, not a dark panel.
   document.body.classList.toggle('theme-frosted', t === 'frosted' || t === 'full');
   document.body.classList.toggle('glass-full', t === 'full');
   // Paint (or remove) the aurora mesh wallpaper the glass lenses.
@@ -543,6 +621,9 @@ export function save(name, colors, opts) {
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
     if (opts.frosted) obj.frosted = true;
     if (opts.glassTier && opts.glassTier !== 'off') obj.glassTier = opts.glassTier;
+    if (opts.meshPreset && opts.meshPreset !== DEFAULT_MESH_PRESET) obj.meshPreset = opts.meshPreset;
+    if (opts.meshSpeed !== undefined && opts.meshSpeed !== DEFAULT_MESH_SPEED) obj.meshSpeed = opts.meshSpeed;
+    if (opts.meshIntensity !== undefined && opts.meshIntensity !== DEFAULT_MESH_INTENSITY) obj.meshIntensity = opts.meshIntensity;
   }
   Storage.setJSON(LS_KEY, obj);
   _syncToServer(obj);
@@ -759,6 +840,13 @@ export function initThemeUI() {
     if (fr) opts.frosted = !!fr.checked;
     const gt = document.getElementById('theme-glass-select');
     if (gt) opts.glassTier = gt.value;
+    const mp = document.getElementById('theme-mesh-preset-select');
+    if (mp) opts.meshPreset = mp.value;
+    // Speed/intensity are read from the live module state (already-clamped, already
+    // applied by applyGlassMeshTuning) rather than re-deriving from the slider's
+    // inverted 0-100 "energy" position — one conversion, not two.
+    opts.meshSpeed = _glassMeshSpeed;
+    opts.meshIntensity = _glassMeshIntensity;
     return opts;
   }
   function _saveFull(name, colors) { save(name, colors, _getOpts()); }
@@ -787,19 +875,26 @@ export function initThemeUI() {
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
-        // The glass house-theme tier is a global treatment independent of the
+        // The glass tier is a global treatment independent of the
         // color palette — carry the active selection across a color swap
         // (custom themes may pin one; built-ins keep whatever's selected).
         const gtSel = document.getElementById('theme-glass-select');
         const gt = (ct && ct.glassTier && GLASS_TIERS.includes(ct.glassTier))
           ? ct.glassTier
           : (gtSel && GLASS_TIERS.includes(gtSel.value) ? gtSel.value : DEFAULT_GLASS_TIER);
+        // Mesh preset carries the same way glass tier does (a global treatment,
+        // not a color-palette property) unless a custom theme pins one.
+        const mpSel = document.getElementById('theme-mesh-preset-select');
+        const mp = (ct && ct.meshPreset && MESH_PRESETS.includes(ct.meshPreset))
+          ? ct.meshPreset
+          : (mpSel && MESH_PRESETS.includes(mpSel.value) ? mpSel.value : DEFAULT_MESH_PRESET);
         applyFontDensity(f, d);
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
         applyFrostedGlass(fr);
         applyGlassTier(gt);
+        applyGlassMeshPreset(mp);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
         const ds = document.getElementById('theme-density-select');
@@ -808,6 +903,7 @@ export function initThemeUI() {
         const eis = document.getElementById('theme-bg-intensity');
         const szs = document.getElementById('theme-bg-size');
         const frs = document.getElementById('theme-frosted-toggle');
+        const mps = document.getElementById('theme-mesh-preset-select');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
         if (ps) ps.value = p;
@@ -815,6 +911,7 @@ export function initThemeUI() {
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
         if (frs) frs.checked = fr;
+        if (mps) mps.value = mp;
         save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr });
       });
     });
@@ -1019,16 +1116,24 @@ export function initThemeUI() {
       applyBgPattern('none');
       applyFrostedGlass(false);
       applyGlassTier(DEFAULT_GLASS_TIER);
+      applyGlassMeshPreset(DEFAULT_MESH_PRESET);
+      applyGlassMeshTuning(DEFAULT_MESH_SPEED, DEFAULT_MESH_INTENSITY);
       const fs = document.getElementById('theme-font-select');
       const ds = document.getElementById('theme-density-select');
       const ps = document.getElementById('theme-bg-pattern-select');
       const gt = document.getElementById('theme-glass-select');
       const fr = document.getElementById('theme-frosted-toggle');
+      const mp = document.getElementById('theme-mesh-preset-select');
+      const mss = document.getElementById('theme-mesh-speed');
+      const mis = document.getElementById('theme-mesh-intensity');
       if (fs) fs.value = DEFAULT_FONT;
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
       if (gt) gt.value = DEFAULT_GLASS_TIER;
       if (fr) fr.checked = false;
+      if (mp) mp.value = DEFAULT_MESH_PRESET;
+      if (mss) mss.value = String(Math.round(100 - ((DEFAULT_MESH_SPEED - 8) / (60 - 8)) * 100));
+      if (mis) mis.value = String(Math.round(((DEFAULT_MESH_INTENSITY - 0.4) / (1.4 - 0.4)) * 100));
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
       const darkSwatch = grid.querySelector('[data-theme="dark"]');
       if (darkSwatch) darkSwatch.classList.add('active');
@@ -1189,10 +1294,17 @@ export function initThemeUI() {
   const _initGlassTier = (saved && GLASS_TIERS.includes(saved.glassTier))
     ? saved.glassTier
     : DEFAULT_GLASS_TIER;
+  const _initMeshPreset = (saved && MESH_PRESETS.includes(saved.meshPreset))
+    ? saved.meshPreset
+    : DEFAULT_MESH_PRESET;
+  const _initMeshSpeed = (saved && saved.meshSpeed !== undefined) ? saved.meshSpeed : DEFAULT_MESH_SPEED;
+  const _initMeshIntensity = (saved && saved.meshIntensity !== undefined) ? saved.meshIntensity : DEFAULT_MESH_INTENSITY;
   applyFontDensity(_initFont, _initDensity);
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
+  applyGlassMeshTuning(_initMeshSpeed, _initMeshIntensity);
+  applyGlassMeshPreset(_initMeshPreset);
   applyFrostedGlass(_initFrosted);
   applyGlassTier(_initGlassTier);
   applyBgPattern(_initPattern);
@@ -1280,8 +1392,8 @@ export function initThemeUI() {
     });
   }
 
-  // Glass house-theme tier picker — exposes the shipped kit-themes.css house
-  // themes (body.house-theme / body.glass-full). Additive; bound once.
+  // Glass tier picker — the one gate (body.theme-frosted / body.glass-full,
+  // applyGlassTier is the sole writer). Additive; bound once.
   const glassSelect = document.getElementById('theme-glass-select');
   if (glassSelect) {
     glassSelect.value = _initGlassTier;
@@ -1292,6 +1404,46 @@ export function initThemeUI() {
         const s = getSaved(); if (s) _saveFull(s.name, s.colors);
       });
     }
+  }
+
+  // Mesh wallpaper preset picker — was previously hard-pinned to 'aurora' for
+  // the in-app glass wallpaper even though the login screen exposes all 5
+  // presets; surface the same picker here and read it in ensureGlassWallpaper
+  // via applyGlassMeshPreset.
+  const meshSelect = document.getElementById('theme-mesh-preset-select');
+  if (meshSelect) {
+    meshSelect.value = _initMeshPreset;
+    if (meshSelect.dataset.themeBound !== '1') {
+      meshSelect.dataset.themeBound = '1';
+      meshSelect.addEventListener('change', () => {
+        applyGlassMeshPreset(meshSelect.value);
+        const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+      });
+    }
+  }
+
+  // Mesh drift speed / intensity — same two knobs the login screen's admin config
+  // exposes (login_bg.js), now user-adjustable for the in-app wallpaper too (#15).
+  // Speed is seconds/cycle (lower = faster); the slider reads inverted 0-100 "energy"
+  // for a more intuitive control, mapped to the 8-60s range mountMeshGradient clamps to.
+  const meshSpeedSlider = document.getElementById('theme-mesh-speed');
+  if (meshSpeedSlider) {
+    meshSpeedSlider.value = String(Math.round(100 - ((_initMeshSpeed - 8) / (60 - 8)) * 100));
+    meshSpeedSlider.addEventListener('input', () => {
+      const energy = parseFloat(meshSpeedSlider.value) / 100;
+      const seconds = 60 - energy * (60 - 8);
+      applyGlassMeshTuning(seconds, undefined);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+  const meshIntensitySlider = document.getElementById('theme-mesh-intensity');
+  if (meshIntensitySlider) {
+    meshIntensitySlider.value = String(Math.round(((_initMeshIntensity - 0.4) / (1.4 - 0.4)) * 100));
+    meshIntensitySlider.addEventListener('input', () => {
+      const pct = parseFloat(meshIntensitySlider.value) / 100;
+      applyGlassMeshTuning(undefined, 0.4 + pct * (1.4 - 0.4));
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
   }
 
   // --- Color Harmony Generator (inside Advanced section) ---

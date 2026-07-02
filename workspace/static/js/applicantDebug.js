@@ -18,9 +18,12 @@
 //   • Variants   — the resume-variant library (lineage / score / approval).
 //   • Run        — run mode + daily target controls and the latest plain-language
 //                  "what the agent is doing right now" intent (writes config).
-//   • Sources    — turn each job-discovery source on/off + see its yield.
-//   • Tools      — enable/disable the engine's tools (engine-wide; writes).
-//   • Update     — a one-click Update button with confirm + status.
+//   • Config     — Sources (turn each job-discovery source on/off + see its
+//                  yield), Tools (enable/disable the engine's tools, engine-
+//                  wide; writes) and Update (a one-click Update button with
+//                  confirm + status) as sub-sections of one pane (item #86 —
+//                  these were 3 separate top-level tabs, pushing the tab strip
+//                  to 8; grouped so the strip stays within the 5-7 ceiling).
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports it's configured
@@ -47,16 +50,19 @@ let _busySubmit = false; // re-entry guard for mark-submitted
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 
+// #86: collapsed from 8 tabs (Activity/Insights/Logs/Variants/Run/Sources/
+// Tools/Update) to 6 — Sources/Tools/Update now render as sub-sections of one
+// Config pane (see _renderConfig) instead of three separate top-level tabs.
 const TABS = [
   ['activity', 'Activity'],
   ['insights', 'Insights'],
   ['logs', 'Logs'],
   ['variants', 'Variants'],
   ['run', 'Run controls'],
-  ['sources', 'Sources'],
-  ['tools', 'Tools'],
-  ['update', 'Update'],
+  ['config', 'Config'],
 ];
+
+const CLOSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
@@ -73,17 +79,24 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           Activity
         </h4>
-        <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">✖</button>
+        <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">${CLOSE_SVG}</button>
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
           Job search
-          <select id="applicant-debug-campaign" class="settings-select" style="min-width:180px;"></select>
+          <select id="applicant-debug-campaign" class="ow-select" style="min-width:180px;"></select>
         </label>
-        <span id="applicant-debug-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
-        <button class="cal-btn" id="applicant-debug-download-log" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
-        <button class="cal-btn" id="applicant-debug-chat" title="Open the assistant beside this so you can ask about what the agent is doing" style="margin-left:auto;">Ask the assistant</button>
+        <div class="applicant-debug-overflow-wrap" style="margin-left:auto;position:relative;">
+          <button class="cal-btn" type="button" id="applicant-debug-overflow-btn" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px;"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+          </button>
+          <div class="applicant-debug-overflow-menu hidden" id="applicant-debug-overflow-menu" role="menu">
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-download-log" role="menuitem" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the assistant beside this so you can ask about what the agent is doing">Ask the assistant</button>
+          </div>
+        </div>
       </div>
+      <div id="applicant-debug-engine-banner" class="admin-toggle-sub" style="padding:0 14px;margin-top:4px;opacity:0.7;display:none;"></div>
       <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
         ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
       </div>
@@ -94,7 +107,20 @@ function _ensureModalEl() {
   document.body.appendChild(modal);
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
-  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') _close(); });
+  const overflowBtn = modal.querySelector('#applicant-debug-overflow-btn');
+  const overflowMenu = modal.querySelector('#applicant-debug-overflow-menu');
+  const closeOverflow = () => {
+    if (!overflowMenu) return;
+    overflowMenu.classList.add('hidden');
+    if (overflowBtn) overflowBtn.setAttribute('aria-expanded', 'false');
+  };
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    // Escape closes the overflow popover first (if open), the whole modal next —
+    // mirrors how a menu/modal stack normally unwinds one layer at a time.
+    if (overflowMenu && !overflowMenu.classList.contains('hidden')) { closeOverflow(); return; }
+    _close();
+  });
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
@@ -109,15 +135,44 @@ function _ensureModalEl() {
     _campaignId = e.target.value || null;
     _renderTab();
   });
+
+  // #87: the header used to pack picker + status text + two text buttons (4+
+  // groups). Now: leading = the job-search picker, trailing = ONE overflow
+  // control housing the two former actions; the engine-offline note moved to
+  // its own banner in the body instead of a header-row badge.
+  if (overflowBtn && overflowMenu) {
+    overflowBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = overflowMenu.classList.contains('hidden');
+      if (willOpen) {
+        // #101: gate "Ask the assistant" on the module actually being present
+        // each time the menu opens, instead of always showing it and no-oping
+        // to a toast on click.
+        const chatItem = overflowMenu.querySelector('#applicant-debug-chat');
+        if (chatItem) {
+          const hasChat = !!(window.applicantChatModule && typeof window.applicantChatModule.openApplicantChat === 'function');
+          chatItem.style.display = hasChat ? '' : 'none';
+        }
+      }
+      overflowMenu.classList.toggle('hidden', !willOpen);
+      overflowBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    document.addEventListener('click', (e) => {
+      if (!overflowMenu.classList.contains('hidden') && e.target !== overflowBtn && !overflowMenu.contains(e.target)) {
+        closeOverflow();
+      }
+    });
+  }
   // Download activity log (JSON) — one-click export of the full action trail.
   const downloadBtn = modal.querySelector('#applicant-debug-download-log');
-  if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadAuditLog());
+  if (downloadBtn) downloadBtn.addEventListener('click', () => { closeOverflow(); _downloadAuditLog(); });
 
   // Dual view: open the Job Assistant beside this window (both are scrim-less,
   // draggable tool windows, so they sit side by side) — watch the agent on one
   // side, ask it questions on the other.
   const chatBtn = modal.querySelector('#applicant-debug-chat');
   if (chatBtn) chatBtn.addEventListener('click', () => {
+    closeOverflow();
     try {
       if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
         window.applicantChatModule.openApplicantChat();
@@ -133,22 +188,27 @@ function _close() {
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = 'none';
+    const overflowMenu = _modalEl.querySelector('#applicant-debug-overflow-menu');
+    if (overflowMenu) overflowMenu.classList.add('hidden');
   }
 }
 
 function _body() { return _modalEl.querySelector('#applicant-debug-body'); }
 
-function _renderOffline(msg) {
-  _body().innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
+// `host` defaults to the whole tab body; the Config pane's sub-sections pass
+// their own sub-host so one section's offline/gated state doesn't blank out
+// its siblings (#86).
+function _renderOffline(msg, host) {
+  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.85;">${esc(msg || 'The Applicant engine is not reachable right now. This view will fill in once it is connected.')}</div>`;
 }
 
 // A GATED response (engine is UP, but setup is incomplete / a precondition isn't
 // met) is NOT offline. Show the engine's own plain-language setup message so the
 // owner knows what to finish, instead of the misleading "not reachable" copy.
-function _renderGated(data) {
+function _renderGated(data, host) {
   const msg = (data && data.message)
     || 'Finish onboarding and configure your model and notification channels to enable automated work.';
-  _body().innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
+  (host || _body()).innerHTML = `<div class="admin-card" style="opacity:0.9;">${esc(msg)}</div>`;
 }
 
 // True only for a genuine transport-offline soft-degrade (engine unreachable),
@@ -222,9 +282,7 @@ async function _renderTab() {
     logs: _renderLogs,
     variants: _renderVariants,
     run: _renderRun,
-    sources: _renderSources,
-    tools: _renderTools,
-    update: _renderUpdate,
+    config: _renderConfig,
   };
   const token = ++_renderToken;
   _body().innerHTML = loadingHTML('Loading…');
@@ -261,6 +319,17 @@ function _needCampaign() {
   return true;
 }
 
+// Host-scoped variant of _needCampaign — for the Config pane's Sources
+// sub-section, which needs a campaign while its Tools/Update siblings don't, so
+// a missing campaign can't blank out the whole pane.
+function _needCampaignIn(host) {
+  if (!_campaignId) {
+    host.innerHTML = _empty('Pick a job search above to see its sources.');
+    return false;
+  }
+  return true;
+}
+
 // ── Audit-log export ─────────────────────────────────────────────────────────
 
 async function _downloadAuditLog() {
@@ -290,6 +359,11 @@ async function _downloadAuditLog() {
   }
 }
 
+// #93/#94/#100: was one bordered `.admin-card` tile per application (glass-on-
+// glass stacking) with two equally-weighted buttons. Now one flat list with
+// hairline row dividers; "Details" (navigation) is the primary action, "I
+// submitted this" (an infrequent, secondary action) is demoted to a plain
+// text-style affordance.
 async function _renderActivity(token) {
   if (!_needCampaign()) return;
   const data = await _fetchJSON(`${ADMIN}/history/${encodeURIComponent(_campaignId)}`);
@@ -302,20 +376,20 @@ async function _renderActivity(token) {
     const id = a.application_id || a.id || '';
     const title = a.role_name || a.job_title || id || 'Application';
     const shots = a.screenshot_count != null ? a.screenshot_count : (a.screenshots || []).length;
-    return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+    return `<div class="applicant-debug-list-row">
       <div style="min-width:0;">
         <div style="font-weight:600;">${esc(title)}</div>
         <div class="admin-toggle-sub" style="margin:2px 0 0;opacity:0.7;">
           ${esc(a.status || 'unknown')} · ${esc(a.work_mode || '—')} · ${esc(shots)} screenshots${(a.outcomes || []).length ? ` · ${esc((a.outcomes || []).map((o) => o.type).join(', '))}` : ''}
         </div>
       </div>
-      <div style="display:flex;gap:6px;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+        <button type="button" class="applicant-debug-row-secondary applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
         <button class="admin-btn-sm applicant-debug-detail" data-app="${esc(id)}">Details</button>
-        <button class="admin-btn-sm applicant-debug-marksub" data-app="${esc(id)}" title="Record that you completed/submitted this yourself so it teaches the system">I submitted this</button>
       </div>
     </div>`;
   }).join('');
-  _body().innerHTML = `<div id="applicant-debug-detail-host"></div>${rows}`;
+  _body().innerHTML = `<div id="applicant-debug-detail-host"></div><div class="applicant-debug-list">${rows}</div>`;
   _body().querySelectorAll('.applicant-debug-detail').forEach((b) => {
     b.addEventListener('click', () => _showAppDetail(b.dataset.app));
   });
@@ -388,6 +462,14 @@ async function _markSubmitted(appId, btn) {
   }
 }
 
+// #102: an aligned key/value mini-grid instead of dot-joined prose ("N matched
+// · N approved…") so the numbers compare down a column. `pairs` is
+// [[label, value], …].
+function _statGrid(pairs) {
+  return `<div class="applicant-debug-statgrid">${pairs.map(([k, v]) => `
+    <span class="applicant-debug-statgrid-k">${esc(k)}</span><span class="applicant-debug-statgrid-v">${esc(v)}</span>`).join('')}</div>`;
+}
+
 // Insights — a read-only window onto what the system has learned for this job
 // search: overall conversion, each source's funnel ranked by how well it
 // converts, the roles that actually convert, and the exploration knob. Plain
@@ -403,10 +485,12 @@ async function _renderInsights() {
 
   const summaryCard = `<div class="admin-card">
     <div style="font-weight:600;">Conversion so far</div>
-    <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
-      ${esc(num(s.total_matched))} matched · ${esc(num(s.total_approved))} approved · ${esc(num(s.total_submitted))} submitted
-      across ${esc(num(s.sources_seen))} source${num(s.sources_seen) === 1 ? '' : 's'}.
-    </div>
+    ${_statGrid([
+      ['Matched', num(s.total_matched)],
+      ['Approved', num(s.total_approved)],
+      ['Submitted', num(s.total_submitted)],
+      ['Sources seen', num(s.sources_seen)],
+    ])}
     <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">This is what the system uses to decide which sources and roles to favour next.</span>
   </div>`;
 
@@ -424,7 +508,7 @@ async function _renderInsights() {
         <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
           ${esc(Number(data.exploration_budget))} — share of effort spent trying new or under-used sources instead of the proven ones.
         </div>
-        <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this on the Sources tab.</span>
+        <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this under Config → Sources.</span>
       </div>`
     : '';
 
@@ -434,12 +518,14 @@ async function _renderInsights() {
   } else {
     const rows = sources.map((src) => {
       const rate = src.conversion_rate != null ? `${esc(src.conversion_rate)}% convert` : 'no rate yet';
-      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      return `<div class="admin-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
         <div style="min-width:0;">
           <div style="font-weight:600;">${esc(src.source)}</div>
-          <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">
-            ${esc(num(src.matched))} matched · ${esc(num(src.approved))} approved · ${esc(num(src.submitted))} submitted
-          </div>
+          ${_statGrid([
+            ['Matched', num(src.matched)],
+            ['Approved', num(src.approved)],
+            ['Submitted', num(src.submitted)],
+          ])}
         </div>
         <div class="admin-toggle-sub" style="opacity:0.75;flex-shrink:0;">${esc(rate)}</div>
       </div>`;
@@ -450,19 +536,58 @@ async function _renderInsights() {
   _body().innerHTML = summaryCard + rolesCard + budgetCard + sourcesCard;
 }
 
+// Best-effort split of one raw log entry into { time, level, message } so it can
+// render as a structured row. Falls back to putting the whole thing in
+// `message` when the shape/format isn't recognized — never throws or drops data.
+function _parseLogEntry(e) {
+  if (e && typeof e === 'object') {
+    const time = e.timestamp || e.time || e.ts || e.created_at || '';
+    const level = e.level || e.lvl || e.severity || '';
+    const message = e.message || e.msg || e.text || JSON.stringify(e);
+    return { time: String(time), level: String(level).toUpperCase(), message: String(message) };
+  }
+  const line = String(e == null ? '' : e);
+  const m = line.match(/^([\d:\-.TZ+]{8,32})\s*[[(]?(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL)[\])]?\s*[:\-]?\s*(.*)$/i);
+  if (m) return { time: m[1].trim(), level: m[2].toUpperCase(), message: (m[3] || '').trim() || line };
+  return { time: '', level: '', message: line };
+}
+
+function _logLevelColor(level) {
+  const l = String(level || '').toLowerCase();
+  if (l === 'error' || l === 'critical') return 'var(--color-error, #ff4444)';
+  if (l === 'warn' || l === 'warning') return 'var(--color-warning, #f0ad4e)';
+  return 'var(--color-muted, #888)';
+}
+
+// #95: logs used to render as one raw `<pre>` blob. Structured rows (time ·
+// level chip · plain message) instead — the raw text is still one click away
+// via Download, for anyone who wants to grep/attach the whole thing.
 async function _renderLogs() {
   const data = await _fetchJSON(`${ADMIN}/logs?limit=100`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const entries = data.entries || [];
   if (!entries.length) { _body().innerHTML = _empty('No recent activity logs.'); return; }
   const raw = entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n');
+  const rows = entries.map((e) => {
+    const { time, level, message } = _parseLogEntry(e);
+    const when = time ? (_relWhen(time) || time) : '';
+    const color = _logLevelColor(level);
+    const chip = level
+      ? `<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;color:${color};background:color-mix(in srgb, ${color} 15%, transparent);">${esc(level)}</span>`
+      : '';
+    return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
+      <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;min-width:60px;">${esc(when)}</span>
+      ${chip}
+      <span style="flex:1;min-width:0;word-break:break-word;">${esc(message)}</span>
+    </div>`;
+  }).join('');
   _body().innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-      <button class="cal-btn" id="applicant-logs-copy" title="Copy these logs to the clipboard">Copy logs</button>
+      <button class="cal-btn" id="applicant-logs-download" title="Download the raw logs as a text file">Download logs</button>
     </div>
-    <pre style="white-space:pre-wrap;font-size:12px;line-height:1.45;margin:0;">${esc(raw)}</pre>`;
-  const copyBtn = _body().querySelector('#applicant-logs-copy');
-  if (copyBtn) copyBtn.addEventListener('click', () => _copy(raw));
+    <div class="applicant-debug-list">${rows}</div>`;
+  const downloadBtn = _body().querySelector('#applicant-logs-download');
+  if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadText(raw, `applicant-logs-${_campaignId || 'engine'}.txt`));
 }
 
 // Copy a value to the clipboard, reusing the workspace copy helper (which shows
@@ -472,6 +597,24 @@ function _copy(text) {
     if (uiModule && typeof uiModule.copyToClipboard === 'function') { uiModule.copyToClipboard(text); return; }
   } catch { /* fall through */ }
   try { navigator.clipboard.writeText(text); _toast('Copied.'); } catch { _toast('Could not copy.'); }
+}
+
+// Download a plain-text blob — used by Logs (#95) to keep the raw text one
+// click away even though the visible view is now structured rows.
+function _downloadText(text, filename) {
+  try {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    _toast('Could not download the logs right now.');
+  }
 }
 
 async function _renderVariants() {
@@ -522,19 +665,20 @@ function _relWhen(iso) {
 
 // A coloured live-status chip (Running / Idle / Paused / Setup needed) for the
 // Run controls tab, built from the engine status payload (FR-AGENT-7/FR-OBS-2).
+// #88: the label itself carries no colour (neutral ink) — only the dot does,
+// and it's a plain system-token fill now, no raw hex and no perpetual pulse.
 function _statusChip(status) {
   const sched = status.scheduler || {};
   let label;
   let color;
-  let pulse = false;
   if (status.paused === true || status.active === false) {
-    label = 'Paused'; color = '#d29922';
+    label = 'Paused'; color = 'var(--color-warning, #f0ad4e)';
   } else if (sched.running === true) {
-    label = 'Working now'; color = '#3fb950'; pulse = true;
+    label = 'Working now'; color = 'var(--color-success, #4caf50)';
   } else {
-    label = 'Idle'; color = '#8b949e';
+    label = 'Idle'; color = 'var(--color-muted, #8b949e)';
   }
-  const dot = `<span aria-hidden="true" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;${pulse ? 'box-shadow:0 0 0 0 ' + color + ';animation:applicantPulse 1.4s infinite;' : ''}"></span>`;
+  const dot = `<span aria-hidden="true" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:7px;"></span>`;
   const bits = [];
   if (sched.last_tick) bits.push(`last run ${esc(_relWhen(sched.last_tick))}`);
   if (sched.next_tick && status.paused !== true) bits.push(`next ${esc(_relWhen(sched.next_tick))}`);
@@ -586,7 +730,7 @@ async function _renderRun() {
     <div class="admin-card">
       <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">How it runs
-        <select id="applicant-run-mode" class="settings-select" style="display:block;margin-top:4px;min-width:220px;">
+        <select id="applicant-run-mode" class="ow-select" style="display:block;margin-top:4px;min-width:220px;">
           ${RUN_MODES.map(([k, label]) => `<option value="${k}"${(curMode === k) ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
       </label>
@@ -658,11 +802,12 @@ async function _renderRun() {
   });
 }
 
-async function _renderSources() {
-  if (!_needCampaign()) return;
+async function _renderSources(host) {
+  host = host || _body();
+  if (!_needCampaignIn(host)) return;
   const data = await _fetchJSON(`${OPS}/discovery/${encodeURIComponent(_campaignId)}`);
-  if (_isGated(data)) { _renderGated(data); return; }
-  if (_isOffline(data)) { _renderOffline(); return; }
+  if (_isGated(data)) { _renderGated(data, host); return; }
+  if (_isOffline(data)) { _renderOffline(undefined, host); return; }
   const items = data.items || [];
   // Exploration budget (FR-LEARN-6): the explore/exploit knob. Shown above the
   // source list. Editable when the engine reports it; read-only note otherwise.
@@ -679,11 +824,11 @@ async function _renderSources() {
       </div>`
     : '';
   if (!items.length) {
-    _body().innerHTML = budgetCard + _empty('No job-discovery sources available for this job search.');
-    _wireExploreBudget();
+    host.innerHTML = budgetCard + _empty('No job-discovery sources available for this job search.');
+    _wireExploreBudget(host);
     return;
   }
-  _body().innerHTML = budgetCard + items.map((s) => {
+  host.innerHTML = budgetCard + items.map((s) => {
     const ys = s.yield_stats || {};
     const hasFunnel = ys.matches != null || ys.approvals != null || ys.submissions != null;
     const stat = hasFunnel
@@ -700,7 +845,7 @@ async function _renderSources() {
       </label>
     </div>`;
   }).join('');
-  _body().querySelectorAll('.applicant-source-toggle').forEach((cb) => {
+  host.querySelectorAll('.applicant-source-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
       try {
         await _put(`${OPS}/discovery/${encodeURIComponent(_campaignId)}/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
@@ -711,13 +856,14 @@ async function _renderSources() {
       }
     });
   });
-  _wireExploreBudget();
+  _wireExploreBudget(host);
 }
 
-function _wireExploreBudget() {
-  const input = _body().querySelector('#applicant-explore-budget');
-  const btn = _body().querySelector('#applicant-explore-save');
-  const msg = _body().querySelector('#applicant-explore-msg');
+function _wireExploreBudget(host) {
+  host = host || _body();
+  const input = host.querySelector('#applicant-explore-budget');
+  const btn = host.querySelector('#applicant-explore-save');
+  const msg = host.querySelector('#applicant-explore-msg');
   if (!input || !btn) return; // read-only / not exposed by the engine
   btn.addEventListener('click', async () => {
     const val = parseFloat(input.value);
@@ -739,14 +885,15 @@ function _wireExploreBudget() {
   });
 }
 
-async function _renderTools() {
+async function _renderTools(host) {
+  host = host || _body();
   // Engine-wide tool registry (not campaign-scoped): list every tool with an
   // on/off switch. Mirrors the Sources tab's switch rendering.
   const data = await _fetchJSON(`${ADMIN}/tools`);
-  if (data.engine_available === false) { _renderOffline(); return; }
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
   const tools = data.tools || [];
-  if (!tools.length) { _body().innerHTML = _empty('No tools reported by the engine.'); return; }
-  _body().innerHTML =
+  if (!tools.length) { host.innerHTML = _empty('No tools reported by the engine.'); return; }
+  host.innerHTML =
     `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Turn the assistant's tools on or off. Disabled tools are never used while it works.</div>` +
     tools.map((t) => {
       const key = t.key != null ? t.key : '';
@@ -762,7 +909,7 @@ async function _renderTools() {
       </label>
     </div>`;
     }).join('');
-  _body().querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
+  host.querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
       try {
         await _post(`${ADMIN}/tools/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
@@ -775,11 +922,12 @@ async function _renderTools() {
   });
 }
 
-async function _renderUpdate() {
+async function _renderUpdate(host) {
+  host = host || _body();
   let status = { engine_available: true };
   try { status = await _fetchJSON(`${OPS}/update`); } catch { status = { engine_available: false }; }
-  if (status.engine_available === false) { _renderOffline(); return; }
-  _body().innerHTML = `
+  if (status.engine_available === false) { _renderOffline(undefined, host); return; }
+  host.innerHTML = `
     <div class="admin-card">
       <div style="font-weight:600;">Update Applicant</div>
       <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
@@ -789,13 +937,13 @@ async function _renderUpdate() {
       <button class="cal-btn cal-btn-primary" id="applicant-update-go" style="margin-top:12px;">Check for &amp; install update</button>
       <div id="applicant-update-result" class="admin-toggle-sub" style="margin-top:10px;"></div>
     </div>`;
-  const updateBtn = _body().querySelector('#applicant-update-go');
+  const updateBtn = host.querySelector('#applicant-update-go');
   if (updateBtn) updateBtn.addEventListener('click', async () => {
     const ok = await _confirm(
       'Update now? Your data is backed up first, then the latest version is applied and the app restarts.',
       { confirmText: 'Update now', cancelText: 'Cancel' });
     if (!ok) return;
-    const out = _body().querySelector('#applicant-update-result');
+    const out = host.querySelector('#applicant-update-result');
     updateBtn.disabled = true;
     if (out) out.textContent = 'Working…';
     try {
@@ -809,7 +957,59 @@ async function _renderUpdate() {
   });
 }
 
+// #86: the Config pane hosts the former Sources/Tools/Update top-level tabs as
+// three independently-rendered sub-sections, each with its own host element so
+// one section's error/offline/gated state can't blank out its siblings.
+async function _renderConfig() {
+  const host = _body();
+  host.innerHTML = `
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Sources</div>
+      <div id="applicant-config-sources">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Tools</div>
+      <div id="applicant-config-tools">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list">
+      <div style="font-weight:600;margin-bottom:8px;">Update</div>
+      <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
+    </div>`;
+  const sourcesHost = host.querySelector('#applicant-config-sources');
+  const toolsHost = host.querySelector('#applicant-config-tools');
+  const updateHost = host.querySelector('#applicant-config-update');
+  const sections = [
+    [sourcesHost, _renderSources],
+    [toolsHost, _renderTools],
+    [updateHost, _renderUpdate],
+  ];
+  for (const [sectionHost, renderFn] of sections) {
+    try {
+      await renderFn(sectionHost);
+    } catch (e) {
+      sectionHost.innerHTML = errorHTML(_errLine(e));
+      wireRetry(sectionHost, () => renderFn(sectionHost));
+    }
+  }
+}
+
 // ── Open / launcher ─────────────────────────────────────────────────────────
+
+// #87: the "Engine offline" note used to be a header-row badge (one more group
+// crowding an already-packed row) — it now lives as a banner just above the
+// tab strip, in the body area, separate from the header's leading/trailing
+// controls.
+function _setEngineBanner(modal, up) {
+  const banner = modal.querySelector('#applicant-debug-engine-banner');
+  if (!banner) return;
+  if (up) {
+    banner.style.display = 'none';
+    banner.textContent = '';
+  } else {
+    banner.textContent = 'Engine offline — this view will fill in once it is connected.';
+    banner.style.display = 'block';
+  }
+}
 
 export async function openApplicantDebug() {
   const modal = _ensureModalEl();
@@ -818,12 +1018,40 @@ export async function openApplicantDebug() {
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
-    const badge = modal.querySelector('#applicant-debug-engine');
-    if (badge) badge.textContent = up ? '' : 'Engine offline';
+    _setEngineBanner(modal, up);
     await _renderTab();
   } catch (err) {
     _body().innerHTML = errorHTML(_errLine(err));
     wireRetry(_body(), openApplicantDebug);
+  }
+}
+
+// #98: lets another surface (Compare) deep-link a specific application into the
+// Debug/Activity detail drill-in instead of dead-ending on a bare id. Opens the
+// modal, selects the given campaign (when known) and jumps straight to that
+// application's detail card on the Activity tab.
+export async function openApplicantDebugDetail(campaignId, appId) {
+  const modal = _ensureModalEl();
+  modal.classList.remove('hidden');
+  modal.style.display = 'flex';
+  _body().innerHTML = loadingHTML('Loading…');
+  try {
+    const up = await _loadCampaigns();
+    _setEngineBanner(modal, up);
+    if (campaignId) {
+      _campaignId = campaignId;
+      const sel = modal.querySelector('#applicant-debug-campaign');
+      if (sel) sel.value = campaignId;
+    }
+    _activeTab = 'activity';
+    modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => {
+      x.classList.toggle('active', x.dataset.tab === 'activity');
+    });
+    await _renderTab();
+    if (appId) await _showAppDetail(appId);
+  } catch (err) {
+    _body().innerHTML = errorHTML(_errLine(err));
+    wireRetry(_body(), () => openApplicantDebugDetail(campaignId, appId));
   }
 }
 
@@ -856,7 +1084,7 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantDebugModule = { openApplicantDebug };
+const applicantDebugModule = { openApplicantDebug, openApplicantDebugDetail };
 try { window.applicantDebugModule = applicantDebugModule; } catch { /* no-op */ }
 
 // Exported so the submission-record drill-in renderer (#372) is unit-renderable.

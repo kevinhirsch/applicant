@@ -36,15 +36,15 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Applicant gallery');
+  modal.setAttribute('aria-label', 'Application Gallery — screenshots and generated materials');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:820px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
         <h4>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          Gallery
+          Application Gallery
         </h4>
-        <button class="close-btn" id="applicant-gallery-close" title="Close" aria-label="Close">✖</button>
+        <button class="modal-close" id="applicant-gallery-close" title="Close" aria-label="Close">×</button>
       </div>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
@@ -143,7 +143,7 @@ function _shotCard(s) {
     ? `<a class="grow" href="${esc(s.page_url)}" target="_blank" rel="noopener" title="${esc(s.page_url)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.page_url)}</a>`
     : '<span class="admin-toggle-sub" style="opacity:0.6;">No page URL</span>';
   return `
-    <div class="admin-card" style="display:flex;flex-direction:column;gap:6px;">
+    <div class="applicant-gallery-tile" style="display:flex;flex-direction:column;gap:6px;">
       <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted,#888);">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
         <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${ref}</strong>
@@ -170,7 +170,7 @@ function _matCard(m) {
     ? `<div style="font-size:12px;line-height:1.4;max-height:4.2em;overflow:hidden;">${esc(String(m.content).slice(0, 240))}</div>`
     : '';
   return `
-    <div class="admin-card" style="display:flex;flex-direction:column;gap:6px;">
+    <div class="applicant-gallery-tile" style="display:flex;flex-direction:column;gap:6px;">
       <div style="display:flex;align-items:center;gap:8px;">
         <strong class="grow">${label}</strong>${badge}
       </div>

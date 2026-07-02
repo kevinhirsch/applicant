@@ -243,8 +243,12 @@ function _ensureModalEl() {
           Activity
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-activity-refresh" title="Refresh the activity feed">Refresh</button>
-          <button class="close-btn" id="applicant-activity-close" title="Close" aria-label="Close">✖</button>
+          <button class="close-btn" id="applicant-activity-refresh" title="Refresh the activity feed" aria-label="Refresh the activity feed">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+          <button class="close-btn" id="applicant-activity-close" title="Close" aria-label="Close">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
       </div>
       <div id="applicant-activity-snapshot" style="flex:0 0 auto;"></div>
@@ -282,9 +286,12 @@ function _snapshotHost() { return _modalEl && _modalEl.querySelector('#applicant
 
 function _snapshotLine(label, sentence, extra) {
   const tail = extra ? `<span style="opacity:0.6;font-weight:400;"> ${esc(extra)}</span>` : '';
+  // Hierarchy from weight, not all-caps micro-type: the label stays sentence-case
+  // (the strings passed in already are — "Now" / "Up next") at a Medium/Semibold
+  // weight so it reads as a label without shouting.
   return `
     <div style="margin:2px 0;font-size:12px;line-height:1.4;">
-      <span style="opacity:0.55;text-transform:uppercase;font-size:9.5px;letter-spacing:0.04em;">${esc(label)}</span>
+      <span style="opacity:0.65;font-size:11px;font-weight:600;">${esc(label)}</span>
       <div style="font-weight:500;">${esc(sentence)}${tail}</div>
     </div>`;
 }
@@ -298,7 +305,10 @@ function _renderSnapshot(host, data) {
   const now = (data && data.now) || {};
   const next = (data && data.next) || {};
   const live = Boolean(now.running);
-  const dot = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px;background:${live ? 'var(--accent, #3a8)' : '#999'};"></span>`;
+  // System-token dot: green while live, neutral ink while paused/idle (matches the
+  // always-visible strip's semantics, but this is the MODAL's own snapshot dot —
+  // a separate element from #applicant-status-strip .applicant-status-dot).
+  const dot = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px;background:${live ? 'var(--color-success, #4caf50)' : 'var(--color-muted, #999)'};"></span>`;
   const parts = [];
   if (now.sentence) {
     parts.push(_snapshotLine('Now', now.sentence));
@@ -397,7 +407,7 @@ function _renderRuns(host, items) {
       </div>`;
   });
   const heading = `
-    <div style="padding:4px 10px 6px;font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;">
+    <div style="padding:4px 10px 6px;font-size:11px;font-weight:600;opacity:0.6;">
       Recently I…
     </div>`;
   host.innerHTML = `<div>${heading}${rows.join('')}</div>`;

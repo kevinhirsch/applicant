@@ -305,9 +305,11 @@ function _absoluteTime(iso) {
 }
 
 function _statusDot(status) {
+  // #132: flat dot — the double box-shadow glow read as a neon halo; the
+  // color itself already carries the signal, no glow needed.
   const colors = { active: '#4caf50', paused: '#ff9800', completed: '#888', error: '#f44336' };
   const c = colors[status] || '#888';
-  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};box-shadow:0 0 6px ${c}, 0 0 3px ${c};flex-shrink:0;position:relative;top:4px;"></span>`;
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};flex-shrink:0;position:relative;top:4px;"></span>`;
 }
 
 const _TASK_ICONS = {
@@ -653,7 +655,7 @@ function _renderList() {
 
   for (const task of visible) {
     const card = document.createElement('div');
-    card.className = 'memory-item task-card' + (task.status === 'paused' ? ' task-paused' : '');
+    card.className = 'memory-item ow-list-row task-card' + (task.status === 'paused' ? ' task-paused' : '');
     card.dataset.id = task.id;
 
     // Title row: icon + name (left); status pill + chevron/actions (right).
@@ -756,8 +758,10 @@ function _renderList() {
       const color = isErr ? 'var(--red,#e06c75)' : 'var(--green,#50fa7b)';
       const result = (task.last_run_result || '').trim();
       const prev = result.length > 200 ? result.slice(0, 200) + '…' : result;
+      // #133: neutral row framing — color lives only on the tiny ✗/✓ glyph,
+      // not washed across the whole row's border/background/text.
       const lr = document.createElement('div');
-      lr.style.cssText = `font-size:11px;margin-bottom:6px;padding:4px 8px;border-left:2px solid ${color};background:color-mix(in srgb, ${color} 8%, transparent);border-radius:2px;line-height:1.4;cursor:pointer;`;
+      lr.style.cssText = `font-size:11px;margin-bottom:6px;padding:4px 8px;border-left:2px solid var(--border);background:color-mix(in srgb, var(--fg) 4%, transparent);border-radius:2px;line-height:1.4;cursor:pointer;`;
       lr.innerHTML = `<span style="font-weight:600;color:${color};">${isErr ? '✗' : '✓'}</span> <span style="opacity:0.9;">${_esc(prev) || (isErr ? 'Failed (no detail)' : 'Success (no output)')}</span>`;
       lr.title = 'Open full history';
       lr.addEventListener('click', (e) => { e.stopPropagation(); _showRunHistory(task.id, task.name); });
@@ -948,7 +952,7 @@ function _showPresetPicker() {
     + '</div>';
   html += '<div class="memory-list" style="max-height:none;flex:1;gap:0px;margin-top:2px;padding-right:8px;">';
   _TASK_PRESETS.forEach((p, i) => {
-    html += `<button class="memory-item task-card" data-idx="${i}" style="cursor:pointer;text-align:left;width:100%;font-family:inherit;">
+    html += `<button class="memory-item ow-list-row task-card" data-idx="${i}" style="cursor:pointer;text-align:left;width:100%;font-family:inherit;">
       <div style="flex:1;min-width:0;">
         <div style="display:flex;align-items:center;gap:6px;">${_presetIcon(p)}<span class="memory-item-title" style="flex:1;position:relative;top:0px;">${p.label}</span></div>
         <div style="font-size:10px;opacity:0.4;margin-top:-1px;position:relative;top:3px;">${p.desc}</div>

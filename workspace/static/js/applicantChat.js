@@ -62,6 +62,18 @@ let _sending = false;
 // would only ever have 404'd. Removed as dead code.
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
+//
+// Design-audit item #46: this stream renders as a centered `.modal` slab over
+// the live composer/welcome rather than docked inline in the content plane.
+// A true inline re-dock (re-parenting the thread/composer out of the modal
+// lifecycle) is a real structural change and risks the thinking-indicator,
+// send-gating, composer-clear-on-success, and retry-without-duplicate-bubble
+// fixes that live in this file today — left as a larger follow-up rather than
+// attempted as a surgical pass. The lower-risk half IS done: the composer bar
+// inside the modal used to carry its own nested frosted-glass layer on top of
+// the modal's own glass ("glass-on-glass-on-content"); style.css now flattens
+// that inner layer so the panel reads as one content plane (search
+// "item #46" in style.css).
 
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
@@ -78,10 +90,16 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Job Assistant
         </h4>
+        <!-- Design-audit item #64 (nit): render via `.ow-window` so the titlebar
+             matches every other window's traffic-light controls. Left as-is here:
+             adopting the AppkitWindow kit is the same scale of change as item #46's
+             full inline re-dock (a new mount lifecycle around this modal's a11y/
+             thinking/send-gating/retry wiring), already tracked as the audit's
+             systemic theme #1 ("adopt the kit") rather than a per-surface nit fix. -->
         <button class="close-btn" id="applicant-chat-close" title="Close" aria-label="Close">✖</button>
       </div>
       <div class="modal-body" id="applicant-chat-body" style="flex:1;overflow-y:auto;">
-        <div class="hwfit-loading">Loading…</div>
+        ${loadingHTML()}
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -107,12 +125,25 @@ function _close() {
 function _renderOffline(body) {
   // Not connected yet is a GATE, not an error — route it through the kit's gated
   // affordance with a clear CTA hint instead of a wall of prose (quick-wins #18).
+  // Item #52: the hint used to be inert text ("Open Settings → Connect a model")
+  // with no way to act on it — a dead end. Route it through a real primary button
+  // wired to the same launcher the rest of the front door uses to reopen setup
+  // (window.launchApplicantSetup, exported by applicantOnboarding.js), so there's
+  // an actual next step instead of a instruction to go find Settings yourself.
   body.innerHTML = gatedHTML(
     'Connect a model in Settings to activate the Job Assistant. Once a model is '
       + 'connected it can answer questions about your applications and surface '
       + 'anything that needs your input.',
-    '<span style="font-size:12px;opacity:0.85;">Open Settings → Connect a model</span>',
+    '<button type="button" class="cal-btn cal-btn-primary" id="applicant-chat-connect-cta">Connect a model</button>',
   );
+  const cta = body.querySelector('#applicant-chat-connect-cta');
+  if (cta) {
+    cta.addEventListener('click', () => {
+      try {
+        if (typeof window.launchApplicantSetup === 'function') { window.launchApplicantSetup(); _close(); }
+      } catch { /* no-op — no launcher available, the button simply stays put */ }
+    });
+  }
 }
 
 function _renderNoCampaign(body) {
@@ -565,7 +596,10 @@ export async function openApplicantChat() {
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
   const body = modal.querySelector('#applicant-chat-body');
-  body.innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  // Item #56: reuse the same spinner/pill the "thinking" reply already uses
+  // instead of a bare text node, so opening the panel reads as work in
+  // progress rather than a possible hang.
+  body.innerHTML = loadingHTML();
   try {
     const data = await _loadCampaigns();
     if (data && data.engine_available === false) { _renderOffline(body); return; }

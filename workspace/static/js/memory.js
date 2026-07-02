@@ -608,7 +608,7 @@ export function renderMemoryList() {
 
   filtered.forEach(memory => {
     const item = document.createElement('div');
-    item.className = 'memory-item';
+    item.className = 'memory-item ow-list-row';
     item.dataset.memoryId = String(memory.id);
 
     // Checkbox for select mode
@@ -861,7 +861,7 @@ export function renderMemoryList() {
 
 function startInlineEdit(item, memory) {
   item.innerHTML = '';
-  item.className = 'memory-item memory-item-editing';
+  item.className = 'memory-item ow-list-row memory-item-editing';
 
   const editRow = document.createElement('div');
   editRow.className = 'memory-edit-row';

@@ -388,16 +388,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (_librarySearch || _libraryActiveLanguage) {
         grid.innerHTML = '<div class="doclib-empty">No documents match your search.</div>';
       } else {
-        const _impIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin:0 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+        // #136: a proper button as the CTA, not accent-colored underlined
+        // link text pretending to be one.
+        const _impIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-left:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
         grid.innerHTML =
-          '<div class="doclib-empty" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
-            '<span>No documents yet</span>' +
-            '<span style="opacity:0.7;font-size:11px;">' +
-              '<a href="#" data-doclib-import style="color:var(--accent,var(--red));text-decoration:underline;">Import' + _impIco + '</a>' +
-              ' &middot; or create one in a session' +
-            '</span>' +
+          '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:28px 16px;text-align:center;">' +
+            '<span class="doclib-empty" style="padding:0;">No documents yet</span>' +
+            '<button type="button" class="cal-btn cal-btn-primary" id="doclib-empty-import">Import' + _impIco + '</button>' +
+            '<span style="opacity:0.55;font-size:11px;">or create one in a session</span>' +
           '</div>';
-        grid.querySelector('[data-doclib-import]')?.addEventListener('click', (e) => {
+        grid.querySelector('#doclib-empty-import')?.addEventListener('click', (e) => {
           e.preventDefault();
           document.getElementById('doclib-import-file-btn')?.click();
         });
@@ -467,7 +467,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
   function libraryCreateCard(doc) {
     const card = document.createElement('div');
-    card.className = 'doclib-card memory-item';
+    card.className = 'doclib-card memory-item ow-list-row';
     card.dataset.docId = doc.id;
     if (_librarySelectMode && _librarySelectedIds.has(doc.id)) {
       card.classList.add('selected');
@@ -2624,7 +2624,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       _maybeCascadeGrid(grid, 'chats');
       for (const s of visible) {
         const card = document.createElement('div');
-        card.className = 'memory-item doclib-chat-row';
+        card.className = 'memory-item doclib-chat-row ow-list-row';
         card.style.cursor = 'pointer';
         card.dataset.sid = s.id;
         const model = (s.model || '').split('/').pop();
@@ -2986,7 +2986,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       _maybeCascadeGrid(grid, 'archive');
       for (const s of visible) {
         const card = document.createElement('div');
-        card.className = 'memory-item doclib-chat-row';
+        card.className = 'memory-item doclib-chat-row ow-list-row';
         card.style.cursor = 'pointer';
         card.dataset.sid = s.id;
         card.dataset.arckey = 'chats:' + s.id;
@@ -3029,7 +3029,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const _arcDocIco = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.5;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>';
       for (const d of filtDocs) {
         const card = document.createElement('div');
-        card.className = 'memory-item doclib-chat-row';
+        card.className = 'memory-item doclib-chat-row ow-list-row';
         card.style.cursor = 'pointer';
         card.dataset.arckey = 'documents:' + d.id;
         const _dcb = _arcSelectMode ? '<input type="checkbox" class="memory-select-cb" data-arckey="documents:' + d.id + '"' + (_arcSelected.has('documents:' + d.id) ? ' checked' : '') + '>' : '';
@@ -3066,7 +3066,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const _arcResIco = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.5;flex-shrink:0;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
       for (const r of filtResearch) {
         const card = document.createElement('div');
-        card.className = 'memory-item doclib-chat-row';
+        card.className = 'memory-item doclib-chat-row ow-list-row';
         card.style.cursor = 'pointer';
         card.dataset.arckey = 'research:' + r.id;
         const _rcb = _arcSelectMode ? '<input type="checkbox" class="memory-select-cb" data-arckey="research:' + r.id + '"' + (_arcSelected.has('research:' + r.id) ? ' checked' : '') + '>' : '';

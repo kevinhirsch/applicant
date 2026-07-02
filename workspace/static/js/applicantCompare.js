@@ -28,6 +28,10 @@ import { _fetchJSON as _kitFetchJSON, errText, loadingHTML, emptyHTML, errorHTML
 const API = `${window.location.origin}/api/applicant/compare`;
 
 let _modalEl = null;
+// The in-flight compare request's abort controller + a flag so the catch handler
+// can tell a user-triggered Cancel apart from a real network/engine error.
+let _compareController = null;
+let _compareCancelled = false;
 
 function _esc(text) {
   const div = document.createElement('div');
@@ -77,7 +81,9 @@ function _ensureModalEl() {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
           Compare
         </h4>
-        <button class="close-btn" id="applicant-compare-close" title="Close" aria-label="Close">✖</button>
+        <button class="close-btn" id="applicant-compare-close" title="Close" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <div class="modal-body" style="flex:1;overflow-y:auto;">
         <p style="opacity:0.75;font-size:12px;margin:0 0 12px;">
@@ -86,20 +92,16 @@ function _ensureModalEl() {
         <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px;">
           <label class="ow-field" style="min-width:160px;">
             <span>What to compare</span>
-            <div class="ow-select">
-              <select id="applicant-compare-kind">
-                <option value="applications">Applications</option>
-                <option value="postings">Postings</option>
-              </select>
-            </div>
+            <select id="applicant-compare-kind" class="ow-select">
+              <option value="applications">Applications</option>
+              <option value="postings">Postings</option>
+            </select>
           </label>
           <label class="ow-field" style="min-width:200px;flex:1;">
             <span>Campaign (optional scope)</span>
-            <div class="ow-select">
-              <select id="applicant-compare-campaign">
-                <option value="">All campaigns</option>
-              </select>
-            </div>
+            <select id="applicant-compare-campaign" class="ow-select">
+              <option value="">All campaigns</option>
+            </select>
           </label>
         </div>
         <label class="ow-field" style="display:block;margin-bottom:14px;">
@@ -171,6 +173,13 @@ function _parseIds(raw) {
     .filter(Boolean);
 }
 
+// Loading state + an inline Cancel — the compare request is a plain POST, so a
+// user-triggered abort is safe/interruptible (unlike e.g. the Update trigger).
+function _loadingWithCancel(label) {
+  return `<div style="display:flex;align-items:center;gap:10px;">${loadingHTML(label)}`
+    + `<button type="button" class="cal-btn" id="applicant-compare-cancel">Cancel</button></div>`;
+}
+
 async function _runCompare() {
   const kind = _modalEl.querySelector('#applicant-compare-kind').value;
   const campaignId = _modalEl.querySelector('#applicant-compare-campaign').value || null;
@@ -183,7 +192,18 @@ async function _runCompare() {
     return;
   }
   _setStatus('', false);
-  result.innerHTML = loadingHTML('Comparing…');
+  _compareCancelled = false;
+  if (_compareController) { try { _compareController.abort(); } catch { /* already settled */ } }
+  const controller = new AbortController();
+  _compareController = controller;
+  result.innerHTML = _loadingWithCancel('Comparing…');
+  const cancelBtn = result.querySelector('#applicant-compare-cancel');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      _compareCancelled = true;
+      try { controller.abort(); } catch { /* no-op */ }
+    });
+  }
   runBtn.disabled = true;
   try {
     const path = kind === 'postings' ? '/postings' : '/applications';
@@ -191,20 +211,38 @@ async function _runCompare() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids, campaign_id: campaignId }),
+      signal: controller.signal,
     });
     _setStatus('', false);
-    _renderResult(result, data);
+    _renderResult(result, data, kind, campaignId);
   } catch (e) {
     _setStatus('', false);
-    // Inline error + Retry so the user recovers without re-typing their ids.
-    result.innerHTML = errorHTML(_errLine(e));
-    wireRetry(result, _runCompare);
+    if (_compareCancelled) {
+      result.innerHTML = '<div style="opacity:0.7;padding:8px 0;">Comparison cancelled.</div>';
+    } else {
+      // Inline error + Retry so the user recovers without re-typing their ids.
+      result.innerHTML = errorHTML(_errLine(e));
+      wireRetry(result, _runCompare);
+    }
   } finally {
     runBtn.disabled = false;
+    if (_compareController === controller) _compareController = null;
   }
 }
 
-function _renderResult(container, data) {
+// True when the values for a dimension actually differ across entities (or the
+// engine already flagged it via `dim.diff`) — used to flag the row, in-content,
+// with neutral ink weight/bg rather than the previous opacity-only "—" signal.
+function _dimDiffers(dim, entityIds, values) {
+  if (dim && dim.diff) return true;
+  const seen = new Set();
+  for (const id of entityIds) {
+    seen.add(values[id] != null ? String(values[id]) : '');
+  }
+  return seen.size > 1;
+}
+
+function _renderResult(container, data, kind, campaignId) {
   container.innerHTML = '';
   if (!data) {
     container.innerHTML = '<div style="opacity:0.7;">No comparison returned.</div>';
@@ -227,35 +265,60 @@ function _renderResult(container, data) {
     return;
   }
 
+  // The diff sits inside a bounded content-material panel instead of directly on
+  // the modal glass — a hairline-divided table, not per-cell inline borders.
+  const panel = document.createElement('div');
+  panel.className = 'applicant-compare-result-panel';
+
   const table = document.createElement('table');
   table.className = 'applicant-compare-table';
-  table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
 
   const thead = document.createElement('thead');
-  let headRow = '<tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);">Dimension</th>';
+  // Applications can be opened in the Debug/Activity detail view; postings have
+  // no reachable detail surface within this module, so their labels stay plain.
+  const canLink = kind === 'applications';
+  let headRow = '<tr><th>Dimension</th>';
   for (const id of entityIds) {
     // Click-to-copy the raw id so it can be re-pasted into another compare /
     // surface without hand-typing. The label stays visible; the id is the payload.
-    headRow += `<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);"><button type="button" class="applicant-compare-copy-id" data-id="${_esc(id)}" title="Copy id — ${_esc(id)}" style="background:none;border:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left;">${_esc(labels[id] || id)}</button></th>`;
+    headRow += `<th>
+      <button type="button" class="applicant-compare-copy-id" data-id="${_esc(id)}" title="Copy id — ${_esc(id)}">${_esc(labels[id] || id)}</button>
+      ${canLink ? `<button type="button" class="applicant-compare-open-detail" data-id="${_esc(id)}" title="Open this application in Activity">Open in Activity →</button>` : ''}
+    </th>`;
   }
-  headRow += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);">Difference</th></tr>';
+  headRow += '<th>Difference</th></tr>';
   thead.innerHTML = headRow;
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
   for (const dim of dimensions) {
     const values = (dim && dim.values) || {};
-    let row = `<tr><td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:600;">${_esc(dim.label || dim.key)}</td>`;
+    const differs = _dimDiffers(dim, entityIds, values);
+    let row = `<tr class="${differs ? 'applicant-compare-row-diff' : ''}"><td>${_esc(dim.label || dim.key)}</td>`;
     for (const id of entityIds) {
-      row += `<td style="padding:6px 8px;border-bottom:1px solid var(--border);">${_esc(values[id] != null ? values[id] : '—')}</td>`;
+      row += `<td>${_esc(values[id] != null ? values[id] : '—')}</td>`;
     }
-    row += `<td style="padding:6px 8px;border-bottom:1px solid var(--border);opacity:0.8;">${_esc(dim.diff || '')}</td></tr>`;
+    row += `<td class="applicant-compare-diff-cell">${_esc(dim.diff || '')}</td></tr>`;
     tbody.insertAdjacentHTML('beforeend', row);
   }
   table.appendChild(tbody);
-  container.appendChild(table);
+  panel.appendChild(table);
+  container.appendChild(panel);
   container.querySelectorAll('.applicant-compare-copy-id').forEach((b) => {
     b.addEventListener('click', () => _copy(b.dataset.id || ''));
+  });
+  container.querySelectorAll('.applicant-compare-open-detail').forEach((b) => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      try {
+        if (window.applicantDebugModule && typeof window.applicantDebugModule.openApplicantDebugDetail === 'function') {
+          _close();
+          window.applicantDebugModule.openApplicantDebugDetail(campaignId, id);
+        } else {
+          _copy(id || '');
+        }
+      } catch { /* no-op — the copy-id button beside it still works */ }
+    });
   });
 }
 
