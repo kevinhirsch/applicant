@@ -2626,8 +2626,14 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/js/applicantDebug.js"></script>  <!-- CRIT-ops: Activity/debug surface -->
-<script type="module" src="/static/js/applicantGallery.js"></script>  <!-- #296: Gallery — screenshots + generated materials -->
+<!-- Perf audit (exhaustive2/03_performance.md #2): Debug, Gallery, and Compare
+     used to be eager <script> tags here (400KB+ combined) even though each is
+     reached only via an explicit launcher click or a shared #debug/#gallery/
+     #compare link. lazyLaunch.js is the tiny eager stand-in: it wires their
+     launcher buttons + hash routes now and dynamic-import()s the real files
+     (applicantDebug.js / applicantGallery.js / applicantCompare.js) on first
+     use, so their bytes only download when actually opened. -->
+<script type="module" src="/static/js/lazyLaunch.js"></script>
 <script type="module" src="/static/js/applicantModelLadder.js"></script>  <!-- FR-LLM-3: model escalation ladder editor (Settings → AI) -->
 <script type="module" src="/static/js/applicantCampaignSettings.js"></script>  <!-- #301: campaign config + discovery-source toggles (Settings → Campaign) -->
 <!-- CRIT-auto: live remote view/takeover + applicant credential vault. Loaded
@@ -2638,9 +2644,10 @@
 <!-- FR-MIND: what the assistant remembers / saved playbooks / learning curation
      approvals. Self-boots and exposes window.applicantMindModule.openApplicantMind. -->
 <script type="module" src="/static/js/applicantMind.js"></script>
-<!-- Compare (#184/#486): engine-backed cross-entity diff surface. Self-boots and
-     wires #tool-compare-btn / #rail-compare; exposes window.applicantCompareModule. -->
-<script type="module" src="/static/js/applicantCompare.js"></script>
+<!-- Compare (#184/#486): engine-backed cross-entity diff surface. Now lazy-loaded
+     by lazyLaunch.js above (see that file's comment) instead of an eager tag here;
+     it still wires #tool-compare-btn / #rail-compare and exposes
+     window.applicantCompareModule once loaded. -->
 <!-- Results: non-admin surface for the engine's outcome/learning data (funnel, per-source conversion, learned signature). Self-boots and wires #rail-results; exposes window.openApplicantResults. -->
 <script type="module" src="/static/js/applicantResults.js"></script>
 <!-- Tracker (design-audit Top-25 #4): the post-submission board (applied -> awaiting response -> interview/offer signals -> rejected/ghosted/archived) plus the owner's "record what happened" write. Self-boots and wires #rail-tracker; exposes window.openApplicantTracker. -->
