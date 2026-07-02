@@ -36,11 +36,22 @@ import {
 } from './applicantCore.js';
 
 const API = '/api/applicant/portal';
+// Sibling owner-scoped proxies the home-base recap + momentum strip read from
+// (surfacing-only; never the engine directly). The recap totals the activity
+// run-history stats since the last visit; the momentum strip reads the results
+// funnel. Both degrade to hidden/empty when their source is offline/gated.
+const ACTIVITY_API = '/api/applicant/activity';
+const RESULTS_API = '/api/applicant/results';
 const BADGE_POLL_MS = 60000;
 // localStorage marker: the newest notification timestamp (ms) the user has
 // already been toasted about, so a backlog on first load doesn't spam and only
 // genuinely-new arrivals pop a toast on later polls.
 const NOTIF_SEEN_KEY = 'applicant_notif_last_toast_ts';
+// localStorage marker: the wall-clock time (ms) of the user's PREVIOUS visit, so
+// the "while you were away" recap can total up what happened since. Mirrors the
+// NOTIF_SEEN_KEY get/set pattern below; a separate key so it never clobbers the
+// toast bookkeeping.
+const RECAP_SEEN_KEY = 'applicant_portal_recap_seen_ts';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -53,6 +64,13 @@ let _notifs = [];
 let _loading = false;
 // pollVisible's teardown handle — pauses the badge poll when the tab is hidden.
 let _badgePollStop = null;
+// Home-base recap bookkeeping. `_lastPendingCount` is the freshest count of items
+// needing the user (set on every _load / badge refresh) so the recap's "— X need
+// you" tail is accurate. `_recapSince` is the "last visit" cutoff captured ONCE per
+// page session, so the recap stays stable across in-session refreshes.
+let _lastPendingCount = 0;
+let _recapSince = null;
+let _recapSinceReady = false;
 
 
 
@@ -308,6 +326,8 @@ function _ensureModalEl() {
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
         <div id="applicant-portal-greeting"></div>
+        <div id="applicant-portal-recap"></div>
+        <div id="applicant-portal-momentum"></div>
         <div id="applicant-portal-neverdoes-panel" style="display:none;"></div>
         <div id="applicant-portal-digest"></div>
         <div id="applicant-portal-pending"><div class="hwfit-loading">Loading…</div></div>
@@ -315,7 +335,7 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   modal.querySelector('#applicant-portal-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); });
+  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); _loadMomentum(); });
   modal.querySelector('#applicant-portal-neverdoes').addEventListener('click', _toggleNeverDoesPanel);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -372,6 +392,166 @@ function _renderGreeting(pendingCount) {
     <div style="font-size:13px;color:var(--fg);opacity:0.9;margin:2px 2px 10px;line-height:1.4;">
       ${esc(_greetingLine(pendingCount))}
     </div>`;
+}
+
+// ── "While you were away" recap (task #1) ────────────────────────────────────
+//
+// A calm card at the top of the home base totalling what happened since the
+// user's last visit. Sourced from the activity run-history proxy: each run
+// carries a `stats` block (discovered / digest_rows / pipelines_started /
+// handoffs / completed) — the same fields the Activity page's _statSummary reads.
+// We sum those over runs newer than the stored "last visit" marker. First-person,
+// neutral ink, no exclamation spam. Shows only when there's something to report;
+// hides silently otherwise (the pending list already carries the offline/gated
+// state, so a duplicate here would be noise).
+
+function _recapHost() { return _modalEl && _modalEl.querySelector('#applicant-portal-recap'); }
+function _momentumHost() { return _modalEl && _modalEl.querySelector('#applicant-portal-momentum'); }
+
+// Capture the "since your last visit" cutoff exactly once per page session, then
+// advance the stored marker to now so the NEXT visit measures from this one. On
+// the very first ever load (no marker) there is no prior visit to summarise, so we
+// seed silently and leave `_recapSince` null — mirroring _toastNew's backlog seed.
+function _captureRecapSince() {
+  if (_recapSinceReady) return;
+  _recapSinceReady = true;
+  let stored = null;
+  try { stored = window.localStorage.getItem(RECAP_SEEN_KEY); } catch { stored = null; }
+  const n = Number(stored);
+  _recapSince = (stored === null || !Number.isFinite(n)) ? null : n;
+  try { window.localStorage.setItem(RECAP_SEEN_KEY, String(Date.now())); } catch { /* no-op */ }
+}
+
+// Best timestamp (ms) for a run record, tolerating ISO strings and epoch s/ms.
+function _runTs(run) {
+  const raw = run && (run.created_at || run.finished_at || run.started_at
+    || run.last_run_at || run.timestamp || run.ts);
+  if (raw == null || raw === '') return 0;
+  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+// Sum the run stats over runs newer than `since`. Runs without a usable timestamp
+// are skipped rather than guessed into the window.
+function _recapTotals(items, since) {
+  const acc = { discovered: 0, shortlisted: 0, prefilled: 0, submitted: 0 };
+  const add = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+  for (const run of items) {
+    if (!run || typeof run !== 'object') continue;
+    const ts = _runTs(run);
+    if (!ts || (since != null && ts <= since)) continue;
+    const s = run.stats || {};
+    acc.discovered += add(s.discovered);
+    acc.shortlisted += add(s.digest_rows);
+    acc.prefilled += add(s.pipelines_started);
+    acc.submitted += add(s.completed);
+  }
+  return acc;
+}
+
+function _recapSentence(t, pending) {
+  const parts = [];
+  if (t.discovered > 0) parts.push(`reviewed ${t.discovered} posting${t.discovered === 1 ? '' : 's'}`);
+  if (t.shortlisted > 0) parts.push(`shortlisted ${t.shortlisted}`);
+  if (t.prefilled > 0) parts.push(`pre-filled ${t.prefilled}`);
+  if (t.submitted > 0) parts.push(`submitted ${t.submitted}`);
+  if (!parts.length) return '';
+  const body = parts.length === 1
+    ? parts[0]
+    : `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+  const p = Number(pending) || 0;
+  const tail = p > 0 ? ` — ${p} need${p === 1 ? 's' : ''} you.` : '.';
+  return `Since your last visit, I ${body}${tail}`;
+}
+
+function _renderRecap(host, totals, pending) {
+  const line = _recapSentence(totals, pending);
+  if (!line) { host.innerHTML = ''; return; }
+  host.innerHTML = `
+    <div class="admin-card" style="margin:0 0 10px;padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.55;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;">While you were away</span>
+      </div>
+      <div style="font-size:13px;color:var(--fg);line-height:1.45;">${esc(line)}</div>
+    </div>`;
+}
+
+async function _loadRecap() {
+  const host = _recapHost();
+  if (!host) return;
+  _captureRecapSince();
+  // First-ever visit: no prior visit to summarise. Stay quiet.
+  if (_recapSince == null) { host.innerHTML = ''; return; }
+  let data;
+  try {
+    data = await _fetchJSON(`${ACTIVITY_API}/runs`);
+  } catch {
+    host.innerHTML = ''; // supplementary card — hide on any read failure
+    return;
+  }
+  // Offline / gated → hide; the pending panel already surfaces those states.
+  if (!data || data.engine_available === false || data.gated === true) { host.innerHTML = ''; return; }
+  const items = (Array.isArray(data.items) ? data.items : []).filter((it) => it && typeof it === 'object');
+  _renderRecap(host, _recapTotals(items, _recapSince), _lastPendingCount);
+}
+
+// ── Momentum strip (task #2) ─────────────────────────────────────────────────
+//
+// A compact one-line scoreboard sourced from the owner-scoped results/funnel
+// proxy (NOT the admin surface). The engine's learning funnel is cumulative
+// (matched → approved → submitted) with sources ranked by conversion — there is
+// no weekly window or interview/"responses" aggregate exposed yet, so this reads
+// as an honest running scoreboard (labelled "Your momentum", not "this week")
+// rather than fabricating numbers. Neutral chrome, plain-language tooltips.
+
+function _momentumEmpty(host) {
+  host.innerHTML = `
+    <div style="font-size:11.5px;opacity:0.6;margin:0 2px 10px;line-height:1.4;">
+      Your momentum shows up here once you've submitted a few.
+    </div>`;
+}
+
+function _renderMomentum(host, data) {
+  const summary = (data && data.summary) || {};
+  const sources = (data && Array.isArray(data.sources)) ? data.sources : [];
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const chip = (value, label, tip) =>
+    `<span title="${esc(tip)}"><strong>${esc(String(num(value)))}</strong> ${esc(label)}</span>`;
+  const sep = '<span style="opacity:0.35;">·</span>';
+  const parts = [
+    chip(summary.total_submitted, 'submitted', 'Applications submitted so far.'),
+    chip(summary.total_approved, 'approved', 'Roles you approved to move forward.'),
+    chip(summary.total_matched, 'found', 'Roles matched to your criteria.'),
+  ];
+  // Best source: the engine ranks sources by conversion; the first named one wins.
+  const best = sources.find((s) => s && s.source);
+  let scoreboard = parts.join(sep);
+  if (best) {
+    scoreboard += `${sep}<span title="The source converting best for you." style="opacity:0.85;">best source: ${esc(String(best.source))}</span>`;
+  }
+  host.innerHTML = `
+    <div class="admin-card" style="margin:0 0 10px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:12px;color:var(--fg);">
+      <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.55;">Your momentum</span>
+      <span style="display:inline-flex;flex-wrap:wrap;gap:2px 8px;align-items:center;">${scoreboard}</span>
+    </div>`;
+}
+
+async function _loadMomentum() {
+  const host = _momentumHost();
+  if (!host) return;
+  let data;
+  try {
+    data = await _fetchJSON(RESULTS_API);
+  } catch {
+    host.innerHTML = ''; // hide silently; the pending panel already covers offline
+    return;
+  }
+  // Offline / gated → hide (the pending list already surfaces those states).
+  if (!data || data.engine_available === false || data.gated === true) { host.innerHTML = ''; return; }
+  if (data.has_data === false) { _momentumEmpty(host); return; }
+  _renderMomentum(host, data);
 }
 
 // ── Empty / offline states ────────────────────────────────────────────────────
@@ -1225,16 +1405,21 @@ async function _load(showSpinner) {
     if (data && data.gated === true) {
       if (body) _renderGated(body, data);
       _renderGreeting(0);
+      _lastPendingCount = 0;
+      const rh = _recapHost(); if (rh) rh.innerHTML = '';
       _setBadge(0);
       return;
     }
     if (data && data.engine_available === false) {
       if (body) _renderOffline(body);
       _renderGreeting(0);
+      _lastPendingCount = 0;
+      const rh = _recapHost(); if (rh) rh.innerHTML = '';
       _setBadge(0);
       return;
     }
     _items = (data && data.items) || [];
+    _lastPendingCount = _items.length;
     // Fold the informational notifications in alongside the action rows, and
     // toast any genuinely-new ones. Independent of the pending fetch, so a slow
     // inbox never blocks the action rows.
@@ -1242,6 +1427,9 @@ async function _load(showSpinner) {
     _renderGreeting(_items.length);
     _setBadge(_items.length + _infoNotifs().length);
     if (body) _renderList(body);
+    // The "while you were away" recap needs the fresh pending count for its tail;
+    // fire it now (independent async fetch of the run history — never blocks).
+    _loadRecap();
   } catch (e) {
     // A down/unreachable engine (network/timeout) is a normal "not connected yet"
     // state, not an error — keep the friendly offline copy. An actual HTTP/auth
@@ -1257,6 +1445,8 @@ async function _load(showSpinner) {
       }
     }
     _renderGreeting(0);
+    _lastPendingCount = 0;
+    const rh = _recapHost(); if (rh) rh.innerHTML = '';
   } finally {
     _loading = false;
   }
@@ -1271,7 +1461,10 @@ export async function openApplicantPortal() {
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   // Today's digest at the home base (C1) loads alongside the pending list; the
   // two are independent so a slow/offline digest never blocks the pending items.
+  // The momentum strip (results funnel) loads independently too; the recap is
+  // kicked off from within _load once the fresh pending count is known.
   _loadDigest(true);
+  _loadMomentum();
   await _load(true);
 }
 
