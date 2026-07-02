@@ -2645,6 +2645,12 @@
 <script type="module" src="/static/js/applicantResults.js"></script>
 <!-- Tracker (design-audit Top-25 #4): the post-submission board (applied -> awaiting response -> interview/offer signals -> rejected/ghosted/archived) plus the owner's "record what happened" write. Self-boots and wires #rail-tracker; exposes window.openApplicantTracker. -->
 <script type="module" src="/static/js/applicantTracker.js"></script>
+<!-- Command palette (design/audits ux-flows backlog): Ctrl+Shift+P / Cmd+Shift+P
+     jumps to any Applicant surface by typing its name. Self-boots (wires its own
+     trigger keydown listener at module-eval time) and only calls the
+     window.applicantXModule.openApplicantX() launchers those surfaces already
+     export above — no other file needed changes. -->
+<script type="module" src="/static/js/commandPalette.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
