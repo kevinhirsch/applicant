@@ -2830,6 +2830,15 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
         return {"error": f"Unsupported method: {method}", "exit_code": 1}
+    if any(method == m and path.endswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_SUFFIX):
+        return {
+            "error": (
+                f"{method} {path} is blocked — this is one of the applicant engine's final-submit "
+                "stop-boundary controls. Final submission must be explicitly authorized by the user "
+                "in the live-session UI, not driven through chat."
+            ),
+            "exit_code": 1,
+        }
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
