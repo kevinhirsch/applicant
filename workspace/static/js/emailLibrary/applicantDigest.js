@@ -293,6 +293,31 @@ function _renderDigest(panel, payload) {
 // caller's selection state. Callers that don't pass `selectable` (the Portal
 // embed) see no checkbox — this stays a strict opt-in so existing callers are
 // unaffected.
+// Presubmit-safety warning badge (duplicate-application guard + scam/ghost-job
+// check, product-gaps backlog). The engine now runs the SAME checks that
+// gate the pipeline at approval time already read-only against every digest
+// row (`applicant.application.services.digest_service.build_digest`), so a
+// row can carry `warnings: [{check, message}, ...]` — informational only,
+// never hides the row. Reuses the exact warning-chip visual pattern the
+// Portal already uses for task urgency (`applicant-portal-badge` +
+// `var(--color-warning, ...)`, see applicantPortal.js `_urgencyBadge`)
+// instead of inventing a new one.
+function _warningBadge(row) {
+  const warnings = Array.isArray(row.warnings) ? row.warnings.filter((w) => w && w.message) : [];
+  if (!warnings.length) return null;
+  const isDuplicate = warnings.some((w) => w.check === 'duplicate_cooldown');
+  const label = isDuplicate
+    ? 'You already applied to a similar role at this company'
+    : 'This posting has some red flags — read before applying';
+  return _el('span', {
+    cls: 'applicant-portal-badge applicant-digest-warning',
+    text: label,
+    title: warnings.map((w) => w.message).join(' '),
+    style: 'background:var(--color-warning,#e0a96c);color:#000;font-size:10px;font-weight:600;'
+      + 'padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle;white-space:normal;',
+  });
+}
+
 export function buildDigestRow(row, ctx = {}) {
   const card = _el('div', {
     cls: 'doclib-card applicant-digest-row',
@@ -333,6 +358,8 @@ export function buildDigestRow(row, ctx = {}) {
       style: 'font-size:10px;opacity:0.7;white-space:nowrap;',
     }));
   }
+  const warnBadge = _warningBadge(row);
+  if (warnBadge) head.appendChild(warnBadge);
   card.appendChild(head);
 
   const why = row.why_suggested || row.reason || '';

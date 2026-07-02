@@ -77,6 +77,7 @@ class DigestService:
         criteria=None,
         notification_service=None,
         pending_actions=None,
+        presubmit_safety_params: dict | None = None,
     ) -> None:
         self._storage = storage
         self._notification = notification
@@ -85,6 +86,12 @@ class DigestService:
         self._criteria = criteria
         self._notification_service = notification_service
         self._pending = pending_actions
+        # G07: same settings-driven thresholds AgentLoop's presubmit safety gate uses
+        # (container.py builds ONE dict and threads it to both) so a digest warning
+        # reflects the SAME operator-configured age/cooldown as the pipeline block —
+        # not a silently-stale hardcoded default. ``None`` (legacy/test callers that
+        # don't pass it) falls back to presubmit_safety's own module defaults.
+        self._presubmit_safety_params = presubmit_safety_params
 
     # --- digest assembly (FR-DIG-3/4) -------------------------------------
     def _resolve_criteria(
@@ -142,8 +149,55 @@ class DigestService:
                 # the digest hot path. The rationale still says scoring is pending.
                 row["viability_score"] = 0.0
                 row["why_suggested"] = "scoring pending"
+            # Product-gaps backlog: the duplicate-application guard and the
+            # scam/ghost-job check already exist (presubmit_safety.py) but were only
+            # invoked by AgentLoop._process_approvals — AFTER the user approves, right
+            # before the pipeline starts — and only to silently skip. That is too late
+            # to inform the decision: surface the SAME checks here, read-only, so the
+            # digest row itself carries a plain-language warning BEFORE approval. A
+            # warning never excludes a row from the digest (unlike the pipeline block).
+            row["warnings"] = self._presubmit_warnings(campaign_id, posting)
             rows.append(row)
         return rows
+
+    def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
+        """Human-readable presubmit-safety warnings for one digest row.
+
+        Reuses ``presubmit_safety.check_scam_or_ghost_job`` / ``check_duplicate_application``
+        unchanged (same reasons/thresholds AgentLoop enforces at pipeline-start) but
+        catches ``PresubmitBlock`` instead of letting it stop anything — a digest
+        warning informs, it does not block. Any unexpected failure degrades to "no
+        warning" rather than breaking the digest hot path (mirrors every other
+        best-effort branch in this file).
+        """
+        from applicant.application.services.presubmit_safety import (
+            PresubmitBlock,
+            check_duplicate_application,
+            check_scam_or_ghost_job,
+        )
+
+        params = self._presubmit_safety_params or {}
+        warnings: list[dict] = []
+        try:
+            check_scam_or_ghost_job(
+                posting, max_age_days=params.get("max_age_days", 90)
+            )
+        except PresubmitBlock as exc:
+            warnings.append({"check": exc.check, "message": exc.reason})
+        except Exception:  # pragma: no cover - defensive
+            log.warning("digest_presubmit_scam_check_failed", exc_info=True)
+        try:
+            check_duplicate_application(
+                campaign_id,
+                posting,
+                self._storage,
+                cooldown_days=params.get("duplicate_cooldown_days", 30),
+            )
+        except PresubmitBlock as exc:
+            warnings.append({"check": exc.check, "message": exc.reason})
+        except Exception:  # pragma: no cover - defensive
+            log.warning("digest_presubmit_duplicate_check_failed", exc_info=True)
+        return warnings
 
     def build_digest_payload(
         self, campaign_id: CampaignId, criteria: SearchCriteria | None = None

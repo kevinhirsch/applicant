@@ -444,6 +444,18 @@ def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
 
+    # G07: pre-submit safety parameters from settings — built ONCE and shared by
+    # every AgentLoop (pipeline-start block) AND every DigestService (digest-row
+    # warning, product-gaps backlog) instance below, so the digest warning always
+    # reflects the SAME operator-configured thresholds as the actual pipeline block
+    # instead of two independently-drifting literals.
+    presubmit_safety_params = {
+        "max_age_days": settings.presubmit_max_listing_age_days,
+        "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+        "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+        "eligibility_enabled": settings.presubmit_eligibility_enabled,
+    }
+
     engine, session_factory, storage = _build_storage(settings)
 
     # Browser adapter imported lazily (Phase 2 heavy deps not required at boot).
@@ -801,6 +813,7 @@ def build_container(settings: Settings | None = None) -> Container:
         criteria=criteria_service,
         notification_service=notification_service,
         pending_actions=pending_actions_service,
+        presubmit_safety_params=presubmit_safety_params,
     )
     attribute_cloud_service = AttributeCloudService(
         storage,
@@ -1110,12 +1123,7 @@ def build_container(settings: Settings | None = None) -> Container:
         llm=llm,
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
         # G07: pre-submit safety parameters from settings.
-        presubmit_safety_params={
-            "max_age_days": settings.presubmit_max_listing_age_days,
-            "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
-            "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
-            "eligibility_enabled": settings.presubmit_eligibility_enabled,
-        },
+        presubmit_safety_params=presubmit_safety_params,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -1156,6 +1164,7 @@ def build_container(settings: Settings | None = None) -> Container:
             criteria=cs,
             notification_service=notification_service,
             pending_actions=pas,
+            presubmit_safety_params=presubmit_safety_params,
         )
         from applicant.application.services.post_submission_service import PostSubmissionService
         post_sub = PostSubmissionService(tick_storage, notification_service, learning=ls)
@@ -1236,12 +1245,7 @@ def build_container(settings: Settings | None = None) -> Container:
             # tick's curation service (shared process-lived ledger). Default OFF ⇒ None.
             loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
             # G07: pre-submit safety parameters from settings.
-            presubmit_safety_params={
-                "max_age_days": settings.presubmit_max_listing_age_days,
-                "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
-                "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
-                "eligibility_enabled": settings.presubmit_eligibility_enabled,
-            },
+            presubmit_safety_params=presubmit_safety_params,
         )
         return {
             "storage": tick_storage,
@@ -1288,6 +1292,7 @@ def build_container(settings: Settings | None = None) -> Container:
             criteria=rs_criteria,
             notification_service=notification_service,
             pending_actions=rs_pas,
+            presubmit_safety_params=presubmit_safety_params,
         )
         rs_attr = AttributeCloudService(
             req_storage, pending_actions=rs_pas, advanced_learning=rs_adv
