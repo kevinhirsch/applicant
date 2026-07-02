@@ -21,9 +21,13 @@
 
 import uiModule from './ui.js';
 import { openApplicantVault } from './applicantVault.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import {
+  esc, _toast, _fetchJSON, _post,
+  errText, loadingHTML, errorHTML, wireRetry,
+} from './applicantCore.js';
 
 const API = '/api/applicant/remote';
+const SNAPSHOT_API = '/api/applicant/snapshot';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -74,7 +78,7 @@ function _ensureModalEl() {
                   sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock"
                   referrerpolicy="no-referrer"></iframe>
           <div id="applicant-remote-empty"
-               style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;opacity:0.7;">
+               style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;opacity:0.7;color:#f2f5f7;">
             No live session is open yet.
           </div>
         </div>
@@ -124,16 +128,30 @@ function _ensureModalEl() {
             The assistant has pre-filled everything and stopped before the final
             submit. Choose how to finish — nothing is submitted until you decide.
           </p>
+          <div>
+            <button id="applicant-remote-preview-toggle" class="memory-toolbar-btn"
+                    aria-expanded="false" aria-controls="applicant-remote-preview"
+                    title="See the exact answers, documents, and posting that will be submitted before you authorize">
+              Review exactly what will be sent</button>
+          </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="applicant-remote-submit-self" class="cal-btn"
                     title="You will click submit yourself in the live session">I'll submit it myself</button>
-            <button id="applicant-remote-authorize" class="cal-btn cal-btn-primary"
+            <button id="applicant-remote-authorize" class="cal-btn cal-btn-danger"
                     title="Let the assistant click the final submit, just this once">Authorize the assistant to finish</button>
           </div>
           <p style="margin:0;opacity:0.55;font-size:11px;">
             The assistant can only click the final submit when you authorize it
             here — it never submits on its own.
           </p>
+          <div id="applicant-remote-preview" class="applicant-snapshot-preview" hidden
+               style="display:none;flex-direction:column;gap:8px;border-top:1px solid var(--border,#3334);padding-top:10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="font-size:12px;">Exactly what will be sent</strong>
+              <span style="opacity:0.55;font-size:11px;flex:1 1 auto;">The immutable record for this application — review before you authorize.</span>
+            </div>
+            <div id="applicant-remote-preview-body" style="font-size:12px;color:var(--fg,#f2f5f7);"></div>
+          </div>
         </div>
 
         <div id="applicant-remote-caveat" class="admin-card"
@@ -159,6 +177,7 @@ function _wire(modal) {
   on('applicant-remote-resume-detection', 'click', () => _resume('resume-detection-step'));
   on('applicant-remote-submit-self', 'click', _onSubmitSelf);
   on('applicant-remote-authorize', 'click', _onAuthorizeFinish);
+  on('applicant-remote-preview-toggle', 'click', _onTogglePreview);
   on('applicant-remote-desktop-toggle', 'click', _onToggleDesktopAssist);
 
   const picker = modal.querySelector('#applicant-remote-picker');
@@ -197,6 +216,10 @@ function _setActiveSession(session) {
   if (picker && session) picker.value = session.session_id;
   // Desktop-assist opt-in is per-session — refresh it whenever the session changes.
   _loadDesktopAssist().catch(e => console.error('Silent catch in applicantRemote:', e));
+  // The "what will be sent" preview is per-application — collapse it (and drop the
+  // previous application's snapshot) whenever the active session changes so a stale
+  // preview can never sit under a different application's decision pair.
+  _collapsePreview();
 }
 
 // ── desktop assist (opt-in, per-session; ships dormant/grayed) ───────────────
@@ -493,6 +516,156 @@ async function _onAuthorizeFinish() {
   } finally {
     _busy = false;
   }
+}
+
+// ── "Review exactly what will be sent" — the pre-submit snapshot preview ─────
+//
+// Before the owner authorizes the irreversible submit, they can open an in-flow
+// panel that shows the engine's immutable submission snapshot for THIS application
+// — the exact answers, the document/material versions, the posting, and the
+// timestamp. It renders whatever the engine has recorded and NEVER fabricates: the
+// pre-submit state (no snapshot yet) reads as an honest "nothing recorded to send
+// yet" empty state via the shared kit. The panel lives BELOW the decision pair so
+// opening it never pushes "I'll submit it myself" / "Authorize the assistant to
+// finish" below the fold.
+
+let _previewOpen = false;
+
+function _previewEls() {
+  const wrap = _modalEl && _modalEl.querySelector('#applicant-remote-preview');
+  const body = _modalEl && _modalEl.querySelector('#applicant-remote-preview-body');
+  const toggle = _modalEl && _modalEl.querySelector('#applicant-remote-preview-toggle');
+  return { wrap, body, toggle };
+}
+
+function _collapsePreview() {
+  _previewOpen = false;
+  const { wrap, body, toggle } = _previewEls();
+  if (wrap) { wrap.hidden = true; wrap.style.display = 'none'; }
+  if (body) body.innerHTML = '';
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = 'Review exactly what will be sent';
+  }
+}
+
+async function _onTogglePreview() {
+  const { wrap, toggle } = _previewEls();
+  if (!wrap || !toggle) return;
+  if (_previewOpen) { _collapsePreview(); return; }
+  if (!_needSession()) return;
+  _previewOpen = true;
+  wrap.hidden = false;
+  wrap.style.display = 'flex';
+  toggle.setAttribute('aria-expanded', 'true');
+  toggle.textContent = 'Hide what will be sent';
+  await _loadSnapshotPreview();
+}
+
+async function _loadSnapshotPreview() {
+  const { body } = _previewEls();
+  if (!body) return;
+  const appId = _activeSession && _activeSession.application_id;
+  if (!appId) { body.innerHTML = _snapshotEmptyHTML(); return; }
+  body.innerHTML = loadingHTML('Loading what will be sent…');
+  let data;
+  try {
+    data = await _fetchJSON(`${SNAPSHOT_API}/${encodeURIComponent(appId)}`);
+  } catch (e) {
+    body.innerHTML = errorHTML(errText(e));
+    wireRetry(body, () => _loadSnapshotPreview());
+    return;
+  }
+  if (data && data.engine_available === false) {
+    body.innerHTML = errorHTML('Can’t reach the assistant to load the snapshot right now.');
+    wireRetry(body, () => _loadSnapshotPreview());
+    return;
+  }
+  body.innerHTML = _renderSnapshot(data || {});
+}
+
+// Honest empty state — the snapshot is recorded at the final-submit stop-boundary,
+// so before you authorize there may be nothing recorded yet. Never fabricated.
+function _snapshotEmptyHTML() {
+  return `<div class="applicant-empty" style="text-align:left;color:var(--fg-muted);padding:10px 2px;">`
+    + `<div style="font-weight:600;color:var(--fg,#f2f5f7);">Nothing recorded to send yet</div>`
+    + `<div style="margin-top:4px;opacity:0.75;">The exact answers, documents, and posting appear here once the `
+    + `assistant records them at the stop-boundary. If this stays empty, open the live session above to review the filled form directly.</div>`
+    + `</div>`;
+}
+
+function _kvRows(obj) {
+  const keys = Object.keys(obj || {});
+  if (!keys.length) return '';
+  return keys.map((k) => (
+    `<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--border,#3334);">`
+    + `<div style="flex:0 0 40%;max-width:40%;opacity:0.7;word-break:break-word;">${esc(k)}</div>`
+    + `<div style="flex:1 1 auto;white-space:pre-wrap;word-break:break-word;">${esc(_scalar(obj[k]))}</div>`
+    + `</div>`
+  )).join('');
+}
+
+function _scalar(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+function _renderSnapshot(data) {
+  if (!data || data.has_snapshot === false) return _snapshotEmptyHTML();
+  const answers = (data.answers && typeof data.answers === 'object') ? data.answers : {};
+  const versions = (data.material_versions && typeof data.material_versions === 'object') ? data.material_versions : {};
+  const materials = Array.isArray(data.materials) ? data.materials : [];
+  const posting = data.posting_url || '';
+  const ts = data.timestamp || '';
+
+  const sections = [];
+
+  // Answers — the exact field values that will be submitted.
+  const answerRows = _kvRows(answers);
+  sections.push(
+    `<div style="margin-top:2px;"><div style="font-weight:600;margin-bottom:2px;">Answers</div>`
+    + (answerRows || `<div style="opacity:0.6;">No individual answers were recorded.</div>`)
+    + `</div>`
+  );
+
+  // Documents / material versions.
+  const matLabels = materials
+    .map((m) => (m && (m.name || m.kind || m.id)) ? esc(String(m.name || m.kind || m.id)) : '')
+    .filter(Boolean);
+  const versionRows = _kvRows(versions);
+  const docBits = [];
+  if (matLabels.length) docBits.push(`<div style="opacity:0.9;">${matLabels.join(', ')}</div>`);
+  if (versionRows) docBits.push(versionRows);
+  sections.push(
+    `<div style="margin-top:8px;"><div style="font-weight:600;margin-bottom:2px;">Documents</div>`
+    + (docBits.length ? docBits.join('') : `<div style="opacity:0.6;">No document versions were recorded.</div>`)
+    + `</div>`
+  );
+
+  // Posting + when it was recorded.
+  const meta = [];
+  if (posting) {
+    meta.push(`<div style="display:flex;gap:10px;padding:6px 0;"><div style="flex:0 0 40%;opacity:0.7;">Posting</div>`
+      + `<div style="flex:1 1 auto;word-break:break-all;"><a href="${esc(posting)}" target="_blank" rel="noopener noreferrer">${esc(posting)}</a></div></div>`);
+  }
+  if (ts) {
+    meta.push(`<div style="display:flex;gap:10px;padding:6px 0;"><div style="flex:0 0 40%;opacity:0.7;">Recorded</div>`
+      + `<div style="flex:1 1 auto;">${esc(_fmtTs(ts))}</div></div>`);
+  }
+  if (meta.length) {
+    sections.push(`<div style="margin-top:8px;"><div style="font-weight:600;margin-bottom:2px;">Posting</div>${meta.join('')}</div>`);
+  }
+
+  return sections.join('');
+}
+
+function _fmtTs(ts) {
+  try {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) return d.toLocaleString();
+  } catch { /* fall through */ }
+  return String(ts);
 }
 
 // ── public surface ──────────────────────────────────────────────────────────

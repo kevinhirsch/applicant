@@ -1,0 +1,252 @@
+{
+  "home": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "portal": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "chat": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "vault": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "remote": [
+    {
+      "text": "No live session is open yet.",
+      "tag": "div",
+      "cls": "",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(11,11,11)",
+      "ratio": 1.12
+    },
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "mind": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "activity": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "debug": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "compare": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "gallery": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "results": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "onboarding": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    }
+  ],
+  "settings": [
+    {
+      "text": "Applicant",
+      "tag": "div",
+      "cls": "welcome-name",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "Type  to get started.",
+      "tag": "div",
+      "cls": "welcome-sub",
+      "color": "rgb(22, 25, 31)",
+      "bg": "rgb(0,0,0)",
+      "ratio": 1.19
+    },
+    {
+      "text": "None",
+      "tag": "div",
+      "cls": "admin-empty",
+      "color": "rgb(154, 163, 175)",
+      "bg": "rgb(255,255,255)",
+      "ratio": 2.55
+    }
+  ]
+}

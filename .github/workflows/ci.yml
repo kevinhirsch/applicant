@@ -63,9 +63,14 @@ jobs:
       #   • docs/adr/0006-agent-intelligence-port.md   — ADR attribution
       - name: White-label codename denylist
         run: |
+          # docs/design/hig/color-wells.md is a genuine false positive: Apple's own API
+          # names UIColorWell / NSColorWell contain the substring "…(col)orwell…". It
+          # carries no upstream codename, so it is excluded here like the hermes-agent
+          # false positives below.
           if git grep -I -i -E 'firehouse|orwell|odysseus|smokey' \
                -- ':!.github' ':!*.lock' ':!uv.lock' \
-               ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md'; then
+               ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
+               ':!docs/design/hig/color-wells.md'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi

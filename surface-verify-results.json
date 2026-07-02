@@ -1,0 +1,287 @@
+{
+  "login_ok": true,
+  "surfaces": [
+    {
+      "surface": "home",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/home-desktop.png",
+      "console_texts": [],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "portal",
+      "viewport": "desktop",
+      "console": 1,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/portal-desktop.png",
+      "console_texts": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "chat",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/chat-desktop.png",
+      "console_texts": [
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "vault",
+      "viewport": "desktop",
+      "console": 5,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/vault-desktop.png",
+      "console_texts": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "remote",
+      "viewport": "desktop",
+      "console": 2,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/remote-desktop.png",
+      "console_texts": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 409 (Conflict)"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "mind",
+      "viewport": "desktop",
+      "console": 6,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/mind-desktop.png",
+      "console_texts": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "activity",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/activity-desktop.png",
+      "console_texts": [
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "debug",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/debug-desktop.png",
+      "console_texts": [],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "compare",
+      "viewport": "desktop",
+      "console": 4,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/compare-desktop.png",
+      "console_texts": [
+        "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "gallery",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": null,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/gallery-desktop.png",
+      "console_texts": [
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "results",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/results-desktop.png",
+      "console_texts": [],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "onboarding",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/onboarding-desktop.png",
+      "console_texts": [
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "settings",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "root_found": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/settings-desktop.png",
+      "console_texts": [
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED",
+        "Failed to load resource: net::ERR_CONNECTION_CLOSED"
+      ],
+      "pageerr_texts": []
+    },
+    {
+      "surface": "route_memory",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_memory-desktop.png"
+    },
+    {
+      "surface": "route_library",
+      "viewport": "desktop",
+      "console": 4,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_library-desktop.png"
+    },
+    {
+      "surface": "route_calendar",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_calendar-desktop.png"
+    },
+    {
+      "surface": "route_notes",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_notes-desktop.png"
+    },
+    {
+      "surface": "route_tasks",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_tasks-desktop.png"
+    },
+    {
+      "surface": "route_gallery",
+      "viewport": "desktop",
+      "console": 0,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_gallery-desktop.png"
+    },
+    {
+      "surface": "route_email",
+      "viewport": "desktop",
+      "console": 3,
+      "pageerr": 0,
+      "http_5xx": 0,
+      "rendered": true,
+      "notes": [],
+      "screenshot": "/home/user/applicant/playtest-screens/route_email-desktop.png"
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+/* meshGradient.css — the iOS/Sequoia "aurora" MESH GRADIENT, shared by the
+   login screen (login_bg.js / login.html) AND the in-app glass theme wallpaper
+   (theme.js → #__wp). Extracted from login.html's inline <style> so the EXACT
+   same renderer + palette presets paint in both places (DRY — one source of
+   truth for the mesh look). login_bg.js / theme.js set data-lbg-preset on the
+   .login-bg-gradient element plus --lbg-speed / --lbg-intensity; the five preset
+   color sets live below.
+
+   The moving color refracts/blurs through the colorless glass panel — which is
+   exactly what sells the liquid-glass look. The mesh is theme-agnostic (its own
+   rich palette), so it reads identically over the login glass and the in-app
+   glass chrome. */
+
+/* gradient (DEFAULT) — a soft-focus MESH gradient in the Apple Sequoia / iOS
+   "aurora" wallpaper idiom: several smoothly-blended, heavily-blurred color
+   blobs over a deep base, dreamy/out-of-focus, NO hard edges. Rich and
+   luminous but not neon.
+
+   PALETTE PRESETS (Sunset / Aurora / Ocean / Gold / Lavender) are admin-chosen:
+   login_bg.js / theme.js set data-lbg-preset on this element + the per-preset
+   color vars, plus --lbg-speed / --lbg-intensity. The five var sets live in the
+   preset blocks below; the defaults here are the Aurora preset (magenta/indigo
+   reads beautifully through glass).
+
+   The heavy gaussian blur is what makes it read as a soft mesh rather than
+   distinct blobs — the panel's own backdrop-blur compounds it. */
+/* When reused as the in-app glass wallpaper, the mesh child fills #__wp (the
+   login page scopes the same fill under #login-bg-host). #__wp is the fixed,
+   z-index:-1, full-bleed layer adaptiveGlass samples + the glass chrome lenses. */
+#__wp .login-bg-gradient,
+.glass-mesh-layer { position: absolute; inset: 0; }
+
+.login-bg-gradient {
+  --lbg-c1: #8b6bff;  /* indigo  */
+  --lbg-c2: #ff5fb0;  /* magenta */
+  --lbg-c3: #ffae66;  /* warm    */
+  --lbg-c4: #5fd8ff;  /* cyan    */
+  --lbg-base: #2a1c5e; /* lifted violet base — bright, not muddy */
+  --lbg-ray: #ffffff;  /* the diagonal aurora light-ray tint */
+  --lbg-speed: 26s;
+  --lbg-intensity: 1;
+}
+/* The blobs live on a ::before so we can heavily blur ONLY the mesh (a wide
+   blur radius on a real layer) without blurring the diagonal ray, and scale it
+   up past the viewport so the blur edges never show. The blobs are LARGE and
+   reach near-full opacity so they fill the frame and overlap into a rich mesh
+   (rather than small dots floating on a dark base). */
+.login-bg-gradient { background: var(--lbg-base); }
+.login-bg-gradient::before {
+  content: ""; position: absolute; inset: -25%;
+  background:
+    radial-gradient(60vmax 60vmax at 16% 12%, color-mix(in srgb, var(--lbg-c1) calc(95% * var(--lbg-intensity)), transparent), transparent 78%),
+    radial-gradient(66vmax 66vmax at 86% 10%, color-mix(in srgb, var(--lbg-c2) calc(92% * var(--lbg-intensity)), transparent), transparent 80%),
+    radial-gradient(72vmax 72vmax at 74% 92%, color-mix(in srgb, var(--lbg-c3) calc(90% * var(--lbg-intensity)), transparent), transparent 82%),
+    radial-gradient(64vmax 64vmax at 20% 86%, color-mix(in srgb, var(--lbg-c4) calc(90% * var(--lbg-intensity)), transparent), transparent 80%);
+  background-size: 150% 150%;
+  filter: blur(54px) saturate(1.55) brightness(1.14);
+  will-change: background-position;
+}
+/* A drifting diagonal "aurora ray" of brighter light streaking across. */
+.login-bg-gradient::after {
+  content: ""; position: absolute; inset: -30%;
+  background: linear-gradient(118deg,
+    transparent 36%,
+    color-mix(in srgb, var(--lbg-ray) calc(24% * var(--lbg-intensity)), transparent) 50%,
+    transparent 64%);
+  filter: blur(30px); mix-blend-mode: screen;
+  will-change: transform, opacity;
+}
+.login-bg-gradient.is-animated::before {
+  animation: login-mesh-drift var(--lbg-speed, 26s) ease-in-out infinite alternate;
+}
+.login-bg-gradient.is-animated::after {
+  animation: login-ray-sweep calc(var(--lbg-speed, 26s) * 1.6) ease-in-out infinite alternate;
+}
+@keyframes login-mesh-drift {
+  0%   { background-position: 0% 50%,   100% 40%,  80% 100%, 20% 0%;   }
+  50%  { background-position: 70% 10%,  20% 90%,   30% 40%,  90% 70%;  }
+  100% { background-position: 100% 60%, 0% 50%,    60% 0%,   0% 100%;  }
+}
+@keyframes login-ray-sweep {
+  0%   { transform: translateX(-12%) translateY(6%);  opacity: 0.7; }
+  100% { transform: translateX(12%)  translateY(-6%); opacity: 1;   }
+}
+/* ── Palette presets (admin-selectable) — rich, luminous Apple-wallpaper sets ──
+   #780: each preset is now visually DISTINCT and TRUE to its label (the old set had
+   'sunset' leading purple ≈ 'aurora', and 'gold' reading green/teal). Soft, luminous,
+   never harsh — the glass material lenses these, so the family stays Apple-restrained. */
+.login-bg-gradient[data-lbg-preset="sunset"] {
+  /* Warm orange → pink dusk: amber high, coral/rose low, one cool violet horizon
+     band for depth (no purple LEAD — that was the aurora collision). */
+  --lbg-c1: #ff9d5c; --lbg-c2: #ff6a8b; --lbg-c3: #ffb86c; --lbg-c4: #c86fd9;
+  --lbg-base: #4a1f33; --lbg-ray: #ffe1c2;
+}
+.login-bg-gradient[data-lbg-preset="aurora"] {
+  /* The aurora-borealis idiom: green/teal curtains with a violet upper sky —
+     green-led so it never reads as the warm/pink 'sunset'. */
+  --lbg-c1: #4ff0b0; --lbg-c2: #46d6e0; --lbg-c3: #7a8cff; --lbg-c4: #b06cff;
+  --lbg-base: #102a3a; --lbg-ray: #d8fff0;
+}
+.login-bg-gradient[data-lbg-preset="ocean"] {
+  --lbg-c1: #4fe6ff; --lbg-c2: #3f8bff; --lbg-c3: #6a5cff; --lbg-c4: #9af0ff;
+  --lbg-base: #11244f; --lbg-ray: #e2f6ff;
+}
+.login-bg-gradient[data-lbg-preset="gold"] {
+  /* Soft, warm, luminous gold/amber — true to its name (the old set was teal-led).
+     Honey high, warm amber/peach low, one muted bronze base — never a punchy yellow. */
+  --lbg-c1: #ffd27a; --lbg-c2: #f5b15a; --lbg-c3: #ffe3a6; --lbg-c4: #e89a55;
+  --lbg-base: #3a2a12; --lbg-ray: #fff0cf;
+}
+.login-bg-gradient[data-lbg-preset="lavender"] {
+  --lbg-c1: #ffb0d6; --lbg-c2: #cfa8ff; --lbg-c3: #aac0ff; --lbg-c4: #ffd2ec;
+  --lbg-base: #3a2c52; --lbg-ray: #ffffff;
+}
+
+/* Reduced motion — freeze to the STATIC gradient (Apple: no peripheral /
+   repetitive animation). The .is-animated class is never added when reduced
+   motion is on (login_bg.js / theme.js), and this belt-and-braces rule kills
+   any residual animation too. */
+@media (prefers-reduced-motion: reduce) {
+  .login-bg-gradient { animation: none !important; }
+  .login-bg-gradient::before, .login-bg-gradient::after { animation: none !important; }
+}

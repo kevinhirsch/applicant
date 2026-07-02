@@ -6,8 +6,51 @@ import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
+import { mountMeshGradient } from './login_bg.js';
+
+// The fixed full-bleed wallpaper layer (z-index:-1) the glass chrome lenses and
+// appkitGlass/adaptiveGlass sample (they look up #__wp). The glass tiers paint the
+// aurora mesh-gradient here so the colorless glass has something rich to refract —
+// which is what actually sells the liquid-glass look. Tier 'off' removes it.
+const WALLPAPER_ID = '__wp';
+function ensureGlassWallpaper(on) {
+  let wp = document.getElementById(WALLPAPER_ID);
+  if (!on) {
+    if (wp) wp.remove();
+    document.body.classList.remove('has-wallpaper');
+    return;
+  }
+  if (!wp) {
+    wp = document.createElement('div');
+    wp.id = WALLPAPER_ID;
+    document.body.insertBefore(wp, document.body.firstChild);
+  }
+  // Fixed, behind everything, non-interactive; a base color so the glass sampler
+  // (which reads #__wp's computed background) has a value even before paint.
+  wp.style.cssText = 'position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;';
+  wp.classList.add('glass-mesh-wp');
+  let meshEl = wp.querySelector('.login-bg-gradient');
+  if (!meshEl) {
+    // intensity 0.5 (the upstream glass default) keeps the mesh a contained glow,
+    // not a full-frame wash.
+    meshEl = mountMeshGradient(wp, { preset: 'aurora', animate: true, speed: 34, intensity: 0.5 });
+  }
+  // Mirror the preset's OWN base onto #__wp (aurora's base is a deep teal ~#102a3a)
+  // so the glass sampler reads a dark base, not an arbitrary flat fill.
+  try {
+    const base = getComputedStyle(meshEl).getPropertyValue('--lbg-base').trim();
+    if (base) wp.style.backgroundColor = base;
+  } catch (_) { /* sampler falls back to the mesh child */ }
+  document.body.classList.add('has-wallpaper');
+}
 
 export const THEMES = {
+  // Glass — the vendored default. A fully NEUTRAL Apple-Liquid-Glass palette: even
+  // the accent (--red) is a neutral gray, so no brand hue lands on chrome text. This
+  // is the OOBE default; combined with the frosted tier it gives glass-everywhere
+  // (blur+saturate) without the SVG-refraction perf cost. Users can still pick the
+  // hued themes below (dark/cyberpunk/…) from Settings.
+  glass:      { bg:'#15171c', fg:'#eef1f4', panel:'#1d2026', border:'#3a3f47', red:'#9aa3af', glassTier:'full', glass:true },
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
   light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
   midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
@@ -30,21 +73,25 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'dark';
+const DEFAULT_THEME = 'glass';
 const LS_KEY = 'applicant-theme';
 const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 
 const FONT_MAP = {
+  // The Apple system font is the HIG default (matches the upstream glass build);
+  // mono/sans/serif remain user-selectable in Settings.
+  system: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', Inter, 'Segoe UI', Roboto, sans-serif",
   mono: "'Fira Code', monospace",
-  sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+  sans: "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
-const DEFAULT_FONT = 'mono';
+const DEFAULT_FONT = 'system';
 const DEFAULT_DENSITY = 'comfortable';
 const MAX_CUSTOM_THEMES = 8;
 
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
+  glass:      'none',
   dark:       'none',
   light:      'dots',
   midnight:   'rain',
@@ -424,7 +471,14 @@ export function applyFrostedGlass(on) {
 //             appkitGlass.js consumes for the Chromium SVG refraction on top of
 //             the CSS glass material.
 export const GLASS_TIERS = ['off', 'frosted', 'full'];
-const DEFAULT_GLASS_TIER = 'off';
+// Frosted is the out-of-the-box default: glass everywhere via the CSS
+// blur+saturate+rim material (body.house-theme, kit-themes.css @supports block),
+// WITHOUT the glass-full-gated SVG refraction/lensing in appkitGlass.js — so the
+// whole front-door reads as Liquid Glass with no per-frame refraction perf cost.
+// 'full' (adds the Chromium SVG refraction) and 'off' (flat panels) remain opt-in
+// via Settings. @supports gives a solid-panel fallback where backdrop-filter is
+// unavailable, and prefers-reduced-motion strips motion but keeps the frost.
+const DEFAULT_GLASS_TIER = 'full';
 
 /** Apply a glass house-theme tier ('off' | 'frosted' | 'full'). Drives the
  *  `house-theme` and `glass-full` body classes that the shipped kit-themes.css
@@ -434,7 +488,15 @@ const DEFAULT_GLASS_TIER = 'off';
 export function applyGlassTier(tier) {
   const t = GLASS_TIERS.includes(tier) ? tier : DEFAULT_GLASS_TIER;
   document.body.classList.toggle('house-theme', t !== 'off');
+  // Match the upstream wiring: frosted AND full both set `theme-frosted` (the
+  // class the light-glass treatment — light frosted chrome + dark ink — is scoped
+  // to); `glass-full` additionally layers the SVG refraction. Without theme-frosted
+  // the chrome stayed dark; this is what makes the frosted default read as the
+  // light Apple glass over the content, not a dark panel.
+  document.body.classList.toggle('theme-frosted', t === 'frosted' || t === 'full');
   document.body.classList.toggle('glass-full', t === 'full');
+  // Paint (or remove) the aurora mesh wallpaper the glass lenses.
+  ensureGlassWallpaper(t !== 'off');
 }
 
 // Read current size multiplier for JS effects (canvas-based).

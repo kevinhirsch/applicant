@@ -22,16 +22,22 @@
 // .hwfit-loading / .applicant-status-strip).
 
 import uiModule from './ui.js';
-import { esc, _fetchJSON } from './applicantCore.js';
+import {
+  esc, _fetchJSON, _post, _toast, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
+  wireRetry, pollVisible,
+} from './applicantCore.js';
 
 const API = '/api/applicant/activity';
+// Global pause / kill-switch — fans out over the owner's campaigns engine-side.
+const CONTROL_API = '/api/applicant/control';
 // Slow poll for the always-visible strip — mirrors the Portal's BADGE_POLL_MS.
 const STATUS_POLL_MS = 45000;
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
-let _statusPollIv = null;
+let _statusPollStop = null;
 let _runsLoading = false;
+let _pauseBusy = false;
 
 
 
@@ -65,7 +71,73 @@ function _relTime(value) {
 
 function _stripEl() { return document.getElementById('applicant-status-strip'); }
 function _stripTextEl() { return document.getElementById('applicant-status-text'); }
+function _pauseBtnEl() { return document.getElementById('applicant-pause-toggle'); }
 function _railEl() { return document.getElementById('rail-activity'); }
+
+// ── Global pause / kill-switch (always-visible strip affordance) ─────────────
+//
+// A one-tap toggle sitting next to the status strip: Pause-all when the agent is
+// live, Resume-all when it's paused. It reflects the live/paused state, shares the
+// strip's visibility (hidden when there's no campaign / the engine is offline),
+// and is a full ≥44px hit target with a visible focus ring (styled in style.css).
+
+// Reflect running/paused on the toggle, or hide it when there's nothing to pause.
+function _setPauseBtn(running, visible) {
+  const btn = _pauseBtnEl();
+  if (!btn) return;
+  if (!visible) { btn.style.display = 'none'; return; }
+  btn.style.display = 'inline-flex';
+  btn.dataset.state = running ? 'live' : 'paused';
+  const label = running ? 'Pause' : 'Resume';
+  const aria = running
+    ? 'Pause your assistant — stop all automated work'
+    : 'Resume your assistant — restart automated work';
+  btn.setAttribute('aria-label', aria);
+  btn.setAttribute('aria-pressed', running ? 'false' : 'true');
+  btn.title = aria;
+  const lbl = btn.querySelector('.applicant-pause-label');
+  if (lbl) lbl.textContent = label; else btn.textContent = label;
+}
+
+// Optimistically paint the strip + toggle to a target running/paused state before
+// the network round-trip settles (reverted on error).
+function _applyPauseOptimistic(running) {
+  const strip = _stripEl();
+  if (strip) {
+    strip.classList.toggle('is-live', running);
+    strip.classList.toggle('is-paused', !running);
+  }
+  const text = _stripTextEl();
+  if (text && !running) text.textContent = 'Paused';
+  _setPauseBtn(running, true);
+}
+
+async function _onPauseToggle() {
+  const btn = _pauseBtnEl();
+  if (!btn || _pauseBusy) return;
+  const wasRunning = btn.dataset.state !== 'paused';
+  // Confirm the global stop (one-tap resume needs no confirmation).
+  if (wasRunning
+      && !window.confirm('Pause all automated work? Your assistant stops until you resume.')) {
+    return;
+  }
+  // Full path segments (leading slash) so the reachability contract sees the
+  // literal /pause-all + /resume-all consumers, not a runtime-concatenated path.
+  const action = wasRunning ? '/pause-all' : '/resume-all';
+  _pauseBusy = true;
+  btn.disabled = true;
+  _applyPauseOptimistic(!wasRunning); // paused becomes the inverse of running
+  try {
+    await _post(`${CONTROL_API}${action}`);
+    refreshStatus(); // reconcile with the engine's authoritative state
+  } catch (e) {
+    _applyPauseOptimistic(wasRunning); // revert
+    _toast(errText(e));
+  } finally {
+    _pauseBusy = false;
+    btn.disabled = false;
+  }
+}
 
 // The rail nav entry and the strip share one visibility signal: both appear only
 // when the engine reports there IS activity. This keeps the nav from showing a
@@ -78,6 +150,7 @@ function _setActivityVisible(visible) {
 function _hideStrip() {
   const strip = _stripEl();
   if (strip) strip.style.display = 'none';
+  _setPauseBtn(false, false); // nothing to pause when the strip is hidden
   _setActivityVisible(false);
 }
 
@@ -117,8 +190,28 @@ function _renderStrip(data) {
   text.textContent = running ? `Applicant is: ${sentence}` : sentence;
   strip.title = `${text.textContent} — open Activity`;
   strip.style.display = 'inline-flex';
+  // Keep the global pause/resume toggle in step with the live/paused state
+  // (skipped mid-toggle so an in-flight optimistic click isn't clobbered).
+  if (!_pauseBusy) _setPauseBtn(running, true);
   // There's activity → reveal the Activity nav entry too.
   _setActivityVisible(true);
+}
+
+// A transient fetch failure used to HIDE the strip, which reads as "the assistant
+// is dead". Instead, if the strip is already on screen, keep it and show a neutral
+// "· reconnecting…" note so a blip reads as a hiccup, not a death. Only hide when
+// the strip was never shown (nothing to reconnect to yet).
+function _renderReconnecting() {
+  const strip = _stripEl();
+  const text = _stripTextEl();
+  if (!strip || !text) return false;
+  const visible = strip.style.display && strip.style.display !== 'none';
+  if (!visible) return false;
+  strip.classList.remove('is-live');
+  strip.classList.add('is-paused');
+  text.textContent = 'Applicant is: reconnecting…';
+  strip.title = 'Reconnecting to your assistant — open Activity';
+  return true;
 }
 
 async function refreshStatus() {
@@ -126,8 +219,9 @@ async function refreshStatus() {
     const data = await _fetchJSON(`${API}/status`);
     _renderStrip(data);
   } catch {
-    // Proxy/engine error — hide rather than show a broken strip.
-    _hideStrip();
+    // Proxy/engine error — keep a visible strip in a neutral "reconnecting" state
+    // rather than vanishing (which reads as dead). Hide only if never shown.
+    if (!_renderReconnecting()) _hideStrip();
   }
 }
 
@@ -150,7 +244,7 @@ function _ensureModalEl() {
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
           <button class="cal-btn" id="applicant-activity-refresh" title="Refresh the activity feed">Refresh</button>
-          <button class="close-btn" id="applicant-activity-close" title="Close">✖</button>
+          <button class="close-btn" id="applicant-activity-close" title="Close" aria-label="Close">✖</button>
         </div>
       </div>
       <div id="applicant-activity-snapshot" style="flex:0 0 auto;"></div>
@@ -253,11 +347,13 @@ function _renderGated(host, data) {
 }
 
 function _renderEmpty(host) {
-  host.innerHTML = `
-    <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.75;">
-      No activity yet. Once your assistant starts working on your job search, what it
-      does will show up here.
-    </div>`;
+  // A hopeful first-run heartbeat rather than a flat "nothing here" — the assistant
+  // is warming up, not idle.
+  host.innerHTML = emptyHTML(
+    'Warming up',
+    'No activity yet — your assistant is getting ready. As soon as it starts '
+      + 'working on your job search, everything it does shows up here.',
+  );
 }
 
 // Friendly one-line summary from a run's stats block, e.g.
@@ -311,7 +407,7 @@ async function _loadRuns(showSpinner) {
   if (_runsLoading) return;
   _runsLoading = true;
   const host = _body();
-  if (host && showSpinner) host.innerHTML = '<div class="hwfit-loading">Loading…</div>';
+  if (host && showSpinner) host.innerHTML = loadingHTML('Loading activity…');
   try {
     const data = await _fetchJSON(`${API}/runs`);
     if (!host) return;
@@ -319,8 +415,11 @@ async function _loadRuns(showSpinner) {
     if (data && data.engine_available === false) { _renderOffline(host); return; }
     const items = (data && data.items) || [];
     _renderRuns(host, items);
-  } catch {
-    if (host) _renderOffline(host);
+  } catch (e) {
+    if (host) {
+      host.innerHTML = errorHTML(errText(e));
+      wireRetry(host, () => _loadRuns(true));
+    }
   } finally {
     _runsLoading = false;
   }
@@ -350,6 +449,13 @@ function _wireLaunchers() {
     strip._applicantActivityWired = true;
     strip.addEventListener('click', () => openApplicantActivity());
   }
+  const pauseBtn = _pauseBtnEl();
+  if (pauseBtn && !pauseBtn._applicantPauseWired) {
+    pauseBtn._applicantPauseWired = true;
+    // Sibling of the strip button — stop propagation so pausing doesn't also
+    // open the Activity page.
+    pauseBtn.addEventListener('click', (e) => { e.stopPropagation(); _onPauseToggle(); });
+  }
 }
 
 function _boot() {
@@ -364,10 +470,11 @@ function _boot() {
     const stripWired = _stripEl()?._applicantActivityWired;
     if ((railWired && stripWired) || tries > 20) clearInterval(iv);
   }, 500);
-  // Seed the strip, then keep it fresh on a slow poll.
-  refreshStatus();
-  if (_statusPollIv) clearInterval(_statusPollIv);
-  _statusPollIv = setInterval(refreshStatus, STATUS_POLL_MS);
+  // Keep the strip fresh on a slow poll — but only while the tab is visible, so a
+  // backgrounded tab doesn't keep hitting the proxy (quick-wins #1). pollVisible
+  // fires once immediately, so it also seeds the strip.
+  if (_statusPollStop) _statusPollStop();
+  _statusPollStop = pollVisible(refreshStatus, STATUS_POLL_MS);
 }
 
 if (document.readyState === 'loading') {
