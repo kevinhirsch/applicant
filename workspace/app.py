@@ -883,6 +883,20 @@ app.include_router(setup_applicant_compare_routes())
 from routes.applicant_results_routes import setup_applicant_results_routes
 app.include_router(setup_applicant_results_routes())
 
+# Global pause / kill-switch — owner-scoped proxy (/api/applicant/control) that
+# fans the engine's per-campaign agent-run pause/resume across all of the owner's
+# campaigns, so the always-visible status strip carries a one-tap supervisory brake
+# (today pause is admin-only + per-campaign). Auth-protected, owner-scoped.
+from routes.applicant_control_routes import setup_applicant_control_routes
+app.include_router(setup_applicant_control_routes())
+
+# Pre-submit snapshot — owner-scoped read proxy (/api/applicant/snapshot) over the
+# engine's immutable submission snapshot (admin→owner read downgrade, mirrors
+# results), so the final-submit gate can preview "exactly what will be sent" before
+# the user authorizes the single irreversible action. Auth-protected, owner-scoped.
+from routes.applicant_snapshot_routes import setup_applicant_snapshot_routes
+app.include_router(setup_applicant_snapshot_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
