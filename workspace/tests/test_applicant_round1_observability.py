@@ -21,8 +21,8 @@ pulse-removal half is already covered by
 is deliberately NOT duplicated here; the raw-hex-removal half (not covered
 elsewhere) IS tested below.
 
-Item #100 is out of scope per the batch instructions (folded into #93/#94, no
-separate fix).
+Item #100 was believed out of scope per the batch instructions (folded into
+#93/#94, no separate fix) — see the UPDATE below.
 
 RESOLVED FINDING (was a critical bug at test-authoring time, fixed since):
 Item #86 claims a new ``_renderConfig()`` hosts Sources/Tools/Update as
@@ -38,11 +38,23 @@ element each (using the ``host`` parameter + ``_needCampaignIn``/`_renderGated`/
 `_renderOffline`'s pre-existing host-scoping support), so one section's
 error/offline/gated state can't blank out its siblings. Tested below.
 
-Item #93 ("list-row treatment applied to Sources/Tools toggle rows") remains
-NOT implemented: the fix above hosts the two sections correctly, but the
-individual toggle rows inside ``_renderSources``/``_renderTools`` still render
-one ``.admin-card`` per row, unchanged. Still SKIPPED — a real but separate,
-non-blocking cosmetic gap, out of scope for this pass.
+UPDATE — item #93 is now implemented (was NOT, at this file's original
+authoring time — see the superseded paragraph this replaces, preserved in git
+history): the fix above hosted the two Config sub-sections correctly, but the
+individual toggle rows inside ``_renderSources``/``_renderTools`` still
+rendered one ``.admin-card`` per row, unchanged, so no test for it was added
+here (a real but separate, non-blocking cosmetic gap, deliberately left
+un-covered pending the fix). Both rows now use the pre-existing
+``.applicant-debug-list``/``.applicant-debug-list-row`` treatment (the same
+pair ``_renderActivity``/``_renderLogs`` already use). Item #100 turned out
+to have two more genuine remaining ``.admin-card``-stacking instances beyond
+Sources/Tools (the Insights "Best sources" list and the Variants list), also
+fixed the same way. All of this is covered in
+``test_applicant_round1_remainder_debuglistrows.py`` (including the
+revert-to-red verification for each converted row), which also confirms this
+file's own #93/#94/#100-numbered tests below (e.g.
+``test_activity_rows_use_list_row_with_demoted_secondary_action``) still pass
+unregressed.
 """
 
 from __future__ import annotations

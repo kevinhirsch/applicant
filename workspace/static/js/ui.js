@@ -816,24 +816,69 @@ if (document.readyState === 'loading') {
   _initScrollDismiss();
 }
 
+// ── Modal Escape arbiter ─────────────────────────────────────────────────
+// Design-audit item #17: a single source of truth for "what closes on
+// Escape" when more than one modal overlay is open at once — e.g. a
+// styledConfirm/styledPrompt dialog opened from within an already-open tool
+// modal (chat, gallery, vault, ...). Every initModalA11y() caller pushes its
+// modalEl onto this stack when it opens and pops off on cleanup; Escape only
+// ever acts on the TOP (most-recently-opened, i.e. topmost) entry. Without
+// this, two overlays open at the same time each carry their own independent
+// keydown listener and either the wrong one closes or (when one overlay's
+// root is a DOM descendant of the other) Escape bubbles through both and
+// closes them at once.
+//
+// Coverage: every surface that calls initModalA11y (styledConfirm/
+// styledPrompt in this file, applicantPortal/Mind/Vault/Remote/Debug/Chat/
+// Gallery/Activity/Results/Update/Onboarding, appkitSheet, assistant.js)
+// gets correct topmost-only Escape arbitration automatically — no
+// per-surface wiring needed. Surfaces that wire a raw local `keydown`
+// listener instead of going through initModalA11y (if any remain) are NOT
+// covered by this arbiter.
+const _modalEscStack = [];
+
+function _escStackPush(modalEl) {
+  _modalEscStack.push(modalEl);
+}
+function _escStackPop(modalEl) {
+  // Use lastIndexOf rather than assuming LIFO cleanup order — a caller could
+  // in principle close an earlier-opened modal first (e.g. a background tool
+  // window torn down programmatically while a dialog sits on top of it).
+  const idx = _modalEscStack.lastIndexOf(modalEl);
+  if (idx !== -1) _modalEscStack.splice(idx, 1);
+}
+function _isTopOfEscStack(modalEl) {
+  return _modalEscStack.length > 0 && _modalEscStack[_modalEscStack.length - 1] === modalEl;
+}
+
 /**
  * Wire keyboard a11y into a modal overlay: focus-trap (Tab / Shift+Tab
  * wraps within the dialog), Escape-to-close, and focus-restore on cleanup.
  *
+ * Escape is arbitrated against every other currently-open initModalA11y()
+ * overlay — only the topmost (most-recently-opened) one reacts, so a
+ * confirm/prompt dialog stacked on top of a parent modal (or any two
+ * stacked overlays) can't both close, or close the wrong one, on a single
+ * Escape press.
+ *
  * Call when the modal opens.  The returned cleanup function removes the
- * keydown listener and restores focus to the element that was active
- * before the modal opened — call it right before hiding/tearing down
- * the modal.
+ * keydown listener, un-registers the modal from the Escape arbiter, and
+ * restores focus to the element that was active before the modal opened —
+ * call it right before hiding/tearing down the modal.
  *
  * @param {HTMLElement} modalEl  The modal root element.
- * @param {Function}    closeFn  Called on Escape (should hide the modal).
+ * @param {Function}    closeFn  Called on Escape when this modal is
+ *                                topmost (should hide the modal).
  * @returns {Function}  cleanup — call this when closing.
  */
 export function initModalA11y(modalEl, closeFn) {
   const savedFocus = document.activeElement;
+  _escStackPush(modalEl);
 
   function onKeydown(e) {
     if (e.key === 'Escape') {
+      // Only the topmost registered overlay reacts — see _modalEscStack above.
+      if (!_isTopOfEscStack(modalEl)) return;
       e.preventDefault();
       closeFn();
       return;
@@ -865,6 +910,7 @@ export function initModalA11y(modalEl, closeFn) {
 
   return () => {
     modalEl.removeEventListener('keydown', onKeydown);
+    _escStackPop(modalEl);
     if (savedFocus && typeof savedFocus.focus === 'function') {
       try { savedFocus.focus(); } catch { /* disposed */ }
     }

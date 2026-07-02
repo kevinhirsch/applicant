@@ -162,6 +162,57 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   return row;
 }
 
+// ── First-run home: designed "let's get you set up" welcome card ───────────
+// Audit item #19: before setup, the empty welcome screen just read as a
+// broken/blank page — a washed wordmark + a bare "Type /setup" hint. This
+// gives that genuinely-unconfigured state (no model endpoints at all) a real
+// designed moment instead: a short on-brand headline + one-line description
+// (copy matches the OOBE wizard's own Welcome step, applicantOnboarding.js
+// `_renderWelcome`, so first-run and the wizard speak with one voice) and a
+// primary CTA that opens the exact same wizard every other empty-state CTA
+// in the app already launches (`window.launchApplicantSetup` — see
+// applicantPortal.js `_renderGated`, the close reference this mirrors).
+// `.admin-card og-card` is the established "designed card" composition
+// (Portal's pending-action/notification rows use the same pairing) so this
+// reuses that glass treatment rather than inventing new visual language.
+function _renderWelcomeSetupCard() {
+  const host = document.getElementById('welcome-setup');
+  if (!host) return;
+  // #welcome-screen itself is pointer-events:none (it's normally just inert
+  // hint text sitting over the chat area) — this card is real interactive
+  // content, so it opts itself back in.
+  host.style.cssText = 'display:block;pointer-events:auto;margin-top:18px;width:min(340px,86vw);';
+  host.innerHTML = `
+    <div class="admin-card og-card" style="text-align:left;padding:20px;margin-bottom:0;">
+      <div style="font-size:15px;font-weight:600;color:var(--fg);margin-bottom:6px;">Let's get you set up</div>
+      <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb, var(--fg) 68%, transparent);margin-bottom:14px;">Connect a model to get started — everything else, Applicant learns as you go.</div>
+      <button type="button" class="cal-btn cal-btn-primary" id="welcome-setup-cta" style="width:100%;">Let's get started</button>
+    </div>`;
+  const cta = host.querySelector('#welcome-setup-cta');
+  if (cta) {
+    cta.addEventListener('click', () => {
+      if (typeof window.launchApplicantSetup === 'function') window.launchApplicantSetup();
+    });
+  }
+  // The card now carries the headline/description itself — the generic
+  // sub/tip hints would just repeat it, so they step aside while it's up.
+  const welcomeSub = document.getElementById('welcome-sub');
+  if (welcomeSub) welcomeSub.style.display = 'none';
+  const welcomeTip = document.getElementById('welcome-tip');
+  if (welcomeTip) welcomeTip.style.display = 'none';
+}
+
+// Configured installs should feel ready, not stuck in onboarding — undo the
+// above the moment there's at least one model endpoint.
+function _hideWelcomeSetupCard() {
+  const host = document.getElementById('welcome-setup');
+  if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+  const welcomeSub = document.getElementById('welcome-sub');
+  if (welcomeSub) welcomeSub.style.display = '';
+  const welcomeTip = document.getElementById('welcome-tip');
+  if (welcomeTip) welcomeTip.style.display = '';
+}
+
 export async function refreshModels(force = false) {
   const box = document.getElementById('models');
   if (!box) return;
@@ -552,13 +603,12 @@ export async function refreshModels(force = false) {
           + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
       }
       box.appendChild(noModels);
-      // No endpoints yet: keep the welcome screen focused on first setup.
-      const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span style="color:var(--accent,var(--red));font-weight:600">/setup</span> to get started.';
-      const welcomeTip = document.getElementById('welcome-tip');
-      if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
+      // No endpoints yet: this is the genuinely-unconfigured pre-setup home —
+      // swap the bare wordmark + "/setup" hint for a designed welcome card.
+      _renderWelcomeSetupCard();
     } else {
       // Configured installs should feel ready, not stuck in onboarding.
+      _hideWelcomeSetupCard();
       const welcomeSub = document.getElementById('welcome-sub');
       if (welcomeSub) welcomeSub.textContent = 'Always on call.';
       const welcomeTip = document.getElementById('welcome-tip');
