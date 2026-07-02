@@ -128,7 +128,7 @@ def test_chat_composer_dimming_wired_on_open_and_close():
         "match this modal's own composer)"
     )
 
-    open_fn = _slice_between(src, "export async function openApplicantChat()", "\nfunction _wireLauncher")
+    open_fn = _slice_between(src, "export async function openApplicantChat(opts)", "\nfunction _wireLauncher")
     assert "_setComposerDimmed(true)" in open_fn, (
         "openApplicantChat must dim the real composer while the panel is open"
     )

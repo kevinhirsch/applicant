@@ -32,6 +32,7 @@
 
 import uiModule from './ui.js';
 import { esc, _toast, _fetchJSON, _post, _put, errText, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const ADMIN = '/api/applicant/admin';
 const OPS = '/api/applicant/ops';
@@ -193,6 +194,14 @@ function _close() {
     const overflowMenu = _modalEl.querySelector('#applicant-debug-overflow-menu');
     if (overflowMenu) overflowMenu.classList.add('hidden');
   }
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('debug');
+}
+
+// Exported so other modules/tests can close Debug without reaching into its
+// private state, mirroring openApplicantDebug's public export.
+export function closeApplicantDebug() {
+  _close();
 }
 
 function _body() { return _modalEl.querySelector('#applicant-debug-body'); }
@@ -1035,10 +1044,11 @@ function _setEngineBanner(modal, up) {
   }
 }
 
-export async function openApplicantDebug() {
+export async function openApplicantDebug(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('debug');
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
@@ -1108,7 +1118,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantDebugModule = { openApplicantDebug, openApplicantDebugDetail };
+// Hash routing (audit #7): '#debug' deep-links straight into the Activity /
+// Debug page — a refresh/shared-link/back-forward on that hash opens/closes
+// it. Registered at module-eval time (runs as soon as app.js's dynamic
+// import resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('debug', { open: openApplicantDebug, close: _close });
+
+const applicantDebugModule = { openApplicantDebug, closeApplicantDebug, openApplicantDebugDetail };
 try { window.applicantDebugModule = applicantDebugModule; } catch { /* no-op */ }
 
 // Exported so the submission-record drill-in renderer (#372) is unit-renderable.

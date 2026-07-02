@@ -174,7 +174,7 @@ def test_chat_modal_open_uses_shared_loading_helper():
     assert re.search(r"import\s*\{[^}]*\bloadingHTML\b[^}]*\}\s*from\s*'\./applicantCore\.js'", src), (
         "expected loadingHTML to be imported from the shared applicantCore helper module"
     )
-    m = re.search(r"export async function openApplicantChat\(\)\s*\{(.*?)\n\}", src, re.S)
+    m = re.search(r"export async function openApplicantChat\(opts\)\s*\{(.*?)\n\}", src, re.S)
     assert m, "expected to find the openApplicantChat function"
     body_of_fn = m.group(1)
     assert "body.innerHTML = loadingHTML();" in body_of_fn, (

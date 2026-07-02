@@ -29,6 +29,7 @@ import {
   esc, _fetchJSON, errText, loadingHTML, emptyHTML, errorHTML, gatedHTML,
   wireRetry, pollVisible,
 } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/results';
 
@@ -97,6 +98,14 @@ function _close() {
   _modalEl.style.display = 'none';
   if (_pollStop) { _pollStop(); _pollStop = null; }
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('results');
+}
+
+// Exported so other modules/tests can close Results without reaching into
+// its private state, mirroring openApplicantResults' public export.
+export function closeApplicantResults() {
+  _close();
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-results-body'); }
@@ -257,10 +266,11 @@ async function _load(showSpinner) {
   }
 }
 
-export async function openApplicantResults() {
+export async function openApplicantResults(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('results');
   await _load(true);
   // Keep it fresh while open (only while the tab is visible).
   if (_pollStop) _pollStop();
@@ -297,7 +307,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantResultsModule = { openApplicantResults };
+// Hash routing (audit #7): '#results' deep-links straight into the Results
+// page — a refresh/shared-link/back-forward on that hash opens/closes it.
+// Registered at module-eval time (runs as soon as app.js's dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('results', { open: openApplicantResults, close: _close });
+
+const applicantResultsModule = { openApplicantResults, closeApplicantResults };
 
 // Expose for deep-links / other modules without import coupling.
 try { window.applicantResultsModule = applicantResultsModule; } catch { /* no-op */ }

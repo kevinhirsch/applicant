@@ -24,6 +24,7 @@
 
 import uiModule from './ui.js';
 import { _fetchJSON as _kitFetchJSON, errText, loadingHTML, emptyHTML, errorHTML, wireRetry } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = `${window.location.origin}/api/applicant/compare`;
 
@@ -136,6 +137,14 @@ function _close() {
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = '';
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('compare');
+}
+
+// Exported so other modules/tests can close Compare without reaching into
+// its private state, mirroring openApplicantCompare's public export.
+export function closeApplicantCompare() {
+  _close();
 }
 
 function _setStatus(msg, isError) {
@@ -330,10 +339,11 @@ function _renderResult(container, data, kind, campaignId) {
 
 // ── Open / launchers / boot ──────────────────────────────────────────────────
 
-export async function openApplicantCompare() {
+export async function openApplicantCompare(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('compare');
   _setStatus('', false);
   // Seed the (otherwise blank) result area with a plain-language empty state so
   // the surface reads as ready, not broken, before the first comparison.
@@ -377,7 +387,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantCompareModule = { openApplicantCompare };
+// Hash routing (audit #7): '#compare' deep-links straight into the Compare
+// page — a refresh/shared-link/back-forward on that hash opens/closes it.
+// Registered at module-eval time (runs as soon as app.js's dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('compare', { open: openApplicantCompare, close: _close });
+
+const applicantCompareModule = { openApplicantCompare, closeApplicantCompare };
 
 // Expose for deep-links / other modules without import coupling.
 try { window.applicantCompareModule = applicantCompareModule; } catch { /* no-op */ }

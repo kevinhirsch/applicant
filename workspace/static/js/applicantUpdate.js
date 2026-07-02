@@ -21,6 +21,7 @@
 import uiModule from './ui.js';
 import { updateStateView, formatLogTail } from './applicantUpdateView.js';
 import { esc, _toast, _fetchJSON, _post, pollVisible } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const OPS = '/api/applicant/ops';
 // While an update is running, re-poll status on this cadence so the live log
@@ -80,6 +81,14 @@ function _close() {
   if (!_modalEl) return;
   _modalEl.classList.add('hidden');
   _modalEl.style.display = 'none';
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('update');
+}
+
+// Exported so other modules/tests can close Update without reaching into
+// its private state, mirroring openApplicantUpdate's public export.
+export function closeApplicantUpdate() {
+  _close();
 }
 
 function _body() { return _modalEl && _modalEl.querySelector('#applicant-update-body'); }
@@ -194,10 +203,11 @@ async function _trigger() {
 
 // ── Open / launcher ──────────────────────────────────────────────────────────
 
-export async function openApplicantUpdate() {
+export async function openApplicantUpdate(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('update');
   const host = _body();
   if (host) host.innerHTML = '<div class="hwfit-loading">Loading…</div>';
   const status = await _refresh();
@@ -232,7 +242,13 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantUpdateModule = { openApplicantUpdate, updateStateView, formatLogTail };
+// Hash routing (audit #7): '#update' deep-links straight into the Update
+// page — a refresh/shared-link/back-forward on that hash opens/closes it.
+// Registered at module-eval time (runs as soon as app.js's dynamic import
+// resolves, well before app.js calls hashRouter.initHashRouting()).
+registerRoute('update', { open: openApplicantUpdate, close: _close });
+
+const applicantUpdateModule = { openApplicantUpdate, closeApplicantUpdate, updateStateView, formatLogTail };
 try { window.applicantUpdateModule = applicantUpdateModule; } catch { /* no-op */ }
 
 // Re-export the pure helpers so importers can pull them from this module too.

@@ -15,6 +15,7 @@
 
 import uiModule from './ui.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/mind';
 
@@ -61,6 +62,14 @@ function _ensureModalEl() {
 function _close() {
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   if (_modalEl) _modalEl.style.display = 'none';
+  // Hash routing (audit #7): only clears when the hash is actually ours.
+  clearHash('mind');
+}
+
+// Exported so other modules/tests can close Mind without reaching into its
+// private state, mirroring openApplicantMind's public export.
+export function closeApplicantMind() {
+  _close();
 }
 
 function _body() {
@@ -252,9 +261,10 @@ function _wireSkillRows() {
 
 // --- open ------------------------------------------------------------------
 
-export async function openApplicantMind() {
+export async function openApplicantMind(opts) {
   const el = _ensureModalEl();
   el.style.display = 'flex';
+  if (!(opts && opts.skipHashUpdate)) setHash('mind');
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(el, _close);
   _body().innerHTML = '<div class="memory-empty" style="padding:18px;opacity:0.7;">Loading…</div>';
@@ -328,7 +338,14 @@ if (document.readyState === 'loading') {
   _boot();
 }
 
-const applicantMindModule = { openApplicantMind };
+// Hash routing (audit #7): '#mind' deep-links straight into "What the
+// assistant remembers" — a refresh/shared-link/back-forward on that hash
+// opens/closes it. Registered at module-eval time (runs as soon as app.js's
+// dynamic import resolves, well before app.js calls
+// hashRouter.initHashRouting()).
+registerRoute('mind', { open: openApplicantMind, close: _close });
+
+const applicantMindModule = { openApplicantMind, closeApplicantMind };
 try { window.applicantMindModule = applicantMindModule; } catch { /* no-op */ }
 
 export default applicantMindModule;
