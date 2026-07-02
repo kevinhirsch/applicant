@@ -53,6 +53,12 @@ const NOTIF_SEEN_KEY = 'applicant_notif_last_toast_ts';
 // NOTIF_SEEN_KEY get/set pattern below; a separate key so it never clobbers the
 // toast bookkeeping.
 const RECAP_SEEN_KEY = 'applicant_portal_recap_seen_ts';
+// localStorage marker: the SET of one-time milestone ids already celebrated
+// (e.g. "submitted_25"), so a round-number "applications sent" threshold is
+// announced exactly once, ever — never re-shown on a later visit. Mirrors the
+// `applicant_vault_*` naming convention applicantVault.js established this
+// session for its own campaign-persistence key.
+const MILESTONES_SEEN_KEY = 'applicant_portal_milestones_shown';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -357,6 +363,8 @@ function _ensureModalEl() {
       </div>
       <div class="modal-body" id="applicant-portal-body" style="flex:1;overflow-y:auto;">
         <div id="applicant-portal-greeting"></div>
+        <div id="applicant-portal-today"></div>
+        <div id="applicant-portal-streak"></div>
         <div id="applicant-portal-recap"></div>
         <div id="applicant-portal-momentum"></div>
         <div id="applicant-portal-neverdoes-panel" style="display:none;"></div>
@@ -366,7 +374,7 @@ function _ensureModalEl() {
     </div>`;
   document.body.appendChild(modal);
   modal.querySelector('#applicant-portal-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); _loadMomentum(); });
+  modal.querySelector('#applicant-portal-refresh').addEventListener('click', () => { _load(true); _loadDigest(true); _loadMomentum(); _loadStreak(); });
   modal.querySelector('#applicant-portal-neverdoes').addEventListener('click', _toggleNeverDoesPanel);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -575,6 +583,80 @@ async function _loadRecap() {
   _renderRecap(host, _recapTotals(items, _recapSince), _lastPendingCount);
 }
 
+// ── Supportive streak ────────────────────────────────────────────────────────
+//
+// "Days in a row the agent has been actively working", sourced from the SAME
+// run-history proxy _loadRecap reads (`/api/applicant/activity/runs` — one
+// record per scheduler tick, via `_runTs`) grouped into calendar days and
+// counted backward from today. One day's grace: if today hasn't produced a
+// run YET, yesterday still anchors the count (a tick simply may not have
+// fired yet today) rather than reading as broken. Deliberately NOT punitive:
+// there is no broken-streak state, no red/warning styling, and no callout
+// when a day is missed — below a 2-day streak (or on any miss) the line just
+// quietly stops rendering, the same "reset without comment" shape as the
+// notification-seen/recap-seen markers above.
+
+const _ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function _streakHost() { return _modalEl && _modalEl.querySelector('#applicant-portal-streak'); }
+
+// A local calendar-day key (not UTC) — good enough as a Set key, no formatting
+// contract to keep, so no zero-padding needed.
+function _dayKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function _computeStreakDays(items) {
+  const days = new Set();
+  for (const run of items) {
+    if (!run || typeof run !== 'object') continue;
+    const ts = _runTs(run);
+    if (ts) days.add(_dayKey(ts));
+  }
+  if (!days.size) return 0;
+  const now = Date.now();
+  let anchor = now;
+  if (!days.has(_dayKey(now))) {
+    const yesterday = now - _ONE_DAY_MS;
+    if (!days.has(_dayKey(yesterday))) return 0; // more than a day's gap — quietly reset
+    anchor = yesterday;
+  }
+  let count = 0;
+  let cursor = anchor;
+  while (days.has(_dayKey(cursor))) {
+    count += 1;
+    cursor -= _ONE_DAY_MS;
+  }
+  return count;
+}
+
+function _renderStreak(host, days) {
+  if (!host) return;
+  // A 1-day "streak" doesn't read as a streak yet — stay quiet until there's
+  // genuinely something to be warm about.
+  if (!(days >= 2)) { host.innerHTML = ''; return; }
+  host.innerHTML = `
+    <div style="font-size:11px;opacity:0.65;margin:0 2px 8px;line-height:1.4;">
+      Working for you ${days} days running
+    </div>`;
+}
+
+async function _loadStreak() {
+  const host = _streakHost();
+  if (!host) return;
+  let data;
+  try {
+    data = await _fetchJSON(`${ACTIVITY_API}/runs`);
+  } catch {
+    host.innerHTML = ''; // supplementary line — hide on any read failure
+    return;
+  }
+  if (!data || data.engine_available === false || data.gated === true) { host.innerHTML = ''; return; }
+  const items = (Array.isArray(data.items) ? data.items : []).filter((it) => it && typeof it === 'object');
+  _renderStreak(host, _computeStreakDays(items));
+}
+
 // ── Momentum strip (task #2) ─────────────────────────────────────────────────
 //
 // A compact one-line scoreboard sourced from the owner-scoped results/funnel
@@ -630,6 +712,64 @@ async function _loadMomentum() {
   if (!data || data.engine_available === false || data.gated === true) { host.innerHTML = ''; return; }
   if (data.has_data === false) { _momentumEmpty(host); return; }
   _renderMomentum(host, data);
+  // Milestone celebration (daily-ritual §4B, item #1): reuses the SAME funnel
+  // data just rendered above — no second data path.
+  _checkSubmitMilestone(data.summary);
+}
+
+// ── Milestone celebrations ────────────────────────────────────────────────────
+//
+// A ONE-TIME, tasteful nudge when a round-number "applications sent" threshold
+// is crossed, sourced from the funnel data _loadMomentum already fetches
+// (`summary.total_submitted`, cumulative) — no second data path. Reuses the
+// exact toast mechanism the outcome-loop's own celebratory notifications
+// surface through here (`_toast`, backed by ui.js `showToast`, the same
+// function `_toastNew` calls for an arriving engine notification) rather than
+// a bespoke banner/confetti widget — reduce-motion-safe by construction (plain
+// text, no animation). Deduped in localStorage (`MILESTONES_SEEN_KEY`, mirrors
+// the `applicant_vault_*` key-naming convention) so a threshold is announced
+// exactly once, ever.
+//
+// "First interview" is deliberately NOT re-celebrated here: the engine's own
+// `notify_positive_outcome()` already fires a celebratory in-app notification
+// on every interview invite (deduped per outcome event via `dedup_key`), and
+// Portal already folds informational notifications into a toast the moment
+// they arrive (`_toastNew`, wired into `_loadNotifs`) — adding a second,
+// Portal-local "first interview" trigger on top of that would be exactly the
+// second celebration mechanism this feature is not supposed to build.
+
+const SUBMIT_MILESTONES = [10, 25, 50, 100];
+
+function _milestonesSeen() {
+  try {
+    const raw = window.localStorage.getItem(MILESTONES_SEEN_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+
+function _markMilestonesSeen(ids) {
+  try {
+    const seen = _milestonesSeen();
+    ids.forEach((id) => seen.add(id));
+    window.localStorage.setItem(MILESTONES_SEEN_KEY, JSON.stringify(Array.from(seen)));
+  } catch { /* no-op */ }
+}
+
+function _checkSubmitMilestone(summary) {
+  const n = Number(summary && summary.total_submitted);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const reached = SUBMIT_MILESTONES.filter((t) => n >= t);
+  if (!reached.length) return;
+  const seen = _milestonesSeen();
+  const unseen = reached.filter((t) => !seen.has(`submitted_${t}`));
+  // Mark every threshold at/below the current count as seen — a big jump
+  // between visits (a batch of submissions) celebrates only the highest
+  // newly-crossed one below, and never re-fires the smaller ones later.
+  _markMilestonesSeen(reached.map((t) => `submitted_${t}`));
+  if (!unseen.length) return;
+  const top = unseen[unseen.length - 1];
+  _toast(`🎉 ${top} applications sent — nice momentum.`);
 }
 
 // ── Empty / offline states ────────────────────────────────────────────────────
@@ -728,6 +868,42 @@ function _renderPulseLine() {
   if (el) el.textContent = _agentPulseLine();
 }
 
+// ── "Today at a glance" ──────────────────────────────────────────────────────
+//
+// A compact one-line summary of TODAY specifically (not the whole "while you
+// were away" recap window), reusing the EXACT `_agentPulse` data
+// `_agentPulseLine` already reads (the engine's `now`/`next` snapshot) — no
+// new data path. Renders in its own always-visible slot (whether the pending
+// queue is empty or full), independent of the empty-state proof-of-life line.
+
+function _todayHost() { return _modalEl && _modalEl.querySelector('#applicant-portal-today'); }
+
+function _todayGlanceLine() {
+  const now = _agentPulse && _agentPulse.now;
+  const next = _agentPulse && _agentPulse.next;
+  const parts = [];
+  const applied = (now && Number.isInteger(now.applied_today)) ? now.applied_today : null;
+  const budget = (now && Number.isInteger(now.daily_budget)) ? now.daily_budget : null;
+  if (applied != null && budget != null && budget > 0) {
+    parts.push(`${applied} of ${budget} application${budget === 1 ? '' : 's'} started`);
+  } else if (applied != null) {
+    parts.push(`${applied} application${applied === 1 ? '' : 's'} started today`);
+  }
+  const pending = (next && Number.isInteger(next.pending_actions)) ? next.pending_actions : null;
+  if (pending != null && pending > 0) {
+    parts.push(`${pending} need${pending === 1 ? 's' : ''} you`);
+  }
+  return parts.length ? `Today: ${parts.join(' · ')}` : '';
+}
+
+function _renderTodayGlance() {
+  const host = _todayHost();
+  if (!host) return;
+  const line = _todayGlanceLine();
+  if (!line) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div style="font-size:11px;opacity:0.65;margin:0 2px 8px;line-height:1.4;">${esc(line)}</div>`;
+}
+
 async function _loadAgentPulse() {
   try {
     const data = await _fetchJSON(`${ACTIVITY_API}/snapshot`);
@@ -736,6 +912,10 @@ async function _loadAgentPulse() {
     _agentPulse = null; // supplementary line — hide behind the static fallback on any read failure
   }
   _renderPulseLine();
+  // Best-effort: a missing #applicant-portal-today host (an older cached DOM,
+  // or a test harness that only fakes the pulse-text element) must never break
+  // the pulse-line update above.
+  try { _renderTodayGlance(); } catch { /* no-op */ }
 }
 
 function _renderEmpty(body) {
@@ -1620,10 +1800,12 @@ export async function openApplicantPortal(opts) {
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   // Today's digest at the home base (C1) loads alongside the pending list; the
   // two are independent so a slow/offline digest never blocks the pending items.
-  // The momentum strip (results funnel) loads independently too; the recap is
-  // kicked off from within _load once the fresh pending count is known.
+  // The momentum strip (results funnel) and the supportive streak load
+  // independently too; the recap is kicked off from within _load once the
+  // fresh pending count is known.
   _loadDigest(true);
   _loadMomentum();
+  _loadStreak();
   await _load(true);
 }
 
