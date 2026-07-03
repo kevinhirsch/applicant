@@ -951,6 +951,14 @@ class ApplicantEngineClient:
         """Run (or reuse) deep research for a campaign — the manual trigger."""
         return await self._request("POST", f"/api/research/{campaign_id}/run", json=body)
 
+    async def research_cached(self, campaign_id: str, query: str) -> Any:
+        """Read an already-cached report for free (dark-engine audit item 38) —
+        no fresh run, no budget spent. Raises a 404 :class:`EngineError` when
+        nothing is cached yet for this exact (campaign, query)."""
+        return await self._request(
+            "GET", f"/api/research/{campaign_id}/cached", params={"query": query}
+        )
+
     async def research_budget(self, campaign_id: str) -> Any:
         """Read a campaign's research budget + channel availability."""
         return await self._request("GET", f"/api/research/{campaign_id}/budget")
