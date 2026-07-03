@@ -11,7 +11,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from applicant.app.deps import get_container, get_setup_service
+from applicant.app.deps import get_chat_service, get_container, get_setup_service
+from applicant.core.ids import CampaignId
 from applicant.ports.driving.setup_wizard import (
     LLMSettings,
     SandboxConnectionSettings,
@@ -436,6 +437,20 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/{campaign_id}/gaps")
+def get_profile_gaps(campaign_id: str, chat=Depends(get_chat_service)) -> dict:
+    """A visible completeness checklist for one campaign (dark-engine audit item 51).
+
+    ``ChatService.identify_gaps`` already computes which core profile attributes
+    (name/email/phone/title) and search criteria are still missing — today it is
+    read only as hidden context inside a chat turn. This surfaces the SAME
+    gap list (no separate computation, no fabricated data) as a plain read so the
+    front door can show it as a checklist without requiring a chat message first.
+    """
+    gaps = chat.identify_gaps(CampaignId(campaign_id))
+    return {"campaign_id": campaign_id, "gaps": gaps, "complete": not gaps}
 
 
 @router.post("/advance/{step}")
