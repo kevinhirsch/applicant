@@ -15,7 +15,10 @@ failures to clean HTTP responses.
 
 Endpoints (mount prefix ``/api/applicant/research``):
 
-* ``POST /{campaign_id}/run``   — run (or reuse) deep research for a campaign.
+* ``POST /{campaign_id}/run``    — run (or reuse) deep research for a campaign.
+* ``GET  /{campaign_id}/cached`` — read an already-cached report for free
+  (dark-engine audit item 38), without burning a research run, or a 404 when
+  nothing is cached yet for that (campaign, query).
 * ``GET  /{campaign_id}/budget`` — read the campaign's research budget + channel
   availability.
 
@@ -27,6 +30,8 @@ Engine contract (``src/applicant/app/routers/research.py``):
   and a ``reason`` — a degraded state, not a server error. We pass that straight
   through so the UI can show a graceful "research isn't set up / budget used" note.
 * An empty query is a 422 on the engine; we forward that status + detail.
+* The cached-read is a plain 404 (not the run's degraded 200) when nothing is
+  cached — the UI treats that as "fall back to a fresh run", not an error state.
 * A transport failure (engine down / timeout) is normalised to a 503 here so the
   surface degrades gracefully instead of throwing.
 """
@@ -113,6 +118,25 @@ def setup_applicant_research_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             try:
                 result = await engine.research_run(campaign_id, payload)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result if isinstance(result, dict) else {}
+
+    @router.get("/{campaign_id}/cached")
+    async def cached_research(campaign_id: str, query: str, request: Request) -> dict:
+        """Read an already-cached report for free — no fresh run, no budget spent.
+
+        Lets the UI check for a report it already paid for before deciding to
+        kick a fresh (budget-charged) run. A plain 404 when nothing is cached
+        yet for this exact (campaign, query) is forwarded as-is; the caller
+        falls back to ``POST .../run``.
+        """
+        _require_user(request)
+        if not (query or "").strip():
+            raise HTTPException(status_code=422, detail="query must not be empty")
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.research_cached(campaign_id, query)
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
         return result if isinstance(result, dict) else {}
