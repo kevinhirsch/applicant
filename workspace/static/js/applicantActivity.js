@@ -325,6 +325,40 @@ function _snapshotLine(label, sentence, extra) {
     </div>`;
 }
 
+// Loop-health chip (dark-engine audit #63): the scheduler already tracks
+// operational metrics across ticks — total/succeeded/failed counts, the
+// consecutive-failure streak, and whether the stall alert is currently armed
+// — and this data already reaches the browser inside the status/snapshot
+// payloads (engine `scheduler.state()` → the read-only status proxy's
+// `scheduler.metrics`, and the consolidated snapshot's `now.metrics`), but
+// nothing rendered it. `_loopMetrics` finds the metrics object wherever the
+// caller's payload put it; `_healthChipText`/`_healthWarningText` turn the
+// raw counters into plain language — no jargon, no fabricated numbers (a
+// chip only renders once at least one tick has actually happened).
+function _loopMetrics(data) {
+  const m = (data && data.now && data.now.metrics) || (data && data.scheduler && data.scheduler.metrics);
+  return (m && typeof m === 'object') ? m : null;
+}
+
+function _healthChipText(m) {
+  const total = Number(m.ticks_total);
+  if (!Number.isFinite(total) || total <= 0) return '';
+  const failed = Number(m.ticks_failed) || 0;
+  const runs = `${total} run${total === 1 ? '' : 's'}`;
+  if (failed === 0) return `${runs} · no failures yet`;
+  if (m.last_tick_success === false && m.last_heartbeat) {
+    const when = _relTime(m.last_heartbeat);
+    return `${runs} · last failure ${when || 'recently'}`;
+  }
+  return `${runs} · ${failed} failure${failed === 1 ? '' : 's'} so far`;
+}
+
+function _healthWarningText(m) {
+  if (!m.alerting) return '';
+  const consecutive = Number(m.consecutive_failures) || 0;
+  return `Stalled — ${consecutive} run${consecutive === 1 ? '' : 's'} in a row failed. Take a look when you can.`;
+}
+
 function _renderSnapshot(host, data) {
   if (!host) return;
   if (!data || data.engine_available === false || data.has_activity === false) {
@@ -349,6 +383,22 @@ function _renderSnapshot(host, data) {
       extra = `${pending} item${pending === 1 ? '' : 's'} waiting on you`;
     }
     parts.push(_snapshotLine('Up next', next.sentence, extra));
+  }
+  // Loop-health chip: a compact, plain-language line under Now/Up next
+  // ("312 runs · no failures yet"), plus a visible warning when the
+  // scheduler's consecutive-failure stall alert is currently armed.
+  const metrics = _loopMetrics(data);
+  if (metrics) {
+    const chipText = _healthChipText(metrics);
+    if (chipText) {
+      parts.push(`
+        <div style="margin:4px 0 0;font-size:11px;opacity:0.65;">${esc(chipText)}</div>`);
+    }
+    const warnText = _healthWarningText(metrics);
+    if (warnText) {
+      parts.push(`
+        <div style="margin:4px 0 0;font-size:11px;font-weight:600;color:var(--orange, #ffb86c);">${esc(warnText)}</div>`);
+    }
   }
   if (!parts.length) { host.innerHTML = ''; return; }
   host.innerHTML = `
