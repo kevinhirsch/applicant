@@ -127,14 +127,55 @@ class FailureLesson:
     lesson: str
 
 
+class EpisodicLessonLedger:
+    """Process-lived store for Reflexion failure lessons (#306, dark-engine audit #44).
+
+    ``LearningService`` is rebuilt fresh every scheduler tick AND every request
+    (``container._build_tick_services`` / ``_build_request_services`` — per-tick
+    Session isolation, CONC-REQ-1), so a lesson kept on a plain dict attribute of
+    the service instance would vanish before the very next recall — the loop
+    would reflect on a failure and then immediately "forget" it. This mirrors the
+    existing ``ResumeLedger`` / ``DigestLedger`` / ``RoutineStore`` pattern: build
+    ONE instance in ``container.py`` and inject it into every LearningService
+    construction (main / per-tick / per-request) so a lesson learned on one
+    tick's failure is still there for the very next attempt's recall.
+    """
+
+    def __init__(self) -> None:
+        self._lessons: dict[str, list[FailureLesson]] = {}
+        self._lock = threading.Lock()
+
+    def add(self, lesson: FailureLesson) -> None:
+        with self._lock:
+            self._lessons.setdefault(lesson.ats, []).append(lesson)
+
+    def recall(self, ats: str) -> list[FailureLesson]:
+        with self._lock:
+            return list(self._lessons.get(str(ats), []))
+
+    def all(self) -> dict[str, list[FailureLesson]]:
+        """Every recorded lesson grouped by ATS (admin/Mind-panel read-model, #44)."""
+        with self._lock:
+            return {ats: list(items) for ats, items in self._lessons.items()}
+
+
 class LearningService:
-    def __init__(self, storage, embedding, *, memory_store=None) -> None:
+    def __init__(
+        self, storage, embedding, *, memory_store=None, lesson_ledger=None
+    ) -> None:
         self._storage = storage
         self._embedding = embedding
         # Episodic memory for verbal lessons (Reflexion). Prefer a wired curated
         # MemoryStore; fall back to an in-process map so recall works hermetically.
         self._memory_store = memory_store
-        self._episodic_lessons: dict[str, list[FailureLesson]] = {}
+        # #44: process-lived ledger (see EpisodicLessonLedger) — defaults to a
+        # PRIVATE instance so plain hermetic construction (``LearningService(storage,
+        # embedding)``, used throughout the test suite) is unaffected; container.py
+        # shares ONE ledger across every tick/request-scoped LearningService it
+        # builds so a lesson survives the per-tick/per-request rebuild.
+        self._lesson_ledger = (
+            lesson_ledger if lesson_ledger is not None else EpisodicLessonLedger()
+        )
 
     def model_for(self, campaign_id: CampaignId) -> LearningModel:
         return LearningModel(campaign_id=campaign_id)
@@ -653,7 +694,7 @@ class LearningService:
             else f"On {ats}, the step '{step}' failed; proceed cautiously next time."
         )
         lesson = FailureLesson(ats=ats, step=step, lesson=lesson_text)
-        self._episodic_lessons.setdefault(ats, []).append(lesson)
+        self._lesson_ledger.add(lesson)
 
         store = self._memory_store
         if store is not None:
@@ -675,4 +716,13 @@ class LearningService:
 
     def recall_lessons(self, ats: str) -> list[FailureLesson]:
         """Recall verbal lessons for an ATS on the next similar attempt (#306)."""
-        return list(self._episodic_lessons.get(str(ats), []))
+        return self._lesson_ledger.recall(ats)
+
+    def list_all_lessons(self) -> dict[str, list[FailureLesson]]:
+        """Every Reflexion lesson recorded so far, grouped by ATS (dark-engine audit #44).
+
+        Read-only overview for the admin/Mind-panel surface — lets an operator see
+        every domain the loop has learned something about, not just one they
+        already know to query by name.
+        """
+        return self._lesson_ledger.all()

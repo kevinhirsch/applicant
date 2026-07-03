@@ -13,6 +13,8 @@ logging ring buffer). Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from applicant.app.container import Container
@@ -161,6 +163,44 @@ def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) 
     see and trust the bias the engine applies.
     """
     return learning.build_summary(campaign_id)  # type: ignore[arg-type]
+
+
+# === Reflexion failure lessons (FR-LEARN-*, dark-engine audit #44) =========
+@router.get("/lessons")
+def all_lessons(learning=Depends(get_learning_service)) -> dict:
+    """Every verbal Reflexion lesson recorded so far, grouped by ATS (#44).
+
+    ``LearningService.reflect_on_failure`` distills a short natural-language
+    lesson from a real pre-fill field failure; the pre-fill loop calls
+    ``recall_lessons`` for the SAME ats before its next fill attempt on that
+    ATS. This is the plain read-only overview across every domain the loop has
+    learned something about, process-global (not campaign-scoped) like
+    ``/prefill-diagnostics`` above.
+    """
+    grouped = learning.list_all_lessons()  # type: ignore[attr-defined]
+    return {
+        "lessons": {
+            ats: [dataclasses.asdict(lesson) for lesson in items]
+            for ats, items in grouped.items()
+        },
+        "status": "live",
+    }
+
+
+@router.get("/lessons/{ats}")
+def lessons_for_ats(ats: str, learning=Depends(get_learning_service)) -> dict:
+    """Verbal Reflexion lessons recalled for ONE ATS (#44).
+
+    The same read the pre-fill loop performs before a fill attempt on ``ats``
+    — surfaced here so an operator can see exactly what the loop already
+    knows about a given ATS before/while it runs.
+    """
+    lessons = learning.recall_lessons(ats)  # type: ignore[arg-type]
+    return {
+        "ats": ats,
+        "lessons": [dataclasses.asdict(lesson) for lesson in lessons],
+        "status": "live",
+    }
 
 
 # === Stealth honesty + egress (FR-STEALTH-4 / FR-STEALTH-5) ================

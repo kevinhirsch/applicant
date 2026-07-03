@@ -54,7 +54,10 @@ from applicant.application.services.discovery_service import DiscoveryService
 from applicant.application.services.feedback_service import FeedbackService
 from applicant.application.services.font_service import FontService
 from applicant.application.services.learning_advanced import AdvancedLearningService
-from applicant.application.services.learning_service import LearningService
+from applicant.application.services.learning_service import (
+    EpisodicLessonLedger,
+    LearningService,
+)
 from applicant.application.services.notification_service import NotificationService
 from applicant.application.services.onboarding_service import OnboardingService
 from applicant.application.services.pending_actions_service import PendingActionsService
@@ -790,7 +793,15 @@ def build_container(settings: Settings | None = None) -> Container:
     )
     font_service = FontService(font_installer)
     conversion_service = ConversionService(latex_tailor=latex_tailor, config_store=config_store)
-    learning_service = LearningService(storage, embedding)
+    # #44 (dark-engine audit): ONE process-lived EpisodicLessonLedger for the whole
+    # process. LearningService is rebuilt fresh every scheduler tick AND every
+    # request (``_build_tick_services`` / ``_build_request_services``, CONC-REQ-1),
+    # so a Reflexion lesson kept on a per-instance dict would vanish before the very
+    # next recall — exactly like resume_ledger/digest_ledger/RoutineStore below.
+    # Injected into every LearningService construction so a lesson learned on one
+    # tick's failure is still there for the next tick's (or request's) recall.
+    lesson_ledger = EpisodicLessonLedger()
+    learning_service = LearningService(storage, embedding, lesson_ledger=lesson_ledger)
     # Phase 4 real-conversion depth layered over the cheap Phase 1 base (FR-LEARN-2/3/4).
     advanced_learning_service = AdvancedLearningService(base=learning_service, storage=storage)
 
@@ -1196,7 +1207,9 @@ def build_container(settings: Settings | None = None) -> Container:
     # orchestrator/sandbox/...) and session-free services are reused. With in-memory
     # storage (tests / no-DB) there is no Session to isolate, so the shared loop is used.
     def _build_tick_services(tick_storage):
-        ls = LearningService(tick_storage, embedding)
+        # #44: share the ONE process-lived EpisodicLessonLedger (not a per-tick
+        # instance), so a lesson reflected on in one tick is recalled in the next.
+        ls = LearningService(tick_storage, embedding, lesson_ledger=lesson_ledger)
         adv = AdvancedLearningService(
             base=ls, storage=tick_storage, recall=agent_memory.recall
         )
@@ -1331,7 +1344,10 @@ def build_container(settings: Settings | None = None) -> Container:
             if getattr(req_storage, "_session", None) is not None
             else InMemoryAppConfigStore()
         )
-        rs_ls = LearningService(req_storage, embedding)
+        # #44: share the ONE process-lived EpisodicLessonLedger across request-scoped
+        # LearningService instances too, so the admin/Mind-panel read reflects the
+        # SAME lessons the running loop has recorded.
+        rs_ls = LearningService(req_storage, embedding, lesson_ledger=lesson_ledger)
         rs_adv = AdvancedLearningService(
             base=rs_ls, storage=req_storage, recall=agent_memory.recall
         )
