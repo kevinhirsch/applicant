@@ -436,8 +436,16 @@ async function _showAppDetail(appId) {
       <button class="admin-btn-sm" id="applicant-debug-detail-close">Close</button>
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Screenshots</strong> (${shotList.length})</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
-      ${shotList.length ? shotList.map((s) => `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(s.page_ref || s.page || s.label || 'page')}</span>`).join(' · ') : _empty('No screenshots captured.')}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+      ${shotList.length ? shotList.map((s) => {
+          const label = s.page_ref || s.page || s.label || 'page';
+          const src = _screenshotImgUrl(appId, s.id);
+          if (!src) {
+            // No id to build an image URL from — fall back to the plain-text label.
+            return `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(label)}</span>`;
+          }
+          return `<img class="applicant-debug-shot-thumb" src="${esc(src)}" alt="${esc(label)}" title="${esc(s.page_url || label)}" data-full="${esc(src)}" data-label="${esc(label)}" loading="lazy" style="width:96px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#3334);cursor:zoom-in;" />`;
+        }).join('') : _empty('No screenshots captured.')}
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Workflow steps</strong></div>
     ${steps.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${steps.map((s) => esc(typeof s === 'string' ? s : (s.name || s.step || JSON.stringify(s)))).join(' → ')}</div>${wf.pending_recovery ? '<div class="admin-toggle-sub" style="color:var(--warn,#c80);">Pending recovery</div>' : ''}` : _empty('No durable workflow recorded.')}
@@ -447,6 +455,49 @@ async function _showAppDetail(appId) {
     ${_renderSnapshot(snapshot)}
   </div>`;
   host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
+  host.querySelectorAll('.applicant-debug-shot-thumb').forEach((img) => {
+    img.addEventListener('click', () => _openScreenshotLightbox(img.dataset.full, img.dataset.label));
+    // The capture may already be gone (ephemeral /tmp, reclaimed after a restart) —
+    // swap a broken thumbnail for the plain-text label rather than a blank icon.
+    img.addEventListener('error', () => {
+      const fallback = document.createElement('span');
+      fallback.className = 'admin-toggle-sub';
+      fallback.style.opacity = '0.7';
+      fallback.title = img.title;
+      fallback.textContent = img.dataset.label || 'page';
+      img.replaceWith(fallback);
+    }, { once: true });
+  });
+}
+
+// Real screenshot pixels, not just a filename label (dark-engine audit #28):
+// build the URL for one screenshot's raw image bytes. Returns '' when the
+// record has no id to address (nothing to fetch).
+function _screenshotImgUrl(appId, screenshotId) {
+  if (!appId || !screenshotId) return '';
+  return `${ADMIN}/screenshots/${encodeURIComponent(appId)}/${encodeURIComponent(screenshotId)}/image`;
+}
+
+// Full-size click-to-enlarge overlay for a screenshot thumbnail. Mirrors the
+// chat attachment lightbox (chatRenderer.js `_openImageLightbox`) — same
+// `.attach-lightbox` styling, reused rather than hand-rolled — simplified to a
+// single image URL (screenshots have no separate thumb/full variant).
+function _openScreenshotLightbox(url, label) {
+  if (!url) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'attach-lightbox';
+  const img = document.createElement('img');
+  img.alt = label || '';
+  img.src = url;
+  overlay.appendChild(img);
+  const _onKey = (e) => { if (e.key === 'Escape') _close(); };
+  const _close = () => {
+    document.removeEventListener('keydown', _onKey);
+    overlay.remove();
+  };
+  overlay.addEventListener('click', _close);
+  document.addEventListener('keydown', _onKey);
+  document.body.appendChild(overlay);
 }
 
 async function _confirm(message, opts) {

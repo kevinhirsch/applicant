@@ -730,6 +730,14 @@ class ApplicantEngineClient:
     async def admin_screenshots(self, application_id: str) -> Any:
         return await self._request("GET", f"/api/admin/screenshots/{application_id}")
 
+    async def admin_screenshot_image(self, application_id: str, screenshot_id: str) -> Any:
+        """Raw image bytes for one captured screenshot (dark-engine audit #28)."""
+        return await self._request(
+            "GET",
+            f"/api/admin/screenshots/{application_id}/{screenshot_id}/image",
+            expect_json=False,  # raw Response — binary image payload
+        )
+
     async def admin_logs(self, limit: int = 100) -> Any:
         return await self._request("GET", "/api/admin/logs", params={"limit": limit})
 
