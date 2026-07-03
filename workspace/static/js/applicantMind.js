@@ -369,6 +369,126 @@ function _renderFeedbackHistory(data) {
   }).join('') + `</ul>`;
 }
 
+// --- ACE playbooks (dark-engine audit item 46) ------------------------------
+// A curated, per-ATS set of strategy bullets kept current via structured
+// add/revise/retire deltas (PlaybookService.apply_deltas) instead of a
+// wholesale rewrite — distinct from the free-text "Saved playbooks" above
+// (those are chat-authored skills). There is no cheap "every ATS" read (a
+// playbook is a per-domain artifact keyed by whatever ATS the assistant has
+// curated one for), so this is loaded on demand by domain, mirroring the
+// lessons panel's per-ATS shape but with a real write path: the audit trail
+// shows exactly which add/revise/retire deltas were applied and when.
+
+function _renderPlaybookShell() {
+  return `
+    <div class="applicant-mind-playbook">
+      <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
+        Look up the curated playbook for a job site to see its strategies and the
+        history of changes applied to it, or apply a new one.
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="text" class="applicant-mind-playbook-ats" placeholder="Job site, e.g. workday.com"
+          style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--border,#3334);
+          border-radius:6px;font:inherit;">
+        <button type="button" class="cal-btn applicant-mind-playbook-load">Load</button>
+      </div>
+      <div class="applicant-mind-playbook-result" style="margin-top:10px;"></div>
+    </div>`;
+}
+
+function _renderPlaybookEntries(ats, data) {
+  const entries = (data && data.entries) || [];
+  const audit = (data && data.audit) || [];
+  const entryRows = entries.length
+    ? `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + entries.map((e) => `
+        <li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+            border-radius:8px;padding:6px 8px;margin:4px 0;">
+          <div><b>${esc(e.key)}</b> <span style="opacity:0.6;">(revision ${esc(String(e.revision))})</span></div>
+          <div style="opacity:0.9;">${esc(e.text)}</div>
+        </li>`).join('') + `</ul>`
+    : `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+        No curated strategies for ${esc(ats)} yet.</div>`;
+  const auditRows = audit.length
+    ? `<ul style="margin:6px 0 0;padding-left:18px;opacity:0.8;font-size:12px;">`
+      + audit.slice().reverse().map((a) => `<li>${esc(a.op)} “${esc(a.key)}”${a.text ? `: ${esc(a.text)}` : ''}</li>`).join('')
+      + `</ul>`
+    : `<div style="opacity:0.6;font-size:12px;">No changes recorded yet.</div>`;
+  return `
+    <div style="font-weight:600;margin-top:6px;">Strategies for ${esc(ats)}</div>
+    ${entryRows}
+    <div style="font-weight:600;margin-top:10px;">Audit trail</div>
+    ${auditRows}
+    <div style="font-weight:600;margin-top:10px;">Apply a change</div>
+    <div class="applicant-mind-playbook-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+      <select class="applicant-mind-playbook-op"
+        style="padding:6px;border:1px solid var(--border,#3334);border-radius:6px;font:inherit;">
+        <option value="add">Add</option>
+        <option value="revise">Revise</option>
+        <option value="retire">Retire</option>
+      </select>
+      <input type="text" class="applicant-mind-playbook-key" placeholder="Strategy key"
+        style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border,#3334);
+        border-radius:6px;font:inherit;">
+      <input type="text" class="applicant-mind-playbook-text" placeholder="Strategy text (add / revise only)"
+        style="flex:2;min-width:180px;padding:6px 8px;border:1px solid var(--border,#3334);
+        border-radius:6px;font:inherit;">
+      <button type="button" class="cal-btn applicant-mind-playbook-apply">Apply</button>
+    </div>`;
+}
+
+async function _loadPlaybook(ats) {
+  const resultEl = _body().querySelector('.applicant-mind-playbook-result');
+  if (!resultEl) return;
+  resultEl.innerHTML = '<div style="opacity:0.7;">Loading…</div>';
+  try {
+    const data = await _fetchJSON(`${API}/playbooks/${encodeURIComponent(ats)}`);
+    resultEl.innerHTML = _renderPlaybookEntries(ats, data);
+    _wirePlaybookApply(ats);
+  } catch (e) {
+    resultEl.innerHTML = `<div style="opacity:0.7;">${esc(e.message || 'Could not load that playbook.')}</div>`;
+  }
+}
+
+function _wirePlaybookApply(ats) {
+  const body = _body();
+  const btn = body.querySelector('.applicant-mind-playbook-apply');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const op = body.querySelector('.applicant-mind-playbook-op').value;
+    const key = (body.querySelector('.applicant-mind-playbook-key').value || '').trim();
+    const text = (body.querySelector('.applicant-mind-playbook-text').value || '').trim();
+    if (!key) { _toast('Give the strategy a key first.'); return; }
+    btn.disabled = true;
+    try {
+      await _post(`${API}/playbooks/${encodeURIComponent(ats)}/apply-deltas`, {
+        deltas: [{ op, key, text }],
+      });
+      _toast('Playbook updated.');
+      await _loadPlaybook(ats);
+    } catch (e) {
+      _toast(e.message || 'Could not update that playbook.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function _wirePlaybookBox() {
+  const body = _body();
+  const input = body.querySelector('.applicant-mind-playbook-ats');
+  const loadBtn = body.querySelector('.applicant-mind-playbook-load');
+  if (!input || !loadBtn) return;
+  const load = () => {
+    const ats = (input.value || '').trim();
+    if (!ats) { _toast('Type a job site to look up first.'); return; }
+    _loadPlaybook(ats);
+  };
+  loadBtn.addEventListener('click', load);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); load(); }
+  });
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -504,14 +624,19 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Learned site routines</h4>
         ${_renderRoutines(routines)}
       </div>
-      <div class="memory-section">
+      <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">What you've told it</h4>
         ${_renderFeedbackHistory(feedbackHistory)}
+      </div>
+      <div class="memory-section">
+        <h4 style="margin:0 0 6px;">Curated strategies by job site</h4>
+        ${_renderPlaybookShell()}
       </div>`;
     _wireIngestBox();
     _wireCurationButtons();
     _wireForgetButtons();
     _wireSkillRows();
+    _wirePlaybookBox();
   } catch (e) {
     // 401 / engine unreachable — degrade to the connect-a-model note.
     _renderOffline();

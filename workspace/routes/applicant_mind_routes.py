@@ -7,8 +7,9 @@ owner-scoped proxy over :class:`src.applicant_engine.ApplicantEngineClient` (the
 engine owns the logic; the front door only forwards):
 
 * reads (``GET`` snapshot / skills / curation queue) require a logged-in user;
-* writes (approve / deny a curation proposal, **forget a remembered line**) require
-  the existing ``can_manage_memory`` privilege, matching the rest of the Brain modal;
+* writes (approve / deny a curation proposal, **forget a remembered line**, apply
+  a playbook delta) require the existing ``can_manage_memory`` privilege, matching
+  the rest of the Brain modal;
 * every engine failure surfaces through the typed :class:`EngineError`, translated
   into a clean HTTP response so a wired surface degrades gracefully (a down engine
   reports unavailable rather than 500ing).
@@ -16,6 +17,13 @@ engine owns the logic; the front door only forwards):
 The engine routes (``/api/agent-memory/*``) are gated behind the engine's own
 LLM-settings gate, so these endpoints only do real work once a model is connected;
 until then the section ships grayed via the feature-activation layer.
+
+The **ACE playbooks** below (dark-engine audit item 46) are a distinct, structured
+artifact from the free-text "Saved playbooks" above (chat-authored procedural
+skills): they hold curated, per-ATS strategy bullets updated by typed add/revise/
+retire deltas rather than a wholesale rewrite, and they are per-campaign, so
+``campaign_id`` is resolved the same way ``applicant_memory_routes.py`` resolves it
+for the attribute cloud (explicit id wins; otherwise the engine's first campaign).
 """
 
 from __future__ import annotations
@@ -52,6 +60,28 @@ async def _engine_get(engine: ApplicantEngineClient, path: str, params: Optional
 
 async def _engine_post(engine: ApplicantEngineClient, path: str, json: Optional[dict] = None) -> Any:
     return await engine._request("POST", path, json=json)
+
+
+async def _resolve_campaign(engine: ApplicantEngineClient, explicit: Optional[str]) -> str:
+    """Resolve the campaign the ACE playbook belongs to.
+
+    Mirrors ``applicant_memory_routes.py``'s helper for the attribute cloud: an
+    explicit ``campaign_id`` always wins, otherwise falls back to the engine's
+    first campaign. Raises 409 if none exists yet so the UI can prompt onboarding
+    instead of a raw engine 404.
+    """
+    if explicit:
+        return explicit
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        _raise_engine_http(exc)
+    if isinstance(campaigns, list) and campaigns:
+        first = campaigns[0]
+        cid = first.get("id") if isinstance(first, dict) else None
+        if cid:
+            return str(cid)
+    raise HTTPException(409, "No Applicant campaign exists yet. Finish onboarding first.")
 
 
 def setup_applicant_mind_routes() -> APIRouter:
@@ -221,5 +251,50 @@ def setup_applicant_mind_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
             return data if isinstance(data, dict) else {"routines": []}
+
+    # -- ACE playbooks (dark-engine audit item 46) ---------------------------
+    # A curated, per-ATS set of strategy bullets kept up to date via structured
+    # add/revise/retire deltas (PlaybookService.apply_deltas) instead of a
+    # wholesale rewrite, so one bad proposal can never blow away everything
+    # already curated — distinct from the free-text "Saved playbooks" above.
+
+    @router.get("/playbooks/{ats}")
+    async def playbook(request: Request, ats: str, campaign_id: Optional[str] = None) -> dict:
+        """One ATS's curated playbook: current strategy bullets + the audit trail
+        of every add/revise/retire delta applied to it."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                data = await engine.playbook(cid, ats)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"ats": ats, "entries": [], "audit": []}
+
+    @router.post("/playbooks/{ats}/apply-deltas")
+    async def apply_playbook_deltas(request: Request, ats: str) -> dict:
+        """Apply structured add/revise/retire deltas to one ATS's curated playbook.
+
+        A write — gated by ``can_manage_memory`` like the other curation writes
+        above (forget, curation approve/deny). The body carries ``deltas`` (a list
+        of ``{op, key, text}``) and an optional ``campaign_id``.
+        """
+        require_privilege(request, "can_manage_memory")
+        try:
+            body = await request.json()
+        except Exception:
+            logger.warning("Bare exception in applicant_mind_routes.py")
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        deltas = body.get("deltas")
+        if not isinstance(deltas, list) or not deltas:
+            raise HTTPException(400, "Give at least one delta to apply.")
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, body.get("campaign_id"))
+            try:
+                return await engine.apply_playbook_deltas(cid, ats, deltas)
+            except EngineError as exc:
+                _raise_engine_http(exc)
 
     return router

@@ -831,6 +831,27 @@ class ApplicantEngineClient:
         params = {"days": days} if days is not None else None
         return await self._request("POST", "/api/admin/retention/prune", params=params)
 
+    # -- ACE playbook deltas (dark-engine audit item 46) ---------------------
+    # A curated, per-ATS set of strategy bullets kept current via structured
+    # add/revise/retire deltas (PlaybookService.apply_deltas) rather than a
+    # wholesale rewrite — distinct from the free-text saved-playbook skills
+    # above (chat's save_playbook/update_playbook). Campaign-scoped, persisted
+    # on the campaign's learning_state.
+
+    async def playbook(self, campaign_id: str, ats: str) -> Any:
+        """One ATS's curated playbook: entries + the applied-delta audit trail."""
+        return await self._request(
+            "GET", f"/api/agent-memory/playbooks/{ats}", params={"campaign_id": campaign_id}
+        )
+
+    async def apply_playbook_deltas(self, campaign_id: str, ats: str, deltas: list[dict]) -> Any:
+        """Apply structured add/revise/retire deltas to one ATS's playbook."""
+        return await self._request(
+            "POST",
+            f"/api/agent-memory/playbooks/{ats}/apply-deltas",
+            json={"campaign_id": campaign_id, "deltas": deltas},
+        )
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
