@@ -1856,6 +1856,25 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return text;
     }
 
+    // Ancestry breadcrumb (dark-engine audit item 50): the engine's
+    // ``MaterialService.lineage`` walk, root-first, turned into a readable trail
+    // like "Original -> Tailored for <job> -> this version" so a user can see how
+    // a tailored resume relates to the ones it was forked from. ``lineage`` on the
+    // wire is a list of ``{variant_id, is_root, targeted_jd_signature, approved}``
+    // ending with the variant itself; returns '' when there is no ancestry to show
+    // (a lone root variant) rather than a one-word breadcrumb.
+    function _applicantLineageBreadcrumb(lineage, esc) {
+      const chain = Array.isArray(lineage) ? lineage : [];
+      if (chain.length < 2) return '';
+      const labels = chain.map((node, idx) => {
+        if (idx === chain.length - 1) return 'this version';
+        if (node && node.is_root) return 'Original';
+        const sig = node && node.targeted_jd_signature;
+        return sig ? `Tailored for ${sig}` : 'Tailored version';
+      });
+      return labels.map(esc).join(' → ');
+    }
+
     // Compact, first-person "What I drew on" panel — surfaces the learned items
     // (saved preferences / playbooks / a prior application) that shaped a draft so
     // the assistant's learning is visible and the user can trust where the
@@ -2094,10 +2113,20 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const approved = v.approved === true ? 'approved' : 'awaiting review';
         const depth = v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : '';
         const from = v.parent_id ? ` · from ${esc(v.parent_id)}` : '';
+        // Ancestry breadcrumb (dark-engine audit item 50): "Original -> Tailored
+        // for Acme -> this version" so the relationship between tailored resumes
+        // is readable, not just a raw parent id + depth count. Hidden entirely
+        // for a lone root variant (nothing to trace).
+        const breadcrumb = _applicantLineageBreadcrumb(v.lineage, esc);
+        const breadcrumbHtml = breadcrumb
+          ? `<div class="memory-desc" style="opacity:0.65;margin-top:2px;font-size:11px;" ` +
+              `title="How this tailored resume was derived, oldest first.">${breadcrumb}</div>`
+          : '';
         return `<div class="admin-card" style="margin-top:6px;">` +
           `<div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>` +
           `<div class="memory-desc" style="opacity:0.7;margin-top:2px;">` +
             `${esc(scoreText)} · ${esc(approved)}${depth}${from}</div>` +
+          breadcrumbHtml +
         `</div>`;
       }).join('');
     }
