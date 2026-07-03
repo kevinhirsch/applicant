@@ -12,6 +12,9 @@
 //   * daily throughput target (how many roles a day to work, capped engine-side)
 //   * exploration budget (how much to try new sources vs. proven ones)
 //   * discovery sources with their learned yield stats + a quick on/off toggle
+//   * Duplicate — clone this campaign's criteria/settings into a fresh campaign
+//     under a new name (dark-engine audit item 36): the natural "same search,
+//     new city" move, instead of rebuilding a similar search by hand.
 //   * Danger zone — permanently delete the campaign (dark-engine audit item 17):
 //     the engine already purges every store on delete (résumés, PII, generated
 //     materials, application history, banked credentials); this just gives the
@@ -114,6 +117,8 @@ function _campaignCard(c) {
         <button type="button" class="cal-btn cs-archive" data-cs-id="${id}" data-cs-active="${archived ? '0' : '1'}">
           ${archived ? 'Reactivate' : 'Archive'}
         </button>
+        <button type="button" class="cal-btn cs-duplicate" data-cs-id="${id}"
+                title="Start a new campaign with this one's criteria and settings">Duplicate</button>
       </div>
       <div class="cs-sources" data-cs-sources-for="${id}">
         <div class="admin-toggle-sub" style="margin:10px 0 6px">Discovery sources</div>
@@ -210,6 +215,27 @@ async function _wireCard(host, card) {
       await mountApplicantCampaignSettings(host);
     } catch (e) {
       _toast(`Could not update: ${e.message || e}`);
+      btn.disabled = false;
+    }
+  });
+  card.querySelector('.cs-duplicate')?.addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+    const newName = (uiModule.styledPrompt
+      ? await uiModule.styledPrompt(`Name the new campaign (a copy of "${name}").`, {
+          title: 'Duplicate campaign',
+          defaultValue: `${name} (copy)`,
+          confirmText: 'Duplicate',
+        })
+      : window.prompt('Name the new campaign:', `${name} (copy)`));
+    if (newName == null) return; // cancelled
+    btn.disabled = true;
+    try {
+      await _post(`${BASE}/${encodeURIComponent(id)}/clone`, { name: newName.trim() || undefined });
+      _toast('Campaign duplicated');
+      await mountApplicantCampaignSettings(host); // re-render fresh with the new campaign
+    } catch (e) {
+      _toast(`Could not duplicate campaign: ${e.message || e}`);
       btn.disabled = false;
     }
   });

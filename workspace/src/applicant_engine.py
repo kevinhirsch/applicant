@@ -417,6 +417,13 @@ class ApplicantEngineClient:
         reserved system campaign."""
         return await self._request("DELETE", f"/api/campaigns/{campaign_id}")
 
+    async def clone_campaign(self, campaign_id: str, name: Optional[str] = None) -> Any:
+        """Duplicate a campaign's criteria/settings under a new identity (dark-
+        engine audit item 36) -- the natural "same search, new city" move. The
+        engine names the copy from the source when ``name`` is omitted."""
+        body: dict = {"name": name} if name else {}
+        return await self._request("POST", f"/api/campaigns/{campaign_id}/clone", json=body)
+
     # -- discovery sources (#301, FR-DISC-2/5) ---------------------------
 
     async def list_discovery_sources(self, campaign_id: str) -> Any:
