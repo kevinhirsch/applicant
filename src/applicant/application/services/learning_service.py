@@ -656,7 +656,8 @@ class LearningService:
         return replace(model, feature_stats=cap_feature_stats(stats))
 
     # --- AWM workflow induction (#306 / Skyvern parity #351) ----------------
-    def induce_workflow(self, routine_store, domain: str, steps):
+    @staticmethod
+    def induce_workflow(routine_store, domain: str, steps):
         """Induce a reusable per-ATS routine from a successful pre-fill (#351, #306).
 
         Skyvern parity: after a successful pre-fill on a given ATS the engine learns a
@@ -670,6 +671,14 @@ class LearningService:
         The routine is **data, not free text** — fill/select/upload steps reference the
         attribute cloud / document library by id, never a literal value, so an induced
         routine can never smuggle a fabricated answer into a form (NFR-TRUTH-1).
+
+        A ``@staticmethod`` (no per-campaign/model state needed) so
+        ``PrefillService._induce_routine`` can call it directly after a clean
+        pre-fill page without constructing a full ``LearningService`` (dark-engine
+        audit #45 — this was previously a zero-caller wrapper around
+        ``routine_store.induce``; the pre-fill loop now calls it explicitly here,
+        which is also where the per-ATS routines listed by ``GET /api/admin/routines``
+        come from).
         """
         if routine_store is None or not domain or not steps:
             return None

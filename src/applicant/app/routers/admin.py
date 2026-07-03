@@ -152,6 +152,26 @@ def prefill_diagnostics(container: Container = Depends(get_container)) -> dict:
     return {"diagnostics": entries, "status": "live"}
 
 
+@router.get("/routines")
+def induced_routines(container: Container = Depends(get_container)) -> dict:
+    """Induced per-ATS routines, the AWM self-improvement flywheel's memory of what
+    worked (#306, dark-engine audit #45).
+
+    After a successful pre-fill page on a given ATS the loop induces a reusable
+    routine (``PrefillService._induce_routine`` -> ``LearningService.induce_workflow``)
+    keyed by domain; the SAME process-lived ``RoutineStore`` offers it back as a
+    planning prior the next time that domain is seen. This is the plain read-only
+    overview of every domain the loop has learned a routine for — process-global (not
+    campaign-scoped), like ``/prefill-diagnostics`` / ``/lessons`` above. Each row is
+    ``domain``, ``step_count``, ``successes``/``failures``, the net ``score`` used for
+    ACE pruning, and ``source``. Returns an empty list (never an error) when the
+    pre-fill service or its routine store is not wired.
+    """
+    pf = container.prefill_service
+    routines = pf.list_routines() if pf is not None else []
+    return {"routines": routines, "status": "live"}
+
+
 @router.get("/stuck-applications/{campaign_id}")
 def stuck_applications(campaign_id: str, container: Container = Depends(get_container)) -> dict:
     """Applications the loop has given up re-driving (dark-engine audit #62).

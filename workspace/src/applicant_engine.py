@@ -784,6 +784,19 @@ class ApplicantEngineClient:
             return await self._request("GET", f"/api/admin/lessons/{ats}")
         return await self._request("GET", "/api/admin/lessons")
 
+    async def admin_routines(self) -> Any:
+        """Induced per-ATS routines — the self-improvement flywheel's memory of what
+        worked (dark-engine audit #45).
+
+        After a successful pre-fill on a given ATS the engine induces a reusable
+        routine (the compact op-sequence that worked, keyed by domain) so the next
+        application to that ATS is guided rather than re-derived cold. Read-only
+        list of every domain the loop has learned a routine for: step count,
+        success/failure counts, and net score. Process-global (not campaign-scoped),
+        like ``admin_lessons``/``admin_prefill_diagnostics``.
+        """
+        return await self._request("GET", "/api/admin/routines")
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
