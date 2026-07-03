@@ -74,6 +74,13 @@ class AdminQueryService:
                     "resume_variant_id": str(a.resume_variant_id) if a.resume_variant_id else None,
                     "screenshot_count": len(shots),
                     "outcomes": [{"type": o.type, "source": o.source.value} for o in outcomes],
+                    # dark-engine audit #54: the attribute map the engine actually
+                    # consumed for THIS application (``Application.attributes_used``,
+                    # recorded at mark-submitted/record-submission time) -- a genuine
+                    # privacy-trust artifact the engine already keeps but never
+                    # surfaced anywhere. Real data only, never fabricated: an
+                    # application that never recorded any attributes returns ``{}``.
+                    "attributes_used": dict(a.attributes_used or {}),
                 }
             )
         return rows
