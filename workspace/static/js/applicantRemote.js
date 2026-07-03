@@ -105,6 +105,19 @@ function _ensureModalEl() {
           </div>
         </div>
 
+        <div id="applicant-remote-handoff" class="admin-card" style="display:none;flex-direction:column;gap:8px;">
+          <h3 style="margin:0;font-size:0.95em;">Fill these in yourself</h3>
+          <p id="applicant-remote-handoff-note" style="margin:0;opacity:0.75;font-size:12px;">
+            The assistant couldn't fill this form automatically. Copy each answer below
+            into the live session, then submit it there and come back to mark it submitted.
+          </p>
+          <div id="applicant-remote-handoff-body" style="display:flex;flex-direction:column;gap:4px;"></div>
+          <div>
+            <button id="applicant-remote-handoff-copy-all" class="memory-toolbar-btn"
+                    title="Copy every field and value below, one per line">Copy all</button>
+          </div>
+        </div>
+
         <div id="applicant-remote-desktop" class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             <h3 style="margin:0;font-size:0.95em;flex:1 1 auto;">Let the assistant help on the desktop</h3>
@@ -188,6 +201,7 @@ function _wire(modal) {
   on('applicant-remote-authorize', 'click', _onAuthorizeFinish);
   on('applicant-remote-preview-toggle', 'click', _onTogglePreview);
   on('applicant-remote-desktop-toggle', 'click', _onToggleDesktopAssist);
+  on('applicant-remote-handoff-copy-all', 'click', _onCopyAllHandoff);
 
   const picker = modal.querySelector('#applicant-remote-picker');
   if (picker) {
@@ -225,6 +239,8 @@ function _setActiveSession(session) {
   if (picker && session) picker.value = session.session_id;
   // Desktop-assist opt-in is per-session — refresh it whenever the session changes.
   _loadDesktopAssist().catch(e => console.error('Silent catch in applicantRemote:', e));
+  // The "fill these in yourself" handoff is per-application — refresh it too.
+  _loadHandoff().catch(e => console.error('Silent catch in applicantRemote:', e));
   // The "what will be sent" preview is per-application — collapse it (and drop the
   // previous application's snapshot) whenever the active session changes so a stale
   // preview can never sit under a different application's decision pair.
@@ -318,6 +334,84 @@ async function _onToggleDesktopAssist() {
     _clearButtonBusy(btn, orig);
     _renderDesktopAssist();
   }
+}
+
+// ── "Fill these in yourself" emergency copy/paste handoff (FR-PREFILL-7) ────
+//
+// A last-resort fallback for when automated pre-fill tried the form and failed
+// (a hard fill error, or the assistant didn't recognize the form well enough to
+// map more than a few fields). The engine hands back whatever it WOULD have
+// filled in; this panel surfaces those field/value pairs so the user can paste
+// them into the live session by hand, then finish and mark it submitted with
+// the existing "I'll submit it myself" control below. Hidden entirely (no dead
+// UI) unless this application actually has an open handoff.
+
+let _handoffData = null; // { available, handoff_values, ... } | null
+
+function _handoffEls() {
+  const card = _modalEl && _modalEl.querySelector('#applicant-remote-handoff');
+  const body = _modalEl && _modalEl.querySelector('#applicant-remote-handoff-body');
+  const note = _modalEl && _modalEl.querySelector('#applicant-remote-handoff-note');
+  const copyAllBtn = _modalEl && _modalEl.querySelector('#applicant-remote-handoff-copy-all');
+  return { card, body, note, copyAllBtn };
+}
+
+function _renderHandoff() {
+  const { card, body, note, copyAllBtn } = _handoffEls();
+  if (!card || !body) return;
+  const values = (_handoffData && _handoffData.available && _handoffData.handoff_values)
+    ? _handoffData.handoff_values
+    : null;
+  const fields = values ? Object.keys(values) : [];
+  if (!fields.length) {
+    card.style.display = 'none';
+    body.innerHTML = '';
+    return;
+  }
+  card.style.display = 'flex';
+  if (note) {
+    note.textContent = _handoffData.kind === 'wrong_ats'
+      ? 'The assistant didn’t recognize this form well enough to fill it in '
+        + 'automatically. Copy each answer below into the live session, then submit '
+        + 'it there and come back to mark it submitted.'
+      : 'The assistant tried to fill this form and ran into a problem. Copy each '
+        + 'answer below into the live session, then submit it there and come back '
+        + 'to mark it submitted.';
+  }
+  body.innerHTML = fields.map((label) => (
+    `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border,#3334);">`
+    + `<div style="flex:0 0 40%;max-width:40%;opacity:0.75;word-break:break-word;font-size:12px;">${esc(label)}</div>`
+    + `<div style="flex:1 1 auto;white-space:pre-wrap;word-break:break-word;font-size:12px;">${esc(String(values[label]))}</div>`
+    + `<button type="button" class="memory-toolbar-btn applicant-remote-handoff-copy-one" `
+    + `data-label="${esc(label)}" title="Copy this value" style="flex:0 0 auto;padding:2px 8px;">Copy</button>`
+    + `</div>`
+  )).join('');
+  body.querySelectorAll('.applicant-remote-handoff-copy-one').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const label = btn.getAttribute('data-label');
+      const value = values[label];
+      uiModule.copyToClipboard(value == null ? '' : String(value));
+    });
+  });
+  if (copyAllBtn) copyAllBtn.disabled = false;
+}
+
+async function _loadHandoff() {
+  _handoffData = null;
+  const appId = _activeSession && _activeSession.application_id;
+  if (!appId) { _renderHandoff(); return; }
+  try {
+    const data = await _fetchJSON(`${API}/applications/${encodeURIComponent(appId)}/emergency-handoff`);
+    if (data) _handoffData = data;
+  } catch { /* best-effort; panel simply stays hidden */ }
+  _renderHandoff();
+}
+
+function _onCopyAllHandoff() {
+  const values = (_handoffData && _handoffData.available && _handoffData.handoff_values) || {};
+  const lines = Object.keys(values).map((label) => `${label}: ${values[label]}`);
+  if (!lines.length) return;
+  uiModule.copyToClipboard(lines.join('\n'));
 }
 
 function _renderPicker() {
