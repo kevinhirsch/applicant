@@ -25,7 +25,9 @@ from applicant.app.container import Container
 from applicant.app.deps import (
     get_admin_query_service,
     get_container,
+    get_data_lifecycle_service,
     get_learning_service,
+    get_setup_service,
     get_storage,
     require_llm_configured,
 )
@@ -314,3 +316,37 @@ def stealth(container: Container = Depends(get_container)) -> dict:
         },
         "status": "live",
     }
+
+
+# === PII-retention sweep, on demand (dark-engine audit #37) ================
+@router.post("/retention/prune")
+def run_retention_sweep(
+    days: int | None = None,
+    container: Container = Depends(get_container),
+    svc=Depends(get_setup_service),
+    data_lifecycle=Depends(get_data_lifecycle_service),
+) -> dict:
+    """Run the PII-retention sweep right now and return the real result (#37).
+
+    ``DataLifecycleService.prune_pii_older_than`` (#363) was previously reachable
+    ONLY from the dormant scheduler tick -- there was no way for an operator to
+    run a sweep on demand or see what the last one actually removed. This runs
+    the SAME cascade synchronously (parsed PII / EEO answers + onboarding
+    intakes older than the window) and returns the real per-store pruned counts,
+    not a fabricated summary.
+
+    The window defaults to the CURRENTLY persisted Settings > Automation
+    retention days (``SetupService.get_automation_prefs()``), falling back to
+    the env-sourced ``Settings`` default when nothing has been saved yet --
+    mirroring exactly what a scheduled sweep would use today. An explicit
+    ``?days=`` overrides it for this one run only and is NOT persisted. A
+    window of 0 (the default, "keep forever") is a legitimate no-op: the result
+    reports ``skipped: true`` and zero pruned rather than erroring.
+    """
+    settings = container.settings
+    stored = svc.get_automation_prefs()
+    default_days = stored.get("pii_retention_days", settings.pii_retention_days)
+    effective_days = default_days if days is None else days
+    result = data_lifecycle.prune_pii_older_than(days=effective_days)
+    result["requested_days"] = effective_days
+    return result
