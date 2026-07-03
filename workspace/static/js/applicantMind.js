@@ -1,10 +1,13 @@
 // static/js/applicantMind.js
 //
 // "What the assistant remembers" + "Saved playbooks" + learning curation
-// approvals — the FR-MIND agent-learning substrate surfaced in the front door.
-// ADDITIVE and self-contained: it opens its own modal panel, talks to the engine
-// through the workspace proxy at /api/applicant/mind/*, and never touches the
-// native Brain modal (memory.js / skills.js / entities.js) or its data.
+// approvals + a bulk "tell it about yourself" import box — the FR-MIND
+// agent-learning substrate surfaced in the front door. ADDITIVE and
+// self-contained: it opens its own modal panel, talks to the engine through
+// the workspace proxy at /api/applicant/mind/* (plus /api/applicant/memory/ingest
+// for the bulk import box, which forwards to the engine's attribute-cloud
+// reconciliation), and never touches the native Brain modal (memory.js /
+// skills.js / entities.js) or its data.
 //
 // Reachability: the engine owns the logic (/api/agent-memory/*); this is a thin
 // view over the owner-scoped proxy. The panel is reachable from the Brain modal
@@ -18,6 +21,11 @@ import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/mind';
+// Bulk observation reconciliation ("tell it about yourself", dark-engine audit
+// #42) rides on the attribute-cloud proxy, not the agent-memory one above — it
+// forwards to the engine's FeedbackService.ingest_parsed_input via
+// routes/applicant_memory_routes.py's /ingest endpoint.
+const MEMORY_API = '/api/applicant/memory';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -82,6 +90,115 @@ function _renderOffline() {
       Connect an AI model to start building what the assistant remembers. You can do
       this in the setup wizard or under Settings.
     </div>`;
+}
+
+// --- bulk observation import ("tell it about yourself") --------------------
+// dark-engine audit #42: FeedbackService.ingest_parsed_input's list path
+// reconciles a whole batch of facts in one call — auto-apply non-integral,
+// hold integral for confirmation, surface conflicts, skip sensitive (EEO).
+// This box is the paste-anything front door for that bulk path (the existing
+// "Add a detail" form in Settings/Profile stays the one-at-a-time path).
+
+function _parseObservationLines(text) {
+  // One fact per line: "Name: value" or "Name = value". Lines without a
+  // recognizable separator, or with an empty name/value, are silently
+  // skipped (matches the engine's own reconcile_inputs — it skips any
+  // observation lacking a name or value rather than erroring the batch).
+  const observations = [];
+  const skippedLines = [];
+  String(text || '').split('\n').forEach((raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    const m = line.match(/^([^:=]+)[:=](.+)$/);
+    if (!m) { skippedLines.push(line); return; }
+    const name = m[1].trim();
+    const value = m[2].trim();
+    if (!name || !value) { skippedLines.push(line); return; }
+    observations.push({ name, value, source: 'paste' });
+  });
+  return { observations, skippedLines };
+}
+
+function _renderIngestBox() {
+  return `
+    <div class="memory-section applicant-mind-ingest" style="margin-bottom:18px;">
+      <h4 style="margin:0 0 6px;">Tell it about yourself</h4>
+      <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
+        Paste anything — one detail per line, like <code>Location: Austin, TX</code>
+        or <code>Years of Python: 8</code>. Each line is checked against what the
+        assistant already knows: new details are saved, changes to a core detail
+        wait for your OK, and sensitive details (like EEO fields) are always
+        skipped here — type those in directly instead.
+      </div>
+      <textarea class="applicant-mind-ingest-input" rows="4"
+        placeholder="Location: Austin, TX&#10;Years of Python: 8&#10;Portfolio: https://me.dev"
+        style="width:100%;box-sizing:border-box;resize:vertical;font:inherit;
+        padding:8px;border:1px solid var(--border,#3334);border-radius:8px;"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+        <button type="button" class="cal-btn applicant-mind-ingest-submit">Import</button>
+      </div>
+      <div class="applicant-mind-ingest-result" style="margin-top:8px;"></div>
+    </div>`;
+}
+
+function _ingestGroup(title, hint, items, render) {
+  if (!items.length) return '';
+  return `<div style="margin-top:6px;">
+    <div style="font-weight:600;">${esc(title)}</div>
+    <div style="opacity:0.7;font-size:11px;margin-bottom:2px;">${esc(hint)}</div>
+    <ul style="margin:2px 0 0;padding-left:18px;">${items.map(render).join('')}</ul>
+  </div>`;
+}
+
+function _renderIngestResult(result, skippedLines) {
+  const applied = result.applied || [];
+  const pending = result.pending || [];
+  const conflicts = result.conflicts || [];
+  const skipped = result.skipped || [];
+  if (!applied.length && !pending.length && !conflicts.length && !skipped.length && !skippedLines.length) {
+    return `<div class="memory-empty" style="opacity:0.7;">
+      Nothing usable in that paste — try one detail per line, like "Location: Austin, TX".</div>`;
+  }
+  const parts = [
+    _ingestGroup('Saved', 'Applied right away.', applied, (n) => `<li>${esc(n)}</li>`),
+    _ingestGroup('Waiting for your review', 'A core detail — approve or reject it in the Portal.', pending,
+      (p) => `<li>${esc(p.name)}: “${esc(p.proposed_value)}”${p.current_value ? ` (currently “${esc(p.current_value)}”)` : ''}</li>`),
+    _ingestGroup('Conflicts with what you already told it', 'Left as-is — nothing was overwritten.', conflicts,
+      (p) => `<li>${esc(p.name)}: kept “${esc(p.current_value)}”, pasted “${esc(p.proposed_value)}”</li>`),
+    _ingestGroup('Skipped (sensitive)', 'Type these in directly instead of pasting.', skipped, (n) => `<li>${esc(n)}</li>`),
+  ];
+  if (skippedLines.length) {
+    parts.push(_ingestGroup('Not understood', 'No "name: value" pattern found on these lines.',
+      skippedLines, (l) => `<li>${esc(l)}</li>`));
+  }
+  return parts.join('');
+}
+
+function _wireIngestBox() {
+  const body = _body();
+  const input = body.querySelector('.applicant-mind-ingest-input');
+  const submit = body.querySelector('.applicant-mind-ingest-submit');
+  const resultEl = body.querySelector('.applicant-mind-ingest-result');
+  if (!input || !submit || !resultEl) return;
+  submit.addEventListener('click', async () => {
+    const { observations, skippedLines } = _parseObservationLines(input.value);
+    if (!observations.length) {
+      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">
+        Nothing to import yet — add at least one line like "Location: Austin, TX".</div>`;
+      return;
+    }
+    submit.disabled = true;
+    try {
+      const result = await _post(`${MEMORY_API}/ingest`, { observations });
+      resultEl.innerHTML = _renderIngestResult(result, skippedLines);
+      input.value = '';
+      _toast('Imported.');
+    } catch (e) {
+      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">${esc(e.message || 'Could not import that.')}</div>`;
+    } finally {
+      submit.disabled = false;
+    }
+  });
 }
 
 // --- section renderers -----------------------------------------------------
@@ -304,6 +421,7 @@ export async function openApplicantMind(opts) {
       _fetchJSON(`${API}/lessons`).catch(() => ({ lessons: {} })),
     ]);
     _body().innerHTML = `
+      ${_renderIngestBox()}
       <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Waiting for your review</h4>
         ${_renderCuration(curation)}
@@ -323,6 +441,7 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Lessons learned from job sites</h4>
         ${_renderLessons(lessons)}
       </div>`;
+    _wireIngestBox();
     _wireCurationButtons();
     _wireForgetButtons();
     _wireSkillRows();
