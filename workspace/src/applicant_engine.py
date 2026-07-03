@@ -703,6 +703,16 @@ class ApplicantEngineClient:
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 
+    async def admin_prefill_diagnostics(self) -> Any:
+        """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
+
+        A bounded, deduped ring of plain-language operator messages for
+        credential/LLM/login failures the pre-fill loop degraded gracefully
+        from — surfaced so the failure is visible instead of silently lost.
+        Process-global (not campaign-scoped), like ``admin_logs``/``admin_stealth``.
+        """
+        return await self._request("GET", "/api/admin/prefill-diagnostics")
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
