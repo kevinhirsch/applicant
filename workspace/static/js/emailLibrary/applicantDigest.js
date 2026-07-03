@@ -749,22 +749,43 @@ function _researchQuery(row) {
   return role || company || 'this role';
 }
 
+// Peek the cache before ever spending a research run (dark-engine audit item
+// 38): a `null` return means nothing is cached yet for this query — the
+// caller falls back to a fresh POST .../run. Any other failure (engine down,
+// setup gate) is rethrown so it surfaces the same way a run failure would.
+async function _apiResearchCached(campaignId, query) {
+  try {
+    return await _apiResearch(
+      `/${encodeURIComponent(campaignId)}/cached?query=${encodeURIComponent(query)}`,
+    );
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
 async function _onResearch(campaignId, row, btn) {
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   const company = row.company || '';
   const role = row.title || row.role || '';
+  const query = _researchQuery(row);
   const original = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = `${_ICON_SEARCH}Researching…`;
   try {
-    const report = await _apiResearch(`/${encodeURIComponent(campaignId)}/run`, {
-      method: 'POST',
-      body: {
-        query: _researchQuery(row),
-        company: company || null,
-        role: role || null,
-      },
-    });
+    // A prior run may already have this exact brief cached — reuse it for
+    // free instead of burning another research run on the same question.
+    let report = await _apiResearchCached(campaignId, query);
+    if (!report) {
+      report = await _apiResearch(`/${encodeURIComponent(campaignId)}/run`, {
+        method: 'POST',
+        body: {
+          query,
+          company: company || null,
+          role: role || null,
+        },
+      });
+    }
     _showReport(report, { company, role });
   } catch (e) {
     showToast(

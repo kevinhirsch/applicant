@@ -80,6 +80,34 @@ def run_research(
     }
 
 
+@router.get("/{campaign_id}/cached")
+def cached_research(
+    campaign_id: str,
+    query: str,
+    svc=Depends(get_research_service),
+    storage=Depends(get_storage),
+) -> dict:
+    """Read an already-cached report for free — no fresh run, no budget spent.
+
+    404 when nothing is cached yet for this exact (campaign, query); the
+    caller should fall back to ``POST .../run`` for a fresh, budget-charged
+    run in that case.
+    """
+    if not (query or "").strip():
+        raise HTTPException(status_code=422, detail="query must not be empty")
+    _require_campaign(storage, campaign_id)
+    report = svc.cached_report(campaign_id, query)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No cached report for this query")
+    data = report.to_dict()
+    data["cached"] = True  # the stored copy carries cached=False; this read is the cache hit
+    return {
+        "campaign_id": campaign_id,
+        "budget_remaining": svc.budget_remaining(campaign_id),
+        **data,
+    }
+
+
 @router.get("/{campaign_id}/budget")
 def research_budget(
     campaign_id: str,
