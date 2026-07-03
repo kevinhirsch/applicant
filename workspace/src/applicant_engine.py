@@ -769,6 +769,19 @@ class ApplicantEngineClient:
             return await self._request("GET", f"/api/admin/lessons/{ats}")
         return await self._request("GET", "/api/admin/lessons")
 
+    async def admin_run_retention_sweep(self, days: Optional[int] = None) -> Any:
+        """Run the PII-retention sweep now (dark-engine audit #37).
+
+        ``DataLifecycleService.prune_pii_older_than`` (#363) was previously
+        reachable only from the dormant scheduler tick. This runs it
+        synchronously and returns the real per-store pruned counts. With
+        ``days`` omitted, the engine uses the currently persisted Settings >
+        Automation retention window (falling back to its env default);
+        passing ``days`` overrides it for this one run only and is not saved.
+        """
+        params = {"days": days} if days is not None else None
+        return await self._request("POST", "/api/admin/retention/prune", params=params)
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
