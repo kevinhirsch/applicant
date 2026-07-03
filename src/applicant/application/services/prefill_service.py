@@ -508,13 +508,24 @@ class PrefillService:
         return self._continue_pages(app, attributes, result, cautious=cautious)
 
     def emergency_handoff(
-        self, application: Application, attributes: list[Attribute] | None = None
+        self,
+        application: Application,
+        attributes: list[Attribute] | None = None,
+        *,
+        kind: str = "emergency_handoff",
+        title: str = "Emergency handoff + mark submitted",
+        extra_payload: dict | None = None,
     ) -> PrefillResult:
         """Emergency copy/paste handoff — ONLY after a reported fill failure (FR-PREFILL-7).
 
         This is never the default path: it is invoked when the agent reports it
         tried to fill and failed. It assembles the values the user can paste into
         their own browser and lands the EMERGENCY_DATA_HANDOFF waiting state.
+
+        ``kind``/``title``/``extra_payload`` let a more specific fill-failure signal
+        (``flag_probable_wrong_ats`` — a near-empty fill, #177) reuse this exact
+        value-assembly + transition + pending action while keeping its own pending
+        action identity and diagnostic payload, instead of duplicating the logic.
         """
         attributes = attributes or []
         # The agent reports it tried to fill and failed while PREFILLING; if the
@@ -522,12 +533,19 @@ class PrefillService:
         app = application
         if app.status is not ApplicationState.PREFILLING:
             app = app.with_status(ApplicationState.PREFILLING)
-        # Best-effort assemble the values that WOULD have been filled, for paste.
+        # Best-effort assemble the values that WOULD have been filled, for paste —
+        # never let a browser/detection hiccup at this late stage crash the loop
+        # (mirrors every other soft-degrade path in this service).
         values: dict[str, str] = {}
-        for fld in self._browser.detect_fields(application.id):
-            resolved = self._resolve_value(fld, attributes, PrefillResult(application.id, app.status))
-            if resolved.value is not None and not resolved.defer_essay:
-                values[fld.label] = resolved.value
+        try:
+            for fld in self._browser.detect_fields(application.id):
+                resolved = self._resolve_value(
+                    fld, attributes, PrefillResult(application.id, app.status)
+                )
+                if resolved.value is not None and not resolved.defer_essay:
+                    values[fld.label] = resolved.value
+        except Exception:  # noqa: BLE001 — never crash assembling the paste set
+            log.debug("emergency_handoff: field assembly failed", exc_info=True)
         app = app.with_status(ApplicationState.EMERGENCY_DATA_HANDOFF)
         result = PrefillResult(
             application_id=application.id,
@@ -535,12 +553,15 @@ class PrefillService:
             sandbox_session_url=application.sandbox_session_url,
             handoff_values=values,
         )
+        payload = {"handoff_values": values}
+        if extra_payload:
+            payload.update(extra_payload)
         result.pending_action_id = self._emit_waiting(
             application=app,
-            kind="emergency_handoff",
-            title="Emergency handoff + mark submitted",
+            kind=kind,
+            title=title,
             session_url=application.sandbox_session_url,
-            payload={"handoff_values": values},
+            payload=payload,
         )
         self._persist(app)
         return result
@@ -659,9 +680,9 @@ class PrefillService:
             # Now stop at the final review/submit page (the engine never clicks the
             # final submit), otherwise advance to the next page; no next page → done.
             if self._browser.is_final_submit_page(aid):
-                return self._reach_final_approval(app, result)
+                return self._reach_final_approval(app, result, attributes)
             if self._browser.advance(aid) is None:
-                return self._reach_final_approval(app, result)
+                return self._reach_final_approval(app, result, attributes)
 
     @staticmethod
     def _routine_domain(url: str) -> str:
@@ -777,7 +798,7 @@ class PrefillService:
 
             fill_values = resolve_fill_values(plan, attribute_cloud)
             terminal, reflection, induced_steps = self._run_plan_ops(
-                app, state, plan, fill_values, result
+                app, state, plan, fill_values, result, attributes
             )
             if reflection is None:
                 # Clean execution (whether the page ended naturally or at a benign
@@ -809,7 +830,7 @@ class PrefillService:
         )
         return self._fill_current_page(app, attributes, result)
 
-    def _run_plan_ops(self, app, state, plan, fill_values, result):
+    def _run_plan_ops(self, app, state, plan, fill_values, result, attributes=None):
         """Execute one plan's ops, honouring the STOP boundary.
 
         Returns ``(terminal, reflection, steps)``:
@@ -917,7 +938,7 @@ class PrefillService:
                 # The planner emitted a stop — honour the STOP boundary.
                 reason = op.reason
                 if reason in ("final_submit",):
-                    return self._reach_final_approval(app, result), None, tuple(steps)
+                    return self._reach_final_approval(app, result, attributes), None, tuple(steps)
                 elif reason in ("account_create", "email_verify", "two_factor", "sms_verify"):
                     return self._account_handoff(app, result, result.sandbox_session_url), None, tuple(steps)
                 elif reason in ("captcha", "oauth"):
@@ -1316,7 +1337,7 @@ class PrefillService:
         self._persist(app)
         return result
 
-    def _reach_final_approval(self, app, result) -> PrefillResult:
+    def _reach_final_approval(self, app, result, attributes=None) -> PrefillResult:
         # #177: before offering the run for final submission, check the field-match
         # rate (filled / detected). A run that walked the whole flow but matched almost
         # nothing is a probable wrong-ATS / near-empty fill — flag it for human review
@@ -1324,7 +1345,7 @@ class PrefillService:
         if is_probable_wrong_ats(
             result.fields_filled, result.fields_detected, floor=self._match_rate_floor
         ):
-            return self.flag_probable_wrong_ats(app, result)
+            return self.flag_probable_wrong_ats(app, result, attributes)
         app = app.with_status(ApplicationState.MATERIAL_PREP)
         app = app.with_status(ApplicationState.MATERIAL_REVIEW)
         app = app.with_status(ApplicationState.AWAITING_FINAL_APPROVAL)
@@ -1348,52 +1369,40 @@ class PrefillService:
         """
         return field_match_rate(filled, detected)
 
-    def flag_probable_wrong_ats(self, app, result) -> PrefillResult:
+    def flag_probable_wrong_ats(self, app, result, attributes=None) -> PrefillResult:
         """Flag a probable wrong-ATS / near-empty-fill run for human review (#177).
 
         Universal-ATS coverage drives ANY form via the generic live-DOM driver, but
         when the run's field-match rate (filled / detected) came in below the floor the
         page model did not line up with the real form — pre-fill landed (almost)
-        nothing. Rather than offer such a run for final submission, hold it for the
-        human: land the established ``EMERGENCY_DATA_HANDOFF`` waiting state (a §7-legal
-        PREFILLING transition) with the copy/paste values the user can apply by hand,
-        and a ``wrong_ats`` pending action that surfaces the low match rate. The human
-        either takes over the live session or marks it submitted manually.
+        nothing. This too is "the agent tried to fill the form and failed" (FR-PREFILL-7)
+        — just detected by match-rate rather than an exception — so it delegates to
+        :meth:`emergency_handoff` for the value-assembly + the established
+        ``EMERGENCY_DATA_HANDOFF`` transition (a §7-legal PREFILLING transition) with
+        the copy/paste values the user can apply by hand, layering its own
+        ``wrong_ats`` pending-action identity and match-rate diagnostics on top. The
+        human either takes over the live session or marks it submitted manually.
         """
         rate = self.field_match_rate(result.fields_filled, result.fields_detected)
-        if app.status is not ApplicationState.PREFILLING:
-            app = app.with_status(ApplicationState.PREFILLING)
-        # Best-effort assemble the values that WOULD have been filled, for paste — the
-        # same handoff payload the emergency path offers (FR-PREFILL-7).
-        values: dict[str, str] = {}
-        try:
-            for fld in self._browser.detect_fields(app.id):
-                resolved = self._resolve_value(fld, [], result)
-                if resolved.value is not None and not resolved.defer_essay:
-                    values[fld.label] = resolved.value
-        except Exception:  # noqa: BLE001 — never crash the loop assembling the paste set
-            values = dict(result.handoff_values)
-        app = app.with_status(ApplicationState.EMERGENCY_DATA_HANDOFF)
-        result.state = app.status
-        result.wrong_ats_flagged = True
-        result.handoff_values = values
         pct = round(rate * 100)
-        result.pending_action_id = self._emit_waiting(
-            application=app,
+        handoff = self.emergency_handoff(
+            app,
+            attributes,
             kind="wrong_ats",
             title="Pre-fill matched too few fields — review needed",
-            session_url=result.sandbox_session_url,
-            payload={
+            extra_payload={
                 "reason": "probable_wrong_ats",
                 "fields_filled": result.fields_filled,
                 "fields_detected": result.fields_detected,
                 "match_rate": rate,
                 "match_rate_pct": pct,
                 "match_rate_floor": self._match_rate_floor,
-                "handoff_values": values,
             },
         )
-        self._persist(app)
+        result.state = handoff.state
+        result.wrong_ats_flagged = True
+        result.handoff_values = handoff.handoff_values
+        result.pending_action_id = handoff.pending_action_id
         return result
 
     def _fill_current_page(

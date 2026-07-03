@@ -933,6 +933,15 @@ class ApplicantEngineClient:
             "POST", f"/api/remote/applications/{application_id}/continue-two-factor"
         )
 
+    async def emergency_handoff(self, application_id: str) -> Any:
+        """The emergency copy/paste handoff values for an application (FR-PREFILL-7):
+        what the agent would have filled in, for the user to paste into their own
+        browser and finish by hand after a hard fill failure (or a near-empty
+        "wrong ATS" fill, #177)."""
+        return await self._request(
+            "GET", f"/api/remote/applications/{application_id}/emergency-handoff"
+        )
+
     async def stealth_caveat(self) -> Any:
         """The honest best-effort anti-detection + egress caveat copy + posture."""
         return await self._request("GET", "/api/admin/stealth")
