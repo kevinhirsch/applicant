@@ -818,6 +818,24 @@ class ApplicantEngineClient:
             "GET", f"/api/admin/history/{campaign_id}", params={"limit": limit}
         )
 
+    # -- paused/stuck applications (engine routers/admin.py, dark-engine audit
+    #    #62) ------------------------------------------------------------------
+    # After repeated failed resume attempts the engine loop stops re-driving an
+    # application and fires one deduped notification; these expose the give-up
+    # list itself + a way to clear it (previously only a full process restart
+    # could unstick an application, and nothing could even list which ones were
+    # stuck).
+
+    async def admin_stuck_applications(self, campaign_id: str) -> Any:
+        """Applications the engine loop has given up re-driving, for one campaign."""
+        return await self._request("GET", f"/api/admin/stuck-applications/{campaign_id}")
+
+    async def admin_retry_stuck_application(self, application_id: str) -> Any:
+        """Clear one application's give-up flag so the loop re-drives it next tick."""
+        return await self._request(
+            "POST", f"/api/admin/stuck-applications/{application_id}/retry"
+        )
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:

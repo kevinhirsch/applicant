@@ -742,6 +742,68 @@ class AgentLoop:
             if str(a.id) not in giveup
         ]
 
+    def list_given_up(self, campaign_id: CampaignId | None = None) -> list[dict]:
+        """Applications the loop has stopped re-driving (dark-engine audit #62).
+
+        Reads the SAME process-lived ``ResumeLedger`` the tick loop writes to (the
+        one the container injects into every per-tick loop), so this reflects
+        exactly what the running scheduler has given up on — not a stale snapshot.
+        Without this method nothing could ever list the give-up set; the only
+        visibility was the one deduped notification fired at cap time (#62). When
+        ``campaign_id`` is given, only that campaign's rows are returned; an
+        application that has since been deleted from storage is silently skipped
+        rather than raising (the ledger key can outlive the row).
+        """
+        with self._resume_ledger.lock:
+            entries = [(k, self._resume_failures.get(k, 0)) for k in self._resume_giveup]
+        rows: list[dict] = []
+        for app_id, failures in entries:
+            app = self._storage.applications.get(ApplicationId(app_id))
+            if app is None:
+                continue
+            if campaign_id is not None and app.campaign_id != campaign_id:
+                continue
+            posting = None
+            if app.posting_id is not None:
+                posting = self._storage.postings.get(app.posting_id)
+            rows.append(
+                {
+                    "application_id": app_id,
+                    "campaign_id": str(app.campaign_id),
+                    "status": app.status.value,
+                    "failures": failures,
+                    "job_title": app.job_title or (posting.title if posting else None),
+                    "company": posting.company if posting else None,
+                    "role_name": app.role_name,
+                }
+            )
+        rows.sort(key=lambda r: r["failures"], reverse=True)
+        return rows
+
+    def retry_given_up(self, application_id: str) -> bool:
+        """Clear one application's give-up flag so the loop re-drives it (#62).
+
+        The normal per-tick resume sweep (``_resumable_apps``) excludes anything
+        in the give-up set, and nothing previously cleared that flag short of a
+        full process restart (which rebuilds a fresh, empty ``ResumeLedger``) —
+        leaving a stuck application permanently invisible AND permanently stuck.
+        This clears the failure streak too (not just the give-up flag) so the app
+        gets a full fresh run of the failure cap rather than tripping it again on
+        the very next failure, and clears the backoff timestamp so the very next
+        tick is free to re-drive it immediately (subject to the normal per-tick
+        cadence) instead of waiting out a stale backoff window. Returns ``False``
+        (a no-op) when the application was not in the give-up set.
+        """
+        key = str(application_id)
+        with self._resume_ledger.lock:
+            if key not in self._resume_giveup:
+                return False
+            self._resume_giveup.discard(key)
+            self._resume_failures.pop(key, None)
+            self._last_resume.pop(key, None)
+        log.info("resume_retry_cleared", application_id=key)
+        return True
+
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
         with self._resume_ledger.lock:
