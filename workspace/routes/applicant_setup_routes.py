@@ -184,7 +184,7 @@ class ConversionPreviewIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/87/88).
+    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90).
 
     Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
     all fields ``Optional`` (default ``None``) so a save from one control never
@@ -197,6 +197,9 @@ class AutomationPrefsIn(BaseModel):
     presubmit_max_apps_per_company_per_day: int | None = None
     pii_retention_days: int | None = None
     presubmit_duplicate_cooldown_days: int | None = None
+    approval_timeout_days: int | None = None
+    approval_wait_seconds: float | None = None
+    scheduler_interval_seconds: float | None = None
 
 
 class SandboxConnectionIn(BaseModel):
@@ -479,13 +482,14 @@ def setup_applicant_setup_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content={"ok": True})
 
-    # ── Settings > Automation (dark-engine audit items 82/84/85) ───────
+    # ── Settings > Automation (dark-engine audit items 82/84/85/86/90) ─
 
     @router.get("/automation")
     async def get_automation_prefs(request: Request) -> JSONResponse:
         """Browser fingerprint timezone/locale, the automated-account-creation
-        opt-in, and the per-company daily application cap -- merged onto the
-        engine's env defaults so this always reflects a real, effective value."""
+        opt-in, the per-company daily application cap, the final-approval
+        timeout, and the check-for-work interval -- merged onto the engine's
+        env defaults so this always reflects a real, effective value."""
         require_user(request)
         try:
             async with ApplicantEngineClient() as engine:
@@ -597,6 +601,21 @@ def setup_applicant_setup_routes() -> APIRouter:
                 data = await engine.onboarding_state(campaign_id)
         except EngineError as exc:
             logger.info("applicant onboarding state failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.get("/gaps/{campaign_id}")
+    async def profile_gaps(campaign_id: str, request: Request) -> JSONResponse:
+        """A completeness checklist: which core profile attributes (name/email/
+        phone/title) and search criteria are still missing (dark-engine audit item
+        51). The assistant chat already computes this internally as hidden
+        context; this exposes the same gap list as a plain read."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_gaps(campaign_id)
+        except EngineError as exc:
+            logger.info("applicant profile gaps failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 

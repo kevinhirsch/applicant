@@ -139,25 +139,31 @@ _LADDER_KEY = "llm.tier_ladder"
 _STEPS_KEY = "wizard.steps_complete"
 _CHANNELS_KEY = "notify.channels"
 _SANDBOX_CONN_KEY = "sandbox.proxmox_windows"
-#: Settings > Automation overrides (dark-engine audit items 82/84/85): the
-#: browser-fingerprint timezone/locale, whether the engine may create ATS
-#: accounts from vaulted credentials, and the per-company daily application
-#: cap. Stored as an OVERRIDE record (only keys the operator actually saved
-#: are present) exactly like ``_CHANNELS_KEY`` -- callers merge this onto the
-#: env-sourced ``Settings`` defaults, so an unconfigured knob still shows the
-#: value the running engine actually uses today.
+#: Settings > Automation overrides (dark-engine audit items 82/84/85, plus
+#: 86/90): the browser-fingerprint timezone/locale, whether the engine may
+#: create ATS accounts from vaulted credentials, the per-company daily
+#: application cap, how long a pending final-approval waits before timing out
+#: (days, with an optional precise-seconds override), and how often the 24/7
+#: loop ticks. Stored as an OVERRIDE record (only keys the operator actually
+#: saved are present) exactly like ``_CHANNELS_KEY`` -- callers merge this
+#: onto the env-sourced ``Settings`` defaults, so an unconfigured knob still
+#: shows the value the running engine actually uses today.
 _AUTOMATION_KEY = "automation.prefs"
 #: Defaults duplicated here (NOT imported from ``applicant.app.config.Settings``)
 #: so this module has zero import-time dependency on the pydantic settings
 #: layer -- the same reason ``get_quiet_hours`` hardcodes "22:00"/"07:00"
 #: rather than importing them. Keep in sync with ``config.py``'s field
 #: defaults (egress_timezone/egress_locale/allow_automated_accounts/
-#: presubmit_max_apps_per_company_per_day).
+#: presubmit_max_apps_per_company_per_day/approval_timeout_days/
+#: approval_wait_seconds/scheduler_interval_seconds).
 AUTOMATION_PREFS_DEFAULTS: dict[str, Any] = {
     "egress_timezone": "America/Phoenix",
     "egress_locale": "en-US",
     "allow_automated_accounts": False,
     "presubmit_max_apps_per_company_per_day": 3,
+    "approval_timeout_days": 30,
+    "approval_wait_seconds": None,
+    "scheduler_interval_seconds": 60.0,
 }
 #: Vault refs for the sandbox-connection secrets (Proxmox token secret, RDP pass).
 _SANDBOX_TOKEN_REF = "sandbox.proxmox_token_secret"
@@ -670,7 +676,7 @@ class SetupService:
             return True
         return self.sandbox_connection_configured()
 
-    # --- Settings > Automation (dark-engine audit items 82/84/85) ---------
+    # --- Settings > Automation (dark-engine audit items 82/84/85/86/90) ---
     def get_automation_prefs(self) -> dict[str, Any]:
         """Return the persisted Automation-tab overrides (no defaults merged in).
 
@@ -691,15 +697,19 @@ class SetupService:
         presubmit_max_apps_per_company_per_day: int | None = None,
         pii_retention_days: int | None = None,
         presubmit_duplicate_cooldown_days: int | None = None,
+        approval_timeout_days: int | None = None,
+        approval_wait_seconds: float | None = None,
+        scheduler_interval_seconds: float | None = None,
     ) -> None:
-        """Persist Automation-tab overrides (dark-engine audit items 82/84/85/87/88).
+        """Persist Automation-tab overrides (dark-engine audit items 82/84/85/86/87/88/90).
 
         ``None`` leaves the persisted value for that key untouched (the same
         "unset = no-op" convention ``set_quiet_hours`` uses) so a partial save
         from one control never clobbers the others. Server-side validation:
-        the per-company cap, the data-retention window, and the re-apply
-        cooldown can't go negative (the browser input already clamps this,
-        but the engine never trusts a caller-supplied value alone -- see the
+        the per-company cap, the data-retention window, the re-apply cooldown,
+        the approval timeout, and the scheduler interval can't go
+        negative/non-positive (the browser inputs already clamp these, but the
+        engine never trusts a caller-supplied value alone -- see the
         fabrication-guard note in CLAUDE.md).
 
         ``pii_retention_days`` (item 87) mirrors ``config.py``'s
@@ -722,6 +732,12 @@ class SetupService:
             and presubmit_duplicate_cooldown_days < 0
         ):
             raise ValueError("The re-apply cooldown cannot be negative.")
+        if approval_timeout_days is not None and approval_timeout_days < 0:
+            raise ValueError("The approval timeout cannot be negative.")
+        if approval_wait_seconds is not None and approval_wait_seconds < 0:
+            raise ValueError("The approval wait override cannot be negative.")
+        if scheduler_interval_seconds is not None and scheduler_interval_seconds <= 0:
+            raise ValueError("The check interval must be greater than zero.")
         rec = self.get_automation_prefs()
         if egress_timezone is not None:
             rec["egress_timezone"] = (
@@ -743,6 +759,12 @@ class SetupService:
             rec["presubmit_duplicate_cooldown_days"] = int(
                 presubmit_duplicate_cooldown_days
             )
+        if approval_timeout_days is not None:
+            rec["approval_timeout_days"] = int(approval_timeout_days)
+        if approval_wait_seconds is not None:
+            rec["approval_wait_seconds"] = float(approval_wait_seconds)
+        if scheduler_interval_seconds is not None:
+            rec["scheduler_interval_seconds"] = float(scheduler_interval_seconds)
         self._store.set(_AUTOMATION_KEY, rec)
         log.info(
             "automation_prefs_configured",
@@ -756,6 +778,9 @@ class SetupService:
             presubmit_duplicate_cooldown_days=rec.get(
                 "presubmit_duplicate_cooldown_days"
             ),
+            approval_timeout_days=rec.get("approval_timeout_days"),
+            approval_wait_seconds=rec.get("approval_wait_seconds"),
+            scheduler_interval_seconds=rec.get("scheduler_interval_seconds"),
         )
 
     # --- status ----------------------------------------------------------

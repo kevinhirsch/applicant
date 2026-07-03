@@ -49,6 +49,12 @@ let _overlayA11yCleanup = null;
 let _campaignId = null;
 let _status = null;        // engine setup status
 let _onboarding = null;    // engine onboarding state
+// Profile-completeness checklist (dark-engine audit item 51): which core profile
+// attributes (name/email/phone/title) + search criteria the engine still reports
+// missing, straight from ChatService.identify_gaps via GET .../gaps/{campaignId}.
+// Best-effort — null until fetched, or on a fetch failure (older engine / offline),
+// so the wizard degrades cleanly (see _profileGapsHTML).
+let _profileGaps = null;
 let _stepIndex = 0;        // active step in STEPS
 let _busy = false;
 // True once the user has typed/changed anything on the CURRENT step since it was
@@ -1420,6 +1426,14 @@ function _renderRepeatSection(key, spec, saved) {
 async function _renderOnboarding() {
   await _ensureCampaign();
   _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
+  // Best-effort refresh of the profile-completeness checklist (item 51) each time
+  // this step is (re)entered, so it reflects the latest attribute/criteria state.
+  // Never lets a fetch failure block the intake itself.
+  try {
+    _profileGaps = await _fetchJSON(`${SETUP}/gaps/${encodeURIComponent(_campaignId)}`);
+  } catch {
+    _profileGaps = null;
+  }
   const done = new Set(_onboarding.sections_complete || []);
   // Resume at the first incomplete intake section.
   _intakeIndex = INTAKE_SECTIONS.findIndex((s) => !done.has(s));
@@ -1443,6 +1457,24 @@ function _applyReadinessBanner() {
   return `<div class="admin-card" style="border-left:3px solid var(--accent-warm, #d8a23a);">
     <p style="margin:0 0 4px;font-size:0.86rem;"><strong>This part is optional.</strong> Add a résumé to fill it in fast, or just tell Applicant in chat — it'll keep learning as you go.</p>
     <p style="margin:0;font-size:0.84rem;opacity:0.85;">Before it can start applying, Applicant still needs: ${esc(missing.join(', '))}.</p>
+  </div>`;
+}
+
+// A visible profile-completeness checklist (dark-engine audit item 51): the SAME
+// gap list the assistant chat already computes internally (core attributes like
+// name/email/phone/title, plus whether search criteria are set) — previously only
+// used as hidden LLM context, now surfaced here so a user reviewing "Your profile"
+// can see at a glance what's still missing without opening chat. Best-effort: ''
+// until fetched, on a fetch failure, or once nothing is missing, so it degrades
+// cleanly like _applyReadinessBanner and never blocks the wizard.
+function _profileGapsHTML() {
+  const g = _profileGaps;
+  if (!g || g.complete || !Array.isArray(g.gaps) || !g.gaps.length) return '';
+  return `<div class="admin-card" id="ao-profile-gaps" style="border-left:3px solid var(--accent-warm, #d8a23a);">
+    <p style="margin:0 0 4px;font-size:0.86rem;"><strong>Still missing from your profile:</strong></p>
+    <ul style="margin:0;padding-left:18px;font-size:0.84rem;opacity:0.85;">
+      ${g.gaps.map((item) => `<li>${esc(item)}</li>`).join('')}
+    </ul>
   </div>`;
 }
 
@@ -1572,6 +1604,7 @@ function _renderBaseResume(saved) {
   _setBody(`
     ${_intakeProgressHTML(total)}
     ${_applyReadinessBanner()}
+    ${_profileGapsHTML()}
     <h2 class="ao-step-title">Start with your resume ${_tip('Applicant reads your resume and fills in the rest of your profile for you — you just review and fix anything it got wrong. After upload we also build a high-fidelity version and show you a preview to accept or reject.')}</h2>
     <p class="ao-step-desc">Optional but recommended: upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell Applicant what you want in chat. You can edit every field afterward.</p>
     <div class="admin-card">

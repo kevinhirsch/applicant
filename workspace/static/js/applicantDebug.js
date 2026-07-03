@@ -19,14 +19,18 @@
 //   • Run        — run mode + daily target controls and the latest plain-language
 //                  "what the agent is doing right now" intent (writes config).
 //   • Config     — Sources (turn each job-discovery source on/off + see its
-//                  yield), Tools (enable/disable the engine's tools, engine-
-//                  wide; writes), Diagnostics (dark-engine audit #34 — recent
-//                  plain-language issues where pre-fill degraded gracefully
-//                  instead of stopping, read-only) and Update (a one-click
-//                  Update button with confirm + status) as sub-sections of one
-//                  pane (item #86 — these were separate top-level tabs, pushing
-//                  the tab strip past its ceiling; grouped so it stays within
-//                  the 5-7 ceiling).
+//                  yield), Detection events (dark-engine audit #26 — plain-
+//                  language history of bot-checks/blocks a job site threw at
+//                  the automated browser, read-only), Tools (enable/disable
+//                  the engine's tools, engine-wide; writes), Stealth posture
+//                  (dark-engine audit #27 — the live egress/connection posture
+//                  + honest best-effort caveat, read-only), Diagnostics (dark-
+//                  engine audit #34 — recent plain-language issues where
+//                  pre-fill degraded gracefully instead of stopping, read-only)
+//                  and Update (a one-click Update button with confirm +
+//                  status) as sub-sections of one pane (item #86 — these were
+//                  separate top-level tabs, pushing the tab strip past its
+//                  ceiling; grouped so it stays within the 5-7 ceiling).
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports it's configured
@@ -436,8 +440,16 @@ async function _showAppDetail(appId) {
       <button class="admin-btn-sm" id="applicant-debug-detail-close">Close</button>
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Screenshots</strong> (${shotList.length})</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
-      ${shotList.length ? shotList.map((s) => `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(s.page_ref || s.page || s.label || 'page')}</span>`).join(' · ') : _empty('No screenshots captured.')}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+      ${shotList.length ? shotList.map((s) => {
+          const label = s.page_ref || s.page || s.label || 'page';
+          const src = _screenshotImgUrl(appId, s.id);
+          if (!src) {
+            // No id to build an image URL from — fall back to the plain-text label.
+            return `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(label)}</span>`;
+          }
+          return `<img class="applicant-debug-shot-thumb" src="${esc(src)}" alt="${esc(label)}" title="${esc(s.page_url || label)}" data-full="${esc(src)}" data-label="${esc(label)}" loading="lazy" style="width:96px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#3334);cursor:zoom-in;" />`;
+        }).join('') : _empty('No screenshots captured.')}
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Workflow steps</strong></div>
     ${steps.length ? `<div class="admin-toggle-sub" style="opacity:0.7;">${steps.map((s) => esc(typeof s === 'string' ? s : (s.name || s.step || JSON.stringify(s)))).join(' → ')}</div>${wf.pending_recovery ? '<div class="admin-toggle-sub" style="color:var(--warn,#c80);">Pending recovery</div>' : ''}` : _empty('No durable workflow recorded.')}
@@ -447,6 +459,49 @@ async function _showAppDetail(appId) {
     ${_renderSnapshot(snapshot)}
   </div>`;
   host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
+  host.querySelectorAll('.applicant-debug-shot-thumb').forEach((img) => {
+    img.addEventListener('click', () => _openScreenshotLightbox(img.dataset.full, img.dataset.label));
+    // The capture may already be gone (ephemeral /tmp, reclaimed after a restart) —
+    // swap a broken thumbnail for the plain-text label rather than a blank icon.
+    img.addEventListener('error', () => {
+      const fallback = document.createElement('span');
+      fallback.className = 'admin-toggle-sub';
+      fallback.style.opacity = '0.7';
+      fallback.title = img.title;
+      fallback.textContent = img.dataset.label || 'page';
+      img.replaceWith(fallback);
+    }, { once: true });
+  });
+}
+
+// Real screenshot pixels, not just a filename label (dark-engine audit #28):
+// build the URL for one screenshot's raw image bytes. Returns '' when the
+// record has no id to address (nothing to fetch).
+function _screenshotImgUrl(appId, screenshotId) {
+  if (!appId || !screenshotId) return '';
+  return `${ADMIN}/screenshots/${encodeURIComponent(appId)}/${encodeURIComponent(screenshotId)}/image`;
+}
+
+// Full-size click-to-enlarge overlay for a screenshot thumbnail. Mirrors the
+// chat attachment lightbox (chatRenderer.js `_openImageLightbox`) — same
+// `.attach-lightbox` styling, reused rather than hand-rolled — simplified to a
+// single image URL (screenshots have no separate thumb/full variant).
+function _openScreenshotLightbox(url, label) {
+  if (!url) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'attach-lightbox';
+  const img = document.createElement('img');
+  img.alt = label || '';
+  img.src = url;
+  overlay.appendChild(img);
+  const _onKey = (e) => { if (e.key === 'Escape') _close(); };
+  const _close = () => {
+    document.removeEventListener('keydown', _onKey);
+    overlay.remove();
+  };
+  overlay.addEventListener('click', _close);
+  document.addEventListener('keydown', _onKey);
+  document.body.appendChild(overlay);
 }
 
 async function _confirm(message, opts) {
@@ -955,6 +1010,60 @@ function _wireExploreBudget(host) {
   });
 }
 
+// Detection events — dark-engine audit #26: DetectionEvent.signal_type/detail
+// (bot-checks/blocks the automated browser hit while filling in an application)
+// was already persisted and proxied (${ADMIN}/detections/{campaign_id}) but had
+// zero JS consumers anywhere. Campaign-scoped, mirrors the Sources sub-section's
+// need-a-campaign guard just above.
+const _DETECTION_LABELS = {
+  captcha: 'A CAPTCHA challenge appeared',
+  turnstile: 'A Cloudflare Turnstile challenge appeared',
+  datadome: 'A bot-detection challenge (DataDome) appeared',
+  cloudflare: 'A Cloudflare security check appeared',
+  rate_limited: 'The site rate-limited the automated browser',
+  blocked_403: 'The site blocked the automated browser',
+  account_friction: 'The site flagged repeated attempts (a lockout-style warning)',
+  anomalous_redirect: 'The automated browser landed on an unexpected page',
+};
+
+// Plain-language sentence for one detection's `signal_type` — falls back to a
+// still-honest generic line (never the raw machine code alone) for a type not
+// in the table above, so a new engine-side signal never renders as jargon.
+function _detectionLabel(signalType) {
+  const key = String(signalType || '').toLowerCase();
+  return _DETECTION_LABELS[key] || 'This site may have detected automated browsing';
+}
+
+async function _renderDetections(host) {
+  host = host || _body();
+  if (!_needCampaignIn(host)) return;
+  const data = await _fetchJSON(`${ADMIN}/detections/${encodeURIComponent(_campaignId)}`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const entries = data.detections || [];
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Moments this job search's automated browsing was challenged or blocked by a site — so a pattern of blocks is visible instead of silently retried.</div>`;
+  if (!entries.length) {
+    host.innerHTML = intro + _empty('No detection events recorded for this job search yet.');
+    return;
+  }
+  const rows = entries.map((e) => {
+    const when = e.timestamp ? (_relWhen(e.timestamp) || e.timestamp) : '';
+    const detail = e.detail && typeof e.detail === 'object'
+      ? Object.entries(e.detail)
+        .filter(([k, v]) => k !== 'body' && v != null && v !== '')
+        .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+        .join(' · ')
+      : '';
+    return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
+      <div style="min-width:0;">
+        <div style="font-weight:600;">${esc(_detectionLabel(e.signal_type))}</div>
+        ${detail ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(detail)}</div>` : ''}
+      </div>
+      <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;">${esc(when)}</span>
+    </div>`;
+  }).join('');
+  host.innerHTML = intro + `<div class="applicant-debug-list">${rows}</div>`;
+}
+
 async function _renderTools(host) {
   host = host || _body();
   // Engine-wide tool registry (not campaign-scoped): list every tool with an
@@ -1020,6 +1129,35 @@ async function _renderDiagnostics(host) {
     </div>`).join('')}</div>`;
 }
 
+// Stealth posture — dark-engine audit #27: GET /api/admin/stealth reports the
+// live egress posture (connection mode / residential attestation / proxy) plus
+// the honest best-effort caveat, and is already proxied (${ADMIN}/stealth), but
+// only the single caveat line was ever read (the narrow `/caveat` lane used by
+// applicantRemote.js / applicantToday.js / applicantPortal.js near the takeover
+// surface) — the fuller posture had zero consumers anywhere. Engine-wide (not
+// campaign-scoped), mirrors the Diagnostics sub-section just above.
+function _egressModeLabel(mode) {
+  const m = String(mode || '').toLowerCase().replace(/_/g, '-');
+  return m === 'residential-proxy' ? 'Residential proxy' : 'Direct connection';
+}
+
+async function _renderStealth(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/stealth`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const egress = data.egress || {};
+  const rows = [
+    ['Connection', _egressModeLabel(egress.mode)],
+    ['Looks like a home internet connection', egress.is_direct_residential ? 'Yes' : 'No'],
+    ['Using a proxy', egress.proxy_configured ? 'Yes' : 'No'],
+  ];
+  const caveat = data.caveat || data.egress_caveat;
+  host.innerHTML =
+    `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">What the automated browser presents to job sites right now — the honest, best-effort picture; no anti-detection setup is ever guaranteed to be undetectable.</div>` +
+    _statGrid(rows) +
+    (caveat ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:8px;">${esc(caveat)}</div>` : '');
+}
+
 async function _renderUpdate(host) {
   host = host || _body();
   let status = { engine_available: true };
@@ -1059,7 +1197,9 @@ async function _renderUpdate(host) {
 // independently-rendered sub-sections, each with its own host element so one
 // section's error/offline/gated state can't blank out its siblings. Diagnostics
 // (dark-engine audit #34) joins them the same way rather than adding a 7th
-// top-level tab, keeping the tab strip within the 5-7 ceiling (#86).
+// top-level tab, keeping the tab strip within the 5-7 ceiling (#86). Detection
+// events and Stealth posture (dark-engine audit #26/#27) join them the same
+// way — both were already proxied but had no JS consumer at all.
 async function _renderConfig() {
   const host = _body();
   host.innerHTML = `
@@ -1068,8 +1208,16 @@ async function _renderConfig() {
       <div id="applicant-config-sources">${loadingHTML('Loading…')}</div>
     </div>
     <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Detection events</div>
+      <div id="applicant-config-detections">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
       <div style="font-weight:600;margin-bottom:8px;">Tools</div>
       <div id="applicant-config-tools">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Stealth posture</div>
+      <div id="applicant-config-stealth">${loadingHTML('Loading…')}</div>
     </div>
     <div class="applicant-debug-list" style="margin-bottom:16px;">
       <div style="font-weight:600;margin-bottom:8px;">Diagnostics</div>
@@ -1080,12 +1228,16 @@ async function _renderConfig() {
       <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
     </div>`;
   const sourcesHost = host.querySelector('#applicant-config-sources');
+  const detectionsHost = host.querySelector('#applicant-config-detections');
   const toolsHost = host.querySelector('#applicant-config-tools');
+  const stealthHost = host.querySelector('#applicant-config-stealth');
   const diagnosticsHost = host.querySelector('#applicant-config-diagnostics');
   const updateHost = host.querySelector('#applicant-config-update');
   const sections = [
     [sourcesHost, _renderSources],
+    [detectionsHost, _renderDetections],
     [toolsHost, _renderTools],
+    [stealthHost, _renderStealth],
     [diagnosticsHost, _renderDiagnostics],
     [updateHost, _renderUpdate],
   ];

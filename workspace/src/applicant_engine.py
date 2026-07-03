@@ -352,12 +352,20 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
-    # -- setup: Settings > Automation (dark-engine audit items 82/84/85) --
+    async def setup_get_gaps(self, campaign_id: str) -> Any:
+        """A completeness checklist for one campaign (dark-engine audit item 51):
+        which core profile attributes (name/email/phone/title) and search criteria
+        are still missing. The SAME gap list the assistant chat already computes
+        internally, surfaced as a plain read so it doesn't require a chat message."""
+        return await self._request("GET", f"/api/setup/{campaign_id}/gaps")
+
+    # -- setup: Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90) --
 
     async def setup_get_automation_prefs(self) -> Any:
         """Browser fingerprint timezone/locale, the automated-account-creation
-        opt-in, and the per-company daily application cap -- persisted
-        overrides merged onto the engine's env defaults."""
+        opt-in, the per-company daily application cap, the final-approval
+        timeout, and the check-for-work interval -- persisted overrides merged
+        onto the engine's env defaults."""
         return await self._request("GET", "/api/setup/automation")
 
     async def setup_set_automation_prefs(self, body: dict) -> Any:
@@ -465,6 +473,12 @@ class ApplicantEngineClient:
     async def generate_cover_letter(self, body: Any) -> Any:
         """Generate a cover letter on demand; routed to review (FR-RESUME-10)."""
         return await self._request("POST", "/api/documents/cover-letter", json=body)
+
+    async def fill_cover_letter_template(self, body: Any) -> Any:
+        """Merge-fill a user's OWN saved cover-letter template's ``{{field}}``
+        placeholders (dark-engine audit item 41). Deterministic string substitution
+        -- no LLM call, complementary to ``generate_cover_letter`` above."""
+        return await self._request("POST", "/api/documents/cover-letter/fill", json=body)
 
     async def generate_screening_answer(self, body: Any) -> Any:
         """Generate a screening answer on demand; routed to review (FR-ANSWER-1)."""
@@ -574,6 +588,14 @@ class ApplicantEngineClient:
 
     async def acquire_missing_attribute(self, body: dict) -> Any:
         return await self._request("POST", "/api/attributes/acquire-missing", json=body)
+
+    async def ingest_observations(self, campaign_id: str, observations: list[dict]) -> Any:
+        """Bulk-reconcile a batch of parsed/observed facts into the attribute cloud
+        (FR-LEARN-4, dark-engine audit #42): auto-applies non-integral values, holds
+        integral ones for confirmation, surfaces conflicts, skips sensitive (EEO)."""
+        return await self._request(
+            "POST", f"/api/feedback/{campaign_id}/ingest", json={"observations": observations}
+        )
 
     # CRIT-profile: attribute delete (FR-ATTR-3) + banned-phrase list (FR-RESUME-5).
     async def delete_attribute(self, campaign_id: str, attribute_id: str) -> Any:
@@ -688,6 +710,12 @@ class ApplicantEngineClient:
     async def feedback_survey(self, body: dict) -> Any:
         return await self._request("POST", "/api/feedback/survey", json=body)
 
+    async def feedback_history(self, campaign_id: str) -> Any:
+        """Read back what the user has told the assistant for one campaign — the
+        read side of a surface that was otherwise write-only (dark-engine audit item
+        23): decline-with-feedback reasons and résumé/answer revision instructions."""
+        return await self._request("GET", f"/api/feedback/{campaign_id}")
+
     # === CRIT-ops: debug/observability + run controls + update + discovery ===
     # Added by the crit-ops lane. Each maps 1:1 to an engine endpoint group
     # (routers/admin.py, outcomes.py, update.py, agent_runs.py, discovery_sources.py)
@@ -730,6 +758,14 @@ class ApplicantEngineClient:
     async def admin_screenshots(self, application_id: str) -> Any:
         return await self._request("GET", f"/api/admin/screenshots/{application_id}")
 
+    async def admin_screenshot_image(self, application_id: str, screenshot_id: str) -> Any:
+        """Raw image bytes for one captured screenshot (dark-engine audit #28)."""
+        return await self._request(
+            "GET",
+            f"/api/admin/screenshots/{application_id}/{screenshot_id}/image",
+            expect_json=False,  # raw Response — binary image payload
+        )
+
     async def admin_logs(self, limit: int = 100) -> Any:
         return await self._request("GET", "/api/admin/logs", params={"limit": limit})
 
@@ -768,6 +804,53 @@ class ApplicantEngineClient:
         if ats:
             return await self._request("GET", f"/api/admin/lessons/{ats}")
         return await self._request("GET", "/api/admin/lessons")
+
+    async def admin_routines(self) -> Any:
+        """Induced per-ATS routines — the self-improvement flywheel's memory of what
+        worked (dark-engine audit #45).
+
+        After a successful pre-fill on a given ATS the engine induces a reusable
+        routine (the compact op-sequence that worked, keyed by domain) so the next
+        application to that ATS is guided rather than re-derived cold. Read-only
+        list of every domain the loop has learned a routine for: step count,
+        success/failure counts, and net score. Process-global (not campaign-scoped),
+        like ``admin_lessons``/``admin_prefill_diagnostics``.
+        """
+        return await self._request("GET", "/api/admin/routines")
+
+    async def admin_run_retention_sweep(self, days: Optional[int] = None) -> Any:
+        """Run the PII-retention sweep now (dark-engine audit #37).
+
+        ``DataLifecycleService.prune_pii_older_than`` (#363) was previously
+        reachable only from the dormant scheduler tick. This runs it
+        synchronously and returns the real per-store pruned counts. With
+        ``days`` omitted, the engine uses the currently persisted Settings >
+        Automation retention window (falling back to its env default);
+        passing ``days`` overrides it for this one run only and is not saved.
+        """
+        params = {"days": days} if days is not None else None
+        return await self._request("POST", "/api/admin/retention/prune", params=params)
+
+    # -- ACE playbook deltas (dark-engine audit item 46) ---------------------
+    # A curated, per-ATS set of strategy bullets kept current via structured
+    # add/revise/retire deltas (PlaybookService.apply_deltas) rather than a
+    # wholesale rewrite — distinct from the free-text saved-playbook skills
+    # above (chat's save_playbook/update_playbook). Campaign-scoped, persisted
+    # on the campaign's learning_state.
+
+    async def playbook(self, campaign_id: str, ats: str) -> Any:
+        """One ATS's curated playbook: entries + the applied-delta audit trail."""
+        return await self._request(
+            "GET", f"/api/agent-memory/playbooks/{ats}", params={"campaign_id": campaign_id}
+        )
+
+    async def apply_playbook_deltas(self, campaign_id: str, ats: str, deltas: list[dict]) -> Any:
+        """Apply structured add/revise/retire deltas to one ATS's playbook."""
+        return await self._request(
+            "POST",
+            f"/api/agent-memory/playbooks/{ats}/apply-deltas",
+            json={"campaign_id": campaign_id, "deltas": deltas},
+        )
 
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections

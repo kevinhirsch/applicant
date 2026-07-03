@@ -14,14 +14,20 @@ logging ring buffer). Gated behind the LLM-settings gate (FR-UI-5).
 from __future__ import annotations
 
 import dataclasses
+import mimetypes
+from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from applicant.app.container import Container
 from applicant.app.deps import (
     get_admin_query_service,
     get_container,
+    get_data_lifecycle_service,
     get_learning_service,
+    get_setup_service,
     get_storage,
     require_llm_configured,
 )
@@ -118,6 +124,34 @@ def application_screenshots(
     return {"application_id": application_id, "screenshots": shots, "status": "live"}
 
 
+@router.get("/screenshots/{application_id}/{screenshot_id}/image")
+def application_screenshot_image(
+    application_id: str, screenshot_id: str, admin_query=Depends(get_admin_query_service)
+) -> FileResponse:
+    """Raw image bytes for one captured screenshot (FR-OBS-2, dark-engine audit #28).
+
+    ``page_ref`` is a ``file://`` ref into the sandbox's local capture directory
+    (FR-LOG-2) — this streams the bytes so the debug surface can render the real
+    proof-of-work image instead of just a filename label. 404s when the id is
+    unknown, the ref isn't a real local file (e.g. the deterministic
+    ``screenshot://fake`` ref used by the in-memory sandbox in tests), or the
+    file no longer exists on disk (ephemeral capture dir, reclaimed after a
+    restart) — never fabricates image bytes.
+    """
+    shots = admin_query.screenshots(application_id)  # type: ignore[arg-type]
+    match = next((s for s in shots if s.get("id") == screenshot_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    parsed = urlparse(match.get("page_ref") or "")
+    if parsed.scheme != "file" or not parsed.path:
+        raise HTTPException(status_code=404, detail="No image bytes available for this screenshot")
+    path = Path(parsed.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot image is no longer available")
+    media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    return FileResponse(str(path), media_type=media_type)
+
+
 @router.get("/logs")
 def logs(limit: int = 100, admin_query=Depends(get_admin_query_service)) -> dict:
     """Recent structured logs for the debug surface (FR-LOG-3 / FR-OBS-2).
@@ -150,6 +184,26 @@ def prefill_diagnostics(container: Container = Depends(get_container)) -> dict:
     pf = container.prefill_service
     entries = pf.diagnostics() if pf is not None else []
     return {"diagnostics": entries, "status": "live"}
+
+
+@router.get("/routines")
+def induced_routines(container: Container = Depends(get_container)) -> dict:
+    """Induced per-ATS routines, the AWM self-improvement flywheel's memory of what
+    worked (#306, dark-engine audit #45).
+
+    After a successful pre-fill page on a given ATS the loop induces a reusable
+    routine (``PrefillService._induce_routine`` -> ``LearningService.induce_workflow``)
+    keyed by domain; the SAME process-lived ``RoutineStore`` offers it back as a
+    planning prior the next time that domain is seen. This is the plain read-only
+    overview of every domain the loop has learned a routine for — process-global (not
+    campaign-scoped), like ``/prefill-diagnostics`` / ``/lessons`` above. Each row is
+    ``domain``, ``step_count``, ``successes``/``failures``, the net ``score`` used for
+    ACE pruning, and ``source``. Returns an empty list (never an error) when the
+    pre-fill service or its routine store is not wired.
+    """
+    pf = container.prefill_service
+    routines = pf.list_routines() if pf is not None else []
+    return {"routines": routines, "status": "live"}
 
 
 @router.get("/stuck-applications/{campaign_id}")
@@ -262,3 +316,37 @@ def stealth(container: Container = Depends(get_container)) -> dict:
         },
         "status": "live",
     }
+
+
+# === PII-retention sweep, on demand (dark-engine audit #37) ================
+@router.post("/retention/prune")
+def run_retention_sweep(
+    days: int | None = None,
+    container: Container = Depends(get_container),
+    svc=Depends(get_setup_service),
+    data_lifecycle=Depends(get_data_lifecycle_service),
+) -> dict:
+    """Run the PII-retention sweep right now and return the real result (#37).
+
+    ``DataLifecycleService.prune_pii_older_than`` (#363) was previously reachable
+    ONLY from the dormant scheduler tick -- there was no way for an operator to
+    run a sweep on demand or see what the last one actually removed. This runs
+    the SAME cascade synchronously (parsed PII / EEO answers + onboarding
+    intakes older than the window) and returns the real per-store pruned counts,
+    not a fabricated summary.
+
+    The window defaults to the CURRENTLY persisted Settings > Automation
+    retention days (``SetupService.get_automation_prefs()``), falling back to
+    the env-sourced ``Settings`` default when nothing has been saved yet --
+    mirroring exactly what a scheduled sweep would use today. An explicit
+    ``?days=`` overrides it for this one run only and is NOT persisted. A
+    window of 0 (the default, "keep forever") is a legitimate no-op: the result
+    reports ``skipped: true`` and zero pruned rather than erroring.
+    """
+    settings = container.settings
+    stored = svc.get_automation_prefs()
+    default_days = stored.get("pii_retention_days", settings.pii_retention_days)
+    effective_days = default_days if days is None else days
+    result = data_lifecycle.prune_pii_older_than(days=effective_days)
+    result["requested_days"] = effective_days
+    return result

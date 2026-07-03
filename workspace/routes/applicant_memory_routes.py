@@ -81,6 +81,22 @@ class AcquireMissingIn(BaseModel):
     campaign_id: Optional[str] = None
 
 
+class ObservationIn(BaseModel):
+    """One observed/parsed fact for the bulk "tell it about yourself" import box:
+    ``{name, value, source?}``. The paste box never asserts ``is_integral`` — that
+    classification is the engine's own (an existing core detail still surfaces as a
+    conflict/held-for-confirmation rather than being silently overwritten)."""
+
+    name: str
+    value: str
+    source: str = "paste"
+
+
+class IngestObservationsIn(BaseModel):
+    observations: list[ObservationIn]
+    campaign_id: Optional[str] = None
+
+
 class PreviewLearningIn(BaseModel):
     source: str = ""
     campaign_id: Optional[str] = None
@@ -317,6 +333,26 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    @router.post("/ingest")
+    async def ingest_observations(request: Request, body: IngestObservationsIn) -> dict:
+        """Bulk-reconcile a batch of pasted/observed facts into the attribute cloud
+        in one call (FR-LEARN-4, dark-engine audit #42) — the "tell it about
+        yourself" import box's backing endpoint.
+
+        Auto-applies non-integral non-conflicting values, holds integral ones for
+        the confirmation gate (FR-FB-3), surfaces conflicts without overwriting,
+        and skips sensitive (EEO) fields (FR-ATTR-6). Same write privilege as the
+        single-attribute add above.
+        """
+        require_privilege(request, "can_manage_memory")
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, body.campaign_id)
+            observations = [o.model_dump() for o in body.observations]
+            try:
+                return await engine.ingest_observations(cid, observations)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
     # -- conversion learning (what the engine learned) ----------------------
 
     @router.get("/learning")
@@ -405,6 +441,25 @@ def setup_applicant_memory_routes() -> APIRouter:
                 return await _signature_get(engine, cid)
             except EngineError as exc:
                 _raise_engine_http(exc)
+
+    # -- feedback history (what you've told it) ------------------------------
+
+    @router.get("/feedback-history")
+    async def feedback_history(request: Request, campaign_id: Optional[str] = None) -> dict:
+        """Read back what the user has told the assistant for this campaign
+        (dark-engine audit item 23) — decline-with-feedback reasons and résumé/
+        answer revision instructions, the read side of an otherwise write-only
+        surface. Read-only; no ``can_manage_memory`` privilege required, matching
+        the other read endpoints above (``/learning``, ``/criteria``, ``/signature``).
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                data = await engine.feedback_history(cid)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"campaign_id": cid, "items": []}
 
     @router.post("/criteria/learned")
     async def apply_learned(request: Request, body: LearnedIn) -> dict:

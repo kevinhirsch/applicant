@@ -9,6 +9,10 @@ Read + light-write surface over the agent-learning substrate:
 * ``GET  /api/agent-memory/curation``        proposals awaiting review (FR-MIND-9).
 * ``POST /api/agent-memory/curation/{id}/approve``  apply a staged proposal.
 * ``POST /api/agent-memory/curation/{id}/deny``     discard a staged proposal.
+* ``GET  /api/agent-memory/playbooks/{ats}``         a curated ACE playbook + its
+  audit trail (dark-engine audit item 46).
+* ``POST /api/agent-memory/playbooks/{ats}/apply-deltas``  apply structured
+  add/revise/retire deltas to it.
 
 Each snapshot entry carries a stable ``ref`` (a content hash of kind + text) so the
 front door can target one line for a **forget** without a DB row id. A forget is a
@@ -23,13 +27,24 @@ the loop (review-before-write, FR-MIND-9). Nothing here can grant authority — 
 memory/skills are advisory context only (FR-MIND-11); the safety boundary derives its
 own ground truth regardless.
 
+The ACE **playbook** (``PlaybookService``, dark-engine audit item 46) is a distinct,
+per-ATS curated artifact from the "saved playbooks" above — those are free-text
+procedural skills authored via chat (``save_playbook``/``update_playbook`` in
+``chat_tools.py``); this is a structured, auditable set of strategy bullets updated
+via typed add/revise/retire deltas rather than a wholesale rewrite, so one bad
+proposal can never blow away everything already curated. It is persisted on the
+owning campaign's ``learning_state`` (namespaced under ``ace_playbooks``), the same
+JSONB bridge ``LearningService`` uses for its own statistical learning model.
+
 Gated behind the LLM-settings gate (FR-UI-5): the substrate is meaningless before a
 model is connected.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -37,15 +52,33 @@ from pydantic import BaseModel
 from applicant.app.deps import (
     get_agent_memory,
     get_curation_service,
+    get_storage,
     require_llm_configured,
 )
 from applicant.application.services.curation_service import proposal_to_dict
+from applicant.application.services.playbook_service import (
+    Playbook,
+    PlaybookDelta,
+    PlaybookEntry,
+    PlaybookService,
+)
+from applicant.core.ids import CampaignId
 
 router = APIRouter(
     prefix="/api/agent-memory",
     tags=["agent_memory"],
     dependencies=[Depends(require_llm_configured)],
 )
+
+#: Pure application service (no I/O of its own, see ``playbook_service.py``) — safe
+#: to share as a module-level singleton, same as any other stateless value-object
+#: transform.
+_playbook_service = PlaybookService()
+
+#: Cap on how many applied-delta audit entries are retained per (campaign, ats) —
+#: keeps the JSONB blob bounded across a long-running curation history, mirroring
+#: ``cap_feature_stats`` in ``learning_service.py``.
+MAX_PLAYBOOK_AUDIT = 100
 
 
 def _entry_ref(e) -> str:
@@ -216,3 +249,117 @@ def deny_curation(proposal_id: str, curation=Depends(get_curation_service)) -> d
     if not curation.deny(proposal_id):
         raise HTTPException(status_code=404, detail="That proposal is no longer pending.")
     return {"ok": True, "id": proposal_id}
+
+
+# --- ACE playbooks (dark-engine audit item 46) -----------------------------
+# A curated, per-ATS set of strategy bullets updated by structured add/revise/
+# retire deltas (``PlaybookService.apply_deltas``) instead of a wholesale rewrite,
+# so one bad proposal can never blow away everything already learned. Persisted
+# on the owning campaign's ``learning_state`` under ``ace_playbooks``.
+
+
+def _entry_to_dict(entry: PlaybookEntry) -> dict:
+    return {
+        "key": entry.key,
+        "text": entry.text,
+        "confidence": entry.confidence,
+        "revision": entry.revision,
+    }
+
+
+def _load_playbook(state: dict, ats: str) -> tuple[Playbook, list[dict]]:
+    """Rehydrate one ATS's ``Playbook`` + its audit trail from ``ace_playbooks``."""
+    raw = state.get(ats) or {}
+    entries = tuple(
+        PlaybookEntry(
+            key=str(e.get("key", "")),
+            text=str(e.get("text", "")),
+            confidence=float(e.get("confidence", 0.5)),
+            revision=int(e.get("revision", 1)),
+        )
+        for e in raw.get("entries", [])
+        if e.get("key")
+    )
+    return Playbook(ats=ats, entries=entries), list(raw.get("audit", []))
+
+
+class PlaybookDeltaIn(BaseModel):
+    """One structured incremental change to a playbook: add / revise / retire."""
+
+    op: str
+    key: str
+    text: str = ""
+
+
+class ApplyPlaybookDeltasIn(BaseModel):
+    campaign_id: str
+    deltas: list[PlaybookDeltaIn]
+
+
+@router.get("/playbooks/{ats}")
+def get_playbook(ats: str, campaign_id: str, storage=Depends(get_storage)) -> dict:
+    """One ATS's curated playbook: current entries + the applied-delta audit trail.
+
+    The read side of what would otherwise be a write-only curation surface — lets
+    the front door show exactly which strategy bullets exist and how each one was
+    added, revised, or retired over time.
+    """
+    campaign = storage.campaigns.get(CampaignId(campaign_id))
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="That campaign was not found.")
+    state = dict((campaign.learning_state or {}).get("ace_playbooks", {}))
+    playbook, audit = _load_playbook(state, ats)
+    return {
+        "ats": ats,
+        "campaign_id": campaign_id,
+        "entries": [_entry_to_dict(e) for e in playbook.entries],
+        "audit": audit,
+    }
+
+
+@router.post("/playbooks/{ats}/apply-deltas")
+def apply_playbook_deltas(
+    ats: str, body: ApplyPlaybookDeltasIn, storage=Depends(get_storage)
+) -> dict:
+    """Apply structured add/revise/retire deltas to one ATS's curated playbook.
+
+    Each delta touches a single strategy bullet; the rest of the playbook is
+    preserved verbatim (never a wholesale rewrite, see ``PlaybookService``). Every
+    delta actually applied is appended to a bounded audit trail so the user can see
+    exactly what changed and when.
+    """
+    if not body.deltas:
+        raise HTTPException(status_code=400, detail="Give at least one delta to apply.")
+
+    campaign = storage.campaigns.get(CampaignId(body.campaign_id))
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="That campaign was not found.")
+
+    state = dict((campaign.learning_state or {}).get("ace_playbooks", {}))
+    playbook, audit = _load_playbook(state, ats)
+    deltas = [PlaybookDelta(op=d.op, key=d.key, text=d.text) for d in body.deltas]
+    new_playbook, applied = _playbook_service.apply_deltas(playbook, deltas)
+
+    now = datetime.now(UTC).isoformat()
+    audit = audit + [
+        {"op": d.op, "key": d.key, "text": d.text, "applied_at": now} for d in applied
+    ]
+    audit = audit[-MAX_PLAYBOOK_AUDIT:]
+
+    state[ats] = {
+        "entries": [_entry_to_dict(e) for e in new_playbook.entries],
+        "audit": audit,
+    }
+    learning_state = dict(campaign.learning_state or {})
+    learning_state["ace_playbooks"] = state
+    storage.campaigns.add(dataclasses.replace(campaign, learning_state=learning_state))
+    storage.commit()
+
+    return {
+        "ok": True,
+        "ats": ats,
+        "campaign_id": body.campaign_id,
+        "applied": [{"op": d.op, "key": d.key, "text": d.text} for d in applied],
+        "entries": [_entry_to_dict(e) for e in new_playbook.entries],
+        "audit": audit,
+    }

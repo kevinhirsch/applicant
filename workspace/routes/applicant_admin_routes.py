@@ -225,6 +225,29 @@ def setup_applicant_admin_routes() -> APIRouter:
                 {"application_id": application_id, "screenshots": []},
             )
 
+    @router.get("/screenshots/{application_id}/{screenshot_id}/image")
+    async def application_screenshot_image(
+        application_id: str, screenshot_id: str, request: Request
+    ):
+        """Raw image bytes for one captured screenshot (dark-engine audit #28).
+
+        Streams the real proof-of-work capture through so the Debug modal can
+        render an actual thumbnail instead of just a filename label. 404s (via
+        ``_engine_http_error``) when the engine has no bytes for this id.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                resp = await engine.admin_screenshot_image(application_id, screenshot_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.content,
+            media_type=resp.headers.get("content-type", "image/png"),
+        )
+
     @router.get("/logs")
     async def logs(request: Request, limit: int = 100) -> dict:
         """Recent redacted run logs (the engine already secret-redacts entries)."""
@@ -368,6 +391,28 @@ def setup_applicant_admin_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             try:
                 result = await engine.outcome_detect(application_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        return result or {}
+
+    # -- data-retention sweep, on demand (dark-engine audit #37) ----------
+    # DESTRUCTIVE: permanently deletes personal data older than the retention
+    # window. The engine derives its own default window from the currently
+    # persisted Settings > Automation preference, so this is a plain "run it
+    # now" trigger, not a second place to configure the window.
+
+    @router.post("/retention/prune")
+    async def run_retention_sweep(request: Request) -> dict:
+        """Run the PII-retention sweep now and return the real per-store result.
+
+        Admin-gated: this permanently deletes personal data (parsed PII / EEO
+        answers / onboarding intakes) older than the retention window, the same
+        cascade the dormant scheduler tick would eventually run on its own.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                result = await engine.admin_run_retention_sweep()
             except EngineError as exc:
                 raise _engine_http_error(exc) from exc
         return result or {}

@@ -1025,14 +1025,57 @@ class PrefillService:
         Best-effort + defensive: no store / empty trace / any error → no-op. When the
         page was filled by REUSING an injected prior, up-weight that routine (ACE) AND
         refresh it with the latest working trace (``induce`` counts a success).
+
+        Routed through ``LearningService.induce_workflow`` (a ``@staticmethod``, so no
+        ``LearningService`` instance construction is needed here) rather than calling
+        ``routine_store.induce`` directly — dark-engine audit #45 flagged
+        ``induce_workflow`` as a zero-caller wrapper; this is that call site.
         """
         store = self._routine_store
         if store is None or not domain or not steps:
             return
         try:
-            store.induce(domain, tuple(steps))
+            from applicant.application.services.learning_service import LearningService
+
+            LearningService.induce_workflow(store, domain, tuple(steps))
         except Exception:  # noqa: BLE001 — induction must never crash the loop
             log.debug("RoutineStore.induce failed for %s", domain, exc_info=True)
+
+    def list_routines(self) -> list[dict]:
+        """List every induced per-ATS routine for the admin/Mind read-model (audit #45).
+
+        Reads the SAME process-lived ``RoutineStore`` the running loop writes to
+        (``_induce_routine`` above) and reads from as planning priors
+        (``_prior_routine_text``), so this always reflects the live loop state, not a
+        stale snapshot. Returns an empty list (never an error) when no store is wired.
+        """
+        store = self._routine_store
+        if store is None:
+            return []
+        rows: list[dict] = []
+        try:
+            domains = store.all_domains()
+        except Exception:  # noqa: BLE001 — introspection must never crash the caller
+            log.debug("RoutineStore.all_domains failed", exc_info=True)
+            return []
+        for domain in domains:
+            try:
+                routine = store.get(domain)
+            except Exception:  # noqa: BLE001
+                log.debug("RoutineStore.get failed for %s", domain, exc_info=True)
+                continue
+            if routine is None:
+                continue
+            rows.append({
+                "domain": routine.domain,
+                "step_count": len(routine.steps),
+                "successes": routine.successes,
+                "failures": routine.failures,
+                "score": routine.score,
+                "source": routine.source,
+            })
+        rows.sort(key=lambda r: (-r["score"], r["domain"]))
+        return rows
 
     def _try_solve_captcha(self, app, state) -> bool:
         """#350: route a detected captcha through the opt-in solver port.

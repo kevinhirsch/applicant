@@ -65,11 +65,6 @@ KNOWN_UNWIRED: dict[str, str] = {
     # selling point (docs/release-readiness-1.0.md §2d note on #403).
     "GET /api/applicant/chat/pending-actions/{campaign_id}": "release-readiness §2d (#403)",
     "POST /api/applicant/chat/pending-actions/{action_id}/resolve": "release-readiness §2d (#403)",
-    # #404-adjacent — debug-only engine reads not surfaced in the front-door:
-    # the detection monitor (FR-PREFILL-6) and the stealth-profile readout are
-    # operator/diagnostic reads, not user surfaces.
-    "GET /api/applicant/admin/detections/{campaign_id}": "release-readiness §2d (#404, debug-only read)",
-    "GET /api/applicant/admin/stealth": "release-readiness §2d (#404, debug-only read)",
     # Exploration-budget READ for research: the front-door reads the budget via the
     # ops/discovery surface (applicantDebug renders data.exploration_budget); the
     # research-scoped budget GET is the unconsumed twin.

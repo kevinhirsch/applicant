@@ -8,10 +8,13 @@ tier ladder (FR-LLM-2/3) and per-step wizard advance (FR-OOBE-2) are all here.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from applicant.app.deps import get_container, get_setup_service
+from applicant.app.deps import get_chat_service, get_container, get_setup_service
+from applicant.core.ids import CampaignId
 from applicant.ports.driving.setup_wizard import (
     LLMSettings,
     SandboxConnectionSettings,
@@ -103,7 +106,7 @@ class EndpointModelIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/87/88).
+    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90).
 
     All fields optional / ``None`` = leave the persisted value untouched
     (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
@@ -118,6 +121,13 @@ class AutomationPrefsIn(BaseModel):
     pii_retention_days: int | None = None
     #: Item 88: how many days before re-applying to the same company/role.
     presubmit_duplicate_cooldown_days: int | None = None
+    #: How many days a pending final-approval waits before timing out (item 90).
+    approval_timeout_days: int | None = None
+    #: Fine-grained override for the approval wait, in seconds; takes precedence
+    #: over ``approval_timeout_days`` when set (item 90).
+    approval_wait_seconds: float | None = None
+    #: How often (in seconds) the 24/7 loop ticks (item 86).
+    scheduler_interval_seconds: float | None = None
 
 
 def _status_dict(svc) -> dict:
@@ -197,10 +207,67 @@ def configure_llm_from_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+def _routing_status(container) -> dict:
+    """Real-time smart-router state for the model-ladder UI (dark-engine audit item 74).
+
+    The router silently reorders the walked tier order every resolve, so the ladder
+    editor alone can't tell a user which endpoint is actually serving requests. This
+    reads the SAME router instance the live LLM adapter uses (``container.llm_router``)
+    — never a fabricated/guessed value — so what's shown always matches reality.
+    ``enabled=False`` covers both "smart routing is off" (the ladder runs in its
+    configured order unchanged) and "no router is wired" (no smart-routing endpoints
+    configured yet).
+    """
+    settings = container.settings
+    out: dict[str, Any] = {
+        "enabled": bool(settings.llm_smart_routing),
+        "prefer_local": bool(settings.llm_smart_routing_prefer_local),
+        "active_endpoint": None,
+        "reordered": False,
+        "health": None,
+    }
+    router = container.llm_router
+    if not out["enabled"] or router is None:
+        return out
+    from applicant.ports.driven.llm_router import CostTier, TaskType
+
+    try:
+        out["health"] = router.health()
+    except Exception:  # pragma: no cover - defensive, mirrors order_ladder_by_router
+        out["health"] = None
+    try:
+        cost_tier = CostTier.LOWEST if out["prefer_local"] else CostTier.BALANCED
+        selected = router.select_endpoint(
+            TaskType.CHAT, cost_tier=cost_tier, prefer_local=out["prefer_local"]
+        )
+    except Exception:  # pragma: no cover - defensive, mirrors order_ladder_by_router
+        selected = None
+    if not selected:
+        return out
+    out["active_endpoint"] = {
+        "name": selected.get("name", ""),
+        "base_url": selected.get("base_url", ""),
+    }
+    tiers = container.setup_service.get_tiers()
+    first_base = _norm_base(tiers[0].get("base_url", "")) if tiers else ""
+    if first_base:
+        out["reordered"] = _norm_base(selected.get("base_url", "")) != first_base
+    return out
+
+
+def _norm_base(url: str) -> str:
+    return (url or "").strip().lower().rstrip("/")
+
+
 @router.get("/llm/tiers")
-def get_tiers(svc=Depends(get_setup_service)) -> dict:
-    """Return the persisted tier ladder (secrets omitted) for the UI (FR-LLM-3)."""
-    return {"tiers": svc.get_tiers()}
+def get_tiers(svc=Depends(get_setup_service), container=Depends(get_container)) -> dict:
+    """Return the persisted tier ladder (secrets omitted) plus live routing status.
+
+    ``routing`` reports which endpoint the smart router actually picked and whether
+    that reorders the configured Level-1 tier (dark-engine audit item 74) — see
+    ``_routing_status``.
+    """
+    return {"tiers": svc.get_tiers(), "routing": _routing_status(container)}
 
 
 @router.put("/llm/tiers", status_code=status.HTTP_204_NO_CONTENT)
@@ -394,7 +461,7 @@ def configure_sandbox_connection(
 def get_automation_prefs(
     svc=Depends(get_setup_service), container=Depends(get_container)
 ) -> dict:
-    """Settings > Automation (dark-engine audit items 82/84/85/87/88).
+    """Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90).
 
     Merges the persisted overrides onto the env-sourced ``Settings`` defaults so
     the UI always shows the value the running engine actually uses today, even
@@ -419,12 +486,21 @@ def get_automation_prefs(
             "presubmit_duplicate_cooldown_days",
             settings.presubmit_duplicate_cooldown_days,
         ),
+        "approval_timeout_days": stored.get(
+            "approval_timeout_days", settings.approval_timeout_days
+        ),
+        "approval_wait_seconds": stored.get(
+            "approval_wait_seconds", settings.approval_wait_seconds
+        ),
+        "scheduler_interval_seconds": stored.get(
+            "scheduler_interval_seconds", settings.scheduler_interval_seconds
+        ),
     }
 
 
 @router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
 def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
-    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/87/88)."""
+    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/86/87/88/90)."""
     try:
         svc.set_automation_prefs(
             egress_timezone=body.egress_timezone,
@@ -433,9 +509,26 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             presubmit_max_apps_per_company_per_day=body.presubmit_max_apps_per_company_per_day,
             pii_retention_days=body.pii_retention_days,
             presubmit_duplicate_cooldown_days=body.presubmit_duplicate_cooldown_days,
+            approval_timeout_days=body.approval_timeout_days,
+            approval_wait_seconds=body.approval_wait_seconds,
+            scheduler_interval_seconds=body.scheduler_interval_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/{campaign_id}/gaps")
+def get_profile_gaps(campaign_id: str, chat=Depends(get_chat_service)) -> dict:
+    """A visible completeness checklist for one campaign (dark-engine audit item 51).
+
+    ``ChatService.identify_gaps`` already computes which core profile attributes
+    (name/email/phone/title) and search criteria are still missing — today it is
+    read only as hidden context inside a chat turn. This surfaces the SAME
+    gap list (no separate computation, no fabricated data) as a plain read so the
+    front door can show it as a checklist without requiring a chat message first.
+    """
+    gaps = chat.identify_gaps(CampaignId(campaign_id))
+    return {"campaign_id": campaign_id, "gaps": gaps, "complete": not gaps}
 
 
 @router.post("/advance/{step}")

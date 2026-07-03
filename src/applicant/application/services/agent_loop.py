@@ -905,7 +905,7 @@ class AgentLoop:
             # concrete field-level failure during THIS pass is distilled into a
             # verbal lesson for the next attempt on this ATS (previously written but
             # never invoked anywhere in the loop).
-            self._reflect_on_prefill_failure(ats, res)
+            self._reflect_on_prefill_failure(campaign.id, ats, res)
             return {"state": res.state.value}
 
         def _material_warranted() -> bool:
@@ -1050,7 +1050,9 @@ class AgentLoop:
             log.info("prefill_recalled_lessons", ats=ats, lesson_count=len(lessons))
         return lessons
 
-    def _reflect_on_prefill_failure(self, ats: str, res) -> None:
+    def _reflect_on_prefill_failure(
+        self, campaign_id: CampaignId, ats: str, res
+    ) -> None:
         """Write a Reflexion lesson from a real field-level pre-fill failure (#44).
 
         ``PrefillResult.fields_failed`` is the concrete, already-recorded signal a
@@ -1074,6 +1076,51 @@ class AgentLoop:
             )
         except Exception:  # pragma: no cover - defensive: reflection must never break the loop
             log.debug("reflect_on_failure raised", exc_info=True)
+        # #47 dark-engine audit: additive assisted-reasoning refinement, LOOP_TOOLS-
+        # gated. The raw lesson above always echoes the last failed selector/error
+        # verbatim; whether that is actually worth generalizing into a reusable
+        # per-ATS note (and how to phrase it) is a genuinely ambiguous judgment call
+        # the templated write can't make. Best-effort + fully additive: it never
+        # replaces the write above, and it is a no-op unless the operator has opted
+        # into LOOP_TOOLS with a tool-capable model (default off ⇒ unchanged tick).
+        self._maybe_assisted_reflect(campaign_id, ats, last)
+
+    def _maybe_assisted_reflect(
+        self, campaign_id: CampaignId, ats: str, last: dict
+    ) -> None:
+        """Let the loop's tool-capable model optionally refine the failure into a
+        reusable playbook note (LOOP_TOOLS, FR-MIND-6 / FR-CUA-2 — dark-engine
+        audit #47: the only consumer of ``run_assisted_reasoning``/``tools_for``).
+
+        The model MAY call ``recall`` to check prior lessons for this domain and
+        ``save_playbook``/``update_playbook`` a short, reusable note for the next
+        attempt here — the SAME guarded chat tools, now reachable from the
+        autonomous loop instead of only the chat assistant. It may also do nothing;
+        the prompt says so explicitly. ``run_assisted_reasoning`` itself already
+        no-ops (returns ``None``) when the setting is off or the model doesn't
+        advertise tool calling, so this call is a clean no-op by default. Wrapped in
+        its own try/except so a bad turn here can never break the tick (mirrors the
+        defensive posture of the raw write above).
+        """
+        try:
+            step = str(last.get("selector") or last.get("label") or "fill")
+            error = str(last.get("error", ""))
+            system = (
+                "You are the autonomous job-application loop's assistant. A "
+                "pre-fill attempt just failed on an application-tracking site. "
+                "You may call `recall` to check for prior lessons about this exact "
+                "domain, then OPTIONALLY call `save_playbook` or `update_playbook` "
+                "with a short, reusable note for the next attempt on this domain. "
+                "Only save something genuinely useful for next time — it is fine "
+                "to do nothing."
+            )
+            prompt = (
+                f"Domain: {ats}\nFailed step: {step}\nError: {error}\n"
+                "Decide whether this is worth remembering, and if so, save it."
+            )
+            self.run_assisted_reasoning(campaign_id, system, prompt)
+        except Exception:  # pragma: no cover - defensive: never break the tick
+            log.debug("assisted_reflect_failed", exc_info=True)
 
     # --- material generation (#3) ----------------------------------------
     def _jd_terms(self, posting) -> list[str]:

@@ -59,10 +59,12 @@ class AdminQueryService:
             apps = apps[:limit]
         shots_by_app = self._batch_screenshots(campaign_id, apps)
         outcomes_by_app = self._batch_outcomes(campaign_id, apps)
+        postings_by_id = self._batch_postings(campaign_id)
         rows: list[dict] = []
         for a in apps:
             shots = shots_by_app.get(str(a.id), [])
             outcomes = outcomes_by_app.get(str(a.id), [])
+            posting = postings_by_id.get(str(a.posting_id)) if a.posting_id else None
             rows.append(
                 {
                     "application_id": str(a.id),
@@ -81,9 +83,23 @@ class AdminQueryService:
                     # surfaced anywhere. Real data only, never fabricated: an
                     # application that never recorded any attributes returns ``{}``.
                     "attributes_used": dict(a.attributes_used or {}),
+                    # dark-engine audit #56: salary/location are captured per posting
+                    # (``JobPosting.salary`` / ``.location``) but, before now, never
+                    # carried through to this per-application drill-down -- only
+                    # ``work_mode`` was. Looked up via the application's own
+                    # ``posting_id`` (batched per campaign, same shape as
+                    # ``_batch_screenshots``/``_batch_outcomes`` above). ``None`` when
+                    # the posting never recorded that field (or, rarely, the posting
+                    # row is gone) -- never fabricated.
+                    "salary": posting.salary if posting else None,
+                    "location": posting.location if posting else None,
                 }
             )
         return rows
+
+    def _batch_postings(self, campaign_id: CampaignId) -> dict[str, object]:
+        """Group this campaign's postings by id, for the history read-model (#56)."""
+        return {str(p.id): p for p in self._storage.postings.list_for_campaign(campaign_id)}
 
     def _batch_screenshots(self, campaign_id: CampaignId, apps) -> dict[str, list]:
         """Group per-app screenshots from one campaign-wide query (#14)."""

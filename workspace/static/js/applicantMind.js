@@ -1,23 +1,34 @@
 // static/js/applicantMind.js
 //
 // "What the assistant remembers" + "Saved playbooks" + learning curation
-// approvals — the FR-MIND agent-learning substrate surfaced in the front door.
-// ADDITIVE and self-contained: it opens its own modal panel, talks to the engine
-// through the workspace proxy at /api/applicant/mind/*, and never touches the
-// native Brain modal (memory.js / skills.js / entities.js) or its data.
+// approvals + a bulk "tell it about yourself" import box + "What you've told it"
+// — the FR-MIND agent-learning substrate surfaced in the front door. ADDITIVE and
+// self-contained: it opens its own modal panel, talks to the engine through the
+// workspace proxy at /api/applicant/mind/* (plus /api/applicant/memory/ingest for
+// the bulk import box, which forwards to the engine's attribute-cloud
+// reconciliation, and /api/applicant/memory/feedback-history for the
+// feedback-history section, which forwards to the engine's
+// FeedbackSummaryProvider read-model), and never touches the native Brain modal
+// (memory.js / skills.js / entities.js) or its data.
 //
-// Reachability: the engine owns the logic (/api/agent-memory/*); this is a thin
-// view over the owner-scoped proxy. The panel is reachable from the Brain modal
-// (a "What the assistant remembers" button is appended when present) and from a
-// global (window.applicantMindModule.openApplicantMind) for deep-links. When the
-// engine is unreachable / no model is connected we render a graceful note instead
-// of erroring, matching the rest of the Applicant front door.
+// Reachability: the engine owns the logic (/api/agent-memory/*, /api/feedback/*);
+// this is a thin view over the owner-scoped proxy. The panel is reachable from the
+// Brain modal (a "What the assistant remembers" button is appended when present)
+// and from a global (window.applicantMindModule.openApplicantMind) for deep-links.
+// When the engine is unreachable / no model is connected we render a graceful note
+// instead of erroring, matching the rest of the Applicant front door.
 
 import uiModule from './ui.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/mind';
+// Bulk observation reconciliation ("tell it about yourself", dark-engine audit
+// #42) and feedback history (dark-engine audit #23) both ride on the
+// attribute-cloud/memory proxy, not the agent-memory one above — they forward to
+// the engine's FeedbackService.ingest_parsed_input / FeedbackSummaryProvider via
+// routes/applicant_memory_routes.py's /ingest and /feedback-history endpoints.
+const MEMORY_API = '/api/applicant/memory';
 
 let _modalEl = null;
 let _modalA11yCleanup = null;
@@ -82,6 +93,115 @@ function _renderOffline() {
       Connect an AI model to start building what the assistant remembers. You can do
       this in the setup wizard or under Settings.
     </div>`;
+}
+
+// --- bulk observation import ("tell it about yourself") --------------------
+// dark-engine audit #42: FeedbackService.ingest_parsed_input's list path
+// reconciles a whole batch of facts in one call — auto-apply non-integral,
+// hold integral for confirmation, surface conflicts, skip sensitive (EEO).
+// This box is the paste-anything front door for that bulk path (the existing
+// "Add a detail" form in Settings/Profile stays the one-at-a-time path).
+
+function _parseObservationLines(text) {
+  // One fact per line: "Name: value" or "Name = value". Lines without a
+  // recognizable separator, or with an empty name/value, are silently
+  // skipped (matches the engine's own reconcile_inputs — it skips any
+  // observation lacking a name or value rather than erroring the batch).
+  const observations = [];
+  const skippedLines = [];
+  String(text || '').split('\n').forEach((raw) => {
+    const line = raw.trim();
+    if (!line) return;
+    const m = line.match(/^([^:=]+)[:=](.+)$/);
+    if (!m) { skippedLines.push(line); return; }
+    const name = m[1].trim();
+    const value = m[2].trim();
+    if (!name || !value) { skippedLines.push(line); return; }
+    observations.push({ name, value, source: 'paste' });
+  });
+  return { observations, skippedLines };
+}
+
+function _renderIngestBox() {
+  return `
+    <div class="memory-section applicant-mind-ingest" style="margin-bottom:18px;">
+      <h4 style="margin:0 0 6px;">Tell it about yourself</h4>
+      <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
+        Paste anything — one detail per line, like <code>Location: Austin, TX</code>
+        or <code>Years of Python: 8</code>. Each line is checked against what the
+        assistant already knows: new details are saved, changes to a core detail
+        wait for your OK, and sensitive details (like EEO fields) are always
+        skipped here — type those in directly instead.
+      </div>
+      <textarea class="applicant-mind-ingest-input" rows="4"
+        placeholder="Location: Austin, TX&#10;Years of Python: 8&#10;Portfolio: https://me.dev"
+        style="width:100%;box-sizing:border-box;resize:vertical;font:inherit;
+        padding:8px;border:1px solid var(--border,#3334);border-radius:8px;"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+        <button type="button" class="cal-btn applicant-mind-ingest-submit">Import</button>
+      </div>
+      <div class="applicant-mind-ingest-result" style="margin-top:8px;"></div>
+    </div>`;
+}
+
+function _ingestGroup(title, hint, items, render) {
+  if (!items.length) return '';
+  return `<div style="margin-top:6px;">
+    <div style="font-weight:600;">${esc(title)}</div>
+    <div style="opacity:0.7;font-size:11px;margin-bottom:2px;">${esc(hint)}</div>
+    <ul style="margin:2px 0 0;padding-left:18px;">${items.map(render).join('')}</ul>
+  </div>`;
+}
+
+function _renderIngestResult(result, skippedLines) {
+  const applied = result.applied || [];
+  const pending = result.pending || [];
+  const conflicts = result.conflicts || [];
+  const skipped = result.skipped || [];
+  if (!applied.length && !pending.length && !conflicts.length && !skipped.length && !skippedLines.length) {
+    return `<div class="memory-empty" style="opacity:0.7;">
+      Nothing usable in that paste — try one detail per line, like "Location: Austin, TX".</div>`;
+  }
+  const parts = [
+    _ingestGroup('Saved', 'Applied right away.', applied, (n) => `<li>${esc(n)}</li>`),
+    _ingestGroup('Waiting for your review', 'A core detail — approve or reject it in the Portal.', pending,
+      (p) => `<li>${esc(p.name)}: “${esc(p.proposed_value)}”${p.current_value ? ` (currently “${esc(p.current_value)}”)` : ''}</li>`),
+    _ingestGroup('Conflicts with what you already told it', 'Left as-is — nothing was overwritten.', conflicts,
+      (p) => `<li>${esc(p.name)}: kept “${esc(p.current_value)}”, pasted “${esc(p.proposed_value)}”</li>`),
+    _ingestGroup('Skipped (sensitive)', 'Type these in directly instead of pasting.', skipped, (n) => `<li>${esc(n)}</li>`),
+  ];
+  if (skippedLines.length) {
+    parts.push(_ingestGroup('Not understood', 'No "name: value" pattern found on these lines.',
+      skippedLines, (l) => `<li>${esc(l)}</li>`));
+  }
+  return parts.join('');
+}
+
+function _wireIngestBox() {
+  const body = _body();
+  const input = body.querySelector('.applicant-mind-ingest-input');
+  const submit = body.querySelector('.applicant-mind-ingest-submit');
+  const resultEl = body.querySelector('.applicant-mind-ingest-result');
+  if (!input || !submit || !resultEl) return;
+  submit.addEventListener('click', async () => {
+    const { observations, skippedLines } = _parseObservationLines(input.value);
+    if (!observations.length) {
+      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">
+        Nothing to import yet — add at least one line like "Location: Austin, TX".</div>`;
+      return;
+    }
+    submit.disabled = true;
+    try {
+      const result = await _post(`${MEMORY_API}/ingest`, { observations });
+      resultEl.innerHTML = _renderIngestResult(result, skippedLines);
+      input.value = '';
+      _toast('Imported.');
+    } catch (e) {
+      resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">${esc(e.message || 'Could not import that.')}</div>`;
+    } finally {
+      submit.disabled = false;
+    }
+  });
 }
 
 // --- section renderers -----------------------------------------------------
@@ -195,6 +315,180 @@ function _renderLessons(data) {
   }).join('') + `</ul>`;
 }
 
+function _renderRoutines(data) {
+  // #45 (dark-engine audit, AWM self-improvement flywheel): after a successful
+  // pre-fill on a given job site (ATS) the assistant induces a reusable routine —
+  // the compact step-sequence that worked, keyed by site — so the next application
+  // to that site is guided by it instead of starting from scratch. Sorted by the
+  // engine (most reliable first); rendered as a simple list, mirroring the
+  // lessons-learned panel above.
+  const rows = (data && data.routines) || [];
+  if (!rows.length) {
+    return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+      No routines learned yet — after the assistant successfully fills out an
+      application on a job site, the steps that worked get remembered here so the
+      next application to that site goes faster.</div>`;
+  }
+  return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + rows.map((r) => {
+    const steps = Number(r.step_count || 0);
+    const wins = Number(r.successes || 0);
+    const losses = Number(r.failures || 0);
+    return `<li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+        border-radius:8px;padding:8px 10px;margin:6px 0;
+        display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div>
+        <div style="font-weight:600;">${esc(r.domain || '')}</div>
+        <div style="opacity:0.7;">${steps} remembered step${steps === 1 ? '' : 's'}</div>
+      </div>
+      <div style="opacity:0.8;white-space:nowrap;" title="Times reused successfully vs. not">
+        ${wins} worked / ${losses} didn't
+      </div>
+    </li>`;
+  }).join('') + `</ul>`;
+}
+
+function _renderFeedbackHistory(data) {
+  // #23 (dark-engine audit): feedback was write-only — the user could tell the
+  // assistant things (decline a match with a reason, redline a generated résumé/
+  // answer) but never see what actually stuck. This reads back exactly those two
+  // kinds of stated feedback, newest-shaped list first (the engine returns them in
+  // storage order; no re-sorting here so this stays a faithful mirror of the read).
+  const items = (data && data.items) || [];
+  if (!items.length) {
+    return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+      Nothing recorded yet — when you decline a match with a reason, or redline a
+      generated résumé or answer, what you told it shows up here.</div>`;
+  }
+  return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((f) => {
+    const kindLabel = f.kind === 'decline' ? 'You declined a match' : 'You revised a document';
+    return `<li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+        border-radius:8px;padding:8px 10px;margin:6px 0;">
+      <div style="font-weight:600;">${esc(kindLabel)}</div>
+      <div style="opacity:0.9;margin-top:2px;">${esc(f.text || '')}</div>
+    </li>`;
+  }).join('') + `</ul>`;
+}
+
+// --- ACE playbooks (dark-engine audit item 46) ------------------------------
+// A curated, per-ATS set of strategy bullets kept current via structured
+// add/revise/retire deltas (PlaybookService.apply_deltas) instead of a
+// wholesale rewrite — distinct from the free-text "Saved playbooks" above
+// (those are chat-authored skills). There is no cheap "every ATS" read (a
+// playbook is a per-domain artifact keyed by whatever ATS the assistant has
+// curated one for), so this is loaded on demand by domain, mirroring the
+// lessons panel's per-ATS shape but with a real write path: the audit trail
+// shows exactly which add/revise/retire deltas were applied and when.
+
+function _renderPlaybookShell() {
+  return `
+    <div class="applicant-mind-playbook">
+      <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
+        Look up the curated playbook for a job site to see its strategies and the
+        history of changes applied to it, or apply a new one.
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="text" class="applicant-mind-playbook-ats" placeholder="Job site, e.g. workday.com"
+          style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--border,#3334);
+          border-radius:6px;font:inherit;">
+        <button type="button" class="cal-btn applicant-mind-playbook-load">Load</button>
+      </div>
+      <div class="applicant-mind-playbook-result" style="margin-top:10px;"></div>
+    </div>`;
+}
+
+function _renderPlaybookEntries(ats, data) {
+  const entries = (data && data.entries) || [];
+  const audit = (data && data.audit) || [];
+  const entryRows = entries.length
+    ? `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + entries.map((e) => `
+        <li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+            border-radius:8px;padding:6px 8px;margin:4px 0;">
+          <div><b>${esc(e.key)}</b> <span style="opacity:0.6;">(revision ${esc(String(e.revision))})</span></div>
+          <div style="opacity:0.9;">${esc(e.text)}</div>
+        </li>`).join('') + `</ul>`
+    : `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+        No curated strategies for ${esc(ats)} yet.</div>`;
+  const auditRows = audit.length
+    ? `<ul style="margin:6px 0 0;padding-left:18px;opacity:0.8;font-size:12px;">`
+      + audit.slice().reverse().map((a) => `<li>${esc(a.op)} “${esc(a.key)}”${a.text ? `: ${esc(a.text)}` : ''}</li>`).join('')
+      + `</ul>`
+    : `<div style="opacity:0.6;font-size:12px;">No changes recorded yet.</div>`;
+  return `
+    <div style="font-weight:600;margin-top:6px;">Strategies for ${esc(ats)}</div>
+    ${entryRows}
+    <div style="font-weight:600;margin-top:10px;">Audit trail</div>
+    ${auditRows}
+    <div style="font-weight:600;margin-top:10px;">Apply a change</div>
+    <div class="applicant-mind-playbook-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+      <select class="applicant-mind-playbook-op"
+        style="padding:6px;border:1px solid var(--border,#3334);border-radius:6px;font:inherit;">
+        <option value="add">Add</option>
+        <option value="revise">Revise</option>
+        <option value="retire">Retire</option>
+      </select>
+      <input type="text" class="applicant-mind-playbook-key" placeholder="Strategy key"
+        style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border,#3334);
+        border-radius:6px;font:inherit;">
+      <input type="text" class="applicant-mind-playbook-text" placeholder="Strategy text (add / revise only)"
+        style="flex:2;min-width:180px;padding:6px 8px;border:1px solid var(--border,#3334);
+        border-radius:6px;font:inherit;">
+      <button type="button" class="cal-btn applicant-mind-playbook-apply">Apply</button>
+    </div>`;
+}
+
+async function _loadPlaybook(ats) {
+  const resultEl = _body().querySelector('.applicant-mind-playbook-result');
+  if (!resultEl) return;
+  resultEl.innerHTML = '<div style="opacity:0.7;">Loading…</div>';
+  try {
+    const data = await _fetchJSON(`${API}/playbooks/${encodeURIComponent(ats)}`);
+    resultEl.innerHTML = _renderPlaybookEntries(ats, data);
+    _wirePlaybookApply(ats);
+  } catch (e) {
+    resultEl.innerHTML = `<div style="opacity:0.7;">${esc(e.message || 'Could not load that playbook.')}</div>`;
+  }
+}
+
+function _wirePlaybookApply(ats) {
+  const body = _body();
+  const btn = body.querySelector('.applicant-mind-playbook-apply');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const op = body.querySelector('.applicant-mind-playbook-op').value;
+    const key = (body.querySelector('.applicant-mind-playbook-key').value || '').trim();
+    const text = (body.querySelector('.applicant-mind-playbook-text').value || '').trim();
+    if (!key) { _toast('Give the strategy a key first.'); return; }
+    btn.disabled = true;
+    try {
+      await _post(`${API}/playbooks/${encodeURIComponent(ats)}/apply-deltas`, {
+        deltas: [{ op, key, text }],
+      });
+      _toast('Playbook updated.');
+      await _loadPlaybook(ats);
+    } catch (e) {
+      _toast(e.message || 'Could not update that playbook.');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function _wirePlaybookBox() {
+  const body = _body();
+  const input = body.querySelector('.applicant-mind-playbook-ats');
+  const loadBtn = body.querySelector('.applicant-mind-playbook-load');
+  if (!input || !loadBtn) return;
+  const load = () => {
+    const ats = (input.value || '').trim();
+    if (!ats) { _toast('Type a job site to look up first.'); return; }
+    _loadPlaybook(ats);
+  };
+  loadBtn.addEventListener('click', load);
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); load(); }
+  });
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -297,13 +591,16 @@ export async function openApplicantMind(opts) {
   try {
     const status = await _fetchJSON(`${API}/status`);
     if (!status.engine_available) { _renderOffline(); return; }
-    const [snap, skills, curation, lessons] = await Promise.all([
+    const [snap, skills, curation, lessons, routines, feedbackHistory] = await Promise.all([
       _fetchJSON(`${API}/memory`).catch(() => ({ environment: [], user: [] })),
       _fetchJSON(`${API}/skills`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/curation`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/lessons`).catch(() => ({ lessons: {} })),
+      _fetchJSON(`${API}/routines`).catch(() => ({ routines: [] })),
+      _fetchJSON(`${MEMORY_API}/feedback-history`).catch(() => ({ items: [] })),
     ]);
     _body().innerHTML = `
+      ${_renderIngestBox()}
       <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Waiting for your review</h4>
         ${_renderCuration(curation)}
@@ -319,13 +616,27 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Saved playbooks</h4>
         ${_renderSkills(skills)}
       </div>
-      <div class="memory-section">
+      <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Lessons learned from job sites</h4>
         ${_renderLessons(lessons)}
+      </div>
+      <div class="memory-section" style="margin-bottom:18px;">
+        <h4 style="margin:0 0 6px;">Learned site routines</h4>
+        ${_renderRoutines(routines)}
+      </div>
+      <div class="memory-section" style="margin-bottom:18px;">
+        <h4 style="margin:0 0 6px;">What you've told it</h4>
+        ${_renderFeedbackHistory(feedbackHistory)}
+      </div>
+      <div class="memory-section">
+        <h4 style="margin:0 0 6px;">Curated strategies by job site</h4>
+        ${_renderPlaybookShell()}
       </div>`;
+    _wireIngestBox();
     _wireCurationButtons();
     _wireForgetButtons();
     _wireSkillRows();
+    _wirePlaybookBox();
   } catch (e) {
     // 401 / engine unreachable — degrade to the connect-a-model note.
     _renderOffline();
