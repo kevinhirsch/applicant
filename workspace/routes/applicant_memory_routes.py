@@ -442,6 +442,25 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    # -- feedback history (what you've told it) ------------------------------
+
+    @router.get("/feedback-history")
+    async def feedback_history(request: Request, campaign_id: Optional[str] = None) -> dict:
+        """Read back what the user has told the assistant for this campaign
+        (dark-engine audit item 23) — decline-with-feedback reasons and résumé/
+        answer revision instructions, the read side of an otherwise write-only
+        surface. Read-only; no ``can_manage_memory`` privilege required, matching
+        the other read endpoints above (``/learning``, ``/criteria``, ``/signature``).
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                data = await engine.feedback_history(cid)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"campaign_id": cid, "items": []}
+
     @router.post("/criteria/learned")
     async def apply_learned(request: Request, body: LearnedIn) -> dict:
         """Apply an LLM-suggested learned criteria adjustment (FR-CRIT-3).

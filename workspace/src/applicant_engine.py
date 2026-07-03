@@ -703,6 +703,12 @@ class ApplicantEngineClient:
     async def feedback_survey(self, body: dict) -> Any:
         return await self._request("POST", "/api/feedback/survey", json=body)
 
+    async def feedback_history(self, campaign_id: str) -> Any:
+        """Read back what the user has told the assistant for one campaign — the
+        read side of a surface that was otherwise write-only (dark-engine audit item
+        23): decline-with-feedback reasons and résumé/answer revision instructions."""
+        return await self._request("GET", f"/api/feedback/{campaign_id}")
+
     # === CRIT-ops: debug/observability + run controls + update + discovery ===
     # Added by the crit-ops lane. Each maps 1:1 to an engine endpoint group
     # (routers/admin.py, outcomes.py, update.py, agent_runs.py, discovery_sources.py)

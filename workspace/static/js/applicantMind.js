@@ -1,20 +1,22 @@
 // static/js/applicantMind.js
 //
 // "What the assistant remembers" + "Saved playbooks" + learning curation
-// approvals + a bulk "tell it about yourself" import box — the FR-MIND
-// agent-learning substrate surfaced in the front door. ADDITIVE and
-// self-contained: it opens its own modal panel, talks to the engine through
-// the workspace proxy at /api/applicant/mind/* (plus /api/applicant/memory/ingest
-// for the bulk import box, which forwards to the engine's attribute-cloud
-// reconciliation), and never touches the native Brain modal (memory.js /
-// skills.js / entities.js) or its data.
+// approvals + a bulk "tell it about yourself" import box + "What you've told it"
+// — the FR-MIND agent-learning substrate surfaced in the front door. ADDITIVE and
+// self-contained: it opens its own modal panel, talks to the engine through the
+// workspace proxy at /api/applicant/mind/* (plus /api/applicant/memory/ingest for
+// the bulk import box, which forwards to the engine's attribute-cloud
+// reconciliation, and /api/applicant/memory/feedback-history for the
+// feedback-history section, which forwards to the engine's
+// FeedbackSummaryProvider read-model), and never touches the native Brain modal
+// (memory.js / skills.js / entities.js) or its data.
 //
-// Reachability: the engine owns the logic (/api/agent-memory/*); this is a thin
-// view over the owner-scoped proxy. The panel is reachable from the Brain modal
-// (a "What the assistant remembers" button is appended when present) and from a
-// global (window.applicantMindModule.openApplicantMind) for deep-links. When the
-// engine is unreachable / no model is connected we render a graceful note instead
-// of erroring, matching the rest of the Applicant front door.
+// Reachability: the engine owns the logic (/api/agent-memory/*, /api/feedback/*);
+// this is a thin view over the owner-scoped proxy. The panel is reachable from the
+// Brain modal (a "What the assistant remembers" button is appended when present)
+// and from a global (window.applicantMindModule.openApplicantMind) for deep-links.
+// When the engine is unreachable / no model is connected we render a graceful note
+// instead of erroring, matching the rest of the Applicant front door.
 
 import uiModule from './ui.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
@@ -22,9 +24,10 @@ import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/mind';
 // Bulk observation reconciliation ("tell it about yourself", dark-engine audit
-// #42) rides on the attribute-cloud proxy, not the agent-memory one above — it
-// forwards to the engine's FeedbackService.ingest_parsed_input via
-// routes/applicant_memory_routes.py's /ingest endpoint.
+// #42) and feedback history (dark-engine audit #23) both ride on the
+// attribute-cloud/memory proxy, not the agent-memory one above — they forward to
+// the engine's FeedbackService.ingest_parsed_input / FeedbackSummaryProvider via
+// routes/applicant_memory_routes.py's /ingest and /feedback-history endpoints.
 const MEMORY_API = '/api/applicant/memory';
 
 let _modalEl = null;
@@ -344,6 +347,28 @@ function _renderRoutines(data) {
   }).join('') + `</ul>`;
 }
 
+function _renderFeedbackHistory(data) {
+  // #23 (dark-engine audit): feedback was write-only — the user could tell the
+  // assistant things (decline a match with a reason, redline a generated résumé/
+  // answer) but never see what actually stuck. This reads back exactly those two
+  // kinds of stated feedback, newest-shaped list first (the engine returns them in
+  // storage order; no re-sorting here so this stays a faithful mirror of the read).
+  const items = (data && data.items) || [];
+  if (!items.length) {
+    return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+      Nothing recorded yet — when you decline a match with a reason, or redline a
+      generated résumé or answer, what you told it shows up here.</div>`;
+  }
+  return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((f) => {
+    const kindLabel = f.kind === 'decline' ? 'You declined a match' : 'You revised a document';
+    return `<li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+        border-radius:8px;padding:8px 10px;margin:6px 0;">
+      <div style="font-weight:600;">${esc(kindLabel)}</div>
+      <div style="opacity:0.9;margin-top:2px;">${esc(f.text || '')}</div>
+    </li>`;
+  }).join('') + `</ul>`;
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -446,12 +471,13 @@ export async function openApplicantMind(opts) {
   try {
     const status = await _fetchJSON(`${API}/status`);
     if (!status.engine_available) { _renderOffline(); return; }
-    const [snap, skills, curation, lessons, routines] = await Promise.all([
+    const [snap, skills, curation, lessons, routines, feedbackHistory] = await Promise.all([
       _fetchJSON(`${API}/memory`).catch(() => ({ environment: [], user: [] })),
       _fetchJSON(`${API}/skills`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/curation`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/lessons`).catch(() => ({ lessons: {} })),
       _fetchJSON(`${API}/routines`).catch(() => ({ routines: [] })),
+      _fetchJSON(`${MEMORY_API}/feedback-history`).catch(() => ({ items: [] })),
     ]);
     _body().innerHTML = `
       ${_renderIngestBox()}
@@ -474,9 +500,13 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Lessons learned from job sites</h4>
         ${_renderLessons(lessons)}
       </div>
-      <div class="memory-section">
+      <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Learned site routines</h4>
         ${_renderRoutines(routines)}
+      </div>
+      <div class="memory-section">
+        <h4 style="margin:0 0 6px;">What you've told it</h4>
+        ${_renderFeedbackHistory(feedbackHistory)}
       </div>`;
     _wireIngestBox();
     _wireCurationButtons();
