@@ -102,6 +102,20 @@ class EndpointModelIn(BaseModel):
     model: str
 
 
+class AutomationPrefsIn(BaseModel):
+    """Settings > Automation body (dark-engine audit items 82/84/85).
+
+    All fields optional / ``None`` = leave the persisted value untouched
+    (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
+    PUT just the one control the operator changed.
+    """
+
+    egress_timezone: str | None = None
+    egress_locale: str | None = None
+    allow_automated_accounts: bool | None = None
+    presubmit_max_apps_per_company_per_day: int | None = None
+
+
 def _status_dict(svc) -> dict:
     s: WizardStatus = svc.status()
     out = {
@@ -367,6 +381,45 @@ def configure_sandbox_connection(
                 takeover_method=body.takeover_method,
                 takeover_url_template=body.takeover_url_template,
             )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/automation")
+def get_automation_prefs(
+    svc=Depends(get_setup_service), container=Depends(get_container)
+) -> dict:
+    """Settings > Automation (dark-engine audit items 82/84/85).
+
+    Merges the persisted overrides onto the env-sourced ``Settings`` defaults so
+    the UI always shows the value the running engine actually uses today, even
+    before an operator has ever saved anything here.
+    """
+    settings = container.settings
+    stored = svc.get_automation_prefs()
+    return {
+        "egress_timezone": stored.get("egress_timezone", settings.egress_timezone),
+        "egress_locale": stored.get("egress_locale", settings.egress_locale),
+        "allow_automated_accounts": stored.get(
+            "allow_automated_accounts", settings.allow_automated_accounts
+        ),
+        "presubmit_max_apps_per_company_per_day": stored.get(
+            "presubmit_max_apps_per_company_per_day",
+            settings.presubmit_max_apps_per_company_per_day,
+        ),
+    }
+
+
+@router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
+def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
+    """Save Settings > Automation overrides (dark-engine audit items 82/84/85)."""
+    try:
+        svc.set_automation_prefs(
+            egress_timezone=body.egress_timezone,
+            egress_locale=body.egress_locale,
+            allow_automated_accounts=body.allow_automated_accounts,
+            presubmit_max_apps_per_company_per_day=body.presubmit_max_apps_per_company_per_day,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
