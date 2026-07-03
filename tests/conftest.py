@@ -224,29 +224,48 @@ def _reset_real_db(_worker_database):
     prev_db = os.environ.get("DATABASE_URL")
     os.environ["DATABASE_URL"] = worker_url
 
-    # Isolate the durable-orchestrator checkpoint store per test too.  The shim
-    # orchestrator persists workflow mailboxes under ``CHECKPOINT_DIR`` (default a
-    # single CWD-relative ``.applicant_checkpoints``).  Shared across xdist workers
-    # that is a cross-test channel: a ``recv`` can miss the ``send`` it expects when a
-    # concurrent test's app clobbers the same directory.  A unique dir per test keeps
-    # each test's durable mailboxes its own (matches the per-test-fresh store).
-    import tempfile
-
-    prev_ckpt = os.environ.get("CHECKPOINT_DIR")
-    ckpt_dir = tempfile.mkdtemp(prefix="applicant_ckpt_")
-    os.environ["CHECKPOINT_DIR"] = ckpt_dir
-
     get_settings.cache_clear()
     try:
         yield
     finally:
-        for key, prev in (("DATABASE_URL", prev_db), ("CHECKPOINT_DIR", prev_ckpt)):
-            if prev is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prev
+        if prev_db is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = prev_db
         get_settings.cache_clear()
         engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_checkpoint_dir():
+    """Give every test its own durable-orchestrator checkpoint store.
+
+    The shim orchestrator persists workflow mailboxes under ``CHECKPOINT_DIR``
+    (default a single CWD-relative ``.applicant_checkpoints``).  Shared across
+    concurrent tests/xdist workers that is a cross-test channel: a ``recv`` can
+    miss the ``send`` it expects when a concurrent test's app clobbers the same
+    directory (observed as a flaky ``None`` from a gate ``recv`` that should have
+    delivered its ``send``ed decision).  Unlike the real-Postgres isolation above,
+    this applies UNCONDITIONALLY — the hermetic in-memory-storage lane still
+    shares the filesystem across xdist workers, so it needs the same per-test
+    directory a real Postgres worker gets.
+    """
+    import tempfile
+
+    from applicant.app.config import get_settings
+
+    prev_ckpt = os.environ.get("CHECKPOINT_DIR")
+    ckpt_dir = tempfile.mkdtemp(prefix="applicant_ckpt_")
+    os.environ["CHECKPOINT_DIR"] = ckpt_dir
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if prev_ckpt is None:
+            os.environ.pop("CHECKPOINT_DIR", None)
+        else:
+            os.environ["CHECKPOINT_DIR"] = prev_ckpt
+        get_settings.cache_clear()
         import shutil
 
         shutil.rmtree(ckpt_dir, ignore_errors=True)
