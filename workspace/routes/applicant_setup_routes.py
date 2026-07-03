@@ -604,6 +604,21 @@ def setup_applicant_setup_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.get("/gaps/{campaign_id}")
+    async def profile_gaps(campaign_id: str, request: Request) -> JSONResponse:
+        """A completeness checklist: which core profile attributes (name/email/
+        phone/title) and search criteria are still missing (dark-engine audit item
+        51). The assistant chat already computes this internally as hidden
+        context; this exposes the same gap list as a plain read."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_gaps(campaign_id)
+        except EngineError as exc:
+            logger.info("applicant profile gaps failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
     @router.post("/onboarding/{campaign_id}/section")
     async def onboarding_section(
         campaign_id: str, body: SectionIn, request: Request

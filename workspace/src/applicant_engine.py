@@ -352,7 +352,14 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
-    # -- setup: Settings > Automation (dark-engine audit items 82/84/85/86/90) --
+    async def setup_get_gaps(self, campaign_id: str) -> Any:
+        """A completeness checklist for one campaign (dark-engine audit item 51):
+        which core profile attributes (name/email/phone/title) and search criteria
+        are still missing. The SAME gap list the assistant chat already computes
+        internally, surfaced as a plain read so it doesn't require a chat message."""
+        return await self._request("GET", f"/api/setup/{campaign_id}/gaps")
+
+    # -- setup: Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90) --
 
     async def setup_get_automation_prefs(self) -> Any:
         """Browser fingerprint timezone/locale, the automated-account-creation
