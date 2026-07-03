@@ -103,7 +103,7 @@ class EndpointModelIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/87/88).
+    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90).
 
     All fields optional / ``None`` = leave the persisted value untouched
     (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
@@ -118,6 +118,13 @@ class AutomationPrefsIn(BaseModel):
     pii_retention_days: int | None = None
     #: Item 88: how many days before re-applying to the same company/role.
     presubmit_duplicate_cooldown_days: int | None = None
+    #: How many days a pending final-approval waits before timing out (item 90).
+    approval_timeout_days: int | None = None
+    #: Fine-grained override for the approval wait, in seconds; takes precedence
+    #: over ``approval_timeout_days`` when set (item 90).
+    approval_wait_seconds: float | None = None
+    #: How often (in seconds) the 24/7 loop ticks (item 86).
+    scheduler_interval_seconds: float | None = None
 
 
 def _status_dict(svc) -> dict:
@@ -394,7 +401,7 @@ def configure_sandbox_connection(
 def get_automation_prefs(
     svc=Depends(get_setup_service), container=Depends(get_container)
 ) -> dict:
-    """Settings > Automation (dark-engine audit items 82/84/85/87/88).
+    """Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90).
 
     Merges the persisted overrides onto the env-sourced ``Settings`` defaults so
     the UI always shows the value the running engine actually uses today, even
@@ -419,12 +426,21 @@ def get_automation_prefs(
             "presubmit_duplicate_cooldown_days",
             settings.presubmit_duplicate_cooldown_days,
         ),
+        "approval_timeout_days": stored.get(
+            "approval_timeout_days", settings.approval_timeout_days
+        ),
+        "approval_wait_seconds": stored.get(
+            "approval_wait_seconds", settings.approval_wait_seconds
+        ),
+        "scheduler_interval_seconds": stored.get(
+            "scheduler_interval_seconds", settings.scheduler_interval_seconds
+        ),
     }
 
 
 @router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
 def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
-    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/87/88)."""
+    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/86/87/88/90)."""
     try:
         svc.set_automation_prefs(
             egress_timezone=body.egress_timezone,
@@ -433,6 +449,9 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             presubmit_max_apps_per_company_per_day=body.presubmit_max_apps_per_company_per_day,
             pii_retention_days=body.pii_retention_days,
             presubmit_duplicate_cooldown_days=body.presubmit_duplicate_cooldown_days,
+            approval_timeout_days=body.approval_timeout_days,
+            approval_wait_seconds=body.approval_wait_seconds,
+            scheduler_interval_seconds=body.scheduler_interval_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

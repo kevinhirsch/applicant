@@ -1,12 +1,12 @@
 // static/js/applicantAutomationSettings.js
 //
-// Settings > Automation (dark-engine audit items 82/84/85/87/88) — the FIRST cut
-// of a generic engine-preferences tab. The dark-engine audit found ~20 engine
-// config knobs that were env-only with zero Settings UI ("the workspace Settings
-// surface mounts only four wizard renderers ... plus the campaign and
-// model-ladder tabs — there is no generic engine-preferences tab",
-// 08_engine_dark_matrix.md §B8). This module builds that tab; later phases add
-// more cards here rather than inventing another tab.
+// Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90) — a
+// generic engine-preferences tab. The dark-engine audit found ~20 engine config
+// knobs that were env-only with zero Settings UI ("the workspace Settings surface
+// mounts only four wizard renderers ... plus the campaign and model-ladder tabs —
+// there is no generic engine-preferences tab", 08_engine_dark_matrix.md §B8). This
+// module builds that tab; later phases add more cards here rather than inventing
+// another tab.
 //
 // What it surfaces:
 //   * Browser timezone + locale (item 82) — the fingerprint the pre-fill browser
@@ -23,6 +23,11 @@
 //     copy is deliberately plain and honest about what that means.
 //   * Re-apply cooldown (item 88) — how many days before Applicant will apply to
 //     the same company/role pair again (a duplicate-application safety valve).
+//   * Approval timeout (item 90) — how many days a pending final-approval waits
+//     before the application times out, plus an optional precise-seconds override
+//     for fine-tuned control.
+//   * Check-for-work interval (item 86) — how often the 24/7 background loop
+//     ticks looking for new work.
 //
 // STANDALONE tab module (not a wizard-step renderer) — same shape as
 // applicantCampaignSettings.js / applicantModelLadder.js: talks only to the
@@ -59,6 +64,15 @@ function _cardHTML(prefs) {
   const cooldownDays = Number.isFinite(prefs.presubmit_duplicate_cooldown_days)
     ? prefs.presubmit_duplicate_cooldown_days
     : 30;
+  const approvalDays = Number.isFinite(prefs.approval_timeout_days)
+    ? prefs.approval_timeout_days
+    : 30;
+  const approvalWaitSeconds = Number.isFinite(prefs.approval_wait_seconds)
+    ? prefs.approval_wait_seconds
+    : '';
+  const checkInterval = Number.isFinite(prefs.scheduler_interval_seconds)
+    ? prefs.scheduler_interval_seconds
+    : 60;
   return `
     <div class="admin-card">
       <h2>Browser identity</h2>
@@ -136,6 +150,40 @@ function _cardHTML(prefs) {
                style="max-width:120px">
       </div>
     </div>
+    <div class="admin-card">
+      <h2>Approval timeout</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        How long Applicant waits for your decision on a final submission before
+        the application times out and is set aside. 0 days means it waits
+        indefinitely.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-approval-days">Days to wait</label>
+        <input id="as-approval-days" class="settings-input" type="number" min="0" step="1"
+               value="${esc(String(approvalDays))}" data-as-field="approval_timeout_days"
+               style="max-width:120px">
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-approval-seconds">Precise override (seconds)</label>
+        <input id="as-approval-seconds" class="settings-input" type="number" min="0" step="1"
+               value="${esc(String(approvalWaitSeconds))}" placeholder="Leave blank to use days above"
+               data-as-field="approval_wait_seconds" style="max-width:180px">
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>How often Applicant checks for work</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        How frequently the background loop looks for new job listings, pending
+        actions, and other work. Lower values react faster; higher values
+        reduce load.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-check-interval">Check interval (seconds)</label>
+        <input id="as-check-interval" class="settings-input" type="number" min="1" step="1"
+               value="${esc(String(checkInterval))}" data-as-field="scheduler_interval_seconds"
+               style="max-width:120px">
+      </div>
+    </div>
     <div class="settings-row" style="gap:8px">
       <button type="button" class="cal-btn cal-btn-primary" id="as-save">Save changes</button>
       <span id="as-msg" class="admin-toggle-sub"></span>
@@ -150,6 +198,9 @@ function _readForm(host) {
   const capEl = get('presubmit_max_apps_per_company_per_day');
   const retentionEl = get('pii_retention_days');
   const cooldownEl = get('presubmit_duplicate_cooldown_days');
+  const approvalDaysEl = get('approval_timeout_days');
+  const approvalSecondsEl = get('approval_wait_seconds');
+  const checkIntervalEl = get('scheduler_interval_seconds');
   const body = {};
   if (tzEl) body.egress_timezone = tzEl.value.trim();
   if (localeEl) body.egress_locale = localeEl.value.trim();
@@ -165,6 +216,20 @@ function _readForm(host) {
   if (cooldownEl) {
     const cooldown = parseInt(cooldownEl.value, 10);
     if (Number.isFinite(cooldown)) body.presubmit_duplicate_cooldown_days = cooldown;
+  }
+  if (approvalDaysEl) {
+    const days = parseInt(approvalDaysEl.value, 10);
+    if (Number.isFinite(days)) body.approval_timeout_days = days;
+  }
+  // Blank = leave the persisted override alone (falls back to the days setting
+  // above); only send a value when the operator actually typed one.
+  if (approvalSecondsEl && approvalSecondsEl.value.trim() !== '') {
+    const seconds = parseFloat(approvalSecondsEl.value);
+    if (Number.isFinite(seconds)) body.approval_wait_seconds = seconds;
+  }
+  if (checkIntervalEl) {
+    const interval = parseFloat(checkIntervalEl.value);
+    if (Number.isFinite(interval)) body.scheduler_interval_seconds = interval;
   }
   return body;
 }
