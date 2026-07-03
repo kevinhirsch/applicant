@@ -27,6 +27,12 @@ class CreateCampaignIn(BaseModel):
     name: str
 
 
+class CloneCampaignIn(BaseModel):
+    """Optional new name for a cloned campaign; the engine names the copy when omitted."""
+
+    name: str | None = None
+
+
 class UpdateCampaignIn(BaseModel):
     """Partial campaign-config update (rename / archive / throughput / budget).
 
@@ -90,6 +96,30 @@ def update_campaign(
     except ValueError as exc:  # bad run_mode value
         raise HTTPException(status_code=422, detail=f"Invalid value: {exc}") from exc
     return _campaign_dict(updated)
+
+
+@router.post("/{campaign_id}/clone", status_code=201)
+def clone_campaign(
+    campaign_id: str, body: CloneCampaignIn, svc=Depends(get_campaign_service)
+) -> dict:
+    """Duplicate a campaign's criteria/settings under a new identity (dark-engine
+    audit item 36) -- the natural "same search, new city" move: start a fresh
+    campaign from an existing one's config instead of rebuilding it by hand.
+
+    ``CampaignService.clone_campaign`` copies every data field (run mode,
+    throughput target, exploration budget, ...) except identity; when no name
+    is supplied here the copy is named after its source. The reserved system
+    campaign is never a valid clone source (it only scopes instance secrets).
+    """
+    if campaign_id == SYSTEM_CAMPAIGN_ID:
+        raise HTTPException(status_code=422, detail="The system campaign cannot be cloned.")
+    cid = CampaignId(campaign_id)
+    source = svc.get_campaign(cid)
+    if source is None:
+        raise HTTPException(status_code=404, detail="No such campaign.")
+    name = (body.name or "").strip() or f"{source.name} (copy)"
+    clone = svc.clone_campaign(cid, name)
+    return _campaign_dict(clone)
 
 
 @router.delete("/{campaign_id}")
