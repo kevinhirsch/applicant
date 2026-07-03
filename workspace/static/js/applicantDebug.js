@@ -20,10 +20,13 @@
 //                  "what the agent is doing right now" intent (writes config).
 //   • Config     — Sources (turn each job-discovery source on/off + see its
 //                  yield), Tools (enable/disable the engine's tools, engine-
-//                  wide; writes) and Update (a one-click Update button with
-//                  confirm + status) as sub-sections of one pane (item #86 —
-//                  these were 3 separate top-level tabs, pushing the tab strip
-//                  to 8; grouped so the strip stays within the 5-7 ceiling).
+//                  wide; writes), Diagnostics (dark-engine audit #34 — recent
+//                  plain-language issues where pre-fill degraded gracefully
+//                  instead of stopping, read-only) and Update (a one-click
+//                  Update button with confirm + status) as sub-sections of one
+//                  pane (item #86 — these were separate top-level tabs, pushing
+//                  the tab strip past its ceiling; grouped so it stays within
+//                  the 5-7 ceiling).
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports it's configured
@@ -994,6 +997,29 @@ async function _renderTools(host) {
   });
 }
 
+// Diagnostics — dark-engine audit #34: pre-fill silently degrades a credential
+// lookup crash, an all-scopes vault outage, an LLM-mapping failure, or a
+// transient browser error during login (it never crashes the run) but banks a
+// plain-language trace instead of losing it. Engine-wide (not campaign-scoped),
+// mirrors the Tools sub-section rendering just above.
+async function _renderDiagnostics(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/prefill-diagnostics`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const entries = data.diagnostics || [];
+  if (!entries.length) {
+    host.innerHTML =
+      `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Recent issues where filling in an application ran into trouble but kept going instead of stopping — so nothing gets lost silently.</div>` +
+      _empty('No issues recorded recently.');
+    return;
+  }
+  host.innerHTML =
+    `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Recent issues where filling in an application ran into trouble but kept going instead of stopping — so nothing gets lost silently.</div>` +
+    `<div class="applicant-debug-list">${entries.map((msg) => `<div class="applicant-debug-list-row">
+      <span style="flex:1;min-width:0;word-break:break-word;">${esc(String(msg))}</span>
+    </div>`).join('')}</div>`;
+}
+
 async function _renderUpdate(host) {
   host = host || _body();
   let status = { engine_available: true };
@@ -1030,8 +1056,10 @@ async function _renderUpdate(host) {
 }
 
 // #86: the Config pane hosts the former Sources/Tools/Update top-level tabs as
-// three independently-rendered sub-sections, each with its own host element so
-// one section's error/offline/gated state can't blank out its siblings.
+// independently-rendered sub-sections, each with its own host element so one
+// section's error/offline/gated state can't blank out its siblings. Diagnostics
+// (dark-engine audit #34) joins them the same way rather than adding a 7th
+// top-level tab, keeping the tab strip within the 5-7 ceiling (#86).
 async function _renderConfig() {
   const host = _body();
   host.innerHTML = `
@@ -1043,16 +1071,22 @@ async function _renderConfig() {
       <div style="font-weight:600;margin-bottom:8px;">Tools</div>
       <div id="applicant-config-tools">${loadingHTML('Loading…')}</div>
     </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Diagnostics</div>
+      <div id="applicant-config-diagnostics">${loadingHTML('Loading…')}</div>
+    </div>
     <div class="applicant-debug-list">
       <div style="font-weight:600;margin-bottom:8px;">Update</div>
       <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
     </div>`;
   const sourcesHost = host.querySelector('#applicant-config-sources');
   const toolsHost = host.querySelector('#applicant-config-tools');
+  const diagnosticsHost = host.querySelector('#applicant-config-diagnostics');
   const updateHost = host.querySelector('#applicant-config-update');
   const sections = [
     [sourcesHost, _renderSources],
     [toolsHost, _renderTools],
+    [diagnosticsHost, _renderDiagnostics],
     [updateHost, _renderUpdate],
   ];
   for (const [sectionHost, renderFn] of sections) {

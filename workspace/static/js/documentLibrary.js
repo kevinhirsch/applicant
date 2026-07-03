@@ -2283,6 +2283,60 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           }
         });
         actions.appendChild(approveBtn);
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        downloadBtn.textContent = 'Download PDF';
+        downloadBtn.title = 'Save the compiled resume PDF for this variant.';
+        downloadBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          downloadBtn.disabled = true;
+          const original = downloadBtn.textContent;
+          downloadBtn.textContent = 'Downloading…';
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(item.id)}/download`, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `resume-${item.id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            if (uiModule) uiModule.showError(err.message || String(err));
+          } finally {
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = original;
+          }
+        });
+        actions.appendChild(downloadBtn);
+
+        const promoteBtn = document.createElement('button');
+        promoteBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        promoteBtn.textContent = 'Promote to base résumé';
+        promoteBtn.title = 'Make this tailored resume the new starting point future resumes are built from.';
+        promoteBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = confirm('Make this resume the new base? Future tailored resumes will be built starting from this version instead of your original base résumé.');
+          if (!ok) return;
+          promoteBtn.disabled = true;
+          const original = promoteBtn.textContent;
+          promoteBtn.textContent = 'Promoting…';
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(item.id)}/promote`, { method: 'POST', credentials: 'same-origin' });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            if (uiModule) uiModule.showToast('This resume is now your base for future tailoring');
+            _loadApplicantMaterials(appId, results);
+          } catch (err) {
+            promoteBtn.disabled = false;
+            promoteBtn.textContent = original;
+            if (uiModule) uiModule.showError(err.message || String(err));
+          }
+        });
+        actions.appendChild(promoteBtn);
       } else {
         const reviewBtn = document.createElement('button');
         reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn';

@@ -18,6 +18,9 @@ Endpoints (all under ``/api/applicant/campaigns``):
 
 * ``GET  /api/applicant/campaigns``                       — campaigns + config.
 * ``PATCH /api/applicant/campaigns/{campaign_id}``        — rename/archive/re-tune.
+* ``POST /api/applicant/campaigns/{campaign_id}/clone``   — duplicate under a new
+  identity (dark-engine audit item 36) — "same search, new city".
+* ``DELETE /api/applicant/campaigns/{campaign_id}``       — permanently delete + purge (#363).
 * ``GET  /api/applicant/campaigns/{campaign_id}/sources`` — discovery sources.
 * ``PUT  /api/applicant/campaigns/{campaign_id}/sources/{source_key}`` — toggle.
 """
@@ -44,6 +47,13 @@ class UpdateCampaignIn(BaseModel):
     throughput_target: Optional[int] = None
     exploration_budget: Optional[float] = None
     active: Optional[bool] = None
+
+
+class CloneCampaignIn(BaseModel):
+    """Optional new name for the duplicate — the engine names it from the source
+    campaign when omitted."""
+
+    name: Optional[str] = None
 
 
 class ToggleSourceIn(BaseModel):
@@ -99,6 +109,58 @@ def setup_applicant_campaigns_routes() -> APIRouter:
                     status_code=exc.status or 502, detail=str(exc)
                 ) from exc
         return updated if isinstance(updated, dict) else {}
+
+    @router.post("/{campaign_id}/clone", status_code=201)
+    async def clone_campaign(
+        request: Request, campaign_id: str, body: CloneCampaignIn
+    ) -> dict:
+        """Duplicate a campaign's criteria/settings under a new identity
+        (owner-scoped, dark-engine audit item 36) -- the natural "same search,
+        new city" move: start a fresh campaign from an existing one's config
+        instead of rebuilding it by hand. A caller can only clone a campaign
+        they own; the reserved system campaign is never in the owner's list so
+        it can never be a clone source here either.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                cloned = await engine.clone_campaign(campaign_id, body.name)
+            except EngineError as exc:
+                logger.debug("campaigns: clone failed for %s: %s", campaign_id, exc)
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return cloned if isinstance(cloned, dict) else {}
+
+    @router.delete("/{campaign_id}")
+    async def delete_campaign(request: Request, campaign_id: str) -> dict:
+        """Permanently delete a campaign and purge its data (owner-scoped, #363).
+
+        Irreversible — the engine cascades the purge across every store (résumés,
+        parsed PII, generated materials, application history, banked credentials).
+        A caller can only delete a campaign they own; the reserved system campaign
+        is never in the owner's list so it can never be targeted here either.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                result = await engine.delete_campaign(campaign_id)
+            except EngineError as exc:
+                logger.debug("campaigns: delete failed for %s: %s", campaign_id, exc)
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {"deleted": True}
 
     @router.get("/{campaign_id}/sources")
     async def list_sources(request: Request, campaign_id: str) -> dict:

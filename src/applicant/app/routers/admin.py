@@ -135,6 +135,21 @@ def variant_library(campaign_id: str, admin_query=Depends(get_admin_query_servic
     return {"campaign_id": campaign_id, "variants": variants}
 
 
+@router.get("/prefill-diagnostics")
+def prefill_diagnostics(container: Container = Depends(get_container)) -> dict:
+    """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
+
+    ``PrefillService.diagnostics()`` keeps a bounded, deduped ring of plain-
+    language operator messages for credential / LLM / login failures that
+    degrade gracefully (the pre-fill loop never crashes) — recorded so the
+    failure is surfaced rather than lost (#202/#203/#211/#223). Process-global
+    (not campaign-scoped), like ``/tools`` and ``/logs`` above.
+    """
+    pf = container.prefill_service
+    entries = pf.diagnostics() if pf is not None else []
+    return {"diagnostics": entries, "status": "live"}
+
+
 @router.get("/learning/{campaign_id}")
 def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) -> dict:
     """What the system has learned for a campaign, in plain language (FR-LEARN-5/6).

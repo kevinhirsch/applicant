@@ -409,6 +409,21 @@ class ApplicantEngineClient:
         """Rename / archive / re-tune a campaign's run config (#301, FR-CRIT-4)."""
         return await self._request("PATCH", f"/api/campaigns/{campaign_id}", json=body)
 
+    async def delete_campaign(self, campaign_id: str) -> Any:
+        """Delete a campaign and PURGE all its associated data (#363, FR-CRIT-4,
+        NFR-PRIV-1) -- résumés/variants, parsed PII, EEO answers, generated
+        materials, attributes, application-scoped children, and banked
+        credentials. Irreversible; the engine itself refuses to delete the
+        reserved system campaign."""
+        return await self._request("DELETE", f"/api/campaigns/{campaign_id}")
+
+    async def clone_campaign(self, campaign_id: str, name: Optional[str] = None) -> Any:
+        """Duplicate a campaign's criteria/settings under a new identity (dark-
+        engine audit item 36) -- the natural "same search, new city" move. The
+        engine names the copy from the source when ``name`` is omitted."""
+        body: dict = {"name": name} if name else {}
+        return await self._request("POST", f"/api/campaigns/{campaign_id}/clone", json=body)
+
     # -- discovery sources (#301, FR-DISC-2/5) ---------------------------
 
     async def list_discovery_sources(self, campaign_id: str) -> Any:
@@ -484,6 +499,23 @@ class ApplicantEngineClient:
 
     async def approve_variant(self, variant_id: str) -> Any:
         return await self._request("POST", f"/api/documents/variants/{variant_id}/approve")
+
+    async def download_variant_pdf(self, variant_id: str) -> Any:
+        """Download the compiled résumé PDF for a variant (dark-engine audit item
+        16), mirroring the ``audit_log_*_export`` binary-passthrough convention:
+        returns the raw ``httpx.Response`` rather than trying to JSON-decode a
+        binary body."""
+        return await self._request(
+            "GET",
+            f"/api/documents/variants/{variant_id}/download",
+            expect_json=False,
+        )
+
+    async def promote_variant(self, variant_id: str) -> Any:
+        """Promote a résumé variant to be the new base résumé future tailoring
+        forks from, instead of the user's original base résumé (dark-engine audit
+        item 33; engine ``MaterialService.promote_to_base_resume``, #293)."""
+        return await self._request("POST", f"/api/documents/variants/{variant_id}/promote")
 
     async def set_document_aggressiveness(self, aggressiveness: Any) -> Any:
         return await self._request(
@@ -703,6 +735,16 @@ class ApplicantEngineClient:
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 
+    async def admin_prefill_diagnostics(self) -> Any:
+        """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
+
+        A bounded, deduped ring of plain-language operator messages for
+        credential/LLM/login failures the pre-fill loop degraded gracefully
+        from — surfaced so the failure is visible instead of silently lost.
+        Process-global (not campaign-scoped), like ``admin_logs``/``admin_stealth``.
+        """
+        return await self._request("GET", "/api/admin/prefill-diagnostics")
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
@@ -761,6 +803,19 @@ class ApplicantEngineClient:
             "POST",
             f"/api/post-submission/applications/{application_id}/scan-email",
             json={"subject": subject, "body": body},
+        )
+
+    async def tracker_application_history(self, campaign_id: str, limit: int = 200) -> Any:
+        """Per-application history detail (status, work mode, screenshot count,
+        recorded outcomes) for the owner-facing Tracker's "View details"
+        disclosure (dark-engine audit #25). Hits the EXACT SAME engine read the
+        admin Debug modal's drill-down already uses (``admin_application_
+        history`` / ``GET /api/admin/history/{campaign_id}``) — this is just an
+        owner-scoped name/route for the same data, reached without the admin
+        gate. Returns every application in the campaign; the caller narrows to
+        the one row it needs."""
+        return await self._request(
+            "GET", f"/api/admin/history/{campaign_id}", params={"limit": limit}
         )
 
     # -- in-UI update button (engine routers/update.py) ----------------------
@@ -939,6 +994,11 @@ class ApplicantEngineClient:
     async def vault_account_status(self) -> Any:
         """Which global account credentials are set (no secrets returned)."""
         return await self._request("GET", "/api/credentials/account")
+
+    async def vault_rotate_key(self) -> Any:
+        """Rotate the vault's master encryption key — mints a fresh key and
+        re-seals every stored credential under it (no secrets returned)."""
+        return await self._request("POST", "/api/credentials/rotate-key")
 
     # -- manual deep-research trigger (engine routers/research.py) ----------
     # The agent auto-escalates to research already; these expose the engine's
