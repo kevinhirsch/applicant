@@ -106,7 +106,7 @@ class EndpointModelIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90).
+    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107).
 
     All fields optional / ``None`` = leave the persisted value untouched
     (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
@@ -128,6 +128,31 @@ class AutomationPrefsIn(BaseModel):
     approval_wait_seconds: float | None = None
     #: How often (in seconds) the 24/7 loop ticks (item 86).
     scheduler_interval_seconds: float | None = None
+    #: Item 91: minimum fields-filled ratio below which an application is
+    #: flagged for review instead of offered for submit (0.0-1.0).
+    ats_match_rate_floor: float | None = None
+    #: Item 97: whether postings are filtered on work-authorization /
+    #: sponsorship / clearance requirements before the pipeline starts.
+    presubmit_eligibility_enabled: bool | None = None
+    #: Item 98: blocks postings older than this many days.
+    presubmit_max_listing_age_days: int | None = None
+    #: Item 99: auto-apply vs staged memory/skills writes (memory MAY be
+    #: relaxed; skills/identity conceptually always warrant review).
+    memory_write_approval: bool | None = None
+    skills_write_approval: bool | None = None
+    #: Item 99: curated-memory prompt-budget caps (characters).
+    memory_max_chars: int | None = None
+    user_max_chars: int | None = None
+    #: Item 102: whether the smart LLM router's tier ladder prefers a local
+    #: endpoint when one is online (the master on/off switch + read-only
+    #: routing status are item 74, already surfaced; this is just the policy).
+    llm_smart_routing_prefer_local: bool | None = None
+    #: Item 105: token budget above which older turns are compressed; 0 disables.
+    context_compress_threshold: int | None = None
+    #: Item 106: consecutive tick failures before a stall alert fires.
+    loop_failure_alert_threshold: int | None = None
+    #: Item 107: switches pre-fill to the experimental plan-as-data planner.
+    prefill_use_planner: bool | None = None
 
 
 def _status_dict(svc) -> dict:
@@ -495,12 +520,41 @@ def get_automation_prefs(
         "scheduler_interval_seconds": stored.get(
             "scheduler_interval_seconds", settings.scheduler_interval_seconds
         ),
+        "ats_match_rate_floor": stored.get(
+            "ats_match_rate_floor", settings.ats_match_rate_floor
+        ),
+        "presubmit_eligibility_enabled": stored.get(
+            "presubmit_eligibility_enabled", settings.presubmit_eligibility_enabled
+        ),
+        "presubmit_max_listing_age_days": stored.get(
+            "presubmit_max_listing_age_days", settings.presubmit_max_listing_age_days
+        ),
+        "memory_write_approval": stored.get(
+            "memory_write_approval", settings.memory_write_approval
+        ),
+        "skills_write_approval": stored.get(
+            "skills_write_approval", settings.skills_write_approval
+        ),
+        "memory_max_chars": stored.get("memory_max_chars", settings.memory_max_chars),
+        "user_max_chars": stored.get("user_max_chars", settings.user_max_chars),
+        "llm_smart_routing_prefer_local": stored.get(
+            "llm_smart_routing_prefer_local", settings.llm_smart_routing_prefer_local
+        ),
+        "context_compress_threshold": stored.get(
+            "context_compress_threshold", settings.context_compress_threshold
+        ),
+        "loop_failure_alert_threshold": stored.get(
+            "loop_failure_alert_threshold", settings.loop_failure_alert_threshold
+        ),
+        "prefill_use_planner": stored.get(
+            "prefill_use_planner", settings.prefill_use_planner
+        ),
     }
 
 
 @router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
 def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
-    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/86/87/88/90)."""
+    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107)."""
     try:
         svc.set_automation_prefs(
             egress_timezone=body.egress_timezone,
@@ -512,6 +566,17 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             approval_timeout_days=body.approval_timeout_days,
             approval_wait_seconds=body.approval_wait_seconds,
             scheduler_interval_seconds=body.scheduler_interval_seconds,
+            ats_match_rate_floor=body.ats_match_rate_floor,
+            presubmit_eligibility_enabled=body.presubmit_eligibility_enabled,
+            presubmit_max_listing_age_days=body.presubmit_max_listing_age_days,
+            memory_write_approval=body.memory_write_approval,
+            skills_write_approval=body.skills_write_approval,
+            memory_max_chars=body.memory_max_chars,
+            user_max_chars=body.user_max_chars,
+            llm_smart_routing_prefer_local=body.llm_smart_routing_prefer_local,
+            context_compress_threshold=body.context_compress_threshold,
+            loop_failure_alert_threshold=body.loop_failure_alert_threshold,
+            prefill_use_planner=body.prefill_use_planner,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

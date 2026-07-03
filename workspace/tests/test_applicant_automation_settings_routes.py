@@ -1,6 +1,10 @@
 """Hermetic tests for the Settings > Automation proxy routes (dark-engine audit
 items 82/84/85: EGRESS_TIMEZONE/EGRESS_LOCALE, ALLOW_AUTOMATED_ACCOUNTS,
-PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY).
+PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY; extended below for items
+91/97/98/99/102/105/106/107 -- the ATS fill-rate floor, the eligibility/
+listing-age filters, memory write-approval + size caps, the smart-router
+prefer-local policy, the context-compression threshold, the loop
+failure-alert threshold, and the experimental prefill planner flag).
 
 Mirrors ``test_applicant_setup_routes.py``'s ``test_get_tiers_passes_through`` /
 ``test_set_tiers_forwards_ladder`` shape: the engine client is replaced with a
@@ -212,3 +216,77 @@ def test_get_automation_prefs_does_not_require_can_configure(monkeypatch):
     client = _make_priv_client({"can_configure": False})
     resp = client.get("/api/applicant/setup/automation")
     assert resp.status_code == 200
+
+
+# ── items 91/97/98/99/102/105/106/107: same proxy body, new fields ─────────
+
+
+def test_get_automation_prefs_passes_new_fields_through(monkeypatch):
+    payload = {
+        "ats_match_rate_floor": 0.2,
+        "presubmit_eligibility_enabled": True,
+        "presubmit_max_listing_age_days": 90,
+        "memory_write_approval": True,
+        "skills_write_approval": True,
+        "memory_max_chars": 8000,
+        "user_max_chars": 4000,
+        "llm_smart_routing_prefer_local": True,
+        "context_compress_threshold": 64000,
+        "loop_failure_alert_threshold": 3,
+        "prefill_use_planner": False,
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/automation")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+
+
+def test_put_automation_prefs_forwards_new_fields(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {
+        "ats_match_rate_floor": 0.5,
+        "presubmit_eligibility_enabled": False,
+        "presubmit_max_listing_age_days": 30,
+        "memory_write_approval": False,
+        "skills_write_approval": False,
+        "memory_max_chars": 12000,
+        "user_max_chars": 6000,
+        "llm_smart_routing_prefer_local": False,
+        "context_compress_threshold": 32000,
+        "loop_failure_alert_threshold": 5,
+        "prefill_use_planner": True,
+    }
+    resp = _make_client().put("/api/applicant/setup/automation", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == body
+
+
+def test_put_automation_prefs_only_forwards_new_fields_actually_sent(monkeypatch):
+    """Same partial-update contract as the foundation knobs: a field omitted
+    from the request body must not be forwarded (would clobber the persisted
+    value for that key on the engine side)."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"loop_failure_alert_threshold": 7},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == {"loop_failure_alert_threshold": 7}
+    assert "ats_match_rate_floor" not in args[0]
+    assert "prefill_use_planner" not in args[0]
+
+
+def test_put_automation_prefs_rejects_engine_400_for_new_field(monkeypatch):
+    err = EngineError("bad", status=400, detail="The fill-rate floor must be between 0.0 and 1.0.")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"ats_match_rate_floor": 1.5},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "The fill-rate floor must be between 0.0 and 1.0."

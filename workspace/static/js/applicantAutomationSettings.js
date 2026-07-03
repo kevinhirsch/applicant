@@ -1,8 +1,9 @@
 // static/js/applicantAutomationSettings.js
 //
-// Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90) — a
-// generic engine-preferences tab. The dark-engine audit found ~20 engine config
-// knobs that were env-only with zero Settings UI ("the workspace Settings surface
+// Settings > Automation (dark-engine audit items
+// 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107) — a generic
+// engine-preferences tab. The dark-engine audit found ~20 engine config knobs
+// that were env-only with zero Settings UI ("the workspace Settings surface
 // mounts only four wizard renderers ... plus the campaign and model-ladder tabs —
 // there is no generic engine-preferences tab", 08_engine_dark_matrix.md §B8). This
 // module builds that tab; later phases add more cards here rather than inventing
@@ -35,6 +36,22 @@
 //     what it actually removed. Destructive (permanently deletes personal
 //     data), so it is gated behind a plain-language confirm — same shape as
 //     applicantRemote.js's / applicantCampaignSettings.js's ``_confirm``.
+//   * Application quality (item 91) — the minimum share of a form's fields
+//     Applicant must be able to fill before offering an application for
+//     submit rather than flagging it for review; (items 97/98) the
+//     work-authorization eligibility filter and the max listing age, both
+//     scam/mismatch guards on which postings even enter the pipeline.
+//   * Assistant memory (item 99) — whether memory/skills writes the agent
+//     proposes auto-apply or wait for your review, plus the character
+//     budgets that cap how much of that memory rides along in every prompt.
+//   * AI routing (item 102) — whether the smart model router prefers an
+//     online local endpoint over a cloud one (the master on/off switch and
+//     live routing status live on the model-ladder tab, item 74; this is
+//     just the policy). Kept in this same save mechanism rather than
+//     duplicating a second GET/PUT wiring on the ladder tab.
+//   * Advanced (items 105/106/107) — the context-compression token
+//     threshold, how many consecutive failed loop ticks trigger a stall
+//     alert, and the experimental plan-as-data pre-fill planner flag.
 //
 // STANDALONE tab module (not a wizard-step renderer) — same shape as
 // applicantCampaignSettings.js / applicantModelLadder.js: talks only to the
@@ -84,6 +101,27 @@ function _cardHTML(prefs) {
   const checkInterval = Number.isFinite(prefs.scheduler_interval_seconds)
     ? prefs.scheduler_interval_seconds
     : 60;
+  const fillRateFloor = Number.isFinite(prefs.ats_match_rate_floor)
+    ? prefs.ats_match_rate_floor
+    : 0.2;
+  const eligibilityEnabled = prefs.presubmit_eligibility_enabled !== false;
+  const maxListingAgeDays = Number.isFinite(prefs.presubmit_max_listing_age_days)
+    ? prefs.presubmit_max_listing_age_days
+    : 90;
+  const memoryWriteApproval = prefs.memory_write_approval !== false;
+  const skillsWriteApproval = prefs.skills_write_approval !== false;
+  const memoryMaxChars = Number.isFinite(prefs.memory_max_chars)
+    ? prefs.memory_max_chars
+    : 8000;
+  const userMaxChars = Number.isFinite(prefs.user_max_chars) ? prefs.user_max_chars : 4000;
+  const preferLocal = prefs.llm_smart_routing_prefer_local !== false;
+  const compressThreshold = Number.isFinite(prefs.context_compress_threshold)
+    ? prefs.context_compress_threshold
+    : 64000;
+  const failureAlertThreshold = Number.isFinite(prefs.loop_failure_alert_threshold)
+    ? prefs.loop_failure_alert_threshold
+    : 3;
+  const usePlanner = !!prefs.prefill_use_planner;
   return `
     <div class="admin-card">
       <h2>Browser identity</h2>
@@ -200,6 +238,138 @@ function _cardHTML(prefs) {
                style="max-width:120px">
       </div>
     </div>
+    <div class="admin-card">
+      <h2>Application quality</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        Guards on which postings Applicant applies to and which finished
+        applications it offers you to submit.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-fill-floor">Minimum form-fill rate before flagging for review (0-1)</label>
+        <input id="as-fill-floor" class="settings-input" type="number" min="0" max="1" step="0.05"
+               value="${esc(String(fillRateFloor))}" data-as-field="ats_match_rate_floor"
+               style="max-width:120px">
+      </div>
+      <div class="admin-toggle-sub" style="margin:2px 0 10px;opacity:0.7;">
+        If Applicant can't fill at least this share of a form's fields, it sets the
+        application aside for you to review instead of offering it for submit.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-listing-age">Skip postings older than (days)</label>
+        <input id="as-listing-age" class="settings-input" type="number" min="0" step="1"
+               value="${esc(String(maxListingAgeDays))}" data-as-field="presubmit_max_listing_age_days"
+               style="max-width:120px">
+      </div>
+      <h2 style="display:flex;align-items:center;gap:6px;margin-top:10px;">
+        Filter out postings you're not eligible for
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-eligibility">
+          <input type="checkbox" id="as-eligibility" data-as-field="presubmit_eligibility_enabled" ${eligibilityEnabled ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub">
+        When on, Applicant skips postings whose work-authorization, sponsorship,
+        or clearance requirements don't match what you told it about yourself.
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>Assistant memory</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        How the assistant handles things it learns about you, and how much of
+        that memory it keeps in mind on every turn.
+      </div>
+      <h2 style="display:flex;align-items:center;gap:6px;font-size:1em;">
+        Review memory updates before they're saved
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-memory-approval">
+          <input type="checkbox" id="as-memory-approval" data-as-field="memory_write_approval" ${memoryWriteApproval ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        When off, non-sensitive memory the assistant proposes is applied
+        automatically instead of waiting for your approval.
+      </div>
+      <h2 style="display:flex;align-items:center;gap:6px;font-size:1em;">
+        Review skill updates before they're saved
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-skills-approval">
+          <input type="checkbox" id="as-skills-approval" data-as-field="skills_write_approval" ${skillsWriteApproval ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        When off, skills the assistant proposes are saved automatically
+        instead of waiting for your approval.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-memory-chars">Memory budget (characters)</label>
+        <input id="as-memory-chars" class="settings-input" type="number" min="1" step="100"
+               value="${esc(String(memoryMaxChars))}" data-as-field="memory_max_chars"
+               style="max-width:120px">
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-user-chars">Preferences budget (characters)</label>
+        <input id="as-user-chars" class="settings-input" type="number" min="1" step="100"
+               value="${esc(String(userMaxChars))}" data-as-field="user_max_chars"
+               style="max-width:120px">
+      </div>
+      <div class="admin-toggle-sub" style="opacity:0.7;">
+        How much learned context (environment lessons / your preferences) rides
+        along in every prompt. Higher budgets give the assistant more context at
+        the cost of a longer prompt.
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2 style="display:flex;align-items:center;gap:6px;">
+        Prefer a local model when one is online
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-prefer-local">
+          <input type="checkbox" id="as-prefer-local" data-as-field="llm_smart_routing_prefer_local" ${preferLocal ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub">
+        When smart routing picks a model for a task, prefer an online local
+        endpoint over a cloud one (keeps requests on your own hardware when
+        possible). The on/off switch for smart routing itself, and which
+        endpoint is actually serving requests right now, are on the model
+        ladder tab.
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>Advanced</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        Lower-level tuning knobs. The defaults work for most setups.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-compress-threshold">Compress conversation above (tokens, 0 = never)</label>
+        <input id="as-compress-threshold" class="settings-input" type="number" min="0" step="1000"
+               value="${esc(String(compressThreshold))}" data-as-field="context_compress_threshold"
+               style="max-width:140px">
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-failure-threshold">Alert after this many failed checks in a row</label>
+        <input id="as-failure-threshold" class="settings-input" type="number" min="1" step="1"
+               value="${esc(String(failureAlertThreshold))}" data-as-field="loop_failure_alert_threshold"
+               style="max-width:120px">
+      </div>
+      <h2 style="display:flex;align-items:center;gap:6px;font-size:1em;margin-top:10px;">
+        Experimental: plan-first form filling
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-use-planner">
+          <input type="checkbox" id="as-use-planner" data-as-field="prefill_use_planner" ${usePlanner ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub">
+        Switches form-filling to an experimental planner that lays out each
+        page's steps before acting, instead of deciding one action at a time.
+        Off by default; the same review-before-submit safeguards still apply
+        either way.
+      </div>
+    </div>
     <div class="settings-row" style="gap:8px">
       <button type="button" class="cal-btn cal-btn-primary" id="as-save">Save changes</button>
       <span id="as-msg" class="admin-toggle-sub"></span>
@@ -238,6 +408,17 @@ function _readForm(host) {
   const approvalDaysEl = get('approval_timeout_days');
   const approvalSecondsEl = get('approval_wait_seconds');
   const checkIntervalEl = get('scheduler_interval_seconds');
+  const fillFloorEl = get('ats_match_rate_floor');
+  const eligibilityEl = get('presubmit_eligibility_enabled');
+  const listingAgeEl = get('presubmit_max_listing_age_days');
+  const memoryApprovalEl = get('memory_write_approval');
+  const skillsApprovalEl = get('skills_write_approval');
+  const memoryCharsEl = get('memory_max_chars');
+  const userCharsEl = get('user_max_chars');
+  const preferLocalEl = get('llm_smart_routing_prefer_local');
+  const compressThresholdEl = get('context_compress_threshold');
+  const failureThresholdEl = get('loop_failure_alert_threshold');
+  const usePlannerEl = get('prefill_use_planner');
   const body = {};
   if (tzEl) body.egress_timezone = tzEl.value.trim();
   if (localeEl) body.egress_locale = localeEl.value.trim();
@@ -268,6 +449,35 @@ function _readForm(host) {
     const interval = parseFloat(checkIntervalEl.value);
     if (Number.isFinite(interval)) body.scheduler_interval_seconds = interval;
   }
+  if (fillFloorEl) {
+    const floor = parseFloat(fillFloorEl.value);
+    if (Number.isFinite(floor)) body.ats_match_rate_floor = floor;
+  }
+  if (eligibilityEl) body.presubmit_eligibility_enabled = !!eligibilityEl.checked;
+  if (listingAgeEl) {
+    const age = parseInt(listingAgeEl.value, 10);
+    if (Number.isFinite(age)) body.presubmit_max_listing_age_days = age;
+  }
+  if (memoryApprovalEl) body.memory_write_approval = !!memoryApprovalEl.checked;
+  if (skillsApprovalEl) body.skills_write_approval = !!skillsApprovalEl.checked;
+  if (memoryCharsEl) {
+    const chars = parseInt(memoryCharsEl.value, 10);
+    if (Number.isFinite(chars)) body.memory_max_chars = chars;
+  }
+  if (userCharsEl) {
+    const chars = parseInt(userCharsEl.value, 10);
+    if (Number.isFinite(chars)) body.user_max_chars = chars;
+  }
+  if (preferLocalEl) body.llm_smart_routing_prefer_local = !!preferLocalEl.checked;
+  if (compressThresholdEl) {
+    const threshold = parseInt(compressThresholdEl.value, 10);
+    if (Number.isFinite(threshold)) body.context_compress_threshold = threshold;
+  }
+  if (failureThresholdEl) {
+    const threshold = parseInt(failureThresholdEl.value, 10);
+    if (Number.isFinite(threshold)) body.loop_failure_alert_threshold = threshold;
+  }
+  if (usePlannerEl) body.prefill_use_planner = !!usePlannerEl.checked;
   return body;
 }
 

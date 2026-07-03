@@ -676,7 +676,7 @@ class SetupService:
             return True
         return self.sandbox_connection_configured()
 
-    # --- Settings > Automation (dark-engine audit items 82/84/85/86/90) ---
+    # --- Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107) ---
     def get_automation_prefs(self) -> dict[str, Any]:
         """Return the persisted Automation-tab overrides (no defaults merged in).
 
@@ -700,8 +700,20 @@ class SetupService:
         approval_timeout_days: int | None = None,
         approval_wait_seconds: float | None = None,
         scheduler_interval_seconds: float | None = None,
+        ats_match_rate_floor: float | None = None,
+        presubmit_eligibility_enabled: bool | None = None,
+        presubmit_max_listing_age_days: int | None = None,
+        memory_write_approval: bool | None = None,
+        skills_write_approval: bool | None = None,
+        memory_max_chars: int | None = None,
+        user_max_chars: int | None = None,
+        llm_smart_routing_prefer_local: bool | None = None,
+        context_compress_threshold: int | None = None,
+        loop_failure_alert_threshold: int | None = None,
+        prefill_use_planner: bool | None = None,
     ) -> None:
-        """Persist Automation-tab overrides (dark-engine audit items 82/84/85/86/87/88/90).
+        """Persist Automation-tab overrides (dark-engine audit items
+        82/84/85/86/87/88/90/91/97/98/99/102/105/106/107).
 
         ``None`` leaves the persisted value for that key untouched (the same
         "unset = no-op" convention ``set_quiet_hours`` uses) so a partial save
@@ -719,6 +731,32 @@ class SetupService:
         days`` (item 88) mirrors ``PRESUBMIT_DUPLICATE_COOLDOWN_DAYS``: how
         many days must pass before the engine will re-apply to the same
         (company, role) pair.
+
+        ``ats_match_rate_floor`` (item 91, mirrors ``ATS_MATCH_RATE_FLOOR``):
+        the minimum fields-filled ratio (0.0-1.0) below which an application
+        is flagged for review instead of offered for submit.
+        ``presubmit_eligibility_enabled`` (item 97, ``PRESUBMIT_ELIGIBILITY_
+        ENABLED``): whether postings are filtered on work-authorization /
+        sponsorship / clearance requirements. ``presubmit_max_listing_age_
+        days`` (item 98, ``PRESUBMIT_MAX_LISTING_AGE_DAYS``): blocks postings
+        older than this many days. ``memory_write_approval``/
+        ``skills_write_approval`` (item 99, ``MEMORY_WRITE_APPROVAL``/
+        ``SKILLS_WRITE_APPROVAL``): auto-apply vs staged memory/skills
+        writes. ``memory_max_chars``/``user_max_chars`` (item 99,
+        ``MEMORY_MAX_CHARS``/``USER_MAX_CHARS``): the curated-memory prompt
+        budget caps, in characters -- must stay positive (a zero/negative
+        budget would silently blank out the memory the loop relies on).
+        ``llm_smart_routing_prefer_local`` (item 102, ``LLM_SMART_ROUTING_
+        PREFER_LOCAL``): whether the smart router's tier ladder prefers a
+        local endpoint when one is online. ``context_compress_threshold``
+        (item 105, ``CONTEXT_COMPRESS_THRESHOLD``): the token budget above
+        which older turns are compressed; ``0`` disables compression.
+        ``loop_failure_alert_threshold`` (item 106, ``LOOP_FAILURE_ALERT_
+        THRESHOLD``): consecutive tick failures before a stall alert fires --
+        must be at least 1 (0/negative would alert on the first failure or
+        never, mirroring the ``config.py`` field's own ``ge=1`` guard).
+        ``prefill_use_planner`` (item 107, ``PREFILL_USE_PLANNER``): switches
+        pre-fill to the experimental plan-as-data planner.
         """
         if (
             presubmit_max_apps_per_company_per_day is not None
@@ -738,6 +776,21 @@ class SetupService:
             raise ValueError("The approval wait override cannot be negative.")
         if scheduler_interval_seconds is not None and scheduler_interval_seconds <= 0:
             raise ValueError("The check interval must be greater than zero.")
+        if ats_match_rate_floor is not None and not (0.0 <= ats_match_rate_floor <= 1.0):
+            raise ValueError("The fill-rate floor must be between 0.0 and 1.0.")
+        if (
+            presubmit_max_listing_age_days is not None
+            and presubmit_max_listing_age_days < 0
+        ):
+            raise ValueError("The maximum listing age cannot be negative.")
+        if memory_max_chars is not None and memory_max_chars <= 0:
+            raise ValueError("The memory character budget must be positive.")
+        if user_max_chars is not None and user_max_chars <= 0:
+            raise ValueError("The user-preferences character budget must be positive.")
+        if context_compress_threshold is not None and context_compress_threshold < 0:
+            raise ValueError("The context-compression threshold cannot be negative.")
+        if loop_failure_alert_threshold is not None and loop_failure_alert_threshold < 1:
+            raise ValueError("The failure-alert threshold must be at least 1.")
         rec = self.get_automation_prefs()
         if egress_timezone is not None:
             rec["egress_timezone"] = (
@@ -765,6 +818,28 @@ class SetupService:
             rec["approval_wait_seconds"] = float(approval_wait_seconds)
         if scheduler_interval_seconds is not None:
             rec["scheduler_interval_seconds"] = float(scheduler_interval_seconds)
+        if ats_match_rate_floor is not None:
+            rec["ats_match_rate_floor"] = float(ats_match_rate_floor)
+        if presubmit_eligibility_enabled is not None:
+            rec["presubmit_eligibility_enabled"] = bool(presubmit_eligibility_enabled)
+        if presubmit_max_listing_age_days is not None:
+            rec["presubmit_max_listing_age_days"] = int(presubmit_max_listing_age_days)
+        if memory_write_approval is not None:
+            rec["memory_write_approval"] = bool(memory_write_approval)
+        if skills_write_approval is not None:
+            rec["skills_write_approval"] = bool(skills_write_approval)
+        if memory_max_chars is not None:
+            rec["memory_max_chars"] = int(memory_max_chars)
+        if user_max_chars is not None:
+            rec["user_max_chars"] = int(user_max_chars)
+        if llm_smart_routing_prefer_local is not None:
+            rec["llm_smart_routing_prefer_local"] = bool(llm_smart_routing_prefer_local)
+        if context_compress_threshold is not None:
+            rec["context_compress_threshold"] = int(context_compress_threshold)
+        if loop_failure_alert_threshold is not None:
+            rec["loop_failure_alert_threshold"] = int(loop_failure_alert_threshold)
+        if prefill_use_planner is not None:
+            rec["prefill_use_planner"] = bool(prefill_use_planner)
         self._store.set(_AUTOMATION_KEY, rec)
         log.info(
             "automation_prefs_configured",
@@ -781,6 +856,17 @@ class SetupService:
             approval_timeout_days=rec.get("approval_timeout_days"),
             approval_wait_seconds=rec.get("approval_wait_seconds"),
             scheduler_interval_seconds=rec.get("scheduler_interval_seconds"),
+            ats_match_rate_floor=rec.get("ats_match_rate_floor"),
+            presubmit_eligibility_enabled=rec.get("presubmit_eligibility_enabled"),
+            presubmit_max_listing_age_days=rec.get("presubmit_max_listing_age_days"),
+            memory_write_approval=rec.get("memory_write_approval"),
+            skills_write_approval=rec.get("skills_write_approval"),
+            memory_max_chars=rec.get("memory_max_chars"),
+            user_max_chars=rec.get("user_max_chars"),
+            llm_smart_routing_prefer_local=rec.get("llm_smart_routing_prefer_local"),
+            context_compress_threshold=rec.get("context_compress_threshold"),
+            loop_failure_alert_threshold=rec.get("loop_failure_alert_threshold"),
+            prefill_use_planner=rec.get("prefill_use_planner"),
         )
 
     # --- status ----------------------------------------------------------
