@@ -59,6 +59,18 @@ Endpoints (all under ``/api/applicant/tracker``):
   through an owner-scoped route instead of an admin gate, backing the
   Tracker's own "View details" disclosure. Derives the campaign id from THIS
   request's own tracker-board fan-out, same as ``interview_prep`` below.
+* ``GET  /api/applicant/tracker/stuck`` — applications the engine loop has
+  given up re-driving after repeated resume failures (dark-engine audit #62),
+  aggregated across the owner's own campaigns, worst-first. A SEPARATE
+  fan-out from the tracker board above: a stuck application is parked in a
+  pre-submission working state (blocked / awaiting a step / in review), not a
+  submitted one, so it would never appear in ``tracker_board``.
+* ``POST /api/applicant/tracker/applications/{application_id}/retry`` —
+  clear a given-up application's flag so the engine re-drives it on its next
+  tick (previously the ONLY way to unstick one was a full engine process
+  restart). ``application_id`` is validated against THIS request's own
+  ``/stuck`` fan-out before the write is forwarded — the same
+  never-trust-a-caller-supplied-id guard the outcome/scan-email writes use.
 """
 
 from __future__ import annotations
@@ -151,6 +163,56 @@ async def _owner_application_ids(engine: ApplicantEngineClient) -> Optional[set]
 
 def _sort_key(row: dict) -> str:
     return str(row.get("submitted_at") or row.get("created_at") or "")
+
+
+async def _owner_stuck_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
+    """Every given-up application across the owner's OWN campaigns (#62), or a
+    :func:`soft_degrade` dict.
+
+    Mirrors ``_owner_tracker_rows`` exactly (fan out over this request's own
+    ``list_campaigns()``, never a caller-supplied campaign id) but hits the
+    engine's stuck-applications read instead of the tracker board, since a
+    given-up application is still mid-pipeline and would never show up on the
+    (submitted-only) tracker board. A per-campaign read failure is skipped
+    (logged, not fatal) so one inaccessible campaign never blanks the panel.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("tracker: stuck campaigns read failed (status=%s): %s", exc.status, exc)
+        return soft_degrade(exc, {"has_data": False})
+    if not isinstance(campaigns, list):
+        return []
+    rows: list[dict] = []
+    for campaign in campaigns:
+        if not isinstance(campaign, dict):
+            continue
+        cid = campaign.get("id")
+        if not cid:
+            continue
+        try:
+            payload = await engine.admin_stuck_applications(str(cid))
+        except EngineError as exc:
+            logger.debug("tracker: stuck read failed for %s: %s", cid, exc)
+            continue
+        items = payload.get("applications") if isinstance(payload, dict) else None
+        for row in items or []:
+            if not isinstance(row, dict):
+                continue
+            r = dict(row)
+            r.setdefault("campaign_id", str(cid))
+            r["campaign_name"] = _campaign_label(campaign)
+            rows.append(r)
+    return rows
+
+
+async def _owner_stuck_application_ids(engine: ApplicantEngineClient) -> Optional[set]:
+    """The set of given-up application ids that belong to THIS owner, or
+    ``None`` when the campaign list itself could not be resolved."""
+    rows = await _owner_stuck_rows(engine)
+    if not isinstance(rows, list):
+        return None
+    return {str(r["application_id"]) for r in rows if r.get("application_id")}
 
 
 def setup_applicant_tracker_routes() -> APIRouter:
@@ -326,5 +388,55 @@ def setup_applicant_tracker_routes() -> APIRouter:
                 status_code=404, detail="No history found for that application."
             )
         return {"found": True, **detail}
+
+    @router.get("/stuck")
+    async def stuck(request: Request) -> dict:
+        """Applications the engine has paused after repeated failed resume
+        attempts (dark-engine audit #62), aggregated across all of the owner's
+        campaigns, worst failure-count first. Degrades soft exactly like the
+        board above: an unreachable engine returns ``engine_available: false``;
+        a setup gate returns ``gated: true``; no stuck applications returns
+        ``has_data: false`` with an empty, well-formed ``applications`` list.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            rows = await _owner_stuck_rows(engine)
+            if not isinstance(rows, list):
+                return {**rows, "applications": []}
+        rows.sort(key=lambda r: r.get("failures") or 0, reverse=True)
+        return {
+            "engine_available": True,
+            "has_data": bool(rows),
+            "applications": rows,
+        }
+
+    @router.post("/applications/{application_id}/retry")
+    async def retry_stuck(request: Request, application_id: str) -> dict:
+        """Clear a given-up application's flag so the engine re-drives it on
+        its very next tick (#62's "Retry now").
+
+        ``application_id`` is validated against this request's own
+        ``_owner_stuck_application_ids`` fan-out BEFORE the write is forwarded
+        -- the same never-trust-a-caller-supplied-id guard ``record_outcome``/
+        ``scan_email`` use above. A caller cannot retry an application that
+        never appeared in their own stuck-applications panel.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_stuck_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            try:
+                result = await engine.admin_retry_stuck_application(application_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: retry_stuck failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
 
     return router

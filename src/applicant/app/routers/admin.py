@@ -150,6 +150,43 @@ def prefill_diagnostics(container: Container = Depends(get_container)) -> dict:
     return {"diagnostics": entries, "status": "live"}
 
 
+@router.get("/stuck-applications/{campaign_id}")
+def stuck_applications(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+    """Applications the loop has given up re-driving (dark-engine audit #62).
+
+    After ``_RESUME_FAILURE_CAP`` consecutive failed resumes the loop stops
+    re-driving an application and fires ONE deduped notification — but until now
+    nothing could LIST the give-up set, so a silently-stuck application was
+    invisible except for that one notification. Reads the SAME process-lived
+    ``ResumeLedger`` the running scheduler writes to (``AgentLoop.list_given_up``),
+    so this always reflects the live loop state, not a stale snapshot. Returns an
+    empty list (never an error) when the loop is not wired (e.g. no orchestrator).
+    """
+    loop = container.agent_loop
+    rows = loop.list_given_up(campaign_id) if loop is not None else []  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "applications": rows, "status": "live"}
+
+
+@router.post("/stuck-applications/{application_id}/retry")
+def retry_stuck_application(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Clear one application's give-up flag so the loop re-drives it (#62).
+
+    Previously the ONLY way to unstick a given-up application was a full process
+    restart (which rebuilds a fresh, empty ``ResumeLedger``) — silently forgetting
+    every OTHER application's failure/backoff state too. This clears just the one
+    application's entry in the same process-lived ledger the loop reads every
+    tick, so the very next tick re-drives it. 404s when the application was not
+    actually in the give-up set (nothing to retry).
+    """
+    loop = container.agent_loop
+    cleared = loop.retry_given_up(application_id) if loop is not None else False  # type: ignore[arg-type]
+    if not cleared:
+        raise HTTPException(status_code=404, detail="No such stuck application.")
+    return {"application_id": application_id, "retried": True}
+
+
 @router.get("/learning/{campaign_id}")
 def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) -> dict:
     """What the system has learned for a campaign, in plain language (FR-LEARN-5/6).
