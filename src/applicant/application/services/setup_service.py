@@ -689,21 +689,39 @@ class SetupService:
         egress_locale: str | None = None,
         allow_automated_accounts: bool | None = None,
         presubmit_max_apps_per_company_per_day: int | None = None,
+        pii_retention_days: int | None = None,
+        presubmit_duplicate_cooldown_days: int | None = None,
     ) -> None:
-        """Persist Automation-tab overrides (dark-engine audit items 82/84/85).
+        """Persist Automation-tab overrides (dark-engine audit items 82/84/85/87/88).
 
         ``None`` leaves the persisted value for that key untouched (the same
         "unset = no-op" convention ``set_quiet_hours`` uses) so a partial save
         from one control never clobbers the others. Server-side validation:
-        the per-company cap can't go negative (the browser input already
-        clamps this, but the engine never trusts a caller-supplied value
-        alone -- see the fabrication-guard note in CLAUDE.md).
+        the per-company cap, the data-retention window, and the re-apply
+        cooldown can't go negative (the browser input already clamps this,
+        but the engine never trusts a caller-supplied value alone -- see the
+        fabrication-guard note in CLAUDE.md).
+
+        ``pii_retention_days`` (item 87) mirrors ``config.py``'s
+        ``PII_RETENTION_DAYS``: how many days parsed PII/EEO/intake data is
+        kept before a retention sweep prunes it; ``0`` (the default) means
+        "keep forever" -- no time-based prune. ``presubmit_duplicate_cooldown_
+        days`` (item 88) mirrors ``PRESUBMIT_DUPLICATE_COOLDOWN_DAYS``: how
+        many days must pass before the engine will re-apply to the same
+        (company, role) pair.
         """
         if (
             presubmit_max_apps_per_company_per_day is not None
             and presubmit_max_apps_per_company_per_day < 0
         ):
             raise ValueError("The per-company daily cap cannot be negative.")
+        if pii_retention_days is not None and pii_retention_days < 0:
+            raise ValueError("The data-retention window cannot be negative.")
+        if (
+            presubmit_duplicate_cooldown_days is not None
+            and presubmit_duplicate_cooldown_days < 0
+        ):
+            raise ValueError("The re-apply cooldown cannot be negative.")
         rec = self.get_automation_prefs()
         if egress_timezone is not None:
             rec["egress_timezone"] = (
@@ -719,6 +737,12 @@ class SetupService:
             rec["presubmit_max_apps_per_company_per_day"] = int(
                 presubmit_max_apps_per_company_per_day
             )
+        if pii_retention_days is not None:
+            rec["pii_retention_days"] = int(pii_retention_days)
+        if presubmit_duplicate_cooldown_days is not None:
+            rec["presubmit_duplicate_cooldown_days"] = int(
+                presubmit_duplicate_cooldown_days
+            )
         self._store.set(_AUTOMATION_KEY, rec)
         log.info(
             "automation_prefs_configured",
@@ -727,6 +751,10 @@ class SetupService:
             allow_automated_accounts=rec.get("allow_automated_accounts"),
             presubmit_max_apps_per_company_per_day=rec.get(
                 "presubmit_max_apps_per_company_per_day"
+            ),
+            pii_retention_days=rec.get("pii_retention_days"),
+            presubmit_duplicate_cooldown_days=rec.get(
+                "presubmit_duplicate_cooldown_days"
             ),
         )
 

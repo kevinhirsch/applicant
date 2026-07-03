@@ -184,7 +184,7 @@ class ConversionPreviewIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85).
+    """Settings > Automation body (dark-engine audit items 82/84/85/87/88).
 
     Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
     all fields ``Optional`` (default ``None``) so a save from one control never
@@ -195,6 +195,8 @@ class AutomationPrefsIn(BaseModel):
     egress_locale: str | None = None
     allow_automated_accounts: bool | None = None
     presubmit_max_apps_per_company_per_day: int | None = None
+    pii_retention_days: int | None = None
+    presubmit_duplicate_cooldown_days: int | None = None
 
 
 class SandboxConnectionIn(BaseModel):
