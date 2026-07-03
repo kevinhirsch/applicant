@@ -504,6 +504,12 @@ class ApplicantEngineClient:
             expect_json=False,
         )
 
+    async def promote_variant(self, variant_id: str) -> Any:
+        """Promote a résumé variant to be the new base résumé future tailoring
+        forks from, instead of the user's original base résumé (dark-engine audit
+        item 33; engine ``MaterialService.promote_to_base_resume``, #293)."""
+        return await self._request("POST", f"/api/documents/variants/{variant_id}/promote")
+
     async def set_document_aggressiveness(self, aggressiveness: Any) -> Any:
         return await self._request(
             "POST", "/api/documents/aggressiveness", json={"aggressiveness": aggressiveness}
