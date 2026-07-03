@@ -51,6 +51,14 @@ Endpoints (all under ``/api/applicant/tracker``):
   ``scan_email``); the engine's detectors classify it and record whatever
   confidently matched. Owner-scoped with the EXACT same
   ``_owner_application_ids`` guard as the outcome write below.
+* ``GET  /api/applicant/tracker/applications/{application_id}/history`` — the
+  per-application drill-down detail (status, work mode, screenshot count, the
+  outcome timeline) for one of the owner's own applications. This is the SAME
+  read the admin-only Debug modal's drill-down already surfaces (``GET
+  /api/admin/history/{campaign_id}``, dark-engine audit #25) — reached here
+  through an owner-scoped route instead of an admin gate, backing the
+  Tracker's own "View details" disclosure. Derives the campaign id from THIS
+  request's own tracker-board fan-out, same as ``interview_prep`` below.
 """
 
 from __future__ import annotations
@@ -271,5 +279,52 @@ def setup_applicant_tracker_routes() -> APIRouter:
                     status_code=exc.status or 502, detail=str(exc)
                 ) from exc
         return data if isinstance(data, dict) else {"generated": False}
+
+    @router.get("/applications/{application_id}/history")
+    async def application_history(request: Request, application_id: str) -> dict:
+        """Per-application drill-down detail for ONE OF THE OWNER'S OWN
+        applications (dark-engine audit #25): status, work mode, screenshot
+        count, and the recorded outcome timeline. This is the SAME engine read
+        the admin-only Debug modal's drill-down already surfaces
+        (``GET /api/admin/history/{campaign_id}``) -- reached here through an
+        owner-scoped route instead of an admin gate, for the Tracker's own
+        "View details" disclosure.
+
+        ``application_id`` is validated against this request's own tracker-board
+        fan-out BEFORE the read is forwarded -- the exact same owner-isolation
+        guard ``record_outcome``/``scan_email``/``interview_prep`` use above
+        (never trust a caller-supplied id). The campaign id used for the engine
+        call is this same fan-out's own row, never a caller-supplied one.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            rows = await _owner_tracker_rows(engine)
+            if not isinstance(rows, list):
+                return {**rows, "found": False}
+            row = next(
+                (r for r in rows if str(r.get("application_id")) == application_id), None
+            )
+            if row is None:
+                raise HTTPException(status_code=404, detail="No such application.")
+            campaign_id = str(row.get("campaign_id") or "")
+            try:
+                data = await engine.tracker_application_history(campaign_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: application_history failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        applications = data.get("applications") if isinstance(data, dict) else None
+        detail = next(
+            (a for a in (applications or []) if str(a.get("application_id")) == application_id),
+            None,
+        )
+        if detail is None:
+            raise HTTPException(
+                status_code=404, detail="No history found for that application."
+            )
+        return {"found": True, **detail}
 
     return router

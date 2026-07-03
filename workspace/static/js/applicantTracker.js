@@ -81,6 +81,28 @@ function _bucketFor(status) {
   return b ? b.key : 'awaiting';
 }
 
+//: Plain-language status label for the "View details" drill-down, built from
+//: the same bucket titles the board itself groups rows under, so the detail
+//: view never introduces a second vocabulary for the same status.
+const STATUS_LABEL = {};
+BUCKETS.forEach((b) => { b.statuses.forEach((s) => { STATUS_LABEL[s] = b.title; }); });
+
+//: Plain-language labels for the outcome-event timeline in "View details" --
+//: distinct from SCAN_OUTCOME_LABEL's article-prefixed phrasing ("a
+//: rejection") since these read as a list of past events, not a toast.
+const OUTCOME_EVENT_LABEL = {
+  submitted: 'Submitted',
+  converted: 'Converted',
+  interview_invited: 'Interview invited',
+  offer: 'Offer received',
+  rejected: 'Rejected',
+  ghosted: 'Went quiet',
+};
+
+function _outcomeEventLabel(type) {
+  return OUTCOME_EVENT_LABEL[type] || String(type || '').replace(/_/g, ' ');
+}
+
 // ── Modal shell ──────────────────────────────────────────────────────────────
 
 function _ensureModalEl() {
@@ -173,9 +195,25 @@ function _renderRow(app) {
         ${_optionsHTML(app.status)}
       </select>
       ${_scanEmailHTML(id, label)}
+      ${_historyHTML(id, label)}
       ${_screeningAnswersHTML(id, campaignId, label)}
       ${signals.includes('interview_invited') ? _interviewPrepHTML(id, label) : ''}
     </div>`;
+}
+
+// A per-row, collapsed-by-default disclosure over the drill-down detail
+// (status, work mode, screenshot count, outcome timeline) behind this row --
+// the same read the admin-only Debug modal's drill-down already surfaces
+// (dark-engine audit #25), reached here through the owner-scoped Tracker
+// instead of an admin gate. Uses the EXACT same native <details>/<summary>
+// disclosure pattern as "Check an email" above -- lazy, loaded only the first
+// time the owner actually opens it.
+function _historyHTML(id, label) {
+  return `
+    <details class="ow-list-row" data-tracker-history="${id}" style="flex-basis:100%;margin:2px 0 0;">
+      <summary style="cursor:pointer;font-size:11px;opacity:0.7;list-style:revert;">View details</summary>
+      <div data-history-body="${id}" style="margin:8px 0 4px;font-size:11px;opacity:0.7;">Loading…</div>
+    </details>`;
 }
 
 // A per-row, collapsed-by-default disclosure over the reusable screening-
@@ -263,6 +301,9 @@ function _renderBoard(host, applications) {
   });
   host.querySelectorAll('[data-tracker-prep]').forEach((details) => {
     details.addEventListener('toggle', () => _onPrepToggle(details), { once: true });
+  });
+  host.querySelectorAll('[data-tracker-history]').forEach((details) => {
+    details.addEventListener('toggle', () => _onHistoryToggle(details), { once: true });
   });
 }
 
@@ -847,6 +888,46 @@ function _renderPrepBody(body, data) {
     parts.push(`<div style="margin-top:6px;opacity:0.85;white-space:pre-wrap;">${esc(data.company_research)}</div>`);
   }
   body.innerHTML = parts.join('') || 'Nothing more to add yet.';
+}
+
+// ── View details (dark-engine audit #25) ────────────────────────────────────
+// The Tracker's own drill-down onto the SAME per-application history the
+// admin-only Debug modal already renders (status, work mode, screenshot
+// count, outcome timeline) -- reached here through the owner-scoped proxy
+// instead of an admin gate. Loaded ONLY the first time a row's "View details"
+// section is opened, never eagerly for every row (same lazy-on-demand shape
+// as "Screening answers" / "Interview prep" above).
+
+async function _onHistoryToggle(details) {
+  if (!details.open) return; // 'toggle' also fires on close; only load on open
+  const id = details.getAttribute('data-tracker-history');
+  const body = details.querySelector(`[data-history-body="${id}"]`);
+  if (!body) return;
+  try {
+    const data = await _fetchJSON(`${API}/applications/${encodeURIComponent(id)}/history`);
+    _renderHistoryBody(body, data);
+  } catch (e) {
+    body.textContent = errText(e);
+  }
+}
+
+function _renderHistoryBody(body, data) {
+  if (!data || data.found === false) {
+    body.textContent = 'No history recorded for this application yet.';
+    return;
+  }
+  const status = esc(STATUS_LABEL[data.status] || String(data.status || 'Unknown').replace(/_/g, ' '));
+  const workMode = esc(data.work_mode ? String(data.work_mode) : 'Not recorded');
+  const shots = data.screenshot_count != null ? Number(data.screenshot_count) : 0;
+  const outcomes = Array.isArray(data.outcomes) ? data.outcomes : [];
+  const timeline = outcomes.length
+    ? `<ul style="margin:4px 0 0 16px;padding:0;">${outcomes.map((o) => `<li>${esc(_outcomeEventLabel(o.type))}</li>`).join('')}</ul>`
+    : '<div style="opacity:0.7;">No outcomes recorded yet.</div>';
+  body.innerHTML = `
+    <div>Status: <strong>${status}</strong></div>
+    <div>Work mode: ${workMode}</div>
+    <div>Screenshots captured: ${esc(String(shots))}</div>
+    <div style="margin-top:4px;">Outcomes:${timeline}</div>`;
 }
 
 export async function openApplicantTracker() {

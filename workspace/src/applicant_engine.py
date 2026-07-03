@@ -788,6 +788,19 @@ class ApplicantEngineClient:
             json={"subject": subject, "body": body},
         )
 
+    async def tracker_application_history(self, campaign_id: str, limit: int = 200) -> Any:
+        """Per-application history detail (status, work mode, screenshot count,
+        recorded outcomes) for the owner-facing Tracker's "View details"
+        disclosure (dark-engine audit #25). Hits the EXACT SAME engine read the
+        admin Debug modal's drill-down already uses (``admin_application_
+        history`` / ``GET /api/admin/history/{campaign_id}``) — this is just an
+        owner-scoped name/route for the same data, reached without the admin
+        gate. Returns every application in the campaign; the caller narrows to
+        the one row it needs."""
+        return await self._request(
+            "GET", f"/api/admin/history/{campaign_id}", params={"limit": limit}
+        )
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:
