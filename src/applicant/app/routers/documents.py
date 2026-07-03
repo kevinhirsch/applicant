@@ -76,6 +76,14 @@ class CoverLetterIn(BaseModel):
     role_requires: bool | None = None
 
 
+class CoverLetterFillIn(BaseModel):
+    # Merge-field fill for a user's OWN saved cover-letter template (dark-engine
+    # audit item 41) -- complementary to the on-demand LLM draft above
+    # (POST /cover-letter): no generation, just ``{{field}}`` substitution.
+    template: str
+    context: dict[str, str] = {}
+
+
 class ScreeningAnswerIn(BaseModel):
     campaign_id: str
     application_id: str
@@ -299,6 +307,26 @@ def generate_cover_letter(body: CoverLetterIn, material=Depends(get_material_ser
     if doc is None:
         return {"generated": False, "reason": "role does not warrant a cover letter"}
     return {"generated": True, "id": doc.id, "type": doc.type.value, "approved": doc.approved}
+
+
+@router.post(
+    "/cover-letter/fill",
+    status_code=200,
+    dependencies=[Depends(require_tool_enabled("cover_letter_generation"))],
+)
+def fill_cover_letter(body: CoverLetterFillIn, material=Depends(get_material_service)) -> dict:
+    """Fill a user's OWN saved cover-letter template's ``{{field}}`` merge fields
+    (dark-engine audit item 41; ``MaterialService.fill_cover_letter_template``).
+
+    A deterministic, complementary path to the on-demand LLM draft above
+    (``POST /cover-letter``): for a user who already has a cover-letter template
+    they like and wants it merge-filled for THIS application rather than a fresh
+    generation. Pure string substitution -- no LLM call, never a fabrication risk,
+    so it needs no review gate of its own; the caller decides what to do with the
+    filled text (e.g. paste it into a new document).
+    """
+    filled = material.fill_cover_letter_template(body.template, body.context)
+    return {"filled": filled}
 
 
 @router.post(

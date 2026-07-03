@@ -2003,8 +2003,24 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         '<div class="memory-toolbar" style="gap:6px;flex-wrap:wrap;">' +
           '<button class="memory-toolbar-btn" id="doclib-gen-cover-btn" title="Write a cover letter for the application ID above.">Draft cover letter</button>' +
           '<button class="memory-toolbar-btn" id="doclib-gen-answer-btn" title="Answer a screening question for the application ID above.">Draft screening answer</button>' +
+          '<button class="memory-toolbar-btn" id="doclib-gen-fill-btn" title="Fill in the blanks of your OWN cover-letter template — no AI writing, just merge fields.">Fill a template</button>' +
         '</div>' +
-        '<div id="doclib-gen-status" class="doclib-empty" style="display:none;padding:8px;"></div>';
+        '<div id="doclib-gen-status" class="doclib-empty" style="display:none;padding:8px;"></div>' +
+        '<div id="doclib-fill-panel" style="display:none;flex-direction:column;gap:6px;border-top:1px solid var(--color-border,rgba(128,128,128,0.2));padding-top:8px;margin-top:4px;">' +
+          '<div class="memory-desc doclib-desc">Paste your own template with <code>{{merge fields}}</code> (e.g. <code>{{company}}</code>) and give the values below — filled deterministically, no AI involved.</div>' +
+          '<textarea class="memory-search-input" id="doclib-fill-template" rows="4" ' +
+            'placeholder="Dear {{company}}, I am excited to apply for the {{role}} position..."></textarea>' +
+          '<textarea class="memory-search-input" id="doclib-fill-context" rows="3" ' +
+            'placeholder="One field per line, e.g.&#10;company: Acme Corp&#10;role: Software Engineer"></textarea>' +
+          '<div class="memory-toolbar" style="gap:6px;">' +
+            '<button class="memory-toolbar-btn" id="doclib-fill-go-btn">Fill template</button>' +
+          '</div>' +
+          '<textarea class="memory-search-input" id="doclib-fill-output" rows="4" readonly ' +
+            'placeholder="Your filled letter will appear here." style="display:none;"></textarea>' +
+          '<div class="memory-toolbar" style="gap:6px;">' +
+            '<button class="memory-toolbar-btn" id="doclib-fill-copy-btn" style="display:none;">Copy to clipboard</button>' +
+          '</div>' +
+        '</div>';
       wrap.appendChild(genWrap);
 
       const genStatus = genWrap.querySelector('#doclib-gen-status');
@@ -2058,6 +2074,65 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _applicantLastAppId = ids.application_id;
           _loadApplicantMaterials(ids.application_id, results);
         } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+      });
+
+      // Template merge-fill (dark-engine audit item 41): deterministic {{field}}
+      // substitution for a user's OWN saved cover-letter template, no LLM call —
+      // a complementary path to "Draft cover letter" above for someone who
+      // already has wording they like and just wants it filled in for THIS
+      // application. Toggles a small inline panel rather than a modal, matching
+      // the rest of this lookup form.
+      const fillPanel = genWrap.querySelector('#doclib-fill-panel');
+      const fillTemplate = genWrap.querySelector('#doclib-fill-template');
+      const fillContext = genWrap.querySelector('#doclib-fill-context');
+      const fillOutput = genWrap.querySelector('#doclib-fill-output');
+      const fillCopyBtn = genWrap.querySelector('#doclib-fill-copy-btn');
+      genWrap.querySelector('#doclib-gen-fill-btn').addEventListener('click', () => {
+        const showing = fillPanel.style.display !== 'none';
+        fillPanel.style.display = showing ? 'none' : 'flex';
+      });
+      // Parses "key: value" lines (one field per line) into a plain context object;
+      // blank lines and lines without a colon are skipped rather than erroring, so
+      // a stray blank line doesn't block the fill.
+      const _parseFillContext = (raw) => {
+        const out = {};
+        (raw || '').split('\n').forEach((line) => {
+          const idx = line.indexOf(':');
+          if (idx < 0) return;
+          const key = line.slice(0, idx).trim();
+          const value = line.slice(idx + 1).trim();
+          if (key) out[key] = value;
+        });
+        return out;
+      };
+      genWrap.querySelector('#doclib-fill-go-btn').addEventListener('click', async () => {
+        const template = (fillTemplate.value || '').trim();
+        if (!template) {
+          if (uiModule) uiModule.showError('Paste your cover-letter template first.');
+          return;
+        }
+        const context = _parseFillContext(fillContext.value);
+        _setGen('Filling in your template…');
+        try {
+          const res = await fetch(`${_APPLICANT_BASE}/cover-letter/fill`, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ template, context }),
+          });
+          if (!res.ok) { _setGen(await _applicantErrText(res)); return; }
+          const data = await res.json();
+          fillOutput.value = (data && data.filled) || '';
+          fillOutput.style.display = 'block';
+          fillCopyBtn.style.display = 'inline-block';
+          _setGen('Template filled below — nothing was sent to the review list.');
+        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+      });
+      fillCopyBtn.addEventListener('click', async () => {
+        try {
+          if (uiModule && uiModule.copyToClipboard) await uiModule.copyToClipboard(fillOutput.value || '');
+          else await navigator.clipboard.writeText(fillOutput.value || '');
+          if (uiModule) uiModule.showToast('Copied to clipboard');
+        } catch { if (uiModule) uiModule.showError('Failed to copy'); }
       });
 
       // Confirm the engine is reachable up front, and give a clear status line.

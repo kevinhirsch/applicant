@@ -466,6 +466,12 @@ class ApplicantEngineClient:
         """Generate a cover letter on demand; routed to review (FR-RESUME-10)."""
         return await self._request("POST", "/api/documents/cover-letter", json=body)
 
+    async def fill_cover_letter_template(self, body: Any) -> Any:
+        """Merge-fill a user's OWN saved cover-letter template's ``{{field}}``
+        placeholders (dark-engine audit item 41). Deterministic string substitution
+        -- no LLM call, complementary to ``generate_cover_letter`` above."""
+        return await self._request("POST", "/api/documents/cover-letter/fill", json=body)
+
     async def generate_screening_answer(self, body: Any) -> Any:
         """Generate a screening answer on demand; routed to review (FR-ANSWER-1)."""
         return await self._request("POST", "/api/documents/screening-answer", json=body)

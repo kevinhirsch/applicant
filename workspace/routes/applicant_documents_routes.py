@@ -117,6 +117,17 @@ class CoverLetterIn(BaseModel):
     role_requires: bool | None = True
 
 
+class CoverLetterFillIn(BaseModel):
+    """Merge-fill a user's OWN saved cover-letter template (dark-engine audit item
+    41). Complementary to ``CoverLetterIn``'s on-demand LLM draft: the user pastes
+    a template with ``{{field}}`` placeholders plus the values to substitute, and
+    gets the filled text back -- pure string substitution, no LLM call, no
+    fabrication risk."""
+
+    template: str
+    context: dict[str, str] = {}
+
+
 class ScreeningAnswerIn(BaseModel):
     """On-demand screening-answer generation request (FR-ANSWER-1). The user supplies
     the question; the answer is drafted from the profile, voice-filtered, and
@@ -341,6 +352,24 @@ def setup_applicant_documents_routes() -> APIRouter:
             logger.info("applicant cover-letter generation failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
+
+    @router.post("/cover-letter/fill")
+    async def fill_cover_letter_template(body: CoverLetterFillIn, request: Request) -> JSONResponse:
+        """Merge-fill a user's OWN saved cover-letter template (engine
+        ``POST /api/documents/cover-letter/fill``; dark-engine audit item 41).
+
+        Complementary to ``/cover-letter`` above: deterministic ``{{field}}``
+        substitution, no LLM call. Same write privilege as the other on-demand
+        generation routes -- it still produces application material, just without
+        the LLM in the loop."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.fill_cover_letter_template(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant cover-letter template fill failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
 
     @router.post("/screening-answer")
     async def generate_screening_answer(body: ScreeningAnswerIn, request: Request) -> JSONResponse:
