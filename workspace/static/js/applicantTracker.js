@@ -911,6 +911,46 @@ async function _onHistoryToggle(details) {
   }
 }
 
+// Plain-language label for one attributes_used key (dark-engine audit #54):
+// the engine's own snake_case/free-form field names ("first_name", "race",
+// "First Name") are turned into a consistent Title Case reading -- never the
+// raw storage key -- so this stays plain language even though the key set
+// itself is caller-defined (whatever the engine recorded as "consumed" for
+// this application), not a fixed enum this module can hard-code labels for.
+function _prettyAttrLabel(key) {
+  const words = String(key || '').replace(/[_-]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return 'Detail';
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+// Best-effort display text for one attributes_used value -- primitives print
+// as-is; anything else (a nested object/array the engine happened to record)
+// is JSON-stringified rather than silently dropped or shown as
+// "[object Object]".
+function _attrValueText(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+// The "which of your details were used" section (dark-engine audit #54):
+// ``Application.attributes_used`` is the exact attribute map the engine
+// consumed submitting THIS application -- a real privacy-trust artifact the
+// engine already keeps (see ``AdminQueryService.application_history``) but
+// never surfaced anywhere before. Real data only -- an application that never
+// recorded any attributes shows the honest "none recorded" state, never a
+// fabricated list.
+function _attributesUsedHTML(attributesUsed) {
+  const attrs = (attributesUsed && typeof attributesUsed === 'object') ? attributesUsed : {};
+  const keys = Object.keys(attrs);
+  if (!keys.length) {
+    return '<div style="opacity:0.7;">No details recorded for this application yet.</div>';
+  }
+  return `<ul style="margin:4px 0 0 16px;padding:0;">${keys.map((k) => (
+    `<li>${esc(_prettyAttrLabel(k))}: ${esc(_attrValueText(attrs[k]))}</li>`
+  )).join('')}</ul>`;
+}
+
 function _renderHistoryBody(body, data) {
   if (!data || data.found === false) {
     body.textContent = 'No history recorded for this application yet.';
@@ -927,7 +967,8 @@ function _renderHistoryBody(body, data) {
     <div>Status: <strong>${status}</strong></div>
     <div>Work mode: ${workMode}</div>
     <div>Screenshots captured: ${esc(String(shots))}</div>
-    <div style="margin-top:4px;">Outcomes:${timeline}</div>`;
+    <div style="margin-top:4px;">Outcomes:${timeline}</div>
+    <div style="margin-top:4px;">Data used on this application:${_attributesUsedHTML(data.attributes_used)}</div>`;
 }
 
 export async function openApplicantTracker() {
