@@ -1,12 +1,12 @@
 // static/js/applicantAutomationSettings.js
 //
-// Settings > Automation (dark-engine audit items 82/84/85) — the FIRST cut of a
-// generic engine-preferences tab. The dark-engine audit found ~20 engine config
-// knobs that were env-only with zero Settings UI ("the workspace Settings surface
-// mounts only four wizard renderers ... plus the campaign and model-ladder tabs —
-// there is no generic engine-preferences tab", 08_engine_dark_matrix.md §B8). This
-// module builds that tab and wires its first three knobs; later phases add more
-// cards here rather than inventing another tab.
+// Settings > Automation (dark-engine audit items 82/84/85/87/88) — the FIRST cut
+// of a generic engine-preferences tab. The dark-engine audit found ~20 engine
+// config knobs that were env-only with zero Settings UI ("the workspace Settings
+// surface mounts only four wizard renderers ... plus the campaign and
+// model-ladder tabs — there is no generic engine-preferences tab",
+// 08_engine_dark_matrix.md §B8). This module builds that tab; later phases add
+// more cards here rather than inventing another tab.
 //
 // What it surfaces:
 //   * Browser timezone + locale (item 82) — the fingerprint the pre-fill browser
@@ -18,6 +18,11 @@
 //     (ADR-0004); this is only the operator's opt-in switch.
 //   * Per-company daily application cap (item 85) — the max applications sent to
 //     the same company in one day (a volume/scam-avoidance safety valve, G07).
+//   * How long we keep your personal data (item 87) — the parsed PII / EEO /
+//     intake-data retention window; 0 (the default) means kept forever, so the
+//     copy is deliberately plain and honest about what that means.
+//   * Re-apply cooldown (item 88) — how many days before Applicant will apply to
+//     the same company/role pair again (a duplicate-application safety valve).
 //
 // STANDALONE tab module (not a wizard-step renderer) — same shape as
 // applicantCampaignSettings.js / applicantModelLadder.js: talks only to the
@@ -48,6 +53,12 @@ function _cardHTML(prefs) {
   const cap = Number.isFinite(prefs.presubmit_max_apps_per_company_per_day)
     ? prefs.presubmit_max_apps_per_company_per_day
     : 3;
+  const retentionDays = Number.isFinite(prefs.pii_retention_days)
+    ? prefs.pii_retention_days
+    : 0;
+  const cooldownDays = Number.isFinite(prefs.presubmit_duplicate_cooldown_days)
+    ? prefs.presubmit_duplicate_cooldown_days
+    : 30;
   return `
     <div class="admin-card">
       <h2>Browser identity</h2>
@@ -96,6 +107,35 @@ function _cardHTML(prefs) {
                style="max-width:120px">
       </div>
     </div>
+    <div class="admin-card">
+      <h2>Re-apply cooldown</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        How many days Applicant waits before applying to the same company and role
+        again, once you've already applied there.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-cooldown">Days before re-applying</label>
+        <input id="as-cooldown" class="settings-input" type="number" min="0" step="1"
+               value="${esc(String(cooldownDays))}" data-as-field="presubmit_duplicate_cooldown_days"
+               style="max-width:120px">
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>How long we keep your personal data</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        How many days Applicant keeps the personal details you shared during
+        setup — resume answers, EEO/diversity answers, and other application-intake
+        data — before deleting them. Set this to <strong>0</strong> to keep this
+        data forever (the default, and today's behavior) — nothing is ever
+        automatically deleted unless you set a number of days here.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-retention">Days to keep your data (0 = keep forever)</label>
+        <input id="as-retention" class="settings-input" type="number" min="0" step="1"
+               value="${esc(String(retentionDays))}" data-as-field="pii_retention_days"
+               style="max-width:120px">
+      </div>
+    </div>
     <div class="settings-row" style="gap:8px">
       <button type="button" class="cal-btn cal-btn-primary" id="as-save">Save changes</button>
       <span id="as-msg" class="admin-toggle-sub"></span>
@@ -108,6 +148,8 @@ function _readForm(host) {
   const localeEl = get('egress_locale');
   const allowEl = get('allow_automated_accounts');
   const capEl = get('presubmit_max_apps_per_company_per_day');
+  const retentionEl = get('pii_retention_days');
+  const cooldownEl = get('presubmit_duplicate_cooldown_days');
   const body = {};
   if (tzEl) body.egress_timezone = tzEl.value.trim();
   if (localeEl) body.egress_locale = localeEl.value.trim();
@@ -115,6 +157,14 @@ function _readForm(host) {
   if (capEl) {
     const cap = parseInt(capEl.value, 10);
     if (Number.isFinite(cap)) body.presubmit_max_apps_per_company_per_day = cap;
+  }
+  if (retentionEl) {
+    const retention = parseInt(retentionEl.value, 10);
+    if (Number.isFinite(retention)) body.pii_retention_days = retention;
+  }
+  if (cooldownEl) {
+    const cooldown = parseInt(cooldownEl.value, 10);
+    if (Number.isFinite(cooldown)) body.presubmit_duplicate_cooldown_days = cooldown;
   }
   return body;
 }
