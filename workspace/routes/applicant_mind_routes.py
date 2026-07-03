@@ -178,4 +178,31 @@ def setup_applicant_mind_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    # -- learned lessons per ATS (dark-engine audit #44, Reflexion) ---------
+    # A verbal lesson the loop distilled from a real pre-fill failure on a given
+    # job-site (ATS) and recalls before its next fill attempt there. Read-only,
+    # gated like the memory/skills/curation reads above (any logged-in user).
+
+    @router.get("/lessons")
+    async def lessons(request: Request) -> dict:
+        """Every learned lesson, grouped by ATS domain."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.admin_lessons()
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"lessons": {}}
+
+    @router.get("/lessons/{ats}")
+    async def lessons_for_ats(request: Request, ats: str) -> dict:
+        """Learned lessons for one ATS domain."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.admin_lessons(ats)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"ats": ats, "lessons": []}
+
     return router

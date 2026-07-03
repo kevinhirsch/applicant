@@ -76,6 +76,18 @@ function _sourceLabel(key) {
   return tail.charAt(0).toUpperCase() + tail.slice(1);
 }
 
+// Live-vs-sample indicator (dark-engine audit item 65). The offline lane backs
+// EVERY source with a fake client that returns the exact same registry shape as a
+// real job board, so without an explicit marker a user can't tell a synthetic
+// "example.test" row from a real discovery result. `live` comes straight from the
+// engine (GET .../sources item.live) — plain language either way, no jargon.
+function _liveBadge(live) {
+  return live
+    ? '<span class="memory-badge" style="font-size:0.7rem;opacity:0.75">Live</span>'
+    : '<span class="memory-badge" style="font-size:0.7rem;opacity:0.75" ' +
+        'title="This source is returning sample data, not real job listings">Sample data</span>';
+}
+
 function _campaignCard(c) {
   const id = esc(c.id);
   const archived = c.active === false;
@@ -122,6 +134,7 @@ function _campaignCard(c) {
       </div>
       <div class="cs-sources" data-cs-sources-for="${id}">
         <div class="admin-toggle-sub" style="margin:10px 0 6px">Discovery sources</div>
+        <div class="cs-sources-banner"></div>
         <div class="cs-sources-list" style="font-size:0.85rem;opacity:0.7">Loading…</div>
       </div>
       <div class="cs-danger-zone" style="margin-top:14px;padding-top:10px;border-top:1px solid color-mix(in srgb, var(--color-danger, #e06c75) 30%, transparent)">
@@ -137,8 +150,21 @@ function _campaignCard(c) {
 }
 
 function _renderSources(host, campaignId, items) {
-  const list = host.querySelector(`[data-cs-sources-for="${CSS.escape(campaignId)}"] .cs-sources-list`);
+  const scope = host.querySelector(`[data-cs-sources-for="${CSS.escape(campaignId)}"]`);
+  const list = scope?.querySelector('.cs-sources-list');
+  const banner = scope?.querySelector('.cs-sources-banner');
   if (!list) return;
+  if (banner) {
+    // Every source is currently backed by sample data (dark-engine audit item 65) —
+    // spell it out once above the list instead of making the user infer it from
+    // per-row badges alone.
+    const anyLive = items.some((s) => s.live === true);
+    banner.innerHTML = items.length && !anyLive
+      ? '<div class="admin-toggle-sub" style="margin-bottom:8px;opacity:0.85">' +
+          'Using sample data for every source below — connect a real job board to see real listings.' +
+        '</div>'
+      : '';
+  }
   if (!items.length) {
     list.innerHTML = '<span style="opacity:0.6">No sources available yet.</span>';
     return;
@@ -151,6 +177,7 @@ function _renderSources(host, campaignId, items) {
         <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px">
           <input type="checkbox" data-cs-source="${key}" ${on ? 'checked' : ''}>
           <span style="flex:1"><strong>${esc(_sourceLabel(s.source_key))}</strong>
+            ${_liveBadge(s.live === true)}
             <span style="opacity:0.6">— ${_yieldSummary(s.yield_stats)}</span></span>
         </label>`;
     })

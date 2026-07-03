@@ -742,6 +742,68 @@ class AgentLoop:
             if str(a.id) not in giveup
         ]
 
+    def list_given_up(self, campaign_id: CampaignId | None = None) -> list[dict]:
+        """Applications the loop has stopped re-driving (dark-engine audit #62).
+
+        Reads the SAME process-lived ``ResumeLedger`` the tick loop writes to (the
+        one the container injects into every per-tick loop), so this reflects
+        exactly what the running scheduler has given up on — not a stale snapshot.
+        Without this method nothing could ever list the give-up set; the only
+        visibility was the one deduped notification fired at cap time (#62). When
+        ``campaign_id`` is given, only that campaign's rows are returned; an
+        application that has since been deleted from storage is silently skipped
+        rather than raising (the ledger key can outlive the row).
+        """
+        with self._resume_ledger.lock:
+            entries = [(k, self._resume_failures.get(k, 0)) for k in self._resume_giveup]
+        rows: list[dict] = []
+        for app_id, failures in entries:
+            app = self._storage.applications.get(ApplicationId(app_id))
+            if app is None:
+                continue
+            if campaign_id is not None and app.campaign_id != campaign_id:
+                continue
+            posting = None
+            if app.posting_id is not None:
+                posting = self._storage.postings.get(app.posting_id)
+            rows.append(
+                {
+                    "application_id": app_id,
+                    "campaign_id": str(app.campaign_id),
+                    "status": app.status.value,
+                    "failures": failures,
+                    "job_title": app.job_title or (posting.title if posting else None),
+                    "company": posting.company if posting else None,
+                    "role_name": app.role_name,
+                }
+            )
+        rows.sort(key=lambda r: r["failures"], reverse=True)
+        return rows
+
+    def retry_given_up(self, application_id: str) -> bool:
+        """Clear one application's give-up flag so the loop re-drives it (#62).
+
+        The normal per-tick resume sweep (``_resumable_apps``) excludes anything
+        in the give-up set, and nothing previously cleared that flag short of a
+        full process restart (which rebuilds a fresh, empty ``ResumeLedger``) —
+        leaving a stuck application permanently invisible AND permanently stuck.
+        This clears the failure streak too (not just the give-up flag) so the app
+        gets a full fresh run of the failure cap rather than tripping it again on
+        the very next failure, and clears the backoff timestamp so the very next
+        tick is free to re-drive it immediately (subject to the normal per-tick
+        cadence) instead of waiting out a stale backoff window. Returns ``False``
+        (a no-op) when the application was not in the give-up set.
+        """
+        key = str(application_id)
+        with self._resume_ledger.lock:
+            if key not in self._resume_giveup:
+                return False
+            self._resume_giveup.discard(key)
+            self._resume_failures.pop(key, None)
+            self._last_resume.pop(key, None)
+        log.info("resume_retry_cleared", application_id=key)
+        return True
+
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
         with self._resume_ledger.lock:
@@ -824,13 +886,26 @@ class AgentLoop:
                 return {"state": ApplicationState.AWAITING_FINAL_APPROVAL.value}
             attrs = self._storage.attributes.list_for_campaign(campaign.id)
             url = current.root_url or (self._posting_url(current.posting_id) or "")
+            ats = self._ats_domain(url)
+            # #44 (dark-engine audit) Reflexion recall — READ side, BEFORE the fill
+            # attempt: surface any verbal lesson learned from a PRIOR failure on this
+            # same ATS so a known-bad domain is handled more carefully instead of
+            # blindly repeating what already failed here.
+            lessons = self._recall_lessons_for(ats)
             # #4: a re-driven app that is parked at a BLOCKED_* / AWAITING_ACCOUNT state
             # must RESUME from where it stalled, not restart the whole pre-fill. Choose
             # the right ``resume_after_*`` for the persisted blocked state; only a fresh
             # (APPROVED / provisioning) app does a full ``prefill_application``.
-            res = self._run_prefill_step(current, url, attrs)
+            res = self._run_prefill_step(
+                current, url, attrs, cautious_hint=bool(lessons)
+            )
             # Persist where pre-fill landed so resume/yield see the real §7 state.
             self._sync_status(current, res.state)
+            # #44 Reflexion self-reflection — WRITE side, AFTER a real failure: a
+            # concrete field-level failure during THIS pass is distilled into a
+            # verbal lesson for the next attempt on this ATS (previously written but
+            # never invoked anywhere in the loop).
+            self._reflect_on_prefill_failure(ats, res)
             return {"state": res.state.value}
 
         def _material_warranted() -> bool:
@@ -905,12 +980,21 @@ class AgentLoop:
             approval_timeout=0.0,
         )
 
-    def _run_prefill_step(self, current: Application, url: str, attrs):
+    def _run_prefill_step(
+        self, current: Application, url: str, attrs, *, cautious_hint: bool = False
+    ):
         """Choose the right pre-fill entry point for the app's §7 state (#4).
 
         Was: always ``prefill_application`` (a full restart) even for an app already
         parked at AWAITING_ACCOUNT_HUMAN_STEP / BLOCKED_MISSING_ATTR — orphaning the
         in-progress session. Now a re-driven blocked app resumes from where it stalled.
+
+        ``cautious_hint`` (#44 dark-engine audit, Reflexion recall): True when a
+        verbal lesson exists for this ATS from a PRIOR failure. It only changes the
+        ``BLOCKED_DETECTION`` resume below, where the loop otherwise hard-codes
+        ``cautious=False`` on the assumption a human just cleared the block — a
+        domain with a recorded failure lesson re-checks for the same signal instead
+        of blindly trusting that assumption again.
         """
         status = current.status
         if status is ApplicationState.AWAITING_ACCOUNT_HUMAN_STEP:
@@ -923,13 +1007,73 @@ class AgentLoop:
             # moves to SANDBOX_PROVISIONING) raised IllegalStateTransition and stranded
             # the app. Resume via the PREFILLING path WITHOUT tearing down the session
             # the user just cleared. Non-cautious so the just-cleared signal does not
-            # immediately re-block the resume.
+            # immediately re-block the resume — UNLESS a recalled lesson (#44) says
+            # this ATS has burned the loop before, in which case stay cautious.
             resume = getattr(self._prefill, "resume_after_detection", None)
             if callable(resume):
-                return resume(current, attrs, cautious=False)
+                return resume(current, attrs, cautious=bool(cautious_hint))
         # BLOCKED_QUESTION re-drives through the normal loop; a fresh APPROVED app
         # starts the full pre-fill.
         return self._prefill.prefill_application(current, url, attrs)
+
+    # --- Reflexion: verbal failure lessons per ATS (#306, dark-engine audit #44) -
+    @staticmethod
+    def _ats_domain(url: str) -> str:
+        """Derive the same registrable-host key ``PrefillService`` uses for routines.
+
+        Mirrors ``PrefillService._routine_domain`` so recalled lessons key on the
+        exact same namespace as the AWM routine store (one ATS == one domain
+        string across both learning surfaces). Best-effort: a bare/relative URL
+        falls back to the raw string so the key is at least stable.
+        """
+        from urllib.parse import urlparse
+
+        try:
+            host = urlparse(url).netloc
+        except Exception:  # noqa: BLE001 — never crash deriving a key
+            host = ""
+        return (host or url or "").lower()
+
+    def _recall_lessons_for(self, ats: str) -> list:
+        """Recall lessons for ``ats`` before a fill attempt (read side, #44).
+
+        Best-effort + defensive: no learning service wired, no ats, or a raising
+        store all degrade to "no lessons" rather than blocking the pre-fill.
+        """
+        if self._learning is None or not ats:
+            return []
+        try:
+            lessons = self._learning.recall_lessons(ats)
+        except Exception:  # pragma: no cover - defensive: recall must never break the loop
+            return []
+        if lessons:
+            log.info("prefill_recalled_lessons", ats=ats, lesson_count=len(lessons))
+        return lessons
+
+    def _reflect_on_prefill_failure(self, ats: str, res) -> None:
+        """Write a Reflexion lesson from a real field-level pre-fill failure (#44).
+
+        ``PrefillResult.fields_failed`` is the concrete, already-recorded signal a
+        real fill attempt failed on this pass (selector/label/error per field) —
+        the most recent one is distilled into a verbal lesson so the NEXT attempt
+        on this ATS recalls it before filling. Best-effort: never breaks the loop.
+        """
+        if self._learning is None or not ats:
+            return
+        failed = getattr(res, "fields_failed", None)
+        if not failed:
+            return
+        last = failed[-1]
+        try:
+            self._learning.reflect_on_failure(
+                {
+                    "ats": ats,
+                    "step": str(last.get("selector") or last.get("label") or "fill"),
+                    "error": str(last.get("error", "")),
+                }
+            )
+        except Exception:  # pragma: no cover - defensive: reflection must never break the loop
+            log.debug("reflect_on_failure raised", exc_info=True)
 
     # --- material generation (#3) ----------------------------------------
     def _jd_terms(self, posting) -> list[str]:

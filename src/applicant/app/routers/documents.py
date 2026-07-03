@@ -467,15 +467,44 @@ def set_banned_phrases(
 
 
 @router.get("/variants/{campaign_id}")
-def list_variants(campaign_id: str, admin_query=Depends(get_admin_query_service)) -> dict:
+def list_variants(
+    campaign_id: str,
+    admin_query=Depends(get_admin_query_service),
+    material=Depends(get_material_service),
+    storage=Depends(get_storage),
+) -> dict:
     """Owner-scoped résumé-variant library: lineage / fit scores / approval state
     (FR-RESUME-6, FR-UI-6).
 
     Reuses the same read-model as the debug surface, but reachable from the
     user-facing document library (not admin-gated) so the variant library is a real
     user surface, not an operator-only view.
+
+    The read-model already carries a raw ``lineage_depth`` count and the immediate
+    ``parent_id``, but neither is human-readable — a user can't see "this variant was
+    tailored from that one, which was tailored from the original base résumé" (dark-
+    engine audit item 50). Attach the actual ancestor chain, root-first, using
+    ``MaterialService.lineage`` (which already walks ``parent_id`` to the root) so the
+    front door can render a readable breadcrumb without re-implementing the walk.
     """
     variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
+    for row in variants:
+        variant = storage.resume_variants.get(ResumeVariantId(row["variant_id"]))
+        if variant is None:
+            row["lineage"] = []
+            continue
+        # ``lineage`` is nearest-first (self, parent, grandparent, ... root);
+        # reverse to root-first so the breadcrumb reads left-to-right as history.
+        chain = list(reversed(material.lineage(variant)))
+        row["lineage"] = [
+            {
+                "variant_id": str(v.id),
+                "is_root": v.is_root,
+                "targeted_jd_signature": v.targeted_jd_signature,
+                "approved": v.approved,
+            }
+            for v in chain
+        ]
     return {"campaign_id": campaign_id, "variants": variants}
 
 

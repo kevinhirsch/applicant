@@ -13,6 +13,8 @@ logging ring buffer). Gated behind the LLM-settings gate (FR-UI-5).
 
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from applicant.app.container import Container
@@ -150,6 +152,43 @@ def prefill_diagnostics(container: Container = Depends(get_container)) -> dict:
     return {"diagnostics": entries, "status": "live"}
 
 
+@router.get("/stuck-applications/{campaign_id}")
+def stuck_applications(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+    """Applications the loop has given up re-driving (dark-engine audit #62).
+
+    After ``_RESUME_FAILURE_CAP`` consecutive failed resumes the loop stops
+    re-driving an application and fires ONE deduped notification — but until now
+    nothing could LIST the give-up set, so a silently-stuck application was
+    invisible except for that one notification. Reads the SAME process-lived
+    ``ResumeLedger`` the running scheduler writes to (``AgentLoop.list_given_up``),
+    so this always reflects the live loop state, not a stale snapshot. Returns an
+    empty list (never an error) when the loop is not wired (e.g. no orchestrator).
+    """
+    loop = container.agent_loop
+    rows = loop.list_given_up(campaign_id) if loop is not None else []  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "applications": rows, "status": "live"}
+
+
+@router.post("/stuck-applications/{application_id}/retry")
+def retry_stuck_application(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Clear one application's give-up flag so the loop re-drives it (#62).
+
+    Previously the ONLY way to unstick a given-up application was a full process
+    restart (which rebuilds a fresh, empty ``ResumeLedger``) — silently forgetting
+    every OTHER application's failure/backoff state too. This clears just the one
+    application's entry in the same process-lived ledger the loop reads every
+    tick, so the very next tick re-drives it. 404s when the application was not
+    actually in the give-up set (nothing to retry).
+    """
+    loop = container.agent_loop
+    cleared = loop.retry_given_up(application_id) if loop is not None else False  # type: ignore[arg-type]
+    if not cleared:
+        raise HTTPException(status_code=404, detail="No such stuck application.")
+    return {"application_id": application_id, "retried": True}
+
+
 @router.get("/learning/{campaign_id}")
 def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) -> dict:
     """What the system has learned for a campaign, in plain language (FR-LEARN-5/6).
@@ -161,6 +200,44 @@ def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) 
     see and trust the bias the engine applies.
     """
     return learning.build_summary(campaign_id)  # type: ignore[arg-type]
+
+
+# === Reflexion failure lessons (FR-LEARN-*, dark-engine audit #44) =========
+@router.get("/lessons")
+def all_lessons(learning=Depends(get_learning_service)) -> dict:
+    """Every verbal Reflexion lesson recorded so far, grouped by ATS (#44).
+
+    ``LearningService.reflect_on_failure`` distills a short natural-language
+    lesson from a real pre-fill field failure; the pre-fill loop calls
+    ``recall_lessons`` for the SAME ats before its next fill attempt on that
+    ATS. This is the plain read-only overview across every domain the loop has
+    learned something about, process-global (not campaign-scoped) like
+    ``/prefill-diagnostics`` above.
+    """
+    grouped = learning.list_all_lessons()  # type: ignore[attr-defined]
+    return {
+        "lessons": {
+            ats: [dataclasses.asdict(lesson) for lesson in items]
+            for ats, items in grouped.items()
+        },
+        "status": "live",
+    }
+
+
+@router.get("/lessons/{ats}")
+def lessons_for_ats(ats: str, learning=Depends(get_learning_service)) -> dict:
+    """Verbal Reflexion lessons recalled for ONE ATS (#44).
+
+    The same read the pre-fill loop performs before a fill attempt on ``ats``
+    — surfaced here so an operator can see exactly what the loop already
+    knows about a given ATS before/while it runs.
+    """
+    lessons = learning.recall_lessons(ats)  # type: ignore[arg-type]
+    return {
+        "ats": ats,
+        "lessons": [dataclasses.asdict(lesson) for lesson in lessons],
+        "status": "live",
+    }
 
 
 # === Stealth honesty + egress (FR-STEALTH-4 / FR-STEALTH-5) ================

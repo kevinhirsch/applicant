@@ -183,6 +183,22 @@ class ConversionPreviewIn(BaseModel):
     source: str = ""
 
 
+class AutomationPrefsIn(BaseModel):
+    """Settings > Automation body (dark-engine audit items 82/84/85/87/88).
+
+    Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
+    all fields ``Optional`` (default ``None``) so a save from one control never
+    clobbers the others (``None`` = leave the persisted value alone).
+    """
+
+    egress_timezone: str | None = None
+    egress_locale: str | None = None
+    allow_automated_accounts: bool | None = None
+    presubmit_max_apps_per_company_per_day: int | None = None
+    pii_retention_days: int | None = None
+    presubmit_duplicate_cooldown_days: int | None = None
+
+
 class SandboxConnectionIn(BaseModel):
     """Native Windows automation-sandbox connection (Proxmox VM) + login.
 
@@ -460,6 +476,36 @@ def setup_applicant_setup_routes() -> APIRouter:
                 await engine.setup_configure_sandbox_connection(body.model_dump())
         except EngineError as exc:
             logger.info("applicant configure sandbox connection failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content={"ok": True})
+
+    # ── Settings > Automation (dark-engine audit items 82/84/85) ───────
+
+    @router.get("/automation")
+    async def get_automation_prefs(request: Request) -> JSONResponse:
+        """Browser fingerprint timezone/locale, the automated-account-creation
+        opt-in, and the per-company daily application cap -- merged onto the
+        engine's env defaults so this always reflects a real, effective value."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.setup_get_automation_prefs()
+        except EngineError as exc:
+            logger.info("applicant get automation prefs failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.put("/automation")
+    async def set_automation_prefs(body: AutomationPrefsIn, request: Request) -> JSONResponse:
+        """Save Settings > Automation overrides (owner-scoped config change)."""
+        require_privilege(request, _CONFIG_PRIV)
+        try:
+            async with ApplicantEngineClient() as engine:
+                await engine.setup_set_automation_prefs(
+                    body.model_dump(exclude_unset=True)
+                )
+        except EngineError as exc:
+            logger.info("applicant set automation prefs failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content={"ok": True})
 

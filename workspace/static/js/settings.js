@@ -78,6 +78,20 @@ function mountRelocatedSetupStep(tab) {
       });
     }
   }
+  // The Automation tab (dark-engine audit items 82/84/85) hosts the generic
+  // engine-preferences module, a self-contained tab mounted the same way as
+  // Campaign/the model ladder above.
+  if (tab === 'automation') {
+    const automationHost = document.getElementById('ao-settings-automation');
+    const mountAutomation = window.mountApplicantAutomationSettings;
+    if (automationHost && typeof mountAutomation === 'function') {
+      automationHost.innerHTML = '';
+      Promise.resolve(mountAutomation(automationHost)).catch(e => {
+        console.error('Failed to mount automation settings:', e);
+        automationHost.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load automation preferences.</p>';
+      });
+    }
+  }
   const cfg = RELOCATED_SETUP_STEPS[tab];
   if (!cfg) return;
   const host = document.getElementById(cfg.host);
@@ -93,6 +107,50 @@ function mountRelocatedSetupStep(tab) {
     console.error('Failed to mount settings step:', e);
     host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Could not load this section.</p>';
   });
+}
+
+/* ── Automation tab (dark-engine audit items 82/84/85) ──
+   The existing "sandbox" tab already carries the visible label "Automation" (it
+   hosts the automation-SANDBOX config -- where the driven browser runs). This new
+   tab is a broader, generic engine-preferences home (the audit's "no generic
+   engine-preferences tab" gap), so it is labelled "Automation Preferences" in the
+   sidebar to stay distinct from the existing tab rather than colliding with it.
+   Its markup isn't in static/index.html (out of this phase's file lane), so it is
+   built here at Settings-modal init time and inserted next to the Campaign tab --
+   the closest sibling (both are self-contained, engine-config-store-backed tabs
+   mounted the same way). Idempotent: a no-op if already injected (e.g. Settings
+   opened twice in one page load). */
+function injectAutomationTab() {
+  if (!modalEl || modalEl.querySelector('[data-settings-tab="automation"]')) return;
+  const sidebar = modalEl.querySelector('.settings-sidebar');
+  const panels = modalEl.querySelector('.settings-panels');
+  if (!sidebar || !panels) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'settings-nav-item admin-only';
+  btn.dataset.settingsTab = 'automation';
+  btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    + '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>'
+    + '<line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>'
+    + '<line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>'
+    + '<line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>'
+    + '</svg><span>Automation Preferences</span>';
+  const campaignBtn = sidebar.querySelector('[data-settings-tab="campaign"]');
+  if (campaignBtn) {
+    campaignBtn.insertAdjacentElement('afterend', btn);
+  } else {
+    sidebar.appendChild(btn);
+  }
+
+  const panel = document.createElement('div');
+  panel.dataset.settingsPanel = 'automation';
+  panel.className = 'hidden';
+  panel.innerHTML = '<div class="admin-toggle-sub" style="margin-bottom:10px">'
+    + 'Engine-level automation preferences — browser identity, account creation, '
+    + 'and safety limits.</div>'
+    + '<div id="ao-settings-automation"></div>';
+  panels.appendChild(panel);
 }
 
 /* ── Dragging ── */
@@ -2153,6 +2211,7 @@ function initAccount() {
 
 function initAll() {
   modalEl = el('settings-modal');
+  injectAutomationTab(); // must run before initTabs() binds [data-settings-tab] clicks
   initTabs();
   initDrag();
   initClose();

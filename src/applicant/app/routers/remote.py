@@ -304,6 +304,62 @@ def resume_detection_step(
     return {"application_id": application_id, "state": result.state.value}
 
 
+#: Pending-action kinds that carry an emergency copy/paste handoff payload
+#: (FR-PREFILL-7): a hard fill failure (``PrefillService.emergency_handoff``) and
+#: a near-empty "wrong ATS" fill (``flag_probable_wrong_ats``, #177) — both land
+#: EMERGENCY_DATA_HANDOFF via the same value-assembly + transition.
+_HANDOFF_KINDS = frozenset({"emergency_handoff", "wrong_ats"})
+
+
+@router.get("/applications/{application_id}/emergency-handoff")
+def get_emergency_handoff(
+    application_id: str,
+    storage=Depends(get_storage),
+) -> dict:
+    """The emergency copy/paste handoff values for an application (FR-PREFILL-7).
+
+    Meaningful once pre-fill reported it tried to fill the form and failed and the
+    application landed ``EMERGENCY_DATA_HANDOFF`` — a hard fill failure or a
+    near-empty "wrong ATS" fill (#177), both routed through
+    ``PrefillService.emergency_handoff``. Returns the values the agent WOULD have
+    filled, for the user to paste into their own browser and finish the
+    application by hand, alongside the open pending action's title so the
+    takeover UI can render one panel. ``available: False`` (never a 404) when
+    there is no open handoff for this application — the panel simply stays
+    hidden rather than erroring, since a caller may poll this during any
+    live-takeover session.
+    """
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
+    action = None
+    for candidate in storage.pending_actions.list_open(app.campaign_id):
+        if (
+            str(getattr(candidate, "application_id", "")) == application_id
+            and candidate.kind in _HANDOFF_KINDS
+        ):
+            action = candidate
+            break
+    if action is None:
+        return {
+            "application_id": application_id,
+            "state": app.status.value,
+            "available": False,
+            "handoff_values": {},
+        }
+    payload = action.payload or {}
+    return {
+        "application_id": application_id,
+        "state": app.status.value,
+        "available": True,
+        "kind": action.kind,
+        "title": action.title,
+        "handoff_values": payload.get("handoff_values", {}),
+        "session_url": payload.get("session_url"),
+        "match_rate_pct": payload.get("match_rate_pct"),
+    }
+
+
 @router.post("/applications/{application_id}/submit-self", status_code=201)
 def submit_self(
     application_id: str,

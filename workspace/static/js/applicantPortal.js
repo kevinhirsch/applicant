@@ -1042,9 +1042,42 @@ function _renderSession(item) {
   return handoff + action;
 }
 
+// Dark-engine audit #55: the engine scores every matched role (a 0-100
+// viability score + a plain-language "why this role" rationale) but that only
+// ever rendered inside the digest itself (Email tab). Each digest-approval row
+// here already IS one specific scored posting (`payload.posting_id` /
+// `payload.score` — see `DigestService.deliver`/`PendingActionsService.
+// digest_approval`), so this card can show that same score right away instead
+// of forcing a deep-link to "see why". The plain-language rationale text
+// itself isn't stored on the pending action (only the numeric score is), so
+// it is fetched lazily by `_wireDigestWhy` below, reusing the EXACT SAME
+// `digestModule.fetchDigest` read (and its `why_suggested` field) the digest
+// panel and the Portal's own "Today's roles" embed already use — never a
+// second scoring/formatting implementation.
+function _digestScoreLine(item) {
+  const score = item && item.payload && item.payload.score;
+  if (score == null || score === '') return '';
+  return `<div style="font-size:12px;margin-bottom:4px;">`
+    + `<span class="memory-count" title="How well this role fits what you told the assistant" `
+    + `style="font-size:10.5px;font-weight:600;opacity:0.85;">${esc(String(score))}% match</span></div>`;
+}
+
 function _renderDigest(item) {
+  const postingId = item && item.payload && item.payload.posting_id;
+  const scoreLine = _digestScoreLine(item);
+  // Populated asynchronously by `_wireDigestWhy` once the matching digest row
+  // loads; left empty (not a "Loading…" placeholder) so a stale/expired
+  // posting id just renders no line at all instead of a permanent spinner.
+  const whyLine = postingId
+    ? `<div class="applicant-portal-digest-why" data-digest-why="${esc(String(item.id))}" `
+      + `data-digest-posting="${esc(String(postingId))}" data-digest-campaign="${esc(String(item.campaign_id || ''))}" `
+      + `style="font-size:11px;opacity:0.72;margin-bottom:6px;display:-webkit-box;-webkit-box-orient:vertical;`
+      + `-webkit-line-clamp:2;line-clamp:2;overflow:hidden;"></div>`
+    : '';
   return `
-    <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">Review the matched roles and approve or skip each one.</div>
+    <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">Review the matched role and approve or skip it.</div>
+    ${scoreLine}
+    ${whyLine}
     <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review applications</button>`;
 }
 
@@ -1206,6 +1239,51 @@ function _renderList(body) {
     : '';
   body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}`;
   _wireRows(body);
+  _wireDigestWhy(body);
+}
+
+// ── Matched-role "why" (dark-engine audit #55) ──────────────────────────────
+//
+// One digest row's plain-language rationale, fetched lazily. Rows are grouped
+// by campaign BEFORE fetching (below) so several matched-role cards open at
+// once in the SAME render still cost one digest read per campaign, not one
+// per row. Deliberately no cross-render cache: `_renderList` calls this fresh
+// on every pending-list render (`_load`'s initial paint and its notifications
+// fold-in), which already keeps this cheap without risking a stale/expired
+// posting's rationale surviving past that render.
+function _digestRowsForCampaign(campaignId) {
+  if (!campaignId) return Promise.resolve([]);
+  return digestModule.fetchDigest(campaignId)
+    .then((data) => ((data && Array.isArray(data.rows)) ? data.rows : []))
+    .catch(() => []);
+}
+
+// Fills in each rendered `[data-digest-why]` placeholder with the matching
+// digest row's `why_suggested` text (the same field `buildDigestRow` in
+// applicantDigest.js renders) once its campaign's digest loads. Best-effort:
+// a posting that no longer appears in the digest (already acted on, expired,
+// or the engine is unreachable) just leaves the line blank instead of erroring.
+async function _wireDigestWhy(host) {
+  const nodes = Array.from(host.querySelectorAll('[data-digest-why]'));
+  if (!nodes.length) return;
+  const byCampaign = new Map();
+  nodes.forEach((el) => {
+    const cid = el.getAttribute('data-digest-campaign') || '';
+    if (!byCampaign.has(cid)) byCampaign.set(cid, []);
+    byCampaign.get(cid).push(el);
+  });
+  await Promise.all(Array.from(byCampaign.entries()).map(async ([cid, els]) => {
+    const rows = await _digestRowsForCampaign(cid);
+    els.forEach((el) => {
+      const pid = el.getAttribute('data-digest-posting') || '';
+      const row = rows.find((r) => r && String(r.posting_id) === pid);
+      const why = row && (row.why_suggested || row.reason);
+      if (why) {
+        el.textContent = String(why);
+        el.title = 'Why the assistant suggested this';
+      }
+    });
+  }));
 }
 
 // ── Deep links + global seams ──────────────────────────────────────────────────

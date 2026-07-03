@@ -352,6 +352,18 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
+    # -- setup: Settings > Automation (dark-engine audit items 82/84/85) --
+
+    async def setup_get_automation_prefs(self) -> Any:
+        """Browser fingerprint timezone/locale, the automated-account-creation
+        opt-in, and the per-company daily application cap -- persisted
+        overrides merged onto the engine's env defaults."""
+        return await self._request("GET", "/api/setup/automation")
+
+    async def setup_set_automation_prefs(self, body: dict) -> Any:
+        """Save Settings > Automation overrides. 204 -> None."""
+        return await self._request("PUT", "/api/setup/automation", json=body)
+
     # -- setup wizard: automation sandbox backend (FR-SANDBOX-1, FR-OOBE) --
 
     async def setup_get_sandbox_connection(self) -> Any:
@@ -745,6 +757,18 @@ class ApplicantEngineClient:
         """
         return await self._request("GET", "/api/admin/prefill-diagnostics")
 
+    async def admin_lessons(self, ats: Optional[str] = None) -> Any:
+        """Verbal Reflexion failure lessons the loop has learned (dark-engine audit #44).
+
+        With ``ats`` omitted, every recorded lesson grouped by ATS domain; with
+        ``ats`` given, just the lessons for that one domain — the same read the
+        engine's pre-fill loop performs before its next fill attempt on it.
+        Process-global (not campaign-scoped), like ``admin_prefill_diagnostics``.
+        """
+        if ats:
+            return await self._request("GET", f"/api/admin/lessons/{ats}")
+        return await self._request("GET", "/api/admin/lessons")
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.
@@ -816,6 +840,24 @@ class ApplicantEngineClient:
         the one row it needs."""
         return await self._request(
             "GET", f"/api/admin/history/{campaign_id}", params={"limit": limit}
+        )
+
+    # -- paused/stuck applications (engine routers/admin.py, dark-engine audit
+    #    #62) ------------------------------------------------------------------
+    # After repeated failed resume attempts the engine loop stops re-driving an
+    # application and fires one deduped notification; these expose the give-up
+    # list itself + a way to clear it (previously only a full process restart
+    # could unstick an application, and nothing could even list which ones were
+    # stuck).
+
+    async def admin_stuck_applications(self, campaign_id: str) -> Any:
+        """Applications the engine loop has given up re-driving, for one campaign."""
+        return await self._request("GET", f"/api/admin/stuck-applications/{campaign_id}")
+
+    async def admin_retry_stuck_application(self, application_id: str) -> Any:
+        """Clear one application's give-up flag so the loop re-drives it next tick."""
+        return await self._request(
+            "POST", f"/api/admin/stuck-applications/{application_id}/retry"
         )
 
     # -- in-UI update button (engine routers/update.py) ----------------------
@@ -931,6 +973,15 @@ class ApplicantEngineClient:
         user's on-device approval, then continue pre-fill (or re-notify for a retry)."""
         return await self._request(
             "POST", f"/api/remote/applications/{application_id}/continue-two-factor"
+        )
+
+    async def emergency_handoff(self, application_id: str) -> Any:
+        """The emergency copy/paste handoff values for an application (FR-PREFILL-7):
+        what the agent would have filled in, for the user to paste into their own
+        browser and finish by hand after a hard fill failure (or a near-empty
+        "wrong ATS" fill, #177)."""
+        return await self._request(
+            "GET", f"/api/remote/applications/{application_id}/emergency-handoff"
         )
 
     async def stealth_caveat(self) -> Any:

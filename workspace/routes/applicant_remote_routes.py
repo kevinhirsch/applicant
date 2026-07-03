@@ -33,9 +33,11 @@ unreachable, otherwise the engine's own status) instead of a 500 + traceback.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -66,6 +68,46 @@ class DesktopActionIn(BaseModel):
     app: str = ""
     intent: str | None = None
     mode: str = "som"
+
+
+async def _owner_application_ids(engine: ApplicantEngineClient) -> Optional[set]:
+    """Application ids with an open pending action in one of the owner's OWN
+    campaigns, or ``None`` when the campaign list itself could not be resolved
+    (engine unreachable).
+
+    The engine has no owner concept of its own (single-tenant per deployment,
+    CLAUDE.md), so THIS request's own ``list_campaigns()`` -> ``list_pending_actions()``
+    fan-out is the ONLY scoping boundary — mirrors
+    ``applicant_tracker_routes._owner_application_ids`` / ``applicant_campaigns_routes.
+    _owner_campaign_ids``. An emergency-handoff record is always backed by an open
+    pending action (``emergency_handoff`` / ``wrong_ats``), so this fan-out both
+    scopes the read AND lines up with what the handoff endpoint actually needs.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("remote: campaigns read failed: %s", exc)
+        return None
+    if not isinstance(campaigns, list):
+        return set()
+    campaign_ids = [
+        str(c["id"]) for c in campaigns if isinstance(c, dict) and c.get("id")
+    ]
+    if not campaign_ids:
+        return set()
+    results = await asyncio.gather(
+        *(engine.list_pending_actions(cid) for cid in campaign_ids),
+        return_exceptions=True,
+    )
+    ids: set[str] = set()
+    for data in results:
+        if isinstance(data, BaseException):
+            continue
+        raw_items = data.get("items") if isinstance(data, dict) else data
+        for raw in raw_items or []:
+            if isinstance(raw, dict) and raw.get("application_id"):
+                ids.add(str(raw["application_id"]))
+    return ids
 
 
 def _engine_error_response(exc: EngineError) -> JSONResponse:
@@ -250,6 +292,38 @@ def setup_applicant_remote_routes() -> APIRouter:
                 data = await engine.continue_two_factor(application_id)
         except EngineError as exc:
             logger.info("applicant remote continue-two-factor failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
+    @router.get("/applications/{application_id}/emergency-handoff")
+    async def emergency_handoff(application_id: str, request: Request) -> JSONResponse:
+        """The emergency copy/paste handoff values for one of the OWNER's OWN
+        applications (FR-PREFILL-7) — what the agent would have filled in, for
+        the "fill these in yourself" panel during a live-takeover session, after
+        a hard fill failure or a near-empty "wrong ATS" fill (#177).
+
+        Owner-scoped via ``_owner_application_ids`` (the SAME fan-out guard as the
+        Tracker's outcome write, ``applicant_tracker_routes.py``): a caller cannot
+        read another owner's handoff values by guessing an application id.
+        """
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                owned = await _owner_application_ids(engine)
+                if owned is None:
+                    return JSONResponse(
+                        content={
+                            "application_id": application_id,
+                            "available": False,
+                            "engine_available": False,
+                            "handoff_values": {},
+                        }
+                    )
+                if application_id not in owned:
+                    raise HTTPException(status_code=404, detail="No such application.")
+                data = await engine.emergency_handoff(application_id)
+        except EngineError as exc:
+            logger.info("applicant remote emergency-handoff failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 

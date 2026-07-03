@@ -127,6 +127,7 @@ function _ensureModalEl() {
         </div>
       </div>
       <div id="applicant-tracker-suggestions" style="display:none;flex-shrink:0;max-height:38vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
+      <div id="applicant-tracker-stuck" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div class="modal-body" id="applicant-tracker-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
       </div>
@@ -135,7 +136,7 @@ function _ensureModalEl() {
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-tracker-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => _load(true));
+  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => { _load(true); _loadStuck(); });
   const findBtn = modal.querySelector('#applicant-tracker-find-emails');
   findBtn.addEventListener('click', () => _onFindResponses(findBtn));
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -330,6 +331,100 @@ function _renderGated(host, data) {
   const msg = (data && data.message)
     || 'Finish onboarding and connect a model to start tracking your applications.';
   host.innerHTML = gatedHTML(msg);
+}
+
+// ── Paused applications (dark-engine audit #62) ─────────────────────────────
+// After 5 failed resume attempts the engine loop stops re-driving an
+// application and fires ONE deduped "needs a look" notification — but nothing
+// let an owner SEE the paused application or unstick it short of restarting
+// the whole engine process. This is a SEPARATE section from the buckets
+// above (it spans applications that never reached a submitted state at all,
+// so it can never live inside a per-row "View details" disclosure) — a small
+// banner-style panel above the board with a "Retry now" per row that clears
+// the engine's give-up flag so the very next tick picks the application back
+// up. Loaded independently of the board fetch (own panel element, own
+// endpoint) so a paused application still shows even when the board itself is
+// empty/gated/offline, and degrades silently (hides itself) on any failure —
+// this is a bonus surface, never allowed to blank out the primary tracker.
+
+function _stuckPanelEl() {
+  return _modalEl && _modalEl.querySelector('#applicant-tracker-stuck');
+}
+
+function _stuckLabel(app) {
+  const role = String(app.job_title || app.role_name || 'A role').trim() || 'A role';
+  const company = app.company ? ` at ${app.company}` : '';
+  return `${role}${company}`;
+}
+
+function _renderStuckRow(app) {
+  const id = esc(String(app.application_id || ''));
+  const label = esc(_stuckLabel(app));
+  const failures = Number(app.failures || 0) || 0;
+  const busy = _busyIds.has(String(app.application_id));
+  return `
+    <div class="memory-item ow-list-row" data-stuck-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:6px 4px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+        <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">Applicant couldn't resume this after ${esc(String(failures))} tries and paused work on it.</div>
+      </div>
+      <button class="cal-btn" type="button" data-stuck-retry="${id}" ${busy ? 'disabled' : ''} aria-label="Retry ${label}">Retry now</button>
+    </div>`;
+}
+
+function _renderStuckPanel(rows) {
+  return `
+    <div style="padding:8px 10px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.6;color:var(--red,#e5484d);">Needs a look</span>
+        <span style="font-size:9.5px;opacity:0.4;">(${rows.length})</span>
+      </div>
+      ${rows.map(_renderStuckRow).join('')}
+    </div>`;
+}
+
+async function _loadStuck() {
+  const panel = _stuckPanelEl();
+  if (!panel) return;
+  try {
+    const data = await _fetchJSON(`${API}/stuck`);
+    const rows = Array.isArray(data && data.applications) ? data.applications : [];
+    if (!rows.length) {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = _renderStuckPanel(rows);
+    panel.querySelectorAll('[data-stuck-retry]').forEach((btn) => {
+      btn.addEventListener('click', () => _retryStuck(btn));
+    });
+  } catch {
+    // Bonus surface — never show an error banner over the primary tracker;
+    // just hide the panel and try again on the next refresh/poll.
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+  }
+}
+
+async function _retryStuck(btn) {
+  const id = btn.getAttribute('data-stuck-retry');
+  if (!id || _busyIds.has(id)) return;
+  _busyIds.add(id);
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Retrying…';
+  try {
+    await _post(`${API}/applications/${encodeURIComponent(id)}/retry`, {});
+    _toast("Retrying — Applicant will pick this back up on its next pass.");
+    await _loadStuck();
+  } catch (e) {
+    _toast(errText(e));
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  } finally {
+    _busyIds.delete(id);
+  }
 }
 
 // ── Data flow ────────────────────────────────────────────────────────────────
@@ -975,10 +1070,10 @@ export async function openApplicantTracker() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  await _load(true);
+  await Promise.all([_load(true), _loadStuck()]);
   // Keep it fresh while open (only while the tab is visible).
   if (_pollStop) _pollStop();
-  _pollStop = pollVisible(() => _load(false), 60000);
+  _pollStop = pollVisible(() => { _load(false); _loadStuck(); }, 60000);
 }
 
 // ── Launcher + boot ──────────────────────────────────────────────────────────

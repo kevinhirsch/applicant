@@ -313,16 +313,25 @@ class DigestService:
     def _presubmit_warnings(self, campaign_id: CampaignId, posting) -> list[dict]:
         """Human-readable presubmit-safety warnings for one digest row.
 
-        Reuses ``presubmit_safety.check_scam_or_ghost_job`` / ``check_duplicate_application``
-        unchanged (same reasons/thresholds AgentLoop enforces at pipeline-start) but
-        catches ``PresubmitBlock`` instead of letting it stop anything — a digest
-        warning informs, it does not block. Any unexpected failure degrades to "no
-        warning" rather than breaking the digest hot path (mirrors every other
-        best-effort branch in this file).
+        Reuses ALL FOUR ``presubmit_safety`` checks unchanged (same reasons/
+        thresholds/param keys ``AgentLoop._process_approvals`` enforces at
+        pipeline-start — see that call site) but catches ``PresubmitBlock``
+        instead of letting it stop anything — a digest warning informs, it does
+        not block. Any unexpected failure degrades to "no warning" rather than
+        breaking the digest hot path (mirrors every other best-effort branch in
+        this file).
+
+        Dark-engine audit #43: ``check_per_company_volume_cap`` / ``check_eligibility``
+        were already fully implemented and already wired into the pipeline-start
+        gate, but — like the scam/duplicate checks before this file's first pass —
+        were never surfaced as a pre-approval signal. This closes that gap the
+        same way: read-only, additive to the two checks already wired here.
         """
         from applicant.application.services.presubmit_safety import (
             PresubmitBlock,
             check_duplicate_application,
+            check_eligibility,
+            check_per_company_volume_cap,
             check_scam_or_ghost_job,
         )
 
@@ -347,6 +356,27 @@ class DigestService:
             warnings.append({"check": exc.check, "message": exc.reason})
         except Exception:  # pragma: no cover - defensive
             log.warning("digest_presubmit_duplicate_check_failed", exc_info=True)
+        try:
+            check_per_company_volume_cap(
+                campaign_id,
+                posting,
+                self._storage,
+                max_per_day=params.get("max_apps_per_company_per_day", 3),
+            )
+        except PresubmitBlock as exc:
+            warnings.append({"check": exc.check, "message": exc.reason})
+        except Exception:  # pragma: no cover - defensive
+            log.warning("digest_presubmit_volume_cap_check_failed", exc_info=True)
+        # Mirrors AgentLoop: eligibility is the one check gated behind a settings
+        # flag (an operator may not have filled in work-authorization intake yet,
+        # in which case the check would just be noise).
+        if params.get("eligibility_enabled", True):
+            try:
+                check_eligibility(campaign_id, posting, self._storage)
+            except PresubmitBlock as exc:
+                warnings.append({"check": exc.check, "message": exc.reason})
+            except Exception:  # pragma: no cover - defensive
+                log.warning("digest_presubmit_eligibility_check_failed", exc_info=True)
         return warnings
 
     def build_digest_payload(
