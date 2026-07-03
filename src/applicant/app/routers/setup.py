@@ -8,6 +8,8 @@ tier ladder (FR-LLM-2/3) and per-step wizard advance (FR-OOBE-2) are all here.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -197,10 +199,67 @@ def configure_llm_from_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+def _routing_status(container) -> dict:
+    """Real-time smart-router state for the model-ladder UI (dark-engine audit item 74).
+
+    The router silently reorders the walked tier order every resolve, so the ladder
+    editor alone can't tell a user which endpoint is actually serving requests. This
+    reads the SAME router instance the live LLM adapter uses (``container.llm_router``)
+    — never a fabricated/guessed value — so what's shown always matches reality.
+    ``enabled=False`` covers both "smart routing is off" (the ladder runs in its
+    configured order unchanged) and "no router is wired" (no smart-routing endpoints
+    configured yet).
+    """
+    settings = container.settings
+    out: dict[str, Any] = {
+        "enabled": bool(settings.llm_smart_routing),
+        "prefer_local": bool(settings.llm_smart_routing_prefer_local),
+        "active_endpoint": None,
+        "reordered": False,
+        "health": None,
+    }
+    router = container.llm_router
+    if not out["enabled"] or router is None:
+        return out
+    from applicant.ports.driven.llm_router import CostTier, TaskType
+
+    try:
+        out["health"] = router.health()
+    except Exception:  # pragma: no cover - defensive, mirrors order_ladder_by_router
+        out["health"] = None
+    try:
+        cost_tier = CostTier.LOWEST if out["prefer_local"] else CostTier.BALANCED
+        selected = router.select_endpoint(
+            TaskType.CHAT, cost_tier=cost_tier, prefer_local=out["prefer_local"]
+        )
+    except Exception:  # pragma: no cover - defensive, mirrors order_ladder_by_router
+        selected = None
+    if not selected:
+        return out
+    out["active_endpoint"] = {
+        "name": selected.get("name", ""),
+        "base_url": selected.get("base_url", ""),
+    }
+    tiers = container.setup_service.get_tiers()
+    first_base = _norm_base(tiers[0].get("base_url", "")) if tiers else ""
+    if first_base:
+        out["reordered"] = _norm_base(selected.get("base_url", "")) != first_base
+    return out
+
+
+def _norm_base(url: str) -> str:
+    return (url or "").strip().lower().rstrip("/")
+
+
 @router.get("/llm/tiers")
-def get_tiers(svc=Depends(get_setup_service)) -> dict:
-    """Return the persisted tier ladder (secrets omitted) for the UI (FR-LLM-3)."""
-    return {"tiers": svc.get_tiers()}
+def get_tiers(svc=Depends(get_setup_service), container=Depends(get_container)) -> dict:
+    """Return the persisted tier ladder (secrets omitted) plus live routing status.
+
+    ``routing`` reports which endpoint the smart router actually picked and whether
+    that reorders the configured Level-1 tier (dark-engine audit item 74) — see
+    ``_routing_status``.
+    """
+    return {"tiers": svc.get_tiers(), "routing": _routing_status(container)}
 
 
 @router.put("/llm/tiers", status_code=status.HTTP_204_NO_CONTENT)
