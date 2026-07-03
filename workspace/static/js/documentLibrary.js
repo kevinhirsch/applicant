@@ -1838,6 +1838,24 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return (type || 'Document').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 
+    // Plain-language "why this variant" line (dark-engine audit item 53): the
+    // per-variant JD keyword coverage the engine already computes and stores
+    // (``ResumeFitScoring.coverage``/``missing_terms``, on the wire as
+    // ``fit_scores: {coverage, missing_terms}``) turned into "Covers 82% of the
+    // posting's language; missing: Kubernetes, SOC 2". Real data only — a
+    // variant that has not been JD-matched yet has no ``coverage`` number, and
+    // this returns '' (render nothing) rather than fabricate one.
+    function _applicantFitScoreText(fitScores) {
+      const scores = (fitScores && typeof fitScores === 'object') ? fitScores : {};
+      const coverage = Number(scores.coverage);
+      if (!Number.isFinite(coverage)) return '';
+      const pct = Math.round(Math.max(0, Math.min(1, coverage)) * 100);
+      const missing = Array.isArray(scores.missing_terms) ? scores.missing_terms.filter(Boolean) : [];
+      let text = `Covers ${pct}% of the posting's language`;
+      if (missing.length) text += `; missing: ${missing.slice(0, 8).join(', ')}`;
+      return text;
+    }
+
     // Compact, first-person "What I drew on" panel — surfaces the learned items
     // (saved preferences / playbooks / a prior application) that shaped a draft so
     // the assistant's learning is visible and the user can trust where the
@@ -2069,16 +2087,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       container.innerHTML = variants.map((v) => {
         const id = v.variant_id || v.id || 'Variant';
-        const scores = v.fit_scores || {};
-        const vals = Object.values(scores).map(Number).filter((n) => !Number.isNaN(n));
-        const scoreText = vals.length ? `best fit ${esc(Math.max(...vals).toFixed(2))}` : 'not scored';
+        // "Why this variant" (dark-engine audit item 53): the engine's real
+        // JD-keyword coverage for this tailored resume, in plain language.
+        // 'not scored' when this variant has not been JD-matched yet.
+        const scoreText = _applicantFitScoreText(v.fit_scores) || 'not scored';
         const approved = v.approved === true ? 'approved' : 'awaiting review';
         const depth = v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : '';
         const from = v.parent_id ? ` · from ${esc(v.parent_id)}` : '';
         return `<div class="admin-card" style="margin-top:6px;">` +
           `<div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>` +
           `<div class="memory-desc" style="opacity:0.7;margin-top:2px;">` +
-            `${scoreText} · ${esc(approved)}${depth}${from}</div>` +
+            `${esc(scoreText)} · ${esc(approved)}${depth}${from}</div>` +
         `</div>`;
       }).join('');
     }
@@ -2254,6 +2273,22 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       // below. Hidden entirely when the assistant drew on nothing learned.
       const drewOn = _applicantProvenancePanel(item.provenance);
       if (drewOn) card.appendChild(drewOn);
+
+      // "Why this variant" — the engine's JD-keyword coverage for this specific
+      // tailored resume (dark-engine audit item 53). Advisory evidence for the
+      // approve/download/promote decisions below; hidden entirely when this
+      // variant has not been JD-matched yet (no fabricated percentage).
+      if (isVariant) {
+        const fitText = _applicantFitScoreText(item.fit_scores);
+        if (fitText) {
+          const fit = document.createElement('div');
+          fit.className = 'doclib-card-fitscore';
+          fit.style.cssText = 'font-size:11px;opacity:0.85;';
+          fit.title = "How much of the job posting's language this tailored resume already covers, and the highest-signal terms it's still missing.";
+          fit.textContent = fitText;
+          card.appendChild(fit);
+        }
+      }
 
       const actions = document.createElement('div');
       actions.className = 'doclib-card-expanded-actions';
