@@ -269,6 +269,18 @@ def setup_applicant_admin_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             return await _soft_get(engine.admin_stealth(), {})
 
+    @router.get("/prefill-diagnostics")
+    async def prefill_diagnostics(request: Request) -> dict:
+        """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
+
+        Credential/LLM/login failures that pre-fill degraded gracefully from
+        (never crashed) but still left a trace for the operator instead of
+        vanishing silently. Process-global, not campaign-scoped.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(engine.admin_prefill_diagnostics(), {"diagnostics": []})
+
     @router.get("/log/{application_id}")
     async def application_log(application_id: str, request: Request) -> dict:
         """Full logged detail for one application (detail + screenshots + outcomes)."""
