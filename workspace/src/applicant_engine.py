@@ -352,6 +352,18 @@ class ApplicantEngineClient:
     async def setup_advance(self, step: str) -> Any:
         return await self._request("POST", f"/api/setup/advance/{step}")
 
+    # -- setup: Settings > Automation (dark-engine audit items 82/84/85) --
+
+    async def setup_get_automation_prefs(self) -> Any:
+        """Browser fingerprint timezone/locale, the automated-account-creation
+        opt-in, and the per-company daily application cap -- persisted
+        overrides merged onto the engine's env defaults."""
+        return await self._request("GET", "/api/setup/automation")
+
+    async def setup_set_automation_prefs(self, body: dict) -> Any:
+        """Save Settings > Automation overrides. 204 -> None."""
+        return await self._request("PUT", "/api/setup/automation", json=body)
+
     # -- setup wizard: automation sandbox backend (FR-SANDBOX-1, FR-OOBE) --
 
     async def setup_get_sandbox_connection(self) -> Any:
