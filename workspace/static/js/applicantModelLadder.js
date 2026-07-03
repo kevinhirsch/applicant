@@ -33,6 +33,10 @@ const PROVIDERS = [
 
 let _host = null;
 let _tiers = [];
+// Live smart-routing status from the engine (dark-engine audit item 74): which
+// endpoint is actually being called and why, straight from the router the LLM
+// adapter itself uses — never fabricated/guessed here.
+let _routing = null;
 
 
 
@@ -63,7 +67,44 @@ async function _load() {
     _hasKey: !!(t.api_key_ref || t.api_key),
   }));
   _tiers = tiers.length ? tiers : [_blankTier()];
+  _routing = data.routing || null;
   _render(data.engine_available === false);
+}
+
+// Renders the live routing status row: which endpoint is actually being used
+// right now, and why (health-based reorder / local preference), sourced only
+// from the engine's real router state (`data.routing`, never guessed here).
+function _routingStatusHTML() {
+  const r = _routing;
+  if (!r) return '';
+  if (!r.enabled) {
+    return '<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:10px;">Smart routing is off — requests always start at Level 1, in the order above.</div>';
+  }
+  const active = r.active_endpoint;
+  const health = r.health || {};
+  let line;
+  if (active && active.name) {
+    line = r.reordered
+      ? `Right now, requests are actually going to <strong>${esc(active.name)}</strong> — ahead of Level 1 because ${r.prefer_local ? 'a local model is online and preferred' : 'it is the best available match right now'}.`
+      : `Right now, requests are going to <strong>${esc(active.name)}</strong> — the configured Level 1.`;
+  } else {
+    line = 'No online endpoint reported yet — requests fall back to the ladder order above.';
+  }
+  const healthBits = [];
+  if (typeof health.endpoints_online === 'number') {
+    healthBits.push(`${health.endpoints_online}/${health.endpoints_total || 0} endpoints online`);
+  }
+  if (health.has_local_fallback) healthBits.push('a local fallback is available');
+  const healthLine = healthBits.length
+    ? ` <span style="opacity:0.6;">(${esc(healthBits.join(' · '))})</span>`
+    : '';
+  return `
+    <div class="admin-card og-card" id="ml-routing-status" style="margin-bottom:10px;">
+      <div style="font-weight:600;margin-bottom:4px;">Smart routing
+        <span class="admin-toggle-sub" style="font-weight:400;opacity:0.7;"> — ${r.prefer_local ? 'prefers a local model when one is online' : 'balances cost against capability'}</span>
+      </div>
+      <div class="admin-toggle-sub">${line}${healthLine}</div>
+    </div>`;
 }
 
 // Read the live input values back into _tiers so reorder/add/remove never lose edits.
@@ -133,6 +174,7 @@ function _render(offline) {
       low confidence, a prompt too long for the current model, or a heavy task like writing a resume or cover letter.
       Put your cheapest capable model first and your strongest last.
     </div>
+    ${_routingStatusHTML()}
     <div id="ml-rows">${_tiers.map((t, i) => _tierRowHTML(t, i)).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
       <button class="cal-btn" id="ml-add" ${_tiers.length >= MAX_TIERS ? 'disabled' : ''}>+ Add a level</button>
