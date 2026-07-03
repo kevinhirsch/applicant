@@ -757,6 +757,18 @@ class ApplicantEngineClient:
         """
         return await self._request("GET", "/api/admin/prefill-diagnostics")
 
+    async def admin_lessons(self, ats: Optional[str] = None) -> Any:
+        """Verbal Reflexion failure lessons the loop has learned (dark-engine audit #44).
+
+        With ``ats`` omitted, every recorded lesson grouped by ATS domain; with
+        ``ats`` given, just the lessons for that one domain — the same read the
+        engine's pre-fill loop performs before its next fill attempt on it.
+        Process-global (not campaign-scoped), like ``admin_prefill_diagnostics``.
+        """
+        if ats:
+            return await self._request("GET", f"/api/admin/lessons/{ats}")
+        return await self._request("GET", "/api/admin/lessons")
+
     # -- gallery collections (engine routers/gallery.py, issue #296) ----------
     # Screenshots + generated materials for a campaign, grouped into collections
     # for a simple grid view. Read-only; backed 1:1 by AdminQueryService.

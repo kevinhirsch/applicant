@@ -173,6 +173,28 @@ function _renderCuration(curation) {
   }).join('') + `</ul>`;
 }
 
+function _renderLessons(data) {
+  // #44 (dark-engine audit, Reflexion): a verbal lesson the loop distilled from a
+  // real pre-fill failure on a given job site (ATS), recalled before its next fill
+  // attempt there. Grouped by ATS, mirroring the saved-playbook list above.
+  const grouped = (data && data.lessons) || {};
+  const atsKeys = Object.keys(grouped).sort();
+  if (!atsKeys.length) {
+    return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+      No lessons learned yet — when a pre-fill attempt runs into trouble on a job
+      site, what the assistant figures out gets remembered here for next time.</div>`;
+  }
+  return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + atsKeys.map((ats) => {
+    const items = grouped[ats] || [];
+    const rows = items.map((l) => `<li style="margin:4px 0;">${esc(l.lesson || '')}</li>`).join('');
+    return `<li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+        border-radius:8px;padding:8px 10px;margin:6px 0;">
+      <div style="font-weight:600;">${esc(ats)}</div>
+      <ul style="margin:4px 0 0;padding-left:18px;opacity:0.9;">${rows}</ul>
+    </li>`;
+  }).join('') + `</ul>`;
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -275,10 +297,11 @@ export async function openApplicantMind(opts) {
   try {
     const status = await _fetchJSON(`${API}/status`);
     if (!status.engine_available) { _renderOffline(); return; }
-    const [snap, skills, curation] = await Promise.all([
+    const [snap, skills, curation, lessons] = await Promise.all([
       _fetchJSON(`${API}/memory`).catch(() => ({ environment: [], user: [] })),
       _fetchJSON(`${API}/skills`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/curation`).catch(() => ({ items: [] })),
+      _fetchJSON(`${API}/lessons`).catch(() => ({ lessons: {} })),
     ]);
     _body().innerHTML = `
       <div class="memory-section" style="margin-bottom:18px;">
@@ -292,9 +315,13 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Memory</h4>
         ${_renderMemory(snap)}
       </div>
-      <div class="memory-section">
+      <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Saved playbooks</h4>
         ${_renderSkills(skills)}
+      </div>
+      <div class="memory-section">
+        <h4 style="margin:0 0 6px;">Lessons learned from job sites</h4>
+        ${_renderLessons(lessons)}
       </div>`;
     _wireCurationButtons();
     _wireForgetButtons();
