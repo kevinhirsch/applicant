@@ -991,7 +991,11 @@ function _renderPrepBody(body, data) {
 // count, outcome timeline) -- reached here through the owner-scoped proxy
 // instead of an admin gate. Loaded ONLY the first time a row's "View details"
 // section is opened, never eagerly for every row (same lazy-on-demand shape
-// as "Screening answers" / "Interview prep" above).
+// as "Screening answers" / "Interview prep" above). Also renders the
+// originating posting's salary/location (dark-engine audit #56) alongside the
+// work mode that was already here -- all three are captured per posting
+// (``JobPosting.salary``/``.location``/``.work_mode``) but, before now, only
+// work mode reached this surface.
 
 async function _onHistoryToggle(details) {
   if (!details.open) return; // 'toggle' also fires on close; only load on open
@@ -1053,6 +1057,12 @@ function _renderHistoryBody(body, data) {
   }
   const status = esc(STATUS_LABEL[data.status] || String(data.status || 'Unknown').replace(/_/g, ' '));
   const workMode = esc(data.work_mode ? String(data.work_mode) : 'Not recorded');
+  // dark-engine audit #56: salary/location, captured per posting alongside
+  // work mode, but never carried through to this drill-down before -- same
+  // "Not recorded" honest-empty convention as work mode above, never a
+  // fabricated placeholder.
+  const salary = esc(data.salary ? String(data.salary) : 'Not recorded');
+  const location = esc(data.location ? String(data.location) : 'Not recorded');
   const shots = data.screenshot_count != null ? Number(data.screenshot_count) : 0;
   const outcomes = Array.isArray(data.outcomes) ? data.outcomes : [];
   const timeline = outcomes.length
@@ -1060,7 +1070,9 @@ function _renderHistoryBody(body, data) {
     : '<div style="opacity:0.7;">No outcomes recorded yet.</div>';
   body.innerHTML = `
     <div>Status: <strong>${status}</strong></div>
+    <div>Location: ${location}</div>
     <div>Work mode: ${workMode}</div>
+    <div>Salary: ${salary}</div>
     <div>Screenshots captured: ${esc(String(shots))}</div>
     <div style="margin-top:4px;">Outcomes:${timeline}</div>
     <div style="margin-top:4px;">Data used on this application:${_attributesUsedHTML(data.attributes_used)}</div>`;
