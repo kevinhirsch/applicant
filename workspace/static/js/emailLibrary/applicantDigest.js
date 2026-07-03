@@ -293,22 +293,34 @@ function _renderDigest(panel, payload) {
 // caller's selection state. Callers that don't pass `selectable` (the Portal
 // embed) see no checkbox — this stays a strict opt-in so existing callers are
 // unaffected.
-// Presubmit-safety warning badge (duplicate-application guard + scam/ghost-job
-// check, product-gaps backlog). The engine now runs the SAME checks that
-// gate the pipeline at approval time already read-only against every digest
-// row (`applicant.application.services.digest_service.build_digest`), so a
-// row can carry `warnings: [{check, message}, ...]` — informational only,
-// never hides the row. Reuses the exact warning-chip visual pattern the
+// Presubmit-safety warning badge (duplicate-application guard, scam/ghost-job
+// check, daily per-company volume cap, work-authorization eligibility check —
+// dark-engine audit #43, product-gaps backlog). The engine now runs ALL FOUR
+// checks that gate the pipeline at approval time read-only against every
+// digest row (`applicant.application.services.digest_service.build_digest`),
+// so a row can carry `warnings: [{check, message}, ...]` — informational
+// only, never hides the row. Reuses the exact warning-chip visual pattern the
 // Portal already uses for task urgency (`applicant-portal-badge` +
 // `var(--color-warning, ...)`, see applicantPortal.js `_urgencyBadge`)
 // instead of inventing a new one.
 function _warningBadge(row) {
   const warnings = Array.isArray(row.warnings) ? row.warnings.filter((w) => w && w.message) : [];
   if (!warnings.length) return null;
-  const isDuplicate = warnings.some((w) => w.check === 'duplicate_cooldown');
-  const label = isDuplicate
-    ? 'You already applied to a similar role at this company'
-    : 'This posting has some red flags — read before applying';
+  const checks = new Set(warnings.map((w) => w.check));
+  let label;
+  if (checks.has('duplicate_cooldown')) {
+    label = 'You already applied to a similar role at this company';
+  } else if (checks.has('per_company_volume')) {
+    label = "You've hit today's application limit for this company";
+  } else if (
+    checks.has('eligibility_sponsorship')
+    || checks.has('eligibility_no_sponsorship')
+    || checks.has('eligibility_clearance')
+  ) {
+    label = 'This posting may not match your work-authorization profile';
+  } else {
+    label = 'This posting has some red flags — read before applying';
+  }
   return _el('span', {
     cls: 'applicant-portal-badge applicant-digest-warning',
     text: label,
