@@ -428,6 +428,48 @@ def setup_applicant_documents_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.post("/variants/{variant_id}/promote")
+    async def promote_variant(variant_id: str, request: Request) -> JSONResponse:
+        """Promote a résumé variant to become the new base résumé future
+        tailoring forks from, instead of the user's original base résumé
+        (dark-engine audit item 33; engine
+        ``POST /api/documents/variants/{id}/promote``).
+
+        The engine route takes only a bare ``variant_id`` (no campaign to check
+        directly), so this proxy fans out over the caller's OWN
+        ``list_campaigns()`` -> ``list_variants()`` results and only forwards the
+        promote when the variant turns up under one of them -- mirrors
+        ``_owner_campaign_ids``'s isolation boundary elsewhere in this file (the
+        engine has no owner concept of its own, so this check is the ONLY
+        isolation boundary: a caller must not be able to promote a variant
+        belonging to another owner's campaign)."""
+        require_privilege(request, "can_use_documents")
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            found = False
+            for cid in owned:
+                try:
+                    data = await engine.list_variants(cid)
+                except EngineError:
+                    continue
+                variants = data.get("variants") if isinstance(data, dict) else None
+                if isinstance(variants, list) and any(
+                    isinstance(v, dict) and str(v.get("variant_id")) == variant_id
+                    for v in variants
+                ):
+                    found = True
+                    break
+            if not found:
+                raise HTTPException(status_code=404, detail="No such résumé variant.")
+            try:
+                data = await engine.promote_variant(variant_id)
+            except EngineError as exc:
+                logger.info("applicant variant promote failed: %s", exc)
+                return _engine_error_response(exc)
+        return JSONResponse(content=data)
+
     # ── settings ────────────────────────────────────────────────────────
 
     @router.post("/aggressiveness")

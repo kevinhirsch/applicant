@@ -537,6 +537,33 @@ def approve_variant(variant_id: str, material=Depends(get_material_service)) -> 
     }
 
 
+@router.post("/variants/{variant_id}/promote", status_code=201)
+def promote_variant(
+    variant_id: str, material=Depends(get_material_service), storage=Depends(get_storage)
+) -> dict:
+    """Promote a résumé variant to be the new base résumé future tailoring forks
+    from, instead of the user's original base résumé (dark-engine audit item 33;
+    ``MaterialService.promote_to_base_resume``, #293).
+
+    Clears the variant's ``parent_id`` (it becomes the lineage root) and marks it
+    approved. Idempotent: promoting an already-promoted variant is a no-op.
+    404 when the variant does not exist.
+    """
+    variant = storage.resume_variants.get(ResumeVariantId(variant_id))
+    if variant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"no such variant {variant_id}"
+        )
+    promoted = material.promote_to_base_resume(variant)
+    return {
+        "id": promoted.id,
+        "type": "resume_variant",
+        "approved": promoted.approved,
+        "campaign_id": promoted.campaign_id,
+        "parent_id": promoted.parent_id,
+    }
+
+
 @router.post("/{document_id}/decline", status_code=201)
 def decline(document_id: str, material=Depends(get_material_service)) -> dict:
     """Decline the material (stays unapproved, blocks submission)."""
