@@ -195,6 +195,38 @@ function _renderLessons(data) {
   }).join('') + `</ul>`;
 }
 
+function _renderRoutines(data) {
+  // #45 (dark-engine audit, AWM self-improvement flywheel): after a successful
+  // pre-fill on a given job site (ATS) the assistant induces a reusable routine —
+  // the compact step-sequence that worked, keyed by site — so the next application
+  // to that site is guided by it instead of starting from scratch. Sorted by the
+  // engine (most reliable first); rendered as a simple list, mirroring the
+  // lessons-learned panel above.
+  const rows = (data && data.routines) || [];
+  if (!rows.length) {
+    return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
+      No routines learned yet — after the assistant successfully fills out an
+      application on a job site, the steps that worked get remembered here so the
+      next application to that site goes faster.</div>`;
+  }
+  return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + rows.map((r) => {
+    const steps = Number(r.step_count || 0);
+    const wins = Number(r.successes || 0);
+    const losses = Number(r.failures || 0);
+    return `<li class="memory-item og-card" style="border:1px solid var(--border,#3334);
+        border-radius:8px;padding:8px 10px;margin:6px 0;
+        display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div>
+        <div style="font-weight:600;">${esc(r.domain || '')}</div>
+        <div style="opacity:0.7;">${steps} remembered step${steps === 1 ? '' : 's'}</div>
+      </div>
+      <div style="opacity:0.8;white-space:nowrap;" title="Times reused successfully vs. not">
+        ${wins} worked / ${losses} didn't
+      </div>
+    </li>`;
+  }).join('') + `</ul>`;
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -297,11 +329,12 @@ export async function openApplicantMind(opts) {
   try {
     const status = await _fetchJSON(`${API}/status`);
     if (!status.engine_available) { _renderOffline(); return; }
-    const [snap, skills, curation, lessons] = await Promise.all([
+    const [snap, skills, curation, lessons, routines] = await Promise.all([
       _fetchJSON(`${API}/memory`).catch(() => ({ environment: [], user: [] })),
       _fetchJSON(`${API}/skills`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/curation`).catch(() => ({ items: [] })),
       _fetchJSON(`${API}/lessons`).catch(() => ({ lessons: {} })),
+      _fetchJSON(`${API}/routines`).catch(() => ({ routines: [] })),
     ]);
     _body().innerHTML = `
       <div class="memory-section" style="margin-bottom:18px;">
@@ -319,9 +352,13 @@ export async function openApplicantMind(opts) {
         <h4 style="margin:0 0 6px;">Saved playbooks</h4>
         ${_renderSkills(skills)}
       </div>
-      <div class="memory-section">
+      <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Lessons learned from job sites</h4>
         ${_renderLessons(lessons)}
+      </div>
+      <div class="memory-section">
+        <h4 style="margin:0 0 6px;">Learned site routines</h4>
+        ${_renderRoutines(routines)}
       </div>`;
     _wireCurationButtons();
     _wireForgetButtons();

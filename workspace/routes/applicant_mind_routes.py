@@ -205,4 +205,21 @@ def setup_applicant_mind_routes() -> APIRouter:
                 _raise_engine_http(exc)
             return data if isinstance(data, dict) else {"ats": ats, "lessons": []}
 
+    # -- learned site routines (dark-engine audit #45, AWM self-improvement) --
+    # After a successful pre-fill on a given job site (ATS) the loop induces a
+    # reusable routine (the compact step-sequence that worked, keyed by site) so
+    # the next application to that site is guided rather than re-derived cold.
+    # Read-only, gated like the lessons/memory/skills reads above.
+
+    @router.get("/routines")
+    async def routines(request: Request) -> dict:
+        """Every learned site routine: step count, success/failure counts, score."""
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            try:
+                data = await engine.admin_routines()
+            except EngineError as exc:
+                _raise_engine_http(exc)
+            return data if isinstance(data, dict) else {"routines": []}
+
     return router
