@@ -14,8 +14,12 @@ logging ring buffer). Gated behind the LLM-settings gate (FR-UI-5).
 from __future__ import annotations
 
 import dataclasses
+import mimetypes
+from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from applicant.app.container import Container
 from applicant.app.deps import (
@@ -116,6 +120,34 @@ def application_screenshots(
     """
     shots = admin_query.screenshots(application_id)  # type: ignore[arg-type]
     return {"application_id": application_id, "screenshots": shots, "status": "live"}
+
+
+@router.get("/screenshots/{application_id}/{screenshot_id}/image")
+def application_screenshot_image(
+    application_id: str, screenshot_id: str, admin_query=Depends(get_admin_query_service)
+) -> FileResponse:
+    """Raw image bytes for one captured screenshot (FR-OBS-2, dark-engine audit #28).
+
+    ``page_ref`` is a ``file://`` ref into the sandbox's local capture directory
+    (FR-LOG-2) — this streams the bytes so the debug surface can render the real
+    proof-of-work image instead of just a filename label. 404s when the id is
+    unknown, the ref isn't a real local file (e.g. the deterministic
+    ``screenshot://fake`` ref used by the in-memory sandbox in tests), or the
+    file no longer exists on disk (ephemeral capture dir, reclaimed after a
+    restart) — never fabricates image bytes.
+    """
+    shots = admin_query.screenshots(application_id)  # type: ignore[arg-type]
+    match = next((s for s in shots if s.get("id") == screenshot_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    parsed = urlparse(match.get("page_ref") or "")
+    if parsed.scheme != "file" or not parsed.path:
+        raise HTTPException(status_code=404, detail="No image bytes available for this screenshot")
+    path = Path(parsed.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot image is no longer available")
+    media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    return FileResponse(str(path), media_type=media_type)
 
 
 @router.get("/logs")
