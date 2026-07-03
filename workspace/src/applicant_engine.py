@@ -575,6 +575,14 @@ class ApplicantEngineClient:
     async def acquire_missing_attribute(self, body: dict) -> Any:
         return await self._request("POST", "/api/attributes/acquire-missing", json=body)
 
+    async def ingest_observations(self, campaign_id: str, observations: list[dict]) -> Any:
+        """Bulk-reconcile a batch of parsed/observed facts into the attribute cloud
+        (FR-LEARN-4, dark-engine audit #42): auto-applies non-integral values, holds
+        integral ones for confirmation, surfaces conflicts, skips sensitive (EEO)."""
+        return await self._request(
+            "POST", f"/api/feedback/{campaign_id}/ingest", json={"observations": observations}
+        )
+
     # CRIT-profile: attribute delete (FR-ATTR-3) + banned-phrase list (FR-RESUME-5).
     async def delete_attribute(self, campaign_id: str, attribute_id: str) -> Any:
         return await self._request(
