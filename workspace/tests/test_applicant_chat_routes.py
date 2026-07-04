@@ -2,27 +2,28 @@
 
 Mounts only ``routes/applicant_chat_routes.py`` on a bare FastAPI app with a tiny
 middleware that authenticates the request (the real global auth gate lives in
-``app.py`` and is out of scope here). The engine is faked two ways:
+``app.py`` and is out of scope here). The engine is faked via a scripted
+``FakeEngine`` patched in for ``ApplicantEngineClient`` (covers the happy paths
++ soft-degrade on unreachable). Zero network.
 
-* a scripted ``FakeEngine`` patched in for ``ApplicantEngineClient`` (covers the
-  happy paths + soft-degrade on unreachable), and
-* a real :class:`ApplicantEngineClient` wired to an ``httpx.MockTransport`` for
-  the remote-action proxies, proving the exact engine paths are hit and that a
-  typed ``EngineError`` (e.g. a 409 review-gate) is forwarded with its status.
-
-Zero network either way.
+(This file used to also stand up a real :class:`ApplicantEngineClient` over an
+``httpx.MockTransport`` to cover a trio of "safe remote job action" proxies
+this router carried -- request-final-approval / resume-account-step /
+resume-detection-step. Those proxies were dead code (dark-engine audit item 3,
+§B1: no caller anywhere on the chat surface; the remote lane already owns the
+identical actions end-to-end) and were removed from
+``routes/applicant_chat_routes.py`` alongside their tests below.)
 """
 
 from __future__ import annotations
 
-import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routes.applicant_chat_routes as mod
 from routes.applicant_chat_routes import setup_applicant_chat_routes
-from src.applicant_engine import ApplicantEngineClient, EngineError
+from src.applicant_engine import EngineError
 
 
 # --- test app with a stand-in auth middleware -------------------------------
@@ -327,74 +328,14 @@ def test_resolve_pending_action_forwards_error(client):
     assert r.status_code == 404
 
 
-# --- safe remote job actions (real client + MockTransport) ------------------
-
-
-def _mock_transport_app(handler):
-    """A test app whose route module builds a real client over a MockTransport."""
-
-    class TransportEngine(ApplicantEngineClient):
-        def __init__(self, *a, **k):
-            super().__init__(base_url="http://api:8000", transport=httpx.MockTransport(handler))
-
-    app = FastAPI()
-
-    @app.middleware("http")
-    async def _auth(request, call_next):
-        request.state.current_user = "tester"
-        return await call_next(request)
-
-    app.include_router(setup_applicant_chat_routes())
-    return app, TransportEngine
-
-
-@pytest.mark.parametrize(
-    "route,expected_path",
-    [
-        ("request-final-approval", "/api/remote/applications/app1/request-final-approval"),
-        ("resume-account-step", "/api/remote/applications/app1/resume-account-step"),
-        ("resume-detection-step", "/api/remote/applications/app1/resume-detection-step"),
-    ],
-)
-def test_remote_actions_hit_exact_engine_paths(monkeypatch, route, expected_path):
-    seen = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen["path"] = request.url.path
-        seen["method"] = request.method
-        return httpx.Response(200, json={"application_id": "app1", "gate": "delivered"})
-
-    app, engine_cls = _mock_transport_app(handler)
-    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
-    c = TestClient(app)
-
-    r = c.post(f"/api/applicant/chat/applications/app1/{route}")
-    assert r.status_code == 200
-    assert seen["path"] == expected_path
-    assert seen["method"] == "POST"
-    assert r.json()["gate"] == "delivered"
-
-
-def test_remote_action_forwards_review_gate_409(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": "review required"})
-
-    app, engine_cls = _mock_transport_app(handler)
-    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
-    c = TestClient(app)
-
-    r = c.post("/api/applicant/chat/applications/app1/request-final-approval")
-    assert r.status_code == 409
-    assert r.json()["detail"] == "review required"
-
-
-def test_remote_action_maps_timeout_to_503(monkeypatch):
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow", request=request)
-
-    app, engine_cls = _mock_transport_app(handler)
-    monkeypatch.setattr(mod, "ApplicantEngineClient", engine_cls)
-    c = TestClient(app)
-
-    r = c.post("/api/applicant/chat/applications/app1/resume-account-step")
-    assert r.status_code == 503
+def test_dead_remote_action_routes_are_gone(client):
+    """dark-engine audit item 3: the chat lane no longer carries its own copies
+    of the remote lane's request-final-approval / resume-account-step /
+    resume-detection-step actions -- they had zero callers on this surface."""
+    for route in (
+        "request-final-approval",
+        "resume-account-step",
+        "resume-detection-step",
+    ):
+        r = client.post(f"/api/applicant/chat/applications/app1/{route}")
+        assert r.status_code == 404

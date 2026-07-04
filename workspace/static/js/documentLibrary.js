@@ -10,6 +10,7 @@ import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
+import { ensureSubmittable } from './applicantReachability.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -2300,7 +2301,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           ? `<button type="button" class="cal-btn cal-btn-primary doclib-applicant-continue-submit" ` +
               `style="margin-left:auto;font-size:11px;padding:2px 10px;" ` +
               `title="Everything is approved — head to the submit step in your Pending home base">Continue to submit &rarr;</button>`
-          : '');
+          // dark-engine audit item 2: a one-click "check what's missing and rebuild
+          // it" action, since until now the engine's ensure-submittable auto-heal
+          // (which this button calls) had no working caller anywhere in the product.
+          : (items.length
+              ? `<button type="button" class="cal-btn doclib-applicant-fix-documents" ` +
+                  `style="margin-left:auto;font-size:11px;padding:2px 10px;" ` +
+                  `title="Check this application's documents and rebuild anything missing">Fix documents</button>`
+              : ''));
       results.appendChild(head);
 
       // Advisory keyword-match line (#23) — a fixed slot placed right under the
@@ -2324,6 +2332,32 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             } catch { /* fall through */ }
             const rail = document.getElementById('rail-portal');
             if (rail) rail.click();
+          });
+        }
+      } else {
+        // "Fix documents": run the engine's ensure-submittable auto-heal for this
+        // application, then refresh the card so any rebuilt/cleared material shows
+        // up immediately (dark-engine audit item 2).
+        const fixBtn = head.querySelector('.doclib-applicant-fix-documents');
+        if (fixBtn) {
+          fixBtn.addEventListener('click', async () => {
+            fixBtn.disabled = true;
+            const origLabel = fixBtn.textContent;
+            fixBtn.textContent = 'Checking…';
+            try {
+              await ensureSubmittable(appId);
+              if (uiModule) uiModule.showToast('All documents are ready to submit');
+              await _loadApplicantMaterials(appId, results);
+              return; // the card just re-rendered from scratch
+            } catch (e) {
+              const detail = e && e.body && e.body.detail;
+              const msg = (typeof detail === 'string' && detail)
+                || (e && e.message && e.message !== '[object Object]' && e.message)
+                || 'Some documents still need your review before this can be submitted.';
+              if (uiModule) uiModule.showToast(msg);
+            }
+            fixBtn.disabled = false;
+            fixBtn.textContent = origLabel;
           });
         }
       }

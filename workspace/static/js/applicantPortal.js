@@ -9,7 +9,9 @@
 //   • material review (cover letter / screening answer / resume)
 //                               → "Review" deep-links to the Applications tab in
 //                                 the Library (the redline surface). We don't
-//                                 rebuild redline — we link to it.
+//                                 rebuild redline — we link to it. "Fix documents"
+//                                 runs the engine's ensure-submittable auto-heal
+//                                 inline (dark-engine audit item 2).
 //   • missing detail            → a small form to supply the value → the engine
 //                                 acquires it and resumes the blocked application.
 //   • account-creation / verification / emergency hand-off carrying a live
@@ -35,6 +37,7 @@ import {
   errText, loadingHTML, errorHTML, wireRetry, pollVisible,
 } from './applicantCore.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
+import { ensureSubmittable } from './applicantReachability.js';
 
 const API = '/api/applicant/portal';
 // Sibling owner-scoped proxies the home-base recap + momentum strip read from
@@ -988,9 +991,14 @@ function _renderAnswer(item) {
 
 function _renderReview(item) {
   const hint = _meta(item.kind).hint || 'Open the side-by-side review.';
+  const appId = esc(_appId(item));
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
-    <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${esc(_appId(item))}">Review</button>`;
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${appId}">Review</button>
+      <button type="button" class="cal-btn applicant-portal-fix-documents" data-app-id="${appId}"
+              title="Check this application's documents and rebuild anything missing">Fix documents</button>
+    </div>`;
 }
 
 function _renderMissing(item) {
@@ -1494,6 +1502,32 @@ function _wireRows(host) {
   // Review → deep-link to the redline surface.
   host.querySelectorAll('.applicant-portal-review').forEach((btn) => {
     btn.addEventListener('click', () => _openRedline(btn.dataset.appId));
+  });
+
+  // Fix documents → run the engine's ensure-submittable auto-heal for this
+  // application right from the blocked-material row (dark-engine audit item 2).
+  // Leaves the row in place either way: success still needs the (now-clean)
+  // Review click to actually approve anything; failure repeats what's missing.
+  host.querySelectorAll('.applicant-portal-fix-documents').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const appId = btn.dataset.appId;
+      if (!appId) { _toast('No application is linked to this item yet'); return; }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Checking…';
+      try {
+        await ensureSubmittable(appId);
+        _toast('All documents are ready to submit');
+      } catch (e) {
+        const detail = e && e.body && e.body.detail;
+        const msg = (typeof detail === 'string' && detail)
+          || (e && e.message && e.message !== '[object Object]' && e.message)
+          || 'Some documents still need your review before this can be submitted.';
+        _toast(msg);
+      }
+      btn.disabled = false;
+      btn.textContent = orig;
+    });
   });
 
   // Digest → deep-link to the digest.
