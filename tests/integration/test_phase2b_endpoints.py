@@ -172,6 +172,36 @@ def test_submit_self_delivers_decision_through_gate(client, seeded_application):
     assert decision == {"decision": "submitted_by_user"}
 
 
+@pytest.mark.integration
+def test_submit_self_enters_post_submission_lifecycle(client, seeded_application):
+    """Dark-engine audit item 12: ``enter_post_submission``/``advance_to_
+    awaiting_response`` had zero callers anywhere, so a submitted application
+    never actually ENTERED the G16 post-submission lifecycle -- the ghosting
+    sweep only ever looks at AWAITING_RESPONSE/POST_SUBMISSION, never
+    SUBMITTED_BY_USER/FINISHED_BY_ENGINE. ``submit-self`` (the live-takeover
+    final-submit confirmation) is the ONE real "the user is done" call site,
+    so it now advances the application into POST_SUBMISSION right after the
+    terminal decision is durably recorded.
+    """
+    from applicant.core.state_machine import ApplicationState
+    from tests.conftest import open_automated_work_gate
+
+    open_automated_work_gate(client)
+    container = client.app.state.container
+    _cid, aid = seeded_application(status=ApplicationState.AWAITING_FINAL_APPROVAL)
+    r = client.post(f"/api/remote/applications/{aid}/submit-self")
+    assert r.status_code == 201
+
+    app = container.storage.applications.get(aid)
+    assert app.status is ApplicationState.POST_SUBMISSION
+    # The tracker board picks the application up now that it has actually
+    # entered the lifecycle -- proving the wiring is reachable end to end,
+    # not just an internal state flip.
+    board = client.get(f"/api/post-submission/{_cid}").json()
+    assert board["applications"][0]["application_id"] == aid
+    assert board["applications"][0]["status"] == "POST_SUBMISSION"
+
+
 # === #4: resume the human account step via a real endpoint ==================
 @pytest.mark.integration
 def test_resume_account_step_endpoint(client, seeded_application):
