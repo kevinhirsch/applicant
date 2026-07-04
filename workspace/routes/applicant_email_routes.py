@@ -207,14 +207,13 @@ def setup_applicant_email_routes() -> APIRouter:
         require_user(request)
         return await _engine_call(lambda e: e.digest_email(campaign_id))
 
-    @router.post("/digest/{campaign_id}/deliver")
-    async def deliver_digest(request: Request, campaign_id: str) -> dict:
-        """Re-send / deliver the digest across configured channels.
-
-        Returns the engine's delivery summary (row count, channels, subject).
-        """
-        require_user(request)
-        return await _engine_call(lambda e: e.deliver_digest(campaign_id))
+    # Dark-engine audit item 5: this router used to also carry
+    # `POST /digest/{campaign_id}/deliver`, a duplicate of `manual_digest_delivery`
+    # below (`POST /campaigns/{campaign_id}/digest/deliver`) -- both forwarded to
+    # the SAME engine call (`deliver_digest`). Only the `/campaigns/.../deliver`
+    # form has ever had a caller (`emailLibrary/applicantDigest.js`'s
+    # `triggerDigestDelivery`); this duplicate was removed rather than left as a
+    # second, unused lane to the identical action.
 
     @router.post("/presence")
     async def set_presence(request: Request, body: PresenceIn) -> dict:

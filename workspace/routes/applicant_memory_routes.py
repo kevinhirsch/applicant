@@ -74,13 +74,6 @@ class BindAttributeIn(BaseModel):
     campaign_id: Optional[str] = None
 
 
-class AcquireMissingIn(BaseModel):
-    name: str
-    value: str
-    confirm: bool = False
-    campaign_id: Optional[str] = None
-
-
 class ObservationIn(BaseModel):
     """One observed/parsed fact for the bulk "tell it about yourself" import box:
     ``{name, value, source?}``. The paste box never asserts ``is_integral`` — that
@@ -315,23 +308,14 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
-    @router.post("/attributes/acquire-missing")
-    async def acquire_missing(request: Request, body: AcquireMissingIn) -> dict:
-        """Supply a detail the engine flagged as missing, resuming any stalled
-        application that was blocked on it (FR-ATTR-5)."""
-        require_privilege(request, "can_manage_memory")
-        async with ApplicantEngineClient() as engine:
-            cid = await _resolve_campaign(engine, body.campaign_id)
-            payload = {
-                "campaign_id": cid,
-                "name": body.name,
-                "value": body.value,
-                "confirm": body.confirm,
-            }
-            try:
-                return await engine.acquire_missing_attribute(payload)
-            except EngineError as exc:
-                _raise_engine_http(exc)
+    # Dark-engine audit item 4: this router used to also carry
+    # `POST /attributes/acquire-missing`, proxying the engine's acquire-missing
+    # endpoint (FR-ATTR-5). Zero JS ever called it -- the Portal's own
+    # `POST /missing-attribute` (`applicant_portal_routes.py`, called from
+    # `applicantPortal.js` / `applicantToday.js`) is the live lane that supplies
+    # a missing detail and resumes a stalled application, and it already calls
+    # the SAME engine client method (`acquire_missing_attribute`) directly.
+    # Removed as an unused second path to the identical engine action.
 
     @router.post("/ingest")
     async def ingest_observations(request: Request, body: IngestObservationsIn) -> dict:

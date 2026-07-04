@@ -81,6 +81,9 @@ class _FakeEngine:
     async def set_banned_phrases(self, phrases):
         return await self._dispatch("set_banned_phrases", phrases)
 
+    async def ensure_submittable(self, application_id):
+        return await self._dispatch("ensure_submittable", application_id)
+
 
 def _make_client(*, authed: bool = True):
     """Bare app with only the documents router mounted.
@@ -269,6 +272,44 @@ def test_banned_phrases_set_forwards_list(monkeypatch):
     )
     assert resp.status_code == 200
     assert _FakeEngine.last_call == ("set_banned_phrases", (["circle back"],))
+
+
+# ── ensure-submittable auto-heal (dark-engine audit items 1/2) ──────────────
+#
+# The review/portal "Fix documents" button (documentLibrary.js, applicantPortal.js)
+# calls the corrected `ensureSubmittable(applicationId)` helper in
+# applicantReachability.js, which posts here. These prove the workspace proxy
+# round-trips to the engine's PER-APPLICATION route -- the same one
+# `applicant_documents_routes.py:ensure_submittable` has always exposed, but
+# which nothing in the product could reach until the helper's URL was fixed.
+
+
+def test_ensure_submittable_forwards_application_id(monkeypatch):
+    _patch_engine(monkeypatch, result={"application_id": "app-7", "submittable": True})
+    resp = _make_client().post("/api/applicant/documents/applications/app-7/ensure-submittable")
+    assert resp.status_code == 200
+    assert resp.json() == {"application_id": "app-7", "submittable": True}
+    assert _FakeEngine.last_call == ("ensure_submittable", ("app-7",))
+
+
+def test_ensure_submittable_review_required_passes_through_409(monkeypatch):
+    """When some material is still unapproved the engine's 409 (with the plain
+    -language reason) must surface to the "Fix documents" button unchanged."""
+    err = EngineError("review required", status=409, detail="approve the cover letter first")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().post("/api/applicant/documents/applications/app-7/ensure-submittable")
+    assert resp.status_code == 409
+    body = resp.json()
+    assert body["engine_status"] == 409
+    assert body["detail"] == "approve the cover letter first"
+
+
+def test_ensure_submittable_requires_auth(monkeypatch):
+    _patch_engine(monkeypatch, result={"submittable": True})
+    resp = _make_client(authed=False).post(
+        "/api/applicant/documents/applications/app-7/ensure-submittable"
+    )
+    assert resp.status_code in (401, 403)
 
 
 # ── error translation ───────────────────────────────────────────────────────

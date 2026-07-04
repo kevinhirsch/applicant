@@ -102,7 +102,24 @@ def test_get_digest_email_relays(make_client):
     assert captured["path"] == "/api/digest/camp-1/email"
 
 
-def test_deliver_digest_relays(make_client):
+def test_old_digest_deliver_route_is_removed(make_client):
+    """dark-engine audit item 5: `/digest/{campaign_id}/deliver` was a dead
+    duplicate of `/campaigns/{campaign_id}/digest/deliver` below -- both
+    forwarded to the same engine call, but only the campaign-scoped form ever
+    had a caller (`emailLibrary/applicantDigest.js`'s `triggerDigestDelivery`).
+    Removed rather than left as a second, unused lane to the same action."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"row_count": 3, "delivered_channels": ["email"]})
+
+    client = make_client(handler)
+    resp = client.post("/api/applicant/email/digest/camp-1/deliver")
+    assert resp.status_code == 404
+
+
+def test_manual_digest_delivery_relays_to_the_live_campaign_scoped_route(make_client):
+    """The surviving lane (`emailLibrary/applicantDigest.js`'s `triggerDigestDelivery`
+    calls this exact path) still round-trips to the engine's deliver-digest call."""
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -111,7 +128,7 @@ def test_deliver_digest_relays(make_client):
         return httpx.Response(200, json={"row_count": 3, "delivered_channels": ["email"]})
 
     client = make_client(handler)
-    resp = client.post("/api/applicant/email/digest/camp-1/deliver")
+    resp = client.post("/api/applicant/email/campaigns/camp-1/digest/deliver")
     assert resp.status_code == 200
     assert resp.json()["row_count"] == 3
     assert captured["path"] == "/api/digest/camp-1/deliver"
@@ -231,7 +248,10 @@ def test_engine_5xx_becomes_502(make_client):
         return httpx.Response(500, text="boom")
 
     client = make_client(handler)
-    resp = client.post("/api/applicant/email/digest/camp-1/deliver")
+    # The live campaign-scoped deliver route (dark-engine audit item 5: the
+    # older `/digest/{campaign_id}/deliver` dup this test used to hit was
+    # removed as dead code -- see test_old_digest_deliver_route_is_removed).
+    resp = client.post("/api/applicant/email/campaigns/camp-1/digest/deliver")
     assert resp.status_code == 502
 
 

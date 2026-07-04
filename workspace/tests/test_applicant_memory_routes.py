@@ -265,19 +265,23 @@ def test_delete_attribute_maps_to_engine_delete():
     assert resp.json()["deleted"] is True
 
 
-def test_acquire_missing():
-    def handler(request):
-        if request.url.path == "/api/attributes/acquire-missing" and request.method == "POST":
-            return httpx.Response(201, json={"id": "m1", "name": "Visa", "value": "Yes", "resumed": True})
-        return _route(request, {})
+def test_acquire_missing_proxy_is_removed():
+    """dark-engine audit item 4: this router used to also proxy the engine's
+    acquire-missing endpoint, but nothing on the front-door ever called it --
+    the Portal's own `/missing-attribute` (a different router) is the live
+    lane for supplying a missing detail. Removed rather than left dead.
 
-    client = _make_client(handler)
+    (405, not 404: the path also matches this router's own
+    ``DELETE /attributes/{attribute_id}`` pattern with "acquire-missing" as the
+    id, so FastAPI reports "method not allowed" for the POST rather than "no
+    such path" -- either way, no route handles this POST anymore.)
+    """
+    client = _make_client(lambda request: _route(request, {}))
     resp = client.post(
         "/api/applicant/memory/attributes/acquire-missing",
         json={"name": "Visa", "value": "Yes"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["resumed"] is True
+    assert resp.status_code == 405
 
 
 # ---------------------------------------------------------------------------

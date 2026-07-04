@@ -15,10 +15,14 @@ What the surface needs (all backed 1:1 by an engine endpoint group):
   (``GET /api/pending-actions/{id}``) and resolve one (``POST .../resolve``).
 * **Campaign state** — list campaigns / create one
   (``GET`` / ``POST /api/campaigns``) so the surface can pick a working campaign.
-* **Safe job actions** — the user-driven, non-destructive remote actions the
-  engine already exposes: request a final-approval ping, and resume a run that is
-  parked on a human account-creation step or a cleared detection challenge
-  (``POST /api/remote/applications/{id}/...``).
+
+Note: the user-driven, non-destructive remote actions (request a final-approval
+ping; resume a run parked on a human account-creation step or a cleared
+detection challenge) are NOT duplicated here — they are owned end-to-end by
+``applicant_remote_routes.py`` / ``applicantRemote.js``. This file used to carry
+its own copies of those three routes, but nothing on the chat surface ever
+called them (dark-engine audit item 3, §B1); they were removed rather than left
+as a second, unused path to the same engine actions.
 
 This file is **additive** and disjoint from the workspace's own native chat /
 assistant surfaces (``chat_routes.py`` / ``assistant_routes.py``): it mounts a
@@ -368,52 +372,12 @@ def setup_applicant_chat_routes() -> APIRouter:
                 raise _engine_http_error(exc) from exc
         return {"resolved": True, "action_id": action_id}
 
-    # -- safe job actions (remote) ----------------------------------------
-    #
-    # Only the user-driven, non-destructive remote actions are exposed here. The
-    # engine NEVER self-authorizes the final submit (the pre-fill boundary), and
-    # the destructive/terminal paths (submit-self / authorize-engine-finish /
-    # takeover) are deliberately left out of the chat surface — they belong to a
-    # live-session control surface, not an inline chat affordance.
-
-    async def _remote_action(path: str) -> dict:
-        """POST a safe remote job action and normalise failures.
-
-        The shared engine client (``applicant_engine.py``) is append-only and
-        ships no ``remote`` helpers yet; per the contract this lane must not edit
-        it, so we issue the request through the client's normalising request seam
-        — it still routes every failure through the typed :class:`EngineError`,
-        so no raw httpx escapes.
-        """
-        async with ApplicantEngineClient() as engine:
-            try:
-                result = await engine._request("POST", path)
-            except EngineError as exc:
-                raise _engine_http_error(exc) from exc
-        return result or {}
-
-    @router.post("/applications/{application_id}/request-final-approval")
-    async def request_final_approval(application_id: str, request: Request) -> dict:
-        """Ask the engine to (re)notify the user that an application awaits sign-off."""
-        _require_user(request)
-        return await _remote_action(
-            f"/api/remote/applications/{application_id}/request-final-approval"
-        )
-
-    @router.post("/applications/{application_id}/resume-account-step")
-    async def resume_account_step(application_id: str, request: Request) -> dict:
-        """Resume a run parked on the human account-creation step."""
-        _require_user(request)
-        return await _remote_action(
-            f"/api/remote/applications/{application_id}/resume-account-step"
-        )
-
-    @router.post("/applications/{application_id}/resume-detection-step")
-    async def resume_detection_step(application_id: str, request: Request) -> dict:
-        """Resume a run parked on a (now-cleared) detection challenge."""
-        _require_user(request)
-        return await _remote_action(
-            f"/api/remote/applications/{application_id}/resume-detection-step"
-        )
+    # Dark-engine audit item 3: this lane used to carry its own
+    # request-final-approval / resume-account-step / resume-detection-step
+    # proxies (a `_remote_action` helper posting straight to
+    # `/api/remote/applications/{id}/...`), but `applicantChat.js` never called
+    # any of them -- the remote lane (`applicant_remote_routes.py` ->
+    # `applicantRemote.js`) already owns these exact actions end-to-end. Removed
+    # rather than left as an unused second path to the same engine endpoints.
 
     return router
