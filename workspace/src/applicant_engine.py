@@ -902,12 +902,30 @@ class ApplicantEngineClient:
         """Tracker-board rows for one campaign, newest first."""
         return await self._request("GET", f"/api/post-submission/{campaign_id}")
 
-    async def tracker_record_outcome(self, application_id: str, outcome_type: str) -> Any:
-        """Manually record an outcome (interview/offer/rejected/ghosted/...)."""
+    async def tracker_record_outcome(
+        self, application_id: str, outcome_type: str, reason: str | None = None
+    ) -> Any:
+        """Manually record an outcome (interview/offer/rejected/ghosted/...).
+
+        ``reason`` (dark-engine audit item 11) is an optional free-text note --
+        meaningful for ``outcome_type == "rejected"`` -- persisted by the engine
+        as a ``RejectionSignal`` audit-trail row alongside the real §7
+        transition. Omitted entirely from the request body when not provided,
+        so the engine's default (``None``) behavior is unaffected.
+        """
+        payload: dict = {"outcome_type": outcome_type}
+        if reason:
+            payload["reason"] = reason
         return await self._request(
             "POST",
             f"/api/post-submission/applications/{application_id}/outcome",
-            json={"outcome_type": outcome_type},
+            json=payload,
+        )
+
+    async def tracker_archive_application(self, application_id: str) -> Any:
+        """Close out a dead application (dark-engine audit item 13)."""
+        return await self._request(
+            "POST", f"/api/post-submission/applications/{application_id}/archive"
         )
 
     async def tracker_scan_email(self, application_id: str, subject: str, body: str) -> Any:

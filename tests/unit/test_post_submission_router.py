@@ -194,3 +194,94 @@ def test_llm_gate_blocks_tracker_when_not_configured():
     with TestClient(create_app()) as c:
         r = c.get("/api/post-submission/c-1")
         assert r.status_code == 409
+
+
+# --- (d) dark-engine audit item 11: free-text rejection reason ------------------
+
+
+def test_manual_rejected_outcome_with_reason_persists_rejection_signal(client):
+    """The optional ``reason`` on a manual "rejected" outcome is layered onto the
+    RejectionSignal audit trail (``process_rejection_signal``) WITHOUT touching
+    the single clean state transition/OutcomeEvent ``record_manual_outcome``
+    already performs."""
+    container = client.app.state.container
+    _seed(container, "c-6", "a-6", status=ApplicationState.AWAITING_RESPONSE)
+
+    r = client.post(
+        "/api/post-submission/applications/a-6/outcome",
+        json={"outcome_type": "rejected", "reason": "Role was put on hold."},
+    )
+    assert r.status_code == 201
+
+    board = client.get("/api/post-submission/c-6").json()
+    assert board["applications"][0]["status"] == "REJECTED"
+
+    # Exactly one "rejected" OutcomeEvent -- the reason must not double-record.
+    outcomes = container.storage.outcomes.list_for_application(ApplicationId("a-6"))
+    rejected_events = [o for o in outcomes if o.type == "rejected"]
+    assert len(rejected_events) == 1
+
+    signals = container.storage.rejection_signals.list_for_application(ApplicationId("a-6"))
+    assert len(signals) == 1
+    assert signals[0].signal_text == "Role was put on hold."
+    assert signals[0].source.value == "manual"
+
+
+def test_manual_rejected_outcome_without_reason_records_no_signal(client):
+    container = client.app.state.container
+    _seed(container, "c-7", "a-7", status=ApplicationState.AWAITING_RESPONSE)
+
+    r = client.post(
+        "/api/post-submission/applications/a-7/outcome",
+        json={"outcome_type": "rejected"},
+    )
+    assert r.status_code == 201
+    signals = container.storage.rejection_signals.list_for_application(ApplicationId("a-7"))
+    assert signals == []
+
+
+def test_reason_on_a_non_rejected_outcome_is_ignored(client):
+    container = client.app.state.container
+    _seed(container, "c-8", "a-8", status=ApplicationState.AWAITING_RESPONSE)
+
+    r = client.post(
+        "/api/post-submission/applications/a-8/outcome",
+        json={"outcome_type": "offer", "reason": "irrelevant text"},
+    )
+    assert r.status_code == 201
+    signals = container.storage.rejection_signals.list_for_application(ApplicationId("a-8"))
+    assert signals == []
+
+
+# --- (e) dark-engine audit item 13: archive -------------------------------------
+
+
+def test_archive_closes_out_an_archivable_application(client):
+    container = client.app.state.container
+    _seed(container, "c-9", "a-9", status=ApplicationState.AWAITING_RESPONSE)
+
+    r = client.post("/api/post-submission/applications/a-9/archive")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["application_id"] == "a-9"
+    assert body["status"] == "ARCHIVED"
+
+    board = client.get("/api/post-submission/c-9").json()
+    assert board["applications"][0]["status"] == "ARCHIVED"
+
+
+def test_archive_rejects_a_not_yet_archivable_application_with_409(client):
+    container = client.app.state.container
+    # SUBMITTED_BY_USER ("Applied" bucket) can't jump straight to ARCHIVED.
+    _seed(container, "c-10", "a-10", status=ApplicationState.SUBMITTED_BY_USER)
+
+    r = client.post("/api/post-submission/applications/a-10/archive")
+    assert r.status_code == 409
+
+    board = client.get("/api/post-submission/c-10").json()
+    assert board["applications"][0]["status"] == "SUBMITTED_BY_USER"
+
+
+def test_archive_unknown_application_is_404(client):
+    r = client.post("/api/post-submission/applications/does-not-exist/archive")
+    assert r.status_code == 404

@@ -127,6 +127,7 @@ function _ensureModalEl() {
         </div>
       </div>
       <div id="applicant-tracker-suggestions" style="display:none;flex-shrink:0;max-height:38vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
+      <div id="applicant-tracker-confirm" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-stuck" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div class="modal-body" id="applicant-tracker-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
@@ -136,7 +137,7 @@ function _ensureModalEl() {
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-tracker-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => { _load(true); _loadStuck(); });
+  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => { _load(true); _loadPendingConfirmation(); _loadStuck(); });
   const findBtn = modal.querySelector('#applicant-tracker-find-emails');
   findBtn.addEventListener('click', () => _onFindResponses(findBtn));
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -178,6 +179,16 @@ function _optionsHTML(currentStatus) {
     .join('');
 }
 
+// Dark-engine audit item 13: "Close / archive" is only offered on rows the
+// engine's §7 state machine can actually move to ARCHIVED from (awaiting
+// response / following up / rejected / ghosted) -- never straight from the
+// just-submitted "Applied" bucket or a row that's already archived. Mirrors
+// the exact same bucket check the engine itself enforces server-side
+// (``can_transition``), so this never offers a button that would just 409.
+function _archivableHTML(id, label) {
+  return `<button class="cal-btn" type="button" data-tracker-archive="${id}" title="Close this application out — it stops showing as active" aria-label="Archive ${label}">Close / archive</button>`;
+}
+
 function _renderRow(app) {
   const id = esc(String(app.application_id || ''));
   const campaignId = esc(String(app.campaign_id || ''));
@@ -185,6 +196,8 @@ function _renderRow(app) {
   const busy = _busyIds.has(String(app.application_id));
   const label = esc(_roleLabel(app));
   const signals = Array.isArray(app.signals) ? app.signals : [];
+  const bucket = _bucketFor(app.status);
+  const archivable = bucket !== 'applied' && bucket !== 'archived';
   return `
     <div class="memory-item ow-list-row" data-tracker-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 4px;">
       <div style="flex:1;min-width:0;">
@@ -195,6 +208,8 @@ function _renderRow(app) {
         <option value="">Record what happened…</option>
         ${_optionsHTML(app.status)}
       </select>
+      <input type="text" class="cal-input" data-tracker-reason="${id}" placeholder="Reason (optional — used if you mark it rejected)" style="font-size:11px;padding:4px 8px;flex-basis:220px;min-width:160px;" aria-label="Optional reason for ${label}" />
+      ${archivable ? _archivableHTML(id, label) : ''}
       ${_scanEmailHTML(id, label)}
       ${_historyHTML(id, label)}
       ${_screeningAnswersHTML(id, campaignId, label)}
@@ -293,6 +308,9 @@ function _renderBoard(host, applications) {
   );
   host.querySelectorAll('[data-tracker-record]').forEach((select) => {
     select.addEventListener('change', () => _recordOutcome(select));
+  });
+  host.querySelectorAll('[data-tracker-archive]').forEach((btn) => {
+    btn.addEventListener('click', () => _archiveApplication(btn));
   });
   host.querySelectorAll('[data-scan-submit]').forEach((btn) => {
     btn.addEventListener('click', () => _scanEmail(btn));
@@ -427,6 +445,125 @@ async function _retryStuck(btn) {
   }
 }
 
+// ── Needs your confirmation (dark-engine audit item 14) ─────────────────────
+// The engine's one-tap "mark as submitted" / auto-detect pair existed but was
+// reachable only behind an admin gate (the Debug modal) — an owner who
+// finished an application by hand (or in a live takeover session the
+// automated detector never confirmed) had no way to tell Applicant "yes, I
+// submitted that" so it could start tracking it and teach the learning loop.
+// A SEPARATE panel from "Needs a look" above: these applications are parked
+// at the final-approval gate or an emergency hand-off — a genuinely earlier
+// §7 state than anything the tracker board itself lists — so this is its own
+// fan-out, loaded independently, degrading silently on any failure (a bonus
+// surface, never allowed to blank out the primary tracker).
+
+function _confirmPanelEl() {
+  return _modalEl && _modalEl.querySelector('#applicant-tracker-confirm');
+}
+
+function _confirmLabel(app) {
+  return String(app.job_title || app.role_name || 'A role').trim() || 'A role';
+}
+
+function _renderConfirmRow(app) {
+  const id = esc(String(app.application_id || ''));
+  const label = esc(_confirmLabel(app));
+  const busy = _busyIds.has(String(app.application_id));
+  return `
+    <div class="memory-item ow-list-row" data-confirm-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:6px 4px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+        <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">Waiting to hear whether this was actually submitted.</div>
+      </div>
+      <button class="cal-btn" type="button" data-confirm-detect="${id}" ${busy ? 'disabled' : ''} title="Ask Applicant to check the live session for a confirmation page" aria-label="Try auto-detect for ${label}">Try auto-detect</button>
+      <button class="cal-btn" type="button" data-confirm-submitted="${id}" ${busy ? 'disabled' : ''} aria-label="Mark ${label} as submitted">I submitted this</button>
+    </div>`;
+}
+
+function _renderConfirmPanel(rows) {
+  return `
+    <div style="padding:8px 10px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.6;">Needs your confirmation</span>
+        <span style="font-size:9.5px;opacity:0.4;">(${rows.length})</span>
+      </div>
+      ${rows.map(_renderConfirmRow).join('')}
+    </div>`;
+}
+
+async function _loadPendingConfirmation() {
+  const panel = _confirmPanelEl();
+  if (!panel) return;
+  try {
+    const data = await _fetchJSON(`${API}/pending-confirmation`);
+    const rows = Array.isArray(data && data.applications) ? data.applications : [];
+    if (!rows.length) {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = _renderConfirmPanel(rows);
+    panel.querySelectorAll('[data-confirm-detect]').forEach((btn) => {
+      btn.addEventListener('click', () => _onDetectSubmission(btn));
+    });
+    panel.querySelectorAll('[data-confirm-submitted]').forEach((btn) => {
+      btn.addEventListener('click', () => _onMarkSubmitted(btn));
+    });
+  } catch {
+    // Bonus surface — never show an error banner over the primary tracker;
+    // just hide the panel and try again on the next refresh/poll.
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+  }
+}
+
+async function _onMarkSubmitted(btn) {
+  const id = btn.getAttribute('data-confirm-submitted');
+  if (!id || _busyIds.has(id)) return;
+  _busyIds.add(id);
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Recording…';
+  try {
+    await _post(`${API}/applications/${encodeURIComponent(id)}/mark-submitted`, {});
+    _toast('Recorded — this will show up on your tracker.');
+    await Promise.all([_loadPendingConfirmation(), _load(false)]);
+  } catch (e) {
+    _toast(errText(e));
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  } finally {
+    _busyIds.delete(id);
+  }
+}
+
+async function _onDetectSubmission(btn) {
+  const id = btn.getAttribute('data-confirm-detect');
+  if (!id || _busyIds.has(id)) return;
+  _busyIds.add(id);
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Checking…';
+  try {
+    const data = await _post(`${API}/applications/${encodeURIComponent(id)}/detect-submission`, {});
+    if (data && data.detected) {
+      _toast('Confirmed — this will show up on your tracker.');
+      await Promise.all([_loadPendingConfirmation(), _load(false)]);
+    } else {
+      _toast("Couldn't confirm it automatically — use \"I submitted this\" if you know for sure.");
+      btn.disabled = false;
+      btn.textContent = origLabel;
+    }
+  } catch (e) {
+    _toast(errText(e));
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  } finally {
+    _busyIds.delete(id);
+  }
+}
+
 // ── Data flow ────────────────────────────────────────────────────────────────
 
 async function _load(showSpinner) {
@@ -456,10 +593,19 @@ async function _recordOutcome(select) {
   const outcomeType = select.value;
   const applicationId = select.getAttribute('data-tracker-record');
   if (!outcomeType || !applicationId) return;
+  // Dark-engine audit item 11: the optional free-text reason input sits next
+  // to the select on the SAME row -- only meaningful (and only forwarded)
+  // when the owner is recording a rejection, so it never sends noise for the
+  // other outcome types.
+  const row = select.closest('[data-tracker-row]');
+  const reasonEl = row ? row.querySelector(`[data-tracker-reason="${CSS.escape(applicationId)}"]`) : null;
+  const reason = (outcomeType === 'rejected' && reasonEl) ? reasonEl.value.trim() : '';
   _busyIds.add(applicationId);
   select.disabled = true;
   try {
-    await _post(`${API}/applications/${encodeURIComponent(applicationId)}/outcome`, { outcome_type: outcomeType });
+    const body = { outcome_type: outcomeType };
+    if (reason) body.reason = reason;
+    await _post(`${API}/applications/${encodeURIComponent(applicationId)}/outcome`, body);
     _toast('Recorded — thanks for letting me know.');
     await _load(false);
   } catch (e) {
@@ -467,6 +613,28 @@ async function _recordOutcome(select) {
     select.disabled = false;
   } finally {
     _busyIds.delete(applicationId);
+  }
+}
+
+// Dark-engine audit item 13: close out a dead application so it stops
+// showing as active in every future tracker view. The engine independently
+// re-checks the §7 transition is legal (409 when the row somehow isn't
+// archivable anymore, e.g. a concurrent update) -- this button is only ever
+// rendered for a row _renderRow already knows is in an archivable bucket.
+async function _archiveApplication(btn) {
+  const id = btn.getAttribute('data-tracker-archive');
+  if (!id || _busyIds.has(id)) return;
+  _busyIds.add(id);
+  btn.disabled = true;
+  try {
+    await _post(`${API}/applications/${encodeURIComponent(id)}/archive`, {});
+    _toast('Archived — it will no longer show as active.');
+    await _load(false);
+  } catch (e) {
+    _toast(errText(e));
+    btn.disabled = false;
+  } finally {
+    _busyIds.delete(id);
   }
 }
 
@@ -1082,10 +1250,10 @@ export async function openApplicantTracker() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  await Promise.all([_load(true), _loadStuck()]);
+  await Promise.all([_load(true), _loadPendingConfirmation(), _loadStuck()]);
   // Keep it fresh while open (only while the tab is visible).
   if (_pollStop) _pollStop();
-  _pollStop = pollVisible(() => { _load(false); _loadStuck(); }, 60000);
+  _pollStop = pollVisible(() => { _load(false); _loadPendingConfirmation(); _loadStuck(); }, 60000);
 }
 
 // ── Launcher + boot ──────────────────────────────────────────────────────────

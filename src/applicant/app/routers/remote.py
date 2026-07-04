@@ -22,6 +22,7 @@ from applicant.app.container import Container
 from applicant.app.deps import (
     get_container,
     get_pending_actions_service,
+    get_post_submission_service,
     get_prefill_service,
     get_storage,
     get_submission_service,
@@ -36,6 +37,9 @@ from applicant.core.errors import ComputerUseBlocked, PrefillBoundaryViolation, 
 from applicant.core.rules.computer_use import CaptureMode, DesktopAction
 from applicant.core.rules.prefill_boundary import StepKind, ensure_action_allowed
 from applicant.core.state_machine import ApplicationState
+from applicant.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 router = APIRouter(
     prefix="/api/remote",
@@ -366,6 +370,7 @@ def submit_self(
     container: Container = Depends(get_container),
     storage=Depends(get_storage),
     submission=Depends(get_submission_service),
+    post_submission=Depends(get_post_submission_service),
 ) -> dict:
     """User submitted themselves in the live session (FR-PREFILL-5, FR-LOG-4).
 
@@ -381,7 +386,13 @@ def submit_self(
     if storage.applications.get(application_id) is None:  # type: ignore[arg-type]
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
     event = _deliver_decision(
-        container, storage, submission, application_id, DECISION_SUBMIT_SELF, OutcomeSource.MANUAL
+        container,
+        storage,
+        submission,
+        application_id,
+        DECISION_SUBMIT_SELF,
+        OutcomeSource.MANUAL,
+        post_submission=post_submission,
     )
     return {
         "application_id": application_id,
@@ -397,6 +408,7 @@ def authorize_engine_finish(
     container: Container = Depends(get_container),
     storage=Depends(get_storage),
     submission=Depends(get_submission_service),
+    post_submission=Depends(get_post_submission_service),
 ) -> dict:
     """Authorize the engine to click the final submit, friction-free (FR-PREFILL-5).
 
@@ -443,7 +455,13 @@ def authorize_engine_finish(
         except PrefillBoundaryViolation as exc:  # pragma: no cover - defensive
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         event = _deliver_decision(
-            container, storage, submission, application_id, DECISION_ENGINE_FINISH, OutcomeSource.AUTO
+            container,
+            storage,
+            submission,
+            application_id,
+            DECISION_ENGINE_FINISH,
+            OutcomeSource.AUTO,
+            post_submission=post_submission,
         )
     finally:
         _finish_in_progress.discard(application_id)
@@ -462,6 +480,8 @@ def _deliver_decision(
     application_id: str,
     decision: str,
     source: OutcomeSource,
+    *,
+    post_submission=None,
 ):
     """Deliver the user's terminal decision through the durable final-approval gate (#1).
 
@@ -476,6 +496,17 @@ def _deliver_decision(
        is immediate. ``record_submission`` is IDEMPOTENT (IDEM-3): if the durable
        pipeline's own submit step also runs, it finds this event and returns it
        WITHOUT recording a second one — exactly one OutcomeEvent either way.
+    3. Dark-engine audit item 12: once the terminal state (SUBMITTED_BY_USER /
+       FINISHED_BY_ENGINE) is durably recorded, advance the application into
+       ``PostSubmissionService.enter_post_submission`` so it actually *enters*
+       the G16 lifecycle (POST_SUBMISSION) instead of sitting in a state the
+       ghosting sweep / awaiting-response bucket never look at.
+       ``SubmissionService.record_submission`` deliberately does NOT call this
+       itself (it would break the mark-submitted contract used by the
+       admin/outcomes one-tap path — see its own docstring), so this is wired
+       here at the ONE real "the user is done, hand it to the tracker" call
+       site instead. Best-effort: a failure here must never undo the terminal
+       submission that was just recorded.
 
     FR-RESUME-8: ``record_submission`` enforces the review gate (``ReviewRequired`` ->
     409) so the user can never submit over unreviewed material.
@@ -486,9 +517,19 @@ def _deliver_decision(
     workflow_id = f"application:{application_id}"
     container.final_approval_service.submit_decision(workflow_id, application_id, decision)
     try:
-        return submission.record_submission(app, source=source)
+        event = submission.record_submission(app, source=source)
     except ReviewRequired as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if post_submission is not None:
+        try:
+            terminal_app = storage.applications.get(application_id)
+            if terminal_app is not None:
+                post_submission.enter_post_submission(terminal_app)
+        except Exception:  # pragma: no cover - defensive: never undo a delivered submission
+            log.warning(
+                "enter_post_submission_failed", application_id=str(application_id), exc_info=True
+            )
+    return event
 
 
 # ── Desktop assist (FR-CUA) ──────────────────────────────────────────────────

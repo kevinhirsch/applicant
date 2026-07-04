@@ -29,8 +29,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from applicant.app.deps import get_post_submission_service, require_llm_configured
+from applicant.app.deps import get_post_submission_service, get_storage, require_llm_configured
 from applicant.core.entities.outcome_event import OUTCOME_TYPES
+from applicant.core.entities.rejection_signal import RejectionSource
 from applicant.core.ids import ApplicationId, CampaignId
 
 router = APIRouter(
@@ -42,6 +43,14 @@ router = APIRouter(
 
 class RecordOutcomeIn(BaseModel):
     outcome_type: str
+    #: Optional free-text ("they said the role was on hold") -- dark-engine
+    #: audit item 11: the owner's strongest negative signal deserves more than
+    #: just a type. Only meaningful when ``outcome_type == "rejected"``;
+    #: persisted as a ``RejectionSignal`` audit-trail row via the EXISTING
+    #: ``process_rejection_signal`` (previously unwired to any router) so the
+    #: real state transition still runs through ``record_manual_outcome``
+    #: exactly as before -- this never invents a second transition path.
+    reason: str | None = None
 
 
 class ScanEmailIn(BaseModel):
@@ -92,12 +101,64 @@ def record_outcome(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if event is None:
         raise HTTPException(status_code=404, detail="No such application.")
+    reason = (body.reason or "").strip()
+    if outcome_type == "rejected" and reason:
+        # Layer the free-text reason on as a RejectionSignal audit-trail row
+        # (dark-engine audit item 11). confidence is kept BELOW the
+        # auto-record threshold (0.8) so this call never re-triggers
+        # ``detect_outcome`` -- ``record_manual_outcome`` above already
+        # performed the one real REJECTED transition + the one clean
+        # OutcomeEvent; this is purely an audit note, never a second
+        # transition attempt. Best-effort: the reason is a nice-to-have,
+        # never allowed to break the outcome that was just recorded.
+        try:
+            svc.process_rejection_signal(
+                ApplicationId(application_id),
+                source=RejectionSource.MANUAL,
+                signal_text=reason,
+                confidence=0.0,
+            )
+        except Exception:
+            pass
     return {
         "application_id": application_id,
         "outcome_id": str(event.id),
         "type": event.type,
         "source": event.source.value,
     }
+
+
+@router.post("/applications/{application_id}/archive", status_code=200)
+def archive_application(
+    application_id: str,
+    storage=Depends(get_storage),
+    svc=Depends(get_post_submission_service),
+) -> dict:
+    """Close out a dead application (dark-engine audit item 13).
+
+    ``PostSubmissionService.archive`` already existed with zero callers --
+    this is the smallest possible router addition to reach it: one owner
+    action, no new state-machine behavior. §7 only allows ARCHIVED from
+    AWAITING_RESPONSE/FOLLOWING_UP/REJECTED/GHOSTED (never straight from the
+    just-submitted "applied" bucket) -- checked here BEFORE the write so a
+    stale UI click gets an honest 409, not a misleading 404 (``svc.archive``
+    itself swallows an illegal transition and returns ``None`` for both
+    "not found" and "not archivable yet").
+    """
+    from applicant.core.state_machine import ApplicationState, can_transition
+
+    app = storage.applications.get(ApplicationId(application_id))
+    if app is None:
+        raise HTTPException(status_code=404, detail="No such application.")
+    if not can_transition(app.status, ApplicationState.ARCHIVED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"This application can't be archived from its current state ({app.status.value}).",
+        )
+    archived = svc.archive(ApplicationId(application_id))
+    if archived is None:  # pragma: no cover - defensive: guarded above
+        raise HTTPException(status_code=404, detail="No such application.")
+    return {"application_id": application_id, "status": archived.status.value}
 
 
 @router.post("/applications/{application_id}/scan-email")

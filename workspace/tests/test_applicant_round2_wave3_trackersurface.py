@@ -189,7 +189,8 @@ def test_engine_client_exposes_tracker_methods_reused_by_the_proxy():
     src = _read(ENGINE_CLIENT_PY)
     assert "async def tracker_board(self, campaign_id: str)" in src
     assert '"/api/post-submission/' in src
-    assert "async def tracker_record_outcome(self, application_id: str, outcome_type: str)" in src
+    assert "async def tracker_record_outcome(" in src
+    assert "application_id: str, outcome_type: str, reason: str | None = None" in src
 
 
 def test_proxy_router_file_exists_and_is_owner_scoped():

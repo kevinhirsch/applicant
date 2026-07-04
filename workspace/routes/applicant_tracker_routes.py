@@ -71,6 +71,23 @@ Endpoints (all under ``/api/applicant/tracker``):
   restart). ``application_id`` is validated against THIS request's own
   ``/stuck`` fan-out before the write is forwarded — the same
   never-trust-a-caller-supplied-id guard the outcome/scan-email writes use.
+* ``POST /api/applicant/tracker/applications/{application_id}/archive`` —
+  close out a dead application (dark-engine audit #13): the engine's
+  ``PostSubmissionService.archive`` had zero callers before this proxy.
+  Owner-scoped against the SAME ``_owner_application_ids`` tracker-board
+  fan-out ``outcome``/``scan-email`` use.
+* ``GET  /api/applicant/tracker/pending-confirmation`` — applications
+  awaiting an owner "did this actually get submitted?" tap (dark-engine
+  audit #14): the engine's one-tap mark-submitted/detect endpoints existed
+  but were reachable only behind an admin gate. A SEPARATE fan-out from the
+  tracker board (these applications haven't reached a tracker-board §7
+  state yet — they're parked at the final-approval gate or an emergency
+  hand-off).
+* ``POST /api/applicant/tracker/applications/{application_id}/mark-submitted``
+  / ``.../detect-submission`` — the owner-scoped lane for the engine's
+  one-tap "mark submitted" / "try auto-detect" pair, validated against THIS
+  request's own ``/pending-confirmation`` fan-out before the write is
+  forwarded.
 """
 
 from __future__ import annotations
@@ -102,11 +119,19 @@ def _campaign_label(campaign: dict) -> str:
 
 class RecordOutcomeIn(BaseModel):
     outcome_type: str
+    #: Optional free-text reason (dark-engine audit item 11) -- meaningful for
+    #: outcome_type == "rejected"; forwarded to the engine's RejectionSignal
+    #: audit trail alongside the real status transition.
+    reason: Optional[str] = None
 
 
 class ScanEmailIn(BaseModel):
     subject: str = ""
     body: str = ""
+
+
+class MarkSubmittedIn(BaseModel):
+    attributes_used: Optional[dict] = None
 
 
 async def _owner_tracker_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
@@ -215,6 +240,73 @@ async def _owner_stuck_application_ids(engine: ApplicantEngineClient) -> Optiona
     return {str(r["application_id"]) for r in rows if r.get("application_id")}
 
 
+#: §7 states an application sits in when it is waiting on the owner to
+#: confirm what actually happened -- awaiting the live-session final-approval
+#: decision, or parked at the emergency copy/paste hand-off (dark-engine audit
+#: item 14). These are intentionally NOT in the tracker board's own
+#: TRACKER_STATES (nothing has been submitted yet from the engine's point of
+#: view), so they need their own small fan-out, reusing the SAME
+#: ``tracker_application_history`` read the "View details" drill-down already
+#: calls (it returns every application in a campaign, not just tracker rows).
+_PENDING_CONFIRMATION_STATUSES = frozenset({"AWAITING_FINAL_APPROVAL", "EMERGENCY_DATA_HANDOFF"})
+
+
+async def _owner_pending_confirmation_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
+    """Applications awaiting an owner "did this actually get submitted?" tap,
+    aggregated across the owner's OWN campaigns, or a :func:`soft_degrade`
+    dict.
+
+    Mirrors ``_owner_tracker_rows`` (fan out over THIS request's own
+    ``list_campaigns()``, never a caller-supplied id) but reads the engine's
+    per-application history (the same read ``application_history`` already
+    proxies for "View details") and narrows to the two states where
+    auto-detection may not have caught a manual/hand-off submission -- the
+    one-tap "mark as submitted" / "try auto-detect" affordances only ever
+    apply here.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("tracker: pending-confirmation campaigns read failed (status=%s): %s", exc.status, exc)
+        return soft_degrade(exc, {"has_data": False})
+    if not isinstance(campaigns, list):
+        return []
+    rows: list[dict] = []
+    for campaign in campaigns:
+        if not isinstance(campaign, dict):
+            continue
+        cid = campaign.get("id")
+        if not cid:
+            continue
+        try:
+            history = await engine.tracker_application_history(str(cid))
+        except EngineError as exc:
+            logger.debug("tracker: pending-confirmation history read failed for %s: %s", cid, exc)
+            continue
+        items = history.get("applications") if isinstance(history, dict) else None
+        for row in items or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status") or "") not in _PENDING_CONFIRMATION_STATUSES:
+                continue
+            r = dict(row)
+            r.setdefault("campaign_id", str(cid))
+            r["campaign_name"] = _campaign_label(campaign)
+            rows.append(r)
+    return rows
+
+
+async def _owner_pending_confirmation_application_ids(
+    engine: ApplicantEngineClient,
+) -> Optional[set]:
+    """The set of pending-confirmation application ids that belong to THIS
+    owner, or ``None`` when the campaign list itself could not be resolved."""
+    rows = await _owner_pending_confirmation_rows(engine)
+    if not isinstance(rows, list):
+        return None
+    return {str(r["application_id"]) for r in rows if r.get("application_id")}
+
+
 def setup_applicant_tracker_routes() -> APIRouter:
     router = APIRouter(prefix="/api/applicant/tracker", tags=["applicant-tracker"])
 
@@ -260,11 +352,125 @@ def setup_applicant_tracker_routes() -> APIRouter:
                 raise HTTPException(status_code=404, detail="No such application.")
             try:
                 result = await engine.tracker_record_outcome(
-                    application_id, body.outcome_type
+                    application_id, body.outcome_type, reason=body.reason
                 )
             except EngineError as exc:
                 logger.debug(
                     "tracker: record_outcome failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
+
+    @router.post("/applications/{application_id}/archive")
+    async def archive(request: Request, application_id: str) -> dict:
+        """Close out a dead application on the owner's OWN tracker board
+        (dark-engine audit item 13) -- ``PostSubmissionService.archive`` had
+        zero callers before this proxy.
+
+        ``application_id`` is validated against this request's own
+        ``_owner_application_ids`` fan-out BEFORE the write is forwarded --
+        the exact same owner-isolation guard ``record_outcome``/``scan_email``
+        use above. The engine independently re-checks the §7 transition is
+        legal (409 when it isn't, e.g. still sitting in the just-submitted
+        "applied" bucket) -- this route only decides WHOSE application it is.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            try:
+                result = await engine.tracker_archive_application(application_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: archive failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
+
+    @router.get("/pending-confirmation")
+    async def pending_confirmation(request: Request) -> dict:
+        """Applications awaiting an owner "did this get submitted?" tap
+        (dark-engine audit item 14), aggregated across all of the owner's
+        campaigns. Degrades soft exactly like the board above: an
+        unreachable engine returns ``engine_available: false``; a setup gate
+        returns ``gated: true``; nothing pending returns ``has_data: false``
+        with an empty, well-formed ``applications`` list.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            rows = await _owner_pending_confirmation_rows(engine)
+            if not isinstance(rows, list):
+                return {**rows, "applications": []}
+        return {
+            "engine_available": True,
+            "has_data": bool(rows),
+            "applications": rows,
+        }
+
+    @router.post("/applications/{application_id}/mark-submitted")
+    async def mark_submitted(
+        request: Request, application_id: str, body: MarkSubmittedIn | None = None
+    ) -> dict:
+        """One-tap "I submitted this myself" for one of the owner's OWN
+        applications, when auto-detection couldn't confirm it (dark-engine
+        audit item 14) -- the engine's ``mark-submitted`` one-tap path
+        existed but was reachable only behind an admin gate
+        (``applicant_admin_routes.py``); this is the owner-scoped lane.
+
+        ``application_id`` is validated against this request's own
+        ``_owner_pending_confirmation_application_ids`` fan-out BEFORE the
+        write is forwarded -- never trust a caller-supplied id.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_pending_confirmation_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            payload = {"attributes_used": body.attributes_used} if body else {}
+            try:
+                result = await engine.outcome_mark_submitted(application_id, payload)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: mark_submitted failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
+
+    @router.post("/applications/{application_id}/detect-submission")
+    async def detect_submission(request: Request, application_id: str) -> dict:
+        """Ask the engine to auto-detect a final submission in the live
+        session for one of the owner's OWN applications (dark-engine audit
+        item 14) -- the sibling of ``mark_submitted`` above for when the
+        owner isn't sure and wants the engine to check the confirmation page
+        itself first.
+
+        ``application_id`` is validated against this request's own
+        ``_owner_pending_confirmation_application_ids`` fan-out BEFORE the
+        request is forwarded -- never trust a caller-supplied id.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_pending_confirmation_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            try:
+                result = await engine.outcome_detect(application_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: detect_submission failed for %s: %s", application_id, exc
                 )
                 raise HTTPException(
                     status_code=exc.status or 502, detail=str(exc)
