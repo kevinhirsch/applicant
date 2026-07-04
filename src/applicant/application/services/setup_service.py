@@ -201,10 +201,32 @@ _REMOTE_VIEW_BACKENDS = ("webtop", "neko")
 #: a deterministic stub when the real TeX/LibreOffice binaries are absent, ``on``
 #: forces the real render, ``off`` forces the stub.
 _RESUME_RENDER_MODES = ("auto", "on", "off")
+#: Item 83: captcha-handling strategy (config.py CAPTCHA_STRATEGY) -- ``human``
+#: (default, safe) hands every captcha to the operator; ``avoid`` lets
+#: score/behavioral families proceed via the stealth layer while interactive
+#: challenges still hand off; ``service`` additionally farms interactive
+#: challenges to the third-party solving service below. This is a
+#: consequential, terms-sensitive opt-in (a paid third party may see the
+#: challenge), hence the plain-language warning on the Settings card.
+_CAPTCHA_STRATEGIES = ("human", "avoid", "service")
+#: Item 83: the third-party captcha-solving services the ``service`` strategy
+#: may farm interactive challenges to (config.py CAPTCHA_SERVICE default
+#: "capsolver"; mirrors the providers named in
+#: ``adapters/captcha/solver_service.py``'s module docstring).
+_CAPTCHA_SERVICES = ("capsolver", "2captcha", "anticaptcha")
+#: Item 89: residential-egress mode (config.py EGRESS_MODE) -- ``direct`` (the
+#: default) uses the host's own connection; ``residential-proxy`` routes
+#: automation traffic through the attested-residential proxy configured below
+#: (a datacenter exit is refused unless ``egress_residential`` is set True).
+_EGRESS_MODES = ("direct", "residential-proxy")
 
 #: Vault refs for the sandbox-connection secrets (Proxmox token secret, RDP pass).
 _SANDBOX_TOKEN_REF = "sandbox.proxmox_token_secret"
 _SANDBOX_RDP_REF = "sandbox.proxmox_rdp_password"
+#: Vault ref for the captcha-solver API key (item 83, FR-VAULT-3). Mirrors the
+#: sandbox-connection secret pattern: a non-empty key reseals it here and only a
+#: marker (``captcha_api_key_ref``) is persisted in the plain config-store record.
+_CAPTCHA_API_KEY_REF = "automation.captcha_api_key"
 _DEFAULT_MAX_TIERS = 10
 #: Defensive backstop TTL for the in-process tier-ladder cache (perf item #7).
 #: ``_save_tiers`` invalidates the cache synchronously on every write made through
@@ -714,7 +736,7 @@ class SetupService:
         return self.sandbox_connection_configured()
 
     # --- Settings > Automation (dark-engine audit items
-    # 82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) ---
+    # 82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) ---
     def get_automation_prefs(self) -> dict[str, Any]:
         """Return the persisted Automation-tab overrides (no defaults merged in).
 
@@ -722,9 +744,37 @@ class SetupService:
         ``get_channels``. Callers (the setup router) merge this onto the
         env-sourced ``Settings`` defaults so the UI always shows a real,
         currently-effective value, not just "whatever was saved."
+
+        Item 83 (SECURITY, FR-VAULT-3): the captcha-solver API key is a SECRET.
+        This general-purpose accessor NEVER surfaces its raw value or vault-ref
+        marker -- only a computed ``captcha_api_key_configured`` boolean, mirroring
+        how ``get_sandbox_connection()`` filters the Proxmox secrets. The raw
+        record (needed to preserve the vault linkage across a partial save) is
+        read directly from the store inside ``set_automation_prefs``, NOT through
+        this method.
         """
         rec = self._store.get(_AUTOMATION_KEY)
-        return dict(rec) if rec else {}
+        if not rec:
+            return {}
+        out = dict(rec)
+        out.pop("captcha_api_key", None)
+        out.pop("captcha_api_key_ref", None)
+        out["captcha_api_key_configured"] = bool(
+            rec.get("captcha_api_key_ref") or rec.get("captcha_api_key")
+        )
+        return out
+
+    def resolve_captcha_api_key(self) -> str:
+        """Unseal the captcha-solver API key (item 83). Internal use only -- the
+        composition root would wire this into the real solver adapter; never
+        exposed via an endpoint and never logged."""
+        rec = self._store.get(_AUTOMATION_KEY) or {}
+        if "captcha_api_key" in rec:
+            return rec["captcha_api_key"]
+        ref = rec.get("captcha_api_key_ref")
+        if ref and self._credentials is not None:
+            return self._retrieve_secret(ref) or ""
+        return ""
 
     def set_automation_prefs(
         self,
@@ -766,9 +816,24 @@ class SetupService:
         takeover_desktop: str | None = None,
         remote_view_backend: str | None = None,
         resume_render: str | None = None,
+        #: Item 83: captcha-handling strategy ("human"/"avoid"/"service") + the
+        #: third-party solving service used by "service". ``captcha_api_key`` is
+        #: the SECRET solver-service API key: a non-empty value reseals it in the
+        #: credential vault; ``None``/blank leaves any already-vaulted key alone
+        #: (so a save of an unrelated field never wipes it, and the key is never
+        #: required to be resent on every save).
+        captcha_strategy: str | None = None,
+        captcha_service: str | None = None,
+        captcha_api_key: str | None = None,
+        #: Item 89: residential-egress mode ("direct"/"residential-proxy"), the
+        #: operator's explicit attestation that the configured proxy is a genuine
+        #: residential exit, and the proxy URL itself.
+        egress_mode: str | None = None,
+        egress_residential: bool | None = None,
+        egress_proxy_url: str | None = None,
     ) -> None:
         """Persist Automation-tab overrides (dark-engine audit items
-        82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
+        82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
         ``None`` leaves the persisted value for that key untouched (the same
         "unset = no-op" convention ``set_quiet_hours`` uses) so a partial save
@@ -848,6 +913,31 @@ class SetupService:
         (item 104, ``RESUME_RENDER``): resume render fidelity (``auto``
         degrades to a deterministic stub when TeX/LibreOffice are absent,
         ``on`` forces the real render, ``off`` forces the stub).
+
+        ``captcha_strategy``/``captcha_service``/``captcha_api_key`` (item 83,
+        ``CAPTCHA_STRATEGY``/``CAPTCHA_SERVICE``/``CAPTCHA_API_KEY``): whether
+        captchas hand off to the operator (``human``, the safe default), are
+        avoided where possible (``avoid``), or are additionally solved for
+        interactive challenges by a paid third-party service (``service`` --
+        a consequential, terms-sensitive opt-in: some sites' terms prohibit
+        automated captcha solving, and the service is a paid external
+        dependency, hence the Settings card's plain-language warning).
+        ``captcha_api_key`` is the SECRET API key for that service: sealed in
+        the credential vault (never the plain config-store record) and never
+        echoed back by ``get_automation_prefs`` -- only a computed
+        ``captcha_api_key_configured`` boolean is. A blank/omitted key leaves
+        any already-vaulted key untouched.
+        ``egress_mode``/``egress_residential``/``egress_proxy_url`` (item 89,
+        ``EGRESS_MODE``/``EGRESS_RESIDENTIAL``/``EGRESS_PROXY_URL``): whether
+        automation traffic exits directly (``direct``, the default) or through
+        a residential proxy (``residential-proxy``), the operator's explicit
+        attestation that the configured proxy is a genuine residential exit
+        (a datacenter exit is refused otherwise), and the proxy URL itself.
+        The proxy URL may legitimately embed credentials (``http://user:pass@
+        host:port``) -- it is SSRF-validated the same way a single Apprise/ntfy
+        URL is and, like ``discovery_proxies`` (which has the same embedded-
+        credential shape), plain-stored rather than vaulted (matching that
+        field's own precedent, not treated as a distinct secret).
 
         All of the above SELECT-style knobs are validated against their real
         allowed value set server-side (never trusting a caller-supplied value
@@ -954,7 +1044,25 @@ class SetupService:
             )
         if resume_render is not None and resume_render not in _RESUME_RENDER_MODES:
             raise ValueError(f"Resume render mode must be one of {_RESUME_RENDER_MODES}.")
-        rec = self.get_automation_prefs()
+        if captcha_strategy is not None and captcha_strategy not in _CAPTCHA_STRATEGIES:
+            raise ValueError(f"Captcha strategy must be one of {_CAPTCHA_STRATEGIES}.")
+        if captcha_service is not None and captcha_service not in _CAPTCHA_SERVICES:
+            raise ValueError(
+                f"Captcha solving service must be one of {_CAPTCHA_SERVICES}."
+            )
+        if egress_mode is not None and egress_mode not in _EGRESS_MODES:
+            raise ValueError(f"Egress mode must be one of {_EGRESS_MODES}.")
+        if egress_proxy_url is not None:
+            # Item 12 (SSRF): a single URL, guarded the same way a single
+            # Apprise/ntfy URL entry is (the plural discovery_proxies list uses
+            # the comma-joined variant of this same helper above).
+            validate_operator_url(egress_proxy_url, field="Egress proxy URL")
+        # Item 83 (SECURITY): read the RAW stored record (NOT the filtered
+        # get_automation_prefs()) so an already-vaulted captcha_api_key_ref stays
+        # intact across a save that doesn't touch the captcha fields -- using the
+        # filtered accessor here would silently drop the vault linkage on every
+        # unrelated save.
+        rec = dict(self._store.get(_AUTOMATION_KEY) or {})
         if egress_timezone is not None:
             rec["egress_timezone"] = (
                 egress_timezone.strip() or AUTOMATION_PREFS_DEFAULTS["egress_timezone"]
@@ -1037,6 +1145,29 @@ class SetupService:
             rec["remote_view_backend"] = remote_view_backend
         if resume_render is not None:
             rec["resume_render"] = resume_render
+        if captcha_strategy is not None:
+            rec["captcha_strategy"] = captcha_strategy
+        if captcha_service is not None:
+            rec["captcha_service"] = captcha_service
+        if captcha_api_key:
+            # Non-empty only -- a blank/omitted value leaves any already-vaulted
+            # key untouched (see the param docstring above). SECRET: seal in the
+            # credential vault; only a marker is ever persisted in this record.
+            if self._credentials is not None:
+                self._store_secret(_CAPTCHA_API_KEY_REF, captcha_api_key)
+                rec["captcha_api_key_ref"] = _CAPTCHA_API_KEY_REF
+                rec.pop("captcha_api_key", None)
+            else:  # no vault wired (tests) -- inline but NEVER logged
+                rec["captcha_api_key"] = captcha_api_key
+        if egress_mode is not None:
+            rec["egress_mode"] = egress_mode
+        if egress_residential is not None:
+            rec["egress_residential"] = bool(egress_residential)
+        if egress_proxy_url is not None:
+            # NOT a secret by this codebase's own precedent (matches
+            # discovery_proxies, which has the identical embedded-credential
+            # shape and is plain-stored, not vaulted) -- see the docstring above.
+            rec["egress_proxy_url"] = egress_proxy_url.strip()
         self._store.set(_AUTOMATION_KEY, rec)
         log.info(
             "automation_prefs_configured",
@@ -1081,6 +1212,19 @@ class SetupService:
             takeover_desktop=rec.get("takeover_desktop"),
             remote_view_backend=rec.get("remote_view_backend"),
             resume_render=rec.get("resume_render"),
+            captcha_strategy=rec.get("captcha_strategy"),
+            captcha_service=rec.get("captcha_service"),
+            # NEVER log the raw key -- only whether one is configured (item 83).
+            captcha_api_key_configured=bool(
+                rec.get("captcha_api_key_ref") or rec.get("captcha_api_key")
+            ),
+            egress_mode=rec.get("egress_mode"),
+            egress_residential=rec.get("egress_residential"),
+            # NEVER log the raw proxy URL -- it may embed a password (item 89);
+            # log only whether one is configured, same care as the API key above
+            # (discovery_proxies' own existing log line predates this stricter
+            # bar and is out of scope here, but a NEW field must not repeat it).
+            egress_proxy_url_configured=bool(rec.get("egress_proxy_url")),
         )
 
     # --- status ----------------------------------------------------------

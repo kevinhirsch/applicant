@@ -185,7 +185,7 @@ class ConversionPreviewIn(BaseModel):
 
 class AutomationPrefsIn(BaseModel):
     """Settings > Automation body (dark-engine audit items
-    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
+    82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
     all fields ``Optional`` (default ``None``) so a save from one control never
@@ -247,6 +247,20 @@ class AutomationPrefsIn(BaseModel):
     remote_view_backend: str | None = None
     #: Item 104: resume render fidelity ("auto"/"on"/"off").
     resume_render: str | None = None
+    #: Item 83: captcha-handling strategy + third-party solving service. The
+    #: SECRET API key (``captcha_api_key``) is sealed by the engine's credential
+    #: vault and never echoed back by GET -- only a boolean
+    #: ``captcha_api_key_configured`` is; a blank/omitted value here leaves any
+    #: already-vaulted key untouched.
+    captcha_strategy: str | None = None
+    captcha_service: str | None = None
+    captcha_api_key: str | None = None
+    #: Item 89: residential-egress mode, the operator's attestation that the
+    #: configured proxy is a genuine residential exit, and the proxy URL
+    #: itself (may embed credentials; plain-stored like ``discovery_proxies``).
+    egress_mode: str | None = None
+    egress_residential: bool | None = None
+    egress_proxy_url: str | None = None
 
 
 class SandboxConnectionIn(BaseModel):

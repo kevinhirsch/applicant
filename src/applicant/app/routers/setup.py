@@ -107,7 +107,7 @@ class EndpointModelIn(BaseModel):
 
 class AutomationPrefsIn(BaseModel):
     """Settings > Automation body (dark-engine audit items
-    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
+    82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     All fields optional / ``None`` = leave the persisted value untouched
     (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
@@ -185,6 +185,23 @@ class AutomationPrefsIn(BaseModel):
     remote_view_backend: str | None = None
     #: Item 104: resume render fidelity ("auto"/"on"/"off").
     resume_render: str | None = None
+    #: Item 83: captcha-handling strategy ("human"/"avoid"/"service") + the
+    #: third-party solving service ("capsolver"/"2captcha"/"anticaptcha") used
+    #: by "service". ``captcha_api_key`` is the SECRET solver API key: sealed
+    #: in the credential vault, never echoed back by GET (only a boolean
+    #: ``captcha_api_key_configured`` is), and a blank/omitted value leaves any
+    #: already-vaulted key untouched.
+    captcha_strategy: str | None = None
+    captcha_service: str | None = None
+    captcha_api_key: str | None = None
+    #: Item 89: residential-egress mode ("direct"/"residential-proxy"), the
+    #: operator's explicit attestation that the configured proxy is a genuine
+    #: residential exit, and the proxy URL itself (SSRF-validated; may embed
+    #: proxy credentials -- plain-stored like ``discovery_proxies``, not
+    #: vaulted, matching that field's own precedent).
+    egress_mode: str | None = None
+    egress_residential: bool | None = None
+    egress_proxy_url: str | None = None
 
 
 def _status_dict(svc) -> dict:
@@ -519,7 +536,7 @@ def get_automation_prefs(
     svc=Depends(get_setup_service), container=Depends(get_container)
 ) -> dict:
     """Settings > Automation (dark-engine audit items
-    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
+    82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     Merges the persisted overrides onto the env-sourced ``Settings`` defaults so
     the UI always shows the value the running engine actually uses today, even
@@ -619,13 +636,26 @@ def get_automation_prefs(
             "remote_view_backend", settings.remote_view_backend
         ),
         "resume_render": stored.get("resume_render", settings.resume_render),
+        "captcha_strategy": stored.get("captcha_strategy", settings.captcha_strategy),
+        "captcha_service": stored.get("captcha_service", settings.captcha_service),
+        # SECRET (item 83, FR-VAULT-3): the raw key is NEVER returned here -- only
+        # whether one has been saved. ``stored`` already comes from the FILTERED
+        # ``get_automation_prefs()``, which computes this same boolean; read it
+        # straight through rather than re-deriving it here.
+        "captcha_api_key_configured": stored.get("captcha_api_key_configured", False),
+        "egress_mode": stored.get("egress_mode", settings.egress_mode),
+        "egress_residential": stored.get("egress_residential", settings.egress_residential),
+        # NOT a secret by this codebase's own precedent (matches discovery_proxies,
+        # item 101, which has the identical embedded-credential shape and is
+        # plain-stored/returned raw, not vaulted) -- item 89.
+        "egress_proxy_url": stored.get("egress_proxy_url", settings.egress_proxy_url),
     }
 
 
 @router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
 def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
     """Save Settings > Automation overrides (dark-engine audit items
-    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107)."""
+    82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107)."""
     try:
         svc.set_automation_prefs(
             egress_timezone=body.egress_timezone,
@@ -665,6 +695,12 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             takeover_desktop=body.takeover_desktop,
             remote_view_backend=body.remote_view_backend,
             resume_render=body.resume_render,
+            captcha_strategy=body.captcha_strategy,
+            captcha_service=body.captcha_service,
+            captcha_api_key=body.captcha_api_key,
+            egress_mode=body.egress_mode,
+            egress_residential=body.egress_residential,
+            egress_proxy_url=body.egress_proxy_url,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
