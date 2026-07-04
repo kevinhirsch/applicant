@@ -106,7 +106,8 @@ class EndpointModelIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107).
+    """Settings > Automation body (dark-engine audit items
+    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     All fields optional / ``None`` = leave the persisted value untouched
     (mirrors ``QuietHoursIn``'s partial-update convention), so the browser can
@@ -153,6 +154,37 @@ class AutomationPrefsIn(BaseModel):
     loop_failure_alert_threshold: int | None = None
     #: Item 107: switches pre-fill to the experimental plan-as-data planner.
     prefill_use_planner: bool | None = None
+    #: Item 92: which sandbox the engine automates in ("local"/"proxmox-windows")
+    #: and the browser-fingerprint persona ("linux"/"native"/"" to auto-derive).
+    sandbox_backend: str | None = None
+    stealth_persona: str | None = None
+    #: Item 93: the browser ALL outbound automation routes through
+    #: ("camoufox"/"chromium") and, for the chromium engine, its channel
+    #: ("chrome"/"chromium").
+    browser_engine: str | None = None
+    browser_channel: str | None = None
+    #: Item 94: assistant/loop tool-autonomy master switches ("off"/"auto").
+    chat_tools: str | None = None
+    loop_tools: str | None = None
+    #: Item 95: fold capped company research into cover-letter generation.
+    material_research_enabled: bool | None = None
+    #: Item 96: desktop-assist backend ("noop"/"cua"), capture mode
+    #: ("som"/"ax"), and approval posture ("manual"/"session").
+    computer_use_backend: str | None = None
+    computer_use_mode: str | None = None
+    computer_use_approvals: str | None = None
+    #: Item 100: proactive-cadence knobs ("off"/"daily") for the memory-curation
+    #: nudge, the periodic campaign status push, and the "still blocked" reminder.
+    curation_schedule: str | None = None
+    status_update_schedule: str | None = None
+    essentials_nudge_schedule: str | None = None
+    #: Item 101: comma-separated proxy list the discovery crawler routes through.
+    discovery_proxies: str | None = None
+    #: Item 103: live-takeover desktop environment + remote-view technology.
+    takeover_desktop: str | None = None
+    remote_view_backend: str | None = None
+    #: Item 104: resume render fidelity ("auto"/"on"/"off").
+    resume_render: str | None = None
 
 
 def _status_dict(svc) -> dict:
@@ -486,7 +518,8 @@ def configure_sandbox_connection(
 def get_automation_prefs(
     svc=Depends(get_setup_service), container=Depends(get_container)
 ) -> dict:
-    """Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90).
+    """Settings > Automation (dark-engine audit items
+    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     Merges the persisted overrides onto the env-sourced ``Settings`` defaults so
     the UI always shows the value the running engine actually uses today, even
@@ -549,12 +582,50 @@ def get_automation_prefs(
         "prefill_use_planner": stored.get(
             "prefill_use_planner", settings.prefill_use_planner
         ),
+        "sandbox_backend": stored.get("sandbox_backend", settings.sandbox_backend),
+        "stealth_persona": stored.get("stealth_persona", settings.stealth_persona),
+        "browser_engine": stored.get("browser_engine", settings.browser_engine),
+        "browser_channel": stored.get("browser_channel", settings.browser_channel),
+        "chat_tools": stored.get("chat_tools", settings.chat_tools),
+        "loop_tools": stored.get("loop_tools", settings.loop_tools),
+        "material_research_enabled": stored.get(
+            "material_research_enabled", settings.material_research_enabled
+        ),
+        "computer_use_backend": stored.get(
+            "computer_use_backend", settings.computer_use_backend
+        ),
+        "computer_use_mode": stored.get(
+            "computer_use_mode", settings.computer_use_mode
+        ),
+        "computer_use_approvals": stored.get(
+            "computer_use_approvals", settings.computer_use_approvals
+        ),
+        "curation_schedule": stored.get(
+            "curation_schedule", settings.curation_schedule
+        ),
+        "status_update_schedule": stored.get(
+            "status_update_schedule", settings.status_update_schedule
+        ),
+        "essentials_nudge_schedule": stored.get(
+            "essentials_nudge_schedule", settings.essentials_nudge_schedule
+        ),
+        "discovery_proxies": stored.get(
+            "discovery_proxies", settings.discovery_proxies
+        ),
+        "takeover_desktop": stored.get(
+            "takeover_desktop", settings.takeover_desktop
+        ),
+        "remote_view_backend": stored.get(
+            "remote_view_backend", settings.remote_view_backend
+        ),
+        "resume_render": stored.get("resume_render", settings.resume_render),
     }
 
 
 @router.put("/automation", status_code=status.HTTP_204_NO_CONTENT)
 def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)) -> None:
-    """Save Settings > Automation overrides (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107)."""
+    """Save Settings > Automation overrides (dark-engine audit items
+    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107)."""
     try:
         svc.set_automation_prefs(
             egress_timezone=body.egress_timezone,
@@ -577,6 +648,23 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             context_compress_threshold=body.context_compress_threshold,
             loop_failure_alert_threshold=body.loop_failure_alert_threshold,
             prefill_use_planner=body.prefill_use_planner,
+            sandbox_backend=body.sandbox_backend,
+            stealth_persona=body.stealth_persona,
+            browser_engine=body.browser_engine,
+            browser_channel=body.browser_channel,
+            chat_tools=body.chat_tools,
+            loop_tools=body.loop_tools,
+            material_research_enabled=body.material_research_enabled,
+            computer_use_backend=body.computer_use_backend,
+            computer_use_mode=body.computer_use_mode,
+            computer_use_approvals=body.computer_use_approvals,
+            curation_schedule=body.curation_schedule,
+            status_update_schedule=body.status_update_schedule,
+            essentials_nudge_schedule=body.essentials_nudge_schedule,
+            discovery_proxies=body.discovery_proxies,
+            takeover_desktop=body.takeover_desktop,
+            remote_view_backend=body.remote_view_backend,
+            resume_render=body.resume_render,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

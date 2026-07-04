@@ -4,7 +4,12 @@ PRESUBMIT_MAX_APPS_PER_COMPANY_PER_DAY; extended below for items
 91/97/98/99/102/105/106/107 -- the ATS fill-rate floor, the eligibility/
 listing-age filters, memory write-approval + size caps, the smart-router
 prefer-local policy, the context-compression threshold, the loop
-failure-alert threshold, and the experimental prefill planner flag).
+failure-alert threshold, and the experimental prefill planner flag; and further
+extended below for items 92/93/94/95/96/100/101/103/104 -- the sandbox backend/
+stealth persona, the browser engine/channel, the assistant/loop tool-autonomy
+switches, company-research enrichment, the desktop-assist backend/mode/
+approvals, the proactive-cadence schedules, the discovery proxy list, the
+live-takeover appearance, and resume render fidelity).
 
 Mirrors ``test_applicant_setup_routes.py``'s ``test_get_tiers_passes_through`` /
 ``test_set_tiers_forwards_ladder`` shape: the engine client is replaced with a
@@ -290,3 +295,105 @@ def test_put_automation_prefs_rejects_engine_400_for_new_field(monkeypatch):
     )
     assert resp.status_code == 400
     assert resp.json()["detail"] == "The fill-rate floor must be between 0.0 and 1.0."
+
+
+# ── items 92/93/94/95/96/100/101/103/104: same proxy body, new fields ──────
+
+
+def test_get_automation_prefs_passes_batch_b8b_fields_through(monkeypatch):
+    payload = {
+        "sandbox_backend": "local",
+        "stealth_persona": "",
+        "browser_engine": "camoufox",
+        "browser_channel": "chrome",
+        "chat_tools": "off",
+        "loop_tools": "off",
+        "material_research_enabled": False,
+        "computer_use_backend": "noop",
+        "computer_use_mode": "som",
+        "computer_use_approvals": "manual",
+        "curation_schedule": "off",
+        "status_update_schedule": "off",
+        "essentials_nudge_schedule": "daily",
+        "discovery_proxies": "",
+        "takeover_desktop": "cinnamon",
+        "remote_view_backend": "webtop",
+        "resume_render": "auto",
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/automation")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+
+
+def test_put_automation_prefs_forwards_batch_b8b_fields(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {
+        "sandbox_backend": "proxmox-windows",
+        "stealth_persona": "native",
+        "browser_engine": "chromium",
+        "browser_channel": "chromium",
+        "chat_tools": "auto",
+        "loop_tools": "auto",
+        "material_research_enabled": True,
+        "computer_use_backend": "cua",
+        "computer_use_mode": "ax",
+        "computer_use_approvals": "session",
+        "curation_schedule": "daily",
+        "status_update_schedule": "daily",
+        "essentials_nudge_schedule": "off",
+        "discovery_proxies": "http://proxy.example.com:8080",
+        "takeover_desktop": "xfce",
+        "remote_view_backend": "neko",
+        "resume_render": "on",
+    }
+    resp = _make_client().put("/api/applicant/setup/automation", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == body
+
+
+def test_put_automation_prefs_only_forwards_batch_b8b_fields_actually_sent(monkeypatch):
+    """Same partial-update contract as the other automation-prefs batches: a
+    field omitted from the request body must not be forwarded (would clobber
+    the persisted value for that key on the engine side)."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"resume_render": "off"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == {"resume_render": "off"}
+    assert "sandbox_backend" not in args[0]
+    assert "discovery_proxies" not in args[0]
+
+
+def test_put_automation_prefs_rejects_engine_400_for_batch_b8b_field(monkeypatch):
+    err = EngineError("bad", status=400, detail="Sandbox backend must be one of ('local', 'proxmox-windows').")
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"sandbox_backend": "not-a-backend"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Sandbox backend must be one of ('local', 'proxmox-windows')."
+
+
+def test_put_automation_prefs_rejects_engine_422_for_discovery_proxies(monkeypatch):
+    """``discovery_proxies`` is SSRF-checked engine-side and 422s (InvalidInput,
+    a DomainError) rather than 400ing (plain ValueError) -- the proxy must pass
+    that status through unchanged, not coerce it."""
+    err = EngineError(
+        "bad", status=422, detail="Discovery proxy entry 'file:///etc/passwd' uses a disallowed scheme 'file'."
+    )
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"discovery_proxies": "file:///etc/passwd"},
+    )
+    assert resp.status_code == 422
+    assert "disallowed scheme" in resp.json()["detail"]

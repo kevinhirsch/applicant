@@ -185,7 +185,7 @@ class ConversionPreviewIn(BaseModel):
 
 class AutomationPrefsIn(BaseModel):
     """Settings > Automation body (dark-engine audit items
-    82/84/85/86/87/88/90/91/97/98/99/102/105/106/107).
+    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
     all fields ``Optional`` (default ``None``) so a save from one control never
@@ -220,6 +220,33 @@ class AutomationPrefsIn(BaseModel):
     loop_failure_alert_threshold: int | None = None
     #: Item 107: experimental plan-as-data prefill planner flag.
     prefill_use_planner: bool | None = None
+    #: Item 92: sandbox backend ("local"/"proxmox-windows") + stealth persona
+    #: ("linux"/"native"/"" to auto-derive).
+    sandbox_backend: str | None = None
+    stealth_persona: str | None = None
+    #: Item 93: browser engine ("camoufox"/"chromium") + channel ("chrome"/"chromium").
+    browser_engine: str | None = None
+    browser_channel: str | None = None
+    #: Item 94: assistant/loop tool-autonomy master switches ("off"/"auto").
+    chat_tools: str | None = None
+    loop_tools: str | None = None
+    #: Item 95: fold capped company research into cover-letter generation.
+    material_research_enabled: bool | None = None
+    #: Item 96: desktop-assist backend/capture-mode/approval-posture.
+    computer_use_backend: str | None = None
+    computer_use_mode: str | None = None
+    computer_use_approvals: str | None = None
+    #: Item 100: proactive-cadence knobs ("off"/"daily").
+    curation_schedule: str | None = None
+    status_update_schedule: str | None = None
+    essentials_nudge_schedule: str | None = None
+    #: Item 101: comma-separated discovery-crawler proxy list.
+    discovery_proxies: str | None = None
+    #: Item 103: live-takeover desktop environment + remote-view technology.
+    takeover_desktop: str | None = None
+    remote_view_backend: str | None = None
+    #: Item 104: resume render fidelity ("auto"/"on"/"off").
+    resume_render: str | None = None
 
 
 class SandboxConnectionIn(BaseModel):
