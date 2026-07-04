@@ -1,7 +1,7 @@
 // static/js/applicantAutomationSettings.js
 //
 // Settings > Automation (dark-engine audit items
-// 82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107)
+// 82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107)
 // — a generic engine-preferences tab. The dark-engine audit found ~20 engine config knobs
 // that were env-only with zero Settings UI ("the workspace Settings surface
 // mounts only four wizard renderers ... plus the campaign and model-ladder tabs —
@@ -66,9 +66,18 @@
 //   * Proactive updates (item 100) — cadence toggles for the memory-curation
 //     nudge, periodic campaign status pushes, and the "still blocked on
 //     essentials" reminder.
-//   * Automation network (item 101) — the discovery-crawler proxy list.
+//   * Automation network (item 101) — the discovery-crawler proxy list; also
+//     where the residential-egress mode/attestation/proxy URL (item 89) live,
+//     as a companion network setting.
 //   * Live takeover appearance (item 103) — the desktop environment and
 //     remote-view technology used for the one-click live-takeover session.
+//   * Captcha handling (item 83) — human hand-off (default, safe) vs. avoid
+//     vs. farming interactive challenges to a paid third-party solving
+//     service; a plain-language warning that the service option is a paid
+//     external dependency that may conflict with some sites' terms of
+//     service, and an explicit opt-in. The solver API key is a SECRET: it is
+//     sealed in the engine's credential vault and this card never receives it
+//     back from the server — only whether one is already saved.
 //
 // STANDALONE tab module (not a wizard-step renderer) — same shape as
 // applicantCampaignSettings.js / applicantModelLadder.js: talks only to the
@@ -175,6 +184,12 @@ function _cardHTML(prefs) {
     .join('\n');
   const takeoverDesktop = prefs.takeover_desktop || 'cinnamon';
   const remoteViewBackend = prefs.remote_view_backend || 'webtop';
+  const captchaStrategy = prefs.captcha_strategy || 'human';
+  const captchaService = prefs.captcha_service || 'capsolver';
+  const captchaKeyConfigured = !!prefs.captcha_api_key_configured;
+  const egressMode = prefs.egress_mode || 'direct';
+  const egressResidential = !!prefs.egress_residential;
+  const egressProxyUrl = esc(prefs.egress_proxy_url || '');
   return `
     <div class="admin-card">
       <h2>Browser identity</h2>
@@ -613,6 +628,98 @@ function _cardHTML(prefs) {
                   placeholder="One proxy URL per line, e.g. http://user:pass@proxy.example.com:8080"
                   rows="3" style="max-width:420px;">${esc(discoveryProxiesText)}</textarea>
       </div>
+      <h2 style="font-size:1em;margin-top:14px;">Residential egress</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        Route Applicant's browser automation itself (not just discovery) through a
+        residential proxy instead of this server's own connection — useful when
+        this server's connection would otherwise look like a datacenter to the
+        sites Applicant applies on. Leave on "Direct" unless you have a
+        residential proxy to point at.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-egress-mode">Egress mode</label>
+        ${_selectHTML(
+          'as-egress-mode',
+          'egress_mode',
+          [
+            ['direct', 'Direct (this server\'s own connection)'],
+            ['residential-proxy', 'Residential proxy'],
+          ],
+          egressMode,
+        )}
+      </div>
+      <div class="settings-row" style="align-items:flex-start;">
+        <label class="settings-label" for="as-egress-proxy-url">Proxy URL</label>
+        <input id="as-egress-proxy-url" class="settings-input" type="text" value="${egressProxyUrl}"
+               placeholder="http://user:pass@residential-proxy.example.com:8080"
+               data-as-field="egress_proxy_url" style="max-width:420px;">
+      </div>
+      <h2 style="display:flex;align-items:center;gap:6px;font-size:1em;margin-top:6px;">
+        This proxy is a genuine residential connection
+        <span style="flex:1"></span>
+        <label class="admin-switch" for="as-egress-residential">
+          <input type="checkbox" id="as-egress-residential" data-as-field="egress_residential" ${egressResidential ? 'checked' : ''}>
+          <span class="admin-slider"></span>
+        </label>
+      </h2>
+      <div class="admin-toggle-sub">
+        Your explicit confirmation that the proxy above is a real residential
+        exit, not a datacenter one. When egress mode is set to "Residential
+        proxy" but this isn't checked, Applicant refuses to launch rather than
+        risk exiting through a datacenter IP.
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>Captcha handling</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">
+        What Applicant does when it hits a CAPTCHA while filling out an
+        application.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-captcha-strategy">Strategy</label>
+        ${_selectHTML(
+          'as-captcha-strategy',
+          'captcha_strategy',
+          [
+            ['human', 'Hand off to me (default, safest)'],
+            ['avoid', 'Avoid where possible, otherwise hand off to me'],
+            ['service', 'Solve automatically using a paid third-party service'],
+          ],
+          captchaStrategy,
+        )}
+      </div>
+      <div class="admin-toggle-sub" style="margin:2px 0 10px;padding:8px;border-radius:6px;background:color-mix(in srgb, var(--red, #c0392b) 12%, transparent);">
+        <strong>Before choosing "Solve automatically":</strong> this sends the
+        CAPTCHA challenge to a paid third-party solving service you configure
+        below, using an API key and account you set up and pay for yourself.
+        Using an automated CAPTCHA-solving service may violate the terms of
+        service of some job sites. Only turn this on if you understand and
+        accept that risk. The default ("Hand off to me") never does this.
+      </div>
+      <div class="settings-row">
+        <label class="settings-label" for="as-captcha-service">Solving service</label>
+        ${_selectHTML(
+          'as-captcha-service',
+          'captcha_service',
+          [
+            ['capsolver', 'CapSolver'],
+            ['2captcha', '2Captcha'],
+            ['anticaptcha', 'Anti-Captcha'],
+          ],
+          captchaService,
+        )}
+      </div>
+      <div class="settings-row" style="align-items:flex-start;">
+        <label class="settings-label" for="as-captcha-api-key">Service API key</label>
+        <input id="as-captcha-api-key" class="settings-input" type="password" value=""
+               placeholder="${captchaKeyConfigured ? 'Saved — leave blank to keep it' : 'Not set'}"
+               autocomplete="new-password" data-as-field="captcha_api_key" style="max-width:280px;">
+      </div>
+      <div class="admin-toggle-sub" style="opacity:0.7;">
+        ${captchaKeyConfigured
+          ? 'A key is already saved and is never shown here again. Type a new one to replace it, or leave this blank to keep the saved key.'
+          : 'Only used when the strategy above is "Solve automatically." Stored in the secure credential vault, never in plain settings, and never shown back to you once saved.'}
+      </div>
     </div>
     <div class="admin-card">
       <h2>Live takeover appearance</h2>
@@ -746,6 +853,12 @@ function _readForm(host) {
   const discoveryProxiesEl = get('discovery_proxies');
   const takeoverDesktopEl = get('takeover_desktop');
   const remoteViewBackendEl = get('remote_view_backend');
+  const captchaStrategyEl = get('captcha_strategy');
+  const captchaServiceEl = get('captcha_service');
+  const captchaApiKeyEl = get('captcha_api_key');
+  const egressModeEl = get('egress_mode');
+  const egressResidentialEl = get('egress_residential');
+  const egressProxyUrlEl = get('egress_proxy_url');
   const body = {};
   if (tzEl) body.egress_timezone = tzEl.value.trim();
   if (localeEl) body.egress_locale = localeEl.value.trim();
@@ -835,6 +948,19 @@ function _readForm(host) {
   }
   if (takeoverDesktopEl) body.takeover_desktop = takeoverDesktopEl.value;
   if (remoteViewBackendEl) body.remote_view_backend = remoteViewBackendEl.value;
+  if (captchaStrategyEl) body.captcha_strategy = captchaStrategyEl.value;
+  if (captchaServiceEl) body.captcha_service = captchaServiceEl.value;
+  // SECRET: only send a new key when the operator actually typed one. This
+  // field never carries the saved value back down (the GET response only
+  // ever surfaces `captcha_api_key_configured`, a boolean), so an untouched
+  // blank input here means "keep whatever is already vaulted" -- omitting
+  // the field entirely rather than sending an empty string that would wipe it.
+  if (captchaApiKeyEl && captchaApiKeyEl.value.trim() !== '') {
+    body.captcha_api_key = captchaApiKeyEl.value.trim();
+  }
+  if (egressModeEl) body.egress_mode = egressModeEl.value;
+  if (egressResidentialEl) body.egress_residential = !!egressResidentialEl.checked;
+  if (egressProxyUrlEl) body.egress_proxy_url = egressProxyUrlEl.value.trim();
   return body;
 }
 

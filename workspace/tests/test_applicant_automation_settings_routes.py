@@ -397,3 +397,113 @@ def test_put_automation_prefs_rejects_engine_422_for_discovery_proxies(monkeypat
     )
     assert resp.status_code == 422
     assert "disallowed scheme" in resp.json()["detail"]
+
+
+# ── items 83/89: same proxy body, new (last two) B8 fields ─────────────────
+#
+# These are the LAST two dark-engine audit §B8 knobs -- security/terms-sensitive
+# and deliberately held back until now (08_engine_dark_matrix.md item 83/89).
+# The captcha-solver API key is a SECRET the engine vaults; the proxy is a THIN
+# pass-through (no field-specific logic here) so these tests only need to prove
+# the new fields flow through the SAME generic body/response plumbing every
+# other automation-prefs field already uses -- never that the proxy itself
+# special-cases the secret (it must not: the engine never sends it back).
+
+
+def test_get_automation_prefs_passes_captcha_and_egress_fields_through(monkeypatch):
+    payload = {
+        "captcha_strategy": "human",
+        "captcha_service": "capsolver",
+        "captcha_api_key_configured": False,
+        "egress_mode": "direct",
+        "egress_residential": False,
+        "egress_proxy_url": "",
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/automation")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    # CRITICAL (SECURITY): the proxy must never fabricate or forward a raw key
+    # field -- only whatever the engine itself returned (never the value).
+    assert "captcha_api_key" not in resp.json()
+
+
+def test_put_automation_prefs_forwards_captcha_and_egress_fields(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {
+        "captcha_strategy": "service",
+        "captcha_service": "2captcha",
+        "captcha_api_key": "sk-operator-supplied-key",
+        "egress_mode": "residential-proxy",
+        "egress_residential": True,
+        "egress_proxy_url": "http://user:pass@proxy.example.com:8080",
+    }
+    resp = _make_client().put("/api/applicant/setup/automation", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    # The proxy forwards whatever the operator sent (including a freshly-typed
+    # key) on to the engine, which is the ONLY layer that vaults/seals it.
+    assert args[0] == body
+
+
+def test_put_automation_prefs_only_forwards_captcha_egress_fields_actually_sent(monkeypatch):
+    """Same partial-update contract as every other automation-prefs batch: a
+    field omitted from the request body must not be forwarded. In particular,
+    an operator saving an unrelated Settings card must never accidentally send
+    an empty ``captcha_api_key`` that could be mistaken for "clear the key"."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"egress_mode": "direct"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == {"egress_mode": "direct"}
+    assert "captcha_api_key" not in args[0]
+    assert "captcha_strategy" not in args[0]
+    assert "egress_proxy_url" not in args[0]
+
+
+def test_put_automation_prefs_rejects_engine_400_for_captcha_strategy(monkeypatch):
+    err = EngineError(
+        "bad", status=400, detail="Captcha strategy must be one of ('human', 'avoid', 'service')."
+    )
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"captcha_strategy": "solve-for-me"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Captcha strategy must be one of ('human', 'avoid', 'service')."
+
+
+def test_put_automation_prefs_rejects_engine_400_for_egress_mode(monkeypatch):
+    err = EngineError(
+        "bad", status=400, detail="Egress mode must be one of ('direct', 'residential-proxy')."
+    )
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"egress_mode": "datacenter"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Egress mode must be one of ('direct', 'residential-proxy')."
+
+
+def test_put_automation_prefs_rejects_engine_422_for_egress_proxy_url(monkeypatch):
+    """``egress_proxy_url`` is SSRF-checked engine-side and 422s (InvalidInput),
+    the same status class ``discovery_proxies`` uses above -- the proxy must
+    pass that status through unchanged, not coerce it to 400."""
+    err = EngineError(
+        "bad", status=422, detail="Egress proxy URL must be an http(s) URL (got scheme 'file')."
+    )
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"egress_proxy_url": "file:///etc/passwd"},
+    )
+    assert resp.status_code == 422
+    assert "must be an http(s) URL" in resp.json()["detail"]

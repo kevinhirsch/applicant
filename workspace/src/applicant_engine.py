@@ -360,7 +360,7 @@ class ApplicantEngineClient:
         return await self._request("GET", f"/api/setup/{campaign_id}/gaps")
 
     # -- setup: Settings > Automation (dark-engine audit items
-    # 82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) --
+    # 82/83/84/85/86/87/88/89/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) --
 
     async def setup_get_automation_prefs(self) -> Any:
         """Browser fingerprint timezone/locale, the automated-account-creation
@@ -372,8 +372,11 @@ class ApplicantEngineClient:
         sandbox/browser/stealth selectors, the assistant/loop tool-autonomy
         switches, company-research enrichment, desktop-assist backend/mode/
         approvals, proactive-cadence schedules, the discovery proxy list, the
-        live-takeover appearance, and the resume render fidelity --
-        persisted overrides merged onto the engine's env defaults."""
+        live-takeover appearance, the resume render fidelity, the
+        captcha-handling strategy/service (the API key surfaces only as a
+        boolean ``captcha_api_key_configured``, never the key itself), and the
+        residential-egress mode/attestation/proxy URL -- persisted overrides
+        merged onto the engine's env defaults."""
         return await self._request("GET", "/api/setup/automation")
 
     async def setup_set_automation_prefs(self, body: dict) -> Any:
