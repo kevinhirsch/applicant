@@ -165,6 +165,43 @@ AUTOMATION_PREFS_DEFAULTS: dict[str, Any] = {
     "approval_wait_seconds": None,
     "scheduler_interval_seconds": 60.0,
 }
+
+#: Allowed-value tuples for the SELECT-style Settings > Automation knobs added for
+#: dark-engine audit items 92/93/94/96/100/103/104. Duplicated here (NOT imported
+#: from ``applicant.app.config``) for the SAME reason ``AUTOMATION_PREFS_DEFAULTS``
+#: duplicates its literals rather than importing ``Settings`` -- this module keeps
+#: zero import-time dependency on the pydantic-settings layer. Keep in sync with
+#: config.py's own ``SANDBOX_BACKENDS``/``STEALTH_PERSONAS``/``BROWSER_ENGINES``/
+#: ``BROWSER_CHANNELS``/``TAKEOVER_DESKTOPS``/``REMOTE_VIEW_BACKENDS``.
+_SANDBOX_BACKENDS = ("local", "proxmox-windows")
+#: Empty string is ALSO valid (item 92): it means "auto-derive from the sandbox
+#: backend", mirroring config.py's own ``STEALTH_PERSONA`` default of ``""``.
+_STEALTH_PERSONAS = ("linux", "native")
+_BROWSER_ENGINES = ("camoufox", "chromium")
+_BROWSER_CHANNELS = ("chrome", "chromium")
+#: Item 94: the assistant/loop tool-autonomy master switches. ``off`` (the
+#: conservative default) never registers tools; ``auto`` registers them only when
+#: the configured model also advertises tool calling (config.py CHAT_TOOLS/LOOP_TOOLS).
+_TOOL_AUTONOMY_MODES = ("off", "auto")
+#: Item 96: desktop-assist backend/capture-mode/approval-posture (config.py
+#: COMPUTER_USE_BACKEND/_MODE/_APPROVALS).
+_COMPUTER_USE_BACKENDS = ("noop", "cua")
+_COMPUTER_USE_MODES = ("som", "ax")
+_COMPUTER_USE_APPROVAL_MODES = ("manual", "session")
+#: Item 100: the proactive-cadence knobs (CURATION_SCHEDULE/STATUS_UPDATE_SCHEDULE/
+#: ESSENTIALS_NUDGE_SCHEDULE). The scheduler only distinguishes "off" from
+#: "anything else" (scheduler.py), but the Settings UI offers the one meaningful
+#: opt-in cadence (``daily``) rather than an unbounded free-text cron-like field.
+_SCHEDULE_CADENCES = ("off", "daily")
+#: Item 103: live-takeover desktop environment + remote-view backend (config.py
+#: TAKEOVER_DESKTOP/REMOTE_VIEW_BACKEND).
+_TAKEOVER_DESKTOPS = ("cinnamon", "xfce", "gnome", "pantheon")
+_REMOTE_VIEW_BACKENDS = ("webtop", "neko")
+#: Item 104: resume render fidelity (config.py RESUME_RENDER); ``auto`` degrades to
+#: a deterministic stub when the real TeX/LibreOffice binaries are absent, ``on``
+#: forces the real render, ``off`` forces the stub.
+_RESUME_RENDER_MODES = ("auto", "on", "off")
+
 #: Vault refs for the sandbox-connection secrets (Proxmox token secret, RDP pass).
 _SANDBOX_TOKEN_REF = "sandbox.proxmox_token_secret"
 _SANDBOX_RDP_REF = "sandbox.proxmox_rdp_password"
@@ -676,7 +713,8 @@ class SetupService:
             return True
         return self.sandbox_connection_configured()
 
-    # --- Settings > Automation (dark-engine audit items 82/84/85/86/90) ---
+    # --- Settings > Automation (dark-engine audit items
+    # 82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107) ---
     def get_automation_prefs(self) -> dict[str, Any]:
         """Return the persisted Automation-tab overrides (no defaults merged in).
 
@@ -700,8 +738,37 @@ class SetupService:
         approval_timeout_days: int | None = None,
         approval_wait_seconds: float | None = None,
         scheduler_interval_seconds: float | None = None,
+        ats_match_rate_floor: float | None = None,
+        presubmit_eligibility_enabled: bool | None = None,
+        presubmit_max_listing_age_days: int | None = None,
+        memory_write_approval: bool | None = None,
+        skills_write_approval: bool | None = None,
+        memory_max_chars: int | None = None,
+        user_max_chars: int | None = None,
+        llm_smart_routing_prefer_local: bool | None = None,
+        context_compress_threshold: int | None = None,
+        loop_failure_alert_threshold: int | None = None,
+        prefill_use_planner: bool | None = None,
+        sandbox_backend: str | None = None,
+        stealth_persona: str | None = None,
+        browser_engine: str | None = None,
+        browser_channel: str | None = None,
+        chat_tools: str | None = None,
+        loop_tools: str | None = None,
+        material_research_enabled: bool | None = None,
+        computer_use_backend: str | None = None,
+        computer_use_mode: str | None = None,
+        computer_use_approvals: str | None = None,
+        curation_schedule: str | None = None,
+        status_update_schedule: str | None = None,
+        essentials_nudge_schedule: str | None = None,
+        discovery_proxies: str | None = None,
+        takeover_desktop: str | None = None,
+        remote_view_backend: str | None = None,
+        resume_render: str | None = None,
     ) -> None:
-        """Persist Automation-tab overrides (dark-engine audit items 82/84/85/86/87/88/90).
+        """Persist Automation-tab overrides (dark-engine audit items
+        82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
         ``None`` leaves the persisted value for that key untouched (the same
         "unset = no-op" convention ``set_quiet_hours`` uses) so a partial save
@@ -719,6 +786,73 @@ class SetupService:
         days`` (item 88) mirrors ``PRESUBMIT_DUPLICATE_COOLDOWN_DAYS``: how
         many days must pass before the engine will re-apply to the same
         (company, role) pair.
+
+        ``ats_match_rate_floor`` (item 91, mirrors ``ATS_MATCH_RATE_FLOOR``):
+        the minimum fields-filled ratio (0.0-1.0) below which an application
+        is flagged for review instead of offered for submit.
+        ``presubmit_eligibility_enabled`` (item 97, ``PRESUBMIT_ELIGIBILITY_
+        ENABLED``): whether postings are filtered on work-authorization /
+        sponsorship / clearance requirements. ``presubmit_max_listing_age_
+        days`` (item 98, ``PRESUBMIT_MAX_LISTING_AGE_DAYS``): blocks postings
+        older than this many days. ``memory_write_approval``/
+        ``skills_write_approval`` (item 99, ``MEMORY_WRITE_APPROVAL``/
+        ``SKILLS_WRITE_APPROVAL``): auto-apply vs staged memory/skills
+        writes. ``memory_max_chars``/``user_max_chars`` (item 99,
+        ``MEMORY_MAX_CHARS``/``USER_MAX_CHARS``): the curated-memory prompt
+        budget caps, in characters -- must stay positive (a zero/negative
+        budget would silently blank out the memory the loop relies on).
+        ``llm_smart_routing_prefer_local`` (item 102, ``LLM_SMART_ROUTING_
+        PREFER_LOCAL``): whether the smart router's tier ladder prefers a
+        local endpoint when one is online. ``context_compress_threshold``
+        (item 105, ``CONTEXT_COMPRESS_THRESHOLD``): the token budget above
+        which older turns are compressed; ``0`` disables compression.
+        ``loop_failure_alert_threshold`` (item 106, ``LOOP_FAILURE_ALERT_
+        THRESHOLD``): consecutive tick failures before a stall alert fires --
+        must be at least 1 (0/negative would alert on the first failure or
+        never, mirroring the ``config.py`` field's own ``ge=1`` guard).
+        ``prefill_use_planner`` (item 107, ``PREFILL_USE_PLANNER``): switches
+        pre-fill to the experimental plan-as-data planner.
+
+        ``sandbox_backend``/``stealth_persona`` (item 92, mirror config.py's
+        ``SANDBOX_BACKEND``/``STEALTH_PERSONA``): which sandbox the engine
+        automates in (``local`` container sandbox vs a native ``proxmox-
+        windows`` VM) and the browser-fingerprint persona (``linux`` spoofed,
+        ``native`` real identity, or ``""`` to auto-derive from the backend).
+        ``browser_engine``/``browser_channel`` (item 93, ``BROWSER_ENGINE``/
+        ``BROWSER_CHANNEL``): the browser ALL outbound automation routes
+        through (``camoufox`` anti-detect vs ``chromium`` patchright+Chrome)
+        and, for the ``chromium`` engine only, which channel it launches.
+        ``chat_tools``/``loop_tools`` (item 94, ``CHAT_TOOLS``/``LOOP_TOOLS``):
+        the assistant/loop tool-autonomy master switches -- ``off`` (default)
+        never registers tools, ``auto`` registers them when the configured
+        model also advertises tool calling. ``material_research_enabled``
+        (item 95, ``MATERIAL_RESEARCH_ENABLED``): folds capped company
+        research into cover-letter generation. ``computer_use_backend``/
+        ``computer_use_mode``/``computer_use_approvals`` (item 96,
+        ``COMPUTER_USE_BACKEND``/``_MODE``/``_APPROVALS``): the desktop-assist
+        backend (``noop`` no side effects vs ``cua`` the real driver), capture
+        mode (``som`` screenshot-with-elements vs ``ax`` accessibility-tree
+        text), and approval posture (``manual`` per-action vs ``session``
+        per-takeover). ``curation_schedule``/``status_update_schedule``/
+        ``essentials_nudge_schedule`` (item 100, ``CURATION_SCHEDULE``/
+        ``STATUS_UPDATE_SCHEDULE``/``ESSENTIALS_NUDGE_SCHEDULE``): the
+        proactive-cadence knobs (``off`` or ``daily``) for the memory-curation
+        nudge, the periodic campaign status push, and the "still blocked on
+        essentials" reminder. ``discovery_proxies`` (item 101,
+        ``DISCOVERY_PROXIES``): a comma-separated proxy list the discovery
+        crawler routes through instead of direct egress; each entry is
+        SSRF-checked the same way Apprise/ntfy URLs are (item 12).
+        ``takeover_desktop``/``remote_view_backend`` (item 103,
+        ``TAKEOVER_DESKTOP``/``REMOTE_VIEW_BACKEND``): the live-takeover
+        desktop environment and remote-view technology. ``resume_render``
+        (item 104, ``RESUME_RENDER``): resume render fidelity (``auto``
+        degrades to a deterministic stub when TeX/LibreOffice are absent,
+        ``on`` forces the real render, ``off`` forces the stub).
+
+        All of the above SELECT-style knobs are validated against their real
+        allowed value set server-side (never trusting a caller-supplied value
+        alone -- the fabrication-guard convention in CLAUDE.md) so a bad enum
+        value 400s instead of silently persisting an inert/undefined setting.
         """
         if (
             presubmit_max_apps_per_company_per_day is not None
@@ -738,6 +872,88 @@ class SetupService:
             raise ValueError("The approval wait override cannot be negative.")
         if scheduler_interval_seconds is not None and scheduler_interval_seconds <= 0:
             raise ValueError("The check interval must be greater than zero.")
+        if ats_match_rate_floor is not None and not (0.0 <= ats_match_rate_floor <= 1.0):
+            raise ValueError("The fill-rate floor must be between 0.0 and 1.0.")
+        if (
+            presubmit_max_listing_age_days is not None
+            and presubmit_max_listing_age_days < 0
+        ):
+            raise ValueError("The maximum listing age cannot be negative.")
+        if memory_max_chars is not None and memory_max_chars <= 0:
+            raise ValueError("The memory character budget must be positive.")
+        if user_max_chars is not None and user_max_chars <= 0:
+            raise ValueError("The user-preferences character budget must be positive.")
+        if context_compress_threshold is not None and context_compress_threshold < 0:
+            raise ValueError("The context-compression threshold cannot be negative.")
+        if loop_failure_alert_threshold is not None and loop_failure_alert_threshold < 1:
+            raise ValueError("The failure-alert threshold must be at least 1.")
+        if sandbox_backend is not None and sandbox_backend not in _SANDBOX_BACKENDS:
+            raise ValueError(f"Sandbox backend must be one of {_SANDBOX_BACKENDS}.")
+        if stealth_persona is not None and stealth_persona not in ("", *_STEALTH_PERSONAS):
+            raise ValueError(
+                f"Stealth persona must be one of {_STEALTH_PERSONAS} "
+                "(or empty to auto-derive from the sandbox backend)."
+            )
+        if browser_engine is not None and browser_engine not in _BROWSER_ENGINES:
+            raise ValueError(f"Browser engine must be one of {_BROWSER_ENGINES}.")
+        if browser_channel is not None and browser_channel not in _BROWSER_CHANNELS:
+            raise ValueError(f"Browser channel must be one of {_BROWSER_CHANNELS}.")
+        if chat_tools is not None and chat_tools not in _TOOL_AUTONOMY_MODES:
+            raise ValueError(
+                f"Assistant tool autonomy must be one of {_TOOL_AUTONOMY_MODES}."
+            )
+        if loop_tools is not None and loop_tools not in _TOOL_AUTONOMY_MODES:
+            raise ValueError(
+                f"Loop tool autonomy must be one of {_TOOL_AUTONOMY_MODES}."
+            )
+        if computer_use_backend is not None and computer_use_backend not in _COMPUTER_USE_BACKENDS:
+            raise ValueError(
+                f"Desktop-assist backend must be one of {_COMPUTER_USE_BACKENDS}."
+            )
+        if computer_use_mode is not None and computer_use_mode not in _COMPUTER_USE_MODES:
+            raise ValueError(
+                f"Desktop-assist capture mode must be one of {_COMPUTER_USE_MODES}."
+            )
+        if (
+            computer_use_approvals is not None
+            and computer_use_approvals not in _COMPUTER_USE_APPROVAL_MODES
+        ):
+            raise ValueError(
+                "Desktop-assist approval posture must be one of "
+                f"{_COMPUTER_USE_APPROVAL_MODES}."
+            )
+        if curation_schedule is not None and curation_schedule not in _SCHEDULE_CADENCES:
+            raise ValueError(f"Curation cadence must be one of {_SCHEDULE_CADENCES}.")
+        if (
+            status_update_schedule is not None
+            and status_update_schedule not in _SCHEDULE_CADENCES
+        ):
+            raise ValueError(
+                f"Status-update cadence must be one of {_SCHEDULE_CADENCES}."
+            )
+        if (
+            essentials_nudge_schedule is not None
+            and essentials_nudge_schedule not in _SCHEDULE_CADENCES
+        ):
+            raise ValueError(
+                f"Essentials-nudge cadence must be one of {_SCHEDULE_CADENCES}."
+            )
+        if discovery_proxies is not None:
+            # Item 12 (SSRF): each comma-separated proxy entry is guarded the
+            # SAME way Apprise/ntfy URLs are -- reuses the existing helper
+            # rather than re-implementing the check.
+            validate_operator_urls(discovery_proxies, field="Discovery proxy")
+        if takeover_desktop is not None and takeover_desktop not in _TAKEOVER_DESKTOPS:
+            raise ValueError(f"Takeover desktop must be one of {_TAKEOVER_DESKTOPS}.")
+        if (
+            remote_view_backend is not None
+            and remote_view_backend not in _REMOTE_VIEW_BACKENDS
+        ):
+            raise ValueError(
+                f"Remote-view backend must be one of {_REMOTE_VIEW_BACKENDS}."
+            )
+        if resume_render is not None and resume_render not in _RESUME_RENDER_MODES:
+            raise ValueError(f"Resume render mode must be one of {_RESUME_RENDER_MODES}.")
         rec = self.get_automation_prefs()
         if egress_timezone is not None:
             rec["egress_timezone"] = (
@@ -765,6 +981,62 @@ class SetupService:
             rec["approval_wait_seconds"] = float(approval_wait_seconds)
         if scheduler_interval_seconds is not None:
             rec["scheduler_interval_seconds"] = float(scheduler_interval_seconds)
+        if ats_match_rate_floor is not None:
+            rec["ats_match_rate_floor"] = float(ats_match_rate_floor)
+        if presubmit_eligibility_enabled is not None:
+            rec["presubmit_eligibility_enabled"] = bool(presubmit_eligibility_enabled)
+        if presubmit_max_listing_age_days is not None:
+            rec["presubmit_max_listing_age_days"] = int(presubmit_max_listing_age_days)
+        if memory_write_approval is not None:
+            rec["memory_write_approval"] = bool(memory_write_approval)
+        if skills_write_approval is not None:
+            rec["skills_write_approval"] = bool(skills_write_approval)
+        if memory_max_chars is not None:
+            rec["memory_max_chars"] = int(memory_max_chars)
+        if user_max_chars is not None:
+            rec["user_max_chars"] = int(user_max_chars)
+        if llm_smart_routing_prefer_local is not None:
+            rec["llm_smart_routing_prefer_local"] = bool(llm_smart_routing_prefer_local)
+        if context_compress_threshold is not None:
+            rec["context_compress_threshold"] = int(context_compress_threshold)
+        if loop_failure_alert_threshold is not None:
+            rec["loop_failure_alert_threshold"] = int(loop_failure_alert_threshold)
+        if prefill_use_planner is not None:
+            rec["prefill_use_planner"] = bool(prefill_use_planner)
+        if sandbox_backend is not None:
+            rec["sandbox_backend"] = sandbox_backend
+        if stealth_persona is not None:
+            rec["stealth_persona"] = stealth_persona
+        if browser_engine is not None:
+            rec["browser_engine"] = browser_engine
+        if browser_channel is not None:
+            rec["browser_channel"] = browser_channel
+        if chat_tools is not None:
+            rec["chat_tools"] = chat_tools
+        if loop_tools is not None:
+            rec["loop_tools"] = loop_tools
+        if material_research_enabled is not None:
+            rec["material_research_enabled"] = bool(material_research_enabled)
+        if computer_use_backend is not None:
+            rec["computer_use_backend"] = computer_use_backend
+        if computer_use_mode is not None:
+            rec["computer_use_mode"] = computer_use_mode
+        if computer_use_approvals is not None:
+            rec["computer_use_approvals"] = computer_use_approvals
+        if curation_schedule is not None:
+            rec["curation_schedule"] = curation_schedule
+        if status_update_schedule is not None:
+            rec["status_update_schedule"] = status_update_schedule
+        if essentials_nudge_schedule is not None:
+            rec["essentials_nudge_schedule"] = essentials_nudge_schedule
+        if discovery_proxies is not None:
+            rec["discovery_proxies"] = discovery_proxies.strip()
+        if takeover_desktop is not None:
+            rec["takeover_desktop"] = takeover_desktop
+        if remote_view_backend is not None:
+            rec["remote_view_backend"] = remote_view_backend
+        if resume_render is not None:
+            rec["resume_render"] = resume_render
         self._store.set(_AUTOMATION_KEY, rec)
         log.info(
             "automation_prefs_configured",
@@ -781,6 +1053,34 @@ class SetupService:
             approval_timeout_days=rec.get("approval_timeout_days"),
             approval_wait_seconds=rec.get("approval_wait_seconds"),
             scheduler_interval_seconds=rec.get("scheduler_interval_seconds"),
+            ats_match_rate_floor=rec.get("ats_match_rate_floor"),
+            presubmit_eligibility_enabled=rec.get("presubmit_eligibility_enabled"),
+            presubmit_max_listing_age_days=rec.get("presubmit_max_listing_age_days"),
+            memory_write_approval=rec.get("memory_write_approval"),
+            skills_write_approval=rec.get("skills_write_approval"),
+            memory_max_chars=rec.get("memory_max_chars"),
+            user_max_chars=rec.get("user_max_chars"),
+            llm_smart_routing_prefer_local=rec.get("llm_smart_routing_prefer_local"),
+            context_compress_threshold=rec.get("context_compress_threshold"),
+            loop_failure_alert_threshold=rec.get("loop_failure_alert_threshold"),
+            prefill_use_planner=rec.get("prefill_use_planner"),
+            sandbox_backend=rec.get("sandbox_backend"),
+            stealth_persona=rec.get("stealth_persona"),
+            browser_engine=rec.get("browser_engine"),
+            browser_channel=rec.get("browser_channel"),
+            chat_tools=rec.get("chat_tools"),
+            loop_tools=rec.get("loop_tools"),
+            material_research_enabled=rec.get("material_research_enabled"),
+            computer_use_backend=rec.get("computer_use_backend"),
+            computer_use_mode=rec.get("computer_use_mode"),
+            computer_use_approvals=rec.get("computer_use_approvals"),
+            curation_schedule=rec.get("curation_schedule"),
+            status_update_schedule=rec.get("status_update_schedule"),
+            essentials_nudge_schedule=rec.get("essentials_nudge_schedule"),
+            discovery_proxies=rec.get("discovery_proxies"),
+            takeover_desktop=rec.get("takeover_desktop"),
+            remote_view_backend=rec.get("remote_view_backend"),
+            resume_render=rec.get("resume_render"),
         )
 
     # --- status ----------------------------------------------------------

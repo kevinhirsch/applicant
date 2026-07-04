@@ -184,7 +184,8 @@ class ConversionPreviewIn(BaseModel):
 
 
 class AutomationPrefsIn(BaseModel):
-    """Settings > Automation body (dark-engine audit items 82/84/85/86/87/88/90).
+    """Settings > Automation body (dark-engine audit items
+    82/84/85/86/87/88/90/91/92/93/94/95/96/97/98/99/100/101/102/103/104/105/106/107).
 
     Thin proxy body mirroring the engine's own ``AutomationPrefsIn`` (setup.py):
     all fields ``Optional`` (default ``None``) so a save from one control never
@@ -200,6 +201,52 @@ class AutomationPrefsIn(BaseModel):
     approval_timeout_days: int | None = None
     approval_wait_seconds: float | None = None
     scheduler_interval_seconds: float | None = None
+    #: Item 91: minimum fields-filled ratio (0.0-1.0) before flagging for review.
+    ats_match_rate_floor: float | None = None
+    #: Item 97: filter postings on work-authorization/sponsorship/clearance.
+    presubmit_eligibility_enabled: bool | None = None
+    #: Item 98: blocks postings older than this many days.
+    presubmit_max_listing_age_days: int | None = None
+    #: Item 99: auto-apply vs staged memory/skills writes + prompt-budget caps.
+    memory_write_approval: bool | None = None
+    skills_write_approval: bool | None = None
+    memory_max_chars: int | None = None
+    user_max_chars: int | None = None
+    #: Item 102: smart-router prefer-local policy.
+    llm_smart_routing_prefer_local: bool | None = None
+    #: Item 105: token budget above which older turns are compressed.
+    context_compress_threshold: int | None = None
+    #: Item 106: consecutive tick failures before a stall alert fires.
+    loop_failure_alert_threshold: int | None = None
+    #: Item 107: experimental plan-as-data prefill planner flag.
+    prefill_use_planner: bool | None = None
+    #: Item 92: sandbox backend ("local"/"proxmox-windows") + stealth persona
+    #: ("linux"/"native"/"" to auto-derive).
+    sandbox_backend: str | None = None
+    stealth_persona: str | None = None
+    #: Item 93: browser engine ("camoufox"/"chromium") + channel ("chrome"/"chromium").
+    browser_engine: str | None = None
+    browser_channel: str | None = None
+    #: Item 94: assistant/loop tool-autonomy master switches ("off"/"auto").
+    chat_tools: str | None = None
+    loop_tools: str | None = None
+    #: Item 95: fold capped company research into cover-letter generation.
+    material_research_enabled: bool | None = None
+    #: Item 96: desktop-assist backend/capture-mode/approval-posture.
+    computer_use_backend: str | None = None
+    computer_use_mode: str | None = None
+    computer_use_approvals: str | None = None
+    #: Item 100: proactive-cadence knobs ("off"/"daily").
+    curation_schedule: str | None = None
+    status_update_schedule: str | None = None
+    essentials_nudge_schedule: str | None = None
+    #: Item 101: comma-separated discovery-crawler proxy list.
+    discovery_proxies: str | None = None
+    #: Item 103: live-takeover desktop environment + remote-view technology.
+    takeover_desktop: str | None = None
+    remote_view_backend: str | None = None
+    #: Item 104: resume render fidelity ("auto"/"on"/"off").
+    resume_render: str | None = None
 
 
 class SandboxConnectionIn(BaseModel):
@@ -482,14 +529,18 @@ def setup_applicant_setup_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content={"ok": True})
 
-    # ── Settings > Automation (dark-engine audit items 82/84/85/86/90) ─
+    # ── Settings > Automation (dark-engine audit items 82/84/85/86/87/88/90/91/97/98/99/102/105/106/107) ───
 
     @router.get("/automation")
     async def get_automation_prefs(request: Request) -> JSONResponse:
         """Browser fingerprint timezone/locale, the automated-account-creation
-        opt-in, the per-company daily application cap, the final-approval
-        timeout, and the check-for-work interval -- merged onto the engine's
-        env defaults so this always reflects a real, effective value."""
+        opt-in, the per-company daily application cap, retention/cooldown
+        windows, the final-approval timeout, the check-for-work interval, the
+        ATS fill-rate floor, eligibility/listing-age filters, memory
+        write-approval + size caps, the smart-router prefer-local policy, the
+        context-compression threshold, the failure-alert threshold, and the
+        experimental prefill planner flag -- merged onto the engine's env
+        defaults so this always reflects a real, effective value."""
         require_user(request)
         try:
             async with ApplicantEngineClient() as engine:
