@@ -86,3 +86,28 @@ class WorkspacePort(Protocol):
         bounds the synchronous run (clamped workspace-side).
         """
         ...
+
+    def create_calendar_event(
+        self,
+        *,
+        title: str,
+        start: str,
+        owner: str | None = None,
+        end: str | None = None,
+        notes: str | None = None,
+        location: str | None = None,
+        all_day: bool = False,
+        dedupe_key: str | None = None,
+    ) -> dict:
+        """LANE A write-back — create/update a calendar event for ``owner``.
+
+        ``POST /api/applicant/internal/calendar/events``. Used by post-submission
+        detection (an interview invite found in an inbound email) to write the
+        detected interview onto the owner's real workspace calendar, closing the
+        loop with :meth:`calendar_interviews` (which only reads). ``dedupe_key``
+        (e.g. the application id) lets the workspace update the SAME event on a
+        repeat detection instead of creating a duplicate. Raises
+        :class:`WorkspaceError` on failure — callers must treat this as
+        best-effort and never let it break outcome recording.
+        """
+        ...

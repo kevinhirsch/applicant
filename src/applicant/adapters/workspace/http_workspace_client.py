@@ -179,6 +179,39 @@ class HttpWorkspaceClient:
             "POST", "/research", owner=owner, json=body, timeout=self._research_timeout
         )
 
+    def create_calendar_event(
+        self,
+        *,
+        title: str,
+        start: str,
+        owner: str | None = None,
+        end: str | None = None,
+        notes: str | None = None,
+        location: str | None = None,
+        all_day: bool = False,
+        dedupe_key: str | None = None,
+    ) -> dict:
+        """LANE A write-back — create/update a calendar event for ``owner``.
+
+        Closes the loop with :meth:`calendar_interviews` (read-only): callers
+        (``PostSubmissionService``) POST a detected interview here so it actually
+        lands on the owner's real workspace calendar. ``dedupe_key`` (typically
+        the application id) lets the workspace update the SAME event on a repeat
+        detection instead of minting a duplicate. Like every other typed method,
+        this raises :class:`WorkspaceError` up front (no network) when the
+        channel is disabled — callers MUST treat the write as best-effort.
+        """
+        body: dict[str, Any] = {"title": title, "start": start, "all_day": bool(all_day)}
+        if end:
+            body["end"] = end
+        if notes:
+            body["notes"] = notes
+        if location:
+            body["location"] = location
+        if dedupe_key:
+            body["dedupe_key"] = dedupe_key
+        return self._request("POST", "/calendar/events", owner=owner, json=body)
+
     # --- FR-MIND agent-memory bridge (memory / skills / recall) ---------------
     # These reach the front-door memory/skills substrate (workspace/services/memory/)
     # over the same token-gated channel; the bridge adapters in

@@ -62,7 +62,7 @@ _MANUAL_OUTCOME_STATUS: dict[str, ApplicationState] = {
 
 
 class PostSubmissionService:
-    def __init__(self, storage, notification_service=None, *, learning=None):
+    def __init__(self, storage, notification_service=None, *, learning=None, workspace=None):
         self._storage = storage
         self._notification = notification_service
         # Optional (design-audit Top-25 #5 nice-to-have): when supplied, a
@@ -72,6 +72,13 @@ class PostSubmissionService:
         # existing caller that constructs this service without a learning
         # collaborator behaves byte-identical to before.
         self._learning = learning
+        # Optional WorkspacePort (dark-engine audit item 69): when supplied AND
+        # its callback channel is configured, a confident interview-invite
+        # detection also WRITES the interview onto the owner's real workspace
+        # calendar (closing the loop with the read-only lane A
+        # ``calendar_interviews``). ``None`` (the default, and every existing
+        # caller before this) fully degrades -- byte-identical to before.
+        self._workspace = workspace
 
     def enter_post_submission(self, application, *, snapshot=None):
         """Transition the application to POST_SUBMISSION.
@@ -226,14 +233,78 @@ class PostSubmissionService:
         ``interview_invited`` directly (``OutcomeSource.AUTO``) on a confident
         match; does not touch ``Application.status`` (no §7 state for this type,
         same as the manual path -- see ``POSITIVE_SIGNAL_TYPES``).
+
+        A confident detection also best-effort WRITES the interview onto the
+        owner's workspace calendar (dark-engine audit item 69) -- see
+        ``_write_interview_to_calendar``. That write can never fail this call:
+        the ``OutcomeEvent`` above is the authoritative record either way.
         """
-        return self._scan_email_for_positive_signal(
+        event = self._scan_email_for_positive_signal(
             email_subject,
             email_body,
             application_id,
             keywords=self.INTERVIEW_KEYWORDS,
             outcome_type="interview_invited",
         )
+        if event is not None:
+            self._write_interview_to_calendar(application_id, email_subject)
+        return event
+
+    def _write_interview_to_calendar(self, application_id, email_subject):
+        """Best-effort calendar write-back for a detected interview (item 69).
+
+        Closes the loop with the read-only lane A ``calendar_interviews`` (the
+        engine could always READ the owner's calendar to notice an interview;
+        nothing ever wrote one back). No confirmed date/time is extractable from
+        a keyword-scanned email, so this lands as an ALL-DAY marker on today's
+        date -- a nudge that something needs scheduling, not a fabricated time
+        slot. Keyed for idempotency on the application id (``dedupe_key``) so a
+        re-scan of the same email/application updates the one event instead of
+        duplicating it.
+
+        NEVER allowed to break outcome recording: a ``None``/unconfigured
+        workspace, a disabled channel, a missing posting, or any transport
+        failure is logged and swallowed. The caller has already committed the
+        ``OutcomeEvent`` by the time this runs.
+        """
+        if self._workspace is None:
+            return
+        try:
+            if not self._workspace.available():
+                return
+            app = self._storage.applications.get(application_id)
+            if app is None:
+                return
+            posting = (
+                self._storage.postings.get(app.posting_id)
+                if app.posting_id is not None
+                else None
+            )
+            company = (getattr(posting, "company", None) or "").strip()
+            role = (
+                (getattr(posting, "title", None) or app.job_title or app.role_name or "")
+                .strip()
+            )
+            link = (getattr(posting, "source_url", None) or "").strip()
+            label = company or "your application"
+            title = f"Interview invite: {label}" + (f" — {role}" if role else "")
+            notes_lines = [
+                f'Detected from an inbound email: "{(email_subject or "").strip()[:200]}"',
+                "No specific time was found in the email -- check your inbox / the "
+                "scheduling link for the exact slot.",
+            ]
+            if link:
+                notes_lines.append(f"Application: {link}")
+            self._workspace.create_calendar_event(
+                title=title,
+                start=datetime.now(UTC).isoformat(),
+                all_day=True,
+                notes="\n".join(notes_lines),
+                location=link,
+                dedupe_key=str(application_id),
+            )
+        except Exception:
+            log.warning("post_submission_calendar_writeback_failed", exc_info=True)
 
     def scan_email_for_offer(self, email_subject, email_body, application_id):
         """Detect a confident offer signal in an inbound email (#5).

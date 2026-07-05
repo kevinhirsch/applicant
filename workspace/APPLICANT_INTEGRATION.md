@@ -354,9 +354,16 @@ Mounted at `/api/applicant/internal/*` (registered in `app.py`). Helpers:
 | Lane | Method + path | Status now | Shape (when implemented) |
 |---|---|---|---|
 | — | `GET  /api/applicant/internal/ping` | **live** | `{"ok": true, "owner": <str|null>}` |
-| A | `GET  /api/applicant/internal/calendar/interviews` | 501 | `{"interviews": [...]}` (owner-scoped) |
-| B | `POST /api/applicant/internal/research` | 501 | run/report handle; body `{"query": str, ...}` |
-| C | `GET  /api/applicant/internal/local-models` | 501 | `{"models": [...]}` |
+| A | `GET  /api/applicant/internal/calendar/interviews` | live | `{"interviews": [...]}` (owner-scoped) |
+| A | `POST /api/applicant/internal/calendar/events` | live | write-back a detected interview (dark-engine item 69); `{"ok": true, "uid": str, "created": bool}` |
+| B | `POST /api/applicant/internal/research` | live | run/report handle; body `{"query": str, ...}` |
+
+Lane C (`GET /api/applicant/internal/local-models`, Cookbook-served local-model
+auto-discovery) was built, then REMOVED end-to-end: the engine half by issue
+#304 ("Remove: Cookbook integration with Applicant — descoped, except
+local-LLM tier"), and this workspace receiver (left behind with no caller —
+dark-engine audit item 70) in the same pass that added the lane A write-back
+above. Do not re-add it without revisiting #304's decision.
 
 Each lane **replaces its own placeholder** in that file (or, preferred, mounts a
 new router under the same prefix and registers it in `app.py`) keeping the path +
@@ -378,8 +385,8 @@ scope to `internal_owner(request)`.
 | `available() -> bool` | config gate (never networks) — `False` when token unset |
 | `ping(owner=None)` | `GET /ping` |
 | `calendar_interviews(owner=None)` | **lane A** — `GET /calendar/interviews` |
+| `create_calendar_event(title, start, owner=None, ...)` | **lane A write-back** — `POST /calendar/events` |
 | `run_research(query, owner=None)` | **lane B** — `POST /research` |
-| `local_models(owner=None)` | **lane C** — `GET /local-models` |
 
 Every failure (timeout / connection refused / non-2xx / bad JSON) raises
 `WorkspaceError` (`.message`, `.status`, `.detail`, `.is_timeout`) — a raw httpx
@@ -390,9 +397,8 @@ exception never escapes. Mock the transport in tests
 
 | Lane | Workspace route (owned, fills placeholder/new router) | Engine consumer (owned) | Port method |
 |---|---|---|---|
-| A — Calendar | `internal/calendar/interviews` handler | calendar-detection consumer | `calendar_interviews` |
+| A — Calendar | `internal/calendar/interviews` handler + `internal/calendar/events` write-back handler | calendar-detection consumer (`PostSubmissionService`) | `calendar_interviews` / `create_calendar_event` |
 | B — Research | `internal/research` handler | research consumer | `run_research` |
-| C — Cookbook | `internal/local-models` handler | model-listing consumer | `local_models` |
 
 **Shared, append-only (coordinate, never rewrite):**
 `workspace/routes/applicant_internal_routes.py` ·
