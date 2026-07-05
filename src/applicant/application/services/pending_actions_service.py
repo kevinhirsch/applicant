@@ -101,6 +101,70 @@ class PendingActionsService:
             dedup_key=f"digest_approval:{posting_id}",
         )
 
+    def materialize_digest_approvals(
+        self, campaign_id: CampaignId, rows: list[dict]
+    ) -> list[PendingAction]:
+        """Batch-materialize one digest-approval action per viable digest row.
+
+        Perf lens 03 #32: ``deliver`` used to call :meth:`digest_approval` (i.e.
+        :meth:`materialize`) once PER ROW, which is one indexed
+        ``find_open_by_dedup`` SELECT *and* one ``commit()`` per row — for a
+        campaign with hundreds of viable roles that is hundreds of round-trips
+        on a request that already pays the digest-build cost. This performs the
+        SAME dedup check (same ``digest_approval:{posting_id}`` key, same
+        "open/unresolved" scope) and creates the SAME ``PendingAction`` shape as
+        :meth:`digest_approval`, but fetches the campaign's open actions ONCE
+        up front (``list_open`` — already the indexed query the portal list
+        uses) instead of once per row, and commits ONCE for the whole batch
+        instead of once per newly-created row. A dedup HIT still does not
+        commit or emit an event, mirroring :meth:`materialize`.
+        """
+        existing_by_dedup = {
+            dedup_key: action
+            for action in self._storage.pending_actions.list_open(campaign_id)
+            for dedup_key in [(action.payload or {}).get("dedup_key")]
+            if dedup_key
+        }
+        results: list[PendingAction] = []
+        created: list[PendingAction] = []
+        for row in rows:
+            posting_id = str(row["posting_id"])
+            dedup_key = f"digest_approval:{posting_id}"
+            found = existing_by_dedup.get(dedup_key)
+            if found is not None:
+                results.append(found)
+                continue
+            title = f"Review: {row['summary']}"
+            body = {
+                "posting_id": posting_id,
+                "link": row["link"],
+                "score": row["viability_score"],
+                "dedup_key": dedup_key,
+            }
+            action = PendingAction(
+                id=PendingActionId(new_id()),
+                campaign_id=campaign_id,
+                kind=KIND_DIGEST_APPROVAL,
+                title=title,
+                application_id=None,
+                payload=body,
+            )
+            self._storage.pending_actions.add(action)
+            existing_by_dedup[dedup_key] = action
+            results.append(action)
+            created.append(action)
+        if created:
+            self._storage.commit()
+            for action in created:
+                event_bus.emit(
+                    PendingActionRaised(
+                        application_id=None,
+                        action_kind=KIND_DIGEST_APPROVAL,
+                        reason=action.title,
+                    )
+                )
+        return results
+
     def missing_attribute(
         self, campaign_id: CampaignId, attribute_name: str, *, site_key: str = "", **payload
     ) -> PendingAction:

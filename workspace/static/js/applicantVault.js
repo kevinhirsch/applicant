@@ -55,11 +55,14 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Saved sign-ins');
+  // a11y-deep audit #9: name the dialog from its own visible heading
+  // (aria-labelledby) instead of a hardcoded string that can drift from the
+  // screen — see the id on the h4 below.
+  modal.setAttribute('aria-labelledby', 'applicant-vault-title');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:90vh;">
       <div class="modal-header">
-        <h4>Saved sign-ins</h4>
+        <h4 id="applicant-vault-title">Saved sign-ins</h4>
         <button id="applicant-vault-close" class="modal-close" aria-label="Close" title="Close">×</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:20px;overflow:auto;">
@@ -73,18 +76,22 @@ function _ensureModalEl() {
              forms — this card was last, below three forms; move it first. -->
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <div style="display:flex;align-items:center;gap:8px;">
-            <h3 style="margin:0;font-size:0.95em;flex:1;">Sites with a saved sign-in
-              <span id="applicant-vault-count" style="font-weight:400;opacity:0.6;"></span></h3>
+            <!-- a11y-deep audit #56: this section heading previously outranked
+                 the dialog's own h4 title (h3 nested under h4) — dropped to h5
+                 so the heading hierarchy nests correctly; the visible size is
+                 still controlled entirely by the inline font-size, unchanged. -->
+            <h5 style="margin:0;font-size:0.95em;flex:1;font-weight:600;">Sites with a saved sign-in
+              <span id="applicant-vault-count" style="font-weight:400;opacity:0.6;"></span></h5>
             <button id="applicant-vault-refresh" class="memory-toolbar-btn" title="Reload">Refresh</button>
           </div>
-          <div id="applicant-vault-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <div id="applicant-vault-list" role="list" style="display:flex;flex-direction:column;gap:6px;"></div>
           <div id="applicant-vault-empty" style="opacity:0.5;font-size:13px;padding:6px 0;">
             No sign-ins saved yet — add one below and the assistant will use it to sign in automatically.
           </div>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
-          <h3 style="margin:0;font-size:0.95em;">Account sign-ins (used everywhere)</h3>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Account sign-ins (used everywhere)</h5>
           <p style="margin:0;opacity:0.7;font-size:12px;">
             Set these once — they apply to every job search. Your Google sign-in
             lets the assistant use “Sign in with Google” on any site; the default
@@ -96,10 +103,19 @@ function _ensureModalEl() {
               Google sign-in
               <span id="applicant-vault-google-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
             </div>
-            <input id="applicant-vault-google-username" class="applicant-field" type="text" autocomplete="off"
-                   placeholder="you@gmail.com" style="width:100%;">
-            <input id="applicant-vault-google-secret" class="applicant-field" type="password" autocomplete="new-password"
-                   placeholder="Google password" style="width:100%;">
+            <label class="ow-field" style="font-size:12px;opacity:0.8;">Google username or email
+              <input id="applicant-vault-google-username" class="applicant-field" type="text" autocomplete="off"
+                     placeholder="you@gmail.com" style="width:100%;margin-top:4px;">
+            </label>
+            <label class="ow-field" style="font-size:12px;opacity:0.8;display:flex;flex-direction:column;">
+              Google password
+              <span style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+                <input id="applicant-vault-google-secret" class="applicant-field" type="password" autocomplete="new-password"
+                       placeholder="Google password" style="width:100%;">
+                <button type="button" class="applicant-vault-toggle-secret cal-btn" data-target="applicant-vault-google-secret"
+                        aria-pressed="false" title="Show/hide the password as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
+              </span>
+            </label>
             <button id="applicant-vault-google-save" class="cal-btn" style="align-self:flex-start;"
                     title="Encrypt and save your Google sign-in">Save Google sign-in</button>
           </div>
@@ -109,17 +125,26 @@ function _ensureModalEl() {
               Default sign-in for new accounts
               <span id="applicant-vault-default-set" style="font-weight:400;font-size:11px;opacity:0.6;">not set</span>
             </div>
-            <input id="applicant-vault-default-username" class="applicant-field" type="text" autocomplete="off"
-                   placeholder="you@example.com" style="width:100%;">
-            <input id="applicant-vault-default-secret" class="applicant-field" type="password" autocomplete="new-password"
-                   placeholder="Password to use for new accounts" style="width:100%;">
+            <label class="ow-field" style="font-size:12px;opacity:0.8;">Default username or email
+              <input id="applicant-vault-default-username" class="applicant-field" type="text" autocomplete="off"
+                     placeholder="you@example.com" style="width:100%;margin-top:4px;">
+            </label>
+            <label class="ow-field" style="font-size:12px;opacity:0.8;display:flex;flex-direction:column;">
+              Default password
+              <span style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+                <input id="applicant-vault-default-secret" class="applicant-field" type="password" autocomplete="new-password"
+                       placeholder="Password to use for new accounts" style="width:100%;">
+                <button type="button" class="applicant-vault-toggle-secret cal-btn" data-target="applicant-vault-default-secret"
+                        aria-pressed="false" title="Show/hide the password as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
+              </span>
+            </label>
             <button id="applicant-vault-default-save" class="cal-btn" style="align-self:flex-start;"
                     title="Encrypt and save the default sign-in used when a site needs a new account">Save default sign-in</button>
           </div>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
-          <h3 style="margin:0;font-size:0.95em;">A specific site sign-in</h3>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">A specific site sign-in</h5>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Site / employer
             <input id="applicant-vault-tenant" class="applicant-field" type="text" placeholder="acme.workday.com"
                    title="The job site or employer tenant this sign-in is for"
@@ -129,16 +154,21 @@ function _ensureModalEl() {
             <input id="applicant-vault-username" class="applicant-field" type="text" autocomplete="off"
                    placeholder="you@example.com" style="width:100%;margin-top:4px;">
           </label>
-          <label class="ow-field" style="font-size:12px;opacity:0.8;">Password
-            <input id="applicant-vault-secret" class="applicant-field" type="password" autocomplete="new-password"
-                   placeholder="••••••••" style="width:100%;margin-top:4px;">
+          <label class="ow-field" style="font-size:12px;opacity:0.8;display:flex;flex-direction:column;">
+            Password
+            <span style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+              <input id="applicant-vault-secret" class="applicant-field" type="password" autocomplete="new-password"
+                     placeholder="••••••••" style="width:100%;">
+              <button type="button" class="applicant-vault-toggle-secret cal-btn" data-target="applicant-vault-secret"
+                      aria-pressed="false" title="Show/hide the password as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
+            </span>
           </label>
           <button id="applicant-vault-save" class="cal-btn" style="align-self:flex-start;"
                   title="Encrypt and save this sign-in">Save sign-in</button>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
-          <h3 style="margin:0;font-size:0.95em;">Encryption key</h3>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Encryption key</h5>
           <p style="margin:0;opacity:0.7;font-size:12px;">
             Re-encrypt every saved sign-in under a brand-new key. Use this if you
             suspect the key that protects this vault may have been exposed. This
@@ -165,7 +195,7 @@ function _wire(modal) {
   on('applicant-vault-save', 'click', _onSave);
   on('applicant-vault-google-save', 'click', () => _onSaveAccount('google'));
   on('applicant-vault-default-save', 'click', () => _onSaveAccount('predefined:account'));
-  on('applicant-vault-refresh', 'click', () => _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e)));
+  on('applicant-vault-refresh', 'click', () => _onRefreshTenants());
   on('applicant-vault-rotate-key', 'click', _onRotateKey);
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _maybeCloseVault();
@@ -175,6 +205,60 @@ function _wire(modal) {
   modal.addEventListener('input', () => _setVaultDirty(true));
   modal.addEventListener('change', () => _setVaultDirty(true));
   _wireSaveProminence(modal);
+  _wireEnterToSave(modal);
+  _wireSecretToggles(modal);
+}
+
+// micro-interactions audit #35: Refresh never showed a busy state anywhere —
+// a second click while a load is already in flight looked like nothing
+// happened. Disable + relabel for the duration, mirroring the pattern
+// applicantRemote.js's _setButtonBusy/_clearButtonBusy already use.
+async function _onRefreshTenants() {
+  const btn = _modalEl && _modalEl.querySelector('#applicant-vault-refresh');
+  const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    await _loadTenants();
+  } catch (e) {
+    console.debug('Silent catch in applicantVault:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = prev || 'Refresh'; }
+  }
+}
+
+// micro-interactions audit #18/#15: Enter in any credential field submits its
+// group's Save button (the canonical enter-to-submit form), guarded against
+// firing on an IME composition-commit Enter (CJK / dead-key input).
+function _wireEnterToSave(modal) {
+  _SAVE_GROUPS.forEach((g) => {
+    g.fields.forEach((fid) => {
+      const el = modal.querySelector('#' + fid);
+      if (!el) return;
+      el.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        const btn = modal.querySelector('#' + g.save);
+        if (btn) btn.click();
+      });
+    });
+  });
+}
+
+// micro-interactions audit #19: no show/hide toggle existed on any password
+// field in the product — a shared kit helper would be the ideal fix (per the
+// audit), but applicantCore.js/ui.js are outside this pass's file scope, so
+// this is wired locally to the three password fields Vault owns.
+function _wireSecretToggles(modal) {
+  modal.querySelectorAll('.applicant-vault-toggle-secret').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = modal.querySelector('#' + btn.dataset.target);
+      if (!input) return;
+      const revealing = input.type === 'password';
+      input.type = revealing ? 'text' : 'password';
+      btn.textContent = revealing ? 'Hide' : 'Show';
+      btn.setAttribute('aria-pressed', String(revealing));
+    });
+  });
 }
 
 // Sets the dirty flag AND toggles `data-no-swipe-dismiss` on the modal-content
@@ -294,11 +378,14 @@ async function _loadTenants() {
   }
   if (emptyEl) emptyEl.style.display = 'none';
   // Tenants may be plain strings or {tenant_key,...} objects — handle both.
+  // a11y-deep audit #58: role="listitem" (paired with the container's
+  // role="list" above) so SR users get "list, N items" context instead of
+  // undifferentiated divs.
   listEl.innerHTML = tenants
     .map((t) => {
       const key = (t && typeof t === 'object') ? (t.tenant_key || t.key || '') : t;
-      return `<div style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <span style="opacity:0.6;">🔒</span><span>${esc(key)}</span></div>`;
+      return `<div role="listitem" style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <span aria-hidden="true" style="opacity:0.6;">🔒</span><span>${esc(key)}</span></div>`;
     })
     .join('');
 }
@@ -320,7 +407,7 @@ async function _save({ tenantKey, username, secret }) {
     });
     _toast('Sign-in saved');
     _setVaultDirty(false);
-    await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
+    await _loadTenants().catch(e => console.debug('Silent catch in applicantVault:', e));
     return true;
   } catch (e) {
     _toast(e.message || 'Could not save the sign-in');
@@ -360,12 +447,22 @@ async function _loadAccountStatus() {
   try {
     data = await _fetchJSON(`${API}/account`);
   } catch { return; /* leave the default "not set" labels */ }
-  const mark = (id, on) => {
+  // micro-interactions audit #31: the "saved ✓" status span was the only saved
+  // signal — the password field itself always read as a plain, generic
+  // placeholder, so reopening the vault could look like nothing had been
+  // saved. Mirror the ladder's "(saved)" placeholder trick onto the secret
+  // field too (a secret is still required every save — this is signal only).
+  const mark = (id, on, secretId) => {
     const el = _modalEl.querySelector('#' + id);
     if (el) { el.textContent = on ? 'saved ✓' : 'not set'; el.style.opacity = on ? '0.8' : '0.6'; }
+    const secretEl = secretId && _modalEl.querySelector('#' + secretId);
+    if (secretEl && !secretEl.value) {
+      if (secretEl.dataset.origPlaceholder == null) secretEl.dataset.origPlaceholder = secretEl.placeholder;
+      secretEl.placeholder = on ? '•••••••• (already saved)' : secretEl.dataset.origPlaceholder;
+    }
   };
-  mark('applicant-vault-google-set', !!(data && data.google));
-  mark('applicant-vault-default-set', !!(data && data.predefined_account));
+  mark('applicant-vault-google-set', !!(data && data.google), 'applicant-vault-google-secret');
+  mark('applicant-vault-default-set', !!(data && data.predefined_account), 'applicant-vault-default-secret');
 }
 
 async function _onSaveAccount(kind) {
@@ -383,7 +480,7 @@ async function _onSaveAccount(kind) {
     _toast('Sign-in saved');
     if (secretEl) secretEl.value = ''; // clear the password from the DOM after save
     _setVaultDirty(false);
-    await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
+    await _loadAccountStatus().catch(e => console.debug('Silent catch in applicantVault:', e));
   } catch (e) {
     _toast(e.message || 'Could not save the sign-in');
   } finally {
@@ -467,10 +564,10 @@ export async function openApplicantVault(campaignId, opts) {
   _setVaultDirty(false);
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _maybeCloseVault);
-  await _loadAccountStatus().catch(e => console.error('Silent catch in applicantVault:', e));
+  await _loadAccountStatus().catch(e => console.debug('Silent catch in applicantVault:', e));
   if (!_campaignId) await _resolveDefaultCampaign();
   _rememberCampaign(_campaignId);
-  await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
+  await _loadTenants().catch(e => console.debug('Silent catch in applicantVault:', e));
   // Pre-fill the "add a sign-in" form for a known site — e.g. opened right after
   // the user created an account during a live takeover (FR-VAULT-2), so they only
   // have to type the username + password they just chose.
@@ -527,7 +624,7 @@ export async function offerApplicantCredentialCapture(c) {
     });
     _toast('Sign-in saved');
     if (_modalEl && !_modalEl.classList.contains('hidden')) {
-      await _loadTenants().catch(e => console.error('Silent catch in applicantVault:', e));
+      await _loadTenants().catch(e => console.debug('Silent catch in applicantVault:', e));
     }
     return true;
   } catch (e) {

@@ -19,7 +19,7 @@
 // instead of erroring, matching the rest of the Applicant front door.
 
 import uiModule from './ui.js';
-import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, errText, loadingHTML, errorHTML, wireRetry } from './applicantCore.js';
 import { registerRoute, setHash, clearHash } from './hashRouter.js';
 
 const API = '/api/applicant/mind';
@@ -54,11 +54,11 @@ function _ensureModalEl() {
   el.style.cssText = 'position:fixed;inset:0;z-index:1200;display:none;align-items:center;'
     + 'justify-content:center;background:rgba(0,0,0,0.45);';
   el.innerHTML = `
-    <div class="admin-card" role="dialog" aria-modal="true" aria-label="What the assistant remembers"
+    <div class="admin-card" role="dialog" aria-modal="true" aria-labelledby="applicant-mind-title"
          tabindex="0"
          style="width:min(720px,94vw);max-height:88vh;overflow:auto;padding:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h3 style="margin:0;font-size:16px;">What the assistant remembers</h3>
+        <h3 id="applicant-mind-title" style="margin:0;font-size:16px;">What the assistant remembers</h3>
         <button type="button" class="cal-btn applicant-mind-close" aria-label="Close" title="Close">Close</button>
       </div>
       <div class="applicant-mind-body" style="font-size:13px;max-width:66ch;margin:0 auto;"></div>
@@ -72,7 +72,15 @@ function _ensureModalEl() {
 
 function _close() {
   if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
-  if (_modalEl) _modalEl.style.display = 'none';
+  if (_modalEl) {
+    _modalEl.style.display = 'none';
+    // micro-interactions audit #94: every sibling modal also toggles the
+    // shared `.hidden` class alongside its display state — Mind used to set
+    // only the inline style, so any code path that reopens via
+    // `classList.remove('hidden')` (matching the other surfaces' convention)
+    // would leave it invisible. Keep both in sync.
+    _modalEl.classList.add('hidden');
+  }
   // Hash routing (audit #7): only clears when the hash is actually ours.
   clearHash('mind');
 }
@@ -243,10 +251,13 @@ function _renderSkills(skills) {
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((s) => `
     <li class="memory-item og-card applicant-mind-skill" data-skill="${esc(s.name)}" tabindex="0"
-        role="button" title="Open this playbook"
+        role="button" aria-expanded="false" title="Open this playbook"
         style="border:1px solid var(--border,#3334);border-radius:8px;
         padding:8px 10px;margin:6px 0;cursor:pointer;">
-      <div style="font-weight:600;">${esc(s.name)}</div>
+      <div style="font-weight:600;">
+        <span class="applicant-mind-skill-chevron" aria-hidden="true" style="display:inline-block;width:1em;opacity:0.6;">▸</span>
+        ${esc(s.name)}
+      </div>
       <div style="opacity:0.85;">${esc(s.description || '')}</div>
       ${s.when_to_use ? `<div style="opacity:0.7;margin-top:2px;">When: ${esc(s.when_to_use)}</div>` : ''}
       <div class="applicant-mind-skill-body" style="display:none;margin-top:8px;"></div>
@@ -489,6 +500,24 @@ function _wirePlaybookBox() {
   });
 }
 
+// Same async confirm shape as applicantVault.js's `_confirm()` / applicantRemote.js's
+// `_confirm()`: uiModule.styledConfirm with a window.confirm fallback.
+async function _confirm(message, opts) {
+  try {
+    if (uiModule.styledConfirm) return await uiModule.styledConfirm(message, opts);
+  } catch { /* fall through */ }
+  try { return window.confirm(message); } catch { return false; }
+}
+
+// Removes the acted-on `<li>` in place instead of tearing down and re-fetching
+// the whole modal (micro-interactions audit #38) — every approve/deny/forget
+// used to `await openApplicantMind()`, re-running all six section fetches,
+// resetting scroll, and collapsing every expanded playbook row.
+function _removeMindRow(btn) {
+  const row = btn.closest('li');
+  if (row) row.remove();
+}
+
 function _wireCurationButtons() {
   const body = _body();
   body.querySelectorAll('.applicant-mind-approve').forEach((btn) => {
@@ -497,7 +526,7 @@ function _wireCurationButtons() {
       try {
         await _post(`${API}/curation/${encodeURIComponent(btn.dataset.id)}/approve`);
         _toast('Saved.');
-        await openApplicantMind();
+        _removeMindRow(btn);
       } catch (e) {
         _toast(e.message || 'Could not save that.');
         btn.disabled = false;
@@ -510,7 +539,7 @@ function _wireCurationButtons() {
       try {
         await _post(`${API}/curation/${encodeURIComponent(btn.dataset.id)}/deny`);
         _toast('Dismissed.');
-        await openApplicantMind();
+        _removeMindRow(btn);
       } catch (e) {
         _toast(e.message || 'Could not dismiss that.');
         btn.disabled = false;
@@ -525,8 +554,11 @@ function _wireForgetButtons() {
     btn.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       const text = btn.dataset.text || '';
-      // Confirm first — a forget is a real change to what I remember.
-      const ok = window.confirm(`Forget this note?\n\n${text}`);
+      // Confirm first — a forget is a real change to what I remember. Routed
+      // through the shared styled dialog (micro-interactions audit #76)
+      // instead of the native window.confirm every neighbouring flow avoids.
+      const ok = await _confirm(`Forget this note?\n\n${text}`,
+        { confirmText: 'Forget it', cancelText: 'Cancel', danger: true });
       if (!ok) return;
       btn.disabled = true;
       try {
@@ -537,17 +569,31 @@ function _wireForgetButtons() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        // Honest feedback: the engine may apply now or stage for approval.
-        _toast(res && res.staged
-          ? 'Sent to your review queue — approve it to forget this.'
-          : 'Forgotten.');
-        await openApplicantMind();
+        // Honest feedback: the engine may apply now or stage for approval. Only
+        // remove the row when it is actually gone — a staged forget is still
+        // in memory until approved elsewhere, so leave it visible (it will
+        // reflect correctly the next time this modal is opened fresh).
+        if (res && res.staged) {
+          _toast('Sent to your review queue — approve it to forget this.');
+        } else {
+          _toast('Forgotten.');
+          _removeMindRow(btn);
+        }
       } catch (e) {
         _toast(e.message || 'Could not forget that.');
         btn.disabled = false;
       }
     });
   });
+}
+
+// micro-interactions audit #70: nothing communicated open/closed state on
+// these rows, visually or to AT — sync both the chevron glyph and
+// `aria-expanded` whenever a row's expansion state changes.
+function _setSkillRowExpanded(row, expanded) {
+  row.setAttribute('aria-expanded', String(expanded));
+  const chevron = row.querySelector('.applicant-mind-skill-chevron');
+  if (chevron) chevron.textContent = expanded ? '▾' : '▸';
 }
 
 function _wireSkillRows() {
@@ -559,10 +605,12 @@ function _wireSkillRows() {
       // Toggle: collapse if already open.
       if (slot.style.display !== 'none' && slot.dataset.loaded === '1') {
         slot.style.display = 'none';
+        _setSkillRowExpanded(row, false);
         return;
       }
-      if (slot.dataset.loaded === '1') { slot.style.display = 'block'; return; }
+      if (slot.dataset.loaded === '1') { slot.style.display = 'block'; _setSkillRowExpanded(row, true); return; }
       slot.style.display = 'block';
+      _setSkillRowExpanded(row, true);
       slot.innerHTML = '<div style="opacity:0.7;">Loading…</div>';
       try {
         const skill = await _fetchJSON(`${API}/skills/${encodeURIComponent(row.dataset.skill)}`);
@@ -584,13 +632,31 @@ function _wireSkillRows() {
 export async function openApplicantMind(opts) {
   const el = _ensureModalEl();
   el.style.display = 'flex';
+  el.classList.remove('hidden');
   if (!(opts && opts.skipHashUpdate)) setHash('mind');
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(el, _close);
-  _body().innerHTML = '<div class="memory-empty" style="padding:18px;opacity:0.7;">Loading…</div>';
+  // a11y-deep audit #12 / micro-interactions audit #81: reuse the shared
+  // spinner kit instead of a bare "Loading…" div, matching every other
+  // applicant surface.
+  _body().innerHTML = loadingHTML();
+  let status;
   try {
-    const status = await _fetchJSON(`${API}/status`);
-    if (!status.engine_available) { _renderOffline(); return; }
+    status = await _fetchJSON(`${API}/status`);
+  } catch (e) {
+    // micro-interactions audit #79: a genuine auth/network failure talking to
+    // the workspace backend is not the same thing as "no model connected" —
+    // don't collapse both into the connect-a-model gate.
+    if (e && e.kind === 'auth') {
+      _body().innerHTML = errorHTML(errText(e));
+      wireRetry(_body(), () => openApplicantMind(opts));
+    } else {
+      _renderOffline();
+    }
+    return;
+  }
+  if (!status.engine_available) { _renderOffline(); return; }
+  try {
     const [snap, skills, curation, lessons, routines, feedbackHistory] = await Promise.all([
       _fetchJSON(`${API}/memory`).catch(() => ({ environment: [], user: [] })),
       _fetchJSON(`${API}/skills`).catch(() => ({ items: [] })),
