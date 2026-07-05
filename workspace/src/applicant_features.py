@@ -33,11 +33,14 @@ management / auth is entirely untouched.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Any, Optional
 
 from src.applicant_engine import (
     EngineError,
     engine_available_sync,
+    engine_base_url,
     get_sync,
 )
 
@@ -48,6 +51,36 @@ STATE_ACTIVE = "active"
 STATE_CONFIGURED = "configured"
 STATE_LOCKED = "locked"
 STATE_DISABLED = "disabled"  # present-but-disabled (no Applicant backing)
+
+# -- lens04 #15: short-TTL cache for compute_features()'s engine calls --------
+#
+# The default (uncustomized) call — as made by the ``/api/applicant/features``
+# route on every render — fans out to up to three blocking engine calls
+# (healthz + setup/status + dormant-surfaces). A few seconds of TTL lets a
+# burst of near-simultaneous renders share one fetch instead of each paying
+# the full round trip, while staying correct: nothing is ever served more than
+# ``_FEATURES_CACHE_TTL_SECONDS`` stale after a configuration change.
+#
+# Only the default call path (``transport is None``) is cached. Callers that
+# pass an explicit ``transport`` (every hermetic test) always bypass the
+# cache, so test behaviour is unaffected and fully deterministic.
+_FEATURES_CACHE_TTL_SECONDS = 4.0
+
+_cache_lock = threading.Lock()
+_result_cache: dict[str, tuple[float, dict]] = {}
+
+# -- lens04 #6: last-known-good engine data for a soft transient degrade -----
+#
+# Kept independently of the short TTL cache above (and never expired on its
+# own) so a momentary engine hiccup -- the healthz ping failing, or the
+# setup-status/dormant-surfaces fetch erroring even though the engine answered
+# healthz -- can fall back to "still configured, just unreachable right now"
+# (``STATE_CONFIGURED``) instead of every section reporting ``STATE_LOCKED``
+# as if nothing had ever been configured. Updated whenever a fetch succeeds;
+# read only to fill in for a fetch that failed this round. Genuinely
+# unconfigured sections are unaffected -- with no prior successful fetch there
+# is nothing to fall back to, so they correctly stay locked.
+_last_known: dict[str, dict[str, Optional[Any]]] = {}
 
 
 #: The Applicant section map. One entry per workspace surface that Stage 2 wires
@@ -325,27 +358,66 @@ def compute_features(
         }
 
     ``transport`` (an httpx Mock/Base transport) is forwarded to the engine
-    client for hermetic tests.
+    client for hermetic tests -- passing one also bypasses the short-TTL
+    result cache (see module docstring) so tests stay fully deterministic.
     """
+    use_cache = transport is None
+    cache_key = (base_url or engine_base_url()) if use_cache else None
+
+    if use_cache:
+        with _cache_lock:
+            cached = _result_cache.get(cache_key)
+        if cached is not None:
+            cached_at, cached_payload = cached
+            if time.monotonic() - cached_at < _FEATURES_CACHE_TTL_SECONDS:
+                return cached_payload
+
     engine_up = engine_available_sync(base_url=base_url, transport=transport)
 
-    status: Optional[dict] = None
-    dormant_by_key: Optional[dict[str, dict]] = None
+    fresh_status: Optional[dict] = None
+    fresh_dormant: Optional[dict[str, dict]] = None
     if engine_up:
         try:
             raw_status = get_sync("/api/setup/status", base_url=base_url, transport=transport)
             if isinstance(raw_status, dict):
-                status = raw_status
+                fresh_status = raw_status
         except EngineError as exc:
             logger.debug("engine setup status unavailable: %s", exc)
         try:
             raw_dormant = get_sync("/api/dormant-surfaces", base_url=base_url, transport=transport)
             if isinstance(raw_dormant, list):
-                dormant_by_key = {
+                fresh_dormant = {
                     d.get("key"): d for d in raw_dormant if isinstance(d, dict) and d.get("key")
                 }
         except EngineError as exc:
             logger.debug("engine dormant surfaces unavailable: %s", exc)
+
+    status, dormant_by_key = fresh_status, fresh_dormant
+    if use_cache:
+        with _cache_lock:
+            last_known = _last_known.get(cache_key)
+            if fresh_status is not None or fresh_dormant is not None:
+                # At least one fetch succeeded this round: use it, filling in
+                # the other piece from the last confirmed-good snapshot if
+                # this round's fetch for it failed, and remember the result.
+                status = fresh_status if fresh_status is not None else (last_known or {}).get("status")
+                dormant_by_key = (
+                    fresh_dormant
+                    if fresh_dormant is not None
+                    else (last_known or {}).get("dormant_by_key")
+                )
+                _last_known[cache_key] = {"status": status, "dormant_by_key": dormant_by_key}
+            elif last_known is not None:
+                # Engine unreachable or both fetches failed this round: this
+                # is the transient-blip case (lens04 #6) -- fall back to the
+                # last confirmed-good snapshot so sections we know are
+                # genuinely configured degrade to STATE_CONFIGURED (soft,
+                # "unreachable right now") rather than STATE_LOCKED (hard,
+                # "never configured"). Sections with no prior successful
+                # fetch have nothing to fall back to and correctly stay
+                # locked.
+                status = last_known.get("status")
+                dormant_by_key = last_known.get("dormant_by_key")
 
     sections: dict[str, dict] = {}
     for section in APPLICANT_SECTIONS:
@@ -364,13 +436,17 @@ def compute_features(
             "present_but_disabled": bool(section["present_but_disabled"]),
         }
 
-    from src.applicant_engine import engine_base_url
-
-    return {
+    payload = {
         "engine_available": engine_up,
         "engine_url": base_url or engine_base_url(),
         "sections": sections,
     }
+
+    if use_cache:
+        with _cache_lock:
+            _result_cache[cache_key] = (time.monotonic(), payload)
+
+    return payload
 
 
 def compute_public_features() -> dict:
