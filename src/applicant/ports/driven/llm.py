@@ -38,6 +38,14 @@ class LLMNotConfigured(LLMError):
     """Raised when a completion is attempted before any tier is configured."""
 
 
+class LLMRateLimited(LLMError):
+    """Raised internally when a tier's per-provider rate limit gate is exceeded.
+
+    Treated exactly like a transient tier failure (``httpx.HTTPError``): the ladder
+    climbs to the next tier rather than surfacing this to the caller (FR-DUR-2, #48).
+    """
+
+
 @dataclass(frozen=True)
 class TierConfig:
     """One rung on the capability-ranked tier ladder (FR-LLM-3).
