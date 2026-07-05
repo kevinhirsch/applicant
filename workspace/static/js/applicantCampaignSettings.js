@@ -39,6 +39,11 @@ const RUN_MODES = [
   ['until_n_viable', "Until I've found enough good matches"],
 ];
 
+// Mirrors the engine's own hard safety cap on daily throughput (dark-engine
+// audit item 25's clamp). Surfaced in the field label itself (lens 11 #51)
+// so the ceiling is visible before a user types past it, not just after.
+const MAX_DAILY_TARGET = 30;
+
 function _runModeLabel(mode) {
   const found = RUN_MODES.find((m) => m[0] === mode);
   return found ? found[1] : (mode || 'continuous');
@@ -122,7 +127,12 @@ function _campaignCard(c) {
       <h2 style="display:flex;align-items:center;gap:8px">
         <span class="cs-name-label">${esc(c.name) || '(unnamed)'}</span>
         ${archived ? '<span class="memory-badge" style="font-size:0.7rem">Archived</span>' : ''}
+        <span class="memory-badge cs-dirty-badge" id="cs-dirty-${id}"
+              style="font-size:0.7rem;display:none" role="status">Unsaved changes</span>
       </h2>
+      <div class="admin-toggle-sub cs-scope-caption" style="margin:-6px 0 10px;opacity:0.65">
+        These settings apply to this search only — not your other searches or the deployment as a whole.
+      </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-name-${id}">Name
           <span style="opacity:0.6;font-weight:normal">(just for you — how this search shows up in your list)</span></label>
@@ -138,8 +148,8 @@ function _campaignCard(c) {
       </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-tput-${id}">Daily target
-          <span style="opacity:0.6;font-weight:normal">(roles/day; capped for safety)</span></label>
-        <input id="cs-tput-${id}" class="settings-input" type="number" min="1" max="30"
+          <span style="opacity:0.6;font-weight:normal">(roles/day; up to ${MAX_DAILY_TARGET}, capped for safety)</span></label>
+        <input id="cs-tput-${id}" class="settings-input" type="number" min="1" max="${MAX_DAILY_TARGET}"
                value="${esc(String(throughput))}" data-cs-field="throughput_target" style="max-width:120px">
       </div>
       <div class="admin-toggle-sub cs-tput-note" id="cs-tput-note-${id}" style="opacity:0.75;margin:-6px 0 4px;display:none;" role="status"></div>
@@ -249,13 +259,27 @@ function _readEdits(card) {
 async function _wireCard(host, card) {
   const id = card.getAttribute('data-campaign-id');
   const saveBtn = card.querySelector('.cs-save');
+  // Dirty indicator (lens 11 #34): name/mode/target/exploration-budget all
+  // share one explicit "Save changes" button, while the source checkboxes
+  // below save instantly on change — a mixed model that isn't legible
+  // without something marking "you have edits not saved yet". Any field
+  // wired to the Save button flips this badge on; a successful save clears
+  // it (via the fresh re-render), a failed save leaves it showing since the
+  // edit is still unsaved.
+  const dirtyBadge = card.querySelector(`#cs-dirty-${CSS.escape(id)}`);
+  const _setDirty = (on) => {
+    if (dirtyBadge) dirtyBadge.style.display = on ? '' : 'none';
+  };
+  card.querySelectorAll('[data-cs-field]').forEach((el) => {
+    el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => _setDirty(true));
+  });
   saveBtn?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
     btn.disabled = true;
     try {
       await _patch(`${BASE}/${encodeURIComponent(id)}`, _readEdits(card));
       _toast('Search updated');
-      await mountApplicantCampaignSettings(host); // re-render fresh
+      await mountApplicantCampaignSettings(host); // re-render fresh (clears the dirty badge too)
     } catch (e) {
       _toast(`I couldn't save that: ${errText(e)}`);
       btn.disabled = false;

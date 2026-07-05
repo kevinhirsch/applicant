@@ -55,6 +55,10 @@ function _ensureModalEl() {
         </h4>
         <button class="modal-close" id="applicant-gallery-close" title="Close" aria-label="Close">×</button>
       </div>
+      <p style="padding:10px 14px 0;margin:0;opacity:0.75;font-size:12px;">
+        A browsable record of what I capture while working your applications — the pages I saw,
+        and the resumes, cover letters, and answers I drafted, organized by job search below.
+      </p>
       <div style="padding:8px 14px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="margin:0;display:flex;gap:6px;align-items:center;">
           Job search
