@@ -350,6 +350,22 @@ class NotificationService:
             return False
         return bool(marker(inbox_id))
 
+    # --- ladder introspection (dark-engine audit #77) ----------------------
+    def ladder_status(self, decision_ref: str) -> dict | None:
+        """Current escalation-ladder rung for a decision (#77).
+
+        Keyed the SAME way ``notify_decision``/``acted`` derive the dedup key
+        (``decision:<ref>``), so a caller holding the RAW ref (e.g. a pending
+        action's own ``material_review:{doc_id}``) doesn't need to know the
+        internal prefix. Returns ``None`` when the notifier doesn't support ladder
+        introspection or there is nothing currently held/pending for it (already
+        acted on, or never sent through the ladder in the first place).
+        """
+        getter = getattr(self._notification, "ladder_status", None)
+        if getter is None:
+            return None
+        return getter(self.dedup_key(decision_ref))
+
     # --- ladder advance (deterministic, FR-NOTIF-2) -----------------------
     def advance(self, now: datetime | None = None) -> list[str]:
         """Fire any escalation rungs now due. Returns channels fired this tick."""

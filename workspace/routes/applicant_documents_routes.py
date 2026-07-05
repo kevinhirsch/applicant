@@ -308,6 +308,29 @@ def setup_applicant_documents_routes() -> APIRouter:
             return _engine_error_response(exc)
         return JSONResponse(content=data)
 
+    @router.get("/research-provenance/{application_id}")
+    async def research_provenance(application_id: str, request: Request) -> JSONResponse:
+        """Which company research (if any) informed this application's materials
+        (dark-engine audit #76; engine ``GET /api/admin/research-provenance/{id}``).
+
+        The capped deep-research escalation folds a company report into an
+        application's materials when the agent hits a genuine knowledge gap, but
+        which report -- if any -- lived only in the engine's checkpoint before now.
+        Same auth tier as ``application_documents``/``jd_match`` above (the
+        materials for an application are visible to any logged-in user of this
+        single-tenant deployment); the redline review surface fetches this
+        alongside the document/redline data to show a "research used" badge +
+        excerpt. Degrades to ``{"used": false}`` on an engine error rather than
+        blocking the review card."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.admin_research_provenance(application_id)
+        except EngineError as exc:
+            logger.info("applicant research-provenance unavailable: %s", exc)
+            return JSONResponse(content={"application_id": application_id, "used": False})
+        return JSONResponse(content=data)
+
     @router.get("/variants/{campaign_id}")
     async def variant_library(campaign_id: str, request: Request) -> JSONResponse:
         """The résumé-variant library for a job search — each variant's lineage,
