@@ -529,40 +529,57 @@ class PostSubmissionService:
     def check_ghosting(self, campaign_id, *, sla_days=DEFAULT_SLA_DAYS, now=None):
         now = now or datetime.now(UTC)
         signals = []
+        any_change = False
         for app in self._storage.applications.list_by_status(
             campaign_id, (ApplicationState.AWAITING_RESPONSE, ApplicationState.POST_SUBMISSION)
         ):
             age = self._submission_age(app, now)
             if age is None or age.days < sla_days:
                 continue
-            ghost = GhostingSignal(
-                campaign_id=campaign_id,
-                application_id=app.id,
-                sla_days=sla_days,
-                submission_age_days=age.days,
-                detail={"status": app.status.value, "sla_days": sla_days, "age_days": age.days},
-            )
-            signals.append(ghost)
-            self._storage.ghosting_signals.add(ghost)
+            # DISC-8: the ONLY way an application reaches here with a
+            # ghosting signal ALREADY on file is a PRIOR sweep whose
+            # status-flip below failed -- once the flip succeeds the app is
+            # GHOSTED and ``list_by_status`` above never returns it again.
+            # So a signal-on-file means "still re-matchable because the flip
+            # previously failed", and this pass must retry the flip WITHOUT
+            # recording a second signal for the same application (that would
+            # silently pile up a duplicate every re-sweep until the flip
+            # finally succeeds).
+            already_signaled = bool(self._storage.ghosting_signals.list_for_application(app.id))
+            if not already_signaled:
+                ghost = GhostingSignal(
+                    campaign_id=campaign_id,
+                    application_id=app.id,
+                    sla_days=sla_days,
+                    submission_age_days=age.days,
+                    detail={"status": app.status.value, "sla_days": sla_days, "age_days": age.days},
+                )
+                signals.append(ghost)
+                self._storage.ghosting_signals.add(ghost)
+                any_change = True
             try:
-                app = app.with_status(ApplicationState.GHOSTED)
-                self._storage.applications.update(app)
-                self._record_outcome_event(app, "ghosted")
+                ghosted_app = app.with_status(ApplicationState.GHOSTED)
+                self._storage.applications.update(ghosted_app)
+                self._record_outcome_event(ghosted_app, "ghosted")
+                any_change = True
             except Exception:
                 # Lens 04 #43: same silent-loss shape as #42 -- the ghosting
-                # SIGNAL is already persisted above, so swallowing this failure
-                # left the application stuck in limbo (flagged as ghosted for
-                # the signal trail, but never transitioned/never an outcome
-                # event) with zero trace. Log it; the ``ghosting_flag`` pending
-                # action still surfaces for the owner via ``ghost_signals``
-                # below regardless of whether the transition itself succeeded,
-                # so this failure is not silent to the front-door either way.
+                # SIGNAL is already persisted above (on the FIRST pass only,
+                # see ``already_signaled`` -- DISC-8), so swallowing this
+                # failure left the application stuck in limbo (flagged as
+                # ghosted for the signal trail, but never transitioned/never
+                # an outcome event) with zero trace. Log it; the
+                # ``ghosting_flag`` pending action still surfaces for the
+                # owner via ``ghost_signals`` below regardless of whether the
+                # transition itself succeeded, so this failure is not silent
+                # to the front-door either way. The application stays
+                # re-matchable and will retry the flip on the next sweep.
                 log.warning(
                     "post_submission_ghosting_transition_failed",
                     application_id=str(app.id),
                     exc_info=True,
                 )
-        if signals:
+        if any_change:
             self._storage.commit()
         return signals
 
@@ -810,15 +827,31 @@ class PostSubmissionService:
         action's payload until the owner approves it, so this method can
         never send a raw, unapproved draft.
 
-        Idempotent: each sent ``FollowUp`` is flipped to ``FollowUpStatus.SENT``
-        (with ``sent_at``) before returning, so ``list_due`` (which filters to
-        ``status == SCHEDULED``) never returns it again on a later call -- a
-        follow-up is sent AT MOST ONCE no matter how often the scheduler
-        re-ticks. Best-effort per row: a notification failure for one
-        follow-up leaves it ``SCHEDULED`` (retried next tick) and never blocks
-        the rest of the batch; a failure marking a row ``SENT`` after a
-        successful notify is logged, never raised (the caller -- the
-        scheduler tick -- must never abort over this).
+        Idempotent -- sent AT MOST ONCE no matter how often the scheduler
+        re-ticks (DISC-7): the row is flipped to ``FollowUpStatus.SENT`` (with
+        ``sent_at``) and durably committed BEFORE the actual notify call, not
+        after. That ordering is deliberate -- flipping AFTER a successful send
+        (the previous shape) has a failure window where the email genuinely
+        went out but the DB write recording that never lands, so the row
+        stays ``SCHEDULED`` and ``list_due`` hands the SAME follow-up back
+        next tick, resending it. Flipping first closes that window: a send is
+        only ever attempted once we've durably recorded it as sent, so a
+        crash/failure between "recorded" and "sent" can at worst UNDER-report
+        (never over-send) -- the safe direction for outbound email.
+
+        That reordering must not break the OTHER hard guarantee -- a genuine
+        send failure (the notifier actually raised, nothing went out) still
+        retries next tick, it must never look identical to "sent and lost".
+        So a ``notify_decision`` failure explicitly REVERTS the row back to
+        ``SCHEDULED`` (best-effort, logged either way) before moving on. Net
+        behavior, per row:
+
+        * flip-to-SENT write itself fails -> never attempt the send at all;
+          row stays ``SCHEDULED``, retried next tick (nothing was ever sent,
+          so nothing to resend).
+        * flip succeeds, notify succeeds -> done, row is SENT and stays SENT.
+        * flip succeeds, notify genuinely raises -> revert to ``SCHEDULED``
+          so ``list_due`` retries it next tick.
 
         Routes the actual send through the EXISTING notification/email
         delivery mechanism (``NotificationService.notify_decision`` -> the
@@ -829,6 +862,22 @@ class PostSubmissionService:
         now = now or datetime.now(UTC)
         sent = []
         for fup in self._storage.follow_ups.list_due(now):
+            sent_fup = dataclasses.replace(fup, status=FollowUpStatus.SENT, sent_at=now)
+            try:
+                self._storage.follow_ups.update(sent_fup)
+                self._storage.commit()
+            except Exception:
+                # DISC-7: we cannot durably record this follow-up as sent, so
+                # we must NOT attempt the send -- an un-recorded send is
+                # exactly the failure mode that used to cause a resend next
+                # tick. The row stays SCHEDULED (whatever was staged for it
+                # is simply not committed) and list_due naturally retries it.
+                log.warning(
+                    "post_submission_followup_mark_sent_failed",
+                    follow_up_id=str(fup.id),
+                    exc_info=True,
+                )
+                continue
             if self._notification:
                 try:
                     self._notification.notify_decision(
@@ -838,30 +887,28 @@ class PostSubmissionService:
                         deep_link=f"/applications/{fup.application_id}",
                     )
                 except Exception:
-                    # Lens 04 #44: this failure was fully swallowed -- no log,
-                    # no retry signal -- so a notifier outage looked identical
-                    # to a follow-up that simply hadn't come due yet. The
-                    # ``continue`` itself is still correct and bounded (per the
-                    # docstring above: the row stays SCHEDULED and ``list_due``
-                    # naturally retries it next tick), it just needs to be
-                    # observable.
+                    # Lens 04 #44 / DISC-7: the flip above already committed
+                    # SENT, but the send itself genuinely never happened --
+                    # revert to SCHEDULED so this is retried next tick instead
+                    # of being silently lost as a phantom "sent" row that was
+                    # never actually delivered.
                     log.warning(
                         "post_submission_followup_notify_failed",
                         follow_up_id=str(fup.id),
                         application_id=str(fup.application_id),
                         exc_info=True,
                     )
+                    try:
+                        self._storage.follow_ups.update(fup)
+                        self._storage.commit()
+                    except Exception:
+                        log.warning(
+                            "post_submission_followup_revert_failed",
+                            follow_up_id=str(fup.id),
+                            exc_info=True,
+                        )
                     continue
             sent.append(fup)
-            try:
-                sent_fup = dataclasses.replace(fup, status=FollowUpStatus.SENT, sent_at=now)
-                self._storage.follow_ups.update(sent_fup)
-            except Exception:
-                log.warning(
-                    "post_submission_followup_mark_sent_failed",
-                    follow_up_id=str(fup.id),
-                    exc_info=True,
-                )
             try:
                 app = self._storage.applications.get(fup.application_id)
                 if app and app.status == ApplicationState.AWAITING_RESPONSE:
