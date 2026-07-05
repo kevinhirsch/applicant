@@ -340,6 +340,58 @@ function _errLine(err) {
   return errText(err);
 }
 
+// lens 04 #56: a 401 from any vault call is specifically a workspace-session
+// expiry (the vault talks to the engine over the SAME cookie session as
+// everything else) — narrower than the shared `.kind === 'auth'` bucket
+// (which _fetchJSON also uses for a 403 forbidden, a different, non-expiry
+// case), so check `.status` directly rather than `.kind` here.
+function _isSessionExpired(err) {
+  return !!(err && err.status === 401);
+}
+
+// Surfaces a clear, actionable "your session expired" affordance instead of
+// the vault just failing generically (previously: a bare toast with the raw
+// error message, or — for background calls like _loadAccountStatus — nothing
+// at all). Reuses ui.js's showToast action-button mechanism (the same one
+// other toasts already use for an Undo button) rather than inventing a new
+// banner component; falls back to a plain toast + confirm-free redirect if
+// the action-button toast shape isn't available for some reason.
+function _offerReauth() {
+  try {
+    uiModule.showToast('Your session expired — sign in again to continue.', {
+      duration: 15000,
+      action: 'Sign in',
+      onAction: () => { window.location.href = '/login'; },
+    });
+  } catch {
+    _toast('Your session expired — sign in again to continue.');
+  }
+}
+
+// Inline, in-modal counterpart to _offerReauth() for the "Saved sign-ins" list
+// (the one place a stale session is most likely to be visible the moment the
+// vault is opened) — a toast alone can be missed/auto-dismissed, so the list
+// area itself also gets a persistent "Sign in again" affordance.
+function _authExpiredHTML() {
+  return `<div class="applicant-error" style="text-align:center;color:var(--fg-muted);padding:24px 12px;">
+    <div style="color:var(--red);font-weight:600;">Your session expired — sign in again to continue.</div>
+    <div style="margin-top:12px;"><button class="cal-btn" type="button" id="applicant-vault-reauth">Sign in again</button></div>
+  </div>`;
+}
+
+function _wireReauthButton(hostEl) {
+  const btn = hostEl && hostEl.querySelector('#applicant-vault-reauth');
+  if (btn) btn.addEventListener('click', () => { window.location.href = '/login'; });
+}
+
+// Shared catch-block handler for the vault's write actions (save / rotate-key /
+// capture): a 401 gets the re-auth affordance instead of a generic "could not
+// save" toast; everything else keeps the existing plain-language toast.
+function _handleActionErr(e, fallbackMsg) {
+  if (_isSessionExpired(e)) { _offerReauth(); return; }
+  _toast(e.message || fallbackMsg);
+}
+
 async function _loadTenants() {
   const listEl = _modalEl && _modalEl.querySelector('#applicant-vault-list');
   const emptyEl = _modalEl && _modalEl.querySelector('#applicant-vault-empty');
@@ -361,6 +413,13 @@ async function _loadTenants() {
     data = await _fetchJSON(`${API}/${encodeURIComponent(_campaignId)}/tenants`);
   } catch (e) {
     if (emptyEl) emptyEl.style.display = 'none';
+    if (_isSessionExpired(e)) {
+      listEl.innerHTML = _authExpiredHTML();
+      _wireReauthButton(listEl);
+      _offerReauth();
+      _setVaultCount(0);
+      return;
+    }
     listEl.innerHTML = errorHTML(_errLine(e));
     wireRetry(listEl, _loadTenants);
     _setVaultCount(0);
@@ -410,7 +469,7 @@ async function _save({ tenantKey, username, secret }) {
     await _loadTenants().catch(e => console.debug('Silent catch in applicantVault:', e));
     return true;
   } catch (e) {
-    _toast(e.message || 'Could not save the sign-in');
+    _handleActionErr(e, 'Could not save the sign-in');
     return false;
   } finally {
     _busy = false;
@@ -446,7 +505,10 @@ async function _loadAccountStatus() {
   let data;
   try {
     data = await _fetchJSON(`${API}/account`);
-  } catch { return; /* leave the default "not set" labels */ }
+  } catch (e) {
+    if (_isSessionExpired(e)) _offerReauth();
+    return; /* leave the default "not set" labels */
+  }
   // micro-interactions audit #31: the "saved ✓" status span was the only saved
   // signal — the password field itself always read as a plain, generic
   // placeholder, so reopening the vault could look like nothing had been
@@ -482,7 +544,7 @@ async function _onSaveAccount(kind) {
     _setVaultDirty(false);
     await _loadAccountStatus().catch(e => console.debug('Silent catch in applicantVault:', e));
   } catch (e) {
-    _toast(e.message || 'Could not save the sign-in');
+    _handleActionErr(e, 'Could not save the sign-in');
   } finally {
     _busy = false;
   }
@@ -513,7 +575,7 @@ async function _onRotateKey() {
       ? `Encryption key rotated — ${n} sign-in${n === 1 ? '' : 's'} re-encrypted.`
       : 'Encryption key rotated.');
   } catch (e) {
-    _toast(e.message || 'Could not rotate the encryption key');
+    _handleActionErr(e, 'Could not rotate the encryption key');
   } finally {
     _busy = false;
     if (btn) { btn.disabled = false; btn.textContent = prevLabel || 'Rotate encryption key'; }
@@ -628,7 +690,7 @@ export async function offerApplicantCredentialCapture(c) {
     }
     return true;
   } catch (e) {
-    _toast(e.message || 'Could not save the sign-in');
+    _handleActionErr(e, 'Could not save the sign-in');
     return false;
   } finally {
     _busy = false;

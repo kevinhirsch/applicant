@@ -37,6 +37,26 @@ log = get_logger(__name__)
 #: than trusted as complete (#218).
 _CHECKPOINT_VERSION = 1
 
+#: Default cross-process advance-lease lifetime (lens 04 #34). Long enough that a
+#: legitimately slow tick (prefill/browser automation can run for minutes) is never
+#: mistaken for a dead holder, short enough that a hard-killed holder (OOM, `docker
+#: kill` during an update) does not strand the workflow's lease forever. Overridable
+#: per call via ``claim_workflow(..., ttl_seconds=...)``.
+DEFAULT_LEASE_TTL_SECONDS = 600.0
+
+#: Default bounded retry policy for a single ``run_step`` invocation (lens 04 #36).
+#: A transient step failure (network blip, rate-limit hiccup) can be given a few
+#: immediate in-process retries before the exception is allowed to propagate —
+#: cheaper and faster than discarding the tick and waiting for the next one to
+#: re-drive the same step from scratch. The default is deliberately ``1`` (i.e. off,
+#: preserving the exact prior single-attempt semantics existing callers/tests rely
+#: on); pass ``step_retry_attempts=`` (constructor) or ``max_attempts=`` (per call)
+#: to opt a workflow's steps into bounded retry. Regardless of attempts, a step that
+#: still fails after its last attempt has its failure durably checkpointed (see
+#: ``run_step``) — that half of #36 is always on, retry count or not.
+DEFAULT_STEP_RETRY_ATTEMPTS = 1
+DEFAULT_STEP_RETRY_BACKOFF_SECONDS = 0.1
+
 
 class CheckpointStorageError(OSError):
     """A durable-checkpoint write failed for a storage reason (base health signal).
@@ -109,12 +129,21 @@ class _Queue:
 class CheckpointShimOrchestrator:
     """Durable orchestrator backed by per-workflow JSON checkpoint files."""
 
-    def __init__(self, checkpoint_dir: str = ".applicant_checkpoints") -> None:
+    def __init__(
+        self,
+        checkpoint_dir: str = ".applicant_checkpoints",
+        *,
+        step_retry_attempts: int = DEFAULT_STEP_RETRY_ATTEMPTS,
+        step_retry_backoff_seconds: float = DEFAULT_STEP_RETRY_BACKOFF_SECONDS,
+    ) -> None:
         self._dir = Path(checkpoint_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._workflows: dict[str, Callable[..., Any]] = {}
         self._queues: dict[str, _Queue] = {}
         self._scheduled: dict[str, Callable[..., Any]] = {}
+        # #36: bounded retry policy applied by ``run_step`` around a step's ``fn()``.
+        self._step_retry_attempts = max(1, step_retry_attempts)
+        self._step_retry_backoff_seconds = max(0.0, step_retry_backoff_seconds)
         # CONC-1: per-workflow / per-queue locks serialize the non-atomic
         # ``_load -> mutate -> _save`` brackets so the 24/7 scheduler thread and the
         # request handlers can't drop each other's checkpoint writes. The registry
@@ -134,8 +163,59 @@ class CheckpointShimOrchestrator:
         safe = workflow_id.replace("/", "_")
         return self._dir / f"{safe}.lease"
 
+    def _steal_marker_path(self, lease: Path) -> Path:
+        return lease.parent / f"{lease.name}.steal"
+
+    def _try_steal_expired_lease(self, lease: Path, ttl_seconds: float) -> bool:
+        """Reclaim ``lease`` if its holder never released it within ``ttl_seconds`` (#34).
+
+        A held lease file's mtime is its claim time (it is written once, at claim, and
+        removed on release — never touched again), so "age since mtime" is exactly how
+        long the current holder has held it. If that exceeds the TTL the holder is
+        presumed dead (crash/OOM/`docker kill`) and the lease is stealable.
+
+        The steal itself is guarded by its own ``O_CREAT|O_EXCL`` marker file so two
+        concurrent claimants racing on the same expired lease can't both believe they
+        won: only the process that creates the marker proceeds to unlink the stale
+        lease, and it re-checks staleness after winning that race (the original holder
+        — or another stealer — may have released/renewed between the first staleness
+        check and now).
+        """
+        try:
+            age = time.time() - lease.stat().st_mtime
+        except OSError:
+            # Lease vanished (released concurrently) — not our steal to make; the
+            # caller's own O_CREAT|O_EXCL retry will pick up the now-free lease.
+            return False
+        if age < ttl_seconds:
+            return False
+        marker = self._steal_marker_path(lease)
+        try:
+            marker_fd = os.open(str(marker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            # Another process is already stealing this expired lease this tick.
+            return False
+        try:
+            os.close(marker_fd)
+            try:
+                age = time.time() - lease.stat().st_mtime
+            except OSError:
+                return False
+            if age < ttl_seconds:
+                return False
+            try:
+                lease.unlink()
+            except OSError:
+                return False
+            return True
+        finally:
+            with contextlib.suppress(OSError):
+                marker.unlink()
+
     @contextlib.contextmanager
-    def claim_workflow(self, workflow_id: str) -> Iterator[bool]:
+    def claim_workflow(
+        self, workflow_id: str, ttl_seconds: float = DEFAULT_LEASE_TTL_SECONDS
+    ) -> Iterator[bool]:
         """Bind a parked workflow to a SINGLE advancing tick across processes (#220).
 
         The per-workflow ``threading.Lock`` only serializes in-process callers; two
@@ -145,6 +225,12 @@ class CheckpointShimOrchestrator:
         claimant yields ``True`` and holds the advance right; a concurrent claimant yields
         ``False`` and must skip the workflow this tick. The lease is released (and the
         lock file removed) when the context exits, so the next tick can re-claim it.
+
+        A holder that is hard-killed (OOM, `docker kill` mid-advance) never reaches that
+        release, which would otherwise strand the lease — and the workflow — forever
+        (#34). So a claimant that loses the initial create also checks whether the
+        existing lease is older than ``ttl_seconds``; if so it steals it (reclaims and
+        recreates it under its own hold) instead of yielding ``False``.
 
         Used as::
 
@@ -167,7 +253,20 @@ class CheckpointShimOrchestrator:
                 os.write(fd, str(os.getpid()).encode("ascii"))
                 held = True
             except FileExistsError:
-                held = False
+                # #34: the lease is already held — but if its holder is dead (never
+                # released within the TTL), steal it rather than skipping the workflow
+                # forever.
+                if self._try_steal_expired_lease(lease, ttl_seconds):
+                    try:
+                        fd = os.open(str(lease), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                        os.write(fd, str(os.getpid()).encode("ascii"))
+                        held = True
+                    except FileExistsError:
+                        # Another claimant recreated it between our steal and our
+                        # create; back off this tick like a normal contended lease.
+                        held = False
+                else:
+                    held = False
             yield held
         finally:
             if fd is not None:
@@ -328,23 +427,88 @@ class CheckpointShimOrchestrator:
         result = fn(self, workflow_id, *args, **kwargs)
         return _ShimHandle(workflow_id=workflow_id, _result=result)
 
-    def run_step(self, workflow_id: str, step_name: str, fn: Callable[[], Any]) -> Any:
-        """Run ``fn`` once; return its checkpointed result on any later re-run.
+    def run_step(
+        self,
+        workflow_id: str,
+        step_name: str,
+        fn: Callable[[], Any],
+        *,
+        max_attempts: int | None = None,
+        retry_backoff_seconds: float | None = None,
+    ) -> Any:
+        """Run ``fn``, retrying transient failures, and checkpoint its result (#36).
+
+        Returns the checkpointed result on any later re-run (once ``fn`` has
+        succeeded); a completed step never re-runs ``fn``.
+
+        Bounded retry: on ``fn`` raising, ``fn`` is retried in-process (bounded by
+        ``max_attempts``, defaulting to the instance's ``step_retry_attempts``, which
+        itself defaults to ``1`` — i.e. off, preserving the exact prior single-attempt
+        semantics) with a short backoff between attempts, instead of a single
+        transient blip (network hiccup, rate-limit) immediately propagating and
+        discarding the tick. This is deliberately broad (retries any ``Exception``,
+        no transient/permanent classification) — a genuinely permanent failure still
+        fails, just after the bounded number of attempts rather than one. Pass
+        ``step_retry_attempts=`` to the constructor, or ``max_attempts=`` per call, to
+        opt a workflow's steps into retrying.
+
+        Checkpoint-on-failure: if every attempt fails, the failure (attempt count,
+        error type/message, timestamp) is durably recorded under
+        ``state["step_failures"][step_name]`` before the exception is re-raised, so a
+        transient-turned-permanent failure leaves a trace instead of vanishing — the
+        checkpoint file itself is not discarded/rolled back, so any *other* already
+        -completed steps' checkpointed progress for this workflow is unaffected.
 
         CONC-1: the ``_load -> mutate -> _save`` bracket is guarded by the
         per-workflow lock so concurrent steps (scheduler thread vs. request handler)
         cannot read-modify-write over each other and drop checkpoints.
         """
+        attempts = self._step_retry_attempts if max_attempts is None else max(1, max_attempts)
+        backoff = (
+            self._step_retry_backoff_seconds
+            if retry_backoff_seconds is None
+            else max(0.0, retry_backoff_seconds)
+        )
         with self._lock_for(workflow_id):
             state = self._load(workflow_id)
             steps = state.setdefault("steps", {})
             if step_name in steps:
                 # Already completed in a prior (possibly killed) execution — resume.
                 return steps[step_name]
-            result = fn()
-            steps[step_name] = result
-            self._save(workflow_id, state)
-            return result
+            for attempt in range(1, attempts + 1):
+                try:
+                    result = fn()
+                except Exception as exc:  # noqa: BLE001 - broad by design, see docstring
+                    if attempt < attempts:
+                        log.warning(
+                            "checkpoint_step_attempt_failed_retrying",
+                            workflow_id=workflow_id,
+                            step_name=step_name,
+                            attempt=attempt,
+                            max_attempts=attempts,
+                            error=str(exc),
+                        )
+                        if backoff:
+                            time.sleep(backoff)
+                        continue
+                    # Retries exhausted: checkpoint the failure so it leaves a durable
+                    # trace, then let the caller see the real (last) exception.
+                    failures = state.setdefault("step_failures", {})
+                    failures[step_name] = {
+                        "attempts": attempt,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "failed_at": time.time(),
+                    }
+                    self._save(workflow_id, state)
+                    raise
+                else:
+                    steps[step_name] = result
+                    # A prior failed attempt for this step is now moot; drop it so
+                    # introspection reflects the current (successful) state.
+                    state.get("step_failures", {}).pop(step_name, None)
+                    self._save(workflow_id, state)
+                    return result
 
     def completed_steps(self, workflow_id: str) -> list[str]:
         """Introspection helper: which steps have checkpointed results."""
@@ -363,6 +527,17 @@ class CheckpointShimOrchestrator:
         the workflow's live services.
         """
         return self._load(workflow_id).get("steps", {}).get(step_name)
+
+    def step_failure(self, workflow_id: str, step_name: str) -> dict[str, Any] | None:
+        """Introspection helper: the checkpointed failure record for a step (#36).
+
+        Mirrors ``step_result``: returns ``None`` when the step has never exhausted
+        its retries (including "never ran" and "currently succeeded"). Populated by
+        ``run_step`` only after every retry attempt has failed, so a caller (e.g. the
+        scheduler/health surface) can see that a step is durably stuck without
+        re-running anything.
+        """
+        return self._load(workflow_id).get("step_failures", {}).get(step_name)
 
     def send(self, workflow_id: str, topic: str, payload: Any) -> None:
         """Durably enqueue a message for ``(workflow_id, topic)`` (FR-DUR-1/3).
