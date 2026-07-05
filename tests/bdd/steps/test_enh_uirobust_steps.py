@@ -232,15 +232,22 @@ def inspect_digest_rows(uirobustctx):
 
 @then("each disables its control before awaiting the request")
 def digest_rows_guarded(uirobustctx):
-    # GREEN: Approve / Pass call _disableRow(card); Research disables its button.
+    # GREEN: Approve / Pass call _disableRow(card). Research now guards re-entry with
+    # an in-flight `dataset.researching` flag and doubles the button as its own cancel
+    # control (a re-click cancels rather than double-submitting), so it deliberately
+    # stays enabled instead of disabling — lens 04 #60.
     assert "_disableRow(card)" in uirobustctx["approve_body"], (
         "_onApprove does not disable the row before awaiting"
     )
     assert "_disableRow(card)" in uirobustctx["pass_body"], (
         "_onPass does not disable the row before awaiting"
     )
-    assert re.search(r"btn\.disabled\s*=\s*true", uirobustctx["research_body"]), (
-        "_onResearch does not disable its button before awaiting"
+    research_body = uirobustctx["research_body"]
+    assert re.search(r"dataset\.researching\s*=\s*'1'", research_body) and (
+        "dataset.researching === '1'" in research_body
+    ), (
+        "_onResearch does not guard re-entry (in-flight flag + cancel-on-reclick) "
+        "before awaiting"
     )
 
 
