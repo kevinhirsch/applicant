@@ -37,7 +37,8 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   the "sent AT MOST ONCE" docstring. Flip to SENT before/atomically-with the send, or record
   a sent-marker that survives the flip failure.
   Where: `application/services/post_submission_service.py::send_scheduled_follow_ups`.
-  Status: open (surfaced during the scheduler #33/#40 work).
+  Status: **fixed** (this batch — the row is durably flipped to SENT *before* the send, so
+  a crash/flip-failure after a successful send can no longer resend).
 
 - **DISC-8 · med · Ghosting can double-signal.**
   In `check_ghosting`, the `GhostingSignal` row is added BEFORE the status flip to GHOSTED;
@@ -45,7 +46,25 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   ghosting signal on the next day's sweep. Order the flip before the signal, or make them
   atomic.
   Where: `application/services/post_submission_service.py::check_ghosting`.
-  Status: open.
+  Status: **fixed** (this batch — a signal is recorded only if one doesn't already exist for
+  the application, so a re-sweep after a failed flip can't create a duplicate).
+
+- **DISC-12 · low · Redrive failures are invisible.**
+  `lifespan._redrive_pending`'s per-workflow `except Exception: log.info("redrive_skipped", …)`
+  swallows individual durable-workflow redrive failures at `log.info` (not even a warning) with
+  no counter — a batch of failed redrives is invisible in logs and on `/healthz`. Same
+  "no aggregate signal" class as 04-#48, scoped inside one boot step.
+  Where: `app/lifespan.py::_redrive_pending`.
+  Status: open (surfaced fixing 04-#48).
+
+- **DISC-13 · high (security) · Loopback trust was bypassable behind a proxy/tunnel.**
+  The first-run/unconfigured loopback bypass in `applicant_ops_routes._require_admin`,
+  `applicant_admin_routes._require_admin`, and `auth_helpers.require_user` trusted any request
+  whose peer host was loopback — but a cloudflared/reverse-proxy tunnel connects FROM loopback,
+  so a remote unauthenticated caller routed through such a tunnel inherited local-operator trust
+  and could reach admin/update/run-control endpoints before auth was configured.
+  Status: **fixed** (this batch — all three call sites now fail closed when any proxy/tunnel
+  forwarding header is present, matching the already-hardened `app.py` pattern).
 
 - **DISC-9 · med · Pre-submit override is lost when the pipeline can't start.**
   In `agent_loop._process_approvals`, the presubmit-safety override is cleared as soon as
