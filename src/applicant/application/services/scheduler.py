@@ -241,23 +241,6 @@ class Scheduler:
         # over 24/7 operation.
         self._prune_daily_sent(now)
 
-        services = self._tick_services_factory() if self._tick_services_factory else None
-        loop = services["agent_loop"] if services else self._loop
-        storage = services["storage"] if services else self._storage
-        session = services.get("_session") if services else None
-        # Prefer the per-tick curation service (shares the SAME process-lived ledger +
-        # memory adapters as the main one, FR-MIND-10) so the nudge runs against the
-        # isolated per-tick session/storage; fall back to the shared service otherwise.
-        curation = (
-            services.get("curation_service") if services else None
-        ) or self._curation
-        # Dark-engine audit B2 items 8/9/60: prefer the per-tick, storage-isolated
-        # PostSubmissionService (shares this tick's Session, CONC-2) over the shared
-        # singleton, exactly like curation above.
-        post_submission = (
-            services.get("post_submission_service") if services else None
-        ) or self._post_submission
-
         ticked: list[str] = []
         # FR-OBS-2 / NFR-OPS: track this tick's health so the metrics surface records
         # success/failure and the consecutive-failure alert can fire. A tick is a
@@ -267,7 +250,34 @@ class Scheduler:
         tick_ok = True
         campaign_attempts = 0
         campaign_failures = 0
+        # Populated inside the ``try`` below; safe defaults so the ``finally`` (which
+        # always runs, even when the try raises) never sees an undefined name.
+        session = None
+        fired: list[str] = []
         try:
+            # Finding #33: build the per-tick services INSIDE the try so a factory
+            # failure (e.g. a bad DB connection) is caught by the SAME handling as
+            # any other tick error below, instead of escaping before this tick's
+            # ``finally`` ever resets ``_tick_running`` or this tick is ever recorded
+            # on the metrics surface.
+            services = self._tick_services_factory() if self._tick_services_factory else None
+            loop = services["agent_loop"] if services else self._loop
+            storage = services["storage"] if services else self._storage
+            session = services.get("_session") if services else None
+            # Prefer the per-tick curation service (shares the SAME process-lived
+            # ledger + memory adapters as the main one, FR-MIND-10) so the nudge runs
+            # against the isolated per-tick session/storage; fall back to the shared
+            # service otherwise.
+            curation = (
+                services.get("curation_service") if services else None
+            ) or self._curation
+            # Dark-engine audit B2 items 8/9/60: prefer the per-tick, storage-isolated
+            # PostSubmissionService (shares this tick's Session, CONC-2) over the
+            # shared singleton, exactly like curation above.
+            post_submission = (
+                services.get("post_submission_service") if services else None
+            ) or self._post_submission
+
             for campaign in self._active_campaigns(storage):
                 # (a) advance the per-campaign run loop one step. IDEM-1: the loop
                 # itself delivers the daily digest at most once per (campaign, UTC day)
@@ -327,10 +337,11 @@ class Scheduler:
             inbox_scan_result = self._run_inbox_scan_sweep(post_submission, storage, now)
         except Exception:
             # The tick body itself blew up (services factory / campaign query / a nudge
-            # ran unguarded) — count it as a failed tick for stall detection, then
-            # re-raise so the caller (lifespan / DBOS workflow) still sees the error.
+            # ran unguarded) — count it as a failed tick for stall detection. The
+            # ladder-advance + metrics recording below (in ``finally``) still run
+            # before this re-raises, so the caller (lifespan / DBOS workflow) still
+            # sees the error but the tick stays fully observable either way.
             tick_ok = False
-            self._record_tick_metrics(now, success=False, campaigns=len(ticked))
             raise
         finally:
             self._tick_running = False
@@ -339,21 +350,30 @@ class Scheduler:
                     session.close()
                 except Exception:  # pragma: no cover - defensive
                     pass
-
-        # A tick where every attempted campaign failed is a stall, not a success.
-        if campaign_attempts > 0 and campaign_failures == campaign_attempts:
-            tick_ok = False
-
-        # (c) advance the notification escalation ladder (FR-NOTIF-2). The ladder is
-        # in the (shared) notifier, not the DB, so it uses the shared service.
-        fired = self._advance_ladders(now)
-
-        # (d) FR-OBS-2 / NFR-OPS: record the tick on the metrics surface (heartbeat +
-        # success/failure counters) and raise ONE operator alert through the existing
-        # notification ladder if N consecutive ticks have now failed (idempotent).
-        self._record_tick_metrics(
-            now, success=tick_ok, campaigns=len(ticked), ladder_fired=len(fired)
-        )
+            # Finding #40: advance the escalation ladder and record this tick's
+            # metrics HERE, in the ``finally``, so a tick that raised partway through
+            # the try above still advances the ladder and stays observable — these
+            # used to live AFTER the try/finally, which a raise skips entirely.
+            # Guarded so a failure in either never escapes and never masks the tick's
+            # real exception (the ``raise`` above, if any).
+            try:
+                # A tick where every attempted campaign failed is a stall, not a
+                # success.
+                if campaign_attempts > 0 and campaign_failures == campaign_attempts:
+                    tick_ok = False
+                # (c) advance the notification escalation ladder (FR-NOTIF-2). The
+                # ladder is in the (shared) notifier, not the DB, so it uses the
+                # shared service.
+                fired = self._advance_ladders(now)
+                # (d) FR-OBS-2 / NFR-OPS: record the tick on the metrics surface
+                # (heartbeat + success/failure counters) and raise ONE operator alert
+                # through the existing notification ladder if N consecutive ticks
+                # have now failed (idempotent).
+                self._record_tick_metrics(
+                    now, success=tick_ok, campaigns=len(ticked), ladder_fired=len(fired)
+                )
+            except Exception:  # pragma: no cover - defensive
+                log.warning("scheduler_tick_finally_failed", exc_info=True)
 
         log.info(
             "scheduler_tick",
