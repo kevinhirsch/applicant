@@ -153,13 +153,24 @@ class PostSubmissionService:
             self._storage.commit()
         if stored:
             try:
-                app = app.with_status(ApplicationState.REJECTED)
-                self._storage.applications.update(app)
-                self._record_outcome_event(app, "rejected")
+                rejected_app = app.with_status(ApplicationState.REJECTED)
+                self._storage.applications.update(rejected_app)
+                self._record_outcome_event(rejected_app, "rejected")
                 self._storage.commit()
-                return app
+                return rejected_app
             except Exception:
-                pass
+                # Lens 04 #42: this is the ONLY place a detected rejection is
+                # actually applied -- swallowing it silently left the app
+                # un-rejected (tracker lies, learning loop never sees the
+                # negative outcome) with zero trace. Log it so the failure is
+                # operable, and fall through to the ORIGINAL (unmutated) ``app``
+                # below rather than the reassigned local -- a failed transition
+                # must never be reported to the caller as though it succeeded.
+                log.warning(
+                    "post_submission_rejection_transition_failed",
+                    application_id=str(application_id),
+                    exc_info=True,
+                )
         return app
 
     def process_rejection_signal(self, application_id, *, source, signal_text="", confidence=1.0, detail=None):
@@ -538,7 +549,19 @@ class PostSubmissionService:
                 self._storage.applications.update(app)
                 self._record_outcome_event(app, "ghosted")
             except Exception:
-                pass
+                # Lens 04 #43: same silent-loss shape as #42 -- the ghosting
+                # SIGNAL is already persisted above, so swallowing this failure
+                # left the application stuck in limbo (flagged as ghosted for
+                # the signal trail, but never transitioned/never an outcome
+                # event) with zero trace. Log it; the ``ghosting_flag`` pending
+                # action still surfaces for the owner via ``ghost_signals``
+                # below regardless of whether the transition itself succeeded,
+                # so this failure is not silent to the front-door either way.
+                log.warning(
+                    "post_submission_ghosting_transition_failed",
+                    application_id=str(app.id),
+                    exc_info=True,
+                )
         if signals:
             self._storage.commit()
         return signals
@@ -815,6 +838,19 @@ class PostSubmissionService:
                         deep_link=f"/applications/{fup.application_id}",
                     )
                 except Exception:
+                    # Lens 04 #44: this failure was fully swallowed -- no log,
+                    # no retry signal -- so a notifier outage looked identical
+                    # to a follow-up that simply hadn't come due yet. The
+                    # ``continue`` itself is still correct and bounded (per the
+                    # docstring above: the row stays SCHEDULED and ``list_due``
+                    # naturally retries it next tick), it just needs to be
+                    # observable.
+                    log.warning(
+                        "post_submission_followup_notify_failed",
+                        follow_up_id=str(fup.id),
+                        application_id=str(fup.application_id),
+                        exc_info=True,
+                    )
                     continue
             sent.append(fup)
             try:
@@ -831,7 +867,16 @@ class PostSubmissionService:
                 if app and app.status == ApplicationState.AWAITING_RESPONSE:
                     self._storage.applications.update(app.with_status(ApplicationState.FOLLOWING_UP))
             except Exception:
-                pass
+                # Lens 04 #44: dropped silently before -- the follow-up was
+                # already sent (marked SENT above) but the tracker board's
+                # status stayed AWAITING_RESPONSE with no trace of why. Log it
+                # so a stuck state-advance is operable server-side.
+                log.warning(
+                    "post_submission_followup_state_advance_failed",
+                    follow_up_id=str(fup.id),
+                    application_id=str(fup.application_id),
+                    exc_info=True,
+                )
         if sent:
             self._storage.commit()
         return sent
