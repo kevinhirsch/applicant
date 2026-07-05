@@ -189,3 +189,205 @@ def test_calendar_interviews_db_failure_degrades(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"interviews": []}
+
+
+# ── 3. POST /calendar/events — write-back (dark-engine audit item 69) ────
+#
+# Real SQLAlchemy models (``core.database.CalendarEvent``/``CalendarCal``)
+# against an in-memory sqlite DB shared across the ``SessionLocal()`` calls the
+# route makes (StaticPool keeps one connection alive so writes from one request
+# are visible to the next -- required to exercise the dedupe/update path).
+# Never touches the real file-based DB the app is configured with.
+
+sqlalchemy = pytest.importorskip("sqlalchemy")
+
+
+@pytest.fixture
+def db_engine(monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # ``core.database`` runs ``init_db()`` (creates all tables) at MODULE IMPORT
+    # time against ``DATABASE_URL`` (default ``sqlite:///./data/app.db``,
+    # relative to cwd). None of the ``test_applicant_*`` tests import it before
+    # this one, so this is the first real import in this process — set an
+    # in-memory URL first so that one-time init never touches (or requires) a
+    # real ``data/`` directory on disk. Harmless if the module was already
+    # imported (module caching means the env var is simply unused then).
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    import core.database as core_db
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    core_db.Base.metadata.create_all(engine)
+    monkeypatch.setattr(core_db, "SessionLocal", sessionmaker(bind=engine))
+    return engine
+
+
+def _events(engine):
+    import core.database as core_db
+    from sqlalchemy.orm import sessionmaker
+
+    db = sessionmaker(bind=engine)()
+    try:
+        return list(db.query(core_db.CalendarEvent).all())
+    finally:
+        db.close()
+
+
+def _calendar(engine, calendar_id):
+    import core.database as core_db
+    from sqlalchemy.orm import sessionmaker
+
+    db = sessionmaker(bind=engine)()
+    try:
+        return db.query(core_db.CalendarCal).filter(core_db.CalendarCal.id == calendar_id).first()
+    finally:
+        db.close()
+
+
+def test_calendar_create_event_requires_token(client, monkeypatch):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    resp = client.post(
+        "/api/applicant/internal/calendar/events",
+        json={"title": "Interview", "start": "2026-07-10T09:00:00"},
+    )
+    assert resp.status_code == 403
+
+
+def test_calendar_create_event_disabled_without_secret(client, monkeypatch):
+    monkeypatch.delenv("APPLICANT_INTERNAL_TOKEN", raising=False)
+    resp = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers={INTERNAL_TOKEN_HEADER: TOKEN},
+        json={"title": "Interview", "start": "2026-07-10T09:00:00"},
+    )
+    assert resp.status_code == 403
+
+
+def test_calendar_create_event_requires_title_and_start(client, monkeypatch):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    h = {INTERNAL_TOKEN_HEADER: TOKEN}
+    assert client.post(
+        "/api/applicant/internal/calendar/events", headers=h, json={"start": "x"}
+    ).status_code == 400
+    assert client.post(
+        "/api/applicant/internal/calendar/events", headers=h, json={"title": "Interview"}
+    ).status_code == 400
+
+
+def test_calendar_create_event_creates_a_real_row(client, monkeypatch, db_engine):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    resp = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "kevin"},
+        json={
+            "title": "Interview invite: Acme Corp",
+            "start": "2026-07-10T00:00:00",
+            "all_day": True,
+            "notes": "Detected from an email",
+            "location": "https://example.com/job",
+            "dedupe_key": "app-1",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["created"] is True
+    uid = body["uid"]
+
+    rows = _events(db_engine)
+    assert len(rows) == 1
+    ev = rows[0]
+    assert ev.uid == uid
+    assert ev.summary == "Interview invite: Acme Corp"
+    assert ev.description == "Detected from an email"
+    assert ev.location == "https://example.com/job"
+    assert ev.all_day is True
+    # It landed on the owner's default calendar — reused from the native
+    # calendar create path (calendar_routes._ensure_default_calendar), not a
+    # hand-rolled "Applicant" calendar.
+    cal = _calendar(db_engine, ev.calendar_id)
+    assert cal.owner == "kevin"
+    assert cal.name == "Personal"
+
+
+def test_calendar_create_event_is_idempotent_on_dedupe_key(client, monkeypatch, db_engine):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    h = {INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "kevin"}
+    first = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers=h,
+        json={
+            "title": "Interview invite: Acme Corp",
+            "start": "2026-07-10T00:00:00",
+            "all_day": True,
+            "dedupe_key": "app-1",
+        },
+    )
+    assert first.json()["created"] is True
+    uid1 = first.json()["uid"]
+
+    # Re-detection of the SAME application updates the one event instead of
+    # creating a second — no duplicate lands on the calendar.
+    second = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers=h,
+        json={
+            "title": "Interview invite: Acme Corp (updated)",
+            "start": "2026-07-11T00:00:00",
+            "all_day": True,
+            "dedupe_key": "app-1",
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["created"] is False
+    assert second.json()["uid"] == uid1
+
+    rows = _events(db_engine)
+    assert len(rows) == 1
+    assert rows[0].summary == "Interview invite: Acme Corp (updated)"
+
+    # A DIFFERENT dedupe_key creates a second, independent event.
+    third = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers=h,
+        json={"title": "Interview invite: Globex", "start": "2026-07-12T00:00:00", "dedupe_key": "app-2"},
+    )
+    assert third.json()["created"] is True
+    assert len(_events(db_engine)) == 2
+
+
+def test_calendar_create_event_without_dedupe_key_always_creates(client, monkeypatch, db_engine):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    h = {INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "kevin"}
+    for _ in range(2):
+        resp = client.post(
+            "/api/applicant/internal/calendar/events",
+            headers=h,
+            json={"title": "Interview", "start": "2026-07-10T09:00:00"},
+        )
+        assert resp.json()["created"] is True
+    assert len(_events(db_engine)) == 2
+
+
+def test_calendar_create_event_db_failure_degrades_to_502(client, monkeypatch):
+    monkeypatch.setenv("APPLICANT_INTERNAL_TOKEN", TOKEN)
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")  # see db_engine fixture
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    import core.database as core_db
+
+    monkeypatch.setattr(core_db, "SessionLocal", _boom)
+    resp = client.post(
+        "/api/applicant/internal/calendar/events",
+        headers={INTERNAL_TOKEN_HEADER: TOKEN, INTERNAL_OWNER_HEADER: "kevin"},
+        json={"title": "Interview", "start": "2026-07-10T09:00:00"},
+    )
+    assert resp.status_code == 502

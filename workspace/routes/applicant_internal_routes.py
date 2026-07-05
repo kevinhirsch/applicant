@@ -4,14 +4,24 @@
 Today the Applicant bridge is one-directional: the front-door **workspace UI**
 calls *into* the **engine** (``src/applicant_engine.py``, ``ENGINE_URL``). Stage
 2.5 needs the *reverse* direction — the engine (the internal ``api`` container)
-must be able to call BACK into the workspace ``applicant-ui`` app to read things
-that only the front-door app knows: auto-detected interview calendar events
-(lane A), deep-research runs (lane B), and Cookbook-served local models (lane C).
+must be able to call BACK into the workspace ``applicant-ui`` app to read (and
+now write) things that only the front-door app knows: auto-detected interview
+calendar events (lane A, read + write-back), and deep-research runs (lane B).
 
 This module is the **shared channel + contract** for that reverse direction.
-Three later lanes fill in the typed endpoints; this file only provides the
+Each lane fills in its own typed endpoints; this file also provides the
 namespaced router (mounted at ``/api/applicant/internal/*``) plus a working
-``ping`` and documented placeholders so the contract is concrete.
+``ping``.
+
+A third lane (Cookbook-served local-model auto-discovery) existed briefly but
+was DELIBERATELY REMOVED end-to-end: the engine side (``HttpWorkspaceClient
+.local_models`` / ``WorkspacePort.local_models`` / the Cookbook-endpoint merge
+in ``ModelEndpointService``) was removed by issue #304 ("Remove: Cookbook
+integration with Applicant — descoped, except local-LLM tier"). This
+``GET /local-models`` receiver was the other half left behind with no caller
+(dark-engine audit item 70) — removed here too so the channel doesn't advertise
+a lane nothing will ever call. The manual local-model endpoint path
+(``model_endpoints`` router, user pastes a base URL) is unaffected.
 
 ## Trust model (READ BEFORE EXTENDING)
 
@@ -45,22 +55,22 @@ calendar / research / models.
 | Lane | Endpoint                                   | Returns |
 |------|--------------------------------------------|---------|
 | A    | ``GET  /api/applicant/internal/calendar/interviews`` | auto-detected interview events for the owner |
+| A    | ``POST /api/applicant/internal/calendar/events``     | write-back: create/update a detected interview on the owner's calendar |
 | B    | ``POST /api/applicant/internal/research``  | deep-research run for the owner |
-| C    | ``GET  /api/applicant/internal/local-models`` | Cookbook-served local models |
 
 See ``workspace/APPLICANT_INTEGRATION.md`` ("Stage 2.5 callback channel") for the
-full contract + file-ownership map so the three lanes do not collide.
+full contract + file-ownership map so the lanes do not collide.
 """
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import os
 import re
 import secrets
+import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -382,120 +392,23 @@ def _read_owner_calendar_events(owner: str) -> list[dict]:
         db.close()
 
 
+def _interview_event_uid(owner: str, dedupe_key: str) -> str:
+    """Deterministic ``CalendarEvent.uid`` for a (owner, dedupe_key) pair.
+
+    Lets ``calendar_create_event`` be idempotent: the engine sends the same
+    ``dedupe_key`` (the application id) every time it re-detects the same
+    interview invite, so repeat calls UPDATE the one event instead of minting a
+    duplicate every scan. Owner is folded in so two owners' dedupe keys (e.g.
+    matching application ids in a hypothetical future multi-tenant engine) can
+    never collide onto the same event.
+    """
+    basis = f"{owner or ''}:{dedupe_key}"
+    return "applicant-interview-" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+
+
 # ======================================================================== #
 # END LANE A                                                                #
 # ======================================================================== #
-
-
-# --- Lane C (Cookbook) helpers -------------------------------------------------
-#: Default serve port when a serve command does not pass ``--port`` (mirrors the
-#: Cookbook UI's serve-port allocator in ``static/js/cookbookRunning.js``).
-_COOKBOOK_DEFAULT_SERVE_PORT = 8000
-#: Serve task statuses that mean an OpenAI-compatible endpoint is (coming) up and
-#: worth advertising to the engine. ``running`` covers a server that is warming
-#: up; ``ready`` is the explicit "Application startup complete" phase.
-_COOKBOOK_LIVE_STATUSES = ("ready", "running")
-_SERVE_PORT_RE = re.compile(r"--port\s+(\d+)")
-
-
-def _cookbook_state_path() -> Path:
-    """Path to the persisted Cookbook state (matches ``cookbook_routes.py``)."""
-    return Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
-
-
-def _load_cookbook_state(path: Path | None = None) -> dict[str, Any]:
-    """Read the Cookbook state JSON, or ``{}`` when missing/unreadable.
-
-    Never raises: a missing or corrupt state file simply means "nothing served".
-    """
-    state_path = path or _cookbook_state_path()
-    try:
-        if not state_path.exists():
-            return {}
-        data = json.loads(state_path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:  # pragma: no cover - defensive; corrupt file -> empty
-        logger.warning("cookbook_state_unreadable", exc_info=True)
-        return {}
-
-
-def _serve_base_url(cmd: str, remote_host: str) -> str:
-    """Derive the in-network OpenAI-compatible base URL for a serve task.
-
-    The serve ``cmd`` carries ``--port N`` (default 8000). The host is the
-    serve target: a remote SSH alias/host when set, else ``localhost`` (the
-    Cookbook server itself). This mirrors ``cookbook_routes`` image-endpoint
-    auto-registration (``http://<host>:<port>/v1``). The engine rewrites a
-    ``localhost`` host to a network-reachable address on its side.
-    """
-    match = _SERVE_PORT_RE.search(cmd or "")
-    port = int(match.group(1)) if match else _COOKBOOK_DEFAULT_SERVE_PORT
-    host = (remote_host or "").strip()
-    if host:
-        # SSH alias form "user@host" -> bare host (Tailscale/DNS resolves it).
-        host = host.split("@")[-1]
-    else:
-        host = "localhost"
-    return f"http://{host}:{port}/v1"
-
-
-def _cookbook_served_models(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract the currently Cookbook-served local LLM endpoints.
-
-    Returns a clean JSON list of ``{model_id, name, base_url, status, remote,
-    served_by}`` — one per live serve task that exposes an OpenAI-compatible
-    endpoint. Diffusion (image) serves are skipped (the engine LLM config wants
-    text endpoints; image serves auto-register on the workspace side already).
-    Empty list when nothing is served.
-    """
-    tasks = state.get("tasks") if isinstance(state, dict) else None
-    if isinstance(tasks, dict):
-        tasks = list(tasks.values())
-    if not isinstance(tasks, list):
-        return []
-
-    out: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        if task.get("type") != "serve":
-            continue
-        status = (task.get("status") or "").strip().lower()
-        if status not in _COOKBOOK_LIVE_STATUSES:
-            continue
-        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-        cmd = payload.get("_cmd") or payload.get("cmd") or ""
-        # Image (diffusion) serves are not OpenAI chat endpoints — skip them.
-        if "diffusion_server.py" in cmd:
-            continue
-        model_id = (
-            task.get("modelId")
-            or task.get("repoId")
-            or task.get("name")
-            or payload.get("repo_id")
-            or payload.get("modelId")
-            or ""
-        )
-        if not model_id:
-            continue
-        remote = (task.get("remoteHost") or "").strip()
-        base_url = _serve_base_url(cmd, remote)
-        if base_url in seen_urls:
-            continue
-        seen_urls.add(base_url)
-        short = model_id.split("/")[-1] if "/" in model_id else model_id
-        out.append(
-            {
-                "model_id": model_id,
-                "name": short,
-                "base_url": base_url,
-                "status": status,
-                "remote": remote or "local",
-                "served_by": "cookbook",
-            }
-        )
-    return out
 
 
 # ======================================================================== #
@@ -743,11 +656,27 @@ def setup_applicant_internal_routes() -> APIRouter:
 
     @router.post("/calendar/events")
     async def calendar_create_event(request: Request):
-        """LANE A — create a calendar event on behalf of the owner.
+        """LANE A write-back — create/update a calendar event for the owner.
 
-        The engine calls this to schedule interview events or reminders in the
-        workspace calendar. Body: ``{title, start, end?, notes?, location?}``.
-        Returns the created event's id. Degrades to 502 on DB failure.
+        ``PostSubmissionService`` calls this (via
+        ``HttpWorkspaceClient.create_calendar_event``) when it detects an
+        interview invite in an inbound email, so the interview actually lands on
+        the owner's real calendar instead of only living in the engine's outcome
+        trail (design-audit dark-engine item 69). Body: ``{title, start, end?,
+        notes?, location?, all_day?, dedupe_key?}``.
+
+        Reuses the SAME create path as the native calendar
+        (``calendar_routes._ensure_default_calendar`` for the default-calendar
+        lookup/creation and ``_parse_dt_pair`` for tz-aware parsing) rather than
+        hand-rolling persistence — the previous version of this handler
+        constructed ``CalendarEvent`` with fields (``title``, no ``uid``) that
+        don't exist on the model and was never actually callable.
+
+        Idempotent when ``dedupe_key`` is supplied (the engine always sends the
+        application id): the event ``uid`` is derived deterministically from
+        ``owner + dedupe_key`` so a repeat detection for the same application
+        UPDATES the existing event instead of creating a duplicate. Degrades to
+        502 on DB failure — never a raw 500 the engine can't interpret.
         """
         verify_internal_token(request)
         owner = internal_owner(request)
@@ -763,42 +692,70 @@ def setup_applicant_internal_routes() -> APIRouter:
         start = (body.get("start") or "").strip()
         if not start:
             raise HTTPException(status_code=400, detail="'start' is required")
+
+        from routes.calendar_routes import _ensure_default_calendar, _parse_dt_pair
+
         try:
-            from datetime import datetime
-            dt_start = datetime.fromisoformat(start)
-            dt_end = None
-            if body.get("end"):
-                dt_end = datetime.fromisoformat(str(body["end"]).strip())
+            dtstart, is_utc = _parse_dt_pair(start)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid datetime: {exc}") from exc
+            raise HTTPException(status_code=400, detail=f"Invalid 'start': {exc}") from exc
+        all_day = bool(body.get("all_day"))
+        end = str(body.get("end") or "").strip()
+        if end:
+            try:
+                dtend, end_utc = _parse_dt_pair(end)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid 'end': {exc}") from exc
+            is_utc = is_utc or end_utc
+        elif all_day:
+            dtend = dtstart + timedelta(days=1)
+        else:
+            dtend = dtstart + timedelta(hours=1)
+
+        dedupe_key = (body.get("dedupe_key") or "").strip()
+        uid = _interview_event_uid(owner, dedupe_key) if dedupe_key else str(uuid.uuid4())
+
         try:
-            from core.database import CalendarCal, CalendarEvent, SessionLocal
+            from core.database import CalendarEvent, SessionLocal
             db = SessionLocal()
             try:
-                cal = db.query(CalendarCal).filter(
-                    CalendarCal.owner == owner if owner else True
-                ).first()
-                if not cal:
-                    cal = CalendarCal(owner=owner or "", name="Applicant")
-                    db.add(cal)
-                    db.flush()
+                existing = (
+                    db.query(CalendarEvent).filter(CalendarEvent.uid == uid).first()
+                    if dedupe_key
+                    else None
+                )
+                if existing is not None:
+                    existing.summary = title
+                    existing.description = body.get("notes") or ""
+                    existing.location = body.get("location") or ""
+                    existing.dtstart = dtstart
+                    existing.dtend = dtend
+                    existing.all_day = all_day
+                    existing.is_utc = is_utc and not all_day
+                    db.commit()
+                    return {"ok": True, "uid": uid, "created": False}
+                cal = _ensure_default_calendar(db, owner or None)
                 event = CalendarEvent(
+                    uid=uid,
                     calendar_id=cal.id,
-                    title=title,
-                    dtstart=dt_start,
-                    dtend=dt_end,
+                    summary=title,
                     description=body.get("notes") or "",
                     location=body.get("location") or "",
-                    owner=owner or "",
+                    dtstart=dtstart,
+                    dtend=dtend,
+                    all_day=all_day,
+                    is_utc=is_utc and not all_day,
                 )
                 db.add(event)
                 db.commit()
-                return {"id": str(event.id), "ok": True}
+                return {"ok": True, "uid": uid, "created": True}
             except Exception:
                 db.rollback()
                 raise
             finally:
                 db.close()
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.warning("calendar_create_event failed: %s", exc)
             raise HTTPException(status_code=502, detail="Failed to create event") from exc
@@ -915,25 +872,6 @@ def setup_applicant_internal_routes() -> APIRouter:
             "owner": owner or None,
             "truncated": truncated,
         }
-
-    @router.get("/local-models")
-    async def local_models(request: Request):
-        """LANE C — list Cookbook-served local model endpoints (owner-scoped).
-
-        Returns ``{"owner": <str|null>, "models": [...]}`` where each model is a
-        currently Cookbook-served OpenAI-compatible endpoint:
-        ``{model_id, name, base_url, status, remote, served_by}``. The base URL is
-        in-network (``http://<host>:<port>/v1``); the engine rewrites a
-        ``localhost`` host to a network-reachable address on its side.
-
-        Empty list when nothing is served (or the Cookbook state is absent). The
-        Cookbook is an owner/admin surface, so the served set is the deployment's;
-        the attributed owner is echoed back for the engine to confirm scoping.
-        """
-        verify_internal_token(request)
-        owner = internal_owner(request)
-        models = _cookbook_served_models(_load_cookbook_state())
-        return {"owner": owner or None, "models": models}
 
     # ==================================================================== #
     # FR-MIND agent-memory bridge — the engine reaches the front-door       #

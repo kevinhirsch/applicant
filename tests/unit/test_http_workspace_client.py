@@ -95,6 +95,66 @@ def test_typed_methods_hit_expected_paths():
     assert ("POST", "/api/applicant/internal/research") in paths
 
 
+def test_create_calendar_event_posts_expected_payload():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        seen["path"] = request.url.path
+        seen["method"] = request.method
+        seen["owner"] = request.headers.get(INTERNAL_OWNER_HEADER)
+        seen["body"] = _json.loads(request.content.decode() or "{}")
+        return httpx.Response(200, json={"ok": True, "uid": "abc123", "created": True})
+
+    client = _client(handler)
+    out = client.create_calendar_event(
+        title="Interview invite: Acme Corp",
+        start="2026-07-10T00:00:00",
+        owner="kev",
+        notes="Detected from an email",
+        location="https://example.com/job",
+        all_day=True,
+        dedupe_key="app-1",
+    )
+    assert out == {"ok": True, "uid": "abc123", "created": True}
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/applicant/internal/calendar/events"
+    assert seen["owner"] == "kev"
+    assert seen["body"] == {
+        "title": "Interview invite: Acme Corp",
+        "start": "2026-07-10T00:00:00",
+        "all_day": True,
+        "notes": "Detected from an email",
+        "location": "https://example.com/job",
+        "dedupe_key": "app-1",
+    }
+
+
+def test_create_calendar_event_omits_optional_fields_when_absent():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        seen["body"] = _json.loads(request.content.decode() or "{}")
+        return httpx.Response(200, json={"ok": True, "uid": "x", "created": True})
+
+    client = _client(handler)
+    client.create_calendar_event(title="Interview", start="2026-07-10T09:00:00")
+    assert seen["body"] == {
+        "title": "Interview",
+        "start": "2026-07-10T09:00:00",
+        "all_day": False,
+    }
+
+
+def test_create_calendar_event_disabled_channel_raises_without_network():
+    client = HttpWorkspaceClient(token="")
+    with pytest.raises(WorkspaceError):
+        client.create_calendar_event(title="Interview", start="2026-07-10T09:00:00")
+
+
 def test_http_error_raises_workspace_error_with_detail():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, json={"detail": "Invalid internal token"})

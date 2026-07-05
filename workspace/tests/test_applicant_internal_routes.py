@@ -74,14 +74,15 @@ def test_owner_scoping_reflected(client, monkeypatch):
 
 
 def test_all_lanes_implemented_not_placeholders(client, monkeypatch):
-    # All three lanes (calendar A, research B, local-models C) are implemented now —
-    # none should return the 501 placeholder when called with a valid token
-    # (their behavior is covered in their own dedicated test files).
+    # Both lanes (calendar A, research B) are implemented now — none should
+    # return the 501 placeholder when called with a valid token (their behavior
+    # is covered in their own dedicated test files). A third lane (Cookbook
+    # local-model auto-discovery, dark-engine audit item 70) was removed
+    # end-to-end as obsolete dead code -- see the module docstring.
     _enable(monkeypatch)
     h = {INTERNAL_TOKEN_HEADER: TOKEN}
     assert client.get("/api/applicant/internal/calendar/interviews", headers=h).status_code != 501
     assert client.post("/api/applicant/internal/research", headers=h, json={"query": "x"}).status_code != 501
-    assert client.get("/api/applicant/internal/local-models", headers=h).status_code != 501
 
 
 def test_lane_placeholders_still_token_gated(client, monkeypatch):
@@ -89,7 +90,6 @@ def test_lane_placeholders_still_token_gated(client, monkeypatch):
     # No token -> 403 before reaching the placeholder/handler.
     assert client.get("/api/applicant/internal/calendar/interviews").status_code == 403
     assert client.post("/api/applicant/internal/research", json={"query": "x"}).status_code == 403
-    assert client.get("/api/applicant/internal/local-models").status_code == 403
 
 
 # === Lane B: POST /research (deep-research callback) =========================
