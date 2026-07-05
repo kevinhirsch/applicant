@@ -88,6 +88,11 @@ Endpoints (all under ``/api/applicant/tracker``):
   one-tap "mark submitted" / "try auto-detect" pair, validated against THIS
   request's own ``/pending-confirmation`` fan-out before the write is
   forwarded.
+* ``GET  /api/applicant/tracker/applications/{application_id}/resume-status``
+  — countdown to the engine's next resume attempt for a blocked (pre-submission)
+  application (dark-engine audit #78): a plain, side-effect-free read, so unlike
+  the writes above it is not gated behind a fan-out (mirrors the documents
+  proxy's ``jd_match``).
 """
 
 from __future__ import annotations
@@ -644,5 +649,33 @@ def setup_applicant_tracker_routes() -> APIRouter:
                     status_code=exc.status or 502, detail=str(exc)
                 ) from exc
         return result if isinstance(result, dict) else {}
+
+    @router.get("/applications/{application_id}/resume-status")
+    async def resume_status(request: Request, application_id: str) -> dict:
+        """Countdown to the engine's next resume attempt for one blocked
+        application (dark-engine audit #78; engine ``GET
+        /api/admin/resume-status/{id}``).
+
+        A blocked (pre-submission) application is re-driven at most every ~300s
+        via the engine's resume backoff, so right after the owner clears a
+        blocker (answers a question, supplies a missing detail, approves a
+        redline) this tells them honestly WHEN the engine will actually pick it
+        back up, instead of the up-to-5-minute silence the fixed backoff
+        otherwise leaves. A plain read with no side effects -- same auth tier as
+        ``applicant_documents_routes.jd_match``/``application_documents`` (the
+        engine has no owner concept of its own, single-tenant per deployment, so
+        a by-id read for the owner's OWN materials/status is not gated behind an
+        extra fan-out); the Portal calls this right after resolving a blocker to
+        phrase its confirmation honestly. Degrades to ``{"status":
+        "not_blocked"}`` on an engine error rather than blocking the toast.
+        """
+        _require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                result = await engine.admin_resume_status(application_id)
+        except EngineError as exc:
+            logger.debug("tracker: resume_status failed for %s: %s", application_id, exc)
+            return {"application_id": application_id, "status": "not_blocked"}
+        return result if isinstance(result, dict) else {"application_id": application_id, "status": "not_blocked"}
 
     return router

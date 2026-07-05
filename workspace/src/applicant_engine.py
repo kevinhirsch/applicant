@@ -1054,6 +1054,23 @@ class ApplicantEngineClient:
             "POST", f"/api/admin/stuck-applications/{application_id}/retry"
         )
 
+    # dark-engine audit #78: the resume backoff (last-resume + fixed 300s window)
+    # gates how often the loop re-drives a blocked application -- until now nothing
+    # could tell an owner WHEN the loop would next check on one after they cleared
+    # a blocker (answered a question, supplied a missing detail, approved a
+    # redline).
+    async def admin_resume_status(self, application_id: str) -> Any:
+        """Countdown to the loop's next resume attempt for one application, or
+        ``{"status": "not_blocked"}`` when it isn't currently backed off."""
+        return await self._request("GET", f"/api/admin/resume-status/{application_id}")
+
+    # dark-engine audit #76: the capped deep-research escalation folds a company
+    # report into an application's materials, but which report (if any) informed
+    # them lived only in the orchestrator's checkpoint until now.
+    async def admin_research_provenance(self, application_id: str) -> Any:
+        """Which company research (if any) informed one application's materials."""
+        return await self._request("GET", f"/api/admin/research-provenance/{application_id}")
+
     # -- in-UI update button (engine routers/update.py) ----------------------
 
     async def update_status(self) -> Any:

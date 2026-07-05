@@ -37,7 +37,7 @@ import dataclasses
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from applicant.application.workflows import application_pipeline
@@ -820,6 +820,45 @@ class AgentLoop:
         log.info("resume_retry_cleared", application_id=key)
         return True
 
+    def resume_backoff_status(
+        self, application_id: str, *, now: datetime | None = None
+    ) -> dict | None:
+        """Countdown to the next resume attempt for a currently-blocked application
+        (dark-engine audit #78).
+
+        Each parked application (``BLOCKED_*``/``AWAITING_*``/``MATERIAL_REVIEW`` --
+        see ``_IN_FLIGHT_RESUMABLE``) is re-driven at most every
+        ``_resume_backoff_seconds`` (300s) via the SAME process-lived
+        ``ResumeLedger`` the tick loop reads/writes (``_resume_due``/``_mark_resumed``)
+        -- so after the user clears a blocker (answers a question, supplies a missing
+        detail, approves a redline) the application can sit for up to 5 minutes with
+        no visible sign anything will happen. This reads ``last_resume`` + the fixed
+        backoff window to give a blocked card an honest "retrying at HH:MM:SS"
+        instead of silence. ``now`` is injectable for deterministic tests; real
+        callers leave it ``None`` (the real wall clock). Returns ``None`` when the
+        application isn't currently in a resumable/blocked state, was never resumed
+        yet (eligible on the very next tick -- nothing to count down), or has been
+        given up on (surfaced instead via the stuck-applications list, #62).
+        """
+        app = self._storage.applications.get(ApplicationId(str(application_id)))
+        if app is None or app.status not in _IN_FLIGHT_RESUMABLE:
+            return None
+        key = str(application_id)
+        with self._resume_ledger.lock:
+            last = self._last_resume.get(key)
+            given_up = key in self._resume_giveup
+        if last is None or given_up:
+            return None
+        next_retry_at = last + timedelta(seconds=self._resume_backoff_seconds)
+        remaining = max(0.0, (next_retry_at - (now or datetime.now(UTC))).total_seconds())
+        return {
+            "application_id": key,
+            "status": app.status.value,
+            "last_resume_at": last.isoformat(),
+            "next_retry_at": next_retry_at.isoformat(),
+            "seconds_remaining": round(remaining),
+        }
+
     def _resume_due(self, application_id: ApplicationId, now: datetime) -> bool:
         """True if enough time has elapsed since this app was last re-driven (#9 backoff)."""
         with self._resume_ledger.lock:
@@ -1180,11 +1219,22 @@ class AgentLoop:
         # dedupes + caches per campaign and self-gates on budget / channel
         # availability, so this is free on re-use and a no-op when research is off.
         research_ctx = ""
+        # dark-engine audit #76: capture WHICH research informed this application's
+        # materials (company/query + a short excerpt + up to 5 sources), not just the
+        # bare ``research_used`` flag -- populated by ``_maybe_research_company`` only
+        # when a fresh/cached report actually came back. This dict is folded into the
+        # checkpointed ``material`` step result below, so a read-model can surface real
+        # provenance instead of a flag alone.
+        research_provenance: dict[str, Any] = {}
         if self._context_is_lacking(true_source, jd_terms):
-            research_ctx = self._maybe_research_company(campaign, posting)
+            research_ctx = self._maybe_research_company(
+                campaign, posting, provenance=research_provenance
+            )
         if research_ctx:
             true_source = f"{true_source}\n\n{research_ctx}" if true_source else research_ctx
             summary["research_used"] = True
+            if research_provenance:
+                summary["research_provenance"] = research_provenance
         try:
             sel = self._material.select_or_generate(
                 campaign.id, app.posting_id, jd_terms, true_source, application_id=app.id
@@ -1240,7 +1290,9 @@ class AgentLoop:
         low = src.lower()
         return any(t and t.strip().lower() not in low for t in jd_terms)
 
-    def _maybe_research_company(self, campaign, posting) -> str:
+    def _maybe_research_company(
+        self, campaign, posting, *, provenance: dict[str, Any] | None = None
+    ) -> str:
         """Escalate to the capped deep-research tool for a company/role gap (Lane B).
 
         Returns a short context block (research summary + key findings) to fold into
@@ -1248,6 +1300,13 @@ class AgentLoop:
         the budget is spent, there is no company to research, or the run fails. The
         ResearchService itself enforces the per-campaign cap + dedupe + cache, so a
         repeated company is served free and a runaway can't burn unbounded runs.
+
+        When ``provenance`` is given and a report actually comes back, it is
+        populated in place with the company/query, a short summary excerpt, up to 5
+        sources, and whether the report was served from cache (dark-engine audit
+        #76) -- the caller folds this into the checkpointed step result so a
+        read-model can show WHICH research informed the application, not just that
+        research happened.
         """
         if self._research is None or posting is None:
             return ""
@@ -1270,6 +1329,19 @@ class AgentLoop:
         lines = [f"[Company research — {company}]", report.summary.strip()]
         for finding in report.key_findings[:6]:
             lines.append(f"- {finding}")
+        if provenance is not None:
+            provenance["company"] = company
+            provenance["query"] = query
+            provenance["summary_excerpt"] = report.summary.strip()[:280]
+            provenance["cached"] = bool(report.cached)
+            provenance["sources"] = [
+                {
+                    "title": str(s.get("title") or "").strip(),
+                    "url": str(s.get("url") or "").strip(),
+                }
+                for s in (report.sources or [])[:5]
+                if isinstance(s, dict) and (s.get("title") or s.get("url"))
+            ]
         return "\n".join(p for p in lines if p).strip()
 
     def _link_variant(self, app: Application, variant_id) -> None:

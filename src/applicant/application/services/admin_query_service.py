@@ -111,9 +111,42 @@ class AdminQueryService:
                     # (``record_plan_history``). Empty list when the planner
                     # never ran for this application (the common case today).
                     "plan_ops": get_plan_history(a.id),
+                    # dark-engine audit #76: which company research (if any) informed
+                    # this application's materials -- see ``research_provenance``.
+                    # ``None`` for the common case (research never used, or its
+                    # workflow checkpoint has already been cleared post-submission).
+                    "research_provenance": self.research_provenance(a.id),
                 }
             )
         return rows
+
+    # --- company-research provenance (dark-engine audit #76) ---------------
+    def research_provenance(self, application_id: ApplicationId) -> dict | None:
+        """Which company research (if any) informed this application's materials.
+
+        The agent loop's checkpointed ``material`` pipeline step records
+        ``research_used``/``research_provenance`` when a genuine company/role
+        knowledge gap triggered the capped deep-research escalation (Lane B,
+        ``AgentLoop._prepare_material_for``) -- but until now that detail lived
+        ONLY in the orchestrator's checkpoint, never reaching any rendered payload.
+        Reads the checkpointed ``material`` step result for this application's
+        durable workflow the SAME way ``workflow_state`` already reads workflow
+        introspection (``application:{id}``). Returns ``None`` when research was
+        never used for this application (the common case), the workflow's
+        checkpoint has already been cleared (a terminal/submitted application,
+        DUR-2), or the orchestrator backend doesn't support step introspection
+        (e.g. DBOS) -- never fabricated.
+        """
+        getter = getattr(self._orch, "step_result", None)
+        if getter is None:
+            return None
+        try:
+            result = getter(f"application:{application_id}", "material")
+        except Exception:  # pragma: no cover - defensive: read-only, never break a page
+            return None
+        if not isinstance(result, dict) or not result.get("research_used"):
+            return None
+        return result.get("research_provenance") or {"used": True}
 
     def _batch_postings(self, campaign_id: CampaignId) -> dict[str, object]:
         """Group this campaign's postings by id, for the history read-model (#56)."""

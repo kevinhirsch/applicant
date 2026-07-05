@@ -2291,6 +2291,68 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       container.appendChild(line);
     }
 
+    // Company-research provenance (dark-engine audit #76): when the agent hit a
+    // genuine company/role knowledge gap while preparing this application's
+    // materials, it escalated to the capped deep-research tool and folded a
+    // report into the writing — surfaced here so the reviewer sees WHICH
+    // research informed what they're about to approve, instead of trusting it
+    // blindly. Fetched separately from the redline itself (its own small read,
+    // engine `GET /api/admin/research-provenance/{id}`) so a slow/failed lookup
+    // never delays the review; degrades to nothing when research was never used
+    // for this application (the common case) or its checkpoint has already been
+    // cleared (a since-submitted application).
+    async function _loadResearchProvenance(appId, container) {
+      if (!container) return;
+      let data;
+      try {
+        const res = await fetch(`${_APPLICANT_BASE}/research-provenance/${encodeURIComponent(appId)}`, { credentials: 'same-origin' });
+        if (!res.ok) return;
+        data = await res.json();
+      } catch { return; }
+      if (!data || !data.used) return;
+
+      const box = document.createElement('div');
+      box.className = 'doclib-applicant-research';
+      box.style.cssText = 'font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;';
+
+      const badge = document.createElement('span');
+      badge.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);font-weight:600;align-self:flex-start;';
+      badge.title = 'The assistant looked up the company before writing this — it informed the wording below.';
+      badge.textContent = data.company ? `Company research used — ${data.company}` : 'Company research used';
+      box.appendChild(badge);
+
+      if (data.summary_excerpt) {
+        const excerpt = document.createElement('div');
+        excerpt.style.cssText = 'opacity:0.8;';
+        excerpt.textContent = data.summary_excerpt;
+        box.appendChild(excerpt);
+      }
+
+      const sources = Array.isArray(data.sources) ? data.sources : [];
+      if (sources.length) {
+        const list = document.createElement('ul');
+        list.style.cssText = 'margin:0;padding-left:16px;';
+        sources.forEach((s) => {
+          const label = s && (s.title || s.url);
+          if (!label) return;
+          const li = document.createElement('li');
+          if (s.url) {
+            const a = document.createElement('a');
+            a.href = s.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = s.title || s.url;
+            li.appendChild(a);
+          } else {
+            li.textContent = label;
+          }
+          list.appendChild(li);
+        });
+        box.appendChild(list);
+      }
+      container.appendChild(box);
+    }
+
     // Fetch + render the materials for one application id.
     async function _loadApplicantMaterials(appId, results) {
       if (!results) return;
@@ -2617,6 +2679,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       header.style.cssText = 'font-size:12px;font-weight:600;opacity:0.85;';
       header.textContent = 'Nothing is submitted until you approve.';
       panel.appendChild(header);
+
+      // Company-research provenance (dark-engine audit #76): best-effort, own
+      // fetch so a slow/failed lookup never blocks the redline below.
+      const researchSlot = document.createElement('div');
+      panel.appendChild(researchSlot);
+      _loadResearchProvenance(appId, researchSlot);
 
       // Redline: the engine returns a redline_state describing what changed
       // versus the base. The engine's side-by-side highlighted redline

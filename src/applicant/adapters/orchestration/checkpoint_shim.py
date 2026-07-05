@@ -350,6 +350,20 @@ class CheckpointShimOrchestrator:
         """Introspection helper: which steps have checkpointed results."""
         return list(self._load(workflow_id).get("steps", {}).keys())
 
+    def step_result(self, workflow_id: str, step_name: str) -> Any:
+        """Introspection helper: a completed step's checkpointed result (dark-engine
+        audit #76), WITHOUT re-running anything.
+
+        Mirrors ``completed_steps`` (same read-only, best-effort shape): returns
+        ``None`` when the step has not completed yet (or the workflow has no
+        checkpoint at all) rather than raising, so a caller can treat "no result
+        yet" and "never ran" identically. Lets a read-model surface detail a
+        checkpointed step recorded (e.g. the ``material`` step's research-used
+        flag/provenance) without re-executing the step or coupling the reader to
+        the workflow's live services.
+        """
+        return self._load(workflow_id).get("steps", {}).get(step_name)
+
     def send(self, workflow_id: str, topic: str, payload: Any) -> None:
         """Durably enqueue a message for ``(workflow_id, topic)`` (FR-DUR-1/3).
 

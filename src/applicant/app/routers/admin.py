@@ -243,6 +243,49 @@ def retry_stuck_application(
     return {"application_id": application_id, "retried": True}
 
 
+@router.get("/resume-status/{application_id}")
+def resume_status(application_id: str, container: Container = Depends(get_container)) -> dict:
+    """Countdown to the next resume attempt for one blocked application
+    (dark-engine audit #78).
+
+    Reads the SAME process-lived ``ResumeLedger`` the running scheduler writes to
+    (``AgentLoop.resume_backoff_status``), so a just-resolved blocker (a missing
+    detail saved, a question answered, a redline approved) can tell the user
+    honestly when the loop will actually pick the application back up, instead of
+    the up-to-5-minute silence the fixed resume backoff otherwise leaves. Returns
+    ``{"status": "not_blocked"}`` (never a 404) when the application isn't
+    currently backed off, so a caller can poll this defensively right after
+    resolving a blocker without special-casing "nothing to show".
+    """
+    loop = container.agent_loop
+    status = loop.resume_backoff_status(application_id) if loop is not None else None  # type: ignore[arg-type]
+    if status is None:
+        return {"application_id": application_id, "status": "not_blocked"}
+    return {"application_id": application_id, **status}
+
+
+@router.get("/research-provenance/{application_id}")
+def research_provenance(
+    application_id: str, admin_query=Depends(get_admin_query_service)
+) -> dict:
+    """Which company research (if any) informed one application's materials
+    (dark-engine audit #76).
+
+    Reads the checkpointed ``material`` pipeline step for this application's
+    durable workflow (``AdminQueryService.research_provenance``) -- a single-app
+    sibling of ``/history/{campaign_id}``'s per-row field, reachable from the
+    redline review surface (pre-submission, while the checkpoint is still live)
+    rather than only from the post-submission per-campaign history. Returns
+    ``{"used": false}`` (never a 404) when research was never used for this
+    application, its checkpoint has already been cleared (submitted/archived),
+    or the orchestrator backend doesn't support step introspection.
+    """
+    provenance = admin_query.research_provenance(application_id)  # type: ignore[arg-type]
+    if provenance is None:
+        return {"application_id": application_id, "used": False}
+    return {"application_id": application_id, "used": True, **provenance}
+
+
 @router.get("/learning/{campaign_id}")
 def learning_insights(campaign_id: str, learning=Depends(get_learning_service)) -> dict:
     """What the system has learned for a campaign, in plain language (FR-LEARN-5/6).

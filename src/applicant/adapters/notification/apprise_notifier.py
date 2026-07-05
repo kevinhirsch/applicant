@@ -671,6 +671,42 @@ class AppriseNotifier:
             fired.extend(self._fire_due(delivery, ts))
         return fired
 
+    def ladder_status(self, dedup_key: str) -> dict | None:
+        """Current escalation-ladder state for one decision (dark-engine audit #77).
+
+        Every tick's ``advance`` fires due rungs (Discord held, then email after the
+        configured timeout, both further held during quiet hours) but nothing before
+        now exposed WHICH rung a decision is currently sitting on. Read-only — never
+        mutates ladder state. Returns ``None`` when there is no active delivery for
+        ``dedup_key`` (never sent, already resolved via ``expire``, or fully
+        escalated + pruned).
+        """
+        with self._sent_lock:
+            delivery = self._sent.get(dedup_key)
+            if delivery is None or not delivery.active:
+                return None
+            notification = delivery.notification
+            rungs = list(delivery.rungs)
+        now = self._clock()
+        channels: list[dict] = []
+        next_channel: str | None = None
+        next_due_at: str | None = None
+        next_quiet_held = False
+        for r in rungs:
+            due_at_iso = None if r.fired else datetime.fromtimestamp(r.due_at, tz=UTC).isoformat()
+            channels.append({"channel": r.channel, "fired": r.fired, "due_at": due_at_iso})
+            if not r.fired and next_channel is None:
+                next_channel = r.channel
+                next_due_at = due_at_iso
+                next_quiet_held = self._channel_quiet_deferred(r.channel, notification, now)
+        return {
+            "channels": channels,
+            "held": next_channel is not None,
+            "next_channel": next_channel,
+            "next_due_at": next_due_at,
+            "quiet_hours_held": next_quiet_held,
+        }
+
     def deliver_now(self, now: datetime | None = None) -> list[str]:
         """Force-flush every pending rung immediately, bypassing quiet hours (#302).
 

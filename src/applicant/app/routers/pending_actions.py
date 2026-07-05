@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from applicant.app.deps import (
     get_attribute_cloud_service,
+    get_notification_service,
     get_pending_actions_service,
     require_llm_configured,
 )
@@ -61,11 +62,31 @@ def index() -> dict:
     return {"surface": "pending_actions", "phase": 1, "status": "live"}
 
 
+def _ladder_status_for(payload: dict | None, notifications) -> dict | None:
+    """Best-effort escalation-ladder lookup for one pending action (#77).
+
+    ``payload["dedup_key"]`` is only present when the item was materialized with
+    an explicit dedup key that also matches the ref its notification was fired
+    with (e.g. ``material_service._announce_review_ready`` uses
+    ``f"material_review:{doc.id}"`` for BOTH). Never raises — a lookup failure
+    (or a notifier that doesn't support introspection) degrades to ``None`` so it
+    can never break the pending-actions list.
+    """
+    ref = (payload or {}).get("dedup_key")
+    if not ref:
+        return None
+    try:
+        return notifications.ladder_status(str(ref))
+    except Exception:  # pragma: no cover - defensive: read-only, never break the page
+        return None
+
+
 @router.get("/{campaign_id}")
 def list_pending(
     campaign_id: str,
     include_snoozed: bool = False,
     pending_actions=Depends(get_pending_actions_service),
+    notifications=Depends(get_notification_service),
 ) -> dict:
     """List open pending actions for the campaign (FR-UI-3) — the 24/7 home base.
 
@@ -91,6 +112,15 @@ def list_pending(
                 "payload": a.payload,
                 "created_at": a.created_at.isoformat(),
                 **meta,
+                # dark-engine audit #77: the notification escalation-ladder state
+                # (held vs. escalated, which rung/channel is next, when) for the item
+                # -- reused from the payload's own ``dedup_key`` where present (the
+                # SAME ref ``notify_decision`` fired the ladder with, e.g.
+                # ``material_review:{doc_id}``), so this never invents a mapping.
+                # ``None`` when the item's payload carries no dedup_key (most kinds
+                # notify via an immediate/CRITICAL ping with no ladder to hold) or
+                # nothing is currently active for it.
+                "notification_ladder": _ladder_status_for(a.payload, notifications),
             }
             for a, meta in paired
         ],

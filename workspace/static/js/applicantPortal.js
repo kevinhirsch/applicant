@@ -294,6 +294,28 @@ function _appId(item) {
   return item.application_id || (item.payload && item.payload.application_id) || '';
 }
 
+// Resume-backoff countdown (dark-engine audit #78): a blocked application is
+// re-driven at most every ~300s, so right after the owner clears a blocker
+// (answers a question / supplies a missing detail) it can sit for up to 5
+// minutes with no sign anything will happen. Fetches the real countdown and
+// returns a short, honest suffix to append to the "Sent"/"Saved" toast — or ''
+// when there's nothing to report (not currently backed off, or the read
+// failed). Best-effort only: never blocks or fails the toast it's appended to.
+async function _resumeCountdownSuffix(appId) {
+  if (!appId) return '';
+  try {
+    const data = await _fetchJSON(`/api/applicant/tracker/applications/${encodeURIComponent(appId)}/resume-status`);
+    if (data && data.status === 'blocked' && data.next_retry_at) {
+      const when = new Date(data.next_retry_at);
+      if (!isNaN(when.getTime())) {
+        const label = when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        return ` — I'll pick this back up by ${label}`;
+      }
+    }
+  } catch { /* best-effort — the toast still lands without the countdown */ }
+  return '';
+}
+
 // Best human "Role · Company" label for an item, from whichever fields the
 // engine carries on the action or its payload.
 function _roleCompany(item) {
@@ -949,6 +971,34 @@ function _renderEmpty(body) {
 
 // ── Row rendering ──────────────────────────────────────────────────────────────
 
+//: Plain-language channel names for the escalation-ladder line (#77) — never the
+//: raw engine channel key.
+const _LADDER_CHANNEL_LABEL = { discord: 'Discord', email: 'email', ntfy: 'push', in_app: 'in-app' };
+
+// Notification escalation-ladder state (dark-engine audit #77): every tick
+// advances a hold→email cadence (Discord held briefly for a quick web approval,
+// then email after a timeout, both further held during quiet hours) but none of
+// that was ever visible — a reminder just silently landed later with no
+// explanation. Returns a short, honest caption for the item's card, or '' when
+// the engine has no ladder info for it (most kinds notify once, immediately,
+// with nothing to hold) or nothing is currently pending.
+function _ladderLine(item) {
+  const ladder = item.notification_ladder;
+  if (!ladder || !ladder.held || !ladder.next_channel) return '';
+  const chLabel = _LADDER_CHANNEL_LABEL[ladder.next_channel] || ladder.next_channel;
+  if (ladder.quiet_hours_held) {
+    return `Reminder held for quiet hours — will notify by ${chLabel} once it ends`;
+  }
+  if (ladder.next_due_at) {
+    const when = new Date(ladder.next_due_at);
+    if (!isNaN(when.getTime())) {
+      const label = when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return `Reminder held — escalates to ${chLabel} at ${label}`;
+    }
+  }
+  return `Reminder held — will escalate to ${chLabel}`;
+}
+
 function _rowShell(item, inner) {
   const meta = _meta(item.kind);
   const title = item.title || meta.label;
@@ -966,12 +1016,17 @@ function _rowShell(item, inner) {
   const doneBtn = resolvable
     ? `<button type="button" class="cal-btn applicant-portal-resolve" data-action-id="${esc(item.id)}" title="Mark this as handled" style="flex-shrink:0;">Done</button>`
     : '';
+  const ladderText = _ladderLine(item);
+  const ladderLine = ladderText
+    ? `<div style="opacity:0.55;font-size:10.5px;margin-top:2px;" title="The reminder ladder: a quick channel is held briefly for a web approval before escalating to the next one.">${esc(ladderText)}</div>`
+    : '';
   return `
     <div class="admin-card og-card applicant-portal-row" data-action-id="${esc(item.id)}">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(title)}${_urgencyBadge(item)}</div>
           <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${_ageLabel(item)} ${where}</div>
+          ${ladderLine}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">${snoozeBtn}${doneBtn}</div>
       </div>
@@ -1000,7 +1055,7 @@ function _renderAnswer(item) {
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
       <textarea class="applicant-portal-answer" rows="2" placeholder="Type your answer…"
                 style="flex:1;min-width:160px;resize:vertical;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:12px;"></textarea>
-      <button type="button" class="cal-btn cal-btn-primary applicant-portal-send-answer" data-action-id="${esc(item.id)}">Send</button>
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-send-answer" data-action-id="${esc(item.id)}" data-application-id="${esc(_appId(item))}">Send</button>
       ${draftBtn}
     </div>`;
 }
@@ -1031,7 +1086,7 @@ function _renderMissing(item) {
       <input type="text" class="applicant-portal-missing-value" placeholder="Value"
              style="flex:2;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-save-missing"
-              data-action-id="${esc(item.id)}" data-campaign-id="${esc(cid)}">Save &amp; continue</button>
+              data-action-id="${esc(item.id)}" data-campaign-id="${esc(cid)}" data-application-id="${esc(_appId(item))}">Save &amp; continue</button>
     </div>`;
 }
 
@@ -1451,6 +1506,7 @@ function _wireRows(host) {
   host.querySelectorAll('.applicant-portal-send-answer').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.actionId;
+      const appId = btn.dataset.applicationId;
       const row = btn.closest('.applicant-portal-row');
       const ta = row && row.querySelector('.applicant-portal-answer');
       const text = (ta && ta.value || '').trim();
@@ -1462,7 +1518,10 @@ function _wireRows(host) {
         // attaches the user's response to the originating run.
         await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, { answer: text });
         _removeRow(host, id);
-        _toast('Sent');
+        // #78: the underlying application is still parked until the engine's next
+        // resume sweep (up to ~5 minutes) — say honestly when that is instead of
+        // implying it continues right away.
+        _toast(`Sent${await _resumeCountdownSuffix(appId)}`);
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Send';
@@ -1677,6 +1736,7 @@ function _wireRows(host) {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.actionId;
       const cid = btn.dataset.campaignId || null;
+      const appId = btn.dataset.applicationId;
       const row = btn.closest('.applicant-portal-row');
       const nameEl = row && row.querySelector('.applicant-portal-missing-name');
       const valEl = row && row.querySelector('.applicant-portal-missing-value');
@@ -1692,7 +1752,10 @@ function _wireRows(host) {
           name, value, campaign_id: cid, action_id: id,
         });
         _removeRow(host, id);
-        _toast('Saved — the application will continue');
+        // #78: if the application is still parked behind the resume backoff
+        // (up to ~5 minutes) after this save, say honestly when the engine will
+        // next check on it instead of implying it continues immediately.
+        _toast(`Saved${await _resumeCountdownSuffix(appId)}`);
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
