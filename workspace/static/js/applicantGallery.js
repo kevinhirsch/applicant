@@ -154,6 +154,28 @@ function _wireCreateSearchCTA() {
   });
 }
 
+// A "open the Job Assistant" button for the DIFFERENT empty state where a job
+// search already exists but hasn't captured anything yet (exhaustive2 lens 02
+// #210) — that state's job search already exists, so routing it through
+// "Create a job search" / launchApplicantSetup would re-run onboarding for no
+// reason. This CTA goes straight to the chat surface that actually starts the
+// work instead.
+function _openAssistantCTA() {
+  return `<button class="cal-btn cal-btn-primary" id="applicant-gallery-cta">Open the Job Assistant</button>`;
+}
+
+function _wireOpenAssistantCTA() {
+  const btn = _body() && _body().querySelector('#applicant-gallery-cta');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    try {
+      if (window.applicantChatModule && window.applicantChatModule.openApplicantChat) {
+        window.applicantChatModule.openApplicantChat(); _close(); return;
+      }
+    } catch { /* fall through to no-op */ }
+  });
+}
+
 // Map a kit error (with .kind) to a plain-language line for the retry card.
 function _errLine(err) {
   if (err && err.kind === 'gated') {
@@ -294,8 +316,8 @@ async function _renderGallery() {
     _body().innerHTML = emptyHTML(
       'Nothing captured yet',
       'This job search has no screenshots or generated materials yet — they appear here as I work.',
-      _createSearchCTA());
-    _wireCreateSearchCTA();
+      _openAssistantCTA());
+    _wireOpenAssistantCTA();
     return;
   }
 
