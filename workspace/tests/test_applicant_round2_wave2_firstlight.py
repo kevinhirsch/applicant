@@ -73,7 +73,7 @@ def test_finish_sets_completed_flag_on_ready_screen_only():
     src = _read(ONBOARDING_JS)
     finish_body = _find_function(src, "_finish")
 
-    ready_marker = "You’re all set!"
+    ready_marker = "You’re all set."
     almost_marker = "Almost there"
     ready_idx = finish_body.find(ready_marker)
     almost_idx = finish_body.find(almost_marker)

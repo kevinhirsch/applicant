@@ -139,6 +139,15 @@ const INTAKE_SECTIONS = [
 
 // The honest "what Applicant never does" list (B1). Exported via the module so
 // other surfaces (e.g. the Portal empty state, D4) reuse the EXACT same wording.
+// NOTE (copy/voice lens 02, #36): the audit flags this list as third-person
+// ("Never submits…" reads as a spec sentence, not the agent speaking) and
+// recommends a first-person rewrite. Left as-is here because
+// workspace/static/landing.html's #trust section (outside this pass's
+// allowlist) does a verbatim substring match against these exact sentences
+// (test_applicant_activation_funnel_09.py::
+// test_trust_section_reuses_the_never_does_wording_verbatim) — rewriting
+// this array without updating the landing page in lockstep would break that
+// drift-guard. Fix both files together in a follow-up pass.
 const NEVER_DOES = [
   'Never submits an application without your approval.',
   'Pauses and asks whenever something is uncertain.',
@@ -579,6 +588,14 @@ function _renderNav() {
 // verbatim (same NEVER_DOES the Portal empty state reuses — see D39) but
 // collapsed behind a `<details>` disclosure so it's a beat away, not a wall of
 // text ahead of the CTA.
+//
+// NOTE (copy/voice lens 02, #51): the audit flags this step-desc as
+// third-person and suggests a first-person rewrite. Left as-is because
+// static/js/models.js's welcome card (outside this pass's allowlist) asserts
+// this EXACT string verbatim (test_applicant_round1_remainder_welcomecard.py
+// ::test_welcome_setup_card_copy_matches_established_wizard_voice) to prove
+// it reuses the wizard's voice rather than inventing new copy. Fix both
+// files together in a follow-up pass.
 function _renderWelcome() {
   _setBody(`
     <h2 class="ao-step-title">Welcome to Applicant</h2>
@@ -590,11 +607,11 @@ function _renderWelcome() {
       </div>
       <div class="ao-hairline-row">
         <span class="ao-step-badge ao-step-badge-optional">Optional</span>
-        <span class="ao-hairline-text">Your profile — add a résumé to speed things up, or skip it and tell Applicant in chat. Notifications, fonts and the automation sandbox live in Settings any time.</span>
+        <span class="ao-hairline-text">Your profile — add a résumé to speed things up, or skip it and tell me in chat. Notifications, fonts and where I browse live in Settings any time.</span>
       </div>
     </div>
     <details class="ao-adv ao-welcome-trust">
-      <summary>What Applicant never does</summary>
+      <summary>What I never do</summary>
       <ul class="ao-trust-list">
         ${NEVER_DOES.map((t) => `<li>${esc(t)}</li>`).join('')}
       </ul>
@@ -633,7 +650,7 @@ function _restoreEndpointManager() {
 
 async function _renderLLM() {
   _setBody(`
-    <h2 class="ao-step-title">Connect a model ${_tip('Applicant uses an AI model to read job posts and write your materials. Add a local model or a cloud provider below, then enable it and pick a model.')}</h2>
+    <h2 class="ao-step-title">Connect a model ${_tip('I use an AI model to read job posts and write your materials. Add a local model or a cloud provider below, then enable it and pick a model.')}</h2>
     <p class="ao-step-desc">Add a model source below — a local model (e.g. Ollama) or a cloud API. Once it is enabled and shows a model, continue.</p>
     <div id="ao-llm-manager"></div>
     <div id="ao-llm-msg"></div>
@@ -696,7 +713,7 @@ async function _renderLLM() {
       } catch (gateErr) {
         if (msgEl) {
           msgEl.innerHTML = _err(esc(
-            `Could not connect this model to the application engine: ${gateErr.message || 'unknown error'}. `,
+            `I couldn’t connect to this model: ${gateErr.message || 'unknown error'}. `,
           ) + 'Check the model is enabled and reachable, then try again.');
         }
         if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Try again'; }
@@ -752,15 +769,15 @@ async function _renderChannels() {
   try { _browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* keep UTC fallback */ }
   const qhTz = qh.tz || _browserTz;
   _setBody(`
-    <h2 class="ao-step-title">Notifications ${_tip('How Applicant reaches you — Discord and/or email — for your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
-    <p class="ao-step-desc">Add a Discord webhook and/or an email address so Applicant can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
+    <h2 class="ao-step-title">Notifications ${_tip('How I reach you — Discord and/or email — with your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
+    <p class="ao-step-desc">Add a Discord webhook and/or an email address so I can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
     <div class="admin-card">
       <div class="settings-col">
         <div class="settings-row">
           <label class="settings-label">Discord webhook
             ${_tip('In your Discord server: Settings → Integrations → Webhooks → New Webhook → Copy URL.')}
           </label>
-          <input id="ao-ch-discord" class="settings-select" type="text" placeholder="https://discord.com/api/webhooks/..." value="${esc(cur.discord_webhook_url || '')}" />
+          <input id="ao-ch-discord" class="settings-select" type="text" placeholder="https://discord.com/api/webhooks/…" value="${esc(cur.discord_webhook_url || '')}" />
         </div>
         <div class="settings-row">
           <label class="settings-label">Email / SMTP
@@ -800,7 +817,7 @@ async function _renderChannels() {
       <p style="margin:0;opacity:0.6;">Full URL formats: github.com/caronc/apprise/wiki</p>
     </div>
     <div class="admin-card">
-      <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Test</h2>
+      <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Send yourself a test</h2>
       <div class="admin-toggle-sub" style="margin-bottom:8px">Save your channels and send a test notification to verify they work.</div>
       <div class="settings-row">
         <span id="ao-ch-test-msg" style="font-size:11px;"></span>
@@ -808,7 +825,7 @@ async function _renderChannels() {
       </div>
     </div>
     <div class="admin-card">
-      <h2>Quiet hours ${_tip('When on, Applicant holds approval requests and your daily digest until quiet hours end, so it never pings you overnight. Anything urgent — like an error that needs you — always comes through right away.')}</h2>
+      <h2>Quiet hours ${_tip('When on, I hold approval requests and your daily digest until quiet hours end, so I never ping you overnight. Anything urgent — like an error that needs you — always comes through right away.')}</h2>
       <div class="admin-toggle-sub" style="margin-bottom:8px">Pause non-urgent pushes (Discord and email) during a nightly window. In-app updates still appear in your portal, and errors always reach you immediately.</div>
       <div class="settings-col">
         <div class="settings-row">
@@ -852,15 +869,15 @@ async function _renderChannels() {
         <span id="ao-qh-save-msg" style="font-size:11px;"></span>
         <button class="admin-btn-add" id="ao-qh-save" style="margin-left:auto;">Save quiet hours</button>
       </div>
-      <div class="admin-toggle-sub" style="margin-top:10px;margin-bottom:6px;">Want what is being held right now? Release every notification quiet hours is holding back, immediately.</div>
+      <div class="admin-toggle-sub" style="margin-top:10px;margin-bottom:6px;">Need something that’s being held right now? I’ll release everything quiet hours is holding, immediately.</div>
       <div class="settings-row">
         <span id="ao-qh-deliver-msg" style="font-size:11px;"></span>
         <button class="cal-btn" id="ao-qh-deliver" style="margin-left:auto;">Deliver now</button>
       </div>
     </div>
     <div class="admin-card">
-      <h2>Email reminder timing ${_tip('How long Applicant waits before also emailing you about an approval it has not heard back on. The in-app and Discord nudges come first; email is the slower backstop.')}</h2>
-      <div class="admin-toggle-sub" style="margin-bottom:8px">If an approval still needs you after this long, Applicant also emails you as a backstop. Lower = emailed sooner; higher = fewer emails.</div>
+      <h2>Email reminder timing ${_tip('How long I wait before also emailing you about an approval I haven’t heard back on. The in-app and Discord nudges come first; email is the slower backstop.')}</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">If an approval still needs you after this long, I also email you as a backstop. Lower means I email sooner; higher means fewer emails.</div>
       <div class="settings-col">
         <div class="settings-row">
           <label class="settings-label">Email me after</label>
@@ -904,7 +921,7 @@ async function _renderChannels() {
       testMsg.textContent = 'Add a channel first.'; testMsg.className = 'admin-error'; return;
     }
     testBtn.disabled = true;
-    testMsg.textContent = 'Saving + sending…'; testMsg.className = '';
+    testMsg.textContent = 'Saving and sending…'; testMsg.className = '';
     try {
       await _post(`${SETUP}/channels`, body);
       const res = await _post(`${SETUP}/channels/test`, {});
@@ -920,7 +937,7 @@ async function _renderChannels() {
         testMsg.textContent = `Test sent to ${ch}.`; testMsg.className = 'admin-success';
       }
     } catch (e) {
-      testMsg.textContent = 'Failed: ' + (e.message || 'Test failed.'); testMsg.className = 'admin-error';
+      testMsg.textContent = "That didn’t send: " + (e.message || "I couldn’t send that test."); testMsg.className = 'admin-error';
     } finally {
       testBtn.disabled = false;
     }
@@ -956,7 +973,7 @@ async function _renderChannels() {
       qhSaveMsg.textContent = enabled ? 'Quiet hours saved.' : 'Notifications on 24/7.';
       qhSaveMsg.className = 'admin-success';
     } catch (e) {
-      qhSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); qhSaveMsg.className = 'admin-error';
+      qhSaveMsg.textContent = "I couldn’t save that: " + (e.message || 'Try again shortly.'); qhSaveMsg.className = 'admin-error';
     } finally {
       qhSave.disabled = false;
     }
@@ -978,7 +995,7 @@ async function _renderChannels() {
       qhDeliverMsg.className = 'admin-success';
       _toast(qhDeliverMsg.textContent);
     } catch (e) {
-      qhDeliverMsg.textContent = 'Failed: ' + (e.message || 'Could not deliver.'); qhDeliverMsg.className = 'admin-error';
+      qhDeliverMsg.textContent = "I couldn’t deliver those: " + (e.message || 'Try again shortly.'); qhDeliverMsg.className = 'admin-error';
     } finally {
       qhDeliver.disabled = false;
     }
@@ -996,10 +1013,10 @@ async function _renderChannels() {
     etSaveMsg.textContent = 'Saving…'; etSaveMsg.className = '';
     try {
       await _post(`${SETUP}/channels`, { email_timeout_minutes: minutes });
-      etSaveMsg.textContent = `Email backstop after ${minutes} min.`;
+      etSaveMsg.textContent = `Saved — I’ll email you after ${minutes} minutes.`;
       etSaveMsg.className = 'admin-success';
     } catch (e) {
-      etSaveMsg.textContent = 'Failed: ' + (e.message || 'Could not save.'); etSaveMsg.className = 'admin-error';
+      etSaveMsg.textContent = "I couldn’t save that: " + (e.message || 'Try again shortly.'); etSaveMsg.className = 'admin-error';
     } finally {
       etSave.disabled = false;
     }
@@ -1051,12 +1068,12 @@ async function _renderDesktopAssistSetting() {
   } catch { /* best-effort; stays locked */ }
   if (health.available) {
     btn.disabled = false;
-    btn.textContent = 'Available';
-    note.textContent = 'Ready. Turn it on for a session from the live-session window when you need it.';
+    btn.textContent = 'Turn on';
+    note.textContent = 'Ready. Turn it on from the live browser window whenever you need it.';
   } else {
     btn.disabled = true;
     btn.textContent = 'Turn on';
-    note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
+    note.textContent = 'Coming in a future update — desktop help isn’t set up on this browser yet.';
   }
 }
 
@@ -1068,14 +1085,14 @@ async function _renderSandbox() {
   const isWindows = (cur.backend === 'proxmox-windows');
 
   _setBody(`
-    <h2 class="ao-step-title">Automation sandbox ${_tip('Where Applicant runs the browser it drives — and that you take over when a human step is needed. The built-in sandbox works out of the box. Advanced: point it at your own Windows VM (on Proxmox) so the browser is real Chrome on real Windows.')}</h2>
-    <p class="ao-step-desc">Pick where Applicant runs the browser. Most people keep the built-in sandbox.</p>
+    <h2 class="ao-step-title">Where I browse ${_tip('Where I run the browser I drive — and that you take over when a human step is needed. The built-in browser works out of the box. Advanced: point me at your own Windows VM (on Proxmox) so I browse using real Chrome on real Windows.')}</h2>
+    <p class="ao-step-desc">Pick where I run the browser. Most people keep the built-in browser.</p>
     <div class="admin-card">
       <div class="settings-col">
         <div class="settings-row">
-          <label class="settings-label">Sandbox</label>
+          <label class="settings-label">Runs in</label>
           <select id="ao-sb-backend" class="settings-select">
-            <option value="local"${isWindows ? '' : ' selected'}>Built-in sandbox (recommended)</option>
+            <option value="local"${isWindows ? '' : ' selected'}>Built-in browser (recommended)</option>
             <option value="proxmox-windows"${isWindows ? ' selected' : ''}>My own Windows VM (Proxmox)</option>
           </select>
         </div>
@@ -1100,7 +1117,7 @@ async function _renderSandbox() {
             </div>
           </div>
           <div class="settings-row">
-            <label class="settings-label">Windows VM id ${_tip('The VMID of your licensed Windows VM (Chrome + guest agent + RDP enabled).')}</label>
+            <label class="settings-label">VM ID ${_tip('The VM ID of your licensed Windows VM (Chrome + guest agent + RDP enabled).')}</label>
             <input id="ao-sb-vmid" class="settings-select" type="number" placeholder="100" value="${esc(conn.template_vmid || '')}" />
           </div>
           <div class="settings-row">
@@ -1141,17 +1158,17 @@ async function _renderSandbox() {
     <div class="admin-card" id="ao-desktop-card">
       <div class="settings-col">
         <div class="settings-row" style="align-items:flex-start;">
-          <label class="settings-label">Desktop help ${_tip('Lets the assistant handle steps that live outside the web page — like a file-upload dialog or another desktop window — during a live session. You stay in control: it never creates accounts, clears verifications, or submits, and it asks before each step. You turn it on per live session.')}</label>
+          <label class="settings-label">Desktop help ${_tip('Lets me handle steps outside the web page — like a file-upload dialog — while you watch. You stay in control: I never create accounts, clear verifications, or submit, and I ask before each step. You turn it on per live session.')}</label>
           <div style="display:flex;flex-direction:column;gap:6px;flex:1;">
             <button class="cal-btn" id="ao-desktop-toggle" type="button" disabled
-                    title="Let the assistant help with desktop steps the browser can't reach">Turn on</button>
+                    title="Let me help with desktop steps the browser can't reach">Turn on</button>
             <p id="ao-desktop-note" style="margin:0;opacity:0.65;font-size:0.8rem;">
-              Coming in a future update — desktop help isn’t set up on this sandbox yet.
+              Coming in a future update — desktop help isn’t set up on this browser yet.
             </p>
             <p style="margin:0;opacity:0.55;font-size:0.78rem;">
-              Best-effort and optional. The assistant only helps with desktop steps you
-              approve, one at a time — the parts only you should do (accounts, verifications,
-              the final submit) always stay with you.
+              Best-effort and optional. I only help with desktop steps you
+              approve, one at a time — accounts, verifications, and the final
+              submit always stay with you.
             </p>
           </div>
         </div>
@@ -1211,7 +1228,7 @@ async function _renderSandbox() {
       takeover_url_template: val('ao-sb-tourl'),
     };
     if (!body.proxmox_api_url || !body.proxmox_node || !body.template_vmid || !body.proxmox_token_id) {
-      if (msgEl) msgEl.innerHTML = _err('Add the Proxmox API URL, node, token id and the Windows VM id to continue.');
+      if (msgEl) msgEl.innerHTML = _err('Add the Proxmox API URL, node, token id and the VM ID to continue.');
       return;
     }
     _busy = true;
@@ -1242,7 +1259,7 @@ async function _renderFonts() {
     <p class="ao-step-desc">Optional: check which fonts your resume needs and add any that are missing, so your generated resume keeps its look.</p>
     <div class="admin-card">
       <div class="settings-col">
-        <label class="settings-label" style="min-width:0;">Check a resume for required fonts</label>
+        <label class="settings-label" style="min-width:0;">Check a résumé for required fonts</label>
         <div class="settings-row">
           <button type="button" class="cal-btn" id="ao-font-pick">Choose a resume…</button>
           <input id="ao-font-detect" type="file" accept=".docx,.doc,.pdf,.rtf,.txt" style="display:none;" />
@@ -1376,7 +1393,7 @@ const SECTION_FORMS = {
     fields: [
       { name: 'authorized_country', label: 'Country you are authorized to work in', type: 'text', list: 'ao-countries', listOptions: _COMMON_COUNTRIES },
       { name: 'authorized', label: 'Authorized to work there?', type: 'yesno' },
-      { name: 'needs_sponsorship', label: 'Will you need visa sponsorship now or in future?', type: 'yesno' },
+      { name: 'needs_sponsorship', label: 'Will you need visa sponsorship now or in the future?', type: 'yesno' },
       { name: 'visa_status', label: 'Visa / status type (if any)', type: 'text' },
     ],
   },
@@ -1458,7 +1475,7 @@ const SECTION_FORMS = {
   },
   eeo: {
     title: 'Voluntary self-identification',
-    desc: 'Entirely optional. The default for every field is "decline to self-identify" — we never guess these.',
+    desc: 'Entirely optional. The default for every field is "decline to self-identify" — I never guess these.',
     fields: [
       { name: 'race_ethnicity', label: 'Race / ethnicity', type: 'eeo' },
       { name: 'gender', label: 'Gender', type: 'eeo' },
@@ -1503,10 +1520,16 @@ function _fieldHTML(f, value) {
       </select></div>`;
   }
   if (f.type === 'eeo') {
-    const opts = ['decline to self-identify', 'prefer to answer'];
+    // Sentence-case labels for display (D-lens02 #81); the underlying value
+    // sent to/read from the engine stays the original lowercase string so
+    // previously-saved answers still match on re-render.
+    const opts = [
+      { value: 'decline to self-identify', label: 'Decline to self-identify' },
+      { value: 'prefer to answer', label: 'Prefer to answer' },
+    ];
     return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label>
       <select class="settings-select" name="${esc(f.name)}">
-        ${opts.map((o) => `<option value="${esc(o)}"${(v || 'decline to self-identify') === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+        ${opts.map((o) => `<option value="${esc(o.value)}"${(v || 'decline to self-identify') === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
       </select>
       <input class="settings-select" name="${esc(f.name)}__detail" type="text" placeholder="Your answer (optional)" value="" style="margin-top:6px;" />
       </div>`;
@@ -1696,14 +1719,14 @@ function _applyReadinessBanner() {
   const s = _status || {};
   if (s.apply_ready) {
     return `<div class="admin-card" style="border-left:3px solid var(--accent-ok, #4a9);">
-      <p style="margin:0;font-size:0.86rem;">Applicant has what it needs to start applying. Anything else here just makes your applications smoother — it's all optional.</p>
+      <p style="margin:0;font-size:0.86rem;">I have what I need to start applying. Anything else here just makes your applications smoother — it's all optional.</p>
     </div>`;
   }
   const missing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
   if (!missing.length) return '';
   return `<div class="admin-card" style="border-left:3px solid var(--accent-warm, #d8a23a);">
-    <p style="margin:0 0 4px;font-size:0.86rem;"><strong>This part is optional.</strong> Add a résumé to fill it in fast, or just tell Applicant in chat — it'll keep learning as you go.</p>
-    <p style="margin:0;font-size:0.84rem;opacity:0.85;">Before it can start applying, Applicant still needs: ${esc(missing.join(', '))}.</p>
+    <p style="margin:0 0 4px;font-size:0.86rem;"><strong>This part is optional.</strong> Add a résumé to fill it in fast, or just tell me in chat — I’ll keep learning as you go.</p>
+    <p style="margin:0;font-size:0.84rem;opacity:0.85;">Before I can start applying, I still need: ${esc(missing.join(', '))}.</p>
   </div>`;
 }
 
@@ -1855,8 +1878,8 @@ function _renderBaseResume(saved) {
     ${_intakeProgressHTML(total)}
     ${_applyReadinessBanner()}
     ${_profileGapsHTML()}
-    <h2 class="ao-step-title">Start with your resume ${_tip('Applicant reads your resume and fills in the rest of your profile for you — you just review and fix anything it got wrong. After upload we also build a high-fidelity version and show you a preview to accept or reject.')}</h2>
-    <p class="ao-step-desc">Optional but recommended: upload your current resume and we’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell Applicant what you want in chat. You can edit every field afterward.</p>
+    <h2 class="ao-step-title">Start with your résumé ${_tip('I read your résumé and fill in the rest of your profile — you just review and fix anything I got wrong. Then I build a polished version and show you a preview to accept or reject.')}</h2>
+    <p class="ao-step-desc">Optional but recommended: upload your current résumé and I’ll read it to fill in the profile fields that follow — so you don’t have to type everything by hand. Prefer to skip it? Use <strong>Skip for now</strong> and just tell me what you want in chat. You can edit every field afterward.</p>
     <div class="admin-card">
       <div class="settings-row">
         <button type="button" class="cal-btn" id="ao-resume-pick">Choose your resume…</button>
@@ -1906,7 +1929,7 @@ function _renderBaseResume(saved) {
       try {
         _onboarding = await _fetchJSON(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}`);
       } catch { /* keep last-known intake; prefill is best-effort */ }
-      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Read ${res.attribute_count || 0} details from your resume — we’ve filled in the next steps for you to review.</p>${_resumeHealthHTML(res)}`;
+      st.innerHTML = `<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">I read ${res.attribute_count || 0} details from your résumé and filled in the next steps for you to review.</p>${_resumeHealthHTML(res)}`;
       if (res.requires_confirmation && (res.conflicts || []).length) {
         _renderConflicts(res.conflicts);
       } else {
@@ -1972,12 +1995,12 @@ function _renderConflicts(conflicts) {
   const wrap = document.getElementById('ao-conflicts');
   wrap.innerHTML = `
     <div class="admin-card">
-      <p style="color:var(--accent-warm, #d8a23a);font-size:0.86rem;margin:0 0 8px;">A few details from your resume differ from what you told us. Pick which to keep:</p>
+      <p style="color:var(--accent-warm, #d8a23a);font-size:0.86rem;margin:0 0 8px;">A few details in your résumé differ from what you told me. Pick which to keep:</p>
       ${conflicts.map((c, i) => `
         <div data-attr="${esc(c.attribute)}" data-i="${i}" style="margin:8px 0;display:flex;flex-direction:column;gap:2px;">
           <strong>${esc(c.attribute)}</strong>
-          <label style="font-weight:normal;font-size:0.86rem;"><input type="radio" name="ao-conf-${i}" value="interview" checked> Keep: ${esc(c.interview_value)}</label>
-          <label style="font-weight:normal;font-size:0.86rem;"><input type="radio" name="ao-conf-${i}" value="parsed"> Use resume: ${esc(c.parsed_value)}</label>
+          <label style="font-weight:normal;font-size:0.86rem;"><input type="radio" name="ao-conf-${i}" value="interview" checked> Keep your answer: ${esc(c.interview_value)}</label>
+          <label style="font-weight:normal;font-size:0.86rem;"><input type="radio" name="ao-conf-${i}" value="parsed"> Use the résumé's: ${esc(c.parsed_value)}</label>
         </div>`).join('')}
       <button class="cal-btn" id="ao-conf-apply" style="margin-top:6px;">Apply choices</button>
     </div>`;
@@ -2053,7 +2076,7 @@ async function _buildPreview() {
       .filter((n) => String(n).trim() !== note.trim());
     wrap.innerHTML = `
       <div class="admin-card">
-        <p style="margin:0 0 8px;">We built a high-fidelity version of your resume (${esc(String(p.page_count || '?'))} page(s)). ${esc(note)}</p>
+        <p style="margin:0 0 8px;">I built a polished version of your résumé (${esc(String(p.page_count || '?'))} ${p.page_count === 1 ? 'page' : 'pages'}). ${esc(note)}</p>
         ${notesList.length ? `<ul>${notesList.map((n) => `<li>${esc(String(n))}</li>`).join('')}</ul>` : ''}
         <div class="settings-row" style="margin-top:6px;">
           <button class="cal-btn cal-btn-primary" id="ao-prev-accept">Use this version</button>
@@ -2172,8 +2195,8 @@ async function _finish() {
     const applyMissing = Array.isArray(s.apply_missing) ? s.apply_missing : [];
     const ready = !!s.apply_ready || applyMissing.length === 0;
     const readyLine = ready
-      ? 'Applicant is ready to start applying for you.'
-      : `Applicant is set up. Before it starts applying it still needs: ${esc(applyMissing.join(', '))} — just tell it in chat or add a résumé any time, and it'll begin automatically.`;
+      ? "I’m ready to start applying for you."
+      : `I’m set up. Before I start applying I still need: ${esc(applyMissing.join(', '))} — tell me in chat or add a résumé any time, and I’ll begin on my own.`;
     // D71: the default throughput (15/day, capped at 30) otherwise takes effect
     // silently — nobody consented to it and nobody was told. State it plainly as
     // a completion RECEIPT, with a pointer to where it's adjustable, right where
@@ -2186,7 +2209,7 @@ async function _finish() {
     const profileJumpBtn = (!ready && applyMissing.length)
       ? '<button class="cal-btn" id="ao-finish-profile" style="margin-top:14px;">Complete your profile</button>'
       : '';
-    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
+    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set.</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
     // First-light payoff: this is the ONE screen that means setup is genuinely
     // done (llm_configured, nothing left gating it) — mark it so _dismiss() knows
@@ -2420,10 +2443,10 @@ async function _renderUpdate() {
     } catch { ok = false; }
     if (!ok) return;
     btn.disabled = true;
-    out.textContent = 'Working…';
+    out.textContent = 'Updating…';
     try {
       const res = await _post(`${OPS}/update/trigger`, {});
-      out.textContent = res.message || (res.started ? 'Update started.' : 'Nothing to do.');
+      out.textContent = res.message || (res.started ? 'Update started.' : "You’re already up to date.");
     } catch (e) {
       out.textContent = e.message || 'Could not start the update right now.';
     } finally {
