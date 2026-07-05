@@ -308,7 +308,15 @@ class _BoomPrefill:
 
 @pytest.mark.unit
 def test_pipeline_exception_does_not_leak_sandbox_slot(tmp_path):
-    """FR-DUR-2/4: a raising pipeline releases its slot so capacity recovers."""
+    """FR-DUR-2/4: a raising pipeline start releases its slot so capacity recovers.
+
+    Lens 04 #31/#32: a poison posting whose pipeline-start raises is now ISOLATED —
+    ``_process_approvals`` logs + records the failure and continues to the next
+    posting rather than letting the exception propagate out of ``run_once``. So
+    ``run_once`` no longer raises; the load-bearing invariant is that the slot is
+    still released (``_start_pipeline`` tears down before the catch) so capacity
+    recovers and the loop can never deadlock on one bad posting.
+    """
     storage = InMemoryStorage()
     orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
     cid = _make_campaign(storage, target=30)
@@ -318,10 +326,10 @@ def test_pipeline_exception_does_not_leak_sandbox_slot(tmp_path):
     loop = _loop(storage, orch, prefill=_BoomPrefill(), capacity=capacity)
 
     now = datetime(2026, 6, 16, tzinfo=UTC)
-    with pytest.raises(RuntimeError):
-        loop.run_once(cid, now=now)
+    # The poison posting is isolated, not propagated — run_once returns normally.
+    loop.run_once(cid, now=now)
 
-    # The slot was released despite the exception — the queue is empty again.
+    # The slot was released despite the failure — the queue is empty again.
     qstate = orch.queue_state("sandbox_concurrency")
     assert qstate["active"] == []
     # And a brand-new application can now be admitted (no deadlock).
