@@ -1386,6 +1386,25 @@ class ApplicantEngineClient:
             "POST", f"/api/admin/blocked-applications/{application_id}/override"
         )
 
+    # -- capability disclosure (engine routers/mcp.py, dark-engine audit item
+    #    24) -------------------------------------------------------------------
+    # The engine's native, dependency-free MCP tool surface (``GET /mcp/tools``)
+    # advertises the exact read-only tools the agent/external MCP clients can
+    # call (list_campaigns / get_attributes / get_applications /
+    # get_pending_actions / health) -- but nothing in the front door ever
+    # showed the owner what the assistant can actually do. This is a plain,
+    # read-only proxy of that SAME list (mirrors the ``tools/list`` JSON-RPC
+    # shape the engine already returns) -- no new engine logic, no fabricated
+    # tools, and consequential actions (final submit) are deliberately absent
+    # from the engine's own list, so they can never appear here either.
+
+    async def mcp_tools_list(self) -> Any:
+        """The engine's advertised MCP tool surface: ``{"tools": [{"name",
+        "description", "inputSchema"}, ...]}``. Gated at the engine layer behind
+        ``require_llm_configured`` (409 until the LLM is connected) -- forwarded
+        honestly as a GATED state by the caller, never silently emptied."""
+        return await self._request("GET", "/mcp/tools")
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

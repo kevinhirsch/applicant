@@ -123,9 +123,13 @@ def test_eager_module_script_tag_count_dropped_by_two():
     of letting it silently drift back up."""
     src = _read(_INDEX_HTML)
     count = len(re.findall(r'<script type="module" src=', src))
-    # 45 after the power-users (07) global keyboard-shortcuts overlay added one
-    # eager module (applicantShortcuts.js); still well below the 46 starting set.
-    assert count == 45, f"expected 45 eager module <script> tags, got {count}"
+    # 46 after the dark-engine audit item 24 capability-disclosure overlay added
+    # one more eager module (applicantCapabilities.js), on top of the 45 the
+    # power-users (07) keyboard-shortcuts overlay left this at; still well
+    # below the 46-tag starting set this whole wave began from (net unchanged
+    # vs. that original count, despite two power/discoverability overlays
+    # having been added since -- three heavy surfaces were lazy-loaded away).
+    assert count == 46, f"expected 46 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():

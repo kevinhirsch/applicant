@@ -957,6 +957,14 @@ app.include_router(setup_applicant_snapshot_routes())
 from routes.applicant_followups_routes import setup_applicant_followups_routes
 app.include_router(setup_applicant_followups_routes())
 
+# Assistant capability disclosure (dark-engine audit item 24) — owner-scoped,
+# read-only proxy (/api/applicant/capabilities) over the engine's native MCP
+# tool surface (GET /mcp/tools). Surfaces the plain-language "what the
+# assistant can do" list in the front door; renders only what the engine
+# actually advertises, never a fabricated list.
+from routes.applicant_capabilities_routes import setup_applicant_capabilities_routes
+app.include_router(setup_applicant_capabilities_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
