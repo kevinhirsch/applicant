@@ -413,7 +413,9 @@ def test_logs_tab_renders_structured_rows_and_download_button_not_copy():
     src = _read(DEBUG_JS)
     fn = _top_level_fn(src, "_renderLogs")
     assert 'class="applicant-debug-list-row"' in fn
-    assert '_parseLogEntry(e)' in fn
+    # lens 12 #35: rows are now built from entries.map(_parseLogEntry) (a wider
+    # 500-entry fetch + client-side level/text filter), still structured-parsed.
+    assert '_parseLogEntry' in fn
     assert 'id="applicant-logs-download"' in fn
     assert ">Download logs<" in fn
     assert "Copy logs" not in fn
