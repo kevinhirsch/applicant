@@ -246,6 +246,7 @@ class PrefillService:
         captcha_solver=None,
         routine_store=None,
         max_replans: int = 2,
+        setup_service=None,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -276,6 +277,16 @@ class PrefillService:
         # it (with at least one field detected) the run is flagged as a probable
         # wrong-ATS / near-empty fill for human review rather than offered for submission.
         self._match_rate_floor = float(match_rate_floor)
+        # Lens 11 #22: optional setup-service handle so the floor above can be
+        # re-read LIVE from the persisted Settings > Automation override
+        # (``ats_match_rate_floor``) on every check instead of only the
+        # constructor-time snapshot (which container.py rebuilds from the SAME
+        # ``settings.ats_match_rate_floor`` env value every tick/request -- so a
+        # Settings save persisted and displayed back but never actually changed the
+        # threshold this check enforced). ``None`` (legacy/unit construction without
+        # a container) keeps behavior byte-identical to before. See
+        # ``_effective_match_rate_floor``.
+        self._setup_service = setup_service
         # #305 Plan-as-Data: optional PlannerPort driving adapter. When ``use_planner``
         # is True AND a planner is present, each page produces a typed Plan before any
         # browser action runs. The plan is validated (validate_plan) and then executed
@@ -313,6 +324,29 @@ class PrefillService:
         # via ``diagnostics()``; the loop also lands a pending action where it has the
         # application context to do so.
         self._diagnostics: list[str] = []
+
+    def _effective_match_rate_floor(self) -> float:
+        """The LIVE ATS match-rate floor, re-read on every check (lens 11 #22).
+
+        ``self._match_rate_floor`` is only the ``settings.ats_match_rate_floor`` (or
+        caller-supplied) default, latched once when this instance (or its per-tick/
+        per-request rebuild) was constructed -- so a Settings > Automation override
+        (``SetupService.set_automation_prefs(ats_match_rate_floor=...)``) persisted
+        and displayed back but never actually changed the threshold this check
+        enforced. Mirrors ``Scheduler._effective_curation_schedule``: re-reads the
+        live override from ``setup_service`` on every call, falling back to the
+        constructor default when nothing has been saved yet or no ``setup_service``
+        is wired (legacy/unit tests, in-memory boot).
+        """
+        if self._setup_service is not None:
+            try:
+                stored = self._setup_service.get_automation_prefs()
+            except Exception:  # pragma: no cover - defensive: never break a run
+                stored = None
+            value = (stored or {}).get("ats_match_rate_floor")
+            if value is not None:
+                return float(value)
+        return self._match_rate_floor
 
     #: Cap the in-process diagnostics ring so a persistently-failing dependency cannot
     #: grow it without bound across a long-lived service.
@@ -1522,7 +1556,9 @@ class PrefillService:
         # nothing is a probable wrong-ATS / near-empty fill — flag it for human review
         # instead of silently submitting garbage (universal-ATS robustness).
         if is_probable_wrong_ats(
-            result.fields_filled, result.fields_detected, floor=self._match_rate_floor
+            result.fields_filled,
+            result.fields_detected,
+            floor=self._effective_match_rate_floor(),
         ):
             return self.flag_probable_wrong_ats(app, result, attributes)
         app = app.with_status(ApplicationState.MATERIAL_PREP)
@@ -1575,7 +1611,7 @@ class PrefillService:
                 "fields_detected": result.fields_detected,
                 "match_rate": rate,
                 "match_rate_pct": pct,
-                "match_rate_floor": self._match_rate_floor,
+                "match_rate_floor": self._effective_match_rate_floor(),
             },
         )
         result.state = handoff.state

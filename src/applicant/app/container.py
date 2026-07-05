@@ -402,7 +402,24 @@ def _build_sandbox(settings: Settings, setup_service: Any) -> Any:
     )
 
 
-def _build_orchestrator(settings: Settings) -> Any:
+def _approval_timeout_seconds_from(
+    wait_seconds: float | None, timeout_days: int | float | None
+) -> float | None:
+    """#189 precedence: an explicit per-second override wins when set; otherwise
+    derive from the whole-days setting. 0 (either knob) means "no timeout / forever"
+    (represented as ``0.0``, the pre-existing contract). Returns ``None`` only when
+    BOTH inputs are ``None`` (no value present at all -- e.g. a fresh, unconfigured
+    Settings > Automation record) so callers can distinguish "no override saved"
+    from "override explicitly set to forever".
+    """
+    if wait_seconds is not None:
+        return float(wait_seconds)
+    if timeout_days is not None:
+        return float(timeout_days) * 86_400 if float(timeout_days) > 0 else 0.0
+    return None
+
+
+def _build_orchestrator(settings: Settings, setup_service: Any = None) -> Any:
     if settings.orchestrator_backend == "dbos":
         # STAGE B: DBOS requires a live Postgres; only select when truly available.
         from applicant.adapters.orchestration.dbos_orchestrator import DbosOrchestrator
@@ -410,15 +427,45 @@ def _build_orchestrator(settings: Settings) -> Any:
         # #189: the per-second override wins when set, so a deployment can tune the
         # approval-gate wait precisely instead of only in whole days; otherwise fall
         # back to the days-based setting. 0 (either knob) means "no timeout / forever".
-        if settings.approval_wait_seconds is not None:
-            timeout_seconds = float(settings.approval_wait_seconds)
-        else:
-            timeout_seconds = (
-                float(settings.approval_timeout_days * 86_400)
-                if settings.approval_timeout_days > 0
-                else 0.0
+        # This is only the ``settings.*`` env DEFAULT, used as the DbosOrchestrator's
+        # constructor-time fallback -- see ``_live_approval_timeout_seconds`` below for
+        # the lens 11 #23 fix that makes an operator's saved override actually govern
+        # the wait, without a restart.
+        timeout_seconds = _approval_timeout_seconds_from(
+            settings.approval_wait_seconds, settings.approval_timeout_days
+        )
+
+        def _live_approval_timeout_seconds() -> float | None:
+            """Lens 11 #23: live re-read of the Settings > Automation override.
+
+            ``timeout_seconds`` above is computed ONCE here at container-build time
+            from ``settings.approval_timeout_days``/``approval_wait_seconds`` -- so an
+            operator's saved override (``SetupService.set_automation_prefs(
+            approval_timeout_days=..., approval_wait_seconds=...)``) persisted and
+            displayed back in Settings but never actually changed how long a pending
+            final-approval waited before timing out. Called on EVERY ``recv``
+            (``DbosOrchestrator._resolve_timeout_seconds``), mirroring
+            ``Scheduler._effective_curation_schedule``; returns ``None`` to defer to
+            the env default above when nothing has been saved yet or no
+            ``setup_service`` is wired (legacy/unit construction).
+            """
+            if setup_service is None:
+                return None
+            try:
+                stored = setup_service.get_automation_prefs() or {}
+            except Exception:  # pragma: no cover - defensive: never break a recv
+                return None
+            return _approval_timeout_seconds_from(
+                stored.get("approval_wait_seconds"), stored.get("approval_timeout_days")
             )
-        return DbosOrchestrator(settings.database_url, approval_timeout_seconds=timeout_seconds)
+
+        return DbosOrchestrator(
+            settings.database_url,
+            approval_timeout_seconds=(
+                timeout_seconds if timeout_seconds is not None else 0.0
+            ),
+            live_approval_timeout_seconds=_live_approval_timeout_seconds,
+        )
     return CheckpointShimOrchestrator(settings.checkpoint_dir)
 
 
@@ -447,21 +494,53 @@ def _compose_summary_providers(*providers: Any) -> Any:
     return _provider
 
 
+class _LivePresubmitSafetyParams:
+    """dict-like presubmit-safety parameters, re-read live on every ``.get()``
+    (lens 11 #22) instead of being latched once from ``settings.presubmit_*`` at
+    container-build time.
+
+    ``AgentLoop._process_approvals`` and ``DigestService`` (the digest-row warning
+    preview) both only ever call ``.get(key, default)`` on the ``presubmit_safety_
+    params`` object -- never iterate or copy it -- so swapping the plain dict
+    ``build_container`` used to pass for this Mapping-like proxy changes NOTHING
+    about how either consumer calls it; it just makes the read live. A Settings >
+    Automation save (``SetupService.set_automation_prefs(presubmit_max_listing_age_
+    days=..., presubmit_duplicate_cooldown_days=..., presubmit_max_apps_per_company_
+    per_day=..., presubmit_eligibility_enabled=...)``) now actually governs the
+    pipeline-blocking checks in ``presubmit_safety.py`` without a restart. Falls back
+    to the ``settings``-sourced default when the operator has not overridden a given
+    key -- mirrors ``Scheduler._effective_curation_schedule``.
+    """
+
+    #: AgentLoop/DigestService's local key name -> the persisted automation-prefs key.
+    _KEY_MAP = {
+        "max_age_days": "presubmit_max_listing_age_days",
+        "duplicate_cooldown_days": "presubmit_duplicate_cooldown_days",
+        "max_apps_per_company_per_day": "presubmit_max_apps_per_company_per_day",
+        "eligibility_enabled": "presubmit_eligibility_enabled",
+    }
+
+    def __init__(self, defaults: dict[str, Any], setup_service: Any) -> None:
+        self._defaults = dict(defaults)
+        self._setup = setup_service
+
+    def get(self, key: str, default: Any = None) -> Any:
+        stored_key = self._KEY_MAP.get(key)
+        if stored_key is not None and self._setup is not None:
+            try:
+                prefs = self._setup.get_automation_prefs()
+            except Exception:  # pragma: no cover - defensive: never break a check
+                prefs = None
+            if prefs:
+                value = prefs.get(stored_key)
+                if value is not None:
+                    return value
+        return self._defaults.get(key, default)
+
+
 def build_container(settings: Settings | None = None) -> Container:
     """Build the fully-wired container."""
     settings = settings or get_settings()
-
-    # G07: pre-submit safety parameters from settings — built ONCE and shared by
-    # every AgentLoop (pipeline-start block) AND every DigestService (digest-row
-    # warning, product-gaps backlog) instance below, so the digest warning always
-    # reflects the SAME operator-configured thresholds as the actual pipeline block
-    # instead of two independently-drifting literals.
-    presubmit_safety_params = {
-        "max_age_days": settings.presubmit_max_listing_age_days,
-        "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
-        "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
-        "eligibility_enabled": settings.presubmit_eligibility_enabled,
-    }
 
     # Perf audit #6: ONE process-lived DigestCache for the whole process, shared
     # across EVERY DigestService construction below (main / per-tick / per-request).
@@ -570,6 +649,23 @@ def build_container(settings: Settings | None = None) -> Container:
         )
 
     setup_service.set_channels_gate(_channels_gate)
+
+    # G07 / lens 11 #22: pre-submit safety parameters -- built ONCE and shared by
+    # every AgentLoop (pipeline-start block) AND every DigestService (digest-row
+    # warning, product-gaps backlog) instance below, so the digest warning always
+    # reflects the SAME operator-configured thresholds as the actual pipeline block
+    # instead of two independently-drifting literals. A live-re-reading proxy (NOT a
+    # plain dict) so a Settings > Automation save actually governs the checks without
+    # a restart -- see ``_LivePresubmitSafetyParams``.
+    presubmit_safety_params = _LivePresubmitSafetyParams(
+        {
+            "max_age_days": settings.presubmit_max_listing_age_days,
+            "duplicate_cooldown_days": settings.presubmit_duplicate_cooldown_days,
+            "max_apps_per_company_per_day": settings.presubmit_max_apps_per_company_per_day,
+            "eligibility_enabled": settings.presubmit_eligibility_enabled,
+        },
+        setup_service,
+    )
     # The LLM env-seed below seals the key in the credential store (campaign-FK).
     # Ensure the reserved __system__ campaign exists FIRST, or the env-config path
     # crashes on boot against a real DB — lifespan's seed runs only later. See
@@ -779,7 +875,7 @@ def build_container(settings: Settings | None = None) -> Container:
         email_timeout_seconds=setup_service.get_email_timeout_minutes() * 60,
         send_real=settings.notifications_live,
     )
-    orchestrator = _build_orchestrator(settings)
+    orchestrator = _build_orchestrator(settings, setup_service)
     # Stage 2.5: outbound client for the engine -> workspace callback channel. The
     # shared secret gates it (available() is False when unset) so the default/test
     # lane never tries to reach the workspace.
@@ -999,6 +1095,10 @@ def build_container(settings: Settings | None = None) -> Container:
         use_planner=settings.prefill_use_planner,
         # #306 self-improvement flywheel: the process-lived RoutineStore (AWM + ACE).
         routine_store=routine_store,
+        # Lens 11 #22: lets the wrong-ATS check re-read a Settings > Automation
+        # ``ats_match_rate_floor`` override live instead of only the env snapshot
+        # above (``_effective_match_rate_floor``).
+        setup_service=setup_service,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
@@ -1320,6 +1420,9 @@ def build_container(settings: Settings | None = None) -> Container:
             # #306: share the ONE process-lived RoutineStore (NOT a per-tick instance),
             # so induced routines + ACE counters survive the per-tick loop rebuild.
             routine_store=routine_store,
+            # Lens 11 #22: live re-read of a Settings > Automation match-rate-floor
+            # override (see the main ``prefill_service`` build above).
+            setup_service=setup_service,
         )
         mat = MaterialService(
             tick_storage,
@@ -1525,6 +1628,9 @@ def build_container(settings: Settings | None = None) -> Container:
             captcha_solver=captcha_solver,
             # #306: share the ONE process-lived RoutineStore across request scopes too.
             routine_store=routine_store,
+            # Lens 11 #22: live re-read of a Settings > Automation match-rate-floor
+            # override (see the main ``prefill_service`` build above).
+            setup_service=setup_service,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(

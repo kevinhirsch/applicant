@@ -51,12 +51,29 @@ class _DbosHandle:
 class DbosOrchestrator:
     """DurableOrchestrationPort backed by DBOS Transact."""
 
-    def __init__(self, database_url: str, approval_timeout_seconds: float = 2_592_000.0) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        approval_timeout_seconds: float = 2_592_000.0,
+        live_approval_timeout_seconds: Callable[[], float | None] | None = None,
+    ) -> None:
         self._database_url = database_url
         #: How long the engine waits for a human decision (FR-DUR-3). Default 30
         #: days (2,592,000 seconds); 0 means effectively forever (fallback to the
-        #: old hardcoded ~10-year constant).
+        #: old hardcoded ~10-year constant). This is only the ``settings.
+        #: approval_timeout_days``/``approval_wait_seconds`` env default, latched
+        #: ONCE when the container builds this orchestrator — used as the fallback
+        #: when ``live_approval_timeout_seconds`` is absent or has nothing saved.
         self._approval_timeout_seconds = approval_timeout_seconds
+        # Lens 11 #23: optional live re-read of the operator's persisted Settings >
+        # Automation override (``SetupService.set_automation_prefs(
+        # approval_timeout_days=..., approval_wait_seconds=...)``), consulted on
+        # EVERY ``recv`` call instead of only the constructor-time snapshot above —
+        # so a Settings change actually governs how long a pending final-approval
+        # waits before timing out, without a process restart. ``None`` (legacy/unit
+        # construction without a container) means no live source is wired; behavior
+        # is then byte-identical to before (the constructor value only).
+        self._live_approval_timeout_seconds = live_approval_timeout_seconds
         self._configured = False
         self._launched = False
         self._dbos: Any = None
@@ -167,22 +184,42 @@ class DbosOrchestrator:
         self._ensure_launched()
         self._dbos.send(workflow_id, payload, topic=topic)
 
+    def _resolve_timeout_seconds(self, timeout: float | None) -> float:
+        """Compute the effective ``recv`` timeout (lens 11 #23: live-configurable).
+
+        An explicit per-call ``timeout`` always wins (unchanged behavior). Otherwise,
+        re-reads ``live_approval_timeout_seconds()`` (the persisted Settings >
+        Automation override) FIRST — falling back to the constructor-time
+        ``approval_timeout_seconds`` snapshot only when the live source is absent or
+        has nothing saved — so a Settings change takes effect on the very next
+        ``recv`` without a process restart. A non-positive effective value means
+        "wait indefinitely" (mirrors the pre-existing 0-means-forever contract).
+        Pulled out of ``recv`` so it can be unit-tested without a real DBOS runtime.
+        """
+        if timeout is not None:
+            return timeout
+        live: float | None = None
+        if self._live_approval_timeout_seconds is not None:
+            try:
+                live = self._live_approval_timeout_seconds()
+            except Exception:  # pragma: no cover - defensive: never break a recv
+                live = None
+        effective = live if live is not None else self._approval_timeout_seconds
+        return effective if effective > 0 else _INDEFINITE_WAIT_SECONDS
+
     def recv(self, workflow_id: str, topic: str, timeout: float | None = None) -> Any:
         """Durably wait for a message on ``topic`` (survives a crash).
 
-        ``timeout=None`` means wait INDEFINITELY for the approval gate (the old code
-        silently substituted 60s, so an approval-gate wait would spuriously time out).
-        A very large finite timeout stands in for "effectively forever" since DBOS
-        ``recv`` requires a numeric ``timeout_seconds``.
+        ``timeout=None`` means wait per the configured approval-gate timeout (the old
+        code silently substituted 60s, so an approval-gate wait would spuriously time
+        out) — live-re-read every call (lens 11 #23) rather than latched once at
+        container-build time. A very large finite timeout stands in for "effectively
+        forever" since DBOS ``recv`` requires a numeric ``timeout_seconds``.
         """
         self._ensure_launched()
         DBOS = self._dbos
 
-        timeout_seconds = (
-            timeout if timeout is not None
-            else (self._approval_timeout_seconds if self._approval_timeout_seconds > 0
-                  else _INDEFINITE_WAIT_SECONDS)
-        )
+        timeout_seconds = self._resolve_timeout_seconds(timeout)
         return DBOS.recv(topic=topic, timeout_seconds=timeout_seconds)
 
     def recover_pending(self) -> list[str]:
