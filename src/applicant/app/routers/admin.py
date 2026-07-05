@@ -243,6 +243,45 @@ def retry_stuck_application(
     return {"application_id": application_id, "retried": True}
 
 
+@router.get("/blocked-applications/{campaign_id}")
+def blocked_applications(campaign_id: str, container: Container = Depends(get_container)) -> dict:
+    """Applications the pre-submit safety gate has stopped on (dark-engine audit #61).
+
+    G07's pre-submit safety checks (scam/ghost-job, duplicate cooldown, per-company
+    volume cap, eligibility/work-authorization) run every tick against every
+    APPROVED application; a block previously left the posting APPROVED forever
+    with only a ``log.info("presubmit_blocked")`` line — no user-visible reason,
+    no way to resolve it. Reads the SAME process-lived ``PresubmitBlockLedger``
+    the running scheduler writes to (``AgentLoop.list_blocked``), so this always
+    reflects live loop state, not a stale snapshot. Returns an empty list (never
+    an error) when the loop is not wired (e.g. no orchestrator).
+    """
+    loop = container.agent_loop
+    rows = loop.list_blocked(campaign_id) if loop is not None else []  # type: ignore[arg-type]
+    return {"campaign_id": campaign_id, "applications": rows, "status": "live"}
+
+
+@router.post("/blocked-applications/{application_id}/override")
+def override_blocked_application(
+    application_id: str, container: Container = Depends(get_container)
+) -> dict:
+    """Let the operator proceed with one blocked application anyway (#61).
+
+    Marks the application so the loop's NEXT tick skips the G07 pre-submit
+    safety checks and starts the pipeline — the operator's own informed
+    decision, made after seeing the reason on the Tracker's blocked-applications
+    panel. This never bypasses review-before-submit (FR-REVIEW): the override
+    only lets prefill/materials generation begin, not any final submission. 404s
+    when the application was not actually in the blocked set (nothing to
+    override).
+    """
+    loop = container.agent_loop
+    overridden = loop.override_blocked(application_id) if loop is not None else False  # type: ignore[arg-type]
+    if not overridden:
+        raise HTTPException(status_code=404, detail="No such blocked application.")
+    return {"application_id": application_id, "overridden": True}
+
+
 @router.get("/resume-status/{application_id}")
 def resume_status(application_id: str, container: Container = Depends(get_container)) -> dict:
     """Countdown to the next resume attempt for one blocked application

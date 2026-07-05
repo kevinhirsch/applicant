@@ -93,6 +93,20 @@ Endpoints (all under ``/api/applicant/tracker``):
   application (dark-engine audit #78): a plain, side-effect-free read, so unlike
   the writes above it is not gated behind a fan-out (mirrors the documents
   proxy's ``jd_match``).
+* ``GET  /api/applicant/tracker/blocked`` — applications the engine's pre-submit
+  safety gate has stopped on (dark-engine audit #61: scam/ghost-job, duplicate
+  cooldown, per-company volume cap, eligibility/work-authorization), aggregated
+  across the owner's own campaigns, most-recently-blocked first. A SEPARATE
+  fan-out from the tracker board and ``/stuck`` above: a blocked application is
+  still sitting APPROVED (never even started the pipeline), so it appears in
+  neither.
+* ``POST /api/applicant/tracker/applications/{application_id}/override-block``
+  — let the owner proceed with one blocked application anyway, after reading
+  why it was stopped (#61's "Proceed anyway"). ``application_id`` is validated
+  against THIS request's own ``/blocked`` fan-out before the write is
+  forwarded — the same never-trust-a-caller-supplied-id guard the other writes
+  use. Never bypasses review-before-submit: the engine still requires the
+  normal redline approval before any final submission.
 """
 
 from __future__ import annotations
@@ -240,6 +254,57 @@ async def _owner_stuck_application_ids(engine: ApplicantEngineClient) -> Optiona
     """The set of given-up application ids that belong to THIS owner, or
     ``None`` when the campaign list itself could not be resolved."""
     rows = await _owner_stuck_rows(engine)
+    if not isinstance(rows, list):
+        return None
+    return {str(r["application_id"]) for r in rows if r.get("application_id")}
+
+
+async def _owner_blocked_rows(engine: ApplicantEngineClient) -> "list[dict] | dict":
+    """Every pre-submit-safety-blocked application across the owner's OWN
+    campaigns (#61), or a :func:`soft_degrade` dict.
+
+    Mirrors ``_owner_stuck_rows`` exactly (fan out over this request's own
+    ``list_campaigns()``, never a caller-supplied campaign id) but hits the
+    engine's blocked-applications read instead, since a blocked application is
+    still sitting APPROVED (never started the pipeline) and would never show up
+    on the tracker board OR the stuck list. A per-campaign read failure is
+    skipped (logged, not fatal) so one inaccessible campaign never blanks the
+    panel.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("tracker: blocked campaigns read failed (status=%s): %s", exc.status, exc)
+        return soft_degrade(exc, {"has_data": False})
+    if not isinstance(campaigns, list):
+        return []
+    rows: list[dict] = []
+    for campaign in campaigns:
+        if not isinstance(campaign, dict):
+            continue
+        cid = campaign.get("id")
+        if not cid:
+            continue
+        try:
+            payload = await engine.admin_blocked_applications(str(cid))
+        except EngineError as exc:
+            logger.debug("tracker: blocked read failed for %s: %s", cid, exc)
+            continue
+        items = payload.get("applications") if isinstance(payload, dict) else None
+        for row in items or []:
+            if not isinstance(row, dict):
+                continue
+            r = dict(row)
+            r.setdefault("campaign_id", str(cid))
+            r["campaign_name"] = _campaign_label(campaign)
+            rows.append(r)
+    return rows
+
+
+async def _owner_blocked_application_ids(engine: ApplicantEngineClient) -> Optional[set]:
+    """The set of blocked application ids that belong to THIS owner, or
+    ``None`` when the campaign list itself could not be resolved."""
+    rows = await _owner_blocked_rows(engine)
     if not isinstance(rows, list):
         return None
     return {str(r["application_id"]) for r in rows if r.get("application_id")}
@@ -677,5 +742,60 @@ def setup_applicant_tracker_routes() -> APIRouter:
             logger.debug("tracker: resume_status failed for %s: %s", application_id, exc)
             return {"application_id": application_id, "status": "not_blocked"}
         return result if isinstance(result, dict) else {"application_id": application_id, "status": "not_blocked"}
+
+    @router.get("/blocked")
+    async def blocked(request: Request) -> dict:
+        """Applications the engine's pre-submit safety gate has stopped on
+        (dark-engine audit #61: scam/ghost-job, duplicate cooldown, per-company
+        volume cap, eligibility/work-authorization), aggregated across all of
+        the owner's campaigns, most-recently-blocked first. Degrades soft
+        exactly like ``/stuck`` above: an unreachable engine returns
+        ``engine_available: false``; a setup gate returns ``gated: true``; no
+        blocked applications returns ``has_data: false`` with an empty,
+        well-formed ``applications`` list.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            rows = await _owner_blocked_rows(engine)
+            if not isinstance(rows, list):
+                return {**rows, "applications": []}
+        rows.sort(key=lambda r: r.get("last_blocked_at") or "", reverse=True)
+        return {
+            "engine_available": True,
+            "has_data": bool(rows),
+            "applications": rows,
+        }
+
+    @router.post("/applications/{application_id}/override-block")
+    async def override_block(request: Request, application_id: str) -> dict:
+        """Proceed with one blocked application anyway, on the owner's own
+        decision after reading why it was stopped (#61's "Proceed anyway").
+
+        ``application_id`` is validated against this request's own
+        ``_owner_blocked_application_ids`` fan-out BEFORE the write is
+        forwarded -- the same never-trust-a-caller-supplied-id guard
+        ``retry_stuck``/``record_outcome`` use above. A caller cannot override
+        an application that never appeared in their own blocked-applications
+        panel. This never bypasses review-before-submit: it only lets the
+        engine start prefill/materials generation on its next tick, the same
+        redline approval still gates the actual final submission.
+        """
+        _require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_blocked_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such blocked application.")
+            try:
+                result = await engine.admin_override_blocked_application(application_id)
+            except EngineError as exc:
+                logger.debug(
+                    "tracker: override_block failed for %s: %s", application_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        return result if isinstance(result, dict) else {}
 
     return router

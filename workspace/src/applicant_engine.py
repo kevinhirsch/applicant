@@ -1367,6 +1367,25 @@ class ApplicantEngineClient:
             "POST", "/api/compare/postings", json=posting_ids, params=params
         )
 
+    # -- blocked applications (engine routers/admin.py, dark-engine audit #61) -
+    # G07's pre-submit safety checks (scam/ghost-job, duplicate cooldown,
+    # per-company volume cap, eligibility/work-authorization) run every tick
+    # against every APPROVED application; a block previously left the posting
+    # APPROVED forever with only a log line -- these expose the block list
+    # itself (reason + how many times it has recurred) plus an override so an
+    # owner can decide to proceed anyway (mirrors the stuck-applications pair,
+    # #62, above).
+
+    async def admin_blocked_applications(self, campaign_id: str) -> Any:
+        """Applications the pre-submit safety gate has stopped on, for one campaign."""
+        return await self._request("GET", f"/api/admin/blocked-applications/{campaign_id}")
+
+    async def admin_override_blocked_application(self, application_id: str) -> Any:
+        """Proceed with one blocked application anyway, on the owner's decision."""
+        return await self._request(
+            "POST", f"/api/admin/blocked-applications/{application_id}/override"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the
