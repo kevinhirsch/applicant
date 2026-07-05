@@ -526,13 +526,19 @@ def deferred_during_quiet(t06ctx):
             title="Approve?", body="role", urgency=NotificationUrgency.NORMAL, dedup_key="dn"
         )
     )
+    # Move past both the Discord (+30s) and email (+15m) rung due-times while the
+    # clock stays inside the 22:00->07:00 quiet window, then advance: the rungs are
+    # now DUE but held by quiet hours — genuinely "deferred because of an active
+    # quiet window" (lens 10 #10). deliver_now must flush exactly these quiet-held
+    # rungs (and only these — it no longer force-fires rungs whose due_at is still
+    # in the future).
+    clock.tick(16 * 60)
     notifier.advance()
     t06ctx["notifier"] = notifier
 
 
 @when("the user taps deliver now to force-send the queued notifications")
 def deliver_now(t06ctx):
-    # PROBE: there is no "deliver now" / flush-queued entrypoint on the adapter today.
     t06ctx["notifier"].deliver_now()
 
 

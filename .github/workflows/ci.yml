@@ -78,7 +78,8 @@ jobs:
                ':!workspace/tests/test_landing_page_content.py' \
                ':!workspace/tests/test_applicant_activation_funnel_09.py' \
                ':!workspace/tests/test_applicant_mind_help_lens12.py' \
-               ':!workspace/tests/test_applicant_remote_help_lens12.py'; then
+               ':!workspace/tests/test_applicant_remote_help_lens12.py' \
+               ':!workspace/tests/test_applicant_debug_help_lens12.py'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi
