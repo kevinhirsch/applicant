@@ -14,15 +14,30 @@ Every endpoint is a thin, auth-protected proxy over
 the engine directly, and every engine failure is normalised to a clean HTTP
 response so the surface degrades gracefully instead of throwing.
 
-Scoping: these are owner/admin surfaces — application history and raw logs are
-operator-grade detail, so they require an admin account (and an authenticated
-session in every mode). In single-user / unconfigured mode there is no admin
-distinction, so the lone owner sees them (matching the rest of the workspace).
+Scoping: most of this file is an operator/admin surface — application history
+and raw logs are operator-grade detail, so they require an admin account (and
+an authenticated session in every mode). In single-user / unconfigured mode
+there is no admin distinction, so the lone owner sees them (matching the rest
+of the workspace). A few reads that are genuinely the owner's OWN data (not
+operator detail) get a SEPARATE owner-reachable lane instead — see "owner-
+reachable lane" below.
 
 This file is ADDITIVE and disjoint from the other ``applicant_*`` proxies: it
 mounts its own ``/api/applicant/admin`` prefix and leaves them untouched. It does
 NOT edit the shared engine client beyond the append-only methods that lane added
 (``admin_*`` / ``outcome_*``).
+
+Owner-scoped reachability (dark-engine audit B4 items 29/30/32): everything
+above requires an admin account even though, on this single-tenant deployment,
+every byte belongs to the one owner. Durable-workflow state (item 29) and the
+per-application audit-log export (item 30) are genuinely the owner's OWN
+data, so they get an owner-reachable lane too, added below under their own
+paths -- the existing admin-gated routes above are untouched. Owner-scoping
+mirrors ``applicant_campaigns_routes._owner_campaign_ids`` /
+``applicant_tracker_routes._owner_application_ids`` elsewhere in this
+workspace: the engine itself has no owner concept, so a caller-supplied
+``application_id`` is validated against THIS request's own campaign fan-out
+(never trusted on its own) before any read or download is forwarded.
 """
 
 from __future__ import annotations
@@ -33,7 +48,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +123,49 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
         return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
     detail = exc.detail if exc.detail not in (None, "") else exc.message
     return HTTPException(status_code=exc.status, detail=detail)
+
+
+async def _owner_application_ids(engine: ApplicantEngineClient) -> "set[str] | None":
+    """The application ids that belong to the caller's OWN campaigns, or
+    ``None`` when the campaign list itself could not be resolved (engine
+    unreachable) — dark-engine audit items 29/30.
+
+    The engine has no owner concept (single-tenant per deployment), so this
+    fans out over THIS request's own ``list_campaigns()`` -> ``GET
+    /api/admin/history/{campaign_id}`` (the same read the admin-gated
+    ``application_history`` route above already proxies) and collects every
+    ``application_id`` that turns up — mirroring
+    ``applicant_campaigns_routes._owner_campaign_ids`` /
+    ``applicant_tracker_routes._owner_application_ids``'s "never trust a
+    caller-supplied id" guard. A per-campaign read failure is skipped (logged,
+    not fatal) so one inaccessible campaign never blanks the whole set.
+    """
+    try:
+        campaigns = await engine.list_campaigns()
+    except EngineError as exc:
+        logger.debug("applicant admin owner-scope: campaigns read failed: %s", exc)
+        return None
+    if not isinstance(campaigns, list):
+        return set()
+    ids: set[str] = set()
+    for campaign in campaigns:
+        if not isinstance(campaign, dict):
+            continue
+        cid = campaign.get("id")
+        if not cid:
+            continue
+        try:
+            history = await engine.admin_application_history(str(cid))
+        except EngineError as exc:
+            logger.debug(
+                "applicant admin owner-scope: history read failed for %s: %s", cid, exc
+            )
+            continue
+        rows = history.get("applications") if isinstance(history, dict) else None
+        for row in rows or []:
+            if isinstance(row, dict) and row.get("application_id"):
+                ids.add(str(row["application_id"]))
+    return ids
 
 
 def setup_applicant_admin_routes() -> APIRouter:
@@ -377,6 +435,77 @@ def setup_applicant_admin_routes() -> APIRouter:
                 "Content-Disposition": f"attachment; filename=audit-log-{application_id}.json"
             },
         )
+
+    # -- owner-reachable lane (no admin account required) -------------------
+    # Dark-engine audit B4 items 29/30/32: the reads above are real
+    # engine data belonging entirely to the owner of this single-tenant
+    # deployment, but were reachable only from an admin account. These give
+    # the owner their OWN data back, id-validated against THIS request's own
+    # campaign/application fan-out (never a caller-supplied id trusted on its
+    # own) instead of an admin gate.
+
+    @router.get("/applications/{application_id}/workflow-status")
+    async def owner_workflow_status(application_id: str, request: Request) -> dict:
+        """Where one of the owner's OWN applications sits in the durable
+        pipeline -- which steps completed and whether it's pending recovery
+        (dark-engine audit item 29). Same engine read as the admin-gated
+        ``/workflow/{id}`` above, reachable here without an admin account.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            return await _soft_get(
+                engine.admin_workflow_state(application_id),
+                {"application_id": application_id, "steps": []},
+            )
+
+    @router.get("/applications/{application_id}/audit-export.json")
+    async def owner_export_application_audit_log(application_id: str, request: Request):
+        """Download the full, ordered action trail for one of the owner's OWN
+        applications as a JSON file (dark-engine audit item 30) -- the
+        honesty artifact for a dispute or a bug report, previously reachable
+        only via an admin account (``/audit-log/application/{id}/export.json``
+        above).
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_application_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if application_id not in owned:
+                raise HTTPException(status_code=404, detail="No such application.")
+            try:
+                resp = await engine.audit_log_application_export(application_id)
+            except EngineError as exc:
+                raise _engine_http_error(exc) from exc
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.text if hasattr(resp, "text") else resp.content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit-log-{application_id}.json"
+            },
+        )
+
+    @router.get("/logs/mine")
+    async def owner_recent_logs(request: Request, limit: int = 100) -> dict:
+        """Recent redacted run logs, reachable without an admin account
+        (dark-engine audit item 32). Process-global -- the engine has no
+        per-application log index, so there is no id to deep-link a specific
+        failure to yet; this only removes the admin-account requirement from
+        the SAME read ``/logs`` above already proxies. A "view logs around
+        this failure" deep link is deferred: every natural attachment point
+        (a failed Portal item, a Tracker row, the Debug modal) is a file this
+        change is explicitly scoped to leave untouched.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(engine.admin_logs(limit=limit), {"entries": []})
 
     # -- close the loop: mark submitted / re-detect (writes) --------------
 

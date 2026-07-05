@@ -44,6 +44,7 @@ class FakeEngine:
     campaigns: list = []
     sources: dict = {}     # campaign_id -> {"items": [...]}
     updated: dict = {}     # campaign_id -> dict returned by update
+    audit_exports: dict = {}  # campaign_id -> httpx.Response
     raises: dict = {}      # key -> EngineError
 
     def __init__(self, *a, **k):
@@ -79,6 +80,14 @@ class FakeEngine:
             raise FakeEngine.raises[("toggle", cid, key)]
         return {"campaign_id": cid, "source_key": key, "enabled": enabled}
 
+    async def audit_log_campaign_export(self, cid):
+        FakeEngine.calls.append(("audit_export", cid))
+        if ("audit_export", cid) in FakeEngine.raises:
+            raise FakeEngine.raises[("audit_export", cid)]
+        return FakeEngine.audit_exports.get(cid) or httpx.Response(
+            200, json={"exported_at": "x", "count": 0, "events": []}
+        )
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -86,6 +95,7 @@ def _reset_fake():
     FakeEngine.campaigns = []
     FakeEngine.sources = {}
     FakeEngine.updated = {}
+    FakeEngine.audit_exports = {}
     FakeEngine.raises = {}
     yield
 
@@ -183,6 +193,88 @@ def test_toggle_not_owned_is_404(client):
     FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
     r = client.put("/api/applicant/campaigns/c-evil/sources/x", json={"enabled": True})
     assert r.status_code == 404
+
+
+# --- campaign audit-log export (owner-scoped, dark-engine audit item 31) ---
+#
+# ``GET /api/admin/audit-log/{campaign_id}/export.json`` already exists on the
+# engine and was already proxied -- but only behind an admin account
+# (``applicant_admin_routes.py``). These pin the NEW owner-scoped lane in
+# THIS file: any authenticated owner can download the ordered action trail
+# for one of their OWN campaigns, id-validated the same way ``update_campaign``
+# / ``delete_campaign`` are above.
+
+
+def test_export_proxies_when_owned(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.audit_exports["c1"] = httpx.Response(
+        200,
+        json={"exported_at": "2026-07-05T00:00:00Z", "count": 3, "events": []},
+        headers={"Content-Disposition": "attachment; filename=audit-log.json"},
+    )
+    r = client.get("/api/applicant/campaigns/c1/audit-log/export.json")
+    assert r.status_code == 200
+    cd = r.headers.get("content-disposition", "")
+    assert "attachment" in cd
+    assert "audit-log-c1.json" in cd
+    assert r.json()["count"] == 3
+    assert ("audit_export", "c1") in FakeEngine.calls
+
+
+def test_export_not_owned_is_404_not_proxied(client):
+    """MANDATORY owner-isolation test: a caller must never download the
+    action trail for a campaign that isn't in their own campaign list --
+    mirrors test_patch_not_owned_is_404_not_proxied / test_delete_not_owned_
+    is_404_not_proxied for this exact proxy file."""
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    r = client.get("/api/applicant/campaigns/c-evil/audit-log/export.json")
+    assert r.status_code == 404
+    assert all(not (isinstance(c, tuple) and c[0] == "audit_export") for c in FakeEngine.calls)
+
+
+def test_export_engine_down_is_503(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down")
+    r = client.get("/api/applicant/campaigns/c1/audit-log/export.json")
+    assert r.status_code == 503
+
+
+def test_export_engine_error_is_forwarded(client):
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.raises[("audit_export", "c1")] = EngineError(
+        "nope", status=404, detail="No such campaign."
+    )
+    r = client.get("/api/applicant/campaigns/c1/audit-log/export.json")
+    assert r.status_code == 404
+
+
+def test_export_unauthenticated_is_rejected(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(authed=False))
+    r = c.get("/api/applicant/campaigns/c1/audit-log/export.json")
+    assert r.status_code == 401
+
+
+def test_engine_export_path_hit_over_real_client(monkeypatch):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.setdefault("paths", []).append((request.method, request.url.path))
+        if request.url.path == "/api/campaigns":
+            return httpx.Response(200, json=[{"id": "c1", "name": "Backend"}])
+        if request.url.path == "/api/admin/audit-log/c1/export.json":
+            return httpx.Response(
+                200, json={"exported_at": "x", "count": 1, "events": []}
+            )
+        return httpx.Response(404, json={"detail": "nope"})
+
+    def _factory(*a, **k):
+        return ApplicantEngineClient(base_url="http://api:8000", transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(mod, "ApplicantEngineClient", _factory)
+    c = TestClient(_make_app())
+    r = c.get("/api/applicant/campaigns/c1/audit-log/export.json")
+    assert r.status_code == 200
+    assert ("GET", "/api/admin/audit-log/c1/export.json") in captured["paths"]
 
 
 # --- real client over MockTransport: exact engine paths ---------------------
