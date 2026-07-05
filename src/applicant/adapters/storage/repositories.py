@@ -1254,6 +1254,14 @@ class FollowUpRepo:
             scheduled_at=f.scheduled_at, sent_at=f.sent_at,
         ))
 
+    def update(self, f):
+        """Persist a status change (e.g. SCHEDULED -> SENT, dark-engine audit B2
+        item 7 -- the idempotent send-queue). Mirrors ``ApplicationRepo.add``/
+        ``.update``: both are a plain upsert ``merge`` keyed on id; ``update``
+        is the explicit, self-documenting name callers use when the row
+        already exists."""
+        self.add(f)
+
     def get(self, fid):
         row = self._s.get(m.FollowUpModel, fid)
         return _follow_up_to_entity(row) if row else None

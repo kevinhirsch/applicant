@@ -845,6 +845,7 @@ class _FollowUpRepo:
         self._d = {}
         self._applications = applications
     def add(self, f): self._d[str(f.id)] = f
+    def update(self, f): self._d[str(f.id)] = f  # upsert, mirrors ``add`` (B2 item 7)
     def get(self, fid): return self._d.get(str(fid))
     def list_for_application(self, aid): return sorted([f for f in self._d.values() if f.application_id == aid], key=lambda f: f.created_at)
     def list_for_campaign(self, cid): return sorted([f for f in self._d.values() if (a := self._applications.get(f.application_id)) and a.campaign_id == cid], key=lambda f: f.created_at)

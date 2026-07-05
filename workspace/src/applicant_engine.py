@@ -984,6 +984,33 @@ class ApplicantEngineClient:
         just these two kinds."""
         return await self._request("GET", f"/api/post-submission/{campaign_id}/attention")
 
+    async def follow_up_approve(
+        self,
+        application_id: str,
+        *,
+        subject: str | None = None,
+        body: str | None = None,
+        delay_hours: float | None = None,
+    ) -> Any:
+        """Approve + schedule a drafted follow-up for sending (dark-engine
+        audit B2 item 7) -- the ONLY caller of the engine's
+        ``PostSubmissionService.schedule_follow_up`` anywhere in the product.
+        ``subject``/``body`` (optional) let the owner edit the draft before
+        approving; omitted fields are sent as absent so the engine keeps
+        exactly what was drafted."""
+        payload: dict = {}
+        if subject is not None:
+            payload["subject"] = subject
+        if body is not None:
+            payload["body"] = body
+        if delay_hours is not None:
+            payload["delay_hours"] = delay_hours
+        return await self._request(
+            "POST",
+            f"/api/post-submission/applications/{application_id}/follow-up/approve",
+            json=payload,
+        )
+
     async def tracker_record_outcome(
         self, application_id: str, outcome_type: str, reason: str | None = None
     ) -> Any:

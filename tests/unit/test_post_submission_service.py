@@ -29,7 +29,7 @@ from applicant.application.services.post_submission_service import (
     PostSubmissionService,
 )
 from applicant.core.entities.application import Application
-from applicant.core.entities.follow_up import FollowUpTemplate
+from applicant.core.entities.follow_up import FollowUpStatus, FollowUpTemplate
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
@@ -600,3 +600,370 @@ class TestRunPostSubmissionSweep:
         result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
 
         assert result["followups_drafted"] == [str(app.id)]
+
+
+# ---------------------------------------------------------------------------
+# Dark-engine audit B2 item 7: approve + schedule a drafted follow-up, and the
+# send-queue's idempotency / hard-safety guarantees.
+# ---------------------------------------------------------------------------
+
+
+def _seed_draft(storage, pending, app, *, subject="Checking in", body="Hi there") -> None:
+    """Materialize a ``followup_draft`` pending action exactly like
+    ``PostSubmissionService._draft_followup_if_due`` does, without needing a
+    full sweep run (keeps these tests focused on the approve path)."""
+    pending.materialize(
+        app.campaign_id,
+        KIND_FOLLOWUP_DRAFT,
+        f"Follow-up ready to review: {app.id}",
+        application_id=app.id,
+        payload={"subject": subject, "body": body, "days_since_submission": 12},
+        dedup_key=f"{KIND_FOLLOWUP_DRAFT}:{app.id}",
+    )
+
+
+@pytest.mark.unit
+class TestApproveFollowUpDraft:
+    def test_approve_schedules_the_draft_and_resolves_the_pending_action(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)
+        _seed_draft(storage, pending, app, subject="Checking in", body="Hi, following up.")
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        fup = service.approve_follow_up_draft(app.id)
+
+        assert fup is not None
+        assert fup.subject == "Checking in"
+        assert fup.body == "Hi, following up."
+        assert fup.application_id == app.id
+        # This is the ONLY producer of the send-queue row -- confirm it landed.
+        assert [f.id for f in storage.follow_ups.list_for_application(app.id)] == [fup.id]
+        # The originating draft is resolved -- it drops off the Portal.
+        drafts = [a for a in storage.pending_actions.list_open(cid) if a.kind == KIND_FOLLOWUP_DRAFT]
+        assert drafts == []
+
+    def test_approve_lets_the_owner_edit_subject_and_body_before_scheduling(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)
+        _seed_draft(storage, pending, app, subject="Original subject", body="Original body")
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        fup = service.approve_follow_up_draft(
+            app.id, subject="Edited subject", body="Edited body"
+        )
+
+        assert fup.subject == "Edited subject"
+        assert fup.body == "Edited body"
+
+    def test_approve_returns_none_when_no_draft_exists(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)  # nothing materialized
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        assert service.approve_follow_up_draft(app.id) is None
+        assert storage.follow_ups.list_for_application(app.id) == []
+
+    def test_approve_returns_none_without_a_pending_actions_collaborator(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage)  # no pending_actions
+
+        assert service.approve_follow_up_draft(app.id) is None
+
+    def test_approve_returns_none_for_unknown_application(self):
+        storage = InMemoryStorage()
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        assert service.approve_follow_up_draft(ApplicationId(new_id())) is None
+
+    def test_approving_the_same_draft_twice_only_schedules_once(self):
+        """The second approve tap 404s (in the router) because the pending
+        action is already resolved -- at the service layer this means a
+        second call finds no OPEN draft and returns ``None`` without creating
+        a second ``FollowUp``."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)
+        _seed_draft(storage, pending, app)
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        first = service.approve_follow_up_draft(app.id)
+        second = service.approve_follow_up_draft(app.id)
+
+        assert first is not None
+        assert second is None
+        assert len(storage.follow_ups.list_for_application(app.id)) == 1
+
+
+@pytest.mark.unit
+class TestSendScheduledFollowUpsHardSafetyAndIdempotency:
+    def test_a_drafted_but_unapproved_followup_is_never_sent(self):
+        """HARD SAFETY: a ``followup_draft`` pending action alone (never
+        approved) must never reach the send queue -- ``schedule_follow_up`` is
+        the ONLY producer of a ``follow_ups`` row, and nothing but
+        ``approve_follow_up_draft`` ever calls it."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)
+        _seed_draft(storage, pending, app)
+        spy = _DecisionSpy()
+        service = PostSubmissionService(storage, spy, pending_actions=pending)
+
+        sent = service.send_scheduled_follow_ups()
+
+        assert sent == []
+        assert spy.calls == []
+
+    def test_a_sent_follow_up_is_never_sent_twice(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid)
+        storage.applications.add(app)
+        spy = _DecisionSpy()
+        service = PostSubmissionService(storage, notification_service=spy)
+        fup = service.schedule_follow_up(
+            app.id, template=FollowUpTemplate.CHECK_IN, delay_hours=-1
+        )
+
+        first = service.send_scheduled_follow_ups()
+        second = service.send_scheduled_follow_ups()
+
+        assert [f.id for f in first] == [fup.id]
+        assert second == []
+        assert len(spy.calls) == 1, "the follow-up must be notified exactly once"
+
+    def test_send_marks_the_follow_up_sent_with_a_timestamp(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid)
+        storage.applications.add(app)
+        service = PostSubmissionService(storage, notification_service=_DecisionSpy())
+        fup = service.schedule_follow_up(
+            app.id, template=FollowUpTemplate.CHECK_IN, delay_hours=-1
+        )
+
+        now = datetime.now(UTC)
+        service.send_scheduled_follow_ups(now=now)
+
+        updated = storage.follow_ups.get(fup.id)
+        assert updated.status == FollowUpStatus.SENT
+        assert updated.sent_at == now
+
+    def test_end_to_end_approve_then_schedule_then_send_once(self):
+        """The full item-7 chain: draft -> approve -> due -> sent once."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        pending = PendingActionsService(storage)
+        _seed_draft(storage, pending, app, subject="Checking in", body="Hi.")
+        spy = _DecisionSpy()
+        service = PostSubmissionService(storage, spy, pending_actions=pending)
+
+        fup = service.approve_follow_up_draft(app.id, delay_hours=-1)  # already due
+        sent_first = service.send_scheduled_follow_ups()
+        sent_second = service.send_scheduled_follow_ups()
+
+        assert [f.id for f in sent_first] == [fup.id]
+        assert sent_second == []
+        assert len(spy.calls) == 1
+        assert spy.calls[0]["title"] == "Checking in"
+        assert spy.calls[0]["body"] == "Hi."
+        assert storage.applications.get(app.id).status == ApplicationState.FOLLOWING_UP
+
+
+# ---------------------------------------------------------------------------
+# Dark-engine audit B2 item 10: rejection/interview/offer scan of the owner's
+# real inbox (never fed to scan_email before this).
+# ---------------------------------------------------------------------------
+
+
+class _FakeWorkspace:
+    """Stand-in for ``WorkspacePort`` -- only the two methods this sweep uses."""
+
+    def __init__(self, *, is_available=True, emails=None, raises=False):
+        self._is_available = is_available
+        self._emails = emails if emails is not None else []
+        self._raises = raises
+        self.calls = 0
+
+    def available(self):
+        return self._is_available
+
+    def recent_emails(self, *, owner=None, limit=20):
+        self.calls += 1
+        if self._raises:
+            raise RuntimeError("workspace unreachable")
+        return {"emails": self._emails}
+
+
+def _awaiting_app(cid, *, company, title="Engineer"):
+    posting = _posting(cid, company=company, title=title)
+    app = Application(
+        id=ApplicationId(new_id()),
+        campaign_id=cid,
+        posting_id=posting.id,
+        status=ApplicationState.AWAITING_RESPONSE,
+    )
+    return posting, app
+
+
+@pytest.mark.unit
+class TestScanInboxForOutcomes:
+    def test_no_workspace_wired_is_a_noop(self):
+        storage = InMemoryStorage()
+        service = PostSubmissionService(storage)  # no workspace
+
+        result = service.scan_inbox_for_outcomes(CampaignId(new_id()))
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+
+    def test_workspace_unavailable_is_a_noop(self):
+        storage = InMemoryStorage()
+        ws = _FakeWorkspace(is_available=False)
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(CampaignId(new_id()))
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+        assert ws.calls == 0  # never even asked for emails once disabled
+
+    def test_workspace_read_failure_degrades_to_noop(self):
+        storage = InMemoryStorage()
+        ws = _FakeWorkspace(raises=True)
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(CampaignId(new_id()))
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+
+    def test_empty_inbox_is_a_noop(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting, app = _awaiting_app(cid, company="Acme Corp")
+        storage.postings.add(posting)
+        storage.applications.add(app)
+        ws = _FakeWorkspace(emails=[])
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(cid)
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+
+    def test_email_matching_exactly_one_company_records_a_rejection(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting, app = _awaiting_app(cid, company="Acme Corp")
+        storage.postings.add(posting)
+        storage.applications.add(app)
+        ws = _FakeWorkspace(
+            emails=[
+                {
+                    "subject": "Update on your Acme Corp application",
+                    "from": "recruiting@acme.example",
+                    # 3 keyword hits (>= the 0.8 auto-record confidence
+                    # threshold): "unfortunately" + "not moving forward" +
+                    # "other candidates".
+                    "body": (
+                        "Unfortunately, after careful consideration we are not "
+                        "moving forward with your application. We have decided "
+                        "to proceed with other candidates for this role."
+                    ),
+                }
+            ]
+        )
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(cid)
+
+        assert result["scanned"] == 1
+        assert result["matched"] == 1
+        assert result["outcomes"][0]["application_id"] == str(app.id)
+        assert result["outcomes"][0]["outcome_type"] == "rejected"
+        assert storage.applications.get(app.id).status == ApplicationState.REJECTED
+
+    def test_ambiguous_company_match_across_two_applications_is_skipped(self):
+        """Two in-flight applications share a company name -- the email can't
+        be attributed to one over the other, so NEITHER is touched."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting1, app1 = _awaiting_app(cid, company="Acme Corp", title="Engineer")
+        posting2, app2 = _awaiting_app(cid, company="Acme Corp", title="Designer")
+        storage.postings.add(posting1)
+        storage.postings.add(posting2)
+        storage.applications.add(app1)
+        storage.applications.add(app2)
+        ws = _FakeWorkspace(
+            emails=[
+                {
+                    "subject": "Update on your Acme Corp application",
+                    "from": "recruiting@acme.example",
+                    "body": "Unfortunately, we will not be moving forward.",
+                }
+            ]
+        )
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(cid)
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+        assert storage.applications.get(app1.id).status == ApplicationState.AWAITING_RESPONSE
+        assert storage.applications.get(app2.id).status == ApplicationState.AWAITING_RESPONSE
+
+    def test_email_matching_no_company_is_skipped(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting, app = _awaiting_app(cid, company="Acme Corp")
+        storage.postings.add(posting)
+        storage.applications.add(app)
+        ws = _FakeWorkspace(
+            emails=[{"subject": "Newsletter", "from": "news@example.com", "body": "Hello!"}]
+        )
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(cid)
+
+        assert result == {"scanned": 0, "matched": 0, "outcomes": []}
+
+    def test_non_matching_email_language_is_scanned_but_not_recorded(self):
+        """The company is matched unambiguously but nothing in the email
+        confidently triggers a detector -- ``scanned`` counts the attempt,
+        ``matched``/``outcomes`` stay empty."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting, app = _awaiting_app(cid, company="Acme Corp")
+        storage.postings.add(posting)
+        storage.applications.add(app)
+        ws = _FakeWorkspace(
+            emails=[
+                {
+                    "subject": "Acme Corp newsletter",
+                    "from": "news@acme.example",
+                    "body": "Check out our latest product updates.",
+                }
+            ]
+        )
+        service = PostSubmissionService(storage, workspace=ws)
+
+        result = service.scan_inbox_for_outcomes(cid)
+
+        assert result["scanned"] == 1
+        assert result["matched"] == 0
+        assert result["outcomes"] == []
+        assert storage.applications.get(app.id).status == ApplicationState.AWAITING_RESPONSE

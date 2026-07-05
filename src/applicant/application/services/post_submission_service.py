@@ -1,10 +1,11 @@
 """PostSubmissionService -- post-submission lifecycle tracking (G16/#190)."""
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 
 from applicant.application.services.followup_service import FollowUpService
-from applicant.core.entities.follow_up import FollowUp, FollowUpTemplate
+from applicant.core.entities.follow_up import FollowUp, FollowUpStatus, FollowUpTemplate
 from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource, is_recognized_outcome
 from applicant.core.entities.rejection_signal import RejectionSignal, RejectionSource
@@ -408,6 +409,112 @@ class PostSubmissionService:
             }
         return None
 
+    #: Minimum company-name length considered for inbox-scan matching (item
+    #: 10) -- guards against a near-empty/very short company name (e.g. a
+    #: 1-2 char placeholder) matching almost any email by accident.
+    _INBOX_SCAN_MIN_COMPANY_LEN = 3
+
+    def scan_inbox_for_outcomes(self, campaign_id, *, limit=20):
+        """Best-effort sweep: read the owner's recent inbox (via the workspace
+        bridge) and feed each message through ``scan_email`` for the ONE
+        in-flight application it can be matched to with NO ambiguity
+        (dark-engine audit B2 item 10).
+
+        Mirrors ``_write_interview_to_calendar``'s degrade posture exactly: a
+        ``None``/unavailable/unreachable workspace, or a bridge call that
+        raises, is a silent no-op -- this NEVER raises, since it is called
+        from the scheduler's sweep, which must never abort a tick.
+
+        Matching is DELIBERATELY conservative. ``scan_email``'s own docstring
+        already flags automatic inbox-to-application matching as out of scope
+        because a mis-attributed email risks recording a fake outcome against
+        the wrong application. This sweep closes that gap the ONLY safe way:
+        an email is scanned against an application ONLY when exactly one
+        AWAITING_RESPONSE/POST_SUBMISSION/FOLLOWING_UP application's company
+        name appears in it (subject, sender, or body) -- zero or 2+ candidate
+        companies skips the email entirely rather than guess. Returns a
+        summary dict (``{"scanned": N, "matched": N, "outcomes": [...]}``) for
+        scheduler logging.
+        """
+        empty = {"scanned": 0, "matched": 0, "outcomes": []}
+        if self._workspace is None:
+            return empty
+        try:
+            if not self._workspace.available():
+                return empty
+        except Exception:
+            return empty
+        try:
+            raw = self._workspace.recent_emails(limit=limit)
+        except Exception:
+            log.info(
+                "post_submission_inbox_read_failed",
+                campaign_id=str(campaign_id),
+            )
+            return empty
+        emails = raw.get("emails") if isinstance(raw, dict) else None
+        if not emails:
+            return empty
+        try:
+            candidates = list(
+                self._storage.applications.list_by_status(
+                    campaign_id,
+                    (
+                        ApplicationState.AWAITING_RESPONSE,
+                        ApplicationState.POST_SUBMISSION,
+                        ApplicationState.FOLLOWING_UP,
+                    ),
+                )
+            )
+        except Exception:
+            log.warning(
+                "post_submission_inbox_scan_list_failed",
+                campaign_id=str(campaign_id),
+                exc_info=True,
+            )
+            return empty
+        by_company: dict[str, list] = {}
+        for app in candidates:
+            posting = (
+                self._storage.postings.get(app.posting_id)
+                if app.posting_id is not None
+                else None
+            )
+            company = (getattr(posting, "company", None) or "").strip().lower()
+            if len(company) >= self._INBOX_SCAN_MIN_COMPANY_LEN:
+                by_company.setdefault(company, []).append(app)
+        if not by_company:
+            return empty
+        scanned = 0
+        outcomes: list[dict] = []
+        for email in emails:
+            if not isinstance(email, dict):
+                continue
+            subject = str(email.get("subject") or "")
+            body = str(email.get("body") or "")
+            sender = str(email.get("from") or "")
+            haystack = f"{subject}\n{sender}\n{body}".lower()
+            matched_companies = [c for c in by_company if c in haystack]
+            if len(matched_companies) != 1:
+                continue
+            apps = by_company[matched_companies[0]]
+            if len(apps) != 1:
+                continue
+            app = apps[0]
+            scanned += 1
+            try:
+                result = self.scan_email(app.id, subject=subject, body=body)
+            except Exception:
+                log.warning(
+                    "post_submission_inbox_scan_failed",
+                    application_id=str(app.id),
+                    exc_info=True,
+                )
+                continue
+            if result and result.get("recorded"):
+                outcomes.append({"application_id": str(app.id), **result})
+        return {"scanned": scanned, "matched": len(outcomes), "outcomes": outcomes}
+
     def check_ghosting(self, campaign_id, *, sla_days=DEFAULT_SLA_DAYS, now=None):
         now = now or datetime.now(UTC)
         signals = []
@@ -619,7 +726,83 @@ class PostSubmissionService:
         self._storage.commit()
         return fup
 
+    def approve_follow_up_draft(
+        self, application_id, *, subject=None, body=None, delay_hours=None
+    ):
+        """Owner approves + schedules the drafted follow-up for ``application_id``
+        (dark-engine audit B2 item 7).
+
+        This is the ONLY caller of :meth:`schedule_follow_up` anywhere in the
+        engine -- the hard safety boundary CLAUDE.md requires: a follow-up is
+        user-facing outbound content, so it may be scheduled for sending ONLY
+        once the owner has reviewed the ``followup_draft`` pending action
+        (materialized by ``run_post_submission_sweep`` / ``_draft_followup_if_
+        due``) and explicitly approved it here (the engine router's
+        ``POST /applications/{id}/follow-up/approve``, hit from the front-door
+        Portal). ``subject``/``body`` let the owner edit the draft before
+        approving; omitted (``None``) falls back to exactly what was drafted.
+        Nothing else in the engine ever inserts a row into the ``follow_ups``
+        send-queue, so ``send_scheduled_follow_ups`` below can never send a
+        raw, un-reviewed draft.
+
+        Returns the newly-scheduled ``FollowUp``, or ``None`` when there is no
+        OPEN follow-up draft for this application (never drafted, already
+        approved/resolved, or the application doesn't exist) -- the router
+        maps that to a 404. Resolves the originating pending action so it
+        drops off the Portal once approved (mirrors every other
+        resolve-on-approve flow in this service).
+        """
+        if self._pending_actions is None:
+            return None
+        app = self._storage.applications.get(application_id)
+        if app is None:
+            return None
+        action = self._storage.pending_actions.find_open_by_dedup(
+            app.campaign_id, f"{KIND_FOLLOWUP_DRAFT}:{application_id}"
+        )
+        if action is None:
+            return None
+        payload = action.payload or {}
+        final_subject = subject if subject is not None else payload.get("subject", "")
+        final_body = body if body is not None else payload.get("body", "")
+        fup = self.schedule_follow_up(
+            application_id,
+            template=FollowUpTemplate.CHECK_IN,
+            delay_hours=delay_hours,
+            subject=final_subject or "",
+            body=final_body or "",
+        )
+        self._pending_actions.resolve(action.id)
+        return fup
+
     def send_scheduled_follow_ups(self, now=None):
+        """Send every owner-approved, now-due follow-up (dark-engine audit B2
+        item 7 -- the send-queue driver, previously called by nothing).
+
+        HARD SAFETY RULE: this can only ever act on rows already sitting in
+        the ``follow_ups`` table, and the ONLY method that ever inserts one is
+        :meth:`schedule_follow_up` -- which is itself only ever called from
+        :meth:`approve_follow_up_draft` (the owner's explicit approve action).
+        A ``followup_draft`` pending action's subject/body live ONLY in that
+        action's payload until the owner approves it, so this method can
+        never send a raw, unapproved draft.
+
+        Idempotent: each sent ``FollowUp`` is flipped to ``FollowUpStatus.SENT``
+        (with ``sent_at``) before returning, so ``list_due`` (which filters to
+        ``status == SCHEDULED``) never returns it again on a later call -- a
+        follow-up is sent AT MOST ONCE no matter how often the scheduler
+        re-ticks. Best-effort per row: a notification failure for one
+        follow-up leaves it ``SCHEDULED`` (retried next tick) and never blocks
+        the rest of the batch; a failure marking a row ``SENT`` after a
+        successful notify is logged, never raised (the caller -- the
+        scheduler tick -- must never abort over this).
+
+        Routes the actual send through the EXISTING notification/email
+        delivery mechanism (``NotificationService.notify_decision`` -> the
+        Apprise-backed ``NotificationPort`` escalation ladder, the SAME path
+        every other decision notification in this engine uses) -- never
+        hand-rolled SMTP.
+        """
         now = now or datetime.now(UTC)
         sent = []
         for fup in self._storage.follow_ups.list_due(now):
@@ -634,6 +817,15 @@ class PostSubmissionService:
                 except Exception:
                     continue
             sent.append(fup)
+            try:
+                sent_fup = dataclasses.replace(fup, status=FollowUpStatus.SENT, sent_at=now)
+                self._storage.follow_ups.update(sent_fup)
+            except Exception:
+                log.warning(
+                    "post_submission_followup_mark_sent_failed",
+                    follow_up_id=str(fup.id),
+                    exc_info=True,
+                )
             try:
                 app = self._storage.applications.get(fup.application_id)
                 if app and app.status == ApplicationState.AWAITING_RESPONSE:

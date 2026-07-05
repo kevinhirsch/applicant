@@ -57,6 +57,7 @@ calendar / research / models.
 | A    | ``GET  /api/applicant/internal/calendar/interviews`` | auto-detected interview events for the owner |
 | A    | ``POST /api/applicant/internal/calendar/events``     | write-back: create/update a detected interview on the owner's calendar |
 | B    | ``POST /api/applicant/internal/research``  | deep-research run for the owner |
+| C    | ``GET  /api/applicant/internal/emails/recent`` | the owner's recent inbox messages, for the rejection/interview/offer scan sweep (dark-engine audit B2 item 10) |
 
 See ``workspace/APPLICANT_INTEGRATION.md`` ("Stage 2.5 callback channel") for the
 full contract + file-ownership map so the lanes do not collide.
@@ -412,6 +413,98 @@ def _interview_event_uid(owner: str, dedupe_key: str) -> str:
 
 
 # ======================================================================== #
+# LANE C — inbox read for the rejection/interview/offer scan sweep          #
+# (dark-engine audit B2 item 10)                                           #
+# ======================================================================== #
+#
+# Reuses the workspace's OWN mailbox reader (``routes/email_routes.py``'s
+# ``GET /api/email/list`` + ``GET /api/email/read/{uid}``) instead of a second
+# IMAP/MIME implementation here (CLAUDE.md principle #1). ``email_routes.py``
+# builds its list/read handlers as CLOSURES over a per-process IMAP
+# connection pool + cache (not importable module-level functions), so this
+# reaches them the SAME way the agent's own ``app_api`` tool already reaches
+# admin-gated routes in-process: a real HTTP loopback call to this same
+# process on its own bound port, presenting the shared internal token +
+# owner-impersonation header (see ``tool_implementations.py``'s
+# ``_internal_headers``/``_COOKBOOK_BASE``). No new auth surface, no second
+# mail implementation.
+
+#: This process's own bound port (mirrors ``tool_implementations.py``'s
+#: ``_COOKBOOK_BASE`` -- the container's ``applicant-ui`` service always
+#: listens on 7000 internally, see CLAUDE.md).
+_MAIL_LOOPBACK_BASE = "http://localhost:7000"
+#: How many of the owner's most recent INBOX messages the sweep looks at —
+#: bounded so a large mailbox never turns this into an expensive full scan.
+_RECENT_EMAILS_MAX = 20
+
+
+async def _read_owner_recent_emails(owner: str, *, limit: int = _RECENT_EMAILS_MAX) -> list[dict]:
+    """Owner-scoped read of the N most recent INBOX messages (subject + body),
+    via the SAME in-process loopback the agent's ``app_api`` tool uses.
+
+    NEVER marks a message read (``mark_seen=false`` on the body fetch) — a
+    background scan must not disturb the owner's actual unread state. Degrades
+    to an empty list on ANY failure (mailbox not configured, workspace
+    unreachable, IMAP error) — never raises, so a caller that forgets to
+    wrap this in its own try/except still can't 500 the engine's callback.
+    """
+    import httpx
+
+    headers = {INTERNAL_TOKEN_HEADER: internal_token()}
+    if owner:
+        headers[INTERNAL_OWNER_HEADER] = owner
+    bounded_limit = max(1, min(int(limit or _RECENT_EMAILS_MAX), _RECENT_EMAILS_MAX))
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{_MAIL_LOOPBACK_BASE}/api/email/list",
+                params={"folder": "INBOX", "limit": bounded_limit, "filter": "all"},
+                headers=headers,
+            )
+            if resp.status_code >= 400:
+                return []
+            listing = resp.json()
+            rows = listing.get("emails") if isinstance(listing, dict) else None
+            if not isinstance(rows, list):
+                return []
+            out: list[dict] = []
+            for row in rows:
+                if not isinstance(row, dict) or not row.get("uid"):
+                    continue
+                message_body = ""
+                try:
+                    detail_resp = await client.get(
+                        f"{_MAIL_LOOPBACK_BASE}/api/email/read/{row['uid']}",
+                        params={"folder": "INBOX", "mark_seen": "false"},
+                        headers=headers,
+                    )
+                    if detail_resp.status_code < 400:
+                        detail = detail_resp.json()
+                        if isinstance(detail, dict):
+                            message_body = detail.get("body") or ""
+                except Exception as exc:
+                    logger.debug("recent_emails: body read failed for uid=%s: %s", row.get("uid"), exc)
+                out.append(
+                    {
+                        "uid": row.get("uid"),
+                        "subject": row.get("subject") or "",
+                        "from": row.get("from_address") or row.get("from_name") or "",
+                        "body": message_body,
+                        "date": row.get("date") or "",
+                    }
+                )
+            return out
+    except Exception as exc:
+        logger.debug("recent_emails: mailbox loopback read failed: %s", exc)
+        return []
+
+
+# ======================================================================== #
+# END LANE C                                                                #
+# ======================================================================== #
+
+
+# ======================================================================== #
 # FR-MIND agent-memory bridge helpers (owner-scoped; back the endpoints     #
 # below). They lift the existing services/memory substrate — MemoryManager  #
 # (memory.json, owner-scoped) + SkillsManager (SKILL.md) — and present it    #
@@ -759,6 +852,29 @@ def setup_applicant_internal_routes() -> APIRouter:
         except Exception as exc:
             logger.warning("calendar_create_event failed: %s", exc)
             raise HTTPException(status_code=502, detail="Failed to create event") from exc
+
+    @router.get("/emails/recent")
+    async def emails_recent(request: Request, limit: int = _RECENT_EMAILS_MAX):
+        """LANE C — the owner's most recent inbox messages (dark-engine audit
+        B2 item 10).
+
+        ``PostSubmissionService.scan_inbox_for_outcomes`` calls this to feed
+        each message through the rejection/interview/offer detectors, closing
+        the loop between the engine's email-scanning capability
+        (``scan_email_for_rejection`` et al.) and the mailbox the workspace
+        already has (``routes/email_routes.py``'s ``/api/email/*``). Owner-
+        scoped (``internal_owner``) and degrades to an empty list rather than
+        500ing the engine's callback — never marks anything read (a
+        background scan must not disturb the owner's actual unread state).
+        """
+        verify_internal_token(request)
+        owner = require_internal_owner(request)
+        try:
+            emails = await _read_owner_recent_emails(owner, limit=limit)
+        except Exception as exc:  # never 500 the engine's callback
+            logger.warning("emails_recent read failed: %s", exc)
+            return {"emails": []}
+        return {"emails": emails}
 
     @router.post("/research")
     async def research(request: Request):

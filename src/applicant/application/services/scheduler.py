@@ -154,6 +154,25 @@ class Scheduler:
         # Scheduler restart that forgets this in-memory guard still can never
         # duplicate an open ghosting-flag / follow-up-draft for the same application.
         self._post_submission_days: dict[tuple[str, date], bool] = {}
+        # Dark-engine audit B2 item 7: the follow-up SEND-QUEUE driver --
+        # ``PostSubmissionService.send_scheduled_follow_ups`` (and its sibling
+        # ``schedule_follow_up``) previously had ZERO callers. Runs EVERY tick
+        # (unlike the once-per-day sweeps above): a follow-up's "due" is a real
+        # ``FollowUp.scheduled_at`` timestamp, not a calendar-day event, so this
+        # mirrors ``_advance_ladders``'s cadence, not the daily digest/ghosting
+        # sweeps. No per-tick dedup guard is needed here -- idempotency lives at
+        # the DATA layer (``send_scheduled_follow_ups`` flips each sent row to
+        # ``FollowUpStatus.SENT`` so ``list_due`` never returns it twice).
+        # Gated on the SAME automated-work gate as every other proactive push
+        # (sending a follow-up is outbound-facing automated work).
+        # (No new field needed: this step only needs ``post_submission``,
+        # already resolved per-tick above, and the gate helper below.)
+        # Dark-engine audit B2 item 10: the inbox-scan sweep -- reads the
+        # owner's recent inbox (via the workspace bridge) and feeds it through
+        # the rejection/interview/offer detectors. A SEPARATE once-per-
+        # (campaign, UTC day) guard from ``_post_submission_days`` above so one
+        # sweep's cadence/failure never blocks the other's.
+        self._inbox_scan_days: dict[tuple[str, date], bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -299,6 +318,13 @@ class Scheduler:
             #      (campaign, UTC day), gated + idempotent. Uses the SAME campaigns
             #      the loop ticked above.
             post_submission_swept = self._run_post_submission_sweep(post_submission, storage, now)
+            # (b7) dark-engine audit B2 item 7: send every owner-approved,
+            #      now-due follow-up. Runs EVERY tick (not once/day) -- see the
+            #      ``_inbox_scan_days``/send-queue field comment in __init__.
+            follow_ups_sent = self._run_follow_up_send(post_submission, now)
+            # (b8) dark-engine audit B2 item 10: the inbox-to-outcome scan sweep,
+            #      once per (campaign, UTC day), gated + idempotent.
+            inbox_scan_result = self._run_inbox_scan_sweep(post_submission, storage, now)
         except Exception:
             # The tick body itself blew up (services factory / campaign query / a nudge
             # ran unguarded) — count it as a failed tick for stall detection, then
@@ -340,6 +366,9 @@ class Scheduler:
             weekly_recaps=len(weekly_recapped),
             ghosted=len(post_submission_swept.get("ghosted", [])),
             followups_drafted=len(post_submission_swept.get("followups_drafted", [])),
+            follow_ups_sent=len(follow_ups_sent),
+            inbox_scanned=inbox_scan_result.get("scanned", 0),
+            inbox_matched=inbox_scan_result.get("matched", 0),
         )
         return {
             "ticked": ticked,
@@ -367,6 +396,13 @@ class Scheduler:
             # this tick (empty when no service wired / gated / already-run today /
             # nothing due).
             "post_submission_sweep": post_submission_swept,
+            # Dark-engine audit B2 item 7: ids of every ``FollowUp`` actually SENT
+            # this tick (empty when no service wired / gate closed / nothing due).
+            "follow_ups_sent": follow_ups_sent,
+            # Dark-engine audit B2 item 10: this tick's inbox-scan sweep result
+            # (``{"scanned": N, "matched": N}``, 0/0 when disabled / gated /
+            # already-run today / bridge unavailable / nothing matched).
+            "inbox_scan": inbox_scan_result,
             # FR-OBS-2 / NFR-OPS: this tick's health (False when every attempted campaign
             # failed). The metrics surface tracks the cross-tick consecutive-failure run.
             "tick_ok": tick_ok,
@@ -837,6 +873,83 @@ class Scheduler:
         """Keep the once-per-day post-submission-sweep guard bounded over 24/7 operation."""
         self._post_submission_days = {
             k: v for k, v in self._post_submission_days.items() if k[1] == today
+        }
+
+    # --- follow-up send queue (dark-engine audit B2 item 7) -----------------
+    def _run_follow_up_send(self, post_submission, now: datetime) -> list[str]:
+        """Send every owner-approved, now-due follow-up (item 7's send-queue
+        driver -- ``PostSubmissionService.send_scheduled_follow_ups`` /
+        ``schedule_follow_up`` previously had zero callers).
+
+        Fast no-op when (a) no ``post_submission_service`` is wired, or (b)
+        the automated-work gate is closed -- sending a follow-up is outbound-
+        facing automated work, gated exactly like every other proactive push
+        in this module. Runs EVERY tick (unlike the once-per-day sweeps
+        above): a follow-up's due time is a real ``FollowUp.scheduled_at``
+        timestamp, not a calendar-day event, so this mirrors
+        ``_advance_ladders``'s cadence. No per-tick dedup guard is needed
+        here: idempotency lives at the DATA layer (``send_scheduled_follow_
+        ups`` flips each sent row to ``FollowUpStatus.SENT``, so a re-tick a
+        minute later can never send the same follow-up twice). Best-effort:
+        an exception here is logged and never allowed to abort the tick.
+        """
+        if post_submission is None:
+            return []
+        if not self._automated_work_allowed():
+            return []
+        try:
+            sent = post_submission.send_scheduled_follow_ups(now=now)
+        except Exception:  # pragma: no cover - defensive
+            log.warning("follow_up_send_sweep_failed", exc_info=True)
+            return []
+        return [str(f.id) for f in sent] if sent else []
+
+    # --- inbox-to-outcome scan sweep (dark-engine audit B2 item 10) --------
+    def _run_inbox_scan_sweep(self, post_submission, storage, now: datetime) -> dict:
+        """Rejection/interview/offer inbox scan, at most once per (campaign,
+        UTC day) (item 10 -- ``PostSubmissionService.scan_email_for_rejection``
+        et al. were never fed the owner's actual inbox).
+
+        Fast no-op when (a) no ``post_submission_service`` is wired, or (b)
+        the automated-work gate is closed -- mirrors
+        ``_run_post_submission_sweep`` exactly, just gated by its OWN per-day
+        guard (``_inbox_scan_days``, a separate dict so one sweep's
+        cadence/failure never blocks the other's). ``PostSubmissionService.
+        scan_inbox_for_outcomes`` itself degrades cleanly when the workspace
+        bridge is unset/unreachable/disabled -- this is best-effort per
+        campaign on top of that: a failure is logged and skipped, never
+        aborts the tick or the other campaigns.
+        """
+        empty = {"scanned": 0, "matched": 0}
+        if post_submission is None:
+            return empty
+        if not self._automated_work_allowed():
+            return empty
+        today = now.date()
+        self._prune_inbox_scan_days(today)
+        scanned = 0
+        matched = 0
+        for campaign in self._active_campaigns(storage):
+            key = (str(campaign.id), today)
+            if self._inbox_scan_days.get(key):
+                continue
+            self._inbox_scan_days[key] = True
+            try:
+                result = post_submission.scan_inbox_for_outcomes(campaign.id)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(
+                    "inbox_scan_sweep_failed", campaign_id=str(campaign.id), error=str(exc)
+                )
+                continue
+            if isinstance(result, dict):
+                scanned += int(result.get("scanned", 0) or 0)
+                matched += int(result.get("matched", 0) or 0)
+        return {"scanned": scanned, "matched": matched}
+
+    def _prune_inbox_scan_days(self, today: date) -> None:
+        """Keep the once-per-day inbox-scan-sweep guard bounded over 24/7 operation."""
+        self._inbox_scan_days = {
+            k: v for k, v in self._inbox_scan_days.items() if k[1] == today
         }
 
     def _active_campaigns(self, storage=None):

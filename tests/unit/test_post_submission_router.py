@@ -340,3 +340,95 @@ def test_attention_endpoint_llm_gate_blocks_when_not_configured():
     with TestClient(create_app()) as c:
         r = c.get("/api/post-submission/c-1/attention")
         assert r.status_code == 409
+
+
+# --- (g) dark-engine audit B2 item 7: approve + schedule a drafted follow-up --
+
+
+def _seed_follow_up_draft(container, cid, aid, *, subject="Checking in", body="Hi, ..."):
+    pending = container.pending_actions_service
+    pending.materialize(
+        CampaignId(cid),
+        "followup_draft",
+        f"Follow-up ready to review: {aid}",
+        application_id=ApplicationId(aid),
+        payload={"subject": subject, "body": body},
+        dedup_key=f"followup_draft:{aid}",
+    )
+
+
+def test_approve_follow_up_route_is_registered(client):
+    paths = _registered_paths(client.app)
+    assert "/api/post-submission/applications/{application_id}/follow-up/approve" in paths
+
+
+def test_approve_follow_up_schedules_it_and_clears_the_draft(client):
+    container = client.app.state.container
+    _seed(container, "c-fu1", "a-fu1", status=ApplicationState.AWAITING_RESPONSE)
+    _seed_follow_up_draft(container, "c-fu1", "a-fu1", subject="Checking in", body="Hi there.")
+
+    r = client.post("/api/post-submission/applications/a-fu1/follow-up/approve")
+    assert r.status_code == 201
+    body = r.json()
+    assert body["application_id"] == "a-fu1"
+    assert body["status"] == "SCHEDULED"
+    assert body["subject"] == "Checking in"
+    assert body["body"] == "Hi there."
+    assert body["scheduled_at"]
+    assert body["follow_up_id"]
+
+    # The draft is resolved -- it no longer appears on the attention feed.
+    attention = client.get("/api/post-submission/c-fu1/attention").json()
+    assert attention["followups_due"] == []
+
+
+def test_approve_follow_up_lets_the_owner_edit_subject_and_body(client):
+    container = client.app.state.container
+    _seed(container, "c-fu2", "a-fu2", status=ApplicationState.AWAITING_RESPONSE)
+    _seed_follow_up_draft(container, "c-fu2", "a-fu2", subject="Original", body="Original body")
+
+    r = client.post(
+        "/api/post-submission/applications/a-fu2/follow-up/approve",
+        json={"subject": "Edited subject", "body": "Edited body"},
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["subject"] == "Edited subject"
+    assert body["body"] == "Edited body"
+
+
+def test_approve_follow_up_without_a_draft_is_404(client):
+    container = client.app.state.container
+    _seed(container, "c-fu3", "a-fu3", status=ApplicationState.AWAITING_RESPONSE)
+
+    r = client.post("/api/post-submission/applications/a-fu3/follow-up/approve")
+    assert r.status_code == 404
+
+
+def test_approve_follow_up_unknown_application_is_404():
+    with TestClient(create_app()) as c:
+        r = c.post(
+            "/api/setup/llm",
+            json={"provider": "ollama", "base_url": "http://localhost:11434/v1", "model": "llama3.1"},
+        )
+        assert r.status_code == 204
+        r = c.post("/api/post-submission/applications/does-not-exist/follow-up/approve")
+        assert r.status_code == 404
+
+
+def test_approve_follow_up_twice_only_schedules_once(client):
+    container = client.app.state.container
+    _seed(container, "c-fu4", "a-fu4", status=ApplicationState.AWAITING_RESPONSE)
+    _seed_follow_up_draft(container, "c-fu4", "a-fu4")
+
+    first = client.post("/api/post-submission/applications/a-fu4/follow-up/approve")
+    second = client.post("/api/post-submission/applications/a-fu4/follow-up/approve")
+
+    assert first.status_code == 201
+    assert second.status_code == 404
+
+
+def test_approve_follow_up_llm_gate_blocks_when_not_configured():
+    with TestClient(create_app()) as c:
+        r = c.post("/api/post-submission/applications/a-1/follow-up/approve")
+        assert r.status_code == 409
