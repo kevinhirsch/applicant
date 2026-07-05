@@ -55,12 +55,16 @@ function _ensureModalEl() {
   modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Live application session');
+  // a11y-deep audit #9: name the dialog from its own visible heading
+  // (aria-labelledby) instead of a hardcoded string that can drift from the
+  // screen — see the id on the h4 below.
+  modal.setAttribute('aria-labelledby', 'applicant-remote-title');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:980px;display:flex;flex-direction:column;max-height:92vh;">
       <div class="modal-header" style="gap:10px;">
-        <h4>Live application session</h4>
+        <h4 id="applicant-remote-title">Live application session</h4>
         <select id="applicant-remote-picker" class="settings-select" title="Choose which live session to watch"
+                aria-label="Choose which live session to watch"
                 style="flex:0 1 auto;max-width:46%;display:none;"></select>
         <button id="applicant-remote-close" class="modal-close" aria-label="Close" title="Close">×</button>
       </div>
@@ -70,6 +74,11 @@ function _ensureModalEl() {
           over at any moment to do the parts only you should do — creating an
           account, clearing a verification, and the final submit.
         </p>
+        <!-- a11y-deep audit #22: the phase arc (launching/ready/took-control/
+             continuing/submitted) was only visible pixels — this one polite
+             live region mirrors it in words, updated by _announcePhase(). -->
+        <div id="applicant-remote-phase" role="status" aria-live="polite"
+             style="font-size:11px;opacity:0.7;min-height:14px;"></div>
 
         <div id="applicant-remote-frame-wrap"
              style="position:relative;border-radius:8px;overflow:hidden;background:#0b0b0b;box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--fg) 10%, transparent);min-height:40dvh;max-height:72dvh;">
@@ -86,14 +95,18 @@ function _ensureModalEl() {
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
           <button id="applicant-remote-takeover" class="cal-btn"
                   title="Take live control of the browser to do a step yourself">Take control</button>
-          <button id="applicant-remote-open-tab" class="memory-toolbar-btn"
+          <button id="applicant-remote-open-tab" class="cal-btn"
                   title="Open the live session full-screen in a new tab">Open in new tab</button>
-          <button id="applicant-remote-refresh" class="memory-toolbar-btn"
+          <button id="applicant-remote-refresh" class="cal-btn"
                   title="Reload the list of live sessions">Refresh sessions</button>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
-          <h3 style="margin:0;font-size:0.95em;">Resume after a step you did yourself</h3>
+          <!-- a11y-deep audit #56: dropped from h3 to h5 — this section
+               heading previously outranked the dialog's own h4 title (h3
+               nested under h4); the visible size is controlled entirely by
+               the inline font-size, unchanged. -->
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Resume after a step you did yourself</h5>
           <p style="margin:0;opacity:0.7;font-size:12px;">
             Use these once you have finished a step the assistant can't do on its own.
           </p>
@@ -106,7 +119,7 @@ function _ensureModalEl() {
         </div>
 
         <div id="applicant-remote-handoff" class="admin-card" style="display:none;flex-direction:column;gap:8px;">
-          <h3 style="margin:0;font-size:0.95em;">Fill these in yourself</h3>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Fill these in yourself</h5>
           <p id="applicant-remote-handoff-note" style="margin:0;opacity:0.75;font-size:12px;">
             The assistant couldn't fill this form automatically. Copy each answer below
             into the live session, then submit it there and come back to mark it submitted.
@@ -120,7 +133,7 @@ function _ensureModalEl() {
 
         <div id="applicant-remote-desktop" class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <h3 style="margin:0;font-size:0.95em;flex:1 1 auto;">Let the assistant help on the desktop</h3>
+            <h5 style="margin:0;font-size:0.95em;font-weight:600;flex:1 1 auto;">Let the assistant help on the desktop</h5>
             <button id="applicant-remote-desktop-toggle" class="cal-btn" disabled
                     title="Let the assistant handle desktop steps the browser can't reach, like a file-upload dialog. You stay in control and approve each action.">
               Turn on</button>
@@ -136,7 +149,7 @@ function _ensureModalEl() {
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
-          <h3 style="margin:0;font-size:0.95em;">Finish the application</h3>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Finish the application</h5>
           <p style="margin:0;opacity:0.75;font-size:12px;">
             The assistant has pre-filled everything and stopped before the final
             submit. Choose how to finish — nothing is submitted until you decide.
@@ -194,7 +207,7 @@ function _wire(modal) {
   on('applicant-remote-close', 'click', closeRemoteSession);
   on('applicant-remote-takeover', 'click', _onTakeover);
   on('applicant-remote-open-tab', 'click', _onOpenTab);
-  on('applicant-remote-refresh', 'click', () => _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e)));
+  on('applicant-remote-refresh', 'click', () => _onRefreshSessions());
   on('applicant-remote-resume-account', 'click', () => _resume('resume-account-step'));
   on('applicant-remote-resume-detection', 'click', () => _resume('resume-detection-step'));
   on('applicant-remote-submit-self', 'click', _onSubmitSelf);
@@ -221,6 +234,15 @@ function _wire(modal) {
 
 let _sessionList = [];
 
+// a11y-deep audit #22: mirrors the phase arc (launching/ready/took-control/
+// continuing/submitted) into the `#applicant-remote-phase` polite live region
+// declared in the modal scaffold, so a screen-reader user gets the same
+// signal a sighted user reads off the frame/buttons.
+function _announcePhase(text) {
+  const el = _modalEl && _modalEl.querySelector('#applicant-remote-phase');
+  if (el) el.textContent = text || '';
+}
+
 function _setActiveSession(session) {
   _activeSession = session || null;
   const frame = _modalEl && _modalEl.querySelector('#applicant-remote-frame');
@@ -229,22 +251,71 @@ function _setActiveSession(session) {
     if (session && session.view_url) {
       frame.src = session.view_url;
       if (empty) empty.style.display = 'none';
+      _announcePhase('Live session ready to watch.');
     } else {
       frame.removeAttribute('src');
       if (empty) empty.style.display = 'flex';
+      _announcePhase('No live session is open yet.');
     }
   }
   // Reflect the selection in the picker if present.
   const picker = _modalEl && _modalEl.querySelector('#applicant-remote-picker');
   if (picker && session) picker.value = session.session_id;
   // Desktop-assist opt-in is per-session — refresh it whenever the session changes.
-  _loadDesktopAssist().catch(e => console.error('Silent catch in applicantRemote:', e));
+  _loadDesktopAssist().catch(e => console.debug('Silent catch in applicantRemote:', e));
   // The "fill these in yourself" handoff is per-application — refresh it too.
-  _loadHandoff().catch(e => console.error('Silent catch in applicantRemote:', e));
+  _loadHandoff().catch(e => console.debug('Silent catch in applicantRemote:', e));
   // The "what will be sent" preview is per-application — collapse it (and drop the
   // previous application's snapshot) whenever the active session changes so a stale
   // preview can never sit under a different application's decision pair.
   _collapsePreview();
+  // micro-interactions audit #7: a new/switched session must never inherit a
+  // previous application's "Submitted ✓" terminal lock on the finish buttons.
+  _clearFinishTerminal();
+}
+
+// micro-interactions audit #7: after a successful submit-self/authorize, the
+// "Finish the application" card used to stay fully active — nothing stopped
+// a second tap on Authorize. Lock the decision pair and show a status line;
+// cleared again in `_setActiveSession` when a different session is picked.
+function _markFinishTerminal(statusText) {
+  const selfBtn = _modalEl && _modalEl.querySelector('#applicant-remote-submit-self');
+  const authBtn = _modalEl && _modalEl.querySelector('#applicant-remote-authorize');
+  [selfBtn, authBtn].forEach((b) => {
+    if (!b) return;
+    b.disabled = true;
+    b.setAttribute('aria-disabled', 'true');
+    b.style.opacity = '0.55';
+    b.style.cursor = 'not-allowed';
+  });
+  const actions = _modalEl && _modalEl.querySelector('#applicant-remote-finish-actions');
+  if (actions) {
+    let status = actions.querySelector('.applicant-remote-finish-status');
+    if (!status) {
+      status = document.createElement('span');
+      status.className = 'applicant-remote-finish-status';
+      status.setAttribute('role', 'status');
+      status.style.cssText = 'font-weight:600;font-size:12px;color:var(--success,#3a8a3a);';
+      actions.appendChild(status);
+    }
+    status.textContent = statusText;
+  }
+  _announcePhase(statusText);
+}
+
+function _clearFinishTerminal() {
+  const selfBtn = _modalEl && _modalEl.querySelector('#applicant-remote-submit-self');
+  const authBtn = _modalEl && _modalEl.querySelector('#applicant-remote-authorize');
+  [selfBtn, authBtn].forEach((b) => {
+    if (!b) return;
+    b.disabled = false;
+    b.removeAttribute('aria-disabled');
+    b.style.opacity = '';
+    b.style.cursor = '';
+  });
+  const actions = _modalEl && _modalEl.querySelector('#applicant-remote-finish-actions');
+  const status = actions && actions.querySelector('.applicant-remote-finish-status');
+  if (status) status.remove();
 }
 
 // ── desktop assist (opt-in, per-session; ships dormant/grayed) ───────────────
@@ -278,6 +349,7 @@ function _renderDesktopAssist() {
     if (card) { card.style.paddingTop = '8px'; card.style.paddingBottom = '8px'; }
     btn.textContent = 'Turn on';
     btn.classList.remove('cal-btn-primary');
+    btn.setAttribute('aria-pressed', 'false');
     note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
     note.style.display = '';
     return;
@@ -286,6 +358,9 @@ function _renderDesktopAssist() {
   if (card) { card.style.paddingTop = ''; card.style.paddingBottom = ''; }
   btn.textContent = enabled ? 'Turn off' : 'Turn on';
   btn.classList.toggle('cal-btn-primary', !enabled);
+  // a11y-deep audit #30 (toggle-state inventory): reflect the on/off state
+  // programmatically, not just in the button's own changing label.
+  btn.setAttribute('aria-pressed', String(enabled));
   note.textContent = enabled
     ? 'On for this session. The assistant asks before each desktop step and never submits on its own.'
     : 'Off. Turn it on to let the assistant help with desktop steps for this session only.';
@@ -452,6 +527,20 @@ async function _loadSessions() {
   }
 }
 
+// micro-interactions audit #35: Refresh sessions never showed a busy state —
+// a second click while a load was in flight looked like nothing happened.
+async function _onRefreshSessions() {
+  const btn = _modalEl && _modalEl.querySelector('#applicant-remote-refresh');
+  const orig = _setButtonBusy(btn, 'Refreshing…');
+  try {
+    await _loadSessions();
+  } catch (e) {
+    console.debug('Silent catch in applicantRemote:', e);
+  } finally {
+    _clearButtonBusy(btn, orig);
+  }
+}
+
 async function _loadCaveat() {
   const box = _modalEl && _modalEl.querySelector('#applicant-remote-caveat');
   if (!box) return;
@@ -520,7 +609,8 @@ async function _onTakeover() {
   try {
     await _post(`${API}/sessions/${encodeURIComponent(_activeSession.session_id)}/takeover`);
     _toast('You now have control of the session');
-    _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e));
+    _announcePhase('You now have control of the session.');
+    _loadSessions().catch(e => console.debug('Silent catch in applicantRemote:', e));
   } catch (e) {
     _toast(e.message || 'Could not take control');
   } finally {
@@ -555,6 +645,7 @@ async function _resume(step) {
   try {
     resp = await _post(`${API}/applications/${encodeURIComponent(appId)}/${step}`);
     _toast('Continuing the application');
+    _announcePhase('Continuing the application.');
   } catch (e) {
     _toast(e.message || 'Could not continue');
   } finally {
@@ -653,22 +744,30 @@ async function _onSubmitSelf() {
   // accepted, fire two POSTs before either `finally` ran.
   _busy = true;
   const orig = _setButtonBusy(btn);
+  let submitted = false;
   try {
+    // micro-interactions audit #87: reuse the SAME confirm-copy builder Portal
+    // does for this stop-boundary, instead of a hand-written string that had
+    // drifted from it — one source of truth for the wording.
     const ok = await _confirm(
-      'Mark this application as submitted by you? Do this after you have clicked '
-      + 'submit in the live session.',
+      _submitSelfConfirmMessage(_activeSession),
       { confirmText: 'Yes, I submitted it', cancelText: 'Not yet' });
     if (!ok) return;
     if (btn) btn.textContent = 'Recording…';
     const appId = _activeSession.application_id;
     await submitSelf(appId);
     _toast('Recorded — thanks for finishing it yourself');
+    submitted = true;
   } catch (e) {
     _toast(e.message || 'Could not record the submission');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
   }
+  // micro-interactions audit #7: lock the "Finish the application" decision
+  // pair AFTER the busy-clear above (which re-enables both buttons) so the
+  // terminal disabled state is the one that actually sticks.
+  if (submitted) _markFinishTerminal('Submitted ✓ — thanks for finishing it yourself.');
 }
 
 // ── authorize hold/cancel window (Top-25 #12) ────────────────────────────
@@ -766,6 +865,7 @@ async function _onAuthorizeFinish() {
   // the employer's real final-submit button, so closing this race matters most.
   _busy = true;
   const orig = _setButtonBusy(btn);
+  let submitted = false;
   try {
     const ok = await _confirm(
       _authorizeConfirmMessage(_activeSession),
@@ -780,12 +880,18 @@ async function _onAuthorizeFinish() {
     const appId = _activeSession.application_id;
     await authorizeEngineFinish(appId);
     _toast('Authorized — the assistant submitted the application');
+    submitted = true;
   } catch (e) {
     _toast(e.message || 'Could not authorize the submission');
   } finally {
     _busy = false;
     _clearButtonBusy(btn, orig);
   }
+  // micro-interactions audit #7: lock the decision pair AFTER the busy-clear
+  // above so the terminal disabled state is the one that sticks — the
+  // employer's real submit button was just physically clicked; a second tap
+  // on Authorize must not be possible.
+  if (submitted) _markFinishTerminal('Submitted ✓ — the assistant finished it.');
 }
 
 // ── "Review exactly what will be sent" — the pre-submit snapshot preview ─────
@@ -965,8 +1071,8 @@ export async function openApplicantRemoteSession(applicationId, sessionUrl) {
     });
   }
 
-  _loadCaveat().catch(e => console.error('Silent catch in applicantRemote:', e));
-  await _loadSessions().catch(e => console.error('Silent catch in applicantRemote:', e));
+  _loadCaveat().catch(e => console.debug('Silent catch in applicantRemote:', e));
+  await _loadSessions().catch(e => console.debug('Silent catch in applicantRemote:', e));
 
   // Prefer the session that matches the requested application, if any.
   if (applicationId) {

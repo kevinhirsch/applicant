@@ -60,6 +60,11 @@ let _modalA11yCleanup = null;
 let _campaigns = [];
 let _activeCampaignId = null;
 let _sending = false;
+// a11y/micro-interactions audit (05 #49 / 01 #49): true once a conversation has
+// been rendered into the modal — lets a reopen skip tearing the thread down and
+// rebuilding from scratch (see openApplicantChat below), so closing the panel to
+// check something else and reopening it no longer wipes the whole conversation.
+let _conversationReady = false;
 
 // Item #46: once the panel is docked to the bottom of the content plane (see
 // the CSS notes at "#applicant-chat-modal" in style.css), it sits directly
@@ -147,15 +152,18 @@ function _ensureModalEl() {
   modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Job Assistant');
+  // a11y-deep audit #9: name the dialog from its own visible heading
+  // (aria-labelledby) instead of a hardcoded string that can drift from the
+  // screen — see the id on the h4 below.
+  modal.setAttribute('aria-labelledby', 'applicant-chat-title');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:800px;display:flex;flex-direction:column;max-height:86vh;">
       <div class="modal-header ow-titlebar">
         <div class="ow-controls">
           <button type="button" class="ow-close modal-close tap-exempt" id="applicant-chat-close" aria-label="Close" title="Close">&times;</button>
         </div>
-        <h4 class="ow-title">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <h4 class="ow-title" id="applicant-chat-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Job Assistant
         </h4>
       </div>
@@ -164,10 +172,11 @@ function _ensureModalEl() {
       </div>
     </div>`;
   document.body.appendChild(modal);
-  if (_modalA11yCleanup) _modalA11yCleanup();
-  // Escape is handled by initModalA11y above (topmost-modal arbiter,
-  // design-audit item #17) — do not add a second local Escape listener here.
-  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  // a11y-deep audit #1: focus management (move-in/trap/restore) is (re-)wired
+  // in openApplicantChat on EVERY open, not here — this creation path only
+  // runs once per page load, and initModalA11y living here (behind that
+  // one-time guard) was exactly the bug: `_close()` tears the trap down, so
+  // every reopen after the first silently lost focus management.
   modal.querySelector('#applicant-chat-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   _modalEl = modal;
@@ -228,7 +237,7 @@ function _renderNoCampaign(body) {
       </div>
       <div style="display:flex;gap:8px;justify-content:center;max-width:360px;margin:0 auto;">
         <input type="text" id="applicant-new-campaign" class="settings-select" placeholder="e.g. Backend roles 2026"
-               style="flex:1;" />
+               aria-label="Job search name" style="flex:1;" />
         <button type="button" class="cal-btn cal-btn-primary" id="applicant-create-campaign">Create</button>
       </div>
     </div>`;
@@ -252,7 +261,11 @@ function _renderNoCampaign(body) {
     }
   };
   btn.addEventListener('click', create);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') create(); });
+  input.addEventListener('keydown', (e) => {
+    // micro-interactions audit #15: don't let an IME composition-commit Enter
+    // (CJK / dead-key input) fire the create action.
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) create();
+  });
   input.focus();
 }
 
@@ -277,13 +290,16 @@ function _renderConversation() {
     <div id="applicant-controls"></div>
     <div id="applicant-suggested-card" style="margin-bottom:10px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:none;"></div>
     <div id="applicant-pending" style="margin-bottom:12px;"></div>
-    <div id="applicant-thread" class="chat-history" style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
+    <div id="applicant-thread" class="chat-history" role="log" aria-live="polite" aria-label="Conversation with the Job Assistant"
+         style="display:flex;flex-direction:column;margin-bottom:12px;padding-left:0;padding-right:0;"></div>
     <div id="applicant-starters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
     <div id="applicant-composer" class="chat-input-bar" style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--border);padding-top:10px;position:sticky;bottom:0;background:var(--bg);">
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
+                aria-label="Message the Job Assistant"
                 style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
       <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send to the assistant">Send</button>
-    </div>`;
+    </div>
+    <div style="text-align:right;font-size:10px;opacity:0.5;margin-top:2px;">⌘/Ctrl + Enter to send</div>`;
 
   const pick = body.querySelector('#applicant-campaign-pick');
   if (pick) {
@@ -300,6 +316,9 @@ function _renderConversation() {
   const send = () => _send(input.value);
   sendBtn.addEventListener('click', send);
   input.addEventListener('keydown', (e) => {
+    // micro-interactions audit #15: an IME composition-commit Enter must not
+    // fall through to the send chord below.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
   });
   // Gate the Send button on non-empty input (quick-wins #10): dim + disable until
@@ -317,9 +336,19 @@ function _renderConversation() {
   // persistence; show() is idempotent and a no-op once the user dismissed it.
   _ensureChatHintRegistered();
   try { appkitChatHint.show(CHAT_HINT_KEY); } catch { /* kit unavailable — no-op */ }
+
+  // micro-interactions audit #49: mark the conversation as rendered so a
+  // subsequent openApplicantChat() (closing to check something else, then
+  // reopening) can skip tearing this thread down and rebuilding it from
+  // scratch — see the reopen short-circuit in openApplicantChat below.
+  _conversationReady = true;
 }
 
 function _renderThreadIntro(seq) {
+  // micro-interactions audit #93: the campaign-switch caller passes a seq but
+  // this used to ignore it — a slow campaign switch could paint a stale
+  // intro over a newer one. Guard it the same way _loadPending already does.
+  if (seq && seq !== _renderSeq) return;
   const thread = _modalEl.querySelector('#applicant-thread');
   if (!thread) return;
   thread.innerHTML = '';
@@ -539,6 +568,11 @@ async function _send(text) {
   const message = (text || '').trim();
   if (!message || _sending) return;
   if (!_activeCampaignId) { _toast('Pick or create a job search first'); return; }
+  // micro-interactions audit #84: starter prompts are an invitation for a
+  // blank composer — once the conversation actually starts they just eat
+  // vertical space, so hide them the first time a message goes out.
+  const startersHost = _modalEl && _modalEl.querySelector('#applicant-starters');
+  if (startersHost) startersHost.style.display = 'none';
   _appendMessage('user', message);
   // A calm "thinking" pill instead of a bare word, so the wait reads as work, not a
   // hang (quick-wins #16 / delight #38). loadingHTML renders trusted markup.
@@ -671,7 +705,28 @@ export async function openApplicantChat(opts) {
   // Item #46: the panel is now docked over the real composer's band (see the
   // scaffold comments above) — dim the real composer for as long as it's open.
   _setComposerDimmed(true);
+
+  // a11y-deep audit #1: re-init focus management on EVERY open, not just the
+  // first — `_close()` tears the trap down (see `_close` above), so without
+  // this every reopen after the first would silently lose focus move-in,
+  // the Tab trap, and focus restore.
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+
   const body = modal.querySelector('#applicant-chat-body');
+
+  // micro-interactions audit #49: closing the panel to check something else
+  // and reopening it used to tear the whole conversation down and rebuild it
+  // from scratch. If a conversation is already rendered for the current
+  // campaign, keep it — just refresh the pending count and refocus the
+  // composer, instead of re-fetching campaigns and wiping the thread.
+  if (_conversationReady && body.querySelector('#applicant-thread')) {
+    _loadPending();
+    const input = body.querySelector('#applicant-input');
+    if (input) input.focus();
+    return;
+  }
+
   // Item #56: reuse the same spinner/pill the "thinking" reply already uses
   // instead of a bare text node, so opening the panel reads as work in
   // progress rather than a possible hang.

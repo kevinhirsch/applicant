@@ -170,8 +170,11 @@ def test_remote_finish_card_has_no_custom_colored_border():
     """#110: the "Finish the application" card must not carry a custom blue
     border — it should read like every other neutral `.admin-card`."""
     src = _read(REMOTE_JS)
+    # Heading level updated to <h5> by the a11y-deep audit's heading-hierarchy
+    # fix (#56 in exhaustive2/05_a11y_deep.md): this h3 used to outrank the
+    # dialog's own <h4> title — the border-color assertion below is unaffected.
     m = re.search(
-        r'<div class="admin-card" style="([^"]*)">\s*<h3[^>]*>Finish the application</h3>',
+        r'<div class="admin-card" style="([^"]*)">\s*<h5[^>]*>Finish the application</h5>',
         src,
     )
     assert m, 'expected to find the "Finish the application" admin-card markup'
