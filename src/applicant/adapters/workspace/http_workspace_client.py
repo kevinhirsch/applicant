@@ -212,6 +212,14 @@ class HttpWorkspaceClient:
             body["dedupe_key"] = dedupe_key
         return self._request("POST", "/calendar/events", owner=owner, json=body)
 
+    def recent_emails(self, *, owner: str | None = None, limit: int = 20) -> dict:
+        """LANE C -- the owner's most recent inbox messages (dark-engine audit
+        B2 item 10). ``PostSubmissionService.scan_inbox_for_outcomes`` feeds
+        each through the rejection/interview/offer detectors. Raises
+        :class:`WorkspaceError` up front (no network) when the channel is
+        disabled -- callers MUST treat this as best-effort."""
+        return self._request("GET", _q("/emails/recent", {"limit": limit}), owner=owner)
+
     # --- FR-MIND agent-memory bridge (memory / skills / recall) ---------------
     # These reach the front-door memory/skills substrate (workspace/services/memory/)
     # over the same token-gated channel; the bridge adapters in

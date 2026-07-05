@@ -67,6 +67,19 @@ class ScanEmailIn(BaseModel):
     body: str = ""
 
 
+class ApproveFollowUpIn(BaseModel):
+    #: Owner edits to the drafted follow-up before approving (dark-engine
+    #: audit B2 item 7). ``None`` (the default) keeps exactly what was
+    #: drafted; an empty string is a deliberate clear (falls back to the
+    #: template default in ``PostSubmissionService._default_subject``/
+    #: ``_default_body``).
+    subject: str | None = None
+    body: str | None = None
+    #: Override the default send delay (hours). ``None`` uses
+    #: ``PostSubmissionService``'s own template default.
+    delay_hours: float | None = None
+
+
 @router.get("")
 def index() -> dict:
     return {"surface": "post-submission", "status": "live"}
@@ -229,3 +242,44 @@ def scan_email(
             raise HTTPException(status_code=404, detail="No such application.")
         return {"application_id": application_id, "detected": False}
     return {"application_id": application_id, "detected": True, **result}
+
+
+@router.post("/applications/{application_id}/follow-up/approve", status_code=201)
+def approve_follow_up(
+    application_id: str,
+    body: ApproveFollowUpIn | None = None,
+    svc=Depends(get_post_submission_service),
+) -> dict:
+    """Owner approves + schedules a drafted follow-up for sending (dark-engine
+    audit B2 item 7).
+
+    This is the ONLY route that ever calls ``PostSubmissionService.
+    schedule_follow_up`` -- the hard safety boundary CLAUDE.md requires: a
+    follow-up is user-facing outbound content, so it is queued for sending
+    ONLY once the owner reviews the ``followup_draft`` pending action (the
+    scheduler's daily sweep, ``run_post_submission_sweep``) and explicitly
+    hits this endpoint -- never autonomously drafted-and-sent in one step.
+    ``subject``/``body`` let the owner edit the draft before approving.
+
+    404s when there is no OPEN follow-up draft for this application (never
+    drafted, already approved, or the application doesn't exist).
+    """
+    b = body or ApproveFollowUpIn()
+    fup = svc.approve_follow_up_draft(
+        ApplicationId(application_id),
+        subject=b.subject,
+        body=b.body,
+        delay_hours=b.delay_hours,
+    )
+    if fup is None:
+        raise HTTPException(
+            status_code=404, detail="No open follow-up draft for this application."
+        )
+    return {
+        "application_id": application_id,
+        "follow_up_id": str(fup.id),
+        "status": fup.status.value,
+        "scheduled_at": fup.scheduled_at.isoformat() if fup.scheduled_at else None,
+        "subject": fup.subject,
+        "body": fup.body,
+    }

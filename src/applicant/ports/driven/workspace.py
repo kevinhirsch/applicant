@@ -111,3 +111,18 @@ class WorkspacePort(Protocol):
         best-effort and never let it break outcome recording.
         """
         ...
+
+    def recent_emails(self, *, owner: str | None = None, limit: int = 20) -> dict:
+        """LANE C -- the owner's most recent inbox messages (dark-engine audit
+        B2 item 10): ``GET /api/applicant/internal/emails/recent``.
+
+        Returns ``{"emails": [{"uid", "subject", "from", "body", "date"}, ...]}``,
+        newest first. Used by ``PostSubmissionService.scan_inbox_for_outcomes``
+        to feed each message through the rejection/interview/offer detectors so
+        a real inbox reply can close the loop without the owner manually
+        pasting it into ``scan_email``. Raises :class:`WorkspaceError` on
+        failure (channel disabled, mailbox not configured, transport error) --
+        callers MUST treat this as best-effort and never let it break the
+        sweep.
+        """
+        ...

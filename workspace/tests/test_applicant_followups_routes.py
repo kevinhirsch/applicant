@@ -38,6 +38,7 @@ class FakeEngine:
     campaigns: list = []
     attention: dict = {}  # campaign_id -> engine response dict
     raises: dict = {}     # key -> EngineError
+    approve_result: dict = {}  # application_id -> engine response dict
 
     def __init__(self, *a, **k):
         pass
@@ -63,6 +64,23 @@ class FakeEngine:
             campaign_id, {"campaign_id": campaign_id, "ghosted": [], "followups_due": []}
         )
 
+    async def follow_up_approve(self, application_id, *, subject=None, body=None, delay_hours=None):
+        FakeEngine.calls.append(("follow_up_approve", application_id, subject, body, delay_hours))
+        key = ("follow_up_approve", application_id)
+        if key in FakeEngine.raises:
+            raise FakeEngine.raises[key]
+        return FakeEngine.approve_result.get(
+            application_id,
+            {
+                "application_id": application_id,
+                "follow_up_id": "fup-1",
+                "status": "SCHEDULED",
+                "scheduled_at": "2026-06-22T00:00:00+00:00",
+                "subject": subject or "Checking in",
+                "body": body or "Hi, ...",
+            },
+        )
+
 
 @pytest.fixture(autouse=True)
 def _reset_fake():
@@ -70,6 +88,7 @@ def _reset_fake():
     FakeEngine.campaigns = []
     FakeEngine.attention = {}
     FakeEngine.raises = {}
+    FakeEngine.approve_result = {}
     yield
 
 
@@ -177,3 +196,100 @@ def test_engine_gate_on_attention_read_degrades_soft(client):
     assert body.get("gated") is True
     assert body["ghosted"] == []
     assert body["followups_due"] == []
+
+
+# --- approve a drafted follow-up (dark-engine audit B2 item 7) ----------------
+
+
+def _own(campaign_id: str, application_id: str, *, subject="Checking in", body="Hi, ..."):
+    """Wire up FakeEngine so ``application_id`` shows up in the owner's own
+    ``followups_due`` fan-out for ``campaign_id`` (the scope guard the approve
+    route checks before forwarding the write)."""
+    FakeEngine.campaigns = [{"id": campaign_id, "name": "Backend"}]
+    FakeEngine.attention = {
+        campaign_id: {
+            "campaign_id": campaign_id,
+            "ghosted": [],
+            "followups_due": [
+                {
+                    "id": "pa-1",
+                    "application_id": application_id,
+                    "title": "Follow-up ready to review",
+                    "payload": {"subject": subject, "body": body},
+                    "created_at": "2026-06-21T00:00:00+00:00",
+                }
+            ],
+        }
+    }
+
+
+def test_unauthenticated_approve_is_rejected(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(authed=False))
+    r = c.post("/api/applicant/followups/applications/a-1/approve")
+    assert r.status_code == 401
+
+
+def test_approve_forwards_to_the_engine_for_an_owned_application(client):
+    _own("c1", "a-1")
+
+    r = client.post("/api/applicant/followups/applications/a-1/approve")
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["application_id"] == "a-1"
+    assert body["status"] == "SCHEDULED"
+    assert body["subject"] == "Checking in"
+    call = next(c for c in FakeEngine.calls if c[0] == "follow_up_approve")
+    assert call == ("follow_up_approve", "a-1", None, None, None)
+
+
+def test_approve_forwards_owner_edited_subject_and_body(client):
+    _own("c1", "a-1")
+
+    r = client.post(
+        "/api/applicant/followups/applications/a-1/approve",
+        json={"subject": "Edited subject", "body": "Edited body", "delay_hours": 2.0},
+    )
+
+    assert r.status_code == 201
+    body = r.json()
+    assert body["subject"] == "Edited subject"
+    assert body["body"] == "Edited body"
+    call = next(c for c in FakeEngine.calls if c[0] == "follow_up_approve")
+    assert call == ("follow_up_approve", "a-1", "Edited subject", "Edited body", 2.0)
+
+
+def test_approve_an_application_never_surfaced_as_a_draft_is_404(client):
+    # An owned campaign exists, but this application never showed up in its
+    # followups_due fan-out.
+    FakeEngine.campaigns = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.attention = {"c1": {"campaign_id": "c1", "ghosted": [], "followups_due": []}}
+
+    r = client.post("/api/applicant/followups/applications/a-not-a-draft/approve")
+
+    assert r.status_code == 404
+    assert not any(c[0] == "follow_up_approve" for c in FakeEngine.calls)
+
+
+def test_approve_when_engine_unreachable_is_503(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("boom", status=None)
+
+    r = client.post("/api/applicant/followups/applications/a-1/approve")
+
+    assert r.status_code == 503
+    assert not any(c[0] == "follow_up_approve" for c in FakeEngine.calls)
+
+
+def test_approve_forwards_a_404_from_the_engine_when_already_approved(client):
+    """Even after this route's own scope check passes, the engine may still
+    404 (e.g. a race: a second tap after the first already resolved the
+    draft) -- that must be forwarded faithfully, not swallowed."""
+    _own("c1", "a-1")
+    FakeEngine.raises[("follow_up_approve", "a-1")] = EngineError(
+        "No open follow-up draft for this application.", status=404
+    )
+
+    r = client.post("/api/applicant/followups/applications/a-1/approve")
+
+    assert r.status_code == 404

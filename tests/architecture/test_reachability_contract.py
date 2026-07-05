@@ -79,6 +79,17 @@ KNOWN_UNWIRED: dict[str, str] = {
     # applicantTracker.js/applicantPortal.js/documentLibrary.js are sibling-owned
     # this round. Pull in once that panel is built.
     "GET /api/applicant/followups/{campaign_id}": "dark-engine audit B2 items 8/9/60 (deferred Tracker panel)",
+    # dark-engine audit B2 item 7: the approve+schedule write is fully wired
+    # end to end (engine service -> engine router -> this proxy) and the owner
+    # can already resolve/dismiss the SAME ``followup_draft`` pending action
+    # generically via the existing Portal resolve path -- but a dedicated
+    # "approve" button/control for THIS write specifically is sibling-owned
+    # this round (applicantTracker.js/applicantPortal.js/documentLibrary.js
+    # are out of file-scope here). Pull in once that control lands (the
+    # deferred Tracker panel above, or a Portal row action).
+    "POST /api/applicant/followups/applications/{application_id}/approve": (
+        "dark-engine audit B2 item 7 (deferred Portal/Tracker approve control)"
+    ),
 }
 
 
