@@ -21,7 +21,7 @@ export function updateStateView(status) {
       running: false,
       canTrigger: false,
       headline: 'Updates are unavailable right now',
-      message: "The app's engine isn't reachable, so updates can't be checked yet. This page will work once it's connected.",
+      message: "I can't check for updates right now — Applicant isn't fully connected yet. This page will work once it is.",
     };
   }
   const state = typeof s.state === 'string' ? s.state : 'idle';
@@ -35,7 +35,7 @@ export function updateStateView(status) {
       canTrigger: false,
       headline: 'One-click updates not enabled yet',
       message: s.message
-        || "This install doesn't have the one-click updater yet. Update once the usual way (the way you first installed it) and the button will appear here after that.",
+        || "One-click updates aren't set up here yet. Update once using the same method you first installed with, and the button will appear here afterwards.",
     };
   }
   if (running) {

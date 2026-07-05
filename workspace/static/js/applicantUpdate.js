@@ -50,7 +50,7 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Update applicant');
+  modal.setAttribute('aria-label', 'Update Applicant');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header">
@@ -182,7 +182,7 @@ async function _trigger() {
   try {
     const res = await _post(`${OPS}/update/trigger`, {});
     if (res.engine_available === false) {
-      _toast("The app's engine isn't reachable, so the update couldn't start.");
+      _toast("I couldn't start the update — Applicant isn't fully connected right now.");
       await _refresh();
       return;
     }

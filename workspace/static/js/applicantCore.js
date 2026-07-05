@@ -49,11 +49,17 @@ export async function _fetchJSON(url, opts = {}) {
   let data = null;
   try { data = await res.json(); } catch { /* empty / non-JSON body */ }
   if (!res.ok) {
-    const detail = (data && (data.detail || data.message)) || `${url} → ${res.status}`;
-    const err = new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+    const detail = data && (data.detail || data.message);
+    // Never let the raw URL/HTTP-status leak into user-facing copy (audit
+    // #138) — that technical detail goes to the console only; the thrown
+    // error's message stays plain and calm when the server sent no detail.
+    const err = new Error(typeof detail === 'string'
+      ? detail
+      : (detail ? JSON.stringify(detail) : 'Something went wrong — please try again.'));
     err.status = res.status;
     err.body = data;
     err.kind = (res.status === 401 || res.status === 403) ? 'auth' : 'http';
+    if (!detail) { try { console.error(`${url} → ${res.status}`); } catch { /* no-op */ } }
     throw err;
   }
   return data || {};
@@ -87,10 +93,10 @@ export function _put(url, body) {
 export function errText(err) {
   const kind = err && err.kind;
   const status = err && err.status;
-  if (kind === 'auth') return 'Your session expired — please sign in again.';
-  if (kind === 'timeout') return 'This is taking a moment — the assistant is still working. Try again shortly.';
-  if (kind === 'network' || status === 0) return 'Can’t reach the assistant right now.';
-  return (err && err.message) ? err.message : 'Something went wrong.';
+  if (kind === 'auth') return 'You’ve been signed out — please sign in again.';
+  if (kind === 'timeout') return 'This is taking a moment — I’m still working. Try again shortly.';
+  if (kind === 'network' || status === 0) return 'I can’t connect right now — I’ll keep trying.';
+  return (err && err.message) ? err.message : 'Something went wrong — please try again.';
 }
 
 /**
