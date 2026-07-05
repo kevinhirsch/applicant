@@ -616,18 +616,44 @@ class Scheduler:
         return fired
 
     # --- closed-loop curation nudge (FR-MIND-7) ---------------------------
+    def _effective_curation_schedule(self) -> str:
+        """The LIVE cadence in effect right now, re-read every tick.
+
+        Dark-engine audit item 66: the constructor-time ``self._curation_schedule``
+        is only the ``CURATION_SCHEDULE`` env default, snapshotted ONCE when the
+        container builds the (process-lived) Scheduler. Settings > Automation's
+        "let the assistant propose memory/skill updates daily" toggle (item 100,
+        ``AutomationPrefsIn.curation_schedule`` -> ``setup_service.
+        set_automation_prefs``) persists a per-tenant override that must take
+        effect WITHOUT a process restart — so this mirrors
+        ``_automated_work_allowed`` and re-reads the stored override from
+        ``setup_service`` on every tick, falling back to the constructor default
+        when nothing has been saved yet or no ``setup_service`` is wired
+        (legacy/unit tests, in-memory boot).
+        """
+        if self._setup is not None:
+            try:
+                stored = self._setup.get_automation_prefs()
+            except Exception:  # pragma: no cover - defensive: never break a tick
+                stored = None
+            value = (stored or {}).get("curation_schedule")
+            if value:
+                return str(value).strip().lower()
+        return self._curation_schedule
+
     def _run_curation(self, curation, storage, now: datetime) -> dict:
         """Run the curation nudge at most once per UTC day, gated + idempotent.
 
-        Fast no-op when (a) disabled (``CURATION_SCHEDULE`` off / no service), (b) the
-        automated-work gate is closed, or (c) the nudge already ran today. Otherwise it
-        asks the (optional) summaries provider for recent runs and proposes
-        memory/skill updates; the curator stages them for review (FR-MIND-9) and dedupes
-        via its process-lived ledger (FR-MIND-10), so this is safe to re-enter and never
-        duplicates proposals (FR-MIND-7). Memory/skills proposed are advisory only and
-        confer no authority (FR-MIND-11).
+        Fast no-op when (a) disabled (``CURATION_SCHEDULE`` off / no service, or the
+        live Settings > Automation override is ``off``), (b) the automated-work gate
+        is closed, or (c) the nudge already ran today. Otherwise it asks the
+        (optional) summaries provider for recent runs and proposes memory/skill
+        updates; the curator stages them for review (FR-MIND-9) and dedupes via its
+        process-lived ledger (FR-MIND-10), so this is safe to re-enter and never
+        duplicates proposals (FR-MIND-7). Memory/skills proposed are advisory only
+        and confer no authority (FR-MIND-11).
         """
-        if curation is None or self._curation_schedule in ("", "off"):
+        if curation is None or self._effective_curation_schedule() in ("", "off"):
             return {"ran": False, "reason": "disabled"}
         if not self._automated_work_allowed():
             return {"ran": False, "reason": "gated"}
