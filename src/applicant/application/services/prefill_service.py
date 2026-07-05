@@ -179,6 +179,62 @@ def get_plan_history(application_id) -> list[dict]:
         return list(_PLAN_HISTORY.get(str(application_id), []))
 
 
+#: Cap the diagnostics ring so a persistently-failing dependency cannot grow it
+#: without bound across a long-lived process.
+_DIAGNOSTICS_RING_MAX = 200
+
+
+@dataclass
+class PrefillDiagnosticsRing:
+    """Cross-tick ring of operator-visible pre-fill diagnostics (lens 04 #39 / DISC-3).
+
+    Before this class, ``PrefillService`` kept its diagnostics ring
+    (``_record_diagnostic`` / ``diagnostics()``) as a plain ``list`` on ``self`` —
+    but the 24/7 scheduler rebuilds a fresh ``PrefillService`` every tick
+    (per-tick Session isolation, ``container._build_tick_services``), so that list
+    was silently thrown away at the end of every tick. The admin route
+    (``/api/admin/prefill-diagnostics``) reads ``container.prefill_service`` — the
+    ONE never-rebuilt instance the container also keeps around — so in practice an
+    operator staring at that endpoint during a real 24/7 run would always see an
+    empty ring: every diagnostic recorded by the tick-built service that actually
+    drives pre-fill vanished the moment that tick's services were discarded, while
+    the long-lived instance the route reads from never had anything recorded on it
+    directly. A stuck/degrading pre-fill would look silent even though it was
+    failing loudly under the hood.
+
+    This mirrors ``ResumeLedger``/``DigestLedger``/``PresubmitBlockLedger`` in
+    ``agent_loop.py`` and the ``RoutineStore`` wired alongside them: the container
+    builds ONE of these for the whole process and injects the SAME instance into
+    every ``PrefillService`` construction (the shared singleton, every per-tick
+    rebuild, and every per-request rebuild), so a diagnostic recorded through any
+    one of them is immediately visible through all the others — including the
+    long-lived instance the admin route reads.
+    """
+
+    max_size: int = _DIAGNOSTICS_RING_MAX
+    entries: list[str] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record(self, message: str) -> None:
+        """Append ``message``, deduped against the immediately-preceding entry."""
+        if not message:
+            return
+        with self.lock:
+            # Drop an immediate duplicate so one failing dependency does not spam
+            # the ring (e.g. an LLM that raises on every field re-records the same
+            # outage message tick after tick).
+            if self.entries and self.entries[-1] == message:
+                return
+            self.entries.append(message)
+            if len(self.entries) > self.max_size:
+                del self.entries[: -self.max_size]
+
+    def list(self) -> list[str]:
+        """Read-only snapshot of the recorded diagnostics, oldest first."""
+        with self.lock:
+            return list(self.entries)
+
+
 @dataclass
 class PrefillResult:
     """Outcome of a (single) pre-fill pass."""
@@ -247,6 +303,7 @@ class PrefillService:
         routine_store=None,
         max_replans: int = 2,
         setup_service=None,
+        diagnostics_ring: PrefillDiagnosticsRing | None = None,
     ) -> None:
         self._storage = storage
         self._browser = browser
@@ -323,7 +380,13 @@ class PrefillService:
         # rather than vanishing. A bounded ring of recent diagnostic strings, surfaced
         # via ``diagnostics()``; the loop also lands a pending action where it has the
         # application context to do so.
-        self._diagnostics: list[str] = []
+        # Lens 04 #39 / DISC-3: this MUST be the SAME process-lived
+        # ``PrefillDiagnosticsRing`` across every per-tick/per-request rebuild (like
+        # ``routine_store`` above) or diagnostics recorded during a real tick vanish the
+        # moment that tick's services are discarded — see ``PrefillDiagnosticsRing``'s
+        # docstring. Defaults to a fresh instance so a direct/unit construction without a
+        # container still works standalone, unchanged from before.
+        self._diagnostics_ring = diagnostics_ring or PrefillDiagnosticsRing()
 
     def _effective_match_rate_floor(self) -> float:
         """The LIVE ATS match-rate floor, re-read on every check (lens 11 #22).
@@ -349,8 +412,10 @@ class PrefillService:
         return self._match_rate_floor
 
     #: Cap the in-process diagnostics ring so a persistently-failing dependency cannot
-    #: grow it without bound across a long-lived service.
-    _MAX_DIAGNOSTICS = 200
+    #: grow it without bound across a long-lived service. Kept as a class attribute for
+    #: back-compat; the actual cap lives on the (now process-lived) ring itself — see
+    #: ``PrefillDiagnosticsRing`` / ``_DIAGNOSTICS_RING_MAX``.
+    _MAX_DIAGNOSTICS = _DIAGNOSTICS_RING_MAX
 
     def diagnostics(self) -> list[str]:
         """Recent operator-visible diagnostics for silent-degradation events.
@@ -358,8 +423,11 @@ class PrefillService:
         Credential / LLM / login failures degrade gracefully (the loop never crashes),
         but a swallowed-without-a-trace failure is invisible to the operator. Each such
         event is recorded here so it is surfaced rather than lost (#202/#203/#211/#223).
+        Reads the SAME process-lived ``PrefillDiagnosticsRing`` every per-tick/per-
+        request ``PrefillService`` rebuild writes to (lens 04 #39 / DISC-3), so this
+        always reflects the live loop state, not a stale/cold snapshot.
         """
-        return list(self._diagnostics)
+        return self._diagnostics_ring.list()
 
     @property
     def captcha_solver(self):
@@ -373,16 +441,12 @@ class PrefillService:
         return self._captcha_solver
 
     def _record_diagnostic(self, message: str) -> None:
-        """Record one operator-visible diagnostic (bounded, deduped against the last)."""
-        if not message:
-            return
-        # Drop an immediate duplicate so one failing dependency does not spam the ring
-        # (e.g. an LLM that raises on every field re-records the same outage).
-        if self._diagnostics and self._diagnostics[-1] == message:
-            return
-        self._diagnostics.append(message)
-        if len(self._diagnostics) > self._MAX_DIAGNOSTICS:
-            del self._diagnostics[: -self._MAX_DIAGNOSTICS]
+        """Record one operator-visible diagnostic (bounded, deduped against the last).
+
+        Delegates to the injected (process-lived) ``PrefillDiagnosticsRing`` so the
+        entry survives this instance's own lifetime (lens 04 #39 / DISC-3).
+        """
+        self._diagnostics_ring.record(message)
 
     # --- public API -------------------------------------------------------
     def prefill_application(

@@ -21,6 +21,8 @@ down workspace never 500s the engine).
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -42,6 +44,16 @@ _DEFAULT_TIMEOUT = 10.0
 #: HTTP read budget than the snappy callbacks. This is the *transport* ceiling; the
 #: research *budget* is carried separately in the ``max_time`` body field.
 _DEFAULT_RESEARCH_TIMEOUT = 30.0
+#: HTTP statuses treated as transient here: a fronting proxy returns these while the
+#: workspace container is restarting / redeploying, so the request never reached the
+#: app. They are safe to retry; every other 4xx/5xx is surfaced immediately.
+_RETRYABLE_STATUS = frozenset({502, 503})
+#: How many EXTRA attempts (beyond the first) a retryable call gets. Bounded so a
+#: persistently-down workspace still fails fast rather than hanging the tick.
+_DEFAULT_RETRY_ATTEMPTS = 2
+#: Base seconds for exponential backoff between attempts (0.5, 1.0, ...). Small,
+#: because the callbacks run inside a scheduler tick and must not stall it for long.
+_DEFAULT_RETRY_BACKOFF = 0.5
 
 
 class HttpWorkspaceClient:
@@ -55,6 +67,9 @@ class HttpWorkspaceClient:
         timeout: float = _DEFAULT_TIMEOUT,
         research_timeout: float = _DEFAULT_RESEARCH_TIMEOUT,
         transport: httpx.BaseTransport | None = None,
+        retry_attempts: int = _DEFAULT_RETRY_ATTEMPTS,
+        retry_backoff: float = _DEFAULT_RETRY_BACKOFF,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         # Strip a trailing slash so path joins are predictable.
         self._base_url = (base_url or DEFAULT_WORKSPACE_URL).rstrip("/")
@@ -65,6 +80,11 @@ class HttpWorkspaceClient:
         self._research_timeout = research_timeout
         # Injectable transport so tests use httpx.MockTransport (hermetic).
         self._transport = transport
+        # Bounded retry with exponential backoff for the idempotent/safe callbacks
+        # (see ``_request``). ``sleep`` is injectable so tests run without real waits.
+        self._retry_attempts = max(0, int(retry_attempts))
+        self._retry_backoff = max(0.0, float(retry_backoff))
+        self._sleep = sleep
 
     # --- config gate ------------------------------------------------------
     def available(self) -> bool:
@@ -87,6 +107,7 @@ class HttpWorkspaceClient:
         owner: str | None = None,
         json: Any = None,
         timeout: float | None = None,
+        retry: bool = False,
     ) -> Any:
         """Make one request and return decoded JSON, or raise WorkspaceError.
 
@@ -95,6 +116,17 @@ class HttpWorkspaceClient:
         default for the longer-running research call; a timeout raises a
         ``WorkspaceError`` with ``is_timeout=True`` so callers can tell an ephemeral
         timeout apart from a connection-refused / down workspace.
+
+        When ``retry`` is set (only for idempotent/safe callbacks — see
+        :meth:`run_research`) a *transient* failure is retried with bounded
+        exponential backoff before giving up. Transient means the workspace was
+        unreachable or restarting so the request never landed: a
+        :class:`httpx.ConnectError` (refused/reset at connect), or a 502/503 from a
+        fronting proxy. Timeouts are deliberately NOT retried — the request may be
+        in flight, and re-issuing could duplicate non-idempotent server work. 4xx
+        client errors and every other status are surfaced immediately. When retries
+        are exhausted the success path and error surface are identical to a
+        one-shot call.
         """
         if not self.available():
             raise WorkspaceError(
@@ -102,51 +134,95 @@ class HttpWorkspaceClient:
             )
         call_timeout = self._timeout if timeout is None else timeout
         url = f"{self._base_url}{_INTERNAL_PREFIX}{path}"
-        try:
-            with httpx.Client(timeout=call_timeout, transport=self._transport) as client:
-                resp = client.request(method, url, headers=self._headers(owner), json=json)
-        except httpx.TimeoutException as exc:
-            log.warning("workspace_callback_timeout", path=path)
-            raise WorkspaceError(
-                f"Workspace request to {path} timed out.", is_timeout=True
-            ) from exc
-        except httpx.HTTPError as exc:  # connect refused, DNS, protocol, …
-            log.warning("workspace_callback_transport_error", path=path, error=str(exc))
-            raise WorkspaceError(
-                f"Workspace request to {path} failed: {exc}"
-            ) from exc
-
-        if resp.status_code >= 400:
-            detail: Any = None
+        # Total attempts = 1 (first try) + configured retries, but only when the
+        # caller opted in AND a positive retry budget is configured.
+        attempts = 1 + (self._retry_attempts if retry else 0)
+        for attempt in range(attempts):
+            last = attempt == attempts - 1
             try:
-                detail = resp.json()
-            except Exception:
-                detail = resp.text
-            log.warning(
-                "workspace_callback_http_error", path=path, status=resp.status_code
-            )
-            raise WorkspaceError(
-                f"Workspace returned HTTP {resp.status_code} for {path}.",
-                status=resp.status_code,
-                detail=detail,
-            )
-        # 204 / empty body -> no JSON to decode.
-        if resp.status_code == 204 or not resp.content:
-            return None
-        try:
-            return resp.json()
-        except Exception as exc:
-            raise WorkspaceError(
-                f"Workspace returned non-JSON for {path}.", status=resp.status_code
-            ) from exc
+                with httpx.Client(
+                    timeout=call_timeout, transport=self._transport
+                ) as client:
+                    resp = client.request(
+                        method, url, headers=self._headers(owner), json=json
+                    )
+            except httpx.TimeoutException as exc:
+                # Not retried: an in-flight request may already be doing work.
+                log.warning("workspace_callback_timeout", path=path)
+                raise WorkspaceError(
+                    f"Workspace request to {path} timed out.", is_timeout=True
+                ) from exc
+            except httpx.ConnectError as exc:  # refused/reset at connect — never landed
+                if not last:
+                    log.warning(
+                        "workspace_callback_retry",
+                        path=path,
+                        attempt=attempt + 1,
+                        reason="connect_error",
+                    )
+                    self._sleep(self._backoff(attempt))
+                    continue
+                log.warning(
+                    "workspace_callback_transport_error", path=path, error=str(exc)
+                )
+                raise WorkspaceError(
+                    f"Workspace request to {path} failed: {exc}"
+                ) from exc
+            except httpx.HTTPError as exc:  # DNS, protocol, … — not transient here
+                log.warning(
+                    "workspace_callback_transport_error", path=path, error=str(exc)
+                )
+                raise WorkspaceError(
+                    f"Workspace request to {path} failed: {exc}"
+                ) from exc
+
+            if resp.status_code in _RETRYABLE_STATUS and not last:
+                log.warning(
+                    "workspace_callback_retry",
+                    path=path,
+                    attempt=attempt + 1,
+                    status=resp.status_code,
+                )
+                self._sleep(self._backoff(attempt))
+                continue
+
+            if resp.status_code >= 400:
+                detail: Any = None
+                try:
+                    detail = resp.json()
+                except Exception:
+                    detail = resp.text
+                log.warning(
+                    "workspace_callback_http_error", path=path, status=resp.status_code
+                )
+                raise WorkspaceError(
+                    f"Workspace returned HTTP {resp.status_code} for {path}.",
+                    status=resp.status_code,
+                    detail=detail,
+                )
+            # 204 / empty body -> no JSON to decode.
+            if resp.status_code == 204 or not resp.content:
+                return None
+            try:
+                return resp.json()
+            except Exception as exc:
+                raise WorkspaceError(
+                    f"Workspace returned non-JSON for {path}.", status=resp.status_code
+                ) from exc
+        # Unreachable: the loop either returns or raises on the last attempt.
+        raise WorkspaceError(f"Workspace request to {path} failed.")  # pragma: no cover
+
+    def _backoff(self, attempt: int) -> float:
+        """Exponential backoff seconds for a zero-based ``attempt`` (0.5, 1.0, ...)."""
+        return self._retry_backoff * (2**attempt)
 
     # --- public API -------------------------------------------------------
     def ping(self, *, owner: str | None = None) -> dict:
-        return self._request("GET", "/ping", owner=owner)
+        return self._request("GET", "/ping", owner=owner, retry=True)
 
     def calendar_interviews(self, *, owner: str | None = None) -> dict:
         """LANE A — auto-detected interview calendar events for ``owner``."""
-        return self._request("GET", "/calendar/interviews", owner=owner)
+        return self._request("GET", "/calendar/interviews", owner=owner, retry=True)
 
     def run_research(
         self,
@@ -175,8 +251,16 @@ class HttpWorkspaceClient:
         # Use the longer research transport ceiling (NOT the snappy default) so a
         # legitimate multi-source run isn't cut off; ``max_time`` is the *research*
         # budget the workspace enforces, distinct from this HTTP read timeout.
+        # ``retry=True``: a research callback is safe to re-issue when the workspace
+        # was simply unreachable/restarting (connect refused or 502/503), so a
+        # transient hop failure during a deploy no longer kills the whole run.
         return self._request(
-            "POST", "/research", owner=owner, json=body, timeout=self._research_timeout
+            "POST",
+            "/research",
+            owner=owner,
+            json=body,
+            timeout=self._research_timeout,
+            retry=True,
         )
 
     def create_calendar_event(
@@ -218,7 +302,9 @@ class HttpWorkspaceClient:
         each through the rejection/interview/offer detectors. Raises
         :class:`WorkspaceError` up front (no network) when the channel is
         disabled -- callers MUST treat this as best-effort."""
-        return self._request("GET", _q("/emails/recent", {"limit": limit}), owner=owner)
+        return self._request(
+            "GET", _q("/emails/recent", {"limit": limit}), owner=owner, retry=True
+        )
 
     # --- FR-MIND agent-memory bridge (memory / skills / recall) ---------------
     # These reach the front-door memory/skills substrate (workspace/services/memory/)
@@ -233,7 +319,7 @@ class HttpWorkspaceClient:
     ) -> dict:
         """FR-MIND-1 — curated-memory snapshot for ``owner`` (env + user split)."""
         params = _drop_none({"scope": scope, "campaign_id": campaign_id})
-        return self._request("GET", _q("/memory/snapshot", params), owner=owner)
+        return self._request("GET", _q("/memory/snapshot", params), owner=owner, retry=True)
 
     def memory_add(self, *, owner: str | None = None, body: dict) -> dict:
         """FR-MIND-1 — append one curated memory line."""
@@ -256,11 +342,11 @@ class HttpWorkspaceClient:
     ) -> dict:
         """FR-MIND-2 — L0 skill metadata list (cheap; no bodies)."""
         params = _drop_none({"scope": scope, "campaign_id": campaign_id})
-        return self._request("GET", _q("/skills", params), owner=owner)
+        return self._request("GET", _q("/skills", params), owner=owner, retry=True)
 
     def skill_load(self, name: str, *, owner: str | None = None) -> dict:
         """FR-MIND-2 — L1 full skill body for ``name``."""
-        return self._request("GET", f"/skills/{name}", owner=owner)
+        return self._request("GET", f"/skills/{name}", owner=owner, retry=True)
 
     def skill_create(self, *, owner: str | None = None, body: dict) -> dict:
         """FR-MIND-2 — author a new skill."""
@@ -291,7 +377,7 @@ class HttpWorkspaceClient:
         params = _drop_none(
             {"q": query, "limit": limit, "scope": scope, "campaign_id": campaign_id}
         )
-        return self._request("GET", _q("/recall", params), owner=owner)
+        return self._request("GET", _q("/recall", params), owner=owner, retry=True)
 
 
 def _drop_none(d: dict[str, Any]) -> dict[str, Any]:

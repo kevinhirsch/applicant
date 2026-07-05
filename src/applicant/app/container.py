@@ -1023,7 +1023,10 @@ def build_container(settings: Settings | None = None) -> Container:
     # Phase 2: durable concurrency + final-approval gate + submission logging.
     from applicant.application.services.capacity_service import CapacityService
     from applicant.application.services.final_approval_service import FinalApprovalService
-    from applicant.application.services.prefill_service import PrefillService
+    from applicant.application.services.prefill_service import (
+        PrefillDiagnosticsRing,
+        PrefillService,
+    )
     from applicant.application.services.submission_service import SubmissionService
 
     capacity_service = CapacityService(
@@ -1072,6 +1075,17 @@ def build_container(settings: Settings | None = None) -> Container:
     from applicant.adapters.routine import InMemoryRoutineStore
     routine_store = InMemoryRoutineStore()
 
+    # Lens 04 #39 / DISC-3: ONE process-lived PrefillDiagnosticsRing for the whole
+    # process, exactly like ``routine_store`` above. The scheduler rebuilds a fresh
+    # PrefillService every tick, so the operator-visible silent-degradation
+    # diagnostics (#202/#203/#211/#223) must live OUTSIDE the per-tick instance or
+    # they vanish the moment that tick's services are discarded — and the admin
+    # ``/api/admin/prefill-diagnostics`` route (which reads THIS ``prefill_service``
+    # singleton) would always see an empty ring even while a real tick's pre-fill was
+    # failing loudly. Injected into the shared singleton AND every per-tick/per-
+    # request rebuild below so a diagnostic recorded anywhere is visible everywhere.
+    prefill_diagnostics_ring = PrefillDiagnosticsRing()
+
     prefill_service = PrefillService(
         storage=storage,
         browser=browser,
@@ -1099,6 +1113,8 @@ def build_container(settings: Settings | None = None) -> Container:
         # ``ats_match_rate_floor`` override live instead of only the env snapshot
         # above (``_effective_match_rate_floor``).
         setup_service=setup_service,
+        # Lens 04 #39 / DISC-3: the process-lived diagnostics ring (see above).
+        diagnostics_ring=prefill_diagnostics_ring,
     )
     # FR-ATTR-5: resolving a missing attribute resumes the stalled pre-fill using the
     # newly-stored value (wired additively to avoid a construction cycle).
@@ -1423,6 +1439,10 @@ def build_container(settings: Settings | None = None) -> Container:
             # Lens 11 #22: live re-read of a Settings > Automation match-rate-floor
             # override (see the main ``prefill_service`` build above).
             setup_service=setup_service,
+            # Lens 04 #39 / DISC-3: share the ONE process-lived diagnostics ring (NOT
+            # a per-tick instance), so silent-degradation diagnostics recorded during
+            # this tick survive the per-tick loop rebuild.
+            diagnostics_ring=prefill_diagnostics_ring,
         )
         mat = MaterialService(
             tick_storage,
@@ -1631,6 +1651,9 @@ def build_container(settings: Settings | None = None) -> Container:
             # Lens 11 #22: live re-read of a Settings > Automation match-rate-floor
             # override (see the main ``prefill_service`` build above).
             setup_service=setup_service,
+            # Lens 04 #39 / DISC-3: share the ONE process-lived diagnostics ring
+            # across request scopes too (see the main ``prefill_service`` build above).
+            diagnostics_ring=prefill_diagnostics_ring,
         )
         rs_attr.set_prefill_service(rs_prefill)
         rs_material = MaterialService(
