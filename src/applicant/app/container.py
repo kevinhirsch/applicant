@@ -693,10 +693,17 @@ def build_container(settings: Settings | None = None) -> Container:
     discovery_proxies = tuple(
         p.strip() for p in settings.discovery_proxies.split(",") if p.strip()
     )
+    # Item 80 (B7): operator-added job-board RSS feeds are injected here the same way
+    # proxies are — the app/config layer reads the setting and threads it into the
+    # discovery adapter, which never imports app.config itself (hexagonal layering).
+    discovery_rss_feeds = tuple(
+        f.strip() for f in settings.discovery_rss_feeds.split(",") if f.strip()
+    )
     discovery = build_default_discovery(
         live=settings.discovery_live,
         searxng_url=settings.searxng_url,
         proxies=discovery_proxies,
+        rss_feeds=discovery_rss_feeds,
     )
     embedding = LocalEmbedding()
     # FR-STEALTH-4: residential egress is enforced up front — a configured proxy is

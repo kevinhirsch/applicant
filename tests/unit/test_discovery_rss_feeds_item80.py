@@ -102,17 +102,19 @@ def test_include_rss_false_disables_configured_feeds_too():
     assert rss_keys == []
 
 
-def test_the_configured_env_var_is_read_when_no_explicit_arg_is_passed(monkeypatch):
-    """This is the production/no-arg call shape ``container.py`` already uses for
-    ``live``/``searxng_url``/``proxies`` -- when the caller does not explicitly
-    pass ``rss_feeds``, the factory must fall back to the configured
-    ``DISCOVERY_RSS_FEEDS`` setting itself (this factory's own escape hatch for
-    reaching the boot wiring without touching ``container.py``, which is a
-    concurrently-edited file in this session)."""
+def test_the_container_threads_the_configured_feed_into_discovery(monkeypatch):
+    """Reachability through the PROPER layer: ``container.py`` reads the configured
+    ``DISCOVERY_RSS_FEEDS`` setting and injects it into ``build_default_discovery``
+    (exactly as it does for ``proxies``), so a boot-configured feed reaches the live
+    discovery adapter. The adapter itself never imports ``app.config`` — that would
+    break the hexagonal layering contract (NFR-ARCH-1), so the wiring lives here."""
+    from applicant.app.config import Settings
+    from applicant.app.container import build_container
+
     monkeypatch.setenv("DISCOVERY_RSS_FEEDS", "https://boards.example.com/careers.rss")
     get_settings.cache_clear()
-    disc = build_default_discovery(live=False)
-    assert "rss:custom-1" in disc.available_sources()
+    container = build_container(Settings())
+    assert "rss:custom-1" in container.discovery.available_sources()
 
 
 def test_settings_default_discovery_rss_feeds_is_empty_string():
