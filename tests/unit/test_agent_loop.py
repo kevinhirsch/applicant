@@ -758,6 +758,69 @@ def test_force_tick_still_respects_automated_work_gate(tmp_path):
 
 
 @pytest.mark.unit
+def test_gated_tick_persists_a_plain_language_skip_reason(tmp_path):
+    """Dark-engine audit #64: a scheduled tick that stops before starting any new
+    work (here: the automated-work gate is closed) used to return before
+    ``_record_intent`` — leaving NO trace in ``agent_runs``, so the status surface
+    showed only the last time real work happened with no visible reason nothing
+    is happening now. It must now persist a run with a plain-language intent and
+    a machine ``skip_reason`` in stats (existing free-form JSON — no schema
+    change)."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    runs = AgentRunService(storage)
+
+    class _ClosedGate:
+        def is_automated_work_allowed(self):
+            return False
+
+    loop = AgentLoop(
+        storage=storage,
+        agent_run_service=runs,
+        scoring_service=_FakeScoring(),
+        digest_service=_FakeDigest(),
+        orchestrator=orch,
+        setup_service=_ClosedGate(),
+    )
+    result = loop.tick(cid, now=datetime(2026, 6, 16, tzinfo=UTC))
+    assert result.reason == "automated_work_gated"
+
+    status = runs.status(cid)
+    assert status["latest_stats"].get("skip_reason") == "automated_work_gated"
+    assert "setup" in status["latest_intent"].lower()
+
+
+@pytest.mark.unit
+def test_gated_tick_does_not_spam_a_new_run_row_every_tick(tmp_path):
+    """The SAME skip reason on back-to-back scheduled ticks must not write a new
+    ``agent_runs`` row every ~60s forever (dark-engine audit #64) — only a REASON
+    CHANGE persists. A paused campaign ticking 5x in a row records exactly one
+    run."""
+    storage = InMemoryStorage()
+    orch = CheckpointShimOrchestrator(str(tmp_path / "ck"))
+    cid = _make_campaign(storage)
+    runs = AgentRunService(storage)
+    runs.set_active(cid, False)  # paused -> run_mode_stop every tick
+    loop = _loop(storage, orch)
+
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    for i in range(5):
+        result = loop.tick(cid, now=now + timedelta(minutes=i))
+        assert result.reason == "run_mode_stop"
+
+    all_runs = runs.list_runs(cid)
+    assert len(all_runs) == 1
+    assert all_runs[0].stats.get("skip_reason") == "run_mode_stop"
+
+    # Resuming the campaign is a reason CHANGE — the loop starts real work again
+    # (no prefill/etc wired, so it just re-scans), which persists a NEW run.
+    runs.set_active(cid, True)
+    loop.tick(cid, now=now + timedelta(minutes=10))
+    assert len(runs.list_runs(cid)) == 2
+
+
+@pytest.mark.unit
 def test_resume_ledger_persists_across_loop_instances():
     """The scheduler rebuilds a fresh AgentLoop every tick, so the resume backoff and
     the failure cap MUST live in a shared ledger or they reset each tick. A shared

@@ -794,6 +794,14 @@ class ApplicantEngineClient:
     async def admin_stealth(self) -> Any:
         return await self._request("GET", "/api/admin/stealth")
 
+    async def admin_workspace_bridge(self) -> Any:
+        """Engine <-> workspace callback-channel health (dark-engine audit #71).
+
+        Whether ``APPLICANT_INTERNAL_TOKEN`` is configured and, when it is,
+        whether the engine's ping-through to THIS workspace actually succeeds.
+        """
+        return await self._request("GET", "/api/admin/workspace-bridge")
+
     async def admin_prefill_diagnostics(self) -> Any:
         """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
 

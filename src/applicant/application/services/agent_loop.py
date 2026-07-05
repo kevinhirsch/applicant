@@ -97,6 +97,20 @@ class DigestLedger:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+#: Plain-language "why nothing happened" sentences for the two early-return gates
+#: a SCHEDULED tick can hit before any new work starts (dark-engine audit #64).
+#: ``campaign_not_found`` isn't here (no campaign row to attach a run to);
+#: ``budget_exhausted`` isn't here either — it already records its own intent via
+#: ``_record_intent``. Keyed by ``TickResult.reason``.
+SKIP_REASON_SENTENCES: dict[str, str] = {
+    "run_mode_stop": "Paused — your run schedule says to hold off starting new work right now.",
+    "automated_work_gated": (
+        "Waiting on setup — finish connecting a model and your profile before I can "
+        "start new work."
+    ),
+}
+
+
 @dataclass
 class TickResult:
     """Structured outcome of one ``tick`` (introspection + tests)."""
@@ -395,6 +409,7 @@ class AgentLoop:
         ):
             result.reason = "run_mode_stop"
             result.budget_remaining = self.remaining_budget(campaign, now)
+            self._record_skip_reason(campaign, result, now)
             return result
 
         result.ran = True
@@ -412,6 +427,7 @@ class AgentLoop:
         # delivery, no pipeline starts.
         if not self._automated_work_allowed():
             result.reason = "automated_work_gated"
+            self._record_skip_reason(campaign, result, now)
             return result
 
         # 2. Throughput cap (FR-AGENT-1): stop discovery + new pre-fill when spent.
@@ -1524,6 +1540,39 @@ class AgentLoop:
                 },
             )
         except Exception:  # pragma: no cover - defensive
+            pass
+
+    def _record_skip_reason(self, campaign, result: TickResult, now: datetime) -> None:
+        """Persist a per-tick "why nothing happened" reason (dark-engine audit #64).
+
+        A scheduled tick that stops before any new work starts (run-mode paused/
+        stopped, or the automated-work gate still closed) used to ``return`` before
+        ``_record_intent`` ran at all — so a paused/gated campaign left NO
+        persisted trace of the skip; the status surface just showed whatever the
+        last REAL run happened to say, with no visible reason nothing is
+        happening now. This persists the reason as a run's intent + a machine
+        ``skip_reason`` in its stats (the existing free-form JSON blob — no schema
+        change needed).
+
+        Only persists on a reason CHANGE (compared against the campaign's own
+        latest persisted run): a 24/7-gated campaign ticks every ~60s, and without
+        this dedup guard it would write one row per tick forever. The scheduler's
+        own ``last_tick``/``next_tick`` heartbeat (already surfaced) carries the
+        "am I still alive" signal; this carries WHY nothing is happening.
+        """
+        try:
+            latest = self._storage.agent_runs.latest(campaign.id)
+            prior_reason = (latest.stats or {}).get("skip_reason") if latest is not None else None
+            if prior_reason == result.reason:
+                return
+            sentence = SKIP_REASON_SENTENCES.get(
+                result.reason, "Not starting any new work right now."
+            )
+            result.intent = sentence
+            self._runs.start_run(
+                campaign.id, sentence, stats={"skip_reason": result.reason}
+            )
+        except Exception:  # pragma: no cover - defensive: a skip note is best-effort
             pass
 
     def _intent_sentence(self, campaign, result: TickResult) -> str:

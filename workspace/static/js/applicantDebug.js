@@ -16,8 +16,15 @@
 //                  and the exploration budget (read-only).
 //   • Logs       — recent redacted run logs.
 //   • Variants   — the resume-variant library (lineage / score / approval).
-//   • Run        — run mode + daily target controls and the latest plain-language
-//                  "what the agent is doing right now" intent (writes config).
+//   • Run        — run mode + daily target controls, the latest plain-language
+//                  "what the agent is doing right now" intent (or, per dark-
+//                  engine audit #64, WHY nothing is happening — waiting on
+//                  setup / paused — when a scheduled run skipped instead of
+//                  working), a live-status chip that also surfaces THIS
+//                  campaign's own recent tick failures/overlap-skips (dark-
+//                  engine audit #73), and a "Recent runs" mini-table of the
+//                  per-run stats the engine already persists every tick (dark-
+//                  engine audit #75) (writes config).
 //   • Config     — Sources (turn each job-discovery source on/off + see its
 //                  yield), Detection events (dark-engine audit #26 — plain-
 //                  language history of bot-checks/blocks a job site threw at
@@ -26,11 +33,15 @@
 //                  (dark-engine audit #27 — the live egress/connection posture
 //                  + honest best-effort caveat, read-only), Diagnostics (dark-
 //                  engine audit #34 — recent plain-language issues where
-//                  pre-fill degraded gracefully instead of stopping, read-only)
-//                  and Update (a one-click Update button with confirm +
-//                  status) as sub-sections of one pane (item #86 — these were
-//                  separate top-level tabs, pushing the tab strip past its
-//                  ceiling; grouped so it stays within the 5-7 ceiling).
+//                  pre-fill degraded gracefully instead of stopping, read-only),
+//                  Background connection (dark-engine audit #71 — whether the
+//                  engine's callback link to this workspace, used for calendar
+//                  sync / deep research / shared memory, is configured and
+//                  actually reachable right now, read-only) and Update (a
+//                  one-click Update button with confirm + status) as
+//                  sub-sections of one pane (item #86 — these were separate
+//                  top-level tabs, pushing the tab strip past its ceiling;
+//                  grouped so it stays within the 5-7 ceiling).
 //
 // Activation: the launcher (tool-debug-btn) is greyed + click-guarded by the
 // feature-activation layer in app.js until the engine reports it's configured
@@ -764,6 +775,17 @@ const RUN_MODES = [
   ['until_n_viable', 'Until target reached'],
 ];
 
+// Plain-language mapping for the engine's machine skip/stop reasons (dark-engine
+// audit #64) — shared by the "Run now" result toast and the "Why nothing's
+// happening right now" note on the Run controls tab, so the same machine code
+// always reads the same way wherever it surfaces.
+const _SKIP_REASON_LABELS = {
+  budget_exhausted: "Today's application limit is reached — it'll resume tomorrow.",
+  automated_work_gated: 'Waiting on setup — finish connecting a model and your profile before I can start new work.',
+  campaign_not_found: 'That job search no longer exists.',
+  run_mode_stop: 'Paused — your run schedule says to hold off starting new work right now.',
+};
+
 // Short relative time from an ISO timestamp, e.g. "12s ago" / "in 48s" / "3m ago".
 // Returns '' for missing/unparseable input so callers can omit the line cleanly.
 function _relWhen(iso) {
@@ -804,10 +826,74 @@ function _statusChip(status) {
     const cap = status.daily_budget != null ? status.daily_budget : status.throughput_target;
     bits.push(`${esc(status.applied_today)}${cap != null ? ` / ${esc(cap)}` : ''} today`);
   }
+  // Per-campaign tick failures / overlap-skips (dark-engine audit #73) — omitted
+  // entirely when this campaign has never failed or been skipped (the common
+  // case), so a healthy campaign's chip is unchanged.
+  const health = sched.campaign;
+  let healthLine = '';
+  if (health && typeof health === 'object') {
+    const parts = [];
+    if (health.failure_count) {
+      const when = _relWhen(health.last_error_at);
+      parts.push(`last error${when ? ` ${when}` : ''}${health.last_error ? `: ${health.last_error}` : ''}`);
+    }
+    if (health.skipped_count) {
+      parts.push(`skipped ${health.skipped_count} time${health.skipped_count === 1 ? '' : 's'} — a previous run was still in progress`);
+    }
+    if (parts.length) {
+      healthLine = `<div class="admin-toggle-sub" style="opacity:0.8;color:var(--orange, #ffb86c);margin-top:6px;">${esc(parts.join(' · '))}</div>`;
+    }
+  }
   return `
-    <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-      <div style="display:flex;align-items:center;font-weight:600;">${dot}${esc(label)}</div>
-      <div class="admin-toggle-sub" style="opacity:0.75;">${bits.join(' · ')}</div>
+    <div class="admin-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;font-weight:600;">${dot}${esc(label)}</div>
+        <div class="admin-toggle-sub" style="opacity:0.75;">${bits.join(' · ')}</div>
+      </div>
+      ${healthLine}
+    </div>`;
+}
+
+// Recent runs mini-table (dark-engine audit #75): every tick already persists
+// per-run stats (discovered / shortlisted / pre-filling / handed off / completed
+// / today's budget remaining, or a plain skip reason when nothing started) to
+// ``agent_runs``, and this SAME ops proxy already returns the full list — but
+// the Run controls tab only ever read ``items[0]`` for the config defaults
+// above and silently dropped the rest. Mirrors applicantActivity.js's own
+// "Recently I…" run-history rendering (same stat vocabulary, same tone).
+function _runStatLine(stats) {
+  if (!stats || typeof stats !== 'object') return '';
+  if (stats.skip_reason) {
+    return _SKIP_REASON_LABELS[stats.skip_reason] || 'Skipped — nothing started this run.';
+  }
+  const parts = [];
+  const push = (n, label) => {
+    const v = Number(n);
+    if (Number.isFinite(v) && v > 0) parts.push(`${label} ${v}`);
+  };
+  push(stats.discovered, 'Discovered');
+  push(stats.digest_rows, 'shortlisted');
+  push(stats.pipelines_started, 'pre-filling');
+  push(stats.handoffs, 'handed to you');
+  push(stats.completed, 'completed');
+  return parts.join(' · ');
+}
+
+function _recentRunsCard(items) {
+  if (!items.length) return '';
+  // The engine returns runs oldest-first; show the newest handful, newest on top.
+  const rows = items.slice(-8).reverse().map((r) => {
+    const when = _relWhen(r.timestamp) || '';
+    const line = _runStatLine(r.stats) || r.intent || 'Ran.';
+    return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
+      <div style="min-width:0;">${esc(line)}</div>
+      <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;">${esc(when)}</span>
+    </div>`;
+  }).join('');
+  return `
+    <div class="applicant-debug-list" style="margin-top:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Recent runs</div>
+      ${rows}
     </div>`;
 }
 
@@ -834,10 +920,17 @@ async function _renderRun() {
   const intentText = intent.intent || status.latest_intent;
   const paused = status.paused === true || status.active === false;
   const haveStatus = status.engine_available !== false && status.campaign_id;
+  // Dark-engine audit #64: a run whose stats carry a machine ``skip_reason``
+  // (the engine now persists ONE of these per gate transition, not per tick)
+  // means the intent sentence is explaining why nothing is happening right now,
+  // not narrating active work — head the card accordingly instead of the
+  // generic "What the agent is doing" label.
+  const skipReason = status.latest_stats && status.latest_stats.skip_reason;
+  const doingTitle = skipReason ? "Why nothing's happening right now" : 'What the agent is doing';
   _body().innerHTML = `
     ${haveStatus ? _statusChip(status) : ''}
     <div class="admin-card">
-      <div style="font-weight:600;">What the agent is doing</div>
+      <div style="font-weight:600;">${esc(doingTitle)}</div>
       <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${esc(intentText || 'No run yet — use “Run now” or set a mode and target below to start.')}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
         <button class="cal-btn cal-btn-primary" id="applicant-run-now">Run now</button>
@@ -857,7 +950,8 @@ async function _renderRun() {
       </label>
       <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
       <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
-    </div>`;
+    </div>
+    ${_recentRunsCard(runs.items || [])}`;
   _body().querySelector('#applicant-run-save').addEventListener('click', async (ev) => {
     if (_busySave) return;
     _busySave = true;
@@ -886,13 +980,9 @@ async function _renderRun() {
     try {
       const res = await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/run`, {});
       if (res.ran === false) {
-        // Map the engine's machine reason to a plain-language message.
-        const reasons = {
-          budget_exhausted: "Today's application limit is reached — it'll resume tomorrow.",
-          automated_work_gated: 'Finish setup (model, profile) before the agent can run.',
-          campaign_not_found: 'That job search no longer exists.',
-        };
-        _toast(reasons[res.reason] || res.reason || 'Nothing to run right now.');
+        // Map the engine's machine reason to the SAME plain-language message the
+        // "Why nothing's happening right now" note uses (dark-engine audit #64).
+        _toast(_SKIP_REASON_LABELS[res.reason] || res.reason || 'Nothing to run right now.');
       } else {
         const found = res.discovered != null ? `Found ${res.discovered} posting(s).` : 'Run complete.';
         _toast(found);
@@ -1158,6 +1248,30 @@ async function _renderStealth(host) {
     (caveat ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:8px;">${esc(caveat)}</div>` : '');
 }
 
+// Background connection (workspace bridge) — dark-engine audit #71:
+// ``HttpWorkspaceClient.ping`` existed exactly for a health probe but nothing
+// called it and no surface showed whether the shared secret is even configured
+// — a missing/wrong token silently disables calendar-interview sync,
+// deep-research, and the memory/skills bridge with nothing telling the owner
+// why any of those quietly do nothing. Engine-wide (not campaign-scoped),
+// mirrors the Stealth posture sub-section just above.
+async function _renderBridge(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/workspace-bridge`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">Whether the assistant's background link to this workspace — used for calendar sync, deep research, and shared memory — is set up and actually working.</div>`;
+  if (!data.configured) {
+    host.innerHTML = intro + _empty('Not set up yet — calendar sync, deep research, and shared memory are unavailable until it is.');
+    return;
+  }
+  const rows = [
+    ['Set up', 'Yes'],
+    ['Reachable right now', data.reachable ? 'Yes' : 'No'],
+  ];
+  const detail = !data.reachable && data.detail ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:8px;">${esc(String(data.detail))}</div>` : '';
+  host.innerHTML = intro + _statGrid(rows) + detail;
+}
+
 async function _renderUpdate(host) {
   host = host || _body();
   let status = { engine_available: true };
@@ -1223,6 +1337,10 @@ async function _renderConfig() {
       <div style="font-weight:600;margin-bottom:8px;">Diagnostics</div>
       <div id="applicant-config-diagnostics">${loadingHTML('Loading…')}</div>
     </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;" title="Background agent health">Background connection</div>
+      <div id="applicant-config-bridge">${loadingHTML('Loading…')}</div>
+    </div>
     <div class="applicant-debug-list">
       <div style="font-weight:600;margin-bottom:8px;">Update</div>
       <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
@@ -1232,6 +1350,7 @@ async function _renderConfig() {
   const toolsHost = host.querySelector('#applicant-config-tools');
   const stealthHost = host.querySelector('#applicant-config-stealth');
   const diagnosticsHost = host.querySelector('#applicant-config-diagnostics');
+  const bridgeHost = host.querySelector('#applicant-config-bridge');
   const updateHost = host.querySelector('#applicant-config-update');
   const sections = [
     [sourcesHost, _renderSources],
@@ -1239,6 +1358,7 @@ async function _renderConfig() {
     [toolsHost, _renderTools],
     [stealthHost, _renderStealth],
     [diagnosticsHost, _renderDiagnostics],
+    [bridgeHost, _renderBridge],
     [updateHost, _renderUpdate],
   ];
   for (const [sectionHost, renderFn] of sections) {

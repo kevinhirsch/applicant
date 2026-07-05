@@ -292,6 +292,21 @@ def setup_applicant_admin_routes() -> APIRouter:
         async with ApplicantEngineClient() as engine:
             return await _soft_get(engine.admin_stealth(), {})
 
+    @router.get("/workspace-bridge")
+    async def workspace_bridge(request: Request) -> dict:
+        """Engine <-> workspace background-link health (dark-engine audit #71).
+
+        Whether the callback channel (calendar sync / deep-research / the
+        memory bridge) is configured and actually reachable — a bad/missing
+        token silently disables all three with nothing telling the owner why.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.admin_workspace_bridge(),
+                {"configured": False, "reachable": False},
+            )
+
     @router.get("/prefill-diagnostics")
     async def prefill_diagnostics(request: Request) -> dict:
         """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).

@@ -88,6 +88,68 @@ def test_tick_advances_each_active_campaign():
     assert {cid for cid, _ in loop.ticked} == {str(c1), str(c2)}
 
 
+class _FailingLoop:
+    """Raises for a configured set of campaigns; ticks the rest normally."""
+
+    def __init__(self, fail_for: set[str]):
+        self._fail_for = fail_for
+
+    def tick(self, campaign_id, now=None):
+        if str(campaign_id) in self._fail_for:
+            raise RuntimeError("boom")
+        return None
+
+
+@pytest.mark.unit
+def test_campaign_tick_failure_is_recorded_per_campaign():
+    """Dark-engine audit #73: a per-campaign tick failure previously reached only
+    ``log.warning`` — the metrics snapshot counts only whole-tick failures, so one
+    flaky campaign inside an otherwise-healthy tick left no visible trace at all.
+    ``campaign_health`` must now report the error + a running failure count, and a
+    campaign that never failed reports empty (no noise)."""
+    storage = InMemoryStorage()
+    c1 = _campaign(storage)
+    c2 = _campaign(storage)
+    sched = Scheduler(storage=storage, agent_loop=_FailingLoop(fail_for={str(c1)}))
+    now = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+    sched.tick(now)
+
+    health = sched.campaign_health(c1)
+    assert health["failure_count"] == 1
+    assert "boom" in health["last_error"]
+    assert health["last_error_at"]
+    # The healthy campaign has no entry at all.
+    assert sched.campaign_health(c2) == {}
+
+    # A second failing tick bumps the running count.
+    sched.tick(now + timedelta(seconds=60))
+    assert sched.campaign_health(c1)["failure_count"] == 2
+
+
+@pytest.mark.unit
+def test_campaign_tick_overlap_skip_is_recorded_per_campaign():
+    """Dark-engine audit #73: a campaign whose PRIOR tick is still running is
+    skipped this interval (``campaign_tick_skipped_in_progress``) — previously
+    log-only. ``campaign_health`` must report the skip + a running count."""
+    storage = InMemoryStorage()
+    c1 = _campaign(storage)
+    loop = _RecordingLoop()
+    sched = Scheduler(storage=storage, agent_loop=loop)
+    now = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+
+    lock = sched._campaign_lock(c1)
+    lock.acquire()  # simulate a still-in-flight prior tick for this campaign
+    try:
+        sched.tick(now)
+    finally:
+        lock.release()
+
+    health = sched.campaign_health(c1)
+    assert health["skipped_count"] == 1
+    assert health["last_skipped_at"]
+    assert loop.ticked == []  # never reached the loop this tick
+
+
 @pytest.mark.unit
 def test_daily_digest_delivered_once_per_day():
     """IDEM-1: the digest is delivered once per (campaign, UTC day) by the LOOP; the

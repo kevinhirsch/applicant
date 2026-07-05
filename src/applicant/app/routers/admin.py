@@ -318,6 +318,34 @@ def stealth(container: Container = Depends(get_container)) -> dict:
     }
 
 
+# === Engine <-> workspace bridge health (dark-engine audit #71) ============
+@router.get("/workspace-bridge")
+def workspace_bridge(container: Container = Depends(get_container)) -> dict:
+    """Is the engine -> workspace callback channel configured and reachable?
+
+    ``APPLICANT_INTERNAL_TOKEN`` gates calendar-interview sync, deep-research, and
+    the memory/skills bridge (``HttpWorkspaceClient``) — a missing or wrong token
+    silently disables all three with nothing telling the operator why. This never
+    fabricates reachability from config alone: when a token IS configured it calls
+    the SAME ``ping`` the client exists for (and the workspace already serves) to
+    prove the channel actually round-trips, not just that a secret is set.
+    """
+    from applicant.ports.driven.workspace import WorkspaceError
+
+    workspace = container.workspace
+    configured = bool(workspace.available()) if workspace is not None else False
+    if not configured:
+        return {"configured": False, "reachable": False, "detail": None, "status": "live"}
+    try:
+        workspace.ping()
+        reachable, detail = True, None
+    except WorkspaceError as exc:
+        reachable, detail = False, str(exc)
+    except Exception as exc:  # pragma: no cover - defensive: never break the status read
+        reachable, detail = False, str(exc)
+    return {"configured": True, "reachable": reachable, "detail": detail, "status": "live"}
+
+
 # === PII-retention sweep, on demand (dark-engine audit #37) ================
 @router.post("/retention/prune")
 def run_retention_sweep(

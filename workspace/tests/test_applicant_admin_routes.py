@@ -103,6 +103,11 @@ class FakeEngine:
     async def admin_stealth(self):
         return await self._maybe("stealth", default={})
 
+    async def admin_workspace_bridge(self):
+        return await self._maybe(
+            "workspace_bridge", default={"configured": False, "reachable": False}
+        )
+
     async def outcome_log(self, aid):
         return await self._maybe("log", aid, default={"application_id": aid})
 
@@ -233,6 +238,44 @@ def test_learning_requires_admin(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
     assert c.get("/api/applicant/admin/learning/c1").status_code == 403
+
+
+# --- workspace bridge health (dark-engine audit #71) ------------------------
+
+
+def test_workspace_bridge_passthrough_when_configured_and_reachable(client):
+    FakeEngine.responses["workspace_bridge"] = {"configured": True, "reachable": True, "detail": None}
+    r = client.get("/api/applicant/admin/workspace-bridge")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["configured"] is True
+    assert body["reachable"] is True
+
+
+def test_workspace_bridge_reports_not_configured(client):
+    FakeEngine.responses["workspace_bridge"] = {
+        "configured": False, "reachable": False, "detail": None,
+    }
+    body = client.get("/api/applicant/admin/workspace-bridge").json()
+    assert body["configured"] is False
+    assert body["reachable"] is False
+
+
+def test_workspace_bridge_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["workspace_bridge"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/workspace-bridge")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["configured"] is False
+    assert body["reachable"] is False
+
+
+def test_workspace_bridge_requires_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/workspace-bridge").status_code == 403
 
 
 def test_workflow_and_screenshots_and_outcomes(client):
