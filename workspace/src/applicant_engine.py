@@ -948,6 +948,15 @@ class ApplicantEngineClient:
         """Tracker-board rows for one campaign, newest first."""
         return await self._request("GET", f"/api/post-submission/{campaign_id}")
 
+    async def post_submission_attention(self, campaign_id: str) -> Any:
+        """Ghosted applications + drafted (never auto-sent) follow-ups awaiting
+        review for one campaign (dark-engine audit B2 items 8/9/60) -- the
+        scheduler's daily ghosting-detection + follow-up-drafting sweep
+        (``PostSubmissionService.run_post_submission_sweep``) materializes both
+        as pending actions; this reads that SAME substrate back, filtered to
+        just these two kinds."""
+        return await self._request("GET", f"/api/post-submission/{campaign_id}/attention")
+
     async def tracker_record_outcome(
         self, application_id: str, outcome_type: str, reason: str | None = None
     ) -> Any:

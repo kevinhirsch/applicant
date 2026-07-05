@@ -29,7 +29,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from applicant.app.deps import get_post_submission_service, get_storage, require_llm_configured
+from applicant.app.deps import (
+    get_pending_actions_service,
+    get_post_submission_service,
+    get_storage,
+    require_llm_configured,
+)
+from applicant.application.services.post_submission_service import (
+    KIND_FOLLOWUP_DRAFT,
+    KIND_GHOSTING_FLAG,
+)
 from applicant.core.entities.outcome_event import OUTCOME_TYPES
 from applicant.core.entities.rejection_signal import RejectionSource
 from applicant.core.ids import ApplicationId, CampaignId
@@ -77,6 +86,39 @@ def tracker_board(
     """
     rows = svc.list_tracker_rows(CampaignId(campaign_id))
     return {"campaign_id": campaign_id, "applications": rows}
+
+
+@router.get("/{campaign_id}/attention")
+def attention(
+    campaign_id: str, pending=Depends(get_pending_actions_service)
+) -> dict:
+    """Ghosted applications + drafted (never auto-sent) follow-ups awaiting the
+    owner's review, for one campaign (dark-engine audit B2 items 8/9/60).
+
+    Reads straight off the SAME pending-actions substrate the Portal already
+    renders generically (CLAUDE.md principle #3) -- ``ghosting_flag`` rows come
+    from the scheduler's daily ``check_ghosting`` sweep, ``followup_draft`` rows
+    from its follow-up-drafting pass (``PostSubmissionService.
+    run_post_submission_sweep``, driven by ``Scheduler._run_post_submission_
+    sweep``). A pure read: resolving/acting on an item still goes through the
+    existing pending-actions resolve path (the Portal), not this endpoint.
+    """
+    rows = pending.list_pending(CampaignId(campaign_id))
+
+    def _row(a) -> dict:
+        return {
+            "id": str(a.id),
+            "application_id": str(a.application_id) if a.application_id else None,
+            "title": a.title,
+            "payload": dict(a.payload or {}),
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+
+    return {
+        "campaign_id": campaign_id,
+        "ghosted": [_row(a) for a in rows if a.kind == KIND_GHOSTING_FLAG],
+        "followups_due": [_row(a) for a in rows if a.kind == KIND_FOLLOWUP_DRAFT],
+    }
 
 
 @router.post("/applications/{application_id}/outcome", status_code=201)

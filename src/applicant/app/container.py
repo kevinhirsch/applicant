@@ -932,7 +932,15 @@ def build_container(settings: Settings | None = None) -> Container:
     final_approval_service = FinalApprovalService(orchestrator, notification_service)
     from applicant.application.services.post_submission_service import PostSubmissionService
     post_submission_service = PostSubmissionService(
-        storage, notification_service, learning=learning_service, workspace=workspace
+        storage,
+        notification_service,
+        learning=learning_service,
+        workspace=workspace,
+        # Dark-engine audit B2 items 8/9/60: lets the scheduler-driven ghosting +
+        # follow-up-drafting sweep materialize both as Portal-visible pending
+        # actions (reuses the SAME substrate every other pending-action already
+        # surfaces through -- no new UI).
+        pending_actions=pending_actions_service,
     )
     submission_service = SubmissionService(
         storage, browser, learning=learning_service, advanced_learning=advanced_learning_service,
@@ -1257,7 +1265,13 @@ def build_container(settings: Settings | None = None) -> Container:
         )
         from applicant.application.services.post_submission_service import PostSubmissionService
         post_sub = PostSubmissionService(
-            tick_storage, notification_service, learning=ls, workspace=workspace
+            tick_storage,
+            notification_service,
+            learning=ls,
+            workspace=workspace,
+            # B2 items 8/9/60: this tick's isolated PendingActionsService (CONC-2),
+            # sharing this tick's Session -- see Scheduler._run_post_submission_sweep.
+            pending_actions=pas,
         )
         sub = SubmissionService(
             tick_storage, browser, learning=ls, advanced_learning=adv,
@@ -1345,6 +1359,10 @@ def build_container(settings: Settings | None = None) -> Container:
             "notification_service": notification_service,
             "final_approval_service": final_approval_service,
             "curation_service": tick_curation,
+            # B2 items 8/9/60: the per-tick, Session-isolated PostSubmissionService so
+            # the scheduler's ghosting/follow-up sweep runs against THIS tick's storage
+            # (CONC-2), same pattern as ``curation_service`` above.
+            "post_submission_service": post_sub,
         }
 
     # CONC-REQ-1: build the storage-bound services for ONE request from a per-request
@@ -1452,7 +1470,14 @@ def build_container(settings: Settings | None = None) -> Container:
         rs_chat._scheduler = scheduler
         from applicant.application.services.post_submission_service import PostSubmissionService
         rs_post_sub = PostSubmissionService(
-            req_storage, notification_service, learning=rs_ls, workspace=workspace
+            req_storage,
+            notification_service,
+            learning=rs_ls,
+            workspace=workspace,
+            # B2 items 8/9/60: this request's isolated PendingActionsService
+            # (CONC-REQ-1), so a request-triggered write (e.g. the new read
+            # endpoint below) sees this request's own Session-scoped data.
+            pending_actions=rs_pas,
         )
         rs_submission = SubmissionService(
             req_storage, browser, learning=rs_ls, advanced_learning=rs_adv,
@@ -1610,6 +1635,13 @@ def build_container(settings: Settings | None = None) -> Container:
             pii_retention_days=settings.pii_retention_days,
         ),
         retention_schedule=settings.pii_retention_schedule,
+        # Dark-engine audit B2 items 8/9/60: drives PostSubmissionService's
+        # check_ghosting + follow-up-drafting sweep once per (campaign, UTC day) —
+        # runs unconditionally (like the daily digest), gated only by the SAME
+        # automated-work gate every other proactive push already respects; the
+        # shared singleton here is the fallback when no per-tick factory is
+        # configured (in-memory / no-DB), mirroring every sibling service above.
+        post_submission_service=post_submission_service,
         # FR-OBS-2 / NFR-OPS: how many CONSECUTIVE failed ticks raise ONE operator alert
         # through the existing notification ladder (idempotent). Uses the process-lived
         # metrics singleton so the agent-status surface reads the same registry.

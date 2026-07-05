@@ -949,6 +949,14 @@ app.include_router(setup_applicant_control_routes())
 from routes.applicant_snapshot_routes import setup_applicant_snapshot_routes
 app.include_router(setup_applicant_snapshot_routes())
 
+# Post-submission "attention" feed (dark-engine audit B2 items 8/9/60) —
+# owner-scoped read proxy (/api/applicant/followups) over the scheduler's daily
+# ghosting-detection + follow-up-drafting sweep. Both surface as pending actions
+# through the EXISTING Portal substrate already; this is an additional queryable
+# per-campaign read (no new UI — see routes/applicant_followups_routes.py).
+from routes.applicant_followups_routes import setup_applicant_followups_routes
+app.include_router(setup_applicant_followups_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

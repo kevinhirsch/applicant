@@ -285,3 +285,58 @@ def test_archive_rejects_a_not_yet_archivable_application_with_409(client):
 def test_archive_unknown_application_is_404(client):
     r = client.post("/api/post-submission/applications/does-not-exist/archive")
     assert r.status_code == 404
+
+
+# --- (f) dark-engine audit B2 items 8/9/60: the ghosting/follow-up "attention" read --
+
+
+def test_attention_endpoint_is_registered_and_well_formed_when_empty(client):
+    paths = _registered_paths(client.app)
+    assert "/api/post-submission/{campaign_id}/attention" in paths
+
+    r = client.get("/api/post-submission/c-empty/attention")
+    assert r.status_code == 200
+    assert r.json() == {"campaign_id": "c-empty", "ghosted": [], "followups_due": []}
+
+
+def test_attention_endpoint_reads_back_ghosting_and_followup_pending_actions(client):
+    container = client.app.state.container
+    _seed(container, "c-attn", "a-attn-1", status=ApplicationState.AWAITING_RESPONSE)
+    _seed(container, "c-attn", "a-attn-2", status=ApplicationState.AWAITING_RESPONSE)
+
+    pending = container.pending_actions_service
+    pending.materialize(
+        CampaignId("c-attn"),
+        "ghosting_flag",
+        "Likely gone silent: Acme",
+        application_id=ApplicationId("a-attn-1"),
+        payload={"sla_days": 21, "submission_age_days": 30},
+        dedup_key="ghosting_flag:a-attn-1",
+    )
+    pending.materialize(
+        CampaignId("c-attn"),
+        "followup_draft",
+        "Follow-up ready to review: Acme",
+        application_id=ApplicationId("a-attn-2"),
+        payload={"subject": "Checking in", "body": "Hi, ..."},
+        dedup_key="followup_draft:a-attn-2",
+    )
+    # An unrelated pending-action kind must not leak into either bucket.
+    pending.materialize(CampaignId("c-attn"), "agent_question", "Unrelated question?")
+
+    r = client.get("/api/post-submission/c-attn/attention")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["campaign_id"] == "c-attn"
+    assert len(body["ghosted"]) == 1
+    assert body["ghosted"][0]["application_id"] == "a-attn-1"
+    assert body["ghosted"][0]["payload"]["sla_days"] == 21
+    assert len(body["followups_due"]) == 1
+    assert body["followups_due"][0]["application_id"] == "a-attn-2"
+    assert body["followups_due"][0]["payload"]["body"] == "Hi, ..."
+
+
+def test_attention_endpoint_llm_gate_blocks_when_not_configured():
+    with TestClient(create_app()) as c:
+        r = c.get("/api/post-submission/c-1/attention")
+        assert r.status_code == 409
