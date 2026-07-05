@@ -94,11 +94,11 @@ def _resume_health_block() -> str:
 def test_read_resume_appends_resume_health_to_the_same_confirmation_message():
     src = _src()
     m = re.search(
-        r"st\.innerHTML = `<p class=\"admin-success\"[^`]*Read \$\{res\.attribute_count[^`]*\}"
+        r"st\.innerHTML = `<p class=\"admin-success\"[^`]*read \$\{res\.attribute_count[^`]*\}"
         r"[^`]*\$\{([^}]+)\}`;",
         src,
     )
-    assert m, "the 'Read N details...' confirmation assignment must exist unmodified"
+    assert m, "the '...read N details...' confirmation assignment must exist unmodified"
     assert m.group(1).strip() == "_resumeHealthHTML(res)", (
         "resume health must be appended INTO the existing confirmation message "
         "(same st.innerHTML assignment), not rendered as a separate step/element"

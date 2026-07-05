@@ -374,7 +374,7 @@ function _maybeDesktopNotify(n) {
 
 const KINDS = {
   agent_question: {
-    label: 'The assistant has a question for you',
+    label: 'I have a question for you',
     affordance: 'answer',
   },
   material_review: {
@@ -383,28 +383,28 @@ const KINDS = {
     affordance: 'review',
   },
   missing_attr: {
-    label: 'A detail is needed before this can continue',
+    label: 'I need one detail before I can continue',
     affordance: 'missing',
   },
   missing_attribute: {
-    label: 'A detail is needed before this can continue',
+    label: 'I need one detail before I can continue',
     affordance: 'missing',
   },
   emergency_handoff: {
-    label: 'Needs you to take over in the live session',
+    label: 'Needs you to take over in the live view',
     affordance: 'session',
   },
   account_human_step: {
-    label: 'Needs you to create an account, then it can continue',
+    label: 'I need you to create an account — then I can continue',
     affordance: 'session',
   },
   account_creation: {
-    label: 'Needs you to create an account, then it can continue',
+    label: 'I need you to create an account — then I can continue',
     affordance: 'session',
   },
   two_factor: {
     label: 'Google needs a two-factor sign-in to continue',
-    hint: 'Tap continue, then approve the prompt on your phone within 60 seconds.',
+    hint: 'Tap ‘Continue Google sign-in’, then approve the prompt on your phone within 60 seconds.',
     affordance: 'two_factor',
   },
   detection_blocker: {
@@ -435,23 +435,23 @@ const KINDS = {
     affordance: 'final',
   },
   error: {
-    label: 'Hit a snag that needs a look',
+    label: 'I hit a snag and need your help',
     affordance: 'answer',
   },
   integral_change: {
-    label: 'A core detail was inferred and needs your OK',
+    label: 'I think one of your core details changed — OK it before I use it',
     hint: 'Confirm the change to apply it, or keep your current value.',
     affordance: 'confirm_change',
   },
   onboarding_incomplete: {
-    label: 'A few profile steps are still to do before your search can run',
+    label: 'A few profile steps are left before your search can run',
     hint: 'Finish these to switch on your automated job search.',
     affordance: 'complete',
   },
 };
 
 function _meta(kind) {
-  return KINDS[kind] || { label: (kind || 'Needs your attention').replace(/_/g, ' '), affordance: 'answer' };
+  return KINDS[kind] || { label: 'Needs your attention', affordance: 'answer' };
 }
 
 // The engine carries a live-session URL under a few possible payload keys.
@@ -538,7 +538,7 @@ function _ensureModalEl() {
   modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Pending');
+  modal.setAttribute('aria-label', 'Waiting on you — pending actions');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:640px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header ow-titlebar">
@@ -547,11 +547,11 @@ function _ensureModalEl() {
         </div>
         <h4 class="ow-title">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          Pending
+          Waiting on you
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What Applicant never does" aria-expanded="false" aria-controls="applicant-portal-neverdoes-panel" title="What Applicant never does — its safety limits" style="font-size:11px;padding:2px 8px;opacity:0.8;">What it never does</button>
-          <button type="button" class="memory-toolbar-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Refresh the list" style="width:26px;height:26px;padding:0;flex-shrink:0;">
+          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What I never do" aria-expanded="false" aria-controls="applicant-portal-neverdoes-panel" title="My hard limits — the things I will never do without you" style="font-size:11px;padding:2px 8px;opacity:0.8;">What I never do</button>
+          <button type="button" class="memory-toolbar-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Check for anything new right now" style="width:26px;height:26px;padding:0;flex-shrink:0;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
         </div>
@@ -564,7 +564,7 @@ function _ensureModalEl() {
         <div id="applicant-portal-momentum"></div>
         <div id="applicant-portal-neverdoes-panel" style="display:none;"></div>
         <div id="applicant-portal-digest"></div>
-        <div id="applicant-portal-pending"><div class="hwfit-loading">Loading…</div></div>
+        <div id="applicant-portal-pending"><div class="hwfit-loading">Checking what needs you…</div></div>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -661,7 +661,7 @@ function _partOfDay() {
 function _greetingLine(pendingCount) {
   const when = _partOfDay();
   const n = Number(pendingCount) || 0;
-  if (n <= 0) return `Good ${when}. You're all clear — I'll bring anything that needs you right here.`;
+  if (n <= 0) return `Good ${when}. You’re all clear — I’ll bring anything that needs you right here.`;
   if (n === 1) return `Good ${when}. One thing is waiting for you below.`;
   return `Good ${when}. ${n} things are waiting for you below.`;
 }
@@ -923,7 +923,7 @@ async function _loadStreak() {
 function _momentumEmpty(host) {
   host.innerHTML = `
     <div style="font-size:11.5px;opacity:0.6;margin:0 2px 10px;line-height:1.4;">
-      Your momentum shows up here once you've submitted a few.
+      Your momentum shows up here once your first applications go out.
     </div>`;
 }
 
@@ -943,7 +943,7 @@ function _renderMomentum(host, data) {
   const best = sources.find((s) => s && s.source);
   let scoreboard = parts.join(sep);
   if (best) {
-    scoreboard += `${sep}<span title="The source converting best for you." style="opacity:0.85;">best source: ${esc(String(best.source))}</span>`;
+    scoreboard += `${sep}<span title="The job board that's working best for you so far." style="opacity:0.85;">best source: ${esc(String(best.source))}</span>`;
   }
   host.innerHTML = `
     <div class="admin-card" style="margin:0 0 10px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;font-size:12px;color:var(--fg);">
@@ -1032,10 +1032,10 @@ function _renderOffline(body) {
   body.innerHTML = `
     <div style="padding:28px 18px;text-align:center;opacity:0.75;">
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5;margin-bottom:10px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      <div style="font-size:14px;margin-bottom:6px;">Not connected yet</div>
+      <div style="font-size:14px;margin-bottom:6px;">I can't check in right now</div>
       <div style="font-size:12px;max-width:420px;margin:0 auto;">
-        Connect a model in Settings to activate your job search. Once it's running,
-        anything that needs your input will show up here.
+        I've lost my connection. I'll keep trying — anything that needs you will
+        appear here as soon as I'm back.
       </div>
     </div>`;
 }
@@ -1045,7 +1045,7 @@ function _renderOffline(body) {
 // so the owner knows what to finish, instead of the misleading "not connected".
 function _renderGated(body, data) {
   const msg = (data && data.message)
-    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+    || 'Finish setup — connect a model and fill in your profile — and I can start working for you.';
   // Audit #28/#29/#30/#39: a gated state is a HEALTHY unconfigured state, not a
   // warning, so it gets the same neutral inbox mark the header/offline states
   // use (not a warning circle+!). The copy is Semibold + left-aligned within a
@@ -1085,7 +1085,7 @@ function _neverDoesHTML() {
   if (!items.length) return '';
   return `
     <div style="max-width:380px;margin:14px auto 0;text-align:left;border-top:1px solid var(--border);padding-top:12px;">
-      <div style="font-size:11px;opacity:0.7;margin-bottom:4px;">What Applicant never does</div>
+      <div style="font-size:11px;opacity:0.7;margin-bottom:4px;">What I never do</div>
       <ul style="margin:0;padding-left:16px;font-size:11px;opacity:0.75;line-height:1.5;">
         ${items.map((t) => `<li>${esc(t)}</li>`).join('')}
       </ul>
@@ -1186,7 +1186,7 @@ function _renderEmpty(body) {
       <div style="max-width:400px;margin:0 auto;text-align:left;">
         <div style="font-size:14px;font-weight:600;color:var(--fg);margin-bottom:4px;">You're all clear</div>
         <div style="font-size:12px;line-height:1.5;color:color-mix(in srgb, var(--fg) 68%, transparent);">
-          Applicant is working in the background — I'll bring anything that needs you
+          I'm working in the background — I'll bring anything that needs you
           right here.
         </div>
         <div style="font-size:11px;color:color-mix(in srgb, var(--fg) 65%, transparent);margin-top:8px;display:inline-flex;align-items:center;gap:6px;">
@@ -1231,6 +1231,10 @@ function _ladderLine(item) {
 function _rowShell(item, inner) {
   const meta = _meta(item.kind);
   const title = item.title || meta.label;
+  // Only show the generic per-kind label as a subtitle when the engine sent
+  // its own distinct title — otherwise the same sentence would print twice
+  // (the title already fell back to meta.label above).
+  const subtitleLabel = title === meta.label ? '' : esc(meta.label);
   const where = item.campaign_name ? `<span style="opacity:0.55;">· ${esc(item.campaign_name)}</span>` : '';
   // The onboarding-gap row is synthetic (no engine action to resolve) and clears
   // itself when the profile is complete, so it carries no "Done" affordance — its
@@ -1254,7 +1258,7 @@ function _rowShell(item, inner) {
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(title)}${_urgencyBadge(item)}</div>
-          <div style="opacity:0.6;font-size:11px;margin-top:1px;">${esc(meta.label)} ${_ageLabel(item)} ${where}</div>
+          <div style="opacity:0.6;font-size:11px;margin-top:1px;">${subtitleLabel} ${_ageLabel(item)} ${where}</div>
           ${ladderLine}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">${snoozeBtn}${doneBtn}</div>
@@ -1290,12 +1294,12 @@ function _renderAnswer(item) {
 }
 
 function _renderReview(item) {
-  const hint = _meta(item.kind).hint || 'Open the side-by-side review.';
+  const hint = _meta(item.kind).hint || 'See exactly what I changed, side by side, before anything goes out.';
   const appId = esc(_appId(item));
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">${esc(hint)}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${appId}">Review</button>
+      <button type="button" class="cal-btn cal-btn-primary applicant-portal-review" data-app-id="${appId}">Review the document</button>
       <button type="button" class="cal-btn applicant-portal-fix-documents" data-app-id="${appId}"
               title="Check this application's documents and rebuild anything missing">Fix documents</button>
     </div>`;
@@ -1307,12 +1311,12 @@ function _renderMissing(item) {
   const cid = item.campaign_id || '';
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">
-      Provide the value below and the application will pick up where it left off.
+      Give me this one detail and I’ll pick the application up where it left off.
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" class="applicant-portal-missing-name" value="${esc(name)}" placeholder="Field"
+      <input type="text" class="applicant-portal-missing-name" value="${esc(name)}" placeholder="What’s missing (e.g. desired salary)"
              style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
-      <input type="text" class="applicant-portal-missing-value" placeholder="Value"
+      <input type="text" class="applicant-portal-missing-value" placeholder="Your answer"
              style="flex:2;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-save-missing"
               data-action-id="${esc(item.id)}" data-campaign-id="${esc(cid)}" data-application-id="${esc(_appId(item))}">Save &amp; continue</button>
@@ -1343,9 +1347,9 @@ function _renderSession(item) {
   let action = '';
   if (url || appId) {
     action = `<button type="button" class="cal-btn cal-btn-primary applicant-portal-session"
-                data-app-id="${esc(appId)}" data-session-url="${esc(url)}">Open live session</button>`;
+                data-app-id="${esc(appId)}" data-session-url="${esc(url)}">Watch live</button>`;
   } else {
-    action = `<div style="font-size:12px;opacity:0.7;">When the live session is ready, a link will appear here.</div>`;
+    action = `<div style="font-size:12px;opacity:0.7;">When the live view is ready, the link will appear here.</div>`;
   }
   return handoff + action;
 }
@@ -1386,7 +1390,7 @@ function _renderDigest(item) {
     <div style="font-size:12px;opacity:0.8;margin-bottom:6px;">Review the matched role and approve or skip it.</div>
     ${scoreLine}
     ${whyLine}
-    <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review applications</button>`;
+    <button type="button" class="cal-btn cal-btn-primary applicant-portal-digest">Review today's roles</button>`;
 }
 
 // Held integral change (FR-FB-3 / FR-LEARN-4): a core detail was inferred from a
@@ -1419,8 +1423,8 @@ function _renderTwoFactor(item) {
   const appId = _appId(item);
   const retry = !!(item.payload && item.payload.retry);
   const hint = retry
-    ? 'The last attempt timed out. Tap continue and approve the prompt on your phone within 60 seconds.'
-    : (meta.hint || 'Tap continue, then approve the prompt on your phone within 60 seconds.');
+    ? 'The last attempt timed out. Tap ‘Try Google again’ and approve the prompt on your phone within 60 seconds.'
+    : (meta.hint || 'Tap ‘Continue Google sign-in’, then approve the prompt on your phone within 60 seconds.');
   return `
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <button type="button" class="cal-btn cal-btn-primary applicant-portal-two-factor"
@@ -1448,10 +1452,10 @@ function _renderFinal(item) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="button" class="cal-btn applicant-portal-final-self"
               data-app-id="${esc(appId)}" data-label="${esc(label)}"
-              title="Open the live session and click submit yourself">I'll submit it myself (open live session)</button>
+              title="Open the live view and click submit yourself">I'll submit it myself</button>
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-final-authorize"
               data-app-id="${esc(appId)}" data-action-id="${esc(item.id)}" data-label="${esc(label)}"
-              title="Let the assistant click the final submit, just this once">Authorize Applicant to submit this</button>
+              title="I'll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
     </div>`;
 }
 
@@ -1597,7 +1601,7 @@ function _renderList(body) {
     : '';
   const actionHdr = _items.length
     ? `<div style="display:flex;align-items:center;gap:8px;margin:2px 2px 2px;">
-         <span style="font-size:11px;opacity:0.7;">${_items.length} item${_items.length === 1 ? '' : 's'} need${_items.length === 1 ? 's' : ''} your attention</span>
+         <span style="font-size:11px;opacity:0.7;">Waiting on you: ${_items.length}</span>
          ${bulkBtn ? `<span style="margin-left:auto;">${bulkBtn}</span>` : ''}
        </div>`
     : '';
@@ -1652,7 +1656,7 @@ function _wireDeliverNow(host) {
       _setBadge(_items.length + _infoNotifs().length);
       _renderList(host);
     } catch (e) {
-      _toast(e.message || 'Could not deliver those notifications');
+      _toast(errText(e) || 'Could not deliver those notifications');
       if (msg) msg.textContent = '';
       btn.disabled = false;
     }
@@ -1718,7 +1722,7 @@ function _openRedline(appId) {
   } catch { /* fall through */ }
   // No direct opener available — offer a one-tap action that lands them on the
   // Library surface instead of dead "go here" instruction text.
-  _toastAction('Applicant review is in your Library', 'Open Library', () => {
+  _toastAction('Your document review is in the Library', 'Open Library', () => {
     const rail = document.getElementById('rail-documents') || document.getElementById('rail-library');
     if (rail) { rail.click(); _close(); }
   });
@@ -1748,7 +1752,7 @@ function _openSession(appId, url) {
   if (url) {
     try { window.open(url, '_blank', 'noopener'); return; } catch { /* fall through */ }
   }
-  _toast('No live session is available yet');
+  _toast('No live view is available yet');
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -1818,7 +1822,7 @@ function _wireRows(host) {
         }
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not update that');
+        _toast(errText(e) || 'Could not update that');
       }
     });
   });
@@ -1833,11 +1837,11 @@ function _wireRows(host) {
       try {
         await _post(`${API}/actions/${encodeURIComponent(id)}/snooze`, {});
         _removeRow(host, id);
-        _toast('Snoozed — we’ll remind you tomorrow');
+        _toast('Snoozed — I’ll bring it back tomorrow morning.');
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not snooze that');
+        _toast(errText(e) || 'Could not snooze that');
       }
     });
   });
@@ -1870,7 +1874,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not approve all of those');
+        _toast(errText(e) || 'Could not approve all of those');
       }
     });
   });
@@ -1898,7 +1902,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Send';
-        _toast(e.message || 'Could not send that');
+        _toast(errText(e) || 'Could not send that');
       }
     });
   });
@@ -1933,7 +1937,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not generate a draft.');
+        _toast(errText(e) || 'Could not generate a draft.');
       }
     });
   });
@@ -1957,7 +1961,7 @@ function _wireRows(host) {
         } catch (e) {
           buttons.forEach((b) => { b.disabled = false; });
           btn.textContent = orig;
-          _toast(e.message || 'Could not update that');
+          _toast(errText(e) || 'Could not update that');
         }
       });
     });
@@ -2051,7 +2055,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not continue the sign-in');
+        _toast(errText(e) || 'Could not continue the sign-in');
       }
     });
   });
@@ -2062,7 +2066,7 @@ function _wireRows(host) {
   host.querySelectorAll('.applicant-portal-final-self').forEach((btn) => {
     btn.addEventListener('click', () => {
       _openSession(btn.dataset.appId, '');
-      _toast('Open the live session and click submit when you’re ready');
+      _toast('Open the live view and click submit when you’re ready');
     });
   });
   host.querySelectorAll('.applicant-portal-final-authorize').forEach((btn) => {
@@ -2073,7 +2077,7 @@ function _wireRows(host) {
       if (!appId) { _toast('No application is linked to this item yet'); return; }
       let message;
       try { message = remoteModule.authorizeConfirmMessage({ label }); }
-      catch { message = `Authorize the assistant to submit ${label || 'this application'}? Materials approved ✓ — this cannot be undone.`; }
+      catch { message = `Send ${label || 'this application'} now? You’ve approved everything in it. Once it’s submitted, I can’t take it back.`; }
       const ok = await _confirm(message, { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
       if (!ok) return;
       btn.disabled = true;
@@ -2084,11 +2088,11 @@ function _wireRows(host) {
         // Best-effort clear the pending row once the submit is authorized.
         if (actionId) { try { await _doResolve(actionId); } catch { /* row refreshes anyway */ } }
         _removeRow(host, actionId);
-        _toast('Authorized — the assistant submitted the application');
+        _toast('Done — I submitted it. It’s on its way.');
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not authorize the submission');
+        _toast(errText(e) || 'Could not authorize the submission');
       }
     });
   });
@@ -2132,7 +2136,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not save that');
+        _toast(errText(e) || 'Could not save that');
       }
     });
   });
@@ -2150,7 +2154,7 @@ function _wireRows(host) {
       } catch (e) {
         btn.disabled = false;
         btn.textContent = orig;
-        _toast(e.message || 'Could not dismiss that');
+        _toast(errText(e) || 'Could not dismiss that');
       }
     });
   });
@@ -2264,9 +2268,9 @@ function _renderDigestRows(payload) {
   if (!rows.length) {
     // Empty-day note with the engine's search rationale (mirrors the Email tab).
     let note = (payload && payload.note) ? String(payload.note)
-      : 'No new roles cleared the bar today. The assistant keeps looking and will let you know.';
+      : "No new roles cleared the bar today. I'm still looking — I'll tell you the moment one does.";
     const searched = payload && payload.searched ? String(payload.searched) : '';
-    if (searched && note.indexOf(searched) === -1) note += ` Searched: ${searched}.`;
+    if (searched && note.indexOf(searched) === -1) note += ` I looked at: ${searched}.`;
     dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.75;">${esc(note)}</div>`;
     return;
   }
@@ -2322,7 +2326,7 @@ async function _loadDigestRows() {
       // in progress) — a normal pre-setup state, not a failure. The Portal is the
       // post-login home, so this is the common case before setup is finished;
       // point to setup instead of showing an alarming error.
-      dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Finish setting up Applicant to start seeing matched roles here.</div>`;
+      dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Finish setup and I'll start lining up matched roles here.</div>`;
     } else {
       dbody.innerHTML = `<div style="padding:6px 4px;font-size:12px;opacity:0.7;">Could not load today’s roles right now.</div>`;
     }

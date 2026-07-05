@@ -487,6 +487,15 @@ function buildDeliverNowHarness() {
     function _setBadge(n) { _setBadgeCalls.push(n); }
     function _infoNotifs() { return []; }
     function _renderList(host) { _renderListCalls.push(host); }
+    // Minimal stand-in for applicantCore.js's real errText(err) (copy/voice
+    // lens-02 fix): the deliver-now handler now routes its failure toast
+    // through it instead of a raw \`e.message\`. For a plain Error with no
+    // \`.kind\` (exactly what \`_postShouldReject\` throws above) the real
+    // implementation falls through to \`err.message\`, so this stub mirrors
+    // that one branch rather than re-implementing the whole helper.
+    function errText(err) {
+      return (err && err.message) ? err.message : 'Something went wrong.';
+    }
 
     ${extractFunction(SRC, '_wireDeliverNow')}
 

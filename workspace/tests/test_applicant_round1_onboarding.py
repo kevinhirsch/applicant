@@ -118,7 +118,7 @@ def test_welcome_never_does_list_is_collapsed_behind_details():
     assert re.search(r"<details class=\"ao-adv ao-welcome-trust\">", body), (
         "expected the trust list wrapped in a collapsed <details> element"
     )
-    assert "<summary>What Applicant never does</summary>" in body
+    assert "<summary>What I never do</summary>" in body
     # The details wrapper must be present in the SAME render as the trust
     # list items so the list actually lives inside it (not just anywhere in
     # the function).
