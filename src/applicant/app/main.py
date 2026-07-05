@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from applicant.app.config import Settings, get_settings
 from applicant.app.container import build_container
-from applicant.app.lifespan import lifespan
+from applicant.app.lifespan import get_boot_health, lifespan
 from applicant.app.routers import register_routers
 from applicant.app.routers.mcp import mount_mcp
 from applicant.app.static import mount_static
@@ -222,6 +222,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         checks["capabilities_degraded"] = sorted(
             name for name, status in caps.items() if not status.startswith("ok")
         )
+
+        # 4) Boot-step health (lens04 #48). Every guarded startup step in
+        # ``app/lifespan.py`` (capability report, durable-workflow recovery, DB
+        # healthcheck, dormant-surface seed, audit-log start, system-campaign
+        # seed) already swallows its own exception + logs a warning so one
+        # failing step never blocks the others — but that left no aggregate
+        # signal here, so a deploy where several warm-up/init steps silently
+        # failed still read fully healthy. ``checks["boot"]`` names every
+        # recorded step's outcome and ``checks["boot_degraded"]`` flattens the
+        # failed ones, same "surfaced, not gated on" contract as
+        # ``capabilities_degraded`` above — this never fails healthz hard, since
+        # these are informational warm-up/init steps, not the DB-reachability
+        # gate (which already has its own hard check + honesty fields above).
+        boot = get_boot_health()
+        checks["boot"] = boot["steps"]
+        checks["boot_degraded"] = boot["failed_steps"]
 
         if ok:
             return JSONResponse(

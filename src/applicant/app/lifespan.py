@@ -28,6 +28,62 @@ log = get_logger(__name__)
 _shutdown_requested: bool = False
 
 
+class BootHealth:
+    """Process-lived aggregate record of guarded boot-step outcomes (lens 04 #48).
+
+    Every boot step below (capability report, durable-workflow recovery, DB
+    healthcheck, dormant-surface seed, audit-log start, system-campaign seed) is
+    individually wrapped in ``except Exception: log.warning(...)`` so one slow
+    or failing step never blocks the others from running. But that means a
+    deploy where several warm-up/init steps silently failed still reported
+    ``/healthz`` as fully healthy — there was no aggregate signal an operator
+    (or an automated deploy check) could read. This is a plain process-lived
+    singleton (module-level, same pattern as ``_shutdown_requested`` above) that
+    each guarded step records its own outcome into; ``get_boot_health()`` hands
+    a snapshot to ``/healthz`` in ``app/main.py``. Purely informational — it
+    never hard-fails healthz (RAG warm-up / endpoint ping are optional; DB
+    reachability already has its own hard gate + ``database_persistence``
+    field).
+    """
+
+    def __init__(self) -> None:
+        self._steps: dict[str, str] = {}
+
+    def reset(self) -> None:
+        """Clear all recorded steps.
+
+        Called once at the top of :func:`lifespan` so a fresh boot (a new
+        process, or a new ``create_app()`` in tests) never inherits a stale
+        failure recorded by a previous boot in the same process.
+        """
+        self._steps.clear()
+
+    def record(self, step: str, *, ok: bool, detail: str = "") -> None:
+        """Record a boot step's outcome. Safe to call more than once per step."""
+        prefix = "ok" if ok else "failed"
+        self._steps[step] = f"{prefix}: {detail}" if detail else prefix
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a JSON-able snapshot: per-step statuses + the flattened failed list."""
+        failed = sorted(name for name, status in self._steps.items() if not status.startswith("ok"))
+        return {
+            "steps": dict(self._steps),
+            "degraded": bool(failed),
+            "failed_steps": failed,
+        }
+
+
+#: Process-lived boot-health record. Module-level singleton (not on the
+#: container) so `/healthz` can read it without threading a new dependency
+#: through the DI container just for this informational signal (#48).
+_boot_health = BootHealth()
+
+
+def get_boot_health() -> dict[str, Any]:
+    """Snapshot of this process's boot-step outcomes, for `/healthz` (#48)."""
+    return _boot_health.snapshot()
+
+
 def _handle_signal(sig: int, frame: Any) -> None:
     """Signal handler for graceful shutdown (FR-DUR-1, #316).
 
@@ -216,6 +272,11 @@ async def lifespan(app: FastAPI):
     container = app.state.container
     scheduler_task: asyncio.Task | None = None
 
+    # Fresh boot => fresh boot-health record (#48). Otherwise a previous boot's
+    # (or, in tests, a previous create_app()'s) recorded failures would leak
+    # into this boot's /healthz response.
+    _boot_health.reset()
+
     # 0) Register graceful-shutdown signal handlers (SIGTERM/SIGINT).
     _register_shutdown_signals()
 
@@ -252,17 +313,24 @@ async def lifespan(app: FastAPI):
                 status=cap.status,
                 detail=cap.detail,
             )
+        _boot_health.record("capability_report", ok=True)
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("capability_status_failed", error=str(exc))
+        _boot_health.record("capability_report", ok=False, detail=str(exc))
 
     # 1) Recover + RE-DRIVE interrupted durable workflows (FR-DUR-1).
     try:
         redriven = _redrive_pending(container)
         log.info("durable_recovery", redriven=redriven)
+        _boot_health.record("durable_recovery", ok=True)
     except NotImplementedError:
         log.info("durable_recovery_skipped", reason="orchestrator backend not ready")
+        _boot_health.record(
+            "durable_recovery", ok=True, detail="skipped: orchestrator backend not ready"
+        )
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("durable_recovery_failed", error=str(exc))
+        _boot_health.record("durable_recovery", ok=False, detail=str(exc))
 
     # 2) Verify DB connectivity (tolerate no-DB in tests).
     try:
@@ -278,8 +346,13 @@ async def lifespan(app: FastAPI):
                 healthy=healthy,
                 degraded="database unreachable — running on non-persistent in-memory storage; data will NOT survive restart",
             )
+        # Boot-step outcome: the healthcheck itself RAN (whether the DB is
+        # actually reachable is a separate, already-surfaced signal — see
+        # /healthz's `database`/`database_persistence` fields).
+        _boot_health.record("db_healthcheck", ok=True)
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("db_healthcheck_failed", error=str(exc))
+        _boot_health.record("db_healthcheck", ok=False, detail=str(exc))
 
     # 3) Register dormant surfaces (FR-UI-2). Tolerate no-DB.
     try:
@@ -288,6 +361,7 @@ async def lifespan(app: FastAPI):
         if session is not None:
             container.storage.commit()
         log.info("dormant_surfaces_seeded", count=count)
+        _boot_health.record("dormant_surfaces", ok=True)
     except Exception as exc:  # pragma: no cover - defensive
         # Roll back so a failed seed doesn't leave the shared boot Session in an
         # aborted-transaction state that makes every later query (ensure_system_campaign,
@@ -297,6 +371,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
         log.warning("dormant_seed_failed", error=str(exc))
+        _boot_health.record("dormant_surfaces", ok=False, detail=str(exc))
 
     # 3b) Start the audit-log service — subscribes to the domain event bus and
     #     persists one ActionEvent per emission (FR-LOG-4, FR-OBS-2). Process-lived;
@@ -311,8 +386,10 @@ async def lifespan(app: FastAPI):
         )
         audit_log.start()
         log.info("audit_log_started", session_isolated=session_factory is not None)
+        _boot_health.record("audit_log", ok=True)
     except Exception as exc:  # pragma: no cover - defensive
         log.warning("audit_log_start_failed", error=str(exc))
+        _boot_health.record("audit_log", ok=False, detail=str(exc))
 
     # 3c) Seed the reserved system campaign so instance-level secrets (the LLM key,
     #     sandbox tokens) can be sealed in the credential store, whose campaign_id is
@@ -324,8 +401,10 @@ async def lifespan(app: FastAPI):
 
         if ensure_system_campaign(container.storage):
             log.info("system_campaign_seeded")
+        _boot_health.record("system_campaign_seed", ok=True)
     except Exception as exc:  # pragma: no cover - tolerate first-boot races
         log.warning("system_campaign_seed_failed", error=str(exc))
+        _boot_health.record("system_campaign_seed", ok=False, detail=str(exc))
 
     # 4) Start the scheduler loop ONLY when enabled (default OFF, hermetic safety).
     if getattr(container.settings, "scheduler_enabled", False) and container.scheduler is not None:
