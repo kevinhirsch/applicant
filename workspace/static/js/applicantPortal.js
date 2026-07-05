@@ -1462,12 +1462,61 @@ function _renderList(body) {
          ${bulkBtn ? `<span style="margin-left:auto;">${bulkBtn}</span>` : ''}
        </div>`
     : '';
-  const notifHdr = infos.length
-    ? `<div style="font-size:11px;opacity:0.7;margin:10px 2px 2px;">Recent updates</div>`
+  // "Deliver now" (lens-10 audit #46): the release control used to live only on
+  // the Settings quiet-hours card, not here in the center it actually flushes —
+  // a user who opens the Portal precisely because "it's quiet hours and I want
+  // my stuff now" had no affordance. Lift-and-shift the same fetch/handler shape
+  // as `applicantOnboarding.js`'s `ao-qh-deliver` button (same endpoint, same
+  // save-then-status message pattern) into this header, shown whenever there is
+  // anything in the center to look at. No engine field currently exposes a count
+  // of what quiet hours is holding (`GET /api/notifications` and the quiet-hours
+  // proxy both omit it), so this ships as a button alone rather than guessing at
+  // a "N held" figure.
+  const deliverBtn = `<button type="button" class="cal-btn applicant-portal-deliver-now" id="applicant-portal-deliver-now" title="Release notifications quiet hours is holding back, right now">Deliver now</button>`;
+  const notifHdr = (infos.length || _items.length)
+    ? `<div style="display:flex;align-items:center;gap:8px;margin:10px 2px 2px;">
+         <span style="font-size:11px;opacity:0.7;">${infos.length ? 'Recent updates' : 'Notifications'}</span>
+         <span id="applicant-portal-deliver-msg" style="font-size:11px;opacity:0.7;margin-left:auto;"></span>
+         ${deliverBtn}
+       </div>`
     : '';
   body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}`;
   _wireRows(body);
   _wireDigestWhy(body);
+  _wireDeliverNow(body);
+}
+
+// Lift-and-shift of the Settings quiet-hours card's "Deliver now" handler
+// (`applicantOnboarding.js` `ao-qh-deliver`, in its quiet-hours card) onto the
+// SAME workspace proxy endpoint (`POST /api/applicant/portal/notifications/
+// deliver-now`), so tapping this button in the Portal force-releases exactly
+// what the Settings button would have. On success the notifications feed is
+// reloaded and the list re-rendered so anything just released appears here
+// immediately instead of waiting for the next poll.
+function _wireDeliverNow(host) {
+  const btn = host.querySelector('#applicant-portal-deliver-now');
+  if (!btn) return;
+  const msg = host.querySelector('#applicant-portal-deliver-msg');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (msg) { msg.textContent = 'Releasing…'; msg.className = ''; }
+    try {
+      const res = await _post(`${API}/notifications/deliver-now`, {});
+      const n = (res && typeof res.count === 'number') ? res.count : 0;
+      const text = n > 0
+        ? `Released ${n} held notification${n === 1 ? '' : 's'}.`
+        : 'Nothing was being held.';
+      _toast(text);
+      if (msg) msg.textContent = '';
+      await _loadNotifs();
+      _setBadge(_items.length + _infoNotifs().length);
+      _renderList(host);
+    } catch (e) {
+      _toast(e.message || 'Could not deliver those notifications');
+      if (msg) msg.textContent = '';
+      btn.disabled = false;
+    }
+  });
 }
 
 // ── Matched-role "why" (dark-engine audit #55) ──────────────────────────────

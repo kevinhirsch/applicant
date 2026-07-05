@@ -676,26 +676,69 @@ class ChatService:
         re.IGNORECASE,
     )
 
+    #: A curated, plain-language product-knowledge block appended to the identity tier
+    #: so the assistant can answer "how does this work?" questions ("what's a redline?",
+    #: "what does the percent match mean?", "what happens when I approve?") instead of
+    #: either refusing (the truthfulness clause above obliges it to say it lacks a fact)
+    #: or guessing from ungrounded latent knowledge. First person, same voice as
+    #: ``_BUILTIN_IDENTITY``, white-labeled, no FR-/NFR- jargon (principle #3). Kept
+    #: factual and in sync with actual behavior — do not describe features that do not
+    #: exist. This is reference knowledge, not per-turn state (that lives in the
+    #: profile/status/memory context blocks assembled elsewhere in ``_reply_text``).
+    _PRODUCT_KNOWLEDGE = (
+        "Here is how I work, in case you're asked or you ask yourself about it:\n"
+        "- A campaign is a saved job search: the criteria and settings that tell me "
+        "what roles to look for and how hard to explore beyond the obvious matches.\n"
+        "- I search continuously and gather what I find into a digest. Each entry in "
+        "the digest shows a percent match: my own estimate of how well that role fits "
+        "your saved criteria and profile, not a guarantee.\n"
+        "- When you approve a role from the digest, I prepare a tailored resume and "
+        "cover letter for it and move forward getting it ready to apply; when you "
+        "decline, I leave it alone and learn from the reason you give, if any.\n"
+        "- Before I use a tailored resume, I show you a redline: the specific "
+        "additions and removals against your base resume, plus the cover letter, so "
+        "you can see exactly what changed. You can ask me to revise it in plain "
+        "words, edit it yourself, or approve it as-is. Nothing is used until you "
+        "approve it.\n"
+        "- I can pre-fill an application's forms for you, but I never submit "
+        "anything myself. Every application waits at a final submit step for your "
+        "explicit approval, whether from the pending actions list or during a live "
+        "session.\n"
+        "- Pending actions is where anything that needs your decision collects: "
+        "approvals, confirmations, and steps only you can do. Items stay there until "
+        "you handle them.\n"
+        "- A live session lets you watch me fill out an application in real time and "
+        "take over at any moment for the parts only you should do, such as creating "
+        "an account, clearing a verification, or the final submit.\n"
+        "Use this only as background for explaining the product; still answer "
+        "questions about this person's own data, activity, or progress strictly from "
+        "the context given elsewhere in this prompt, and say so plainly if something "
+        "specific is not in that context."
+    )
+
     def _identity_prompt(self) -> str:
         """The system-prompt identity tier (FR-MIND-4).
 
         Returns the user-tunable identity text when one is configured AND it passes a
         prompt-injection scan; otherwise the built-in white-labeled voice. User text is
         appended to (never replaces) the built-in voice so the truthfulness/safety
-        clauses cannot be tuned away.
+        clauses cannot be tuned away. The product-knowledge block (help self-explain
+        lens 12 #3) is always appended so the assistant can answer "how does this
+        work?" questions regardless of whether a custom tone is configured.
         """
         from applicant.core.rules.agent_memory import claims_authority
 
+        base = self._BUILTIN_IDENTITY + "\n\n" + self._PRODUCT_KNOWLEDGE
         extra = (self._identity_text or "").strip()
         if not extra:
-            return self._BUILTIN_IDENTITY
+            return base
         # FR-MIND-4 / FR-MIND-11: untrusted text — reject an override/injection attempt
         # or an authority claim; fall back to the built-in voice unchanged.
         if self._IDENTITY_INJECTION.search(extra) or claims_authority(extra):
-            return self._BUILTIN_IDENTITY
+            return base
         if len(extra) > 800:
             extra = extra[:800]
-        return self._BUILTIN_IDENTITY + "\n\nTone preferences from the user: " + extra
+        return base + "\n\nTone preferences from the user: " + extra
 
     # --- current-status context (FR-AGENT-7 / FR-OBS-2; truthful) ---------
     def _status_context(self, campaign_id: CampaignId) -> str:

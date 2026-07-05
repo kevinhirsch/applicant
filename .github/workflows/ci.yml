@@ -76,7 +76,9 @@ jobs:
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
                ':!docs/design/hig/color-wells.md' \
                ':!workspace/tests/test_landing_page_content.py' \
-               ':!workspace/tests/test_applicant_activation_funnel_09.py'; then
+               ':!workspace/tests/test_applicant_activation_funnel_09.py' \
+               ':!workspace/tests/test_applicant_mind_help_lens12.py' \
+               ':!workspace/tests/test_applicant_remote_help_lens12.py'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi
@@ -90,7 +92,9 @@ jobs:
                ':!docs/spec/computer-use.md' \
                ':!docs/spec/agent-intelligence.md' \
                ':!docs/adr/0005-computer-use-cua-driver.md' \
-               ':!docs/adr/0006-agent-intelligence-port.md'; then
+               ':!docs/adr/0006-agent-intelligence-port.md' \
+               ':!workspace/tests/test_applicant_mind_help_lens12.py' \
+               ':!workspace/tests/test_applicant_remote_help_lens12.py'; then
             echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi

@@ -124,13 +124,17 @@ function _campaignCard(c) {
         ${archived ? '<span class="memory-badge" style="font-size:0.7rem">Archived</span>' : ''}
       </h2>
       <div class="settings-row">
-        <label class="settings-label" for="cs-name-${id}">Name</label>
+        <label class="settings-label" for="cs-name-${id}">Name
+          <span style="opacity:0.6;font-weight:normal">(just for you — how this search shows up in your list)</span></label>
         <input id="cs-name-${id}" class="settings-input" type="text" value="${esc(c.name)}"
-               data-cs-field="name" placeholder="Search name" maxlength="120">
+               data-cs-field="name" placeholder="Search name" maxlength="120"
+               title="A label to tell this search apart from your others — doesn't affect what I search for">
       </div>
       <div class="settings-row">
-        <label class="settings-label" for="cs-mode-${id}">Run mode</label>
-        <select id="cs-mode-${id}" class="settings-input" data-cs-field="run_mode">${modeOpts}</select>
+        <label class="settings-label" for="cs-mode-${id}">Run mode
+          <span style="opacity:0.6;font-weight:normal">(when I stop looking for this search)</span></label>
+        <select id="cs-mode-${id}" class="settings-input" data-cs-field="run_mode"
+                title="Continuous: I never stop looking. Fixed duration: I stop after a set time. Until enough matches: I stop once you've approved enough">${modeOpts}</select>
       </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-tput-${id}">Daily target
@@ -197,7 +201,8 @@ function _renderSources(host, campaignId, items) {
       const key = esc(s.source_key);
       const on = s.enabled !== false;
       return `
-        <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px">
+        <label class="settings-row" style="cursor:pointer;align-items:center;gap:8px"
+               title="On: I search ${esc(_sourceLabel(s.source_key))} for new roles. Off: I skip it — what I've already learned about it is kept in case you turn it back on.">
           <input type="checkbox" data-cs-source="${key}" ${on ? 'checked' : ''}>
           <span style="flex:1"><strong>${esc(_sourceLabel(s.source_key))}</strong>
             ${_liveBadge(s.live === true)}

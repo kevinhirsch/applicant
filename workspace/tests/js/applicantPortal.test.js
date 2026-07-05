@@ -430,3 +430,142 @@ test('_isQuietHoursNow (finding #45) handles the overnight wrap, the disabled fl
   assert.equal(isQuiet({ enabled: true, start: '09:00', end: '09:00', tz: '' }), false, 'a zero-length window (start === end) is inert, mirroring the engine side');
   assert.equal(isQuiet(null), false, 'no config at all (fetch never resolved) must not suppress toasts forever');
 });
+
+// ── #46: "Deliver now" reachable from the Portal notification center ──────
+//
+// The engine endpoint and the workspace proxy already existed; the only gap
+// was that the release control lived exclusively on the Settings quiet-hours
+// card (`applicantOnboarding.js`'s `ao-qh-deliver`). These tests assert (a)
+// the SAME endpoint the Settings button calls is wired into the Portal's
+// notification-center header, and (b) the extracted click handler actually
+// drives that call, toasts, and refreshes on success/failure — so reverting
+// the fix (removing the button/handler from applicantPortal.js) fails these,
+// and restoring it turns them green again.
+
+test('_renderList (finding #46) source wires a "Deliver now" control into the notification-center header, over the SAME endpoint the Settings button uses', () => {
+  // The endpoint string, verbatim, as used by applicantOnboarding.js's
+  // ao-qh-deliver handler (`${PORTAL}/notifications/deliver-now`) — the
+  // Portal must call the identical path via its own `${API}` base.
+  assert.ok(
+    SRC.includes('${API}/notifications/deliver-now'),
+    'the Portal must call the SAME deliver-now path the Settings button uses, not a new endpoint',
+  );
+  assert.ok(
+    SRC.includes('id="applicant-portal-deliver-now"'),
+    'a "Deliver now" control must be rendered into the notification center',
+  );
+  assert.ok(
+    /class="cal-btn applicant-portal-deliver-now"/.test(SRC),
+    'the control must reuse the workspace design system (.cal-btn), not a hand-rolled button',
+  );
+  assert.ok(
+    SRC.includes('_wireDeliverNow(body)'),
+    '_renderList must wire the deliver-now control on every render',
+  );
+});
+
+function buildDeliverNowHarness() {
+  const harness = `
+    const API = '/api/applicant/portal';
+    let _items = [];
+    let _postCalls = [];
+    let _toastCalls = [];
+    let _loadNotifsCalls = 0;
+    let _setBadgeCalls = [];
+    let _renderListCalls = [];
+    let _postResult = null;
+    let _postShouldReject = false;
+
+    async function _post(url, body) {
+      _postCalls.push({ url, body });
+      if (_postShouldReject) throw new Error('deliver failed');
+      return _postResult;
+    }
+    function _toast(msg) { _toastCalls.push(msg); }
+    async function _loadNotifs() { _loadNotifsCalls += 1; }
+    function _setBadge(n) { _setBadgeCalls.push(n); }
+    function _infoNotifs() { return []; }
+    function _renderList(host) { _renderListCalls.push(host); }
+
+    ${extractFunction(SRC, '_wireDeliverNow')}
+
+    function makeHost(btn, msg) {
+      return {
+        querySelector: (sel) => {
+          if (sel === '#applicant-portal-deliver-now') return btn;
+          if (sel === '#applicant-portal-deliver-msg') return msg;
+          return null;
+        },
+      };
+    }
+
+    return {
+      wire: _wireDeliverNow,
+      makeHost,
+      setPostResult: (r) => { _postResult = r; },
+      setPostReject: (v) => { _postShouldReject = v; },
+      getPostCalls: () => _postCalls.slice(),
+      getToastCalls: () => _toastCalls.slice(),
+      getLoadNotifsCalls: () => _loadNotifsCalls,
+      getSetBadgeCalls: () => _setBadgeCalls.slice(),
+      getRenderListCalls: () => _renderListCalls.length,
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(harness)();
+}
+
+function makeButtonStub() {
+  return { disabled: false, _handler: null, addEventListener(evt, fn) { this._handler = fn; } };
+}
+function makeMsgStub() {
+  return { textContent: '', className: '' };
+}
+
+test('_wireDeliverNow (finding #46) calls the deliver-now endpoint, toasts the released count, and refreshes the center on success', async () => {
+  const h = buildDeliverNowHarness();
+  h.setPostResult({ flushed: ['discord', 'email'], count: 2 });
+  const btn = makeButtonStub();
+  const msg = makeMsgStub();
+  const host = h.makeHost(btn, msg);
+
+  h.wire(host);
+  assert.equal(typeof btn._handler, 'function', 'the button must get a click handler');
+
+  await btn._handler();
+
+  const calls = h.getPostCalls();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/applicant/portal/notifications/deliver-now', 'must hit the same proxy path the Settings button uses');
+
+  assert.ok(h.getToastCalls().includes('Released 2 held notifications.'), 'success toasts the released count');
+  assert.equal(h.getLoadNotifsCalls(), 1, 'the notifications feed is reloaded after a successful release');
+  assert.equal(h.getRenderListCalls(), 1, 'the center is re-rendered so released items appear immediately');
+});
+
+test('_wireDeliverNow (finding #46) reports "nothing held" in plain language when the count is zero', async () => {
+  const h = buildDeliverNowHarness();
+  h.setPostResult({ flushed: [], count: 0 });
+  const btn = makeButtonStub();
+  const msg = makeMsgStub();
+  h.wire(h.makeHost(btn, msg));
+
+  await btn._handler();
+
+  assert.ok(h.getToastCalls().includes('Nothing was being held.'));
+});
+
+test('_wireDeliverNow (finding #46) re-enables the button and toasts an error message if the release fails', async () => {
+  const h = buildDeliverNowHarness();
+  h.setPostReject(true);
+  const btn = makeButtonStub();
+  const msg = makeMsgStub();
+  h.wire(h.makeHost(btn, msg));
+
+  btn.disabled = false;
+  await btn._handler();
+
+  assert.equal(btn.disabled, false, 'a failed release must leave the button clickable again');
+  assert.ok(h.getToastCalls().some((m) => m.includes('deliver failed')), 'the failure reason should surface in a toast');
+  assert.equal(h.getRenderListCalls(), 0, 'the center should not be re-rendered on a failed release');
+});
