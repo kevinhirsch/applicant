@@ -57,6 +57,20 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   Where: `application/services/agent_loop.py::_process_approvals`.
   Status: open.
 
+- **DISC-10 · med · Bulk decline loses the shared reason on failure.**
+  The digest single-row decline now preserves the typed reason on a failed POST (04-#53),
+  but `_onBulkDecline` has the same unfixed pattern — a failed bulk decline forces retyping
+  the shared reason for the whole batch.
+  Where: `workspace/static/js/emailLibrary/applicantDigest.js::_onBulkDecline`.
+  Status: open (surfaced fixing 04-#53).
+
+- **DISC-11 · low · Approval-start give-ups are invisible to the operator surface.**
+  The new `ApprovalStartLedger` (04-#32) gives up on a repeatedly-failing pipeline start,
+  but `list_given_up()` / `retry_given_up()` (the operator visibility + retry surface for
+  resume give-ups) don't include approval-start give-ups — a given-up app is invisible there.
+  Where: `application/services/agent_loop.py` give-up surface.
+  Status: open (surfaced fixing 04-#32).
+
 - **DISC-2 · high · In-memory ledgers lost on restart → retry storm.**
   `ResumeLedger` and `CurationLedger`/`InMemoryRoutineStore` are now process-lived
   (tick-safe), but a genuine process restart (deploy via update.sh, OOM, crash) wipes
