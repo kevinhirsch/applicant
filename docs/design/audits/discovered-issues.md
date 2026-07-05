@@ -74,7 +74,8 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   and it looks brand-new to the operator even though they already overrode it once. Clear
   the override only after a confirmed start.
   Where: `application/services/agent_loop.py::_process_approvals`.
-  Status: open.
+  Status: **fixed** (this batch — the override clears only after `_start_pipeline` confirms a
+  start; a capacity-full or exception failed-start preserves it for the next tick).
 
 - **DISC-10 · med · Bulk decline loses the shared reason on failure.**
   The digest single-row decline now preserves the typed reason on a failed POST (04-#53),
@@ -88,7 +89,9 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   but `list_given_up()` / `retry_given_up()` (the operator visibility + retry surface for
   resume give-ups) don't include approval-start give-ups — a given-up app is invisible there.
   Where: `application/services/agent_loop.py` give-up surface.
-  Status: open (surfaced fixing 04-#32).
+  Status: **fixed** (this batch — `list_given_up`/`retry_given_up` now merge both ledgers,
+  tagging each row with a `give_up_reason`). Front-door copy to distinguish the reason in the
+  UI is a small workspace follow-up.
 
 - **DISC-2 · high · In-memory ledgers lost on restart → retry storm.**
   `ResumeLedger` and `CurationLedger`/`InMemoryRoutineStore` are now process-lived
