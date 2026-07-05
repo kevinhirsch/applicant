@@ -129,7 +129,12 @@ def test_eager_module_script_tag_count_dropped_by_two():
     # below the 46-tag starting set this whole wave began from (net unchanged
     # vs. that original count, despite two power/discoverability overlays
     # having been added since -- three heavy surfaces were lazy-loaded away).
-    assert count == 46, f"expected 46 eager module <script> tags, got {count}"
+    # 47 after the trust-center reachability fix (lens 12 #5) wired
+    # applicantTrust.js in eagerly -- a light, content-only, self-boot overlay
+    # (no engine calls), the same category as applicantCapabilities.js /
+    # applicantShortcuts.js above, not one of the "heavy" surfaces this wave
+    # lazy-loaded away.
+    assert count == 47, f"expected 47 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():
