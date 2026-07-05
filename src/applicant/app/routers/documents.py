@@ -195,8 +195,13 @@ def list_for_application(
                 "approved": d.approved,
                 "content": d.content,
                 # Advisory "What I drew on" transparency (FR-MIND-5/-11, FR-OBS-2):
-                # which learned items shaped this draft. Empty list when none.
+                # which learned items shaped this draft. Empty list when none. The
+                # degraded-fallback sentinel (dark-engine audit #40) is excluded here
+                # — it is not a learned item — and surfaced instead as ``degraded``/
+                # ``degraded_reason`` below.
                 "provenance": _provenance_payload(d.provenance),
+                "degraded": _is_degraded(d.provenance),
+                "degraded_reason": _degraded_reason(d.provenance),
             }
             for d in docs
         ],
@@ -260,12 +265,29 @@ def _provenance_payload(provenance) -> list[dict]:
     Each entry is a plain ``{kind, label, ref}`` dict (FR-MIND-5/-11): ``kind`` is
     ``memory`` | ``playbook`` | ``recall``, ``label`` is the plain-language phrase the
     UI shows, ``ref`` is the underlying item id (memory line / playbook name / recall
-    run-id). Descriptive only — never authorization.
+    run-id). Descriptive only — never authorization. Excludes the degraded-fallback
+    sentinel (dark-engine audit #40, ``kind == "degraded"``) — that is not a learned
+    item and is surfaced separately via ``_is_degraded``/``_degraded_reason`` so it
+    never gets rendered inside the "What I drew on" transparency list.
     """
     return [
         {"kind": p.kind, "label": p.label, "ref": p.ref}
         for p in (provenance or ())
+        if p.kind != MaterialService.DEGRADED_PROVENANCE_KIND
     ]
+
+
+def _is_degraded(provenance) -> bool:
+    """True when this draft carries the degraded-fallback sentinel (audit #40)."""
+    return any(p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in (provenance or ()))
+
+
+def _degraded_reason(provenance) -> str:
+    """Plain-language reason for a degraded draft, or ``""`` when not degraded."""
+    for p in provenance or ():
+        if p.kind == MaterialService.DEGRADED_PROVENANCE_KIND:
+            return p.label
+    return ""
 
 
 @router.post(
@@ -517,6 +539,12 @@ def list_variants(
     """
     variants = admin_query.variant_library(campaign_id)  # type: ignore[arg-type]
     for row in variants:
+        # Dark-engine audit #40: the degraded-fallback flag rides the existing
+        # ``fit_scores`` JSON dict (no migration) — normalize it to a top-level
+        # boolean here so the front door doesn't have to reach into fit_scores.
+        row["degraded"] = bool((row.get("fit_scores") or {}).get(
+            MaterialService.DEGRADED_FIT_SCORE_KEY
+        ))
         variant = storage.resume_variants.get(ResumeVariantId(row["variant_id"]))
         if variant is None:
             row["lineage"] = []
