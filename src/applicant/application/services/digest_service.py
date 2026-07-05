@@ -97,6 +97,24 @@ def _digest_subject(payload: dict, top_row: dict | None) -> str:
     return subject
 
 
+def _preheader_html(text: str, *, already_escaped: bool = False) -> str:
+    """Hidden preview-text span (audit lens 10 #31).
+
+    Most inbox lists (Gmail, Outlook, Apple Mail...) show a short snippet next
+    to the subject, taken from the first bit of visible text in the body. With
+    no preheader that snippet is whatever raw markup happens to render first;
+    this hides a short, deliberate summary so the inbox preview is useful.
+    Zero size/opacity + ``mso-hide`` keeps it invisible in the rendered body
+    while mail clients' snippet logic still reads it.
+    """
+    safe = text if already_escaped else html.escape(str(text or ""))
+    return (
+        "<span style='display:none;font-size:0;line-height:0;max-height:0;"
+        "max-width:0;opacity:0;overflow:hidden;mso-hide:all;'>"
+        f"{safe}</span>"
+    )
+
+
 def _criteria_fingerprint(criteria: SearchCriteria | None) -> tuple | None:
     """Cheap, hashable snapshot of the criteria fields a score depends on.
 
@@ -449,13 +467,22 @@ class DigestService:
         #13: accepts an already-built ``payload`` so ``deliver`` builds + scores the
         digest ONCE and passes it in, instead of ``render_email`` re-scoring the full
         set a second time per delivery.
+
+        Lens 10 #31: the body is a minimal, INLINE-styled single-column card list —
+        no ``<style>`` block (mail clients strip those) and no flex/grid (mail
+        clients don't support either); table-based layout is kept for the widest
+        client compatibility, it's just one card per role instead of the old
+        multi-column ``<table border='1' cellpadding='6'>`` grid that was unreadable
+        at phone width. A hidden preheader span carries the inbox-list preview text.
         """
         if payload is None:
             payload = self.build_digest_payload(campaign_id, criteria)
         lines = ["<h1>Your daily digest</h1>"]
         top_row: dict | None = None
         if payload["empty"]:
-            lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
+            note = str(payload["note"] or "")
+            lines.append(_preheader_html(note))
+            lines.append(f"<p><em>{html.escape(note)}</em></p>")
         else:
             all_rows = payload["rows"]
             total = len(all_rows)
@@ -471,9 +498,15 @@ class DigestService:
             # lens 10 #30: the highest-scored row also seeds the subject line's
             # "top match" callout below — reuse the SAME sort instead of a second pass.
             top_row = top_rows[0] if top_rows else None
+            first_summary = html.escape(str(top_rows[0]["summary"] or "")) if top_rows else ""
+            preheader = f"{total} new role match{'es' if total != 1 else ''} today" + (
+                f" — including {first_summary}." if first_summary else "."
+            )
+            lines.append(_preheader_html(preheader, already_escaped=True))
             lines.append(
-                "<table border='1' cellpadding='6'><tr><th>Role</th><th>Work mode</th>"
-                "<th>Score</th><th>Why suggested</th><th>Link</th></tr>"
+                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+                "border='0' style='width:100%;max-width:640px;font-family:Arial,Helvetica,"
+                "sans-serif;'>"
             )
             for r in top_rows:
                 # SECURITY: every interpolated cell is untrusted scraped data
@@ -486,9 +519,23 @@ class DigestService:
                 why = html.escape(str(r["why_suggested"] or ""))
                 href = _safe_href(r["link"])
                 lines.append(
-                    f"<tr><td>{summary}</td><td>{work_mode}</td>"
-                    f"<td>{score}</td><td>{why}</td>"
-                    f"<td><a href='{href}'>open</a></td></tr>"
+                    "<tr><td>"
+                    "<table role='presentation' width='100%' cellpadding='0' "
+                    "cellspacing='0' border='0' style='width:100%;margin:0 0 12px;"
+                    "border:1px solid #dddddd;border-radius:8px;'>"
+                    "<tr><td style='padding:16px;'>"
+                    f"<div style='font-size:16px;font-weight:bold;color:#111111;'>{summary}</div>"
+                    "<div style='font-size:13px;color:#555555;margin:4px 0 0;'>"
+                    f"{work_mode} &middot; Score {score}</div>"
+                    f"<div style='font-size:13px;color:#555555;margin:4px 0 0;'>{why}</div>"
+                    "<div style='margin:12px 0 0;'>"
+                    f"<a href='{href}' style='display:inline-block;padding:8px 14px;"
+                    "background-color:#2f6fed;color:#ffffff;text-decoration:none;"
+                    "border-radius:4px;font-size:13px;'>Open role</a>"
+                    "</div>"
+                    "</td></tr>"
+                    "</table>"
+                    "</td></tr>"
                 )
             lines.append("</table>")
             # Footer: when more roles cleared the bar than we rendered, point the
@@ -496,8 +543,10 @@ class DigestService:
             if total > MAX_EMAIL_ROWS:
                 remaining = total - MAX_EMAIL_ROWS
                 lines.append(
-                    f"<p><em>Showing the top {MAX_EMAIL_ROWS} of {total} matches "
-                    f"by score — view the remaining {remaining} in the portal.</em></p>"
+                    "<p style='font-size:13px;color:#555555;'><em>"
+                    f"Showing the top {MAX_EMAIL_ROWS} of {total} matches "
+                    f"by score — view the remaining {remaining} in the portal."
+                    "</em></p>"
                 )
         return {
             "subject": _digest_subject(payload, top_row),
