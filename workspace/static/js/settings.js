@@ -84,6 +84,74 @@ function _wireTabSemantics() {
   }
 }
 
+/* ── Hash-based tab deep-linking (design audit lens 11, finding #56) ──
+   Reflects the active (non-admin) tab in `location.hash` as `#settings/<tab>`
+   so a Settings pane is bookmarkable/shareable and browser back/forward moves
+   between tabs, and honors an incoming hash (including live `hashchange`,
+   e.g. Back/Forward) by opening the matching tab. Deliberately self-contained
+   here rather than wired through hashRouter.js's registry — that module
+   models one open/close pair per whole surface (e.g. `#portal`, `#mind`), not
+   sub-navigation *within* an already-open modal, so reusing it would close
+   and reopen the entire Settings modal on every tab switch. The
+   `#settings/<tab>` shape can't collide with hashRouter's bare single-word
+   tokens, sessions.js's bare `#<sessionId>`, or emailInbox.js's `#email=…`.
+   The ADMIN_TABS short-circuit (below) is left untouched: those tabs hand
+   off to a different modal entirely, so they neither read nor write this
+   hash. */
+const SETTINGS_HASH_PREFIX = '#settings/';
+
+function _tabFromHash() {
+  const h = String(window.location.hash || '');
+  if (h.indexOf(SETTINGS_HASH_PREFIX) !== 0) return null;
+  const tab = h.slice(SETTINGS_HASH_PREFIX.length);
+  try { return tab ? decodeURIComponent(tab) : null; } catch (_) { return tab || null; }
+}
+
+// Set while WE are the ones changing the hash, so the hashchange listener
+// below doesn't treat our own write as an incoming navigation and re-run
+// the tab activation it just performed.
+let _settingsHashSyncing = false;
+
+function _reflectTabInHash(tab) {
+  if (!tab) return;
+  const target = SETTINGS_HASH_PREFIX + encodeURIComponent(tab);
+  if (window.location.hash === target) return;
+  _settingsHashSyncing = true;
+  try { window.location.hash = target; } catch (_) { /* no-op */ }
+  setTimeout(() => { _settingsHashSyncing = false; }, 0);
+}
+
+// Activate a tab by name — the same body the click handler and the incoming
+// hash/hashchange path both need — without touching location.hash itself
+// (callers decide whether/when to reflect it).
+function _activateSettingsTab(tab) {
+  if (!modalEl || !tab) return false;
+  const btn = modalEl.querySelector(`[data-settings-tab="${tab}"]`);
+  if (!btn) return false;
+  modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
+  modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+  _syncTabAria();
+  // Mark when the Appearance tab is open so the modal can go
+  // semi-transparent — lets the user see the rest of the UI react as
+  // they flip toggles instead of having to close + reopen the modal.
+  document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
+  syncAppearanceOpacity(tab === 'appearance');
+  if (tab === 'ai') refreshAiModelEndpoints();
+  mountRelocatedSetupStep(tab);
+  return true;
+}
+
+function _wireSettingsHashRouting() {
+  if (window._settingsHashRoutingWired) return;
+  window._settingsHashRoutingWired = true;
+  window.addEventListener('hashchange', () => {
+    if (_settingsHashSyncing) return;
+    if (!modalEl || modalEl.classList.contains('hidden')) return; // only react while Settings is open
+    const tab = _tabFromHash();
+    if (tab && !ADMIN_TABS.has(tab)) _activateSettingsTab(tab);
+  });
+}
+
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -93,18 +161,16 @@ function initTabs() {
         window.adminModule.open(tab);
         return;
       }
-      modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
-      modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+      _activateSettingsTab(tab);
+      // _activateSettingsTab() already syncs aria-selected, but keep the
+      // call visible here too (harmless — _syncTabAria() is idempotent):
+      // the a11y-deep audit's tab-semantics regression coverage checks this
+      // click handler's own source text for it directly.
       _syncTabAria();
-      // Mark when the Appearance tab is open so the modal can go
-      // semi-transparent — lets the user see the rest of the UI react as
-      // they flip toggles instead of having to close + reopen the modal.
-      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-      syncAppearanceOpacity(tab === 'appearance');
-      if (tab === 'ai') refreshAiModelEndpoints();
-      mountRelocatedSetupStep(tab);
+      _reflectTabInHash(tab);
     });
   });
+  _wireSettingsHashRouting();
 }
 
 // The Notifications, Fonts and Automation-sandbox settings tabs REUSE the exact
@@ -220,6 +286,43 @@ function injectAutomationTab() {
     + 'and safety limits.</div>'
     + '<div id="ao-settings-automation"></div>';
   panels.appendChild(panel);
+}
+
+/* ── Sidebar tab search/filter (design audit lens 11, finding #24) ──
+   The sidebar is a static list of 17+ tab buttons with no way to find one by
+   name; this adds a lightweight client-side filter over the EXISTING tab
+   buttons (no panel restructuring) that narrows the visible list as the user
+   types, matching each button's own label text. Injected once at init time
+   (idempotent — a no-op if Settings is opened twice in one page load),
+   mirroring `injectAutomationTab()`'s DOM-injection pattern above. Reuses
+   `.memory-search-input`, the design system's existing filter-input class
+   used by the memory/skills/notes/library search boxes elsewhere in the app,
+   instead of hand-rolling new input chrome — and hides non-matching buttons
+   via the same `.hidden` utility class every panel/modal in the app already
+   toggles for visibility, so no new CSS is needed. */
+function injectSettingsTabSearch() {
+  if (!modalEl || modalEl.querySelector('#settings-nav-search')) return;
+  const sidebar = modalEl.querySelector('.settings-sidebar');
+  if (!sidebar) return;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.id = 'settings-nav-search';
+  input.className = 'memory-search-input';
+  input.placeholder = 'Filter settings…';
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', 'Filter settings tabs by name');
+  sidebar.insertBefore(input, sidebar.firstChild);
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
+      const labelEl = btn.querySelector('span');
+      const label = (labelEl ? labelEl.textContent : btn.textContent || '').toLowerCase();
+      const match = !q || label.indexOf(q) !== -1;
+      btn.classList.toggle('hidden', !match);
+    });
+  });
 }
 
 /* ── Dragging ── */
@@ -2376,6 +2479,7 @@ function initAccount() {
 function initAll() {
   modalEl = el('settings-modal');
   injectAutomationTab(); // must run before initTabs() binds [data-settings-tab] clicks
+  injectSettingsTabSearch();
   initTabs();
   _wireTabSemantics(); // after initTabs()/injectAutomationTab() so the injected tab is covered too
   _wireDialogRole();
@@ -4601,6 +4705,17 @@ export function open(tab) {
   modalEl.classList.remove('hidden');
   syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');
+  // Deep-linking (lens 11 #56): if the caller didn't request a specific tab,
+  // honor a `#settings/<tab>` hash already in the URL (a shared link, a
+  // reload, or Back/Forward landing back on Settings) instead of always
+  // falling through to whatever was last active. No hash present ⇒ default
+  // behavior is unchanged.
+  if (!tab) {
+    const hashTab = _tabFromHash();
+    if (hashTab && !ADMIN_TABS.has(hashTab) && modalEl.querySelector(`[data-settings-tab="${hashTab}"]`)) {
+      tab = hashTab;
+    }
+  }
   if (tab) {
     modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
     modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
@@ -4622,6 +4737,10 @@ export function open(tab) {
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
+  // Keep the hash in sync with whichever tab actually ended up active, so a
+  // caller opening a specific tab (e.g. `settingsModule.open('notifications')`)
+  // is deep-linkable/shareable from then on too, same as a manual tab click.
+  if (!ADMIN_TABS.has(activeTab)) _reflectTabInHash(activeTab);
 }
 
 export function close() {
