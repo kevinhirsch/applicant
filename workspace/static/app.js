@@ -1311,6 +1311,17 @@ function initializeEventListeners() {
   // additive — it never touches auth, user management, or the toggles above.
   // Exposed so the first-run setup wizard can re-run activation on completion
   // (when the engine gate flips open) without a full page reload.
+  // Lens 12 #45: the engine already computes exactly which gate is unmet per
+  // section (`requirement` in the /api/applicant/features payload — see
+  // workspace/src/applicant_features.py's three gate predicates). Map each
+  // known value to a specific, plain-language reason instead of the generic
+  // "engine is configured" copy; fall back to the generic line for any
+  // unrecognized or absent requirement so a future gate never renders blank.
+  const APPLICANT_REQUIREMENT_REASONS = {
+    onboarding_complete: 'Finish setup to unlock this',
+    llm_configured: 'Connect a model to unlock this',
+    channels_configured: 'Add a notification channel in Settings to unlock this',
+  };
   window.refreshApplicantFeatures = function () {
     return fetch(`${API_BASE}/api/applicant/features`, { credentials: 'same-origin' })
     .then(r => r.json())
@@ -1320,7 +1331,8 @@ function initializeEventListeners() {
         const active = section.state === 'active';
         const reason = section.present_but_disabled
           ? `${section.title} is not available in this build`
-          : `${section.title} unlocks once the Applicant engine is configured`;
+          : (APPLICANT_REQUIREMENT_REASONS[section.requirement]
+              || `${section.title} unlocks once the Applicant engine is configured`);
         (section.nav_ids || []).forEach(id => {
           const e = el(id);
           if (!e) return;
