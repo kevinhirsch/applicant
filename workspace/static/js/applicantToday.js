@@ -320,10 +320,10 @@ function _renderMissing(wrap, item) {
   const nameReadonly = !!name;
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">
-      Give me this one detail and I'll pick the application up where it left off.
+      Give me this one detail and I’ll pick the application up where it left off.
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" data-role="name" value="${esc(name)}" placeholder="What's missing (e.g. desired salary)" aria-label="Field name"
+      <input type="text" data-role="name" value="${esc(name)}" placeholder="What’s missing (e.g. desired salary)" aria-label="Field name"
              ${nameReadonly ? 'readonly title="Provided by me"' : ''}
              style="flex:1;min-width:120px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;${nameReadonly ? 'opacity:0.75;' : ''}" />
       <input type="text" data-role="value" placeholder="Your answer" aria-label="Value"
@@ -507,8 +507,8 @@ function _renderFinal(wrap, item) {
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <div data-role="caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" class="cal-btn" data-role="self" title="Open the live view and click submit yourself">I'll submit it myself</button>
-      <button type="button" class="cal-btn cal-btn-primary" data-role="authorize" title="I'll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
+      <button type="button" class="cal-btn" data-role="self" title="Open the live view and click submit yourself">I’ll submit it myself</button>
+      <button type="button" class="cal-btn cal-btn-primary" data-role="authorize" title="I’ll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
     </div>`;
   remoteModule.fetchCaveat().then((data) => {
     const line = data && (data.caveat || data.egress_caveat);
@@ -528,7 +528,7 @@ function _renderFinal(wrap, item) {
     if (!appId) { _toast('No application is linked to this item yet'); return; }
     let message;
     try { message = remoteModule.authorizeConfirmMessage({ label }); }
-    catch { message = `Send ${label || 'this application'} now? You've approved everything in it. Once it's submitted, I can't take it back.`; }
+    catch { message = `Send ${label || 'this application'} now? You’ve approved everything in it. Once it’s submitted, I can’t take it back.`; }
     const ok = await _confirm(message, { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
     if (!ok) return;
     const restore = _busyBtn(btn, 'Submitting…');
@@ -702,8 +702,8 @@ function _renderCurrent() {
 
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
-    "I can't check in right now",
-    "I've lost my connection. I'll keep trying — anything that needs you will appear here as soon as I'm back.",
+    "I can’t check in right now",
+    "I’ve lost my connection. I’ll keep trying — anything that needs you will appear here as soon as I’m back.",
   );
 }
 

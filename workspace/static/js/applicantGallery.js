@@ -156,7 +156,7 @@ function _errLine(err) {
     return 'Finish setup (connect a model and your profile) to enable this view.';
   }
   if (err && (err.kind === 'offline' || err.kind === 'network')) {
-    return "I can't connect right now — this gallery will fill in once I'm back.";
+    return "I can’t connect right now — this gallery will fill in once I’m back.";
   }
   return errText(err);
 }

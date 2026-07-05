@@ -172,9 +172,9 @@ def test_today_final_approval_is_first_person():
     body = fn.group(0)
     assert "Let me submit it" in body
     assert "Authorize Applicant to submit this" not in body
-    assert "I'll submit it myself" in body
+    assert "I’ll submit it myself" in body
     assert "(open live session)" not in body
-    assert "You've approved everything in it" in body
+    assert "You’ve approved everything in it" in body
     assert "Authorize the assistant to submit" not in body
     assert "Done — I submitted it." in body
     assert "Authorized — the assistant submitted the application" not in body
@@ -207,9 +207,9 @@ def test_today_missing_detail_placeholders_are_plain_language():
     body = fn.group(0)
     assert 'placeholder="Field"' not in body
     assert 'placeholder="Value"' not in body
-    assert "What's missing (e.g. desired salary)" in body
+    assert "What’s missing (e.g. desired salary)" in body
     assert "Your answer" in body
-    assert "Give me this one detail and I'll pick the application up where it left off." in body
+    assert "Give me this one detail and I’ll pick the application up where it left off." in body
     assert "Provide the value below" not in body
     assert "Provided by the assistant" not in body
     assert "Provided by me" in body
@@ -344,7 +344,7 @@ def test_campaign_settings_archive_confirm_is_first_person():
     archive_fn = re.search(r"card\.querySelector\('\.cs-archive'\)[\s\S]*?\n  \}\);", src)
     assert archive_fn, "expected the .cs-archive click handler"
     body = archive_fn.group(0)
-    assert "I'll stop working this job search until you reactivate it." in body
+    assert "I’ll stop working this job search until you reactivate it." in body
     assert "The assistant will stop working" not in body
 
 
@@ -422,7 +422,7 @@ def test_gallery_offline_copy_drops_engine_jargon():
     """Finding #206."""
     src = _gallery_src()
     assert "The Applicant engine is not reachable right now." not in src
-    assert "I can't connect right now — this gallery will fill in once I'm back." in src
+    assert "I can’t connect right now — this gallery will fill in once I’m back." in src
 
 
 def test_gallery_engine_badge_is_plain_language():

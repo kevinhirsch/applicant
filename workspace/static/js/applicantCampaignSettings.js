@@ -294,7 +294,7 @@ async function _wireCard(host, card) {
     if (active) {
       const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this search';
       const ok = await _confirm(
-        `Archive "${name}"? I'll stop working this job search until you reactivate it.`,
+        `Archive "${name}"? I’ll stop working this job search until you reactivate it.`,
         { confirmText: 'Archive', cancelText: 'Keep active' },
       );
       if (!ok) return;
