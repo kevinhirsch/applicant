@@ -9,12 +9,80 @@ import { sortModelIds } from './modelSort.js';
 
 let initialized = false;
 let modalEl = null;
+// Focus-trap/restore cleanup from the last uiModule.initModalA11y() call —
+// re-run on every open() (not just first creation) so a second open after a
+// close still gets a working trap/restore (a11y audit #1's "six modals lose
+// ALL focus management after their first close" class of bug, avoided here
+// by never gating this behind a "created once" guard).
+let _modalA11yCleanup = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+// Reduced-motion gate for the one inline `infinite`-duration CSS animation in
+// this file (the email-account Test-connection button's success glow, below)
+// — the rest of the applicant-reachable chrome's reduce-motion coverage is
+// good (design audit #45); this keeps that true here too instead of adding a
+// new perpetual animation the OS preference can't reach.
+function _prefersReducedMotion() {
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; }
+}
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
+
+// Keep the tab buttons' `aria-selected` in sync with the `.active` class that
+// already drives the visual state — called after every place that toggles
+// `.active` (the click handler below and `open(tab)`'s direct-select path)
+// so screen readers hear which section is current (a11y audit #29).
+function _syncTabAria() {
+  if (!modalEl) return;
+  modalEl.querySelectorAll('[data-settings-tab]').forEach(b => {
+    b.setAttribute('aria-selected', b.classList.contains('active') ? 'true' : 'false');
+  });
+}
+
+// Give the sidebar nav + its panels real tab/tabpanel semantics (a11y audit
+// #29 — Debug's tab strip has the identical gap; fixed the same way here).
+// Additive: every nav item keeps its default tabindex (no roving tabindex),
+// so the existing Tab-key order through all items is unchanged — Up/Down
+// arrow-key navigation is layered on top as an accelerator, not a replacement.
+function _wireTabSemantics() {
+  if (!modalEl) return;
+  const tabBtns = Array.from(modalEl.querySelectorAll('[data-settings-tab]'));
+  const sidebar = modalEl.querySelector('.settings-sidebar');
+  if (sidebar) {
+    sidebar.setAttribute('role', 'tablist');
+    sidebar.setAttribute('aria-orientation', 'vertical');
+  }
+  tabBtns.forEach(btn => {
+    const tab = btn.dataset.settingsTab;
+    if (!btn.id) btn.id = `settings-tab-${tab}`;
+    btn.setAttribute('role', 'tab');
+    const panel = modalEl.querySelector(`[data-settings-panel="${tab}"]`);
+    if (panel) {
+      if (!panel.id) panel.id = `settings-panel-${tab}`;
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', btn.id);
+      btn.setAttribute('aria-controls', panel.id);
+    }
+  });
+  _syncTabAria();
+  if (sidebar && !sidebar.dataset.arrowNavWired) {
+    sidebar.dataset.arrowNavWired = '1';
+    sidebar.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const visible = tabBtns.filter(b => b.offsetParent !== null);
+      const idx = visible.indexOf(document.activeElement);
+      if (idx === -1) return;
+      e.preventDefault();
+      const next = e.key === 'ArrowDown'
+        ? visible[(idx + 1) % visible.length]
+        : visible[(idx - 1 + visible.length) % visible.length];
+      next.focus();
+      next.click();
+    });
+  }
+}
 
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
@@ -27,6 +95,7 @@ function initTabs() {
       }
       modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
       modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+      _syncTabAria();
       // Mark when the Appearance tab is open so the modal can go
       // semi-transparent — lets the user see the rest of the UI react as
       // they flip toggles instead of having to close + reopen the modal.
@@ -193,29 +262,75 @@ function resetWindowPlacement() {
 }
 
 /* ── Close on backdrop / X ── */
+// Shared by both the focus-trap's Escape handling (wired fresh on every
+// open(), see uiModule.initModalA11y below) and used to be a standalone
+// document-level Escape listener. If an integration edit/add form is open
+// inside the modal, close just that — don't dismiss the whole settings
+// modal. (Pressing ESC mid-edit and losing the modal was a fast-typing
+// footgun.) Routing this through initModalA11y's closeFn (instead of a
+// second ad-hoc `document.keydown` listener) also gives Settings the same
+// topmost-of-stack Escape arbitration every other applicant modal gets, so
+// Escape can't reach through Settings into a dialog stacked above it.
+function _escapeClose() {
+  const innerForm = modalEl.querySelector('#unified-intg-form, #set-email-accounts-form');
+  if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
+    innerForm.style.display = 'none';
+    innerForm.innerHTML = '';
+    return;
+  }
+  close();
+}
+
 function initClose() {
   modalEl.querySelector('.close-btn').addEventListener('click', close);
   modalEl.addEventListener('mousedown', e => {
     if (uiModule.isTouchInsideModal()) return;
     if (e.target === modalEl) close();
   });
-  document.addEventListener('keydown', e => {
-    if (e.key !== 'Escape' || !modalEl || modalEl.classList.contains('hidden')) return;
-    // If an integration edit/add form is open inside the modal, close
-    // just that — don't dismiss the whole settings modal. (Pressing
-    // ESC mid-edit and losing the modal was a fast-typing footgun.)
-    const innerForm = modalEl.querySelector('#unified-intg-form, #set-email-accounts-form');
-    if (innerForm && innerForm.style.display !== 'none' && innerForm.children.length > 0) {
-      e.preventDefault();
-      e.stopPropagation();
-      innerForm.style.display = 'none';
-      innerForm.innerHTML = '';
-      return;
+}
+
+// Dialog semantics (a11y): role="dialog"/aria-modal + aria-labelledby
+// pointing at the actual visible title (`.modal-header h4`) instead of a
+// hardcoded string that could drift from the on-screen text — mirrors the
+// audit's "point every dialog at its own heading" recommendation (#9). Runs
+// once at init; idempotent (safe if initAll() were ever re-entered).
+function _wireDialogRole() {
+  if (!modalEl) return;
+  modalEl.setAttribute('role', 'dialog');
+  modalEl.setAttribute('aria-modal', 'true');
+  const titleEl = modalEl.querySelector('.modal-header h4');
+  if (titleEl) {
+    if (!titleEl.id) titleEl.id = 'settings-modal-title';
+    modalEl.setAttribute('aria-labelledby', titleEl.id);
+  }
+}
+
+// One-time sweep (plus a MutationObserver for anything rendered later, e.g.
+// the unified-integrations / email-account sub-forms' inline status spans)
+// that marks every save/test-status message element as a polite live
+// region, so "Saved" / "Failed to save" / a Test-connection result reaches
+// screen-reader users instead of only sighted ones (a11y audit #11/#12 —
+// applicantCore.js's shared kit is out of this pass's file lane, so this
+// covers settings.js's own inline status spans directly).
+function _wireLiveStatusRegions() {
+  if (!modalEl || modalEl._applicantMsgObserver) return;
+  const mark = (node) => {
+    if (!node || node.nodeType !== 1) return;
+    if (/(?:Msg|-msg)$/.test(node.id || '') && !node.hasAttribute('aria-live')) {
+      node.setAttribute('aria-live', 'polite');
     }
-    e.preventDefault();
-    e.stopPropagation();
-    close();
+    if (typeof node.querySelectorAll === 'function') {
+      node.querySelectorAll('[id$="Msg"], [id$="-msg"]').forEach(n => {
+        if (!n.hasAttribute('aria-live')) n.setAttribute('aria-live', 'polite');
+      });
+    }
+  };
+  mark(modalEl);
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(m => m.addedNodes.forEach(mark));
   });
+  observer.observe(modalEl, { childList: true, subtree: true });
+  modalEl._applicantMsgObserver = observer;
 }
 
 /* ── Appearance-tab opacity slider ──
@@ -1300,14 +1415,30 @@ async function initSearchSettings() {
   }
   function _renderSearchPickerMenu() {
     if (!pickerMenu) return;
+    pickerMenu.setAttribute('role', 'listbox');
     pickerMenu.innerHTML = Array.from(provSel.options).map(function(o) {
       var logo = _searchProviderLogoSvg(o.dataset.searchLogo);
-      var active = o.value === provSel.value ? ' active' : '';
-      return '<div class="adm-provider-item' + active + '" role="option" data-value="' + o.value.replace(/"/g, '&quot;') + '">' +
+      var isActive = o.value === provSel.value;
+      var active = isActive ? ' active' : '';
+      // tabindex + aria-selected (design audit — keyboard operability on
+      // custom controls): this popover's options were click-only before,
+      // with no way to reach or choose one from the keyboard.
+      return '<div class="adm-provider-item' + active + '" role="option" tabindex="0" aria-selected="' + (isActive ? 'true' : 'false') + '" data-value="' + o.value.replace(/"/g, '&quot;') + '">' +
         '<span class="adm-provider-logo">' + logo + '</span>' +
         '<span>' + o.textContent + '</span>' +
       '</div>';
     }).join('');
+  }
+  // Select the item under `el` the same way a click does, then close the
+  // popover and return focus to its launcher button.
+  function _chooseSearchPickerItem(el) {
+    if (!el) return;
+    provSel.value = el.dataset.value;
+    provSel.dispatchEvent(new Event('change', { bubbles: true }));
+    pickerMenu.classList.add('hidden');
+    if (pickerBtn) pickerBtn.setAttribute('aria-expanded', 'false');
+    _renderSearchPickerMenu();
+    if (pickerBtn) pickerBtn.focus();
   }
   function _syncSearchPicker() {
     if (!pickerCurrent) return;
@@ -1317,22 +1448,55 @@ async function initSearchSettings() {
     pickerCurrent.querySelector('.adm-provider-name').textContent = opt.textContent;
   }
   if (picker && pickerBtn && pickerMenu && pickerCurrent) {
+    pickerBtn.setAttribute('aria-haspopup', 'listbox');
+    pickerBtn.setAttribute('aria-expanded', 'false');
     _renderSearchPickerMenu();
     _syncSearchPicker();
     pickerBtn.addEventListener('click', function(e) {
       e.stopPropagation();
+      var willOpen = pickerMenu.classList.contains('hidden');
       pickerMenu.classList.toggle('hidden');
+      pickerBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      if (willOpen) {
+        var current = pickerMenu.querySelector('.adm-provider-item.active') || pickerMenu.querySelector('.adm-provider-item');
+        if (current) current.focus();
+      }
     });
     pickerMenu.addEventListener('click', function(e) {
       var item = e.target.closest('.adm-provider-item');
       if (!item) return;
-      provSel.value = item.dataset.value;
-      provSel.dispatchEvent(new Event('change', { bubbles: true }));
-      pickerMenu.classList.add('hidden');
-      _renderSearchPickerMenu();
+      _chooseSearchPickerItem(item);
+    });
+    // Keyboard operability on the custom option list: Enter/Space chooses
+    // the focused option (mirrors a native <select>'s activation keys),
+    // Up/Down move between options, Escape closes and returns focus to the
+    // launcher button.
+    pickerMenu.addEventListener('keydown', function(e) {
+      var items = Array.from(pickerMenu.querySelectorAll('.adm-provider-item'));
+      var idx = items.indexOf(document.activeElement);
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        if (idx !== -1) _chooseSearchPickerItem(items[idx]);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (idx === -1) return;
+        e.preventDefault();
+        var next = e.key === 'ArrowDown' ? items[(idx + 1) % items.length] : items[(idx - 1 + items.length) % items.length];
+        next.focus();
+      } else if (e.key === 'Escape') {
+        // Close just this popover, not the whole Settings modal — stop the
+        // key from also reaching the modal's own Escape/focus-trap handler.
+        e.preventDefault();
+        e.stopPropagation();
+        pickerMenu.classList.add('hidden');
+        pickerBtn.setAttribute('aria-expanded', 'false');
+        pickerBtn.focus();
+      }
     });
     document.addEventListener('click', function(e) {
-      if (!picker.contains(e.target)) pickerMenu.classList.add('hidden');
+      if (!picker.contains(e.target)) {
+        pickerMenu.classList.add('hidden');
+        pickerBtn.setAttribute('aria-expanded', 'false');
+      }
     });
   }
 
@@ -2213,6 +2377,9 @@ function initAll() {
   modalEl = el('settings-modal');
   injectAutomationTab(); // must run before initTabs() binds [data-settings-tab] clicks
   initTabs();
+  _wireTabSemantics(); // after initTabs()/injectAutomationTab() so the injected tab is covered too
+  _wireDialogRole();
+  _wireLiveStatusRegions();
   initDrag();
   initClose();
   initOpacityToggle();
@@ -2708,21 +2875,21 @@ async function initEmailAccountsSettings() {
     formEl.innerHTML = `
       <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
       <div class="settings-col">
-        <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
-        <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="eaf-name" class="settings-input" placeholder="(optional — leave blank to use email)" value="${esc(a.name || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-provider">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-name">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="eaf-name" class="settings-input" placeholder="(optional — leave blank to use email)" value="${esc(a.name || '')}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-from">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
-        <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
-        <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.).')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
-        <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-imap-host">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-imap-port">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-imap-user">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-imap-pass">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.).')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-imap-starttls">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
-        <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
-        <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
-        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
-        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-smtp-host">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-smtp-port">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="eaf-smtp-port" class="settings-input" type="number" value="${esc(a.smtp_port || 465)}" style="max-width:100px"></div>
+        <div class="settings-row"><label class="settings-label" for="eaf-smtp-same">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
+        <div class="settings-row eaf-smtp-creds"><label class="settings-label" for="eaf-smtp-user">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
+        <div class="settings-row eaf-smtp-creds"><label class="settings-label" for="eaf-smtp-pass">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
         <div class="settings-row" style="margin-top:10px;align-items:center;">
           <button class="admin-btn-add" id="eaf-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
@@ -3372,13 +3539,13 @@ async function initUnifiedIntegrations() {
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">${editId ? 'Edit' : 'Add'} API Integration</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
-          <div class="settings-row"><label class="settings-label">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
-          <div class="settings-row"><label class="settings-label">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-preset">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-name">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-url">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
           <div id="uf-api-ntfy-hint" style="display:none;font-size:11px;line-height:1.35;opacity:0.68;margin:-2px 0 2px 106px;"></div>
-          <div class="settings-row"><label class="settings-label">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
-          <div class="settings-row" id="uf-api-header-row"><label class="settings-label">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
-          <div class="settings-row"><label class="settings-label">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-auth">Auth${_apiHint('How this service expects the credential to be sent. <b>Bearer</b> = sends "Authorization: Bearer YOUR_KEY" (most modern APIs, ntfy, OpenAI-style). <b>Header</b> = sends YOUR_KEY verbatim under a header name you choose (Miniflux uses X-Auth-Token). <b>Basic</b> = HTTP basic auth (user:pass). <b>None</b> = the API is open / no auth.')}</label><select id="uf-api-auth" class="settings-input"><option value="bearer">Bearer (most common)</option><option value="header">Header</option><option value="basic">Basic</option><option value="none">None</option></select></div>
+          <div class="settings-row" id="uf-api-header-row"><label class="settings-label" for="uf-api-header">Header${_apiHint('The HTTP header name the key goes under (Miniflux: X-Auth-Token; most others: Authorization). Only used when Auth = Header.')}</label><input id="uf-api-header" class="settings-input" placeholder="X-Auth-Token"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-api-key">API Key${_apiHint('The secret token the service issued you (generated in its admin panel / settings). Used to prove your identity on each request. Required for any Auth mode except None.')}</label><input id="uf-api-key" class="settings-input" type="password" placeholder="Token/key"></div>
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
@@ -3459,9 +3626,9 @@ async function initUnifiedIntegrations() {
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">Calendar (CalDAV)</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="http://localhost:5232/user"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-caldav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-caldav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-caldav-url">Server URL</label><input id="uf-caldav-url" class="settings-input" placeholder="http://localhost:5232/user"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-caldav-user">Username</label><input id="uf-caldav-user" class="settings-input"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-caldav-pass">Password</label><input id="uf-caldav-pass" class="settings-input" type="password"></div>
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-caldav-save">Save</button><button class="admin-btn-sm" id="uf-caldav-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-caldav-cancel" style="opacity:0.7">Cancel</button><span id="uf-caldav-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
@@ -3541,9 +3708,9 @@ async function initUnifiedIntegrations() {
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">Contacts (CardDAV)</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
-          <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
-          <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-url">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-user">Username</label><input id="uf-carddav-user" class="settings-input"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-carddav-pass">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">Save</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">Cancel</button><span id="uf-carddav-msg" style="font-size:11px"></span></div>
         </div>
       </div>
@@ -3796,23 +3963,23 @@ async function initUnifiedIntegrations() {
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="uf-email-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
+          <div class="settings-row"><label class="settings-label" for="uf-email-provider">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="uf-email-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
           <div id="uf-email-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
-          <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="uf-email-name" class="settings-input" placeholder="(optional — leave blank to use email)"></div>
-          <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-email-name">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="uf-email-name" class="settings-input" placeholder="(optional — leave blank to use email)"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-email-from">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px">IMAP (Receiving)</div>
-          <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
-          <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
-          <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row"><label class="settings-label" for="uf-imap-host">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-imap-port">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-imap-user">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-imap-pass">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-imap-starttls">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
-          <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
-          <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
-          <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
-          <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
-          <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
+          <div class="settings-row"><label class="settings-label" for="uf-smtp-host">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-smtp-port">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-smtp-same">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
+          <div class="settings-row uf-smtp-creds"><label class="settings-label" for="uf-smtp-user">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
+          <div class="settings-row uf-smtp-creds"><label class="settings-label" for="uf-smtp-pass">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row" style="margin-top:4px"><label class="settings-label" for="uf-email-default">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;">
             <button class="admin-btn-add" id="uf-email-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
               <span class="uf-email-save-ico" style="display:inline-flex;width:11px;height:11px;align-items:center;justify-content:center;">
@@ -4060,7 +4227,7 @@ async function initUnifiedIntegrations() {
           btn.style.boxShadow =
             '0 0 0 2px color-mix(in srgb, var(--green, #50fa7b) 25%, transparent),'
           + ' 0 0 10px 2px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent)';
-          btn.style.animation = 'cookbook-srv-glow-ok 2.4s ease-in-out infinite';
+          if (!_prefersReducedMotion()) btn.style.animation = 'cookbook-srv-glow-ok 2.4s ease-in-out infinite';
           ico.innerHTML = _checkIcon;
         } else {
           // Failure — red glow, original icon, error detail in status
@@ -4140,9 +4307,9 @@ async function initUnifiedIntegrations() {
         <h2 style="font-size:13px">Vaultwarden (Password Vault)</h2>
         <div id="uf-vault-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">Loading...</div>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
-          <div class="settings-row"><label class="settings-label">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-url">Server URL</label><input id="uf-vault-url" class="settings-input" placeholder="https://vault.example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-email">Email</label><input id="uf-vault-email" class="settings-input" placeholder="you@example.com"></div>
+          <div class="settings-row"><label class="settings-label" for="uf-vault-pass">Master Password</label><input id="uf-vault-pass" class="settings-input" type="password" placeholder="Only required for Login / Unlock"></div>
           <div class="settings-row" style="margin-top:4px;flex-wrap:wrap;gap:4px">
             <button class="admin-btn-sm" id="uf-vault-save">Save Config</button>
             <button class="admin-btn-sm" id="uf-vault-login">Login</button>
@@ -4338,15 +4505,15 @@ async function initUnifiedIntegrations() {
         <div class="admin-card" style="margin-top:8px">
           <h2 style="font-size:13px">Add MCP Server</h2>
           <div class="settings-col">
-            <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
-            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
+            <div class="settings-row"><label class="settings-label" for="uf-mcp-name">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
+            <div class="settings-row"><label class="settings-label" for="uf-mcp-transport">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
-              <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
-              <div class="settings-row"><label class="settings-label">Env</label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
+              <div class="settings-row"><label class="settings-label" for="uf-mcp-cmd">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
+              <div class="settings-row"><label class="settings-label" for="uf-mcp-args">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
+              <div class="settings-row"><label class="settings-label" for="uf-mcp-env">Env</label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label" for="uf-mcp-url">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
             </div>
             <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">Save</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Cancel</button><span id="uf-mcp-msg" style="font-size:11px"></span></div>
           </div>
@@ -4392,7 +4559,7 @@ async function initUnifiedIntegrations() {
         <div class="admin-card" style="margin-top:8px">
           <h2 style="font-size:13px">Add Integration</h2>
           <div class="settings-col">
-            <div class="settings-row"><label class="settings-label">Type</label>
+            <div class="settings-row"><label class="settings-label" for="uf-type-picker">Type</label>
               <select id="uf-type-picker" class="settings-input">
                 <option value="">Select...</option>
                 <option value="api">API Service</option>
@@ -4437,7 +4604,15 @@ export function open(tab) {
   if (tab) {
     modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
     modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+    _syncTabAria();
   }
+  // Keyboard a11y: trap focus inside the modal, move focus in, Escape
+  // closes (or closes just an in-progress inner form — see _escapeClose),
+  // and focus is restored to the launcher on close. Re-wired on every open
+  // (not gated behind a "first open only" check) so a second open after a
+  // close still gets a working trap/restore.
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modalEl, _escapeClose);
   // Auto-init admin data if showing an admin tab
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
@@ -4451,6 +4626,7 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
   // Always clear the appearance-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
   document.body.classList.remove('settings-appearance-open');

@@ -83,6 +83,31 @@ const TABS = [
 
 const CLOSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 
+// Keep the tab strip's `.active`/`aria-selected` and the shared tabpanel's
+// `aria-labelledby` all pointing at the same current tab (a11y audit #29 —
+// real `role="tab"`/`role="tabpanel"` semantics instead of plain buttons with
+// no selected-state). Pure DOM sync, no render — callers that also need a
+// fresh render call `_activateTab` instead (below) or `_renderTab()` directly.
+function _syncTabActiveUI(tab) {
+  if (!_modalEl) return;
+  const body = _modalEl.querySelector('#applicant-debug-body');
+  _modalEl.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => {
+    const active = x.dataset.tab === tab;
+    x.classList.toggle('active', active);
+    x.setAttribute('aria-selected', active ? 'true' : 'false');
+    if (active && body) body.setAttribute('aria-labelledby', x.id);
+  });
+}
+
+// Click/arrow-key entry point: sets the active tab, syncs its ARIA state, and
+// renders it — the click handler and the tablist's arrow-key navigation both
+// go through this one function so they can never drift out of sync.
+function _activateTab(tab) {
+  _activeTab = tab;
+  _syncTabActiveUI(tab);
+  _renderTab();
+}
+
 function _ensureModalEl() {
   if (_modalEl) return _modalEl;
   const modal = document.createElement('div');
@@ -90,12 +115,14 @@ function _ensureModalEl() {
   modal.className = 'modal hidden';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Applicant diagnostics');
+  // aria-labelledby (pointing at the actual visible title) instead of a
+  // hardcoded aria-label string that can drift from the on-screen text —
+  // a11y audit #9.
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:860px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
-        <h4>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <h4 id="applicant-debug-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           Activity
         </h4>
         <button class="close-btn" id="applicant-debug-close" title="Close" aria-label="Close">${CLOSE_SVG}</button>
@@ -107,7 +134,7 @@ function _ensureModalEl() {
         </label>
         <div class="applicant-debug-overflow-wrap" style="margin-left:auto;position:relative;">
           <button class="cal-btn" type="button" id="applicant-debug-overflow-btn" title="More actions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px;"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px;" aria-hidden="true"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
           </button>
           <div class="applicant-debug-overflow-menu hidden" id="applicant-debug-overflow-menu" role="menu">
             <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-download-log" role="menuitem" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
@@ -116,15 +143,15 @@ function _ensureModalEl() {
         </div>
       </div>
       <div id="applicant-debug-engine-banner" class="admin-toggle-sub" style="padding:0 14px;margin-top:4px;opacity:0.7;display:none;"></div>
-      <div class="admin-tabs" id="applicant-debug-tabs" style="padding:8px 14px 0;">
-        ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" data-tab="${k}">${esc(label)}</button>`).join('')}
+      <div class="admin-tabs" id="applicant-debug-tabs" role="tablist" style="padding:8px 14px 0;">
+        ${TABS.map(([k, label], i) => `<button class="admin-tab${i === 0 ? ' active' : ''}" role="tab" id="applicant-debug-tab-${k}" aria-selected="${i === 0 ? 'true' : 'false'}" aria-controls="applicant-debug-body" data-tab="${k}">${esc(label)}</button>`).join('')}
       </div>
-      <div class="modal-body" id="applicant-debug-body" style="flex:1;overflow-y:auto;padding:14px;">
+      <div class="modal-body" id="applicant-debug-body" role="tabpanel" aria-labelledby="applicant-debug-tab-${TABS[0][0]}" style="flex:1;overflow-y:auto;padding:14px;">
         ${loadingHTML('Loading…')}
       </div>
+      <div id="applicant-debug-live" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;"></div>
     </div>`;
   document.body.appendChild(modal);
-  if (_modalA11yCleanup) _modalA11yCleanup();
   const overflowBtn = modal.querySelector('#applicant-debug-overflow-btn');
   const overflowMenu = modal.querySelector('#applicant-debug-overflow-menu');
   const closeOverflow = () => {
@@ -132,26 +159,38 @@ function _ensureModalEl() {
     overflowMenu.classList.add('hidden');
     if (overflowBtn) overflowBtn.setAttribute('aria-expanded', 'false');
   };
-  // Escape closes the overflow popover first (if open), the whole modal next —
-  // mirrors how a menu/modal stack normally unwinds one layer at a time. Routed
-  // through initModalA11y's closeFn (rather than a second local `keydown`
-  // listener) so this modal also gets topmost-only Escape arbitration against
-  // any other open modal/dialog (design-audit item #17) — the whole-modal
-  // branch below only actually runs when this modal is the topmost overlay.
-  _modalA11yCleanup = uiModule.initModalA11y(modal, () => {
-    if (overflowMenu && !overflowMenu.classList.contains('hidden')) { closeOverflow(); return; }
-    _close();
-  });
+  // Focus-trap/restore (uiModule.initModalA11y) is deliberately NOT wired here
+  // — this function only runs once, on first creation, and re-gating the trap
+  // behind that "created once" branch is exactly the six-modals bug design
+  // audit #1 flags (Debug named explicitly): the cleanup that Escape/close
+  // runs tears the trap down, and a modal only ever re-created here would
+  // never get it back. `_wireA11y()` below is called fresh from every
+  // openApplicantDebug()/openApplicantDebugDetail() instead, so every open —
+  // not just the first — gets a working trap, Escape, and focus restore.
   modal.querySelector('#applicant-debug-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((b) => {
-    b.addEventListener('click', () => {
-      modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      _activeTab = b.dataset.tab;
-      _renderTab();
-    });
+    b.addEventListener('click', () => { _activateTab(b.dataset.tab); });
   });
+  // Left/Right arrow-key accelerators on the tablist (design audit #29 — no
+  // tab strip in the product has arrow-key nav). Additive: every tab button
+  // keeps its normal tabindex, so plain Tab-key order through the strip is
+  // unchanged; arrows are a layered-on shortcut, not a replacement.
+  const tablist = modal.querySelector('#applicant-debug-tabs');
+  if (tablist) {
+    tablist.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const tabs = Array.from(tablist.querySelectorAll('.admin-tab'));
+      const idx = tabs.indexOf(document.activeElement);
+      if (idx === -1) return;
+      e.preventDefault();
+      const next = e.key === 'ArrowRight'
+        ? tabs[(idx + 1) % tabs.length]
+        : tabs[(idx - 1 + tabs.length) % tabs.length];
+      next.focus();
+      _activateTab(next.dataset.tab);
+    });
+  }
   modal.querySelector('#applicant-debug-campaign').addEventListener('change', (e) => {
     _campaignId = e.target.value || null;
     _renderTab();
@@ -314,20 +353,34 @@ async function _renderTab() {
     config: _renderConfig,
   };
   const token = ++_renderToken;
-  _body().innerHTML = loadingHTML('Loading…');
+  const tabLabel = (TABS.find(([k]) => k === _activeTab) || [])[1] || 'this view';
+  const body = _body();
+  // aria-busy + a short plain-language live-status line around the fetch/
+  // render (design audit #11/#12) — the tabpanel's own content swap stays
+  // silent (too verbose to read whole-hog on every switch); this narrates
+  // just the loading/settled transition.
+  if (body) body.setAttribute('aria-busy', 'true');
+  body.innerHTML = loadingHTML('Loading…');
+  _announce(`Loading ${tabLabel}…`);
   try {
     await (map[_activeTab] || _renderActivity)(token);
+    if (_renderIsStale(token)) return;
+    if (body) body.setAttribute('aria-busy', 'false');
+    _announce(`${tabLabel} loaded.`);
   } catch (e) {
     if (_renderIsStale(token)) return;
+    if (body) body.setAttribute('aria-busy', 'false');
     if (e && (e.status === 403 || e.kind === 'forbidden')) {
       // Admin gate: a Retry can't fix a permissions block, so show the message
       // without a retry affordance (keeps the gate honest).
       _renderOffline('This view is available to admins only.');
+      _announce('This view is available to admins only.');
     } else {
       // Everything else dead-ended on error text before — give an inline Retry
       // so the user recovers without closing the surface.
       _body().innerHTML = errorHTML(_errLine(e));
       wireRetry(_body(), _renderTab);
+      _announce(`Could not load ${tabLabel}.`);
     }
   }
 }
@@ -420,16 +473,21 @@ async function _renderActivity(token) {
   }).join('');
   _body().innerHTML = `<div id="applicant-debug-detail-host"></div><div class="applicant-debug-list">${rows}</div>`;
   _body().querySelectorAll('.applicant-debug-detail').forEach((b) => {
-    b.addEventListener('click', () => _showAppDetail(b.dataset.app));
+    b.addEventListener('click', () => _showAppDetail(b.dataset.app, b));
   });
   _body().querySelectorAll('.applicant-debug-marksub').forEach((b) => {
     b.addEventListener('click', () => _markSubmitted(b.dataset.app, b));
   });
 }
 
-async function _showAppDetail(appId) {
+// `triggerBtn` (the row's "Details" button) is remembered so closing the
+// drill-in can hand focus back to it — without this, the innerHTML swap that
+// tears down the panel (including its own Close button) drops keyboard focus
+// to `<body>` with no way back in via Tab (design audit #6).
+async function _showAppDetail(appId, triggerBtn) {
   const host = _body().querySelector('#applicant-debug-detail-host');
   if (!host || !appId) return;
+  if (triggerBtn) host._applicantDebugTrigger = triggerBtn;
   host.innerHTML = loadingHTML('Loading details…');
   let shots = { screenshots: [] }, wf = { steps: [] }, outcomes = { outcomes: [] };
   let anyErr = null;
@@ -459,7 +517,7 @@ async function _showAppDetail(appId) {
             // No id to build an image URL from — fall back to the plain-text label.
             return `<span class="admin-toggle-sub" style="opacity:0.7;" title="${esc(s.page_url || '')}">${esc(label)}</span>`;
           }
-          return `<img class="applicant-debug-shot-thumb" src="${esc(src)}" alt="${esc(label)}" title="${esc(s.page_url || label)}" data-full="${esc(src)}" data-label="${esc(label)}" loading="lazy" style="width:96px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#3334);cursor:zoom-in;" />`;
+          return `<img class="applicant-debug-shot-thumb" src="${esc(src)}" alt="${esc(label)}" title="${esc(s.page_url || label)}" data-full="${esc(src)}" data-label="${esc(label)}" loading="lazy" tabindex="0" role="button" aria-label="View screenshot: ${esc(label)}" style="width:96px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#3334);cursor:zoom-in;" />`;
         }).join('') : _empty('No screenshots captured.')}
     </div>
     <div class="admin-toggle-sub" style="margin-top:8px;"><strong>Workflow steps</strong></div>
@@ -469,9 +527,21 @@ async function _showAppDetail(appId) {
     <div class="admin-toggle-sub" style="margin-top:8px;" title="An immutable record of exactly what was submitted: the answers, the document versions, the posting, and when."><strong>Submission record</strong></div>
     ${_renderSnapshot(snapshot)}
   </div>`;
-  host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => { host.innerHTML = ''; });
+  host.querySelector('#applicant-debug-detail-close').addEventListener('click', () => {
+    host.innerHTML = '';
+    const trigger = host._applicantDebugTrigger;
+    if (trigger && document.body.contains(trigger)) trigger.focus();
+  });
   host.querySelectorAll('.applicant-debug-shot-thumb').forEach((img) => {
-    img.addEventListener('click', () => _openScreenshotLightbox(img.dataset.full, img.dataset.label));
+    img.addEventListener('click', () => _openScreenshotLightbox(img.dataset.full, img.dataset.label, img));
+    // Enter/Space activation (design audit lens 01/05 — keyboard operability
+    // on custom controls): the thumbnail is a real `role="button"` + tabindex
+    // now, so it needs the same native-button activation keys wired by hand.
+    img.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      e.preventDefault();
+      _openScreenshotLightbox(img.dataset.full, img.dataset.label, img);
+    });
     // The capture may already be gone (ephemeral /tmp, reclaimed after a restart) —
     // swap a broken thumbnail for the plain-text label rather than a blank icon.
     img.addEventListener('error', () => {
@@ -497,10 +567,18 @@ function _screenshotImgUrl(appId, screenshotId) {
 // chat attachment lightbox (chatRenderer.js `_openImageLightbox`) — same
 // `.attach-lightbox` styling, reused rather than hand-rolled — simplified to a
 // single image URL (screenshots have no separate thumb/full variant).
-function _openScreenshotLightbox(url, label) {
+// `triggerEl` (the thumbnail that opened this) gets focus back on close —
+// otherwise the overlay's removal drops keyboard focus to `<body>` with no
+// way back to the Details panel via Tab (design audit #6's "re-renders
+// destroy the focused element" pattern, same fix applied here).
+function _openScreenshotLightbox(url, label, triggerEl) {
   if (!url) return;
   const overlay = document.createElement('div');
   overlay.className = 'attach-lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', label || 'Screenshot');
+  overlay.tabIndex = -1;
   const img = document.createElement('img');
   img.alt = label || '';
   img.src = url;
@@ -509,10 +587,12 @@ function _openScreenshotLightbox(url, label) {
   const _close = () => {
     document.removeEventListener('keydown', _onKey);
     overlay.remove();
+    if (triggerEl && document.body.contains(triggerEl)) triggerEl.focus();
   };
   overlay.addEventListener('click', _close);
   document.addEventListener('keydown', _onKey);
   document.body.appendChild(overlay);
+  overlay.focus();
 }
 
 async function _confirm(message, opts) {
@@ -1025,7 +1105,7 @@ async function _renderSources(host) {
         <div style="font-weight:600;">Exploration budget</div>
         <div class="admin-toggle-sub" style="opacity:0.7;margin:2px 0 8px;">How much effort to spend trying new or under-used sources instead of the proven ones. 0 sticks to what works; 1 explores the most.</div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="number" id="applicant-explore-budget" class="settings-input" min="0" max="1" step="0.05" value="${esc(Number(data.exploration_budget))}" style="width:90px;" title="A number between 0 and 1." />
+          <input type="number" id="applicant-explore-budget" class="settings-input" min="0" max="1" step="0.05" value="${esc(Number(data.exploration_budget))}" style="width:90px;" title="A number between 0 and 1." aria-label="Exploration budget, a number between 0 and 1" />
           <button class="cal-btn" id="applicant-explore-save" title="Save the exploration budget">Save</button>
           <span id="applicant-explore-msg" class="admin-toggle-sub" style="opacity:0.7;"></span>
         </div>
@@ -1054,7 +1134,7 @@ async function _renderSources(host) {
         <div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(stat)}</div>
       </div>
       <label class="admin-switch" style="flex-shrink:0;" title="Turn this source on or off">
-        <input type="checkbox" class="applicant-source-toggle" data-key="${esc(s.source_key)}"${s.enabled ? ' checked' : ''} />
+        <input type="checkbox" class="applicant-source-toggle" data-key="${esc(s.source_key)}"${s.enabled ? ' checked' : ''} aria-label="Turn ${esc(s.source_key)} on or off" />
         <span class="admin-slider"></span>
       </label>
     </div>`;
@@ -1062,12 +1142,18 @@ async function _renderSources(host) {
   host.innerHTML = budgetCard + rows;
   host.querySelectorAll('.applicant-source-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
+      // Disable for the round-trip so a fast double-toggle can't race two
+      // in-flight requests against each other (micro-interactions audit —
+      // busy/disabled affordance on a control that mutates immediately).
+      cb.disabled = true;
       try {
         await _put(`${OPS}/discovery/${encodeURIComponent(_campaignId)}/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
         _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
         _toast(e.message || 'Could not change that source.');
+      } finally {
+        cb.disabled = false;
       }
     });
   });
@@ -1178,19 +1264,23 @@ async function _renderTools(host) {
         ${t.description ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:2px;">${esc(t.description)}</div>` : ''}
       </div>
       <label class="admin-switch" style="flex-shrink:0;" title="Turn this tool on or off">
-        <input type="checkbox" class="applicant-tool-toggle" data-key="${esc(key)}"${t.enabled ? ' checked' : ''} />
+        <input type="checkbox" class="applicant-tool-toggle" data-key="${esc(key)}"${t.enabled ? ' checked' : ''} aria-label="Turn ${esc(label)} on or off" />
         <span class="admin-slider"></span>
       </label>
     </div>`;
     }).join('');
   host.querySelectorAll('.applicant-tool-toggle').forEach((cb) => {
     cb.addEventListener('change', async () => {
+      // Same busy-disable guard as the Sources toggle above.
+      cb.disabled = true;
       try {
         await _post(`${ADMIN}/tools/${encodeURIComponent(cb.dataset.key)}`, { enabled: cb.checked });
         _toast(`${cb.dataset.key} ${cb.checked ? 'on' : 'off'}.`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
         _toast(e.message || 'Could not change that tool.');
+      } finally {
+        cb.disabled = false;
       }
     });
   });
@@ -1483,10 +1573,44 @@ function _setEngineBanner(modal, up) {
   }
 }
 
+// Keyboard a11y: trap focus inside the modal, move focus in, Escape closes
+// the overflow popover first (if open) or the modal next, and focus is
+// restored to whatever launched Debug when it closes. Called fresh from
+// EVERY open (openApplicantDebug / openApplicantDebugDetail) rather than
+// once at first creation — design audit #1 names this modal as one of six
+// that used to lose all focus management on every open after the first,
+// because the old wiring lived behind `_ensureModalEl`'s "already built"
+// early-return guard.
+function _wireA11y(modal) {
+  if (_modalA11yCleanup) { _modalA11yCleanup(); _modalA11yCleanup = null; }
+  const overflowMenu = modal.querySelector('#applicant-debug-overflow-menu');
+  const overflowBtn = modal.querySelector('#applicant-debug-overflow-btn');
+  const closeOverflow = () => {
+    if (!overflowMenu) return;
+    overflowMenu.classList.add('hidden');
+    if (overflowBtn) overflowBtn.setAttribute('aria-expanded', 'false');
+  };
+  _modalA11yCleanup = uiModule.initModalA11y(modal, () => {
+    if (overflowMenu && !overflowMenu.classList.contains('hidden')) { closeOverflow(); return; }
+    _close();
+  });
+}
+
+// Visually-hidden aria-live status line (design audit #11/#12 — Debug is one
+// of the many applicant surfaces with zero live regions, so its own tab-body
+// load/error/result transitions are otherwise inaudible). Kept separate from
+// the tabpanel itself so a full content swap isn't read in its entirety on
+// every tab switch — just a short plain-language status line.
+function _announce(msg) {
+  const live = _modalEl && _modalEl.querySelector('#applicant-debug-live');
+  if (live) live.textContent = msg;
+}
+
 export async function openApplicantDebug(opts) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  _wireA11y(modal);
   if (!(opts && opts.skipHashUpdate)) setHash('debug');
   _body().innerHTML = loadingHTML('Loading…');
   try {
@@ -1507,6 +1631,7 @@ export async function openApplicantDebugDetail(campaignId, appId) {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
+  _wireA11y(modal);
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();
@@ -1517,9 +1642,7 @@ export async function openApplicantDebugDetail(campaignId, appId) {
       if (sel) sel.value = campaignId;
     }
     _activeTab = 'activity';
-    modal.querySelectorAll('#applicant-debug-tabs .admin-tab').forEach((x) => {
-      x.classList.toggle('active', x.dataset.tab === 'activity');
-    });
+    _syncTabActiveUI('activity');
     await _renderTab();
     if (appId) await _showAppDetail(appId);
   } catch (err) {
