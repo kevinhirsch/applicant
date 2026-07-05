@@ -28,7 +28,7 @@
 // Mounted lazily by settings.js when the Campaign tab opens, into
 // #ao-settings-campaign. Re-renders fresh each open so it reflects saved state.
 
-import { esc, _toast, _fetchJSON, _post, _put } from './applicantCore.js';
+import { esc, _toast, _fetchJSON, _post, _put, errText } from './applicantCore.js';
 import uiModule from './ui.js';
 
 const BASE = '/api/applicant/campaigns';
@@ -36,7 +36,7 @@ const BASE = '/api/applicant/campaigns';
 const RUN_MODES = [
   ['continuous', 'Continuous (24/7)'],
   ['fixed_duration', 'Fixed duration'],
-  ['until_n_viable', 'Until enough viable roles'],
+  ['until_n_viable', "Until I've found enough good matches"],
 ];
 
 function _runModeLabel(mode) {
@@ -71,14 +71,29 @@ function _yieldSummary(stats) {
   const conversions = stats.conversions ?? stats.converted;
   const bits = [];
   if (postings != null) bits.push(`${esc(String(postings))} found`);
-  if (conversions != null) bits.push(`${esc(String(conversions))} converted`);
+  if (conversions != null) bits.push(`${esc(String(conversions))} led to applications`);
   return bits.length ? bits.join(' · ') : 'No data yet';
 }
 
+// Known job-board brand names get their real capitalization; anything else
+// falls back to a plain title-cased guess so an unrecognized source key never
+// renders as a raw slug.
+const _KNOWN_SOURCE_BRANDS = {
+  linkedin: 'LinkedIn',
+  ziprecruiter: 'ZipRecruiter',
+  indeed: 'Indeed',
+  glassdoor: 'Glassdoor',
+  ashby: 'Ashby',
+  greenhouse: 'Greenhouse',
+  lever: 'Lever',
+  workday: 'Workday',
+};
+
 function _sourceLabel(key) {
-  // "jobspy:indeed" -> "Indeed", "linkedin" -> "Linkedin".
+  // "jobspy:indeed" -> "Indeed", "linkedin" -> "LinkedIn".
   const tail = String(key || '').split(':').pop() || String(key || '');
-  return tail.charAt(0).toUpperCase() + tail.slice(1);
+  const known = _KNOWN_SOURCE_BRANDS[tail.toLowerCase()];
+  return known || (tail.charAt(0).toUpperCase() + tail.slice(1));
 }
 
 // Live-vs-sample indicator (dark-engine audit item 65). The offline lane backs
@@ -111,7 +126,7 @@ function _campaignCard(c) {
       <div class="settings-row">
         <label class="settings-label" for="cs-name-${id}">Name</label>
         <input id="cs-name-${id}" class="settings-input" type="text" value="${esc(c.name)}"
-               data-cs-field="name" placeholder="Campaign name" maxlength="120">
+               data-cs-field="name" placeholder="Search name" maxlength="120">
       </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-mode-${id}">Run mode</label>
@@ -125,8 +140,8 @@ function _campaignCard(c) {
       </div>
       <div class="admin-toggle-sub cs-tput-note" id="cs-tput-note-${id}" style="opacity:0.75;margin:-6px 0 4px;display:none;" role="status"></div>
       <div class="settings-row">
-        <label class="settings-label" for="cs-budget-${id}">Exploration budget
-          <span style="opacity:0.6;font-weight:normal">(% effort on new sources)</span></label>
+        <label class="settings-label" for="cs-budget-${id}">Trying new sources
+          <span style="opacity:0.6;font-weight:normal">(% of my effort spent on unproven job boards)</span></label>
         <input id="cs-budget-${id}" class="settings-input" type="number" min="0" max="100" step="5"
                value="${esc(String(budgetPct))}" data-cs-field="exploration_pct" style="max-width:120px">
       </div>
@@ -136,9 +151,9 @@ function _campaignCard(c) {
           ${archived ? 'Reactivate' : 'Archive'}
         </button>
         <button type="button" class="cal-btn cs-duplicate" data-cs-id="${id}"
-                title="Start a new campaign with this one's criteria and settings">Duplicate</button>
+                title="Start a new search with this one's criteria and settings">Duplicate</button>
         <button type="button" class="cal-btn cs-audit-log" data-cs-id="${id}"
-                title="Download every action taken on this campaign as a JSON file">Download activity log</button>
+                title="Download every action taken on this search as a JSON file">Download activity log</button>
       </div>
       <div class="cs-sources" data-cs-sources-for="${id}">
         <div class="admin-toggle-sub" style="margin:10px 0 6px">Discovery sources</div>
@@ -148,11 +163,11 @@ function _campaignCard(c) {
       <div class="cs-danger-zone" style="margin-top:14px;padding-top:10px;border-top:1px solid color-mix(in srgb, var(--color-danger, #e06c75) 30%, transparent)">
         <div class="admin-toggle-label" style="color:#e55">Danger zone</div>
         <div class="admin-toggle-sub" style="margin-bottom:8px">
-          Permanently deletes this campaign and everything in it — résumés, applications,
+          Permanently deletes this search and everything in it — résumés, applications,
           discovery sources, and learned criteria. This cannot be undone.
         </div>
         <button type="button" class="cal-btn cal-btn-danger cs-delete" data-cs-id="${id}"
-                title="Permanently delete this campaign and purge its data">Delete this campaign</button>
+                title="Permanently delete this search and purge its data">Delete this search</button>
       </div>
     </div>`;
 }
@@ -207,7 +222,7 @@ async function _wireSources(host, campaignId) {
         _toast(`${_sourceLabel(sourceKey)} ${cb.checked ? 'enabled' : 'disabled'}`);
       } catch (e) {
         cb.checked = !cb.checked; // revert on failure
-        _toast(`Could not update source: ${e.message || e}`);
+        _toast(`I couldn't update that source: ${errText(e)}`);
       }
     });
   });
@@ -234,10 +249,10 @@ async function _wireCard(host, card) {
     btn.disabled = true;
     try {
       await _patch(`${BASE}/${encodeURIComponent(id)}`, _readEdits(card));
-      _toast('Campaign updated');
+      _toast('Search updated');
       await mountApplicantCampaignSettings(host); // re-render fresh
     } catch (e) {
-      _toast(`Could not save: ${e.message || e}`);
+      _toast(`I couldn't save that: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -277,9 +292,9 @@ async function _wireCard(host, card) {
     // consequence, micro-interactions audit #41). Reactivating stays a
     // single click; it only resumes work, nothing is lost by a mis-click.
     if (active) {
-      const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+      const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this search';
       const ok = await _confirm(
-        `Archive "${name}"? The assistant will stop working this job search until you reactivate it.`,
+        `Archive "${name}"? I'll stop working this job search until you reactivate it.`,
         { confirmText: 'Archive', cancelText: 'Keep active' },
       );
       if (!ok) return;
@@ -287,31 +302,31 @@ async function _wireCard(host, card) {
     btn.disabled = true;
     try {
       await _patch(`${BASE}/${encodeURIComponent(id)}`, { active: !active });
-      _toast(active ? 'Campaign archived' : 'Campaign reactivated');
+      _toast(active ? 'Search archived' : 'Search reactivated');
       await mountApplicantCampaignSettings(host);
     } catch (e) {
-      _toast(`Could not update: ${e.message || e}`);
+      _toast(`I couldn't update that: ${errText(e)}`);
       btn.disabled = false;
     }
   });
   card.querySelector('.cs-duplicate')?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
-    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this search';
     const newName = (uiModule.styledPrompt
-      ? await uiModule.styledPrompt(`Name the new campaign (a copy of "${name}").`, {
-          title: 'Duplicate campaign',
+      ? await uiModule.styledPrompt(`Name the new search (a copy of "${name}").`, {
+          title: 'Duplicate search',
           defaultValue: `${name} (copy)`,
           confirmText: 'Duplicate',
         })
-      : window.prompt('Name the new campaign:', `${name} (copy)`));
+      : window.prompt('Name the new search:', `${name} (copy)`));
     if (newName == null) return; // cancelled
     btn.disabled = true;
     try {
       await _post(`${BASE}/${encodeURIComponent(id)}/clone`, { name: newName.trim() || undefined });
-      _toast('Campaign duplicated');
+      _toast('Search duplicated');
       await mountApplicantCampaignSettings(host); // re-render fresh with the new campaign
     } catch (e) {
-      _toast(`Could not duplicate campaign: ${e.message || e}`);
+      _toast(`I couldn't duplicate that search: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -322,25 +337,25 @@ async function _wireCard(host, card) {
     try {
       window.open(`${BASE}/${encodeURIComponent(id)}/audit-log/export.json`, '_blank', 'noopener');
     } catch (e) {
-      _toast(`Could not open the activity log: ${e.message || e}`);
+      _toast(`I couldn't open the activity log: ${errText(e)}`);
     }
   });
   card.querySelector('.cs-delete')?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
-    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+    const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this search';
     const ok = await _confirm(
       `Permanently delete "${name}"? Its résumés, applications, discovery sources, and learned ` +
         'criteria will be purged and cannot be recovered.',
-      { confirmText: 'Delete permanently', cancelText: 'Keep campaign', danger: true },
+      { confirmText: 'Delete permanently', cancelText: 'Keep search', danger: true },
     );
     if (!ok) return;
     btn.disabled = true;
     try {
       await _del(`${BASE}/${encodeURIComponent(id)}`);
-      _toast('Campaign deleted');
+      _toast('Search deleted');
       await mountApplicantCampaignSettings(host); // re-render fresh without it
     } catch (e) {
-      _toast(`Could not delete campaign: ${e.message || e}`);
+      _toast(`I couldn't delete that search: ${errText(e)}`);
       btn.disabled = false;
     }
   });
@@ -377,16 +392,16 @@ async function _wireCreate(host) {
   const create = async () => {
     const name = input.value.trim();
     if (!name) {
-      _toast('Give the campaign a name first');
+      _toast('Give the search a name first');
       return;
     }
     btn.disabled = true;
     try {
       await _post(BASE, { name });
-      _toast('Campaign created');
+      _toast('Search created');
       await mountApplicantCampaignSettings(host);
     } catch (e) {
-      _toast(`Could not create campaign: ${e.message || e}`);
+      _toast(`I couldn't create that search: ${errText(e)}`);
       btn.disabled = false;
     }
   };
@@ -416,23 +431,23 @@ export async function mountApplicantCampaignSettings(host) {
   const { available, campaigns } = await _loadCampaigns();
   if (!available) {
     host.innerHTML =
-      '<p style="font-size:0.85rem;opacity:0.7;">Applicant is offline — campaign settings will appear once it reconnects.</p>';
+      '<p style="font-size:0.85rem;opacity:0.7;">I can\'t connect right now — your search settings will appear once I\'m back.</p>';
     host.setAttribute('aria-busy', 'false');
     return;
   }
   const createCard = `
     <div class="admin-card">
-      <h2>Create a campaign</h2>
-      <div class="admin-toggle-sub" style="margin-bottom:8px">A campaign is one job search — its own criteria, sources, and learning.</div>
+      <h2>Start a search</h2>
+      <div class="admin-toggle-sub" style="margin-bottom:8px">Each search has its own criteria, sources, and learning.</div>
       <div class="settings-row" style="gap:8px">
         <input id="cs-create-name" class="settings-input" type="text" placeholder="e.g. Senior Backend Engineer"
-               aria-label="Campaign name" maxlength="120">
-        <button type="button" class="cal-btn" id="cs-create">Create</button>
+               aria-label="Search name" maxlength="120">
+        <button type="button" class="cal-btn" id="cs-create">Start search</button>
       </div>
     </div>`;
   const cards = campaigns.length
     ? campaigns.map(_campaignCard).join('')
-    : '<p style="font-size:0.85rem;opacity:0.7;">No campaigns yet — create one above to get started.</p>';
+    : '<p style="font-size:0.85rem;opacity:0.7;">No searches yet — start one above.</p>';
   host.innerHTML = createCard + cards;
   host.scrollTop = savedScrollTop;
   host.setAttribute('aria-busy', 'false');

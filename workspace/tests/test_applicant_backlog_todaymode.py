@@ -650,6 +650,13 @@ def test_gated_state_shows_finish_setup(node_available):
 
 
 def test_offline_state_shows_not_connected(node_available):
+    """Copy updated by the copy/voice (exhaustive2 lens 02) pass: the
+    engine-unreachable state is diagnosed as a transient disconnect (Today's
+    separate `gated` branch already handles the true never-configured case),
+    so the title reads "I can't check in right now" rather than the old
+    "Not connected yet" (see docs/design/audits/exhaustive2/02_copy_voice.md
+    finding #12 and test_applicant_exhaustive2_copyvoice_
+    today_campaignsettings_gallery.py's own dedicated coverage)."""
     script = f"""
         globalThis.__fetchResponder = (url) => {{
           if (url.endsWith('/api/applicant/portal/pending')) {{
@@ -660,7 +667,10 @@ def test_offline_state_shows_not_connected(node_available):
         const mod = await import('file://{_TODAY_JS}');
         await mod.openApplicantToday();
         const text = document.getElementById('applicant-today-body').innerHTML;
-        console.log(JSON.stringify({{ hasNotConnected: text.includes('Not connected yet') }}));
+        // emptyHTML() runs the title through esc(), which turns the
+        // apostrophe into &#39; — match on the unambiguous, apostrophe-free
+        // tail of the string instead of the raw text.
+        console.log(JSON.stringify({{ hasNotConnected: text.includes('check in right now') }}));
     """
     out = _run_node(script)
     assert out == {"hasNotConnected": True}

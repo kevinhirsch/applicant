@@ -156,7 +156,7 @@ function _errLine(err) {
     return 'Finish setup (connect a model and your profile) to enable this view.';
   }
   if (err && (err.kind === 'offline' || err.kind === 'network')) {
-    return 'The Applicant engine is not reachable right now. This gallery will fill in once it is connected.';
+    return "I can't connect right now — this gallery will fill in once I'm back.";
   }
   return errText(err);
 }
@@ -289,7 +289,7 @@ async function _renderGallery() {
     _body().setAttribute('aria-busy', 'false');
     _body().innerHTML = emptyHTML(
       'Nothing captured yet',
-      'This job search has no screenshots or generated materials yet — they appear here as the agent works.',
+      'This job search has no screenshots or generated materials yet — they appear here as I work.',
       _createSearchCTA());
     _wireCreateSearchCTA();
     return;
@@ -298,10 +298,10 @@ async function _renderGallery() {
   const sections = [];
   sections.push(`<h5 style="margin:0 0 8px;">Screenshots <span class="admin-toggle-sub" style="opacity:0.6;">${shots.length}</span></h5>`);
   sections.push(shots.length ? _grid(shots.map(_shotCard)) : _empty(
-    'No screenshots yet — these are captured automatically as the agent works through each page.'));
+    'No screenshots yet — these are captured automatically as I work through each page.'));
   sections.push(`<h5 style="margin:16px 0 8px;">Materials <span class="admin-toggle-sub" style="opacity:0.6;">${mats.length}</span></h5>`);
   sections.push(mats.length ? _grid(mats.map(_matCard)) : _empty(
-    'No generated materials yet — resumes, cover letters, and screening answers will appear here as the agent drafts them.'));
+    'No generated materials yet — resumes, cover letters, and screening answers will appear here as I draft them.'));
   _body().setAttribute('aria-busy', 'false');
   _body().innerHTML = sections.join('');
 }
@@ -321,7 +321,7 @@ export async function openApplicantGallery(opts) {
   try {
     const up = await _loadCampaigns();
     const badge = modal.querySelector('#applicant-gallery-engine');
-    if (badge) badge.textContent = up ? '' : 'Engine offline';
+    if (badge) badge.textContent = up ? '' : 'Not connected';
     await _renderGallery();
   } catch (err) {
     _body().innerHTML = errorHTML(_errLine(err));

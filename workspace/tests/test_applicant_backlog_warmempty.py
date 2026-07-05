@@ -118,8 +118,13 @@ def test_gallery_section_empty_states_are_warm_not_flat():
     js = _read(GALLERY_JS)
     assert "_empty('No screenshots yet.')" not in js
     assert "_empty('No generated materials yet.')" not in js
-    assert "these are captured automatically as the agent works through each page" in js
-    assert "resumes, cover letters, and screening answers will appear here as the agent drafts them" in js
+    # Copy updated by the copy/voice (exhaustive2 lens 02) pass: "the agent"
+    # -> first-person "I" (see docs/design/audits/exhaustive2/02_copy_voice.md
+    # finding #209 and this repo's dedicated test_applicant_exhaustive2_
+    # copyvoice_today_campaignsettings_gallery.py coverage) — the warm,
+    # explanatory shape these assertions protect is unchanged.
+    assert "these are captured automatically as I work through each page" in js
+    assert "resumes, cover letters, and screening answers will appear here as I draft them" in js
 
 
 def test_gallery_top_level_empty_states_already_warm_untouched():

@@ -57,27 +57,27 @@ let _errMsg = '';
 // emits). `affordance` selects which card body renderer runs below.
 
 const KINDS = {
-  agent_question: { label: 'The assistant has a question for you', affordance: 'answer' },
+  agent_question: { label: 'I have a question for you', affordance: 'answer' },
   material_review: { label: 'A tailored document is ready for your review', hint: 'Open the side-by-side review before anything is sent.', affordance: 'review' },
-  missing_attr: { label: 'A detail is needed before this can continue', affordance: 'missing' },
-  missing_attribute: { label: 'A detail is needed before this can continue', affordance: 'missing' },
-  emergency_handoff: { label: 'Needs you to take over in the live session', affordance: 'session' },
-  account_human_step: { label: 'Needs you to create an account, then it can continue', affordance: 'session' },
-  account_creation: { label: 'Needs you to create an account, then it can continue', affordance: 'session' },
-  two_factor: { label: 'Google needs a two-factor sign-in to continue', hint: 'Tap continue, then approve the prompt on your phone within 60 seconds.', affordance: 'two_factor' },
+  missing_attr: { label: 'I need one detail before I can continue', affordance: 'missing' },
+  missing_attribute: { label: 'I need one detail before I can continue', affordance: 'missing' },
+  emergency_handoff: { label: 'Needs you to take over in the live view', affordance: 'session' },
+  account_human_step: { label: 'I need you to create an account — then I can continue', affordance: 'session' },
+  account_creation: { label: 'I need you to create an account — then I can continue', affordance: 'session' },
+  two_factor: { label: 'Google needs a two-factor sign-in to continue', hint: 'Tap ‘Continue Google sign-in’, then approve the prompt on your phone within 60 seconds.', affordance: 'two_factor' },
   detection_blocker: { label: 'Paused on a verification check', affordance: 'session' },
   detection_clear: { label: 'Paused on a verification check', affordance: 'session' },
   digest_approval: { label: 'New roles are waiting for your decision', affordance: 'digest' },
   final_approval: { label: 'Ready for your final approval', hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.', affordance: 'final' },
   'request-final-approval': { label: 'Ready for your final approval', hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.', affordance: 'final' },
   request_final_approval: { label: 'Ready for your final approval', hint: 'Your materials are approved. Choose how to submit — nothing is sent until you do.', affordance: 'final' },
-  error: { label: 'Hit a snag that needs a look', affordance: 'answer' },
-  integral_change: { label: 'A core detail was inferred and needs your OK', hint: 'Confirm the change to apply it, or keep your current value.', affordance: 'confirm_change' },
-  onboarding_incomplete: { label: 'A few profile steps are still to do before your search can run', hint: 'Finish these to switch on your automated job search.', affordance: 'complete' },
+  error: { label: 'I hit a snag and need your help', affordance: 'answer' },
+  integral_change: { label: 'I think one of your core details changed — OK it before I use it', hint: 'Confirm the change to apply it, or keep your current value.', affordance: 'confirm_change' },
+  onboarding_incomplete: { label: 'A few profile steps are left before your search can run', hint: 'Finish these to switch on your automated job search.', affordance: 'complete' },
 };
 
 function _meta(kind) {
-  return KINDS[kind] || { label: (kind || 'Needs your attention').replace(/_/g, ' '), affordance: 'answer' };
+  return KINDS[kind] || { label: 'Needs your attention', affordance: 'answer' };
 }
 
 function _appId(item) {
@@ -140,7 +140,7 @@ function _ensureModalEl() {
         </div>
       </div>
       <div class="modal-body" id="applicant-today-body" style="flex:1;overflow-y:auto;" aria-live="polite" aria-busy="false">
-        <div class="hwfit-loading">Loading…</div>
+        <div class="hwfit-loading">Loading today's items…</div>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -276,7 +276,7 @@ function _renderAnswer(wrap, item) {
       _removeItem(item.id);
     } catch (err) {
       restore();
-      _toast(err.message || 'Could not send that');
+      _toast(errText(err));
     }
   };
   sendBtn.addEventListener('click', send);
@@ -291,10 +291,10 @@ function _renderAnswer(wrap, item) {
 }
 
 function _renderReview(wrap, item) {
-  const hint = _meta(item.kind).hint || 'Open the side-by-side review.';
+  const hint = _meta(item.kind).hint || 'See exactly what I changed, side by side, before anything goes out.';
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:10px;">${esc(hint)}</div>
-    <button type="button" class="cal-btn cal-btn-primary" data-role="review">Review</button>`;
+    <button type="button" class="cal-btn cal-btn-primary" data-role="review">Review the document</button>`;
   wrap.querySelector('[data-role="review"]').addEventListener('click', () => {
     const appId = _appId(item);
     try {
@@ -320,13 +320,13 @@ function _renderMissing(wrap, item) {
   const nameReadonly = !!name;
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">
-      Provide the value below and the application will pick up where it left off.
+      Give me this one detail and I'll pick the application up where it left off.
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" data-role="name" value="${esc(name)}" placeholder="Field" aria-label="Field name"
-             ${nameReadonly ? 'readonly title="Provided by the assistant"' : ''}
+      <input type="text" data-role="name" value="${esc(name)}" placeholder="What's missing (e.g. desired salary)" aria-label="Field name"
+             ${nameReadonly ? 'readonly title="Provided by me"' : ''}
              style="flex:1;min-width:120px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;${nameReadonly ? 'opacity:0.75;' : ''}" />
-      <input type="text" data-role="value" placeholder="Value" aria-label="Value"
+      <input type="text" data-role="value" placeholder="Your answer" aria-label="Value"
              style="flex:2;min-width:140px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:8px;">
@@ -348,7 +348,7 @@ function _renderMissing(wrap, item) {
       _removeItem(item.id);
     } catch (err) {
       restore();
-      _toast(err.message || 'Could not save that');
+      _toast(errText(err));
     }
   };
   saveBtn.addEventListener('click', save);
@@ -383,8 +383,8 @@ function _renderSession(wrap, item) {
       </div>`;
   }
   wrap.innerHTML = handoff + ((url || appId)
-    ? `<button type="button" class="cal-btn cal-btn-primary" data-role="session">Open live session</button>`
-    : `<div style="font-size:12px;opacity:0.7;">When the live session is ready, a link will appear here.</div>`);
+    ? `<button type="button" class="cal-btn cal-btn-primary" data-role="session">Watch live</button>`
+    : `<div style="font-size:12px;opacity:0.7;">When the live view is ready, the link will appear here.</div>`);
   const btn = wrap.querySelector('[data-role="session"]');
   if (btn) {
     btn.addEventListener('click', () => {
@@ -395,7 +395,7 @@ function _renderSession(wrap, item) {
         }
       } catch { /* fall through */ }
       if (url) { try { window.open(url, '_blank', 'noopener'); return; } catch { /* fall through */ } }
-      _toast('No live session is available yet');
+      _toast('No live view is available yet');
     });
   }
 }
@@ -405,8 +405,8 @@ function _renderTwoFactor(wrap, item) {
   const appId = _appId(item);
   const retry = !!(item.payload && item.payload.retry);
   const hint = retry
-    ? 'The last attempt timed out. Tap continue and approve the prompt on your phone within 60 seconds.'
-    : (meta.hint || 'Tap continue, then approve the prompt on your phone within 60 seconds.');
+    ? 'The last attempt timed out. Tap ‘Try Google again’ and approve the prompt on your phone within 60 seconds.'
+    : (meta.hint || 'Tap ‘Continue Google sign-in’, then approve the prompt on your phone within 60 seconds.');
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:10px;">${esc(hint)}</div>
     <button type="button" class="cal-btn cal-btn-primary" data-role="two-factor">${retry ? 'Try Google again' : 'Continue Google sign-in'}</button>`;
@@ -444,7 +444,7 @@ function _renderTwoFactor(wrap, item) {
       }
     } catch (err) {
       restore();
-      _toast(err.message || 'Could not continue the sign-in');
+      _toast(errText(err));
     }
   });
 }
@@ -452,7 +452,7 @@ function _renderTwoFactor(wrap, item) {
 function _renderDigest(wrap) {
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:10px;">Review the matched roles and approve or skip each one.</div>
-    <button type="button" class="cal-btn cal-btn-primary" data-role="digest">Review applications</button>`;
+    <button type="button" class="cal-btn cal-btn-primary" data-role="digest">Review today's roles</button>`;
   wrap.querySelector('[data-role="digest"]').addEventListener('click', () => {
     try {
       const railEmail = document.getElementById('rail-email');
@@ -486,7 +486,7 @@ function _renderConfirmChange(wrap, item) {
       _removeItem(item.id);
     } catch (err) {
       restore();
-      _toast(err.message || 'Could not update that');
+      _toast(errText(err));
     }
   };
   const confirmBtn = wrap.querySelector('[data-role="confirm"]');
@@ -507,8 +507,8 @@ function _renderFinal(wrap, item) {
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">${esc(hint)}</div>
     <div data-role="caveat" style="font-size:11px;opacity:0.7;margin-bottom:8px;"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button type="button" class="cal-btn" data-role="self" title="Open the live session and click submit yourself">I'll submit it myself (open live session)</button>
-      <button type="button" class="cal-btn cal-btn-primary" data-role="authorize" title="Let the assistant click the final submit, just this once">Authorize Applicant to submit this</button>
+      <button type="button" class="cal-btn" data-role="self" title="Open the live view and click submit yourself">I'll submit it myself</button>
+      <button type="button" class="cal-btn cal-btn-primary" data-role="authorize" title="I'll click the final submit for you — just this once, only after you confirm">Let me submit it</button>
     </div>`;
   remoteModule.fetchCaveat().then((data) => {
     const line = data && (data.caveat || data.egress_caveat);
@@ -520,7 +520,7 @@ function _renderFinal(wrap, item) {
     try {
       if (typeof window.openApplicantRemoteSession === 'function') { window.openApplicantRemoteSession(appId, ''); }
     } catch { /* fall through */ }
-    _toast('Open the live session and click submit when you’re ready');
+    _toast('Open the live view and click submit when you’re ready');
   });
   const authorizeBtn = wrap.querySelector('[data-role="authorize"]');
   authorizeBtn.addEventListener('click', async () => {
@@ -528,18 +528,18 @@ function _renderFinal(wrap, item) {
     if (!appId) { _toast('No application is linked to this item yet'); return; }
     let message;
     try { message = remoteModule.authorizeConfirmMessage({ label }); }
-    catch { message = `Authorize the assistant to submit ${label || 'this application'}? Materials approved ✓ — this cannot be undone.`; }
+    catch { message = `Send ${label || 'this application'} now? You've approved everything in it. Once it's submitted, I can't take it back.`; }
     const ok = await _confirm(message, { confirmText: 'Authorize & submit', cancelText: 'Cancel', danger: true });
     if (!ok) return;
     const restore = _busyBtn(btn, 'Submitting…');
     try {
       await remoteModule.authorizeEngineFinish(appId);
       try { await _post(`${API}/actions/${encodeURIComponent(item.id)}/resolve`, {}); } catch { /* row clears anyway */ }
-      _toast('Authorized — the assistant submitted the application');
+      _toast('Done — I submitted it. It’s on its way.');
       _removeItem(item.id);
     } catch (err) {
       restore();
-      _toast(err.message || 'Could not authorize the submission');
+      _toast(errText(err));
     }
   });
 }
@@ -585,12 +585,16 @@ function _renderCardShell(item) {
   const title = item.title || meta.label;
   const where = item.campaign_name ? ` · ${esc(item.campaign_name)}` : '';
   const resolvable = meta.affordance !== 'complete';
+  // Only show the generic per-kind label as a subtitle when the engine sent
+  // its own distinct title — otherwise the same sentence would render twice
+  // (the h3 title already fell back to meta.label above).
+  const subtitleLabel = title === meta.label ? '' : esc(meta.label);
   const card = document.createElement('div');
   card.className = 'admin-card';
   card.style.padding = '16px';
   card.innerHTML = `
     <h3 id="applicant-today-card-title" tabindex="-1" style="font-size:15px;font-weight:600;word-break:break-word;margin:0;">${esc(title)}${_urgencyBadge(item)}</h3>
-    <div style="opacity:0.6;font-size:11.5px;margin-top:2px;margin-bottom:14px;">${esc(meta.label)}${_ageLabel(item)}${where}</div>
+    <div style="opacity:0.6;font-size:11.5px;margin-top:2px;margin-bottom:14px;">${subtitleLabel}${_ageLabel(item)}${where}</div>
     <div data-role="card-body"></div>
     ${resolvable ? `
       <div style="display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
@@ -608,11 +612,11 @@ function _renderCardShell(item) {
       const restore = _busyBtn(btn, '…');
       try {
         await _post(`${API}/actions/${encodeURIComponent(item.id)}/snooze`, {});
-        _toast('Snoozed — we’ll remind you tomorrow');
+        _toast('Snoozed — I’ll bring it back tomorrow morning.');
         _removeItem(item.id);
       } catch (err) {
         restore();
-        _toast(err.message || 'Could not snooze that');
+        _toast(errText(err));
       }
     });
     doneBtn.addEventListener('click', async () => {
@@ -624,7 +628,7 @@ function _renderCardShell(item) {
         _removeItem(item.id);
       } catch (err) {
         restore();
-        _toast(err.message || 'Could not update that');
+        _toast(errText(err));
       }
     });
   }
@@ -698,14 +702,14 @@ function _renderCurrent() {
 
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
-    'Not connected yet',
-    'Connect a model in Settings to activate your job search. Once it’s running, anything that needs your input will show up here.',
+    "I can't check in right now",
+    "I've lost my connection. I'll keep trying — anything that needs you will appear here as soon as I'm back.",
   );
 }
 
 function _renderGated(host, data) {
   const msg = (data && data.message)
-    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+    || "Finish setup — connect a model and fill in your profile — and I can start working for you.";
   host.innerHTML = gatedHTML(msg,
     '<button type="button" class="cal-btn cal-btn-primary" id="applicant-today-gated-setup">Finish setup</button>');
   const btn = host.querySelector('#applicant-today-gated-setup');
