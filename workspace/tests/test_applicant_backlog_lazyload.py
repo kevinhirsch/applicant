@@ -123,7 +123,9 @@ def test_eager_module_script_tag_count_dropped_by_two():
     of letting it silently drift back up."""
     src = _read(_INDEX_HTML)
     count = len(re.findall(r'<script type="module" src=', src))
-    assert count == 44, f"expected 44 eager module <script> tags (was 46 before this batch), got {count}"
+    # 45 after the power-users (07) global keyboard-shortcuts overlay added one
+    # eager module (applicantShortcuts.js); still well below the 46 starting set.
+    assert count == 45, f"expected 45 eager module <script> tags, got {count}"
 
 
 def test_cookbook_admin_native_compare_are_still_eager_this_wave():
