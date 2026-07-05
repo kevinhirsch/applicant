@@ -165,7 +165,7 @@ prune_backups() {
   done <<<"${stale}"
 }
 
-# --- rollback path ----------------------------------------------------------
+# --- shared rollback/recovery machinery (issues #18/#20/#279) ---------------
 # A real rollback reverts the CODE + IMAGES alongside the database (issue #279):
 # restoring only the DB would leave the NEW code/images on top of OLD data (after
 # the new migrations already ran), a broken mix. Revert the git checkout to the
@@ -173,10 +173,19 @@ prune_backups() {
 # (docker image tag), redeploy, then restore the DB dump. If the pre-update
 # snapshot is missing we cannot safely revert code/images, so FAIL LOUDLY rather
 # than silently doing a partial (DB-only) rollback.
-if [[ "${ROLLBACK}" -eq 1 ]]; then
-  log "Rollback — reverting code + images + database to the pre-update snapshot."
+#
+# Factored into a function so it is not just the MANUAL `--rollback` path: it is
+# also invoked AUTOMATICALLY below when `docker compose up -d` or the post-update
+# heartbeat fails (issues #18/#20) — the exact moment the script *knows* the stack
+# is half-updated or unhealthy, instead of only printing rollback guidance.
+auto_rollback() {
+  local reason="$1"
+  log "AUTO-RECOVERY (${reason}) — reverting code + images + database to the pre-update snapshot."
   # Fail loudly if the snapshot is missing rather than a silent partial DB-only rollback (#279).
-  [[ -f "${DEPLOY_SNAPSHOT}" ]] || { echo "No pre-update snapshot at ${DEPLOY_SNAPSHOT}; refusing partial DB-only rollback." >&2; exit 1; }
+  if [[ ! -f "${DEPLOY_SNAPSHOT}" ]]; then
+    echo "AUTO-RECOVERY FAILED: no pre-update snapshot at ${DEPLOY_SNAPSHOT}; refusing a partial DB-only rollback." >&2
+    return 1
+  fi
   GIT_REV=""; API_IMAGE_ID=""; UI_IMAGE_ID=""
   # shellcheck disable=SC1090
   source "${DEPLOY_SNAPSHOT}"
@@ -186,13 +195,29 @@ if [[ "${ROLLBACK}" -eq 1 ]]; then
   [[ -n "${API_IMAGE_ID}" ]] && run docker image tag applicant/api:previous applicant/api:latest
   [[ -n "${UI_IMAGE_ID}" ]] && run docker image tag applicant/ui:previous applicant/ui:latest
   # 3. Restore the most recent DB dump, then redeploy the reverted stack.
-  LATEST="$(ls -1t "${BACKUP_DIR}"/applicant-*.sql 2>/dev/null | head -n1 || true)"
-  [[ -n "${LATEST}" ]] || { echo "No DB backup in ${BACKUP_DIR}; nothing to roll back." >&2; exit 1; }
-  log "Restoring DB backup ${LATEST} and redeploying."
-  restore_dump "${LATEST}"
+  local latest
+  latest="$(ls -1t "${BACKUP_DIR}"/applicant-*.sql 2>/dev/null | head -n1 || true)"
+  if [[ -z "${latest}" ]]; then
+    echo "AUTO-RECOVERY: no DB backup in ${BACKUP_DIR}; nothing to roll back — the stack was NOT redeployed." >&2
+    return 1
+  fi
+  log "AUTO-RECOVERY: restoring DB backup ${latest} and redeploying."
+  if ! restore_dump "${latest}"; then
+    echo "AUTO-RECOVERY: DB restore from ${latest} FAILED; the stack was NOT redeployed — restore manually: scripts/update.sh --rollback --apply" >&2
+    return 1
+  fi
   run docker compose -f "${COMPOSE_FILE}" up -d
-  log "Rollback complete (or dry-run printed above)."
-  exit 0
+  log "AUTO-RECOVERY complete (or dry-run printed above) — reverted to the pre-update snapshot."
+  return 0
+}
+
+# --- rollback path (manual --rollback CLI invocation) -----------------------
+if [[ "${ROLLBACK}" -eq 1 ]]; then
+  if auto_rollback "manual --rollback"; then
+    exit 0
+  else
+    exit 1
+  fi
 fi
 
 # --- update path ------------------------------------------------------------
@@ -255,6 +280,50 @@ if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" && -n "${OLD_REV}" &
   # correctness gate.
   docker image inspect applicant/api:latest >/dev/null 2>&1 || REBUILD_API=1
   docker image inspect applicant/ui:latest  >/dev/null 2>&1 || REBUILD_UI=1
+
+  # Migration-skip robustness (#19): the path-glob above only catches a NEW revision
+  # file landing under the hardcoded versions/ dir — a path rename, a vendored
+  # migration living elsewhere, or an env.py data-fix would be skipped while the new
+  # code that needs the new schema deploys (exactly the skew the migrate step exists
+  # to prevent). Never trust path-matching alone: compare the DB's ACTUAL applied
+  # revision against the repo's alembic head(s) computed from the files now on disk
+  # (post-sync) and force a migrate if they disagree, regardless of which files the
+  # diff touched. Best-effort — if python3/psql/the DB are unavailable this simply
+  # falls back to the conservative path-based decision above (never loosens it).
+  if [[ "${RUN_MIGRATE}" -eq 0 ]] && command -v python3 >/dev/null 2>&1; then
+    _alembic_versions_dir="${REPO_ROOT}/src/applicant/adapters/storage/alembic/versions"
+    if [[ -d "${_alembic_versions_dir}" ]]; then
+      _code_heads="$(python3 - "${_alembic_versions_dir}" <<'PYEOF' 2>/dev/null || true
+import os, re, sys
+d = sys.argv[1]
+revs = set()
+downs = set()
+for fn in os.listdir(d):
+    if not fn.endswith(".py"):
+        continue
+    try:
+        text = open(os.path.join(d, fn), encoding="utf-8", errors="ignore").read()
+    except OSError:
+        continue
+    m = re.search(r"^revision\s*[:=].*?['\"]([\w]+)['\"]", text, re.M)
+    if not m:
+        continue
+    revs.add(m.group(1))
+    for dm in re.finditer(r"^down_revision\s*[:=].*?['\"]([\w]+)['\"]", text, re.M):
+        downs.add(dm.group(1))
+print(",".join(sorted(revs - downs)))
+PYEOF
+      )"
+      _db_current="$(docker compose -f "${COMPOSE_FILE}" exec -T "${DB_SERVICE}" \
+        psql -tA -U "${DB_USER}" -d "${DB_NAME}" \
+        -c "select coalesce(string_agg(version_num, ',' order by version_num), '') from alembic_version" \
+        2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ -n "${_code_heads}" && "${_code_heads}" != "${_db_current}" ]]; then
+        log "Migration-skip override: repo alembic head(s) [${_code_heads}] differ from the DB's applied revision(s) [${_db_current:-none}] — migrating despite no matched path change."
+        RUN_MIGRATE=1
+      fi
+    fi
+  fi
 fi
 
 # --- Snapshot the pre-update deployable state for rollback (issue #279) --------
@@ -351,17 +420,51 @@ log "4/5 Restarting the stack on the freshly built images (built once in 2/5 —
 # Plain `up -d` (no --build): step 2/5 already built applicant-ui + api from the
 # synced source, so re-passing --build here would rebuild AND re-export/unpack the
 # same images a second time — the slowest, disk-bound stage — for nothing.
-run docker compose -f "${COMPOSE_FILE}" up -d
+#
+# Auto-recovery (#18): migrate can succeed and `up -d` still fail (registry hiccup,
+# port conflict, a transient daemon error) — the window where the new schema is live
+# under old/mixed containers. Retry a bounded number of times first (transient), and
+# if it still fails, AUTO-ROLL BACK (execute the recovery, not just print guidance)
+# rather than leaving a half-updated stack for a human to notice.
+if [[ "${APPLY}" -eq 1 ]]; then
+  UP_OK=0
+  for _up_attempt in 1 2 3; do
+    if docker compose -f "${COMPOSE_FILE}" up -d; then
+      UP_OK=1
+      break
+    fi
+    echo "docker compose up -d failed (attempt ${_up_attempt}/3)." >&2
+    [[ "${_up_attempt}" -lt 3 ]] && sleep 5
+  done
+  if [[ "${UP_OK}" -ne 1 ]]; then
+    echo "docker compose up -d failed after 3 attempts — the stack may be half-updated (new schema, old/mixed containers)." >&2
+    if auto_rollback "up -d failed after retries"; then
+      echo "Auto-recovery restored the pre-update stack. Investigate the up -d failure (docker/daemon/port) before retrying the update." >&2
+    else
+      echo "Auto-recovery could not complete. Manual rollback: scripts/update.sh --rollback --apply" >&2
+    fi
+    exit 1
+  fi
+else
+  run docker compose -f "${COMPOSE_FILE}" up -d
+fi
 
 log "5/5 Update applied."
 
-# Heartbeat: verify the stack came back green before declaring success; if not,
-# point the operator at rollback.
+# Heartbeat: verify the stack came back green before declaring success. A heartbeat
+# failure is the one moment the script KNOWS the post-update stack is unhealthy, so
+# (#20) it now actually EXECUTES the rollback it used to only recommend, instead of
+# printing guidance and leaving a human to run it.
 if [[ "${APPLY}" -eq 1 && "${APPLICANT_SELFTEST:-0}" != "1" ]]; then
   # Prefer APP_PORT from .env (the value compose publishes); else derive from APP_URL.
   APP_PORT="${APP_PORT:-${APP_URL##*:}}"; [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=8000
   if ! heartbeat "${APP_PORT}"; then
-    echo "Update did not come up healthy. Roll back with: scripts/update.sh --rollback --apply" >&2
+    echo "Update did not come up healthy." >&2
+    if auto_rollback "heartbeat failed"; then
+      echo "Auto-recovery restored the pre-update stack. Investigate before retrying the update." >&2
+    else
+      echo "Auto-recovery could not complete. Manual rollback: scripts/update.sh --rollback --apply" >&2
+    fi
     exit 1
   fi
 fi

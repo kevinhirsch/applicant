@@ -831,15 +831,21 @@ run_retry "Image build" dc -f "${COMPOSE_FILE}" build applicant-ui api
 # table and, because applicant-ui depends_on api: service_healthy, abort the up.
 phase "Migrating the schema (alembic upgrade head) BEFORE the api serves"
 run dc -f "${COMPOSE_FILE}" up -d postgres
-# On --update, snapshot the DB into the pgbackups volume BEFORE migrating so a bad
-# migration is recoverable (parity with update.sh's backup step). Best-effort.
-if [[ "${MODE}" == "update" && "${APPLY}" -eq 1 ]]; then
+# Snapshot the DB into the pgbackups volume BEFORE migrating so a bad migration is
+# recoverable (parity with update.sh's backup step). This ran on --update only
+# (issue #21): a truly fresh install has an empty DB and nothing to lose, but a
+# RE-RUN of `--apply`/`--update` against an EXISTING volume (a common operator
+# mistake — re-running the installer, or restarting a partially-provisioned box)
+# has real data and previously had no recovery path if a migration half-applied.
+# Run it on every provisioning apply, not just --update: best-effort and guarded so
+# it never blocks the install (a fresh/empty DB just produces a tiny, harmless dump).
+if [[ "${APPLY}" -eq 1 ]]; then
   ui_step "Backing up the database before migrating (into the pgbackups volume)…"
   if dc -f "${COMPOSE_FILE}" exec -T postgres \
        sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" > "/backups/pre-update-$(date -u +%Y%m%dT%H%M%SZ).sql"' 2>/dev/null; then
     ui_ok "Database backed up (see the pgbackups volume)."
   else
-    ui_warn "DB backup skipped (postgres not reachable yet) — migration is still idempotent."
+    ui_warn "DB backup skipped (postgres not reachable yet, or a fresh/empty DB) — migration is still idempotent."
   fi
 fi
 run_retry "Alembic migrate" dc -f "${COMPOSE_FILE}" run --rm api uv run alembic upgrade head
