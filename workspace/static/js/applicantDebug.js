@@ -147,7 +147,7 @@ function _ensureModalEl() {
           </button>
           <div class="applicant-debug-overflow-menu hidden" id="applicant-debug-overflow-menu" role="menu">
             <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-download-log" role="menuitem" title="Download a record of every action the engine took for this search, in order">Download activity log</button>
-            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the assistant beside this so you can ask about what the agent is doing">Ask the assistant</button>
+            <button type="button" class="applicant-debug-overflow-item" id="applicant-debug-chat" role="menuitem" title="Open the Job Assistant beside this window to ask about what's happening">Ask the assistant</button>
           </div>
         </div>
       </div>
@@ -446,7 +446,7 @@ async function _downloadAuditLog() {
     URL.revokeObjectURL(url);
     _toast('Downloaded.');
   } catch (e) {
-    _toast(e.message || 'Could not download the activity log right now.');
+    _toast('Could not download the activity log right now.');
   }
 }
 
@@ -660,7 +660,7 @@ async function _renderInsights() {
       ['Submitted', num(s.total_submitted)],
       ['Sources seen', num(s.sources_seen)],
     ])}
-    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">This is what the system uses to decide which sources and roles to favour next.</span>
+    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">This is what the system uses to decide which sources and roles to favor next.</span>
   </div>`;
 
   const rolesCard = `<div class="admin-card">
@@ -875,7 +875,7 @@ async function _renderVariants() {
     const scoreText = scoreVals.length
       ? `best fit ${esc(Math.max(...scoreVals.map(Number)).toFixed(2))}`
       : (v.score != null ? `score ${esc(v.score)}` : 'not scored');
-    const approved = v.approved === true ? 'approved' : (v.approval_state || 'awaiting review');
+    const approved = v.approved === true ? 'approved' : (v.approval_state || 'in review');
     const uses = v.uses || 0;
     const usesText = uses === 1 ? '1 use' : `${esc(uses)} uses`;
     const rateText = v.interview_rate != null ? `${esc(v.interview_rate)}% interview rate` : 'not enough data yet';
@@ -1069,7 +1069,7 @@ async function _renderRun() {
         <button class="cal-btn" id="applicant-run-cancel" title="Stop waiting for this run"${runInFlight ? '' : ' style="display:none;"'}>Cancel</button>
         <button class="cal-btn" id="applicant-run-pause">${paused ? 'Resume' : 'Pause'}</button>
       </div>
-      <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">“Run now” discovers, scores and refreshes the digest immediately instead of waiting for the next scheduled pass.</span>
+      <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">“Run now” looks for new roles, scores them, and refreshes your Daily updates immediately instead of waiting for the next scheduled pass.</span>
     </div>
     <div class="admin-card">
       <div style="font-weight:600;margin-bottom:8px;">Run controls</div>
@@ -1081,7 +1081,7 @@ async function _renderRun() {
       <label class="admin-toggle-sub" style="display:block;margin-bottom:8px;">Applications per day (target)
         <input type="number" id="applicant-run-target" class="settings-select" min="0" value="${esc(curTarget != null ? curTarget : '')}" style="display:block;margin-top:4px;width:120px;" />
       </label>
-      <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are clamped automatically.</span>
+      <span class="admin-toggle-sub" style="opacity:0.6;display:block;">Targets above the safe daily cap are lowered to the cap automatically.</span>
       <button class="cal-btn cal-btn-primary" id="applicant-run-save" style="margin-top:10px;">Save run settings</button>
     </div>
     ${_recentRunsCard(runs.items || [])}`;
@@ -1126,9 +1126,9 @@ async function _renderRun() {
       if (res.ran === false) {
         // Map the engine's machine reason to the SAME plain-language message the
         // "Why nothing's happening right now" note uses (dark-engine audit #64).
-        _toast(_SKIP_REASON_LABELS[res.reason] || res.reason || 'Nothing to run right now.');
+        _toast(_SKIP_REASON_LABELS[res.reason] || 'Nothing to run right now.');
       } else {
-        const found = res.discovered != null ? `Found ${res.discovered} posting(s).` : 'Run complete.';
+        const found = res.discovered != null ? `Found ${res.discovered} ${res.discovered === 1 ? 'posting' : 'postings'}.` : 'Run complete.';
         _toast(found);
       }
     } catch (e) {
@@ -1656,7 +1656,7 @@ function _setEngineBanner(modal, up) {
     banner.style.display = 'none';
     banner.textContent = '';
   } else {
-    banner.textContent = 'Engine offline — this view will fill in once it is connected.';
+    banner.textContent = 'Not connected right now — this view will fill in once I\'m connected.';
     banner.style.display = 'block';
   }
 }

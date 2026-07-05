@@ -228,7 +228,7 @@ def test_debug_engine_banner_is_its_own_element_not_header_badge():
     fn = re.search(r"function _setEngineBanner\(modal, up\)\s*\{(.*?)\n\}", src, re.S)
     assert fn, "expected _setEngineBanner"
     assert "applicant-debug-engine-banner" in fn.group(1)
-    assert "Engine offline" in fn.group(1)
+    assert "Not connected" in fn.group(1)
 
 
 def test_debug_overflow_menu_houses_both_former_header_actions():
