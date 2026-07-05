@@ -188,7 +188,10 @@ def test_screenshot_image_proxy_requires_admin(monkeypatch):
 
 def _show_app_detail_body() -> str:
     src = _read(DEBUG_JS)
-    fn = re.search(r"async function _showAppDetail\(appId\) \{.*?\n\}\n", src, re.S)
+    # `triggerBtn` is an optional second param added by the a11y pass (05/01)
+    # so the drill-in's Close button can hand focus back to the row that
+    # opened it — the signature match tolerates it either way.
+    fn = re.search(r"async function _showAppDetail\(appId(?:, triggerBtn)?\) \{.*?\n\}\n", src, re.S)
     assert fn, "expected the _showAppDetail(appId) renderer"
     return fn.group(0)
 
@@ -221,7 +224,10 @@ def test_screenshot_lightbox_reuses_existing_attach_lightbox_styling():
     lightbox's existing ``.attach-lightbox`` CSS class instead of hand-rolling
     a new overlay style."""
     src = _read(DEBUG_JS)
-    fn = re.search(r"function _openScreenshotLightbox\(url, label\) \{.*?\n\}\n", src, re.S)
+    # `triggerEl` is an optional third param (a11y pass 05/01, focus restore
+    # on close) — tolerate it either way, same convention as
+    # `_show_app_detail_body` above.
+    fn = re.search(r"function _openScreenshotLightbox\(url, label(?:, triggerEl)?\) \{.*?\n\}\n", src, re.S)
     assert fn, "expected an _openScreenshotLightbox(url, label) function"
     assert "attach-lightbox" in fn.group(0)
 

@@ -108,11 +108,20 @@ const STEPS = [
 // education, skills). The user then steps through and corrects any parsing
 // mistakes instead of typing everything by hand — uploading is the starting
 // point of profile setup, not a post-hoc reconciliation.
+// Order (activation-funnel audit 09, items 52/56): `campaign_criteria` — the
+// single highest-leverage input for discovery quality — used to sit LAST (12
+// of 12), greeting the most fatigued user; moved right after `target_roles`
+// so it lands while attention is still fresh. `references` — needed by only a
+// minority of applications, and only at submit time — used to sit mid-list;
+// moved to the very end so it's the thing skipped first when a user runs out
+// of steam, not campaign criteria or EEO. Sections resume by KEY (see
+// `_renderOnboarding`'s `findIndex`), so this reorder is safe for anyone
+// already partway through the old order.
 const INTAKE_SECTIONS = [
   'base_resume',
-  'identity', 'work_authorization', 'location', 'target_roles', 'compensation',
-  'work_history', 'education', 'references', 'key_attributes', 'eeo',
-  'campaign_criteria',
+  'identity', 'work_authorization', 'location', 'target_roles', 'campaign_criteria',
+  'compensation', 'work_history', 'education', 'key_attributes', 'eeo',
+  'references',
 ];
 
 // The honest "what Applicant never does" list (B1). Exported via the module so
@@ -186,6 +195,11 @@ function _buildOverlay() {
       <div class="modal-header" style="cursor:default;">
         <h4>Welcome — let's get you set up</h4>
       </div>
+      <!-- D82: resumability is fully implemented (status-driven resume, see
+           maybeLaunchOnboarding) but was never STATED, so leaving mid-setup read
+           as risky ("will I lose this?"). One persistent, honest line converts
+           that fear into permission to step away and come back. -->
+      <p class="ao-progress-hint" style="margin:2px 22px 0;font-size:11px;opacity:0.62;">Your progress saves automatically — close this any time and pick up where you left off.</p>
       <div class="admin-tabs" id="ao-rail" role="list" aria-label="Setup progress"></div>
       <div class="modal-body" id="ao-body"></div>
       <!-- D69: Back/Skip (persistent) and the per-step primary action used to be two
@@ -365,12 +379,21 @@ function _renderNav() {
   const nav = document.getElementById('ao-nav');
   if (!nav) return;
   const last = _stepIndex >= STEPS.length - 1;
+  // D16 (activation-funnel audit 09): "Skip for now" and "Finish" used to be the
+  // exact same button with no hint of what skipping actually costs. On the one
+  // step that truly gates beginning ("Connect a model"), spell out the
+  // consequence right next to the button instead of leaving it silent.
+  const cur = STEPS[_stepIndex];
+  const skipHint = (!last && cur && cur.required && !cur.done(_status))
+    ? '<span class="ao-skip-hint" style="font-size:11px;opacity:0.65;margin-left:10px;">Skipping this means Applicant can’t start yet.</span>'
+    : '';
   // D69: nav is now a left-aligned button cluster inside the shared `.ao-actionbar`
   // row (see _buildOverlay) rather than a full-width row of its own — no need for
   // an empty spacer span to hold Back's place when it's absent.
   nav.innerHTML =
     (_stepIndex > 0 ? '<button type="button" class="cal-btn" id="ao-back">← Back</button>' : '') +
-    `<button type="button" class="cal-btn" id="ao-skip">${last ? 'Finish' : 'Skip for now →'}</button>`;
+    `<button type="button" class="cal-btn" id="ao-skip">${last ? 'Finish' : 'Skip for now →'}</button>` +
+    skipHint;
   const back = document.getElementById('ao-back');
   if (back) back.onclick = () => { if (!_busy) _prevStep(); };
   const skip = document.getElementById('ao-skip');
@@ -489,6 +512,13 @@ async function _renderLLM() {
       // B4: infer the provider from the SELECTED ENDPOINT OBJECT (the server's
       // detected `provider` / local-vs-api `category`), not a regex on the URL.
       const provider = _inferProvider(chosen);
+      // D27/D33: the manager can silently pick the FIRST enabled endpoint's FIRST
+      // model with no confirmation UI, and an unrecognized cloud provider quietly
+      // becomes "openai" — say out loud what is actually about to be connected so
+      // a wrong pick (a toy/embedding model, a mis-detected provider) is visible
+      // before it becomes the engine's brain, not discovered later as a mystery
+      // failure.
+      if (msgEl) msgEl.innerHTML = `<p style="font-size:0.8rem;opacity:0.75;margin:4px 0;">Connecting as <strong>${esc(provider)}</strong> · model: <strong>${esc(chosen.model)}</strong>…</p>`;
       // B3: only advance when the engine gate actually opens. If the save fails,
       // keep the user on this step with a clear retry and leave it marked
       // not-done so the resumable wizard reopens here.
@@ -1148,6 +1178,16 @@ async function _renderFonts() {
 // ── STEP 4: Onboarding intake (resumable interview) ─────────────────────────
 
 // Per-section form fields. Kept plain-language. Each field: {name, label, type}.
+// D47: a compact common-country list for the work-authorization datalist — a
+// plain suggestion list (the input stays free text so nothing is blocked),
+// just enough to steer "USA"/"United States"/"US" toward one spelling.
+const _COMMON_COUNTRIES = [
+  'United States', 'Canada', 'United Kingdom', 'Ireland', 'Germany', 'France',
+  'Spain', 'Italy', 'Netherlands', 'Portugal', 'Poland', 'Sweden', 'Norway',
+  'Denmark', 'Switzerland', 'Australia', 'New Zealand', 'India', 'Singapore',
+  'Japan', 'South Korea', 'Philippines', 'Mexico', 'Brazil', 'South Africa',
+];
+
 const SECTION_FORMS = {
   identity: {
     title: 'About you',
@@ -1155,16 +1195,16 @@ const SECTION_FORMS = {
       { name: 'full_legal_name', label: 'Full legal name', type: 'text' },
       { name: 'preferred_name', label: 'Preferred name', type: 'text' },
       { name: 'email', label: 'Email', type: 'email' },
-      { name: 'phone', label: 'Phone', type: 'text' },
+      { name: 'phone', label: 'Phone', type: 'tel', placeholder: '+1 555-555-5555' },
       { name: 'address', label: 'Mailing address', type: 'text' },
-      { name: 'linkedin', label: 'LinkedIn URL', type: 'text' },
-      { name: 'portfolio', label: 'Portfolio / GitHub URL', type: 'text' },
+      { name: 'linkedin', label: 'LinkedIn URL', type: 'text', placeholder: 'linkedin.com/in/you' },
+      { name: 'portfolio', label: 'Portfolio / GitHub URL', type: 'text', placeholder: 'github.com/you' },
     ],
   },
   work_authorization: {
     title: 'Work authorization',
     fields: [
-      { name: 'authorized_country', label: 'Country you are authorized to work in', type: 'text' },
+      { name: 'authorized_country', label: 'Country you are authorized to work in', type: 'text', list: 'ao-countries', listOptions: _COMMON_COUNTRIES },
       { name: 'authorized', label: 'Authorized to work there?', type: 'yesno' },
       { name: 'needs_sponsorship', label: 'Will you need visa sponsorship now or in future?', type: 'yesno' },
       { name: 'visa_status', label: 'Visa / status type (if any)', type: 'text' },
@@ -1189,10 +1229,15 @@ const SECTION_FORMS = {
   },
   compensation: {
     title: 'Compensation',
+    // D50: numbers only + a real currency picker (was three unlinked free-text
+    // fields, e.g. "$120k" / "120,000" / "120000 usd" all landing differently in
+    // the comparator that filters postings), plus a one-line privacy note so the
+    // ask doesn't read as a black box.
+    desc: 'Numbers only, no symbols. Postings below your floor are filtered out of discovery — this is never shared with an employer unless their own application form asks for it.',
     fields: [
-      { name: 'salary_floor', label: 'Salary floor (hard minimum)', type: 'text' },
-      { name: 'desired_salary', label: 'Desired salary / range', type: 'text' },
-      { name: 'currency', label: 'Currency', type: 'text' },
+      { name: 'salary_floor', label: 'Salary floor (hard minimum)', type: 'number', placeholder: 'e.g. 120000' },
+      { name: 'desired_salary', label: 'Desired salary / range', type: 'text', placeholder: 'e.g. 140000-160000' },
+      { name: 'currency', label: 'Currency', type: 'select', options: ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'Other'] },
     ],
   },
   work_history: {
@@ -1221,12 +1266,16 @@ const SECTION_FORMS = {
   },
   references: {
     title: 'References',
+    // D52: references are needed by only a minority of applications, and only at
+    // submit time — not before first value — so this section now sits LAST in
+    // INTAKE_SECTIONS (see the reorder note there) and says so plainly.
+    desc: 'Most applications don’t ask for these up front. Add them now, or skip — Applicant will ask only when a specific application actually needs one.',
     repeat: true,
     fields: [
       { name: 'name', label: 'Name', type: 'text' },
       { name: 'relationship', label: 'Relationship / title', type: 'text' },
       { name: 'email', label: 'Email', type: 'email' },
-      { name: 'phone', label: 'Phone', type: 'text' },
+      { name: 'phone', label: 'Phone', type: 'tel', placeholder: '+1 555-555-5555' },
     ],
   },
   key_attributes: {
@@ -1292,14 +1341,42 @@ function _fieldHTML(f, value) {
       <input class="settings-select" name="${esc(f.name)}__detail" type="text" placeholder="Your answer (optional)" value="" style="margin-top:6px;" />
       </div>`;
   }
-  return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><input class="settings-select" type="${esc(f.type)}" name="${esc(f.name)}" value="${esc(v)}" /></div>`;
+  // D50 (compensation, currency): a small closed-option dropdown, same card/label
+  // shell as every other field — used instead of free text so "USD"/"US dollars"/
+  // "120000 usd" never fragments the comparator that filters postings on it.
+  if (f.type === 'select' && Array.isArray(f.options)) {
+    return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label>
+      <select class="settings-select" name="${esc(f.name)}">
+        ${f.options.map((o) => `<option value="${esc(o)}"${v === o ? ' selected' : ''}>${esc(o)}</option>`).join('')}
+      </select></div>`;
+  }
+  // D45/D47: optional `placeholder` (e.g. phone) and `list` (a datalist id, e.g.
+  // the work-authorization country field) on an otherwise plain input — additive,
+  // every existing field spec that doesn't set them renders exactly as before.
+  const placeholderAttr = f.placeholder ? ` placeholder="${esc(f.placeholder)}"` : '';
+  const listAttr = f.list ? ` list="${esc(f.list)}"` : '';
+  const datalistHTML = (f.list && Array.isArray(f.listOptions))
+    ? `<datalist id="${esc(f.list)}">${f.listOptions.map((o) => `<option value="${esc(o)}"></option>`).join('')}</datalist>`
+    : '';
+  return `<div class="settings-col" style="margin-bottom:12px;"><label class="settings-label" style="min-width:0;">${esc(f.label)}</label><input class="settings-select" type="${esc(f.type)}" name="${esc(f.name)}" value="${esc(v)}"${placeholderAttr}${listAttr} />${datalistHTML}</div>`;
+}
+
+// D46: LinkedIn/portfolio URLs typed without a scheme ("linkedin.com/in/me")
+// save as unusable strings for anything that later treats them as a link
+// (e.g. a pre-fill form field). Normalize just these two well-known field
+// names on the way into the saved payload — a no-op for every other field.
+function _maybeNormalizeUrl(name, value) {
+  if ((name === 'linkedin' || name === 'portfolio') && value && !/^https?:\/\//i.test(value)) {
+    return 'https://' + value.replace(/^\/+/, '');
+  }
+  return value;
 }
 
 function _collectForm(formEl) {
   const out = {};
   formEl.querySelectorAll('input, textarea, select').forEach((inp) => {
     if (!inp.name) return;
-    out[inp.name] = inp.value;
+    out[inp.name] = _maybeNormalizeUrl(inp.name, inp.value);
   });
   return out;
 }
@@ -1862,13 +1939,31 @@ async function _finish() {
     const readyLine = ready
       ? 'Applicant is ready to start applying for you.'
       : `Applicant is set up. Before it starts applying it still needs: ${esc(applyMissing.join(', '))} — just tell it in chat or add a résumé any time, and it'll begin automatically.`;
-    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p></div>`);
+    // D71: the default throughput (15/day, capped at 30) otherwise takes effect
+    // silently — nobody consented to it and nobody was told. State it plainly as
+    // a completion RECEIPT, with a pointer to where it's adjustable, right where
+    // the user is already reading "what happens next".
+    const receiptLine = 'By default, Applicant targets up to 15 new applications a day (never more than 30) — every one reviewed by you before it ships. Adjust the pace any time in Campaigns.';
+    // D73: when the model is connected but profile essentials are still missing,
+    // the old copy buried the fix in a sentence with no way to act on it. Give it
+    // a real jump button back into "Your profile", matching the jump-button
+    // mechanic the still-blocked branch below already uses.
+    const profileJumpBtn = (!ready && applyMissing.length)
+      ? '<button class="cal-btn" id="ao-finish-profile" style="margin-top:14px;">Complete your profile</button>'
+      : '';
+    _setBody(`<div style="text-align:center;padding:30px 0;"><h2 style="margin:0 0 8px;">You’re all set!</h2><p style="max-width:460px;margin:0 auto;">${readyLine}</p><p style="max-width:460px;margin:10px auto 0;font-size:0.82rem;opacity:0.75;">${receiptLine}</p>${profileJumpBtn}</div>`);
     _setFoot('<button class="cal-btn cal-btn-primary" id="ao-finish">Get started</button>');
     // First-light payoff: this is the ONE screen that means setup is genuinely
     // done (llm_configured, nothing left gating it) — mark it so _dismiss() knows
     // to hand off to the Portal home base rather than just closing quietly.
     _justCompletedSetup = true;
     document.getElementById('ao-finish').onclick = _dismiss;
+    const profileBtn = document.getElementById('ao-finish-profile');
+    if (profileBtn) profileBtn.onclick = () => {
+      if (_busy) return;
+      const idx = STEPS.findIndex((st) => st.key === 'onboarding');
+      if (idx >= 0) { _stepIndex = idx; _renderStep(); }
+    };
     const nav = document.getElementById('ao-nav');
     if (nav) nav.innerHTML = '';
     _renderRail();

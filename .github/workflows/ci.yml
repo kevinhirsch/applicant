@@ -75,7 +75,8 @@ jobs:
                -- ':!.github' ':!*.lock' ':!uv.lock' \
                ':!HARVEST-INVENTORY.md' ':!docs/HARVEST-*' ':!docs/APPLICANT-SURVIVAL-PLAN.md' \
                ':!docs/design/hig/color-wells.md' \
-               ':!workspace/tests/test_landing_page_content.py'; then
+               ':!workspace/tests/test_landing_page_content.py' \
+               ':!workspace/tests/test_applicant_activation_funnel_09.py'; then
             echo "::error::Upstream-fork codename found above — white-label violation."
             exit 1
           fi
