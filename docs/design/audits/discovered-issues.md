@@ -13,13 +13,48 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 
 ## Open
 
-- **DISC-1 · high · Approved follow-ups never actually send.**
-  `send_scheduled_follow_ups()` is now correct (lens 10 #1 / #53 fixed), but **nothing
-  calls it** — no scheduler tick hook, no router wires the send-queue into the running
-  loop. So a user who approves a follow-up draft never has it sent. Needs a scheduler
-  hook (`scheduler.py`) that drains due follow-ups each tick.
-  Where: `application/services/post_submission_service.py::send_scheduled_follow_ups`
-  (definition-only; grep finds no caller) + `application/services/scheduler.py`.
+- **DISC-5 · med · Deep-research inner-hop transport timeout may still be short.**
+  Lens 04 #10 gave the front-door research *route* a long read timeout, but the
+  engine→workspace research *callback* hop (the workspace-callback discovery adapter on
+  the engine side) may still carry a short default transport timeout — so a long manual
+  run could 502 at that inner hop even after the route fix. Verify and, if short, lengthen.
+  Where: `src/applicant/adapters/.../research` workspace-callback adapter vs
+  `workspace/routes/applicant_internal_routes.py` (`_RESEARCH_*` request-budget clamp).
+  Status: open (surfaced fixing 04-#10).
+
+- **DISC-6 · low · Already-resolved pending action isn't surfaced to the UI.**
+  The service `resolve()` now returns a distinguishable already-resolved signal (lens 04
+  #27), but the `pending_actions` router still returns a bare `204` regardless, so the
+  front-door proxy/UI can't tell the user "this was already handled." Wire the signal
+  through (response body or distinct status) → proxy → JS.
+  Where: `app/routers/pending_actions.py` (~206-237) + workspace proxy + Portal JS.
+  Status: open (surfaced fixing 04-#27; the Portal #50 lane addresses the UX shell).
+
+- **DISC-7 · high · Follow-up can resend — "sent at most once" is violated.**
+  In `send_scheduled_follow_ups`, if `notify_decision` sends the email but the subsequent
+  `follow_ups.update(sent_fup)` (flip to SENT) raises, the exception is swallowed and the
+  row stays `SCHEDULED`, so `list_due()` resends the same follow-up next tick — contradicting
+  the "sent AT MOST ONCE" docstring. Flip to SENT before/atomically-with the send, or record
+  a sent-marker that survives the flip failure.
+  Where: `application/services/post_submission_service.py::send_scheduled_follow_ups`.
+  Status: open (surfaced during the scheduler #33/#40 work).
+
+- **DISC-8 · med · Ghosting can double-signal.**
+  In `check_ghosting`, the `GhostingSignal` row is added BEFORE the status flip to GHOSTED;
+  if the flip silently fails, the application stays re-matchable and gets a duplicate
+  ghosting signal on the next day's sweep. Order the flip before the signal, or make them
+  atomic.
+  Where: `application/services/post_submission_service.py::check_ghosting`.
+  Status: open.
+
+- **DISC-9 · med · Pre-submit override is lost when the pipeline can't start.**
+  In `agent_loop._process_approvals`, the presubmit-safety override is cleared as soon as
+  it's seen, before `_start_pipeline` confirms the pipeline actually started. If
+  `_start_pipeline` returns `False` for a NORMAL reason (e.g. capacity full — not an
+  exception), the override bookkeeping is already gone, so the next tick re-blocks the item
+  and it looks brand-new to the operator even though they already overrode it once. Clear
+  the override only after a confirmed start.
+  Where: `application/services/agent_loop.py::_process_approvals`.
   Status: open.
 
 - **DISC-2 · high · In-memory ledgers lost on restart → retry storm.**
@@ -48,6 +83,14 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 ---
 
 ## Resolved
+
+- **DISC-1 · NOT A BUG (was mis-captured) · Approved follow-ups DO send.**
+  Originally captured as "nothing calls `send_scheduled_follow_ups()`" — that was wrong,
+  propagated from an earlier agent working off stale `main`. Verified: the scheduler tick
+  already drains due follow-ups (`scheduler.py` calls
+  `post_submission.send_scheduled_follow_ups(now=now)`), wired by prior merged commit
+  `65b0ab5` ("Wire dark-engine audit items 7/10 … follow-up send queue"). No action needed.
+  Status: wontfix (already wired; false finding — kept for the audit trail).
 
 - **DISC-0 · high · `detect_outcome` returned an object that *looked* rejected without
   persisting.** The REJECTED-transition swallow (lens 04 #42) masked a second bug: the
