@@ -171,12 +171,98 @@ function _isInformational(n) {
   return !!n && n.kind !== 'action' && !n.links_action;
 }
 
+// Lens-10 audit #39: the inverse of _isInformational — a newly-arrived
+// action-required row (a new 2FA wait, CAPTCHA/emergency handoff, or final
+// approval). These are already represented as persistent rows in the
+// pending-action list once loaded, so they are deliberately NOT folded into
+// the informational notification queue (`_infoNotifs`/`_renderNotifRow`) —
+// that would double-track them. But the *arrival signal* (toast + desktop
+// notification) was being dropped entirely, so the single most urgent class
+// of event produced no transient signal at all, only a badge bump on the
+// next poll. This predicate exists so `_toastNew` can toast these too.
+function _isActionArrival(n) {
+  return !!n && (n.kind === 'action' || !!n.links_action);
+}
+
+// ── Quiet hours (lens-10 audit #45) ────────────────────────────────────────
+//
+// The engine's notifier already defers Discord/email pushes during the
+// persisted quiet-hours window (FR-NOTIF-5), but treats in-app as "always
+// silent" — so a tab left open overnight kept popping toasts AND OS-level
+// desktop notifications straight through the user's configured quiet window.
+// Read the SAME persisted window the Settings quiet-hours card already
+// configures (no new engine endpoint: this is the existing
+// `GET /api/applicant/setup/channels/quiet-hours` proxy over the engine's
+// `setup_service.get_quiet_hours()`) and gate both `_toastNew` and
+// `_maybeDesktopNotify` on it.
+let _quietHoursCfg = null;
+let _quietHoursFetchedAt = 0;
+const QUIET_HOURS_TTL_MS = 5 * 60 * 1000;
+
+// Best-effort, cached fetch — never throws, never blocks toasting on a slow
+// or offline engine. A stale/absent cache degrades to "not quiet hours" (the
+// pre-fix behavior) rather than silently swallowing every arrival forever.
+async function _refreshQuietHoursCfg() {
+  const now = Date.now();
+  if (_quietHoursCfg && (now - _quietHoursFetchedAt) < QUIET_HOURS_TTL_MS) return _quietHoursCfg;
+  try {
+    const data = await _fetchJSON('/api/applicant/setup/channels/quiet-hours');
+    if (data && typeof data === 'object') _quietHoursCfg = data;
+  } catch { /* keep the last-known cache (or null) on a transient error */ }
+  _quietHoursFetchedAt = now;
+  return _quietHoursCfg;
+}
+
+function _parseHHMM(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s));
+  if (!m) return null;
+  const mins = (Number(m[1]) % 24) * 60 + Number(m[2]);
+  return Number.isFinite(mins) ? mins : null;
+}
+
+// Minutes-since-midnight "now", in the configured IANA zone when given and
+// valid; falls back to the browser's local clock otherwise — the same
+// graceful degrade the engine documents for an unrecognised zone name.
+function _minutesNowInTz(tz) {
+  if (tz) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit',
+      }).formatToParts(new Date());
+      const h = Number((parts.find((p) => p.type === 'hour') || {}).value);
+      const m = Number((parts.find((p) => p.type === 'minute') || {}).value);
+      if (Number.isFinite(h) && Number.isFinite(m)) return (h % 24) * 60 + m;
+    } catch { /* unknown/invalid zone — fall through to local time */ }
+  }
+  const d = new Date();
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+// True when "now" falls inside the persisted quiet-hours window. Handles the
+// overnight wrap (e.g. 22:00–07:00) the same way the engine's own window
+// check does. A zero-length window (start === end) is inert, mirroring the
+// engine's own "no quiet hours" treatment of that case.
+function _isQuietHoursNow(cfg) {
+  if (!cfg || !cfg.enabled) return false;
+  const start = _parseHHMM(cfg.start);
+  const end = _parseHHMM(cfg.end);
+  if (start === null || end === null || start === end) return false;
+  const nowMin = _minutesNowInTz(cfg.tz);
+  if (start < end) return nowMin >= start && nowMin < end;
+  return nowMin >= start || nowMin < end;
+}
+
 // Fire a transient toast for each notification newer than the last-toasted
 // marker, then advance the marker. On the very first load (no marker yet) we
-// seed the marker to the newest item WITHOUT toasting, so a backlog never spams.
-function _toastNew(notifs) {
-  const infos = (notifs || []).filter(_isInformational);
-  const newest = infos.reduce((mx, n) => Math.max(mx, _notifTs(n)), 0);
+// seed the marker to the newest item WITHOUT toasting, so a backlog never
+// spams. Informational AND action-required arrivals share one seen-marker
+// (lens-10 audit #39) so an action item already toasted once is never
+// re-toasted on a later poll just because no new informational item arrived
+// meanwhile.
+async function _toastNew(notifs) {
+  const cfg = await _refreshQuietHoursCfg();
+  const all = notifs || [];
+  const newest = all.reduce((mx, n) => Math.max(mx, _notifTs(n)), 0);
   let seen;
   try { seen = window.localStorage.getItem(NOTIF_SEEN_KEY); } catch { seen = null; }
   if (seen === null) {
@@ -185,11 +271,31 @@ function _toastNew(notifs) {
     return;
   }
   const since = _notifSeenTs();
-  const fresh = infos
+  // Lens-10 audit #45: quiet hours suppresses the arrival signal itself, but
+  // the marker still advances so nothing already-seen re-toasts in a burst
+  // once the window ends.
+  if (_isQuietHoursNow(cfg)) {
+    if (newest > since) _setNotifSeenTs(newest);
+    return;
+  }
+  const fresh = all
     .filter((n) => _notifTs(n) > since)
     .sort((a, b) => _notifTs(a) - _notifTs(b));
-  // Cap the toast burst so a flurry never floods the corner.
-  for (const n of fresh.slice(-3)) {
+  const freshActions = fresh.filter(_isActionArrival);
+  const freshInfo = fresh.filter((n) => !_isActionArrival(n));
+  // Action-required arrivals toast in full — an "Open Pending" action (reusing
+  // the same showToast action-slot the review/digest deep-link toasts already
+  // use) rather than a plain message, since there is something to do about it.
+  // These are deliberately NOT subject to the burst cap below: the most
+  // urgent events must not be the ones squeezed out by an informational
+  // flurry.
+  for (const n of freshActions) {
+    const label = n.title || n.body || 'New notification';
+    _toastAction(label, 'Open Pending', () => { openApplicantPortal(); });
+    _maybeDesktopNotify(n);
+  }
+  // Cap the informational toast burst so a flurry never floods the corner.
+  for (const n of freshInfo.slice(-3)) {
     const label = n.title || n.body || 'New notification';
     _toast(label);
     _maybeDesktopNotify(n);
@@ -206,6 +312,11 @@ function _toastNew(notifs) {
 // back to the direct constructor otherwise (today's desktop-browser path).
 function _maybeDesktopNotify(n) {
   try {
+    // Lens-10 audit #45: belt-and-suspenders quiet-hours gate using the
+    // cached config `_toastNew` just refreshed — `_toastNew` already skips
+    // calling this during the window, but guard here too so this function is
+    // correct standalone if anything else ever calls it directly.
+    if (_isQuietHoursNow(_quietHoursCfg)) return;
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     const body = (n.body && n.body !== n.title) ? String(n.body).slice(0, 140) : '';
     const title = n.title || 'Applicant';
@@ -1858,7 +1969,7 @@ async function _loadNotifs() {
     const data = await _fetchJSON(`${API}/notifications`);
     if (data && data.engine_available === false) { _notifs = []; return 0; }
     _notifs = (data && data.items) || [];
-    _toastNew(_notifs);
+    await _toastNew(_notifs);
   } catch {
     _notifs = [];
   }

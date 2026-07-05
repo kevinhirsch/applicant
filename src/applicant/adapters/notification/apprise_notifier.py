@@ -161,6 +161,28 @@ def _default_clock() -> datetime:
     return datetime.now(UTC)
 
 
+def _ntfy_url_with_priority(url: str, notification: Notification) -> str:
+    """Map urgency to Apprise's ntfy ``priority`` query param (#15).
+
+    Bare ``ntfy://`` URLs carry no priority, so an IMMEDIATE/CRITICAL "agent is
+    stuck" push arrives at the same default priority as a routine NORMAL ping —
+    no bypass-DND, no distinct sound. NORMAL keeps ntfy's own default; IMMEDIATE
+    and CRITICAL request ``urgent`` (Apprise supports ``?priority=`` on ntfy
+    URLs). A URL that already names a priority is left alone (explicit
+    caller/user override wins).
+    """
+    if "priority=" in url:
+        return url
+    priority = (
+        "urgent"
+        if notification.urgency
+        in (NotificationUrgency.IMMEDIATE, NotificationUrgency.CRITICAL)
+        else "default"
+    )
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}priority={priority}"
+
+
 class AppriseNotifier:
     """NotificationPort adapter: real semantics, offline-safe by default."""
 
@@ -471,6 +493,14 @@ class AppriseNotifier:
         key = notification.dedup_key or ""
         if notification.web_preemptable or key.startswith("decision:"):
             return "action"
+        if key == "channels-test":
+            # #14: the Settings "Send a test" ping (setup.py's ``/channels/test``)
+            # uses IMMEDIATE urgency purely so it bypasses quiet hours and fans out
+            # to every configured channel at once — it is not a real alert, so it
+            # must not fall into the IMMEDIATE->error mapping below (a user's very
+            # first in-app notification should not render as a failure). Any other
+            # IMMEDIATE notification still classifies as ``error`` unchanged.
+            return "info"
         if notification.urgency is NotificationUrgency.IMMEDIATE:
             return "error"
         if key.startswith("digest:"):
@@ -539,9 +569,11 @@ class AppriseNotifier:
             for url in (u.strip() for u in self._apprise.split(",") if u.strip()):
                 client.add(url)
         elif channel == NotificationChannel.NTFY.value and self._ntfy:
-            # #300: ntfy push channel. Apprise supports ntfy:// URLs natively.
+            # #300/#15: ntfy push channel. Apprise supports ntfy:// URLs
+            # natively; map urgency -> its ``priority`` param so an urgent
+            # action alert doesn't arrive identical to a routine ping.
             for url in (u.strip() for u in self._ntfy.split(",") if u.strip()):
-                client.add(url)
+                client.add(_ntfy_url_with_priority(url, notification))
         body = notification.body
         if notification.deep_link:
             body = f"{body}\n{notification.deep_link}"

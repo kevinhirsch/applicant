@@ -223,3 +223,210 @@ test('refreshBadge (finding #44, regression guard) still zeroes the badge when t
   assert.equal(calls.length, 1, 'refreshBadge should paint the badge exactly once');
   assert.equal(calls[0], 0, 'an explicit engine_available:false should still zero the badge (not a transient blip)');
 });
+
+// ── #39 / #45: action-required arrivals now toast; quiet hours gates both
+// in-tab toasts and OS desktop notifications ─────────────────────────────
+//
+// Same "extract the real source, execute it headlessly" pattern as above.
+// `_toastNew` pulls in a small tree of real helpers (`_isActionArrival`,
+// `_notifSeenTs`/`_setNotifSeenTs`, and the new quiet-hours trio
+// `_refreshQuietHoursCfg`/`_parseHHMM`/`_isQuietHoursNow`) — all extracted
+// verbatim so a revert of the fix (in any of those functions) goes red here.
+// The one deliberate override is `_minutesNowInTz`: it reads the real wall
+// clock, which this suite cannot control, so a second `function
+// _minutesNowInTz(...)` declaration is appended AFTER the extracted real one
+// — function declarations in the same scope keep only the LAST binding, so
+// this override wins while every other function stays the genuine source.
+
+const NOTIF_SEEN_KEY_LITERAL = (SRC.match(/const NOTIF_SEEN_KEY = '([^']+)'/) || [])[1];
+assert.ok(NOTIF_SEEN_KEY_LITERAL, 'could not find NOTIF_SEEN_KEY in applicantPortal.js — has it been renamed?');
+
+function buildToastHarness() {
+  const harness = `
+    const NOTIF_SEEN_KEY = ${JSON.stringify(NOTIF_SEEN_KEY_LITERAL)};
+    const _store = new Map();
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+
+    let _fetchImpl = async () => ({ enabled: false });
+    const _fetchCalls = [];
+    async function _fetchJSON(url) { _fetchCalls.push(url); return _fetchImpl(url); }
+
+    const _toastCalls = [];
+    function _toast(msg) { _toastCalls.push(msg); }
+
+    const _toastActionCalls = [];
+    function _toastAction(msg, actionLabel, onAction) {
+      _toastActionCalls.push({ msg, actionLabel, onAction });
+    }
+
+    let _openPortalCalls = 0;
+    function openApplicantPortal() { _openPortalCalls += 1; }
+
+    ${extractFunction(SRC, '_notifTs')}
+    ${extractFunction(SRC, '_notifSeenTs')}
+    ${extractFunction(SRC, '_setNotifSeenTs')}
+    ${extractFunction(SRC, '_isInformational')}
+    ${extractFunction(SRC, '_isActionArrival')}
+    ${extractFunction(SRC, '_refreshQuietHoursCfg')}
+    ${extractFunction(SRC, '_parseHHMM')}
+    ${extractFunction(SRC, '_minutesNowInTz')}
+    // Test override (see file-header comment): last declaration wins.
+    let _fixedNowMinutes = 12 * 60;
+    function _minutesNowInTz() { return _fixedNowMinutes; }
+    ${extractFunction(SRC, '_isQuietHoursNow')}
+    let _quietHoursCfg = null;
+    let _quietHoursFetchedAt = 0;
+    const QUIET_HOURS_TTL_MS = 5 * 60 * 1000;
+
+    // Real _maybeDesktopNotify, minus the actual browser Notification API
+    // (undefined in Node) — its OWN quiet-hours gate is exercised for real
+    // (the \`if (_isQuietHoursNow(_quietHoursCfg)) return;\` line at the top),
+    // we just record whether it got far enough to attempt a notification.
+    const _desktopAttempts = [];
+    ${extractFunction(SRC, '_maybeDesktopNotify').replace(
+      "if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;",
+      "_desktopAttempts.push(n); return; // stop before touching the real Notification API",
+    )}
+
+    ${extractFunction(SRC, '_toastNew')}
+
+    return {
+      run: _toastNew,
+      seedSeenTs: (ts) => { _store.set(NOTIF_SEEN_KEY, String(ts)); },
+      setFetchImpl: (f) => { _fetchImpl = f; },
+      setNowMinutes: (m) => { _fixedNowMinutes = m; },
+      getFetchCalls: () => _fetchCalls.slice(),
+      getToastCalls: () => _toastCalls.slice(),
+      getToastActionCalls: () => _toastActionCalls.slice(),
+      getDesktopAttempts: () => _desktopAttempts.slice(),
+      getOpenPortalCalls: () => _openPortalCalls,
+      getSeenTs: () => _store.get(NOTIF_SEEN_KEY),
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(harness)();
+}
+
+test('_toastNew (finding #39) toasts a newly-arrived action-required item with an "Open Pending" action, alongside a normal informational toast', async () => {
+  const h = buildToastHarness();
+  h.seedSeenTs(1000); // not a first-ever load
+  h.setFetchImpl(async () => ({ enabled: false })); // quiet hours off
+  h.setNowMinutes(12 * 60);
+
+  const actionItem = {
+    id: 'a1', kind: 'action', title: 'A 2FA prompt needs you', created_at: new Date(3000).toISOString(),
+  };
+  const infoItem = {
+    id: 'i1', kind: 'info', title: 'Digest ready', created_at: new Date(2000).toISOString(),
+  };
+
+  await h.run([actionItem, infoItem]);
+
+  const actionCalls = h.getToastActionCalls();
+  assert.equal(actionCalls.length, 1, 'exactly one action-style toast should fire for the new action-required arrival');
+  assert.equal(actionCalls[0].msg, 'A 2FA prompt needs you');
+  assert.equal(actionCalls[0].actionLabel, 'Open Pending', 'the action toast should offer an "Open Pending" affordance');
+
+  const plainCalls = h.getToastCalls();
+  assert.ok(plainCalls.includes('Digest ready'), 'the informational arrival must still toast as before');
+
+  // The action toast's action must actually open the Portal (reusing the
+  // existing _toastAction seam), not just carry inert label text.
+  actionCalls[0].onAction();
+  assert.equal(h.getOpenPortalCalls(), 1, 'clicking "Open Pending" should open the Portal');
+
+  assert.equal(Number(h.getSeenTs()), Date.parse(actionItem.created_at), 'the seen-marker should advance to the newest arrival across BOTH kinds');
+});
+
+test('_toastNew (finding #39, regression guard) never double-toasts the same action item on a later poll', async () => {
+  const h = buildToastHarness();
+  h.seedSeenTs(1000);
+  h.setFetchImpl(async () => ({ enabled: false }));
+
+  const actionItem = { id: 'a1', kind: 'action', title: 'A 2FA prompt needs you', created_at: new Date(3000).toISOString() };
+
+  await h.run([actionItem]);
+  assert.equal(h.getToastActionCalls().length, 1, 'first poll toasts the new action item once');
+
+  // Simulate the next 60s poll re-delivering the SAME (still-open) action row.
+  await h.run([actionItem]);
+  assert.equal(h.getToastActionCalls().length, 1, 'a second poll carrying the same item must not toast it again');
+});
+
+test('_toastNew (finding #45) suppresses both the toast and the desktop-notification attempt during the configured quiet-hours window', async () => {
+  const h = buildToastHarness();
+  h.seedSeenTs(1000);
+  // Overnight window 22:00-07:00; "now" forced to 23:30 (inside the window).
+  h.setFetchImpl(async () => ({ enabled: true, start: '22:00', end: '07:00', tz: '' }));
+  h.setNowMinutes(23 * 60 + 30);
+
+  const actionItem = { id: 'a1', kind: 'action', title: 'A 2FA prompt needs you', created_at: new Date(3000).toISOString() };
+  const infoItem = { id: 'i1', kind: 'info', title: 'Digest ready', created_at: new Date(2000).toISOString() };
+
+  await h.run([actionItem, infoItem]);
+
+  assert.equal(h.getToastActionCalls().length, 0, 'quiet hours must suppress the action-required toast');
+  assert.equal(h.getToastCalls().length, 0, 'quiet hours must suppress the informational toast');
+  assert.equal(h.getDesktopAttempts().length, 0, 'quiet hours must suppress the desktop-notification attempt too');
+
+  // The marker still advances so nothing re-toasts in a burst once quiet
+  // hours ends.
+  assert.equal(Number(h.getSeenTs()), Date.parse(actionItem.created_at), 'the seen-marker must still advance during quiet hours');
+});
+
+test('_toastNew (finding #45) toasts normally once "now" is outside the configured quiet-hours window', async () => {
+  const h = buildToastHarness();
+  h.seedSeenTs(1000);
+  h.setFetchImpl(async () => ({ enabled: true, start: '22:00', end: '07:00', tz: '' }));
+  h.setNowMinutes(12 * 60); // noon — outside the 22:00-07:00 window
+
+  const infoItem = { id: 'i1', kind: 'info', title: 'Digest ready', created_at: new Date(2000).toISOString() };
+  await h.run([infoItem]);
+
+  assert.ok(h.getToastCalls().includes('Digest ready'), 'outside the quiet-hours window, toasting proceeds as normal');
+  assert.equal(h.getDesktopAttempts().length, 1, 'outside quiet hours, a desktop-notification attempt should be made');
+});
+
+test('_refreshQuietHoursCfg (finding #45) reads the EXISTING quiet-hours setup proxy — no new engine endpoint', async () => {
+  const h = buildToastHarness();
+  h.seedSeenTs(1000);
+  h.setFetchImpl(async () => ({ enabled: false }));
+
+  await h.run([{ id: 'i1', kind: 'info', title: 'Digest ready', created_at: new Date(2000).toISOString() }]);
+
+  assert.ok(
+    h.getFetchCalls().includes('/api/applicant/setup/channels/quiet-hours'),
+    'the quiet-hours gate must reuse the already-existing Settings quiet-hours proxy endpoint, not a new one',
+  );
+});
+
+test('_isQuietHoursNow (finding #45) handles the overnight wrap, the disabled flag, and a zero-length window', () => {
+  const body = `
+    ${extractFunction(SRC, '_parseHHMM')}
+    let _fixedNowMinutes = 0;
+    function _minutesNowInTz() { return _fixedNowMinutes; }
+    ${extractFunction(SRC, '_isQuietHoursNow')}
+    return { isQuiet: _isQuietHoursNow, setNow: (m) => { _fixedNowMinutes = m; } };
+  `;
+  // eslint-disable-next-line no-new-func
+  const { isQuiet, setNow } = new Function(body)();
+
+  const overnight = { enabled: true, start: '22:00', end: '07:00', tz: '' };
+  setNow(23 * 60); // 23:00 — inside
+  assert.equal(isQuiet(overnight), true, '23:00 is inside a 22:00-07:00 window');
+  setNow(3 * 60); // 03:00 — inside (past midnight)
+  assert.equal(isQuiet(overnight), true, '03:00 is inside a 22:00-07:00 window (wraps past midnight)');
+  setNow(12 * 60); // noon — outside
+  assert.equal(isQuiet(overnight), false, 'noon is outside a 22:00-07:00 window');
+
+  setNow(23 * 60);
+  assert.equal(isQuiet({ enabled: false, start: '22:00', end: '07:00', tz: '' }), false, 'enabled:false is never quiet hours, regardless of the window');
+
+  assert.equal(isQuiet({ enabled: true, start: '09:00', end: '09:00', tz: '' }), false, 'a zero-length window (start === end) is inert, mirroring the engine side');
+  assert.equal(isQuiet(null), false, 'no config at all (fetch never resolved) must not suppress toasts forever');
+});
