@@ -23,6 +23,14 @@ Endpoints (all under ``/api/applicant/campaigns``):
 * ``DELETE /api/applicant/campaigns/{campaign_id}``       — permanently delete + purge (#363).
 * ``GET  /api/applicant/campaigns/{campaign_id}/sources`` — discovery sources.
 * ``PUT  /api/applicant/campaigns/{campaign_id}/sources/{source_key}`` — toggle.
+* ``GET  /api/applicant/campaigns/{campaign_id}/audit-log/export.json`` —
+  download the ordered action trail for the campaign (dark-engine audit item
+  31): the engine already builds this export (``routers/audit.py``), but it
+  was reachable only from an admin account (``applicant_admin_routes.py``);
+  this owner-scoped lane reuses the exact same engine export, just gated by
+  campaign ownership instead of an admin flag — the honesty artifact the
+  single owner of this deployment needs when deciding whether to trust the
+  agent shouldn't require operator rank for their own data.
 """
 
 from __future__ import annotations
@@ -161,6 +169,42 @@ def setup_applicant_campaigns_routes() -> APIRouter:
                     status_code=exc.status or 502, detail=str(exc)
                 ) from exc
         return result if isinstance(result, dict) else {"deleted": True}
+
+    @router.get("/{campaign_id}/audit-log/export.json")
+    async def export_campaign_audit_log(request: Request, campaign_id: str):
+        """Download the full ordered action trail for one of the owner's OWN
+        campaigns as a JSON file (dark-engine audit item 31) -- the same
+        export the engine already builds (``GET
+        /api/admin/audit-log/{campaign_id}/export.json``), previously
+        reachable only from an admin account. Owner-scoped exactly like
+        ``delete_campaign``/``clone_campaign`` above: a caller can only
+        export a campaign they own.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            owned = await _owner_campaign_ids(engine)
+            if owned is None:
+                raise HTTPException(status_code=503, detail="The engine is unavailable.")
+            if campaign_id not in owned:
+                raise HTTPException(status_code=404, detail="No such campaign.")
+            try:
+                resp = await engine.audit_log_campaign_export(campaign_id)
+            except EngineError as exc:
+                logger.debug(
+                    "campaigns: audit-log export failed for %s: %s", campaign_id, exc
+                )
+                raise HTTPException(
+                    status_code=exc.status or 502, detail=str(exc)
+                ) from exc
+        from fastapi.responses import Response
+
+        return Response(
+            content=resp.text if hasattr(resp, "text") else resp.content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=audit-log-{campaign_id}.json"
+            },
+        )
 
     @router.get("/{campaign_id}/sources")
     async def list_sources(request: Request, campaign_id: str) -> dict:

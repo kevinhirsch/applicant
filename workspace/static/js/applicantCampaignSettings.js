@@ -15,6 +15,11 @@
 //   * Duplicate — clone this campaign's criteria/settings into a fresh campaign
 //     under a new name (dark-engine audit item 36): the natural "same search,
 //     new city" move, instead of rebuilding a similar search by hand.
+//   * Download activity log — export the campaign's complete, ordered action
+//     trail as a JSON file (dark-engine audit item 31): the engine already
+//     builds this export; it was reachable only from an admin account before
+//     now, even though every action in it belongs to the one owner of this
+//     deployment.
 //   * Danger zone — permanently delete the campaign (dark-engine audit item 17):
 //     the engine already purges every store on delete (résumés, PII, generated
 //     materials, application history, banked credentials); this just gives the
@@ -131,6 +136,8 @@ function _campaignCard(c) {
         </button>
         <button type="button" class="cal-btn cs-duplicate" data-cs-id="${id}"
                 title="Start a new campaign with this one's criteria and settings">Duplicate</button>
+        <button type="button" class="cal-btn cs-audit-log" data-cs-id="${id}"
+                title="Download every action taken on this campaign as a JSON file">Download activity log</button>
       </div>
       <div class="cs-sources" data-cs-sources-for="${id}">
         <div class="admin-toggle-sub" style="margin:10px 0 6px">Discovery sources</div>
@@ -264,6 +271,16 @@ async function _wireCard(host, card) {
     } catch (e) {
       _toast(`Could not duplicate campaign: ${e.message || e}`);
       btn.disabled = false;
+    }
+  });
+  card.querySelector('.cs-audit-log')?.addEventListener('click', () => {
+    // A plain authenticated GET download (same-origin, cookie session already
+    // covers it) — the proxy's Content-Disposition header does the rest, same
+    // pattern as the résumé/preview PDF downloads elsewhere in this workspace.
+    try {
+      window.open(`${BASE}/${encodeURIComponent(id)}/audit-log/export.json`, '_blank', 'noopener');
+    } catch (e) {
+      _toast(`Could not open the activity log: ${e.message || e}`);
     }
   });
   card.querySelector('.cs-delete')?.addEventListener('click', async (ev) => {

@@ -117,6 +117,12 @@ class FakeEngine:
     async def outcome_detect(self, aid):
         return await self._maybe("detect", aid, default={"detected": True})
 
+    async def list_campaigns(self):
+        return await self._maybe("list_campaigns", default=[])
+
+    async def audit_log_application_export(self, aid):
+        return await self._maybe("audit_export", aid, default=None)
+
 
 @pytest.fixture(autouse=True)
 def _reset():
@@ -454,3 +460,146 @@ def test_tools_require_admin(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
     assert c.get("/api/applicant/admin/tools").status_code == 403
+
+
+# --- owner-reachable lane (dark-engine audit B4 items 29/30/32) -------------
+#
+# Unlike everything above, these routes must be reachable by a NON-admin
+# authenticated user -- that's the whole point (durable-workflow state, an
+# application's own audit export, and recent logs are the owner's OWN data,
+# not operator-grade detail). Each owner-scoped read/download is validated
+# against a caller-supplied application_id: it must turn up in THIS
+# request's own campaign -> application-history fan-out first.
+
+
+def test_owner_workflow_status_passthrough_when_owned(client):
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1", "name": "Backend"}]
+    FakeEngine.responses["history"] = {
+        "campaign_id": "c1",
+        "applications": [{"application_id": "a1", "status": "APPLIED"}],
+    }
+    FakeEngine.responses["workflow"] = {
+        "application_id": "a1",
+        "steps": ["fill", "review", "submit"],
+        "pending_recovery": False,
+    }
+    r = client.get("/api/applicant/admin/applications/a1/workflow-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["steps"] == ["fill", "review", "submit"]
+
+
+def test_owner_workflow_status_allows_non_admin_user(monkeypatch):
+    """MANDATORY per item 29: a non-admin owner must reach this, unlike the
+    admin-gated ``/workflow/{id}`` route above (see test_workflow_and_
+    screenshots_and_outcomes / test_non_admin_is_rejected)."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    r = c.get("/api/applicant/admin/applications/a1/workflow-status")
+    assert r.status_code == 200
+
+
+def test_owner_workflow_status_not_owned_is_404_not_proxied(client):
+    """MANDATORY owner-isolation test: a caller must never read workflow state
+    for an application that never turned up in their own campaign fan-out."""
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    r = client.get("/api/applicant/admin/applications/a-evil/workflow-status")
+    assert r.status_code == 404
+    assert all(not (isinstance(call, tuple) and call[0] == "workflow") for call in FakeEngine.calls)
+
+
+def test_owner_workflow_status_engine_down_is_503(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down")
+    r = client.get("/api/applicant/admin/applications/a1/workflow-status")
+    assert r.status_code == 503
+
+
+def test_owner_workflow_status_requires_authentication(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user=None, configured=True, admins=("alice",)))
+    r = c.get("/api/applicant/admin/applications/a1/workflow-status")
+    assert r.status_code == 401
+
+
+def test_owner_export_application_audit_log_passthrough(client):
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    FakeEngine.responses["audit_export"] = httpx.Response(
+        200,
+        json={"exported_at": "2026-07-05T00:00:00Z", "count": 1, "events": []},
+        headers={"Content-Disposition": "attachment; filename=audit-log.json"},
+    )
+    r = client.get("/api/applicant/admin/applications/a1/audit-export.json")
+    assert r.status_code == 200
+    cd = r.headers.get("content-disposition", "")
+    assert "attachment" in cd
+    assert "audit-log-a1.json" in cd
+    assert r.json()["count"] == 1
+
+
+def test_owner_export_application_audit_log_allows_non_admin_user(monkeypatch):
+    """MANDATORY per item 30: reachable without an admin account, unlike
+    ``/audit-log/application/{id}/export.json`` (see test_applicant_audit_
+    routes.py's ``test_audit_export_requires_admin``)."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    FakeEngine.responses["audit_export"] = httpx.Response(
+        200, json={"exported_at": "x", "count": 0, "events": []},
+    )
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    r = c.get("/api/applicant/admin/applications/a1/audit-export.json")
+    assert r.status_code == 200
+
+
+def test_owner_export_application_audit_log_not_owned_is_404_not_proxied(client):
+    """MANDATORY owner-isolation test: a caller must never download the audit
+    trail for an application that never turned up in their own fan-out."""
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    r = client.get("/api/applicant/admin/applications/a-evil/audit-export.json")
+    assert r.status_code == 404
+    assert all(not (isinstance(call, tuple) and call[0] == "audit_export") for call in FakeEngine.calls)
+
+
+def test_owner_export_application_audit_log_engine_down_is_503(client):
+    FakeEngine.raises["list_campaigns"] = EngineError("down")
+    r = client.get("/api/applicant/admin/applications/a1/audit-export.json")
+    assert r.status_code == 503
+
+
+def test_owner_export_application_audit_log_error_is_forwarded(client):
+    FakeEngine.responses["list_campaigns"] = [{"id": "c1"}]
+    FakeEngine.responses["history"] = {"applications": [{"application_id": "a1"}]}
+    FakeEngine.raises["audit_export"] = EngineError("nope", status=404, detail="No such application.")
+    r = client.get("/api/applicant/admin/applications/a1/audit-export.json")
+    assert r.status_code == 404
+
+
+def test_owner_logs_allows_non_admin_user(monkeypatch):
+    """Item 32: recent redacted logs, reachable without an admin account
+    (unlike ``/logs`` above, see test_non_admin_is_rejected)."""
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    FakeEngine.responses["logs"] = {"entries": [{"level": "info", "message": "tick"}]}
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    r = c.get("/api/applicant/admin/logs/mine")
+    assert r.status_code == 200
+    assert r.json()["entries"][0]["message"] == "tick"
+
+
+def test_owner_logs_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["logs"] = EngineError("down")
+    r = client.get("/api/applicant/admin/logs/mine")
+    assert r.status_code == 200
+    assert r.json() == {"entries": [], "engine_available": False}
+
+
+def test_owner_logs_requires_authentication(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user=None, configured=True, admins=("alice",)))
+    r = c.get("/api/applicant/admin/logs/mine")
+    assert r.status_code == 401
