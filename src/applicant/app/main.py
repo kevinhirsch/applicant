@@ -141,7 +141,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         Kept fast and dependency-light: one cheap query + one filesystem check. When
         no real DB is wired (the in-memory boot/test path, ``engine is None``) the
-        DB check is treated as satisfied — that path has no Postgres to probe.
+        DB check is treated as satisfied — that path has no Postgres to probe — but
+        ``checks.database_persistence`` still honestly reports whether storage is a
+        data-losing in-memory fallback (never flips the top-level status; see
+        below). ``checks.capabilities``/``checks.capabilities_degraded`` likewise
+        surface optional-capability gaps (missing browser/TeX/LibreOffice/etc.)
+        without ever failing this probe hard for an optional gap.
         """
         checks: dict[str, str] = {}
         ok = True
@@ -158,6 +163,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 checks["database"] = f"error: {type(exc).__name__}"
         else:
             checks["database"] = "in-memory"
+            # (lens04 #1) `engine is None` alone does not say WHY: it is the same
+            # signal for "no Postgres configured for this (dev/hermetic-test) boot"
+            # and for "DATABASE_URL was unreachable and the container silently
+            # degraded to InMemoryStorage(is_fallback=True)" (container.py, #312).
+            # The coarse ok/degraded gate above stays green either way — the
+            # hermetic/dev lane legitimately runs on in-memory storage — but a
+            # data-losing fallback must never be indistinguishable from that
+            # legitimate case in the payload. Consult the storage's own honesty
+            # signal (`healthcheck()` returns `not is_fallback`) and report it as
+            # its own field so a typo'd DATABASE_URL in prod is visible to an
+            # operator even though this branch does not flip `ok`.
+            storage_obj = getattr(app.state.container, "storage", None)
+            is_fallback = True
+            if storage_obj is not None and hasattr(storage_obj, "healthcheck"):
+                try:
+                    is_fallback = not storage_obj.healthcheck()
+                except Exception:  # noqa: BLE001 - never let this probe crash healthz
+                    is_fallback = True
+            checks["database_persistence"] = (
+                "degraded: in-memory fallback active — data will NOT persist "
+                "across restarts"
+                if is_fallback
+                else "ok"
+            )
 
         # 2) Credential-vault key directory must be writable (else sealed secrets
         #    can't be read/written — a silent data-loss class). Cheap dir check.
@@ -182,6 +211,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             postgres_engine=engine,
         )
         checks["capabilities"] = caps
+        # (lens04 #38) A missing optional binary (e.g. no browser for pre-fill,
+        # no TeX/LibreOffice for résumé rendering) is deliberately informational
+        # here — it never fails healthz hard, since it may be an intentionally
+        # disabled feature rather than a broken deploy. But leaving it buried in
+        # free-text per-capability strings means nothing actually surfaces the
+        # degradation at a glance. Flatten it into a plain list of the
+        # capabilities that are NOT "ok" so an operator (or an automated deploy
+        # check) can see a degraded image without parsing prose.
+        checks["capabilities_degraded"] = sorted(
+            name for name, status in caps.items() if not status.startswith("ok")
+        )
 
         if ok:
             return JSONResponse(
