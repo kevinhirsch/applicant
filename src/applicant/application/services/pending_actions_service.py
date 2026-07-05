@@ -32,6 +32,14 @@ KIND_ERROR = "error"
 #: résumé-parse) awaiting the user's explicit confirm-or-reject (FR-FB-3, FR-LEARN-4).
 KIND_INTEGRAL_CHANGE = "integral_change"
 
+#: Stable :meth:`PendingActionsService.resolve` outcomes (lens 04 #27) -- a caller
+#: (double-resolve, a retried request, a stale client) can switch on these to tell
+#: a real open->resolved transition apart from a no-op, instead of every call
+#: reporting the same silent success.
+RESOLVE_RESOLVED = "resolved"
+RESOLVE_ALREADY_RESOLVED = "already_resolved"
+RESOLVE_NOT_FOUND = "not_found"
+
 
 class PendingActionsService:
     def __init__(self, storage) -> None:
@@ -275,9 +283,26 @@ class PendingActionsService:
         """
         return len(self.list_pending(campaign_id, include_snoozed=include_snoozed))
 
-    def resolve(self, action_id: PendingActionId) -> None:
+    def resolve(self, action_id: PendingActionId) -> str:
+        """Resolve a pending action once the user has acted on it (FR-UI-3).
+
+        Idempotent -- an already-resolved (or unknown) action is never re-applied,
+        the storage-level ``resolve`` only fires on a genuine open -> resolved
+        transition -- but the OUTCOME is now observable (lens 04 #27): a
+        double-resolve (two tabs, a retried request, a stale client re-sending
+        the same action id) used to look identical to a fresh resolve, so a
+        caller had no way to tell whether this call actually cleared something.
+        Returns one of :data:`RESOLVE_RESOLVED` / :data:`RESOLVE_ALREADY_RESOLVED`
+        / :data:`RESOLVE_NOT_FOUND`.
+        """
+        action = self._storage.pending_actions.get(action_id)
+        if action is None:
+            return RESOLVE_NOT_FOUND
+        if action.resolved:
+            return RESOLVE_ALREADY_RESOLVED
         self._storage.pending_actions.resolve(action_id)
         self._storage.commit()
+        return RESOLVE_RESOLVED
 
     def resolve_many(
         self, campaign_id: CampaignId, action_ids: list[PendingActionId]
