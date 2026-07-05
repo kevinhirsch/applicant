@@ -61,6 +61,15 @@ let _activeTab = 'activity';
 let _campaignId = null;
 let _busySave = false; // re-entry guard for save-run-settings
 let _busySubmit = false; // re-entry guard for mark-submitted
+// lens 04 #61: the in-flight "Run now" request's AbortController, if any — set
+// while a run is running so (a) the Cancel button has something to abort and
+// (b) a re-render (tab switch away and back) can tell a run is still going and
+// restore the busy/Cancel UI instead of showing a stale idle "Run now" button.
+let _runAbortController = null;
+// A full discover+score+pre-fill tick can legitimately run past the shared 15s
+// _fetchJSON default (applicantChat.js's `/message` send overrides the same
+// default for its own known-longer call) — give "Run now" the same treatment.
+const RUN_NOW_TIMEOUT_MS = 120000;
 
 
 
@@ -1043,13 +1052,21 @@ async function _renderRun() {
   // generic "What the agent is doing" label.
   const skipReason = status.latest_stats && status.latest_stats.skip_reason;
   const doingTitle = skipReason ? "Why nothing's happening right now" : 'What the agent is doing';
+  // lens 04 #61: a run already in flight (e.g. the user switched tabs and came
+  // back) re-renders with the busy/Cancel state restored instead of a stale
+  // idle "Run now" button that no longer reflects reality.
+  const runInFlight = !!_runAbortController;
+  const runNowHTML = runInFlight
+    ? '<span class="btn-spinner" aria-hidden="true"></span>Running…'
+    : 'Run now';
   _body().innerHTML = `
     ${haveStatus ? _statusChip(status) : ''}
     <div class="admin-card">
       <div style="font-weight:600;">${esc(doingTitle)}</div>
       <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">${esc(intentText || 'No run yet — use “Run now” or set a mode and target below to start.')}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-        <button class="cal-btn cal-btn-primary" id="applicant-run-now">Run now</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+        <button class="cal-btn cal-btn-primary" id="applicant-run-now"${runInFlight ? ' disabled aria-busy="true"' : ''}>${runNowHTML}</button>
+        <button class="cal-btn" id="applicant-run-cancel" title="Stop waiting for this run"${runInFlight ? '' : ' style="display:none;"'}>Cancel</button>
         <button class="cal-btn" id="applicant-run-pause">${paused ? 'Resume' : 'Pause'}</button>
       </div>
       <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">“Run now” discovers, scores and refreshes the digest immediately instead of waiting for the next scheduled pass.</span>
@@ -1089,12 +1106,23 @@ async function _renderRun() {
     }
   });
   const runNowBtn = _body().querySelector('#applicant-run-now');
+  const runCancelBtn = _body().querySelector('#applicant-run-cancel');
   if (runNowBtn) runNowBtn.addEventListener('click', async () => {
+    if (runNowBtn.disabled) return; // already running — Cancel is the only way to interrupt it
     runNowBtn.disabled = true;
-    const prev = runNowBtn.textContent;
-    runNowBtn.textContent = 'Running…';
+    runNowBtn.setAttribute('aria-busy', 'true');
+    // lens 04 #61: was a plain textContent swap with no visual progress and no
+    // way to stop it. Reuse the design system's existing (until now unused)
+    // `.btn-spinner` inline spinner class for progress, and reveal a Cancel
+    // button that aborts the in-flight request via a real AbortSignal — not
+    // just a UI no-op — so a long-running tick can actually be interrupted.
+    runNowBtn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Running…';
+    const controller = new AbortController();
+    _runAbortController = controller;
+    if (runCancelBtn) { runCancelBtn.style.display = ''; runCancelBtn.disabled = false; }
     try {
-      const res = await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/run`, {});
+      const res = await _post(`${OPS}/runs/${encodeURIComponent(_campaignId)}/run`, {},
+        { signal: controller.signal, timeoutMs: RUN_NOW_TIMEOUT_MS });
       if (res.ran === false) {
         // Map the engine's machine reason to the SAME plain-language message the
         // "Why nothing's happening right now" note uses (dark-engine audit #64).
@@ -1104,12 +1132,25 @@ async function _renderRun() {
         _toast(found);
       }
     } catch (e) {
-      _toast(e.message || 'Could not run now.');
+      // _fetchJSON can't distinguish "the user clicked Cancel" from "the
+      // internal timeout fired" (both surface as an AbortError) — our own
+      // controller's `.aborted` flag is the one reliable signal that this was
+      // a user-requested cancel, so check it before falling back to the
+      // generic error message.
+      _toast(controller.signal.aborted ? 'Run cancelled.' : (e.message || 'Could not run now.'));
     } finally {
+      if (_runAbortController === controller) _runAbortController = null;
       runNowBtn.disabled = false;
-      runNowBtn.textContent = prev;
+      runNowBtn.removeAttribute('aria-busy');
+      runNowBtn.innerHTML = 'Run now';
+      if (runCancelBtn) { runCancelBtn.style.display = 'none'; runCancelBtn.disabled = false; }
       _renderRun();
     }
+  });
+  if (runCancelBtn) runCancelBtn.addEventListener('click', () => {
+    if (!_runAbortController) return;
+    runCancelBtn.disabled = true; // one cancel request is enough — guard against a double-click
+    _runAbortController.abort();
   });
   const pauseBtn = _body().querySelector('#applicant-run-pause');
   if (pauseBtn) pauseBtn.addEventListener('click', async () => {
