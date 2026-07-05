@@ -28,6 +28,7 @@ network) so contract/unit/BDD tests assert ladder + idempotency semantics offlin
 from __future__ import annotations
 
 import itertools
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -61,7 +62,15 @@ _MAX_CAPTURED = 1000
 # Capping by count alone meant a quiet stretch could keep day-old entries pinned
 # in the inbox indefinitely; prune anything older than this window on the same
 # cadence as the email-dedup prune so the lists stay both small AND fresh.
-_INBOX_MAX_AGE = timedelta(hours=24)
+#
+# #27: a 24-hour window emptied the center for anyone who checks in every 2-3
+# days (a weekend away deleted Friday's unread error). The count cap (1000)
+# already bounds memory on its own, so this window only needs to keep the
+# inbox reasonably fresh, not aggressively small — raised to two weeks. Unseen
+# in-app entries are additionally exempted from this age prune entirely (see
+# ``_prune_old``): an unread notification should never silently vanish just
+# because the user was away, it should only age out once acknowledged.
+_INBOX_MAX_AGE = timedelta(days=14)
 
 # LEAK-NOTIF-1: bound the digest-email dedup memory to a rolling window of recent
 # UTC days. Each digest dedup key embeds its day (``digest_email:<cid>:<YYYY-MM-DD>``),
@@ -159,6 +168,20 @@ class CapturedSend:
 
 def _default_clock() -> datetime:
     return datetime.now(UTC)
+
+
+# #4: a coarse "is this body HTML markup" sniff for the digest email path (the
+# only notification body that is ever rendered HTML today — ``send_email``
+# wraps ``render_email``'s ``<h1>Your daily digest</h1>`` + ``<table ...>``
+# string verbatim into ``Notification.body``). Plain-text bodies (decision
+# pings, status updates, errors) never contain an opening HTML tag, so this
+# only flips on for the digest email and stays off for everything else.
+_HTML_BODY_RE = re.compile(r"<(?:html|body|table|h[1-6]|div|p)[\s>]", re.IGNORECASE)
+
+
+def _looks_like_html(body: str) -> bool:
+    """True when ``body`` is HTML markup rather than a plain-text message."""
+    return bool(_HTML_BODY_RE.search(body))
 
 
 def _ntfy_url_with_priority(url: str, notification: Notification) -> str:
@@ -528,7 +551,7 @@ class AppriseNotifier:
             # The in-app sink gets a stable id the notification center addresses.
             captured = replace(captured, id=f"inapp-{next(self._inbox_ids)}")
             self._inbox.append(captured)
-            self._prune_old(self._inbox, now)
+            self._prune_old(self._inbox, now, exempt_unseen=True)
             if len(self._inbox) > self._max_inbox:
                 del self._inbox[: len(self._inbox) - self._max_inbox]
         if self._send_real:
@@ -540,16 +563,28 @@ class AppriseNotifier:
             dedup_key=notification.dedup_key,
         )
 
-    def _prune_old(self, entries: list[CapturedSend], now: datetime) -> None:
+    def _prune_old(
+        self, entries: list[CapturedSend], now: datetime, *, exempt_unseen: bool = False
+    ) -> None:
         """LEAK-NOTIF-2: drop entries older than the age window, in place.
 
         Mirrors the rolling-window prune used for the email-dedup set so the
         in-app inbox + capture lists are bounded by AGE as well as by count.
         Entries without a ``created_at`` (legacy/test-built) are retained.
+
+        #27: when ``exempt_unseen`` is set (the in-app inbox), an entry the user
+        has never dismissed survives the age prune regardless of how old it is —
+        only the count cap (``_max_inbox``) bounds it. Only entries the user has
+        already acknowledged (dismissed) age out on this window. This is what
+        keeps a weekend-away unread error from silently disappearing.
         """
         horizon = now - self._max_age
         entries[:] = [
-            e for e in entries if e.created_at is None or e.created_at >= horizon
+            e
+            for e in entries
+            if e.created_at is None
+            or e.created_at >= horizon
+            or (exempt_unseen and e.id and e.id not in self._dismissed)
         ]
 
     def _send_real_dispatch(self, channel: str, notification: Notification) -> None:
@@ -577,10 +612,20 @@ class AppriseNotifier:
         body = notification.body
         if notification.deep_link:
             body = f"{body}\n{notification.deep_link}"
+        # #4: the digest email body is rendered HTML (``<h1>``/``<table>``); with no
+        # format hint Apprise's default TEXT handling delivered literal markup
+        # source to most SMTP recipients. Detect the HTML-bodied case and pass the
+        # HTML format hint so those channels render it; plain-text bodies (decision
+        # pings, status updates, errors) are untouched and keep the default TEXT
+        # format. (Scoped to the format hint only — a plain-text MIME alternative
+        # part is a larger change, deferred.)
+        notify_kwargs: dict = {"title": notification.title, "body": body}
+        if _looks_like_html(notification.body):
+            notify_kwargs["body_format"] = apprise.NotifyFormat.HTML
         # Apprise returns False on a failed delivery (it does NOT raise). Ignoring
         # the return recorded failures as "dispatched" — check it and surface the
         # failure so the caller / logs reflect reality (FR-NOTIF-1).
-        ok = client.notify(title=notification.title, body=body)
+        ok = client.notify(**notify_kwargs)
         if not ok:
             log.error(
                 "notification_delivery_failed",
@@ -740,13 +785,19 @@ class AppriseNotifier:
         }
 
     def deliver_now(self, now: datetime | None = None) -> list[str]:
-        """Force-flush every pending rung immediately, bypassing quiet hours (#302).
+        """Force-flush quiet-hours-held rungs immediately, bypassing the quiet gate (#302).
 
         The "deliver now" action the user taps to release notifications that were
-        held back by an active quiet window — it fires every not-yet-fired rung on
-        every active delivery at once, regardless of its scheduled ``due_at`` or the
-        quiet-hours gate, and surfaces the held Discord/email/push channels. Returns
-        the channels flushed on this call.
+        held back by an active quiet window. It bypasses the quiet-hours gate (and
+        presence pre-emption) for every active delivery, surfacing Discord/email/
+        push rungs that are due but sitting held by quiet hours.
+
+        #10: this only flushes rungs whose ``due_at`` has already passed — it never
+        force-fires a rung scheduled for the future. Without that guard, tapping
+        "Deliver now" to release an overnight digest also instantly fired the
+        15-minute email backstop for every open decision (an email the user would
+        never otherwise get so soon) since that rung's ``due_at`` just hadn't
+        arrived yet, quiet hours or not. Returns the channels flushed on this call.
         """
         ts = (now or self._clock()).timestamp()
         with self._sent_lock:
@@ -787,9 +838,16 @@ class AppriseNotifier:
         fired: list[str] = []
         when = datetime.fromtimestamp(ts, tz=UTC)
         for rung in delivery.rungs:
-            # ``force`` (deliver-now) fires every not-yet-fired rung regardless of its
-            # scheduled time; the normal path only fires rungs whose ``due_at`` has come.
-            if rung.fired or (not force and rung.due_at > ts):
+            # #10: ``force`` (deliver-now) bypasses the QUIET-HOURS gate below (and
+            # presence pre-emption) so a rung that is only being held back by an
+            # active quiet window flushes immediately — but it must NOT bypass
+            # ``due_at`` itself. A rung scheduled for the future (e.g. the 15-minute
+            # email backstop for a decision the user hasn't acted on yet) has not
+            # "come due" for any quiet-hours reason; force-firing it meant tapping
+            # "Deliver now" to release an overnight digest also instantly emailed
+            # every open decision's backstop. Only rungs whose scheduled time has
+            # actually arrived are eligible, whether flushed normally or by force.
+            if rung.fired or rung.due_at > ts:
                 continue
             # Presence pre-emption (FR-NOTIF-2): when the user is verifiably present
             # in the web UI, suppress the Discord push in favor of the in-app surface.
@@ -861,7 +919,7 @@ class AppriseNotifier:
         items), then returns the inbox newest-first, omitting ones the user has
         dismissed unless ``include_seen`` is set.
         """
-        self._prune_old(self._inbox, self._clock())
+        self._prune_old(self._inbox, self._clock(), exempt_unseen=True)
         entries = [
             replace(e, seen=e.id in self._dismissed)
             for e in self._inbox

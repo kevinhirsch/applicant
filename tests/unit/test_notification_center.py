@@ -86,25 +86,28 @@ def test_expire_clears_action_required_inbox_entry():
     assert notifier.list_inbox() == []
 
 
-def test_age_prune_drops_entries_older_than_window():
+def test_unseen_entries_survive_the_age_window():
+    # lens 10 #27: an unseen (never-dismissed) entry must NOT silently vanish
+    # from the in-app center — it is exempt from the age prune, so a user who
+    # checks back a day or two later still sees it. (Only dismissed entries and
+    # the count cap age out now, and the window itself is days, not 24h.)
     notifier, clock = _notifier()
     notifier.notify(Notification(title="Old", body="b", dedup_key="old"))
-    # Jump past the 24h window, then dispatch a fresh one to trigger the prune.
+    # Jump a day, then dispatch a fresh one — the old, unseen entry survives.
     clock.now = clock.now + timedelta(hours=25)
     notifier.notify(Notification(title="New", body="b", dedup_key="new"))
 
-    titles = [e.title for e in notifier.list_inbox()]
-    assert titles == ["New"]  # the day-old entry was pruned by age
-    # The capture list is pruned by age too.
-    assert [c.title for c in notifier.captured()] == ["New"]
+    titles = {e.title for e in notifier.list_inbox()}
+    assert titles == {"Old", "New"}  # the unseen day-old entry survives
 
 
-def test_age_prune_on_read_without_new_dispatch():
+def test_unseen_entry_survives_on_read_without_new_dispatch():
+    # lens 10 #27: even with no new dispatch to trigger a prune pass, reading the
+    # inbox does not drop an unseen aged entry.
     notifier, clock = _notifier()
     notifier.notify(Notification(title="Old", body="b", dedup_key="old"))
     clock.now = clock.now + timedelta(hours=25)
-    # list_inbox prunes by age on read, even with no new dispatch.
-    assert notifier.list_inbox() == []
+    assert [e.title for e in notifier.list_inbox()] == ["Old"]
 
 
 def test_count_cap_still_applies():

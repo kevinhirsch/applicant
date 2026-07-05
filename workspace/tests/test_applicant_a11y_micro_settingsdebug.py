@@ -159,7 +159,9 @@ def test_debug_source_and_tool_toggles_have_accessible_names():
     assert 'aria-label="Turn ${esc(s.source_key)} on or off"' in sources_fn
     tools_fn = _top_level_fn(js, "_renderTools")
     assert 'aria-label="Turn ${esc(label)} on or off"' in tools_fn
-    assert 'aria-label="Exploration budget, a number between 0 and 1"' in sources_fn
+    # lens 12 #10: the exploration-budget control is now percent-based (0-100),
+    # matching Campaign Settings — the accessible name tracks the same units.
+    assert 'aria-label="Exploration budget, a percentage between 0 and 100"' in sources_fn
 
 
 def test_debug_source_and_tool_toggles_disable_during_their_round_trip():
