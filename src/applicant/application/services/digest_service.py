@@ -497,19 +497,14 @@ class DigestService:
         # raises, so the "ready" ping never points at a digest with no acted-on
         # rows persisted.
         if self._pending is not None:
-            for row in payload["rows"]:
-                # The digest row is a POSTING, not an Application — no application row
-                # exists yet. Store the posting id in the payload and leave
-                # ``application_id=None`` so we never write a posting id into the
-                # ``pending_actions.application_id`` FK (would IntegrityError on
-                # Postgres: no matching ``applications.id``).
-                self._pending.digest_approval(
-                    campaign_id,
-                    posting_id=str(row["posting_id"]),
-                    title=f"Review: {row['summary']}",
-                    link=row["link"],
-                    score=row["viability_score"],
-                )
+            # The digest row is a POSTING, not an Application — no application row
+            # exists yet, so ``application_id`` stays ``None`` (a posting id would
+            # IntegrityError on Postgres: no matching ``applications.id``).
+            # perf lens 03 #32: one query + one commit for the WHOLE batch of viable
+            # rows, instead of one dedup SELECT + one commit per row
+            # (``materialize_digest_approvals`` reuses the exact dedup key / shape
+            # ``digest_approval`` -> ``materialize`` would have produced per row).
+            self._pending.materialize_digest_approvals(campaign_id, payload["rows"])
         handle = None
         email_sent = False
         if self._notification_service is not None:
