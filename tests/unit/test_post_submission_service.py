@@ -123,7 +123,11 @@ class TestSendScheduledFollowUps:
         assert len(spy.calls) == 1, "notify_decision must be called exactly once"
         call = spy.calls[0]
         assert call["decision_ref"] == str(fup.id)
-        assert call["title"] == fup.subject
+        # lens 10 #53: the notification is a product-voice "a draft is ready"
+        # prompt, NOT the raw first-person follow-up subject (which would buzz
+        # the user's phone reading as if the product were thanking them).
+        assert call["title"] != fup.subject
+        assert "review & send" in call["title"]
         assert call["body"] == fup.body
         assert call["deep_link"] == f"/applications/{fup.application_id}"
 
@@ -783,7 +787,9 @@ class TestSendScheduledFollowUpsHardSafetyAndIdempotency:
         assert [f.id for f in sent_first] == [fup.id]
         assert sent_second == []
         assert len(spy.calls) == 1
-        assert spy.calls[0]["title"] == "Checking in"
+        # lens 10 #53: product-voice "draft ready" title, not the raw subject.
+        assert spy.calls[0]["title"] != "Checking in"
+        assert "review & send" in spy.calls[0]["title"]
         assert spy.calls[0]["body"] == "Hi."
         assert storage.applications.get(app.id).status == ApplicationState.FOLLOWING_UP
 
