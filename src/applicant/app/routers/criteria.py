@@ -17,6 +17,7 @@ from applicant.app.container import Container
 from applicant.app.deps import (
     get_container,
     get_criteria_service,
+    get_storage,
     require_llm_configured,
 )
 from applicant.core.entities.search_criteria import SearchCriteria
@@ -120,6 +121,35 @@ def converting_signature(
         "samples": getattr(model, "converting_samples", 0),
         "exploration_budget": getattr(model, "exploration_budget", None),
     }
+
+
+@router.get("/{campaign_id}/alignment/{posting_id}")
+def posting_alignment(
+    campaign_id: str,
+    posting_id: str,
+    container: Container = Depends(get_container),
+    storage=Depends(get_storage),
+) -> dict:
+    """WHY a posting aligns with what has actually converted before (dark-engine
+    audit #39, "match to your past wins").
+
+    Cheap, deterministic, no-LLM lexical alignment (FR-LEARN-5) of the posting's
+    title/description against the SAME discrete converting-role signature that
+    already biases scoring behind the scenes (``ScoringService._signature_alignment``
+    -> ``AdvancedLearningService.text_alignment``) — this is a READ-ONLY companion
+    that explains the number (which facet/value pairs from your past wins actually
+    show up in this posting) rather than re-folding or double-counting a signal.
+    ``cold_start`` is True when nothing has converted yet, so the caller can render
+    "not enough data yet" instead of a misleading 0%. 404 when the posting does not
+    exist or belongs to a different campaign.
+    """
+    posting = storage.postings.get(posting_id)  # type: ignore[arg-type]
+    if posting is None or str(posting.campaign_id) != str(campaign_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such posting.")
+    model = container.learning_service.load_model(campaign_id)  # type: ignore[arg-type]
+    text = f"{posting.title or ''} {posting.description or ''}".strip()
+    result = container.advanced_learning_service.explain_text_alignment(model, text)
+    return {"campaign_id": campaign_id, "posting_id": posting_id, **result}
 
 
 @router.put("/{campaign_id}/exploration-budget")

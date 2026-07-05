@@ -179,6 +179,60 @@ def test_signature_summary_groups_by_facet(advanced, campaign):
     assert "remote" in summary.get("work_mode", [])
 
 
+# === "match to your past wins" explainability (dark-engine audit #39) ======
+@pytest.mark.unit
+def test_explain_text_alignment_cold_start_before_any_conversion(advanced, campaign):
+    """Nothing has converted yet -> cold_start, zero score, no matched evidence."""
+    model = LearningModel(campaign_id=campaign.id)
+    result = advanced.explain_text_alignment(model, "Senior Backend Engineer, remote")
+    assert result == {"score": 0.0, "cold_start": True, "matched": []}
+
+
+@pytest.mark.unit
+def test_explain_text_alignment_returns_matched_evidence_after_a_conversion(advanced, campaign):
+    """After a real conversion, a posting that reads like the winning role surfaces
+    WHICH facet/value pairs matched (not just a bare score) — the "why"."""
+    app = _approved_app(campaign.id, job_title="Senior Backend Engineer")
+    event = OutcomeEvent(id=OutcomeEventId(new_id()), application_id=app.id, type="submitted")
+    model = advanced.record_conversion(LearningModel(campaign_id=campaign.id), app, [event])
+
+    matching_text = "We are hiring a Senior Backend Engineer, fully remote."
+    result = advanced.explain_text_alignment(model, matching_text)
+    assert result["cold_start"] is False
+    assert result["score"] > 0.0
+    # Same score `text_alignment` would compute — a read-only companion, no
+    # re-fold, never double-counts.
+    assert result["score"] == advanced.text_alignment(model, matching_text)
+    facets = {m["facet"] for m in result["matched"]}
+    assert "role" in facets
+    assert "work_mode" in facets
+    # Ordered by weight (descending) — not just an unordered bag.
+    weights = [m["weight"] for m in result["matched"]]
+    assert weights == sorted(weights, reverse=True)
+
+
+@pytest.mark.unit
+def test_explain_text_alignment_no_evidence_for_an_unrelated_posting(advanced, campaign):
+    app = _approved_app(campaign.id, job_title="Senior Backend Engineer")
+    event = OutcomeEvent(id=OutcomeEventId(new_id()), application_id=app.id, type="submitted")
+    model = advanced.record_conversion(LearningModel(campaign_id=campaign.id), app, [event])
+
+    result = advanced.explain_text_alignment(model, "Pastry Chef, onsite bakery role")
+    assert result["cold_start"] is False
+    assert result["matched"] == []
+    assert result["score"] == 0.0
+
+
+@pytest.mark.unit
+def test_explain_text_alignment_empty_text_is_a_safe_no_op(advanced, campaign):
+    app = _approved_app(campaign.id, job_title="Senior Backend Engineer")
+    event = OutcomeEvent(id=OutcomeEventId(new_id()), application_id=app.id, type="submitted")
+    model = advanced.record_conversion(LearningModel(campaign_id=campaign.id), app, [event])
+    assert advanced.explain_text_alignment(model, "") == {
+        "score": 0.0, "cold_start": False, "matched": []
+    }
+
+
 # === cross-input folds (FR-LEARN-3) ========================================
 @pytest.mark.unit
 def test_fold_revision_feedback_learns_user_edits(advanced, campaign):

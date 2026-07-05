@@ -378,6 +378,44 @@ class AdvancedLearningService:
             return 0.0
         return max(0.0, min(1.0, hit / total))
 
+    def explain_text_alignment(self, model: LearningModel, text: str) -> dict:
+        """WHY a posting aligns with what has actually converted (dark-engine
+        audit #39, "match to your past wins").
+
+        ``text_alignment`` (above) already computes and biases scoring off this
+        SAME signature (``ScoringService._signature_alignment``) but only ever
+        returns a bare number folded into one rationale sentence — a user asking
+        "why does the agent like this job?" has no evidence to look at. This is a
+        READ-ONLY companion (never re-folds, never double-counts) that returns
+        the identical score PLUS which concrete facet/value pairs (role, skill,
+        seniority, work mode, comp band, source, résumé variant) that showed up in
+        past conversions are actually present in ``text``, ordered by how much
+        weight they carry — the "why" behind the number.
+
+        ``cold_start`` is True when nothing has converted yet (an empty discrete
+        signature), so the caller can render "not enough data yet" rather than a
+        misleading 0%.
+        """
+        sig = {k: v for k, v in model.converting_role_signature.items() if k != "vector"}
+        cold_start = not sig
+        if not text or not text.strip() or cold_start:
+            return {"score": 0.0, "cold_start": cold_start, "matched": []}
+        haystack = text.lower()
+        matched: list[dict] = []
+        for feat, weight in sig.items():
+            if ":" not in feat:
+                continue
+            facet, value = feat.split(":", 1)
+            value = value.strip()
+            if value and value.lower() in haystack:
+                matched.append({"facet": facet, "value": value, "weight": float(weight)})
+        matched.sort(key=lambda m: -m["weight"])
+        return {
+            "score": self.text_alignment(model, text),
+            "cold_start": False,
+            "matched": matched,
+        }
+
     def variant_alignment(self, model: LearningModel, variant_id) -> float:
         """Share of the discrete signature's weight carried by ``variant:{id}`` —
         i.e. how strongly THIS résumé variant is the one that past conversions used

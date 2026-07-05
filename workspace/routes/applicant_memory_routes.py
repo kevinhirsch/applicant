@@ -426,6 +426,30 @@ def setup_applicant_memory_routes() -> APIRouter:
             except EngineError as exc:
                 _raise_engine_http(exc)
 
+    # -- per-posting "match to your past wins" (dark-engine audit item 39) ----
+
+    @router.get("/alignment/{posting_id}")
+    async def posting_alignment(
+        posting_id: str, request: Request, campaign_id: Optional[str] = None
+    ) -> dict:
+        """WHY a posting aligns with the roles that have actually converted before.
+
+        A read-only, no-LLM explainer over the SAME discrete converting-role
+        signature that already biases scoring behind the scenes — this surfaces
+        the "why" (which facet/value pairs from past wins show up in this
+        posting) rather than a bare score, so a digest/review row can show its
+        work instead of just a percentage. ``cold_start: true`` means nothing
+        has converted yet, so the UI should render "not enough data yet" rather
+        than a misleading number.
+        """
+        require_user(request)
+        async with ApplicantEngineClient() as engine:
+            cid = await _resolve_campaign(engine, campaign_id)
+            try:
+                return await _alignment_get(engine, cid, posting_id)
+            except EngineError as exc:
+                _raise_engine_http(exc)
+
     # -- feedback history (what you've told it) ------------------------------
 
     @router.get("/feedback-history")
@@ -489,3 +513,12 @@ async def _criteria_put(engine: ApplicantEngineClient, campaign_id: str, changes
 async def _signature_get(engine: ApplicantEngineClient, campaign_id: str) -> Any:
     """Read the learned converting-role signature (criteria router, FR-LEARN-5)."""
     return await engine._request("GET", f"/api/criteria/{campaign_id}/signature")
+
+
+async def _alignment_get(
+    engine: ApplicantEngineClient, campaign_id: str, posting_id: str
+) -> Any:
+    """Read a posting's "match to your past wins" evidence (dark-engine audit #39)."""
+    return await engine._request(
+        "GET", f"/api/criteria/{campaign_id}/alignment/{posting_id}"
+    )

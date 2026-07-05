@@ -754,3 +754,100 @@ def test_engine_selection_follows_conversion_choice(storage):
     assert svc.tailoring_for(cid) is latex
     conv.reject(str(cid))
     assert svc.tailoring_for(cid) is docx
+
+
+# === degraded-draft flag reaches persisted material (dark-engine audit #40) ===
+# Regression for the "review UI presents a fallback draft as a real generation"
+# gap: MaterialService.last_generation_degraded / silent_failure_count already
+# existed but reached no persisted material and no router — a degraded cover
+# letter / screening essay / résumé variant looked identical to a real one once
+# read back from storage. These assert the sentinel actually survives the
+# storage round trip (not just the in-process property checked above).
+
+
+@pytest.mark.unit
+def test_cover_letter_marks_degraded_marker_in_provenance_on_ladder_exhaustion(storage):
+    svc = MaterialService(
+        storage, llm=_ExhaustingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, new_id(), "I built Python pipelines.", ["Python"], role_requires=True
+    )
+    assert doc is not None
+    assert any(p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in doc.provenance)
+    # The degraded sentinel is excluded from `_provenance_payload` at the router
+    # layer (tested there); here just confirm it round-trips through storage.
+    reloaded = storage.documents.get(doc.id)
+    assert any(
+        p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in reloaded.provenance
+    )
+
+
+@pytest.mark.unit
+def test_cover_letter_not_marked_degraded_on_real_generation(storage):
+    svc = MaterialService(
+        storage,
+        llm=_StartTierRecordingLLM(),
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_cover_letter(
+        cid, new_id(), "Python and SQL.", ["Python"], role_requires=True
+    )
+    assert doc is not None
+    assert not any(p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in doc.provenance)
+
+
+@pytest.mark.unit
+def test_screening_essay_marks_degraded_marker_on_ladder_exhaustion(storage):
+    svc = MaterialService(
+        storage, llm=_ExhaustingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "Why do you want to work here?", "I love building pipelines.", essay=True
+    )
+    assert any(p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in doc.provenance)
+
+
+@pytest.mark.unit
+def test_screening_factual_answer_never_marked_degraded_even_with_exhausted_llm(storage):
+    """Factual answers never call the LLM, so an exhausted ladder is irrelevant —
+    regression guard against the marker leaking onto a path that never generates."""
+    svc = MaterialService(
+        storage, llm=_ExhaustingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    doc = svc.generate_screening_answer(
+        cid, new_id(), "How many years of Python?", "Eight years.", essay=False
+    )
+    assert not any(p.kind == MaterialService.DEGRADED_PROVENANCE_KIND for p in doc.provenance)
+
+
+@pytest.mark.unit
+def test_resume_variant_fork_marks_degraded_in_fit_scores_on_ladder_exhaustion(storage):
+    svc = MaterialService(
+        storage, llm=_ExhaustingLLM(), resume_tailoring=LatexTailor(), embedding=LocalEmbedding()
+    )
+    cid = CampaignId(new_id())
+    result = svc.select_or_generate(cid, JobPostingId(new_id()), ["Kubernetes"], BASE)
+    assert result.generated is True
+    assert result.variant.fit_scores.get(MaterialService.DEGRADED_FIT_SCORE_KEY) is True
+    reloaded = storage.resume_variants.get(result.variant.id)
+    assert reloaded.fit_scores.get(MaterialService.DEGRADED_FIT_SCORE_KEY) is True
+
+
+@pytest.mark.unit
+def test_resume_variant_fork_not_marked_degraded_on_real_generation(storage):
+    svc = MaterialService(
+        storage,
+        llm=_StartTierRecordingLLM(),
+        resume_tailoring=LatexTailor(),
+        embedding=LocalEmbedding(),
+    )
+    cid = CampaignId(new_id())
+    result = svc.select_or_generate(cid, JobPostingId(new_id()), ["Kubernetes"], BASE)
+    assert result.generated is True
+    assert MaterialService.DEGRADED_FIT_SCORE_KEY not in result.variant.fit_scores

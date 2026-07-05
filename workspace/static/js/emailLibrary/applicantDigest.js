@@ -100,6 +100,8 @@ const _ICON_LINK =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 const _ICON_SEARCH =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+const _ICON_STAR =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 
 // --- feature gate ----------------------------------------------------------
 
@@ -537,8 +539,62 @@ export function buildDigestRow(row, ctx = {}) {
   research.addEventListener('click', () => _onResearch(getCampaignId(), row, research));
   actions.appendChild(research);
 
+  // "Match to your past wins" (dark-engine audit item 39): a read-only, no-LLM
+  // explainer over the SAME converting-role signature that already biases
+  // scoring behind the scenes — which of the roles/skills/seniority that
+  // actually converted before show up in THIS posting. Fetched on demand (a
+  // toggle, like a disclosure triangle) rather than eagerly for every row, so a
+  // digest full of postings never pays for N extra round trips it might not
+  // need. Only offered when the row carries a posting id to look up.
+  if (row.posting_id) {
+    const align = _el('button', {
+      cls: 'memory-toolbar-btn applicant-digest-alignment-btn',
+      html: `${_ICON_STAR}Past-wins match`,
+      title: 'See which of your past successful applications this role resembles',
+      attrs: { type: 'button' },
+    });
+    align.addEventListener('click', () => _onAlignment(getCampaignId(), row, align, card));
+    actions.appendChild(align);
+  }
+
   card.appendChild(actions);
   return card;
+}
+
+// Toggle a small evidence line under the card showing WHY a posting aligns
+// with what has actually converted before (dark-engine audit item 39). A
+// second click removes the line (cheap local computation either way, so
+// re-fetching on toggle-back-on is fine — no caching needed).
+async function _onAlignment(campaignId, row, btn, card) {
+  const existing = card.querySelector('.applicant-digest-alignment');
+  if (existing) { existing.remove(); return; }
+  if (!campaignId || !row.posting_id) { showToast('Pick a job search first.'); return; }
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = 'Checking…';
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/applicant/memory/alignment/${encodeURIComponent(row.posting_id)}` +
+        `?campaign_id=${encodeURIComponent(campaignId)}`,
+      { credentials: 'same-origin' },
+    );
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    const data = await res.json();
+    const line = _el('div', { cls: 'applicant-digest-alignment', style: 'font-size:11px;opacity:0.8;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);' });
+    if (data.cold_start || !Array.isArray(data.matched) || !data.matched.length) {
+      line.textContent = 'Not enough past wins yet to compare this role against.';
+    } else {
+      const pct = Math.round(Math.max(0, Math.min(1, Number(data.score) || 0)) * 100);
+      const bits = data.matched.slice(0, 6).map((m) => m.value).filter(Boolean);
+      line.textContent = `${pct}% match to past wins — shares ${bits.join(', ')} with roles you've landed before.`;
+    }
+    card.appendChild(line);
+  } catch (e) {
+    showToast(e.message || 'Could not check past-wins match right now.');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
 }
 
 // --- bulk selection (Email-panel only; Portal's embed doesn't opt in) ------

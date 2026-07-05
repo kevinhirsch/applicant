@@ -216,6 +216,42 @@ class MaterialService:
         """
         return self._last_degraded
 
+    #: Sentinel ``LearnedProvenance.kind`` marking a cover-letter/screening-answer
+    #: draft as a degraded deterministic fallback (dark-engine audit #40). Reuses
+    #: the EXISTING ``provenance`` JSON column (no schema migration) purely as a
+    #: durable carrier — it is NOT a learned item, so the review UI must render it
+    #: as a plain-language fallback warning and exclude it from the "What I drew
+    #: on" transparency list.
+    DEGRADED_PROVENANCE_KIND = "degraded"
+
+    #: Same idea, but for résumé variants: they persist via ``fit_scores`` (a free
+    #: JSON dict, no migration needed either) rather than ``provenance``.
+    DEGRADED_FIT_SCORE_KEY = "degraded"
+
+    _DEGRADED_LABEL = (
+        "The writing model was unavailable, so this draft used a basic template "
+        "instead of being tailored by AI. Review it closely before approving."
+    )
+
+    def _degraded_marker(self) -> LearnedProvenance:
+        """Build the provenance sentinel recording a degraded generation pass."""
+        return LearnedProvenance(
+            kind=self.DEGRADED_PROVENANCE_KIND, label=self._DEGRADED_LABEL, ref=""
+        )
+
+    def _with_degraded_marker(
+        self, provenance: tuple[LearnedProvenance, ...]
+    ) -> tuple[LearnedProvenance, ...]:
+        """Append the degraded sentinel to ``provenance`` iff the last pass degraded.
+
+        Called right after ``_generate_text`` (mirrors how ``_last_provenance`` is
+        read), so the flag is captured before the NEXT ``_generate_text`` call
+        resets it.
+        """
+        if self._last_degraded:
+            return (*provenance, self._degraded_marker())
+        return provenance
+
     # === engine selection (FR-RESUME-3a; respects Phase 0 ConversionService) ===
     def tailoring_for(self, campaign_id: CampaignId):
         """Return the tailoring adapter for the campaign's chosen engine.
@@ -763,6 +799,10 @@ class MaterialService:
         generated = self._generate_text(
             parent_source, jd_terms, kind="resume_variant", campaign_id=campaign_id
         )
+        # Dark-engine audit #40: capture the degradation flag right after the pass
+        # that set it (mirrors ``_last_provenance``), before it can be reset by any
+        # later ``_generate_text`` call.
+        degraded = self._last_degraded
         report = self.apply_post_filter(generated)
         # Fail-closed (NFR-TRUTH-1): the fabrication post-check runs BEFORE the variant
         # is persisted, so a forked variant whose generated body adds an unsupported
@@ -778,6 +818,10 @@ class MaterialService:
             parent_id=parent.id if parent else None,
             targeted_jd_signature=",".join(sorted(jd_terms)),
             approved=False,
+            # Dark-engine audit #40: flag a fallback-template draft so the review UI
+            # can warn the user instead of presenting it as a real AI tailoring pass.
+            # Stored in the existing ``fit_scores`` JSON dict (no migration needed).
+            fit_scores=({self.DEGRADED_FIT_SCORE_KEY: True} if degraded else {}),
         )
         self._storage.resume_variants.add(new_variant)
         self._storage.commit()
@@ -1023,7 +1067,10 @@ class MaterialService:
             application_id,
             DocumentType.COVER_LETTER,
             report.text,
-            provenance=self._last_provenance,
+            # Dark-engine audit #40: append the degraded-fallback sentinel (no-op
+            # tuple concat when the LLM ladder did not exhaust) so the review UI can
+            # flag this draft as a basic template rather than a real AI tailoring.
+            provenance=self._with_degraded_marker(self._last_provenance),
             verify_source=check_source,
             prose=True,
         )
@@ -1065,7 +1112,11 @@ class MaterialService:
             answer = self._generate_text(
                 true_source, [question], kind="essay_answer", campaign_id=campaign_id
             )
-            provenance = self._last_provenance
+            # Dark-engine audit #40: same degraded-fallback sentinel as the cover
+            # letter / résumé paths — the essay path is the only screening-answer
+            # kind that actually calls the LLM, so it is the only one that can
+            # degrade.
+            provenance = self._with_degraded_marker(self._last_provenance)
         elif kind is ScreeningKind.SENSITIVE:
             # EEO/demographic: no fabrication, no AI-guess, no PII leak. The answer
             # comes ONLY from an explicit stored EEO answer; absent that, decline.

@@ -159,6 +159,35 @@ def test_application_documents_passes_provenance_through(monkeypatch):
     assert {p["kind"] for p in prov} == {"memory", "playbook"}
 
 
+def test_application_documents_passes_degraded_flag_through(monkeypatch):
+    """The degraded-draft flag (dark-engine audit #40) rides on each material and
+    reaches the review UI unchanged through the proxy — a fallback-template draft
+    must not silently look like a real generation once it crosses the wire."""
+    payload = {
+        "application_id": "app-7",
+        "items": [
+            {
+                "id": "doc-1",
+                "type": "cover_letter",
+                "approved": False,
+                "content": "Dear hiring team,",
+                "provenance": [],
+                "degraded": True,
+                "degraded_reason": "The writing model was unavailable, so this draft "
+                "used a basic template instead of being tailored by AI.",
+            }
+        ],
+        "all_approved": False,
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/applications/app-7")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    item = resp.json()["items"][0]
+    assert item["degraded"] is True
+    assert "basic template" in item["degraded_reason"]
+
+
 def test_variant_library_forwards_campaign_and_passes_through(monkeypatch):
     payload = {"campaign_id": "camp-3", "variants": [{"variant_id": "v1", "is_root": True}]}
     _patch_engine(monkeypatch, result=payload)
@@ -166,6 +195,23 @@ def test_variant_library_forwards_campaign_and_passes_through(monkeypatch):
     assert resp.status_code == 200
     assert resp.json() == payload
     assert _FakeEngine.last_call == ("list_variants", ("camp-3",))
+
+
+def test_variant_library_passes_degraded_flag_through(monkeypatch):
+    """A résumé variant's degraded-fallback flag (dark-engine audit #40, carried
+    in the engine's ``fit_scores``/normalized top-level ``degraded``) survives
+    the proxy unchanged."""
+    payload = {
+        "campaign_id": "camp-3",
+        "variants": [
+            {"variant_id": "v1", "is_root": True, "fit_scores": {"degraded": True}, "degraded": True},
+        ],
+    }
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/documents/variants/camp-3")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+    assert resp.json()["variants"][0]["degraded"] is True
 
 
 def test_variant_library_requires_auth(monkeypatch):

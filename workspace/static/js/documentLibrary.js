@@ -1857,6 +1857,32 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return text;
     }
 
+    // Degraded-draft warning (dark-engine audit item 40): ``MaterialService``
+    // silently falls back to a deterministic template when the writing model's
+    // tier ladder is exhausted — the engine now flags that (``degraded`` +
+    // ``degraded_reason`` on documents; ``degraded`` inside ``fit_scores`` for
+    // résumé variants), but until now the review surface presented the fallback
+    // draft exactly like a real AI-tailored one. Reuses the SAME warning tone as
+    // the scheduler stall line in applicantDebug.js (``var(--orange, #ffb86c)``)
+    // rather than inventing a new color. Returns null (render nothing) when the
+    // draft is not degraded.
+    function _applicantDegradedBadge(reason) {
+      if (!reason) return null;
+      const badge = document.createElement('div');
+      badge.className = 'doclib-applicant-degraded';
+      badge.style.cssText = 'font-size:11px;padding:4px 8px;border-radius:6px;' +
+        'border:1px solid var(--orange, #ffb86c);color:var(--orange, #ffb86c);' +
+        'opacity:0.95;display:flex;align-items:center;gap:5px;';
+      badge.title = reason;
+      badge.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
+          '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>' +
+          '<line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+        '<span>Fallback draft — model was unavailable, review closely</span>';
+      return badge;
+    }
+
     // Ancestry breadcrumb (dark-engine audit item 50): the engine's
     // ``MaterialService.lineage`` walk, root-first, turned into a readable trail
     // like "Original -> Tailored for <job> -> this version" so a user can see how
@@ -2198,11 +2224,24 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           ? `<div class="memory-desc" style="opacity:0.65;margin-top:2px;font-size:11px;" ` +
               `title="How this tailored resume was derived, oldest first.">${breadcrumb}</div>`
           : '';
+        // Degraded-draft warning (dark-engine audit item 40): the engine flags a
+        // résumé variant that fell back to a deterministic template (the writing
+        // model's tier ladder was exhausted) via ``degraded`` — same warning tone
+        // as the card-level badge in ``_applicantDegradedBadge`` above, in the
+        // string-template shape this list already uses.
+        const degradedHtml = v.degraded
+          ? `<div style="font-size:11px;margin-top:4px;padding:3px 8px;border-radius:6px;` +
+              `border:1px solid var(--orange, #ffb86c);color:var(--orange, #ffb86c);` +
+              `display:inline-block;" title="This tailored resume used a basic template ` +
+              `because the writing model was unavailable — review it closely.">` +
+              `Fallback draft — model was unavailable</div>`
+          : '';
         return `<div class="admin-card" style="margin-top:6px;">` +
           `<div style="font-weight:600;">${esc(v.is_root ? 'Base resume' : id)}</div>` +
           `<div class="memory-desc" style="opacity:0.7;margin-top:2px;">` +
             `${esc(scoreText)} · ${esc(approved)}${depth}${from}</div>` +
           breadcrumbHtml +
+          degradedHtml +
         `</div>`;
       }).join('');
     }
@@ -2396,6 +2435,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           `title="${approved ? 'Approved and ready to use.' : 'Not approved yet — review it before it is sent.'}">` +
           `${approved ? 'Approved' : 'Draft'}</span>`;
       card.appendChild(header);
+
+      // Degraded-draft warning (dark-engine audit item 40) — placed right under
+      // the header, above the preview, so it is the first thing a reviewer sees
+      // on a fallback-template draft rather than approving it blind.
+      const degradedBadge = _applicantDegradedBadge(item.degraded ? (item.degraded_reason || 'This draft used a fallback template.') : '');
+      if (degradedBadge) card.appendChild(degradedBadge);
 
       if (preview) {
         const body = document.createElement('div');

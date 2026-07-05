@@ -404,6 +404,62 @@ def test_get_signature_uses_explicit_campaign():
 
 
 # ---------------------------------------------------------------------------
+# per-posting "match to your past wins" alignment (dark-engine audit #39)
+# ---------------------------------------------------------------------------
+
+
+def test_get_alignment_hits_engine_and_passes_through():
+    def handler(request):
+        if (
+            request.url.path == "/api/criteria/camp-1/alignment/posting-1"
+            and request.method == "GET"
+        ):
+            return httpx.Response(200, json={
+                "campaign_id": "camp-1",
+                "posting_id": "posting-1",
+                "score": 0.75,
+                "cold_start": False,
+                "matched": [{"facet": "role", "value": "backend engineer", "weight": 1.0}],
+            })
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/alignment/posting-1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["score"] == 0.75
+    assert body["cold_start"] is False
+    assert body["matched"][0]["facet"] == "role"
+
+
+def test_get_alignment_uses_explicit_campaign():
+    def handler(request):
+        if request.url.path == "/api/criteria/c9/alignment/posting-9" and request.method == "GET":
+            return httpx.Response(200, json={
+                "campaign_id": "c9", "posting_id": "posting-9",
+                "score": 0.0, "cold_start": True, "matched": [],
+            })
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/alignment/posting-9?campaign_id=c9")
+    assert resp.status_code == 200
+    assert resp.json()["campaign_id"] == "c9"
+    assert resp.json()["cold_start"] is True
+
+
+def test_get_alignment_forwards_engine_404():
+    def handler(request):
+        if request.url.path == "/api/criteria/camp-1/alignment/no-such-posting":
+            return httpx.Response(404, json={"detail": "No such posting."})
+        return _route(request, {})
+
+    client = _make_client(handler)
+    resp = client.get("/api/applicant/memory/alignment/no-such-posting")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # error translation
 # ---------------------------------------------------------------------------
 
