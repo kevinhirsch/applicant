@@ -6,6 +6,40 @@ from fastapi import Request, HTTPException
 
 log = logging.getLogger(__name__)
 
+#: Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
+#: nginx, Caddy, Tailscale Funnel, ...). Such a proxy/tunnel connects to this
+#: app FROM loopback, so a bare ``client.host in ("127.0.0.1", "::1")`` check
+#: would let a remote, unauthenticated caller inherit local-operator trust
+#: during unconfigured/first-run mode. Mirrors ``workspace/app.py``'s
+#: ``_is_trusted_loopback`` (and ``applicant_ops_routes.py``'s copy of it) —
+#: the same class of forwarded-loopback spoofing every loopback-trust check
+#: in this codebase must refuse to fail open on.
+_PROXY_FWD_HEADERS = (
+    "cf-connecting-ip", "cf-ray", "cf-visitor",
+    "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+)
+
+
+def is_trusted_loopback(request: Request) -> bool:
+    """True ONLY for a DIRECT loopback connection with no proxy/tunnel
+    forwarding headers present. A bare ``client.host in ("127.0.0.1", "::1")``
+    check is unsafe behind a Cloudflare tunnel / reverse proxy: those connect
+    to the app FROM loopback, so a remote visitor would otherwise inherit
+    local trust. Genuine in-process/local-operator loopback calls carry none
+    of these headers, so they still qualify."""
+    client = getattr(request, "client", None)
+    host = (getattr(client, "host", "") if client else "") or ""
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        return False
+    # A real Request always has a `.headers` mapping; fall back to an empty
+    # one for any minimal test double that doesn't set one (no headers means
+    # nothing to disqualify the loopback trust on).
+    headers = getattr(request, "headers", None) or {}
+    for header in _PROXY_FWD_HEADERS:
+        if headers.get(header):
+            return False
+    return True
+
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
@@ -16,7 +50,9 @@ def require_user(request: Request) -> str:
     """FastAPI dependency: reject unauthenticated callers, even if upstream
     middleware was bypassed (LOCALHOST_BYPASS, AUTH_ENABLED=false, SSRF from
     a sibling service). Returns the resolved username, or "" in unconfigured
-    first-run mode when the caller is on loopback.
+    first-run mode when the caller is on a DIRECT loopback connection (not one
+    tunneled/forwarded through a proxy that merely connects to us from
+    loopback, e.g. cloudflared — see :func:`is_trusted_loopback`).
 
     Use this on routes that touch user data so middleware misconfig can't
     open them up.
@@ -27,10 +63,8 @@ def require_user(request: Request) -> str:
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
         raise HTTPException(401, "Not authenticated")
-    # Unconfigured / first-run mode: only allow loopback callers.
-    client = getattr(request, "client", None)
-    host = (client.host if client else "") or ""
-    if host in ("127.0.0.1", "::1", "localhost"):
+    # Unconfigured / first-run mode: only allow a DIRECT loopback caller.
+    if is_trusted_loopback(request):
         return ""
     raise HTTPException(401, "Not authenticated")
 

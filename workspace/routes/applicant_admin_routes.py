@@ -48,7 +48,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.applicant_engine import ApplicantEngineClient, EngineError
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import get_current_user, is_trusted_loopback, require_user
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +84,13 @@ def _require_admin(request: Request) -> str:
         # surface must still be reachable only from the box itself, not from the
         # network (#228). Unlike require_user, the old gate returned "" for ANY
         # host, so a remote unauthenticated caller passed during setup. Allow the
-        # lone owner only from loopback; refuse a remote unauthenticated caller.
+        # lone owner only from a DIRECT loopback connection — never one merely
+        # tunneled/forwarded through something that itself connects to us from
+        # loopback (cloudflared, a reverse proxy) — see
+        # ``src.auth_helpers.is_trusted_loopback``.
         if owner:
             return owner
-        client = getattr(request, "client", None)
-        host = (getattr(client, "host", "") if client else "") or ""
-        if host in ("127.0.0.1", "::1", "localhost"):
+        if is_trusted_loopback(request):
             return ""
         raise HTTPException(status_code=401, detail="Not authenticated")
 
