@@ -32,10 +32,13 @@ tested; swapping in the real Playwright page-source is the only change to go liv
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from applicant.adapters.browser.ats import SCREENING_ESSAY, SCREENING_FACTUAL
 from applicant.core.entities.application import Application
@@ -100,6 +103,80 @@ def ping_dedup_key(application_id, kind: str, _suffix: str | None = None) -> str
 #: trivial L1 rung handles poorly, so the ladder STARTS at L2 (it still climbs on
 #: low confidence / overflow). This is the spec's per-task starting tier in action.
 FIELD_MAPPING_START_TIER = 2
+
+
+#: dark-engine audit #58 — Plan-as-Data artifacts (the planner's typed GOTO/FIND/
+#: FILL/... op sequence, ``core.entities.plan.Plan``) are computed per page
+#: whenever ``PREFILL_USE_PLANNER`` is on, but were never persisted anywhere a
+#: human could review them (screenshots/workflow steps already are; the plan
+#: itself was not). This is a bare MODULE-level store — not an instance attribute,
+#: not container-wired — so it survives the scheduler's per-tick PrefillService
+#: rebuild (``container._build_tick_services``) without needing a new
+#: constructor-injected ledger: the same "process-lived, not on ``self``" rule
+#: ``ResumeLedger`` follows (see agent_loop.py), just without the container.py
+#: wiring step. Deliberately in-memory only (not a new DB table/migration): this
+#: is read-only observability data, never used to make a safety decision, so
+#: losing it on a process restart is an acceptable trade for staying additive.
+#: Keyed by ``str(application_id)`` -> a capped list of the most recent per-page
+#: plans, oldest first.
+_PLAN_HISTORY_LOCK = threading.Lock()
+_PLAN_HISTORY: dict[str, list[dict]] = {}
+#: cap per application so a long-running loop never grows this unbounded.
+_PLAN_HISTORY_MAX_PER_APP = 5
+
+
+def _serialize_plan_op(op) -> dict:
+    """Plain JSON-able dict for one typed :class:`~applicant.core.entities.plan.Op`.
+
+    Read-only display shape only — this value is never fed back into planning or
+    execution. ``kind`` is normalised to its plain string value (``OpKind`` is a
+    ``str, Enum`` so this is also what a raw op already serializes to); empty/unset
+    fields are dropped so e.g. a ``GotoOp`` doesn't carry a bunch of blank
+    fill/select-only keys.
+    """
+    try:
+        raw = dataclasses.asdict(op)
+    except TypeError:
+        return {"kind": getattr(getattr(op, "kind", None), "value", None)}
+    kind = raw.pop("kind", None)
+    out: dict = {"kind": kind.value if hasattr(kind, "value") else kind}
+    out.update({k: v for k, v in raw.items() if v not in (None, "")})
+    return out
+
+
+def record_plan_history(application_id, url: str, plan) -> None:
+    """Record the ops of one Plan executed/attempted for ``application_id`` (#58).
+
+    Best-effort: any failure here is swallowed rather than allowed to break the
+    prefill loop, exactly like the other observability recorders in this module
+    (``_induce_routine`` et al.).
+    """
+    try:
+        entry = {
+            "url": url,
+            "captured_at": datetime.now(UTC).isoformat(),
+            "ops": [_serialize_plan_op(op) for op in plan],
+        }
+    except Exception:  # noqa: BLE001 — observability must never break the loop
+        log.debug("record_plan_history failed for %s", application_id, exc_info=True)
+        return
+    key = str(application_id)
+    with _PLAN_HISTORY_LOCK:
+        history = _PLAN_HISTORY.setdefault(key, [])
+        history.append(entry)
+        if len(history) > _PLAN_HISTORY_MAX_PER_APP:
+            del history[: len(history) - _PLAN_HISTORY_MAX_PER_APP]
+
+
+def get_plan_history(application_id) -> list[dict]:
+    """The recent Plan-as-Data op-sequences recorded for ``application_id`` (#58).
+
+    Read-only (returns a shallow copy so a caller can't mutate the live ledger);
+    empty when the planner has never run for this application (the default —
+    ``PREFILL_USE_PLANNER`` is off by default).
+    """
+    with _PLAN_HISTORY_LOCK:
+        return list(_PLAN_HISTORY.get(str(application_id), []))
 
 
 @dataclass
@@ -795,6 +872,12 @@ class PrefillService:
                     aid, state.url, len(errors), errors[0],
                 )
                 return self._fill_current_page(app, attributes, result)
+
+            # dark-engine audit #58: record the validated op-sequence this attempt
+            # is ABOUT to run, so "the plan I followed" reflects what actually
+            # executed (including a reflective re-plan's replacement plan), not
+            # just what the planner first proposed.
+            record_plan_history(aid, state.url, plan)
 
             fill_values = resolve_fill_values(plan, attribute_cloud)
             terminal, reflection, induced_steps = self._run_plan_ops(

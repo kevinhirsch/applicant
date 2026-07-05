@@ -472,9 +472,26 @@ function _runTime(run) {
   return run.created_at || run.finished_at || run.started_at || run.last_run_at || run.timestamp || run.ts || '';
 }
 
+// Dark-engine audit #59: the engine's ``AgentRun``/intent-sentence history
+// (``core/entities/agent_run.py``, persisted with a timestamp per run) is
+// real history, not just "the latest line" -- but this page previously
+// rendered ``items`` exactly as the engine returned them: OLDEST first,
+// unbounded (a campaign that has run for weeks could return thousands of
+// rows). That defeated the "Recently I…" heading and buried the actual
+// recent trail at the bottom of a very long scroll. The engine's own ordering
+// contract is oldest-first (see ``AgentRunRepository.list_for_campaign``,
+// contract-tested) -- every consumer is expected to reverse/cap client-side,
+// exactly like the sibling admin debug "Recent runs" mini-table already does
+// (dark-engine audit #75, ``applicantDebug.js`` ``_recentRunsCard``:
+// "items.slice(-8).reverse()"). This is that same fix for the dedicated
+// Activity page's fuller "intent timeline": the most recent
+// ``_RECENT_RUNS_CAP`` runs, newest first, in a short scrollable list.
+const _RECENT_RUNS_CAP = 25;
+
 function _renderRuns(host, items) {
   if (!items.length) { _renderEmpty(host); return; }
-  const rows = items.map((run) => {
+  const recent = items.slice(-_RECENT_RUNS_CAP).reverse();
+  const rows = recent.map((run) => {
     const intent = run.intent || run.summary || 'Worked on your job search';
     const summary = _statSummary(run.stats);
     const when = _relTime(_runTime(run));

@@ -27,6 +27,7 @@ from applicant.application.services.post_submission_service import (
     POSITIVE_SIGNAL_TYPES,
     TRACKER_STATES,
 )
+from applicant.application.services.prefill_service import get_plan_history
 from applicant.core.ids import ApplicationId, CampaignId
 from applicant.observability.logging import recent_logs
 
@@ -93,6 +94,23 @@ class AdminQueryService:
                     # row is gone) -- never fabricated.
                     "salary": posting.salary if posting else None,
                     "location": posting.location if posting else None,
+                    # dark-engine audit #57: the application's own live
+                    # sandbox/takeover session URL (``Application.
+                    # sandbox_session_url``) was stored but never reached any
+                    # rendered payload — the remote lane rebuilds its own
+                    # session list from ``/sessions`` instead of reading this
+                    # field. ``None``/empty when there is no live session for
+                    # this application (a submitted/archived application, or
+                    # one that never reached a browser session).
+                    "sandbox_session_url": a.sandbox_session_url or None,
+                    # dark-engine audit #58: the Plan-as-Data op-sequence(s)
+                    # (GOTO/FIND/FILL/... ) the pre-fill planner emitted for
+                    # this application, when ``PREFILL_USE_PLANNER`` is on
+                    # (default off) -- read from the process-lived, in-memory
+                    # ledger ``PrefillService`` writes to per page
+                    # (``record_plan_history``). Empty list when the planner
+                    # never ran for this application (the common case today).
+                    "plan_ops": get_plan_history(a.id),
                 }
             )
         return rows

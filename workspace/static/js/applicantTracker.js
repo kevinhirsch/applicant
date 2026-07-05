@@ -1218,6 +1218,74 @@ function _attributesUsedHTML(attributesUsed) {
   )).join('')}</ul>`;
 }
 
+// A direct link into the application's own LIVE sandbox/takeover session
+// (dark-engine audit #57): ``Application.sandbox_session_url`` was recorded on
+// every in-flight application but nothing read it -- the remote/takeover lane
+// rebuilt its own session list from ``/sessions`` instead of this field.
+// Omitted entirely (no empty/dead link) once there is no live session for
+// this application (already submitted/archived, or never reached a browser
+// session) -- never a fabricated link.
+function _sandboxSessionHTML(url) {
+  const href = (url == null) ? '' : String(url).trim();
+  if (!href) return '';
+  return `
+    <div style="margin-top:6px;">
+      <a class="cal-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer"
+         style="display:inline-block;text-decoration:none;font-size:11px;"
+         title="Open the live browser session the assistant is using for this application">
+        Open live session
+      </a>
+    </div>`;
+}
+
+// Plain-language verb-phrase for one Plan-as-Data op (dark-engine audit #58) --
+// the typed GOTO/FIND/FILL/... vocabulary is engine-internal; the owner sees
+// "Went to / Filled / Selected / ..." instead of raw op-kind strings.
+const _PLAN_OP_LABEL = {
+  goto: 'Went to the page',
+  find: 'Located a field',
+  fill: 'Filled in a field',
+  select: 'Chose an option',
+  click: 'Clicked a button',
+  upload: 'Attached a document',
+  extract: 'Read a value from the page',
+  assert: 'Checked the page state',
+  wait: 'Waited for the page',
+  stop: 'Stopped for your review',
+};
+
+function _planOpLabel(op) {
+  const kind = String((op && op.kind) || '').toLowerCase();
+  const base = _PLAN_OP_LABEL[kind] || 'Took a step';
+  const detail = op.attribute_id || op.ref || op.url || op.reason || op.document_id || '';
+  return detail ? `${base} (${_prettyAttrLabel(String(detail))})` : base;
+}
+
+// The "what the agent did on this form" disclosure (dark-engine audit #58):
+// the pre-fill planner's stored op-sequence(s) (``plan_ops``, newest last),
+// read-only -- this never re-executes anything, it just narrates what
+// already ran. Absent/empty (the common case -- ``PREFILL_USE_PLANNER`` is
+// off by default) renders nothing, same "no dead UI" convention as the rest
+// of this drill-down.
+function _planOpsHTML(planOps) {
+  const plans = Array.isArray(planOps) ? planOps : [];
+  if (!plans.length) return '';
+  const pages = plans.map((p) => {
+    const ops = Array.isArray(p && p.ops) ? p.ops : [];
+    if (!ops.length) return '';
+    const steps = ops.map((op) => `<li>${esc(_planOpLabel(op))}</li>`).join('');
+    const pageUrl = p && p.url ? esc(String(p.url)) : 'this page';
+    return `<div style="margin-top:4px;"><div style="opacity:0.7;">${pageUrl}</div><ol style="margin:2px 0 0 16px;padding:0;">${steps}</ol></div>`;
+  }).filter(Boolean).join('');
+  if (!pages) return '';
+  const totalSteps = plans.reduce((n, p) => n + (Array.isArray(p && p.ops) ? p.ops.length : 0), 0);
+  return `
+    <details style="margin-top:6px;">
+      <summary style="cursor:pointer;opacity:0.7;list-style:revert;">What the agent did on this form (${totalSteps} step${totalSteps === 1 ? '' : 's'})</summary>
+      <div style="margin:6px 0 0;max-height:220px;overflow-y:auto;">${pages}</div>
+    </details>`;
+}
+
 function _renderHistoryBody(body, data) {
   if (!data || data.found === false) {
     body.textContent = 'No history recorded for this application yet.';
@@ -1243,7 +1311,9 @@ function _renderHistoryBody(body, data) {
     <div>Salary: ${salary}</div>
     <div>Screenshots captured: ${esc(String(shots))}</div>
     <div style="margin-top:4px;">Outcomes:${timeline}</div>
-    <div style="margin-top:4px;">Data used on this application:${_attributesUsedHTML(data.attributes_used)}</div>`;
+    <div style="margin-top:4px;">Data used on this application:${_attributesUsedHTML(data.attributes_used)}</div>
+    ${_sandboxSessionHTML(data.sandbox_session_url)}
+    ${_planOpsHTML(data.plan_ops)}`;
 }
 
 export async function openApplicantTracker() {
