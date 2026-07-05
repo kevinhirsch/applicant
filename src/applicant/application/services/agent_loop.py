@@ -61,6 +61,12 @@ _THIN_SOURCE_CHARS = 400
 #: every backoff window forever (24/7 robustness).
 _RESUME_FAILURE_CAP = 5
 
+#: Consecutive failed APPROVED-application pipeline starts after which the loop
+#: STOPS retrying that application and surfaces it to the operator once, instead of
+#: retrying a permanently-poison posting forever (lens 04 #32). Mirrors
+#: ``_RESUME_FAILURE_CAP``/``ResumeLedger`` above.
+_APPROVAL_START_FAILURE_CAP = 5
+
 
 @dataclass
 class ResumeLedger:
@@ -80,6 +86,44 @@ class ResumeLedger:
     failures: dict[str, int] = field(default_factory=dict)
     giveup: set[str] = field(default_factory=set)
     lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+@dataclass
+class ApprovalStartLedger:
+    """Cross-tick bookkeeping for failures starting the pipeline on an APPROVED
+    application (lens 04 #31/#32).
+
+    ``_process_approvals`` drives every APPROVED application's pipeline start each
+    tick. Before this ledger, a start that raised (a poison posting — a bad context,
+    a permanently-failing adapter call, ...) propagated straight out of
+    ``_process_approvals``, which (a) aborted the rest of THIS tick's approved batch
+    (siblings after the poison one in iteration order never got attempted — #31) and
+    (b) since the application row is left APPROVED, was retried from scratch on every
+    later tick forever with no give-up (#32).
+
+    Exactly like ``ResumeLedger``, the scheduler rebuilds a fresh ``AgentLoop`` every
+    tick (per-tick Session isolation, ``container._build_tick_services``), so the
+    failure streak + give-up set must live OUTSIDE the loop instance or they would
+    reset every tick and the cap would never trip. Unlike ``ResumeLedger`` /
+    ``DigestLedger`` / ``PresubmitBlockLedger`` (each explicitly constructed once and
+    injected into every per-tick loop by the container), no explicit instance is
+    injected here yet — ``AgentLoop.__init__`` falls back to the single
+    process-lived ``_DEFAULT_APPROVAL_START_LEDGER`` module object below when none is
+    given, so every loop built in the process (the shared one and every per-tick
+    rebuild) shares the SAME ledger without requiring a container change. Callers
+    that want an isolated ledger (tests, or once the container is updated to inject
+    its own like the other ledgers) may still pass one explicitly.
+    """
+
+    failures: dict[str, int] = field(default_factory=dict)
+    giveup: set[str] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
+#: The process-lived default described in ``ApprovalStartLedger`` above. Module-level
+#: (not per-instance) so it survives every ``AgentLoop`` rebuild even without an
+#: explicit ``approval_start_ledger=`` injection at the call site.
+_DEFAULT_APPROVAL_START_LEDGER = ApprovalStartLedger()
 
 
 @dataclass
@@ -193,6 +237,9 @@ class AgentLoop:
             "_presubmit_block_ledger",
             "_presubmit_blocks",
             "_presubmit_overridden",
+            "_approval_start_ledger",
+            "_approval_start_failures",
+            "_approval_start_giveup",
         }
     )
 
@@ -253,6 +300,12 @@ class AgentLoop:
         # dark-engine audit #61: process-lived ledger of pre-submit safety blocks
         # (reason + override), shared across per-tick rebuilds by the container.
         presubmit_block_ledger: PresubmitBlockLedger | None = None,
+        # lens 04 #31/#32: process-lived ledger of APPROVED-application pipeline-start
+        # failures (streak + give-up), shared across per-tick rebuilds. Defaults to the
+        # module-level ``_DEFAULT_APPROVAL_START_LEDGER`` (see ``ApprovalStartLedger``)
+        # rather than a fresh per-call instance, so it stays cross-tick-persistent even
+        # where the container does not (yet) inject an explicit one.
+        approval_start_ledger: ApprovalStartLedger | None = None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -355,6 +408,21 @@ class AgentLoop:
         )
         self._presubmit_blocks = self._presubmit_block_ledger.blocks
         self._presubmit_overridden = self._presubmit_block_ledger.overridden
+        # lens 04 #31/#32: APPROVED-application start-failure bookkeeping lives in a
+        # ledger that OUTLIVES this instance for the same reason resume/digest/
+        # presubmit bookkeeping does -- the scheduler rebuilds the loop every tick, so
+        # a per-instance dict would lose the failure streak (and the give-up flag) the
+        # moment the next tick's fresh instance runs, letting a persistently-failing
+        # posting be retried forever. When no ledger is injected explicitly, every
+        # loop in the process shares ``_DEFAULT_APPROVAL_START_LEDGER`` so this is
+        # cross-tick-persistent by default (see ``ApprovalStartLedger`` docstring).
+        self._approval_start_ledger = (
+            approval_start_ledger
+            if approval_start_ledger is not None
+            else _DEFAULT_APPROVAL_START_LEDGER
+        )
+        self._approval_start_failures = self._approval_start_ledger.failures
+        self._approval_start_giveup = self._approval_start_ledger.giveup
 
     # --- daily throughput ledger (FR-AGENT-1) -----------------------------
     def acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
@@ -628,6 +696,15 @@ class AgentLoop:
             # Only act on applications that have not yet started the pipeline.
             if app.status is not ApplicationState.APPROVED:
                 continue
+            # lens 04 #32: an application whose pipeline start has failed
+            # ``_APPROVAL_START_FAILURE_CAP`` times in a row has already been
+            # surfaced to the operator once (see ``_record_approval_start_failure``)
+            # and is given up on -- skip it silently rather than retrying a
+            # permanently-poison posting every tick forever.
+            with self._approval_start_ledger.lock:
+                given_up_on_start = str(app.id) in self._approval_start_giveup
+            if given_up_on_start:
+                continue
             # G07: run pre-submit safety checks before starting the pipeline. When a
             # check blocks, PERSIST the reason (dark-engine audit #61 -- previously
             # only ``log.info`` recorded it, so the posting sat APPROVED forever with
@@ -691,13 +768,77 @@ class AgentLoop:
                         except PresubmitBlock as exc:
                             self._record_presubmit_block(app, posting, exc, now)
                             continue
+            # lens 04 #31/#32: a start that raises must not be fatal to the rest of
+            # this tick's approved batch -- mirror _resume_in_flight's per-app
+            # isolation (log + continue) rather than letting the exception propagate
+            # out of this loop and strand every approved posting still waiting its
+            # turn. _start_pipeline already released the sandbox slot + tore down the
+            # session before re-raising (FR-DUR-2/4); we just isolate it here and
+            # count it toward the give-up cap so a permanently-poison posting stops
+            # being retried forever instead of failing (and blocking siblings) every
+            # tick.
+            try:
+                started = self._start_pipeline(campaign, app, result)
+            except Exception as exc:
+                log.warning(
+                    "approval_start_exception_isolated",
+                    application_id=str(app.id),
+                    error=str(exc),
+                )
+                self._record_approval_start_failure(app.id)
+                continue
             # #9: record the daily-acted budget ONLY after the pipeline actually
             # started. _start_pipeline returns False when admission is deferred (full
             # sandbox capacity); counting before would burn budget for work that never
             # started and could wrongly exhaust the day's cap.
-            if self._start_pipeline(campaign, app, result):
+            if started:
                 self._record_acted(campaign.id, now, 1)
+                # A clean start clears the failure streak (the app made progress).
+                self._clear_approval_start_failure(app.id)
         result.budget_remaining = self.remaining_budget(campaign, now)
+
+    def _record_approval_start_failure(self, application_id: ApplicationId) -> None:
+        """Count a failed pipeline start; after the cap, stop retrying + alert once.
+
+        Mirrors ``_record_resume_failure``: without this a permanently-failing
+        APPROVED application (a poison posting whose start always raises -- a
+        corrupt context, an adapter that can never succeed, ...) would be retried
+        from scratch every tick forever, logging on every pass and never reaching
+        the operator (lens 04 #32). At the cap we give up retrying it and surface
+        ONE deduped error.
+        """
+        key = str(application_id)
+        with self._approval_start_ledger.lock:
+            n = self._approval_start_failures.get(key, 0) + 1
+            self._approval_start_failures[key] = n
+            capped = n >= _APPROVAL_START_FAILURE_CAP and key not in self._approval_start_giveup
+            if capped:
+                self._approval_start_giveup.add(key)
+        if not capped:
+            log.warning("approval_start_failed", application_id=key, failures=n)
+            return
+        log.error("approval_start_giving_up", application_id=key, failures=n)
+        # Surface it to the operator once (deduped), so a stuck approval becomes a
+        # visible action item instead of silent churn every tick. Never let this
+        # break the tick.
+        if self._notifications is not None:
+            try:
+                self._notifications.notify_error(
+                    title="An application needs a look",
+                    body=(
+                        "Applicant couldn't start one of your approved applications "
+                        f"after {n} tries and has paused work on it. Open Activity to "
+                        "review it."
+                    ),
+                    dedup_key=f"stuck_approval_start:{key}",
+                )
+            except Exception:  # pragma: no cover - notification must never break the loop
+                pass
+
+    def _clear_approval_start_failure(self, application_id: ApplicationId) -> None:
+        """Clear a start-failure streak after a clean start (mirrors resume's clear)."""
+        with self._approval_start_ledger.lock:
+            self._approval_start_failures.pop(str(application_id), None)
 
     def _start_pipeline(self, campaign, app: Application, result: TickResult) -> bool:
         """Start the durable pipeline for ``app``. Returns True iff it actually started.
