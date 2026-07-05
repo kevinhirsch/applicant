@@ -113,6 +113,12 @@ class ApprovalStartLedger:
     rebuild) shares the SAME ledger without requiring a container change. Callers
     that want an isolated ledger (tests, or once the container is updated to inject
     its own like the other ledgers) may still pass one explicitly.
+
+    DISC-11: ``giveup``/``failures`` here used to be invisible to the operator
+    surface entirely -- ``AgentLoop.list_given_up``/``retry_given_up`` (the
+    listing + retry surface built for ``ResumeLedger`` give-ups, #62) now read and
+    clear this ledger too, tagging each row's ``give_up_reason`` as
+    ``"approval_start"`` so it is distinguishable from a resume give-up.
     """
 
     failures: dict[str, int] = field(default_factory=dict)
@@ -711,6 +717,7 @@ class AgentLoop:
             # nothing user-visible) and skip; the posting remains APPROVED so either a
             # future re-drive with the condition resolved, or an explicit operator
             # override, may proceed.
+            presubmit_overridden_this_app = False
             if self._presubmit_safety_params is not None:
                 posting = self._storage.postings.get(posting_id)
                 if posting is not None:
@@ -719,9 +726,17 @@ class AgentLoop:
                         overridden = app_key in self._presubmit_overridden
                     if overridden:
                         # The operator explicitly chose to proceed past the safety
-                        # flag for THIS application (#61) -- skip the checks and
-                        # clear the bookkeeping now that it is actually starting.
-                        self._clear_presubmit_block(app.id)
+                        # flag for THIS application (#61) -- skip the checks, but do
+                        # NOT clear the override/block bookkeeping yet (DISC-9): the
+                        # start below may still not happen this tick for a NORMAL
+                        # reason (e.g. sandbox capacity full -- ``_start_pipeline``
+                        # returns False, not an exception). Clearing here regardless
+                        # would drop the override before it was actually honored, so
+                        # the very next tick re-runs the safety checks from scratch
+                        # and re-blocks the application -- it would look brand-new to
+                        # the operator even though they already overrode it once.
+                        # Only clear once a start is CONFIRMED below.
+                        presubmit_overridden_this_app = True
                     else:
                         from applicant.application.services.presubmit_safety import (
                             PresubmitBlock,
@@ -786,6 +801,10 @@ class AgentLoop:
                     error=str(exc),
                 )
                 self._record_approval_start_failure(app.id)
+                # DISC-9: the start did not happen (an exception is not a confirmed
+                # start either) -- an operator override survives untouched so the
+                # NEXT attempt (retry, or after the give-up cap is manually cleared)
+                # still skips the safety checks instead of re-blocking as if new.
                 continue
             # #9: record the daily-acted budget ONLY after the pipeline actually
             # started. _start_pipeline returns False when admission is deferred (full
@@ -795,6 +814,15 @@ class AgentLoop:
                 self._record_acted(campaign.id, now, 1)
                 # A clean start clears the failure streak (the app made progress).
                 self._clear_approval_start_failure(app.id)
+                # DISC-9: only NOW that the start is CONFIRMED do we drop the
+                # override + block bookkeeping (mirrors the #61 comment this used to
+                # do eagerly, before the start was known to have actually happened).
+                if presubmit_overridden_this_app:
+                    self._clear_presubmit_block(app.id)
+            # DISC-9: when ``started`` is False (e.g. sandbox capacity full -- a
+            # NORMAL, non-exception reason to defer), an operator override is left
+            # exactly as it was: still present, so the next tick skips the safety
+            # checks again instead of re-blocking a previously-overridden item.
         result.budget_remaining = self.remaining_budget(campaign, now)
 
     def _record_approval_start_failure(self, application_id: ApplicationId) -> None:
@@ -967,16 +995,36 @@ class AgentLoop:
         ``campaign_id`` is given, only that campaign's rows are returned; an
         application that has since been deleted from storage is silently skipped
         rather than raising (the ledger key can outlive the row).
+
+        DISC-11: an APPROVED application whose pipeline start (not resume) hit
+        ``_APPROVAL_START_FAILURE_CAP`` gives up in the SEPARATE process-lived
+        ``ApprovalStartLedger`` (see ``_record_approval_start_failure``), which used
+        to be invisible here entirely -- the operator's only signal was the one
+        deduped notification at cap time, with no listing/retry surface (unlike
+        resume give-ups). Both give-up ledgers are merged into one list here so a
+        given-up-on-start application shows up next to given-up-on-resume ones;
+        ``give_up_reason`` tells them apart (``"resume"`` vs ``"approval_start"``).
         """
         with self._resume_ledger.lock:
-            entries = [(k, self._resume_failures.get(k, 0)) for k in self._resume_giveup]
+            entries = [
+                (k, self._resume_failures.get(k, 0), "resume") for k in self._resume_giveup
+            ]
+        with self._approval_start_ledger.lock:
+            entries += [
+                (k, self._approval_start_failures.get(k, 0), "approval_start")
+                for k in self._approval_start_giveup
+            ]
         rows: list[dict] = []
-        for app_id, failures in entries:
+        seen: set[str] = set()
+        for app_id, failures, reason in entries:
+            if app_id in seen:
+                continue
             app = self._storage.applications.get(ApplicationId(app_id))
             if app is None:
                 continue
             if campaign_id is not None and app.campaign_id != campaign_id:
                 continue
+            seen.add(app_id)
             posting = None
             if app.posting_id is not None:
                 posting = self._storage.postings.get(app.posting_id)
@@ -989,6 +1037,7 @@ class AgentLoop:
                     "job_title": app.job_title or (posting.title if posting else None),
                     "company": posting.company if posting else None,
                     "role_name": app.role_name,
+                    "give_up_reason": reason,
                 }
             )
         rows.sort(key=lambda r: r["failures"], reverse=True)
@@ -1005,17 +1054,36 @@ class AgentLoop:
         gets a full fresh run of the failure cap rather than tripping it again on
         the very next failure, and clears the backoff timestamp so the very next
         tick is free to re-drive it immediately (subject to the normal per-tick
-        cadence) instead of waiting out a stale backoff window. Returns ``False``
-        (a no-op) when the application was not in the give-up set.
+        cadence) instead of waiting out a stale backoff window.
+
+        DISC-11: an application can ALSO be given up on in the separate
+        ``ApprovalStartLedger`` (pipeline-start failures on a still-APPROVED
+        application, never a resume at all -- see ``_record_approval_start_failure``).
+        Before this fix nothing could clear that give-up either, so
+        ``list_given_up``'s approval-start rows had no matching retry path. Both
+        ledgers are checked/cleared here (an application is realistically only ever
+        in one of the two, but checking both is cheap and future-proof); the
+        skip-on-start-cap (``_process_approvals``) reads ``_approval_start_giveup``
+        fresh every tick, so clearing it here is immediately effective on the very
+        next tick, exactly like the resume path. Returns ``False`` (a no-op) only
+        when the application was in NEITHER give-up set.
         """
         key = str(application_id)
+        cleared = False
         with self._resume_ledger.lock:
-            if key not in self._resume_giveup:
-                return False
-            self._resume_giveup.discard(key)
-            self._resume_failures.pop(key, None)
-            self._last_resume.pop(key, None)
-        log.info("resume_retry_cleared", application_id=key)
+            if key in self._resume_giveup:
+                self._resume_giveup.discard(key)
+                self._resume_failures.pop(key, None)
+                self._last_resume.pop(key, None)
+                cleared = True
+        with self._approval_start_ledger.lock:
+            if key in self._approval_start_giveup:
+                self._approval_start_giveup.discard(key)
+                self._approval_start_failures.pop(key, None)
+                cleared = True
+        if not cleared:
+            return False
+        log.info("given_up_retry_cleared", application_id=key)
         return True
 
     # --- G07 pre-submit safety blocks (dark-engine audit #61) --------------
