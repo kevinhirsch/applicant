@@ -370,112 +370,154 @@ class PrefillService:
 
         # 1. Provision the isolated, ephemeral sandbox (FR-SANDBOX-1, FR-PREFILL-1).
         app = application.with_status(ApplicationState.SANDBOX_PROVISIONING)
-        session = self._sandbox.provision(aid)
-        # Session-continuity handoff (FR-PREFILL-5 / FR-SANDBOX-3): when the remote
-        # view is the full webtop desktop, tell it which application URL to open so the
-        # human takes over the SAME application the agent was filling. Best-effort and
-        # signature-stable: only the webtop adapter exposes ``bind_application_url``.
-        session_url = session.remote_view_url
-        remote_view = getattr(self._sandbox, "remote_view", None)
-        if callable(remote_view):
-            rv = remote_view()
-            bind = getattr(rv, "bind_application_url", None)
-            if callable(bind):
-                bind(session.session_id, url)
-                session_url = rv.view_url(session.session_id)
-        result = PrefillResult(
-            application_id=aid,
-            state=app.status,
-            sandbox_session_url=session_url,
-        )
+        # Audit #37 (failure-paths lens): everything below — sandbox provisioning,
+        # the browser launch, and the whole account-gate/login block — used to run
+        # with NO recovery boundary at all. Only the later page WALK
+        # (``_continue_pages`` -> ``_walk_pages``) was guarded; a crash HERE (missing
+        # browser binary, sandbox at capacity, an account-gate/login adapter raising)
+        # propagated straight out of ``prefill_application`` uncaught: the application
+        # never reached FAILED, no pending action was created to tell the operator
+        # why, and the scheduler silently re-crashed on the same application every
+        # tick forever (feeding the unbounded-retry finding, #31). ``result`` starts
+        # ``None`` because it cannot be constructed until the sandbox session exists;
+        # the except branch below builds a fallback one if the crash happened before
+        # that point.
+        result: PrefillResult | None = None
+        try:
+            session = self._sandbox.provision(aid)
+            # Session-continuity handoff (FR-PREFILL-5 / FR-SANDBOX-3): when the remote
+            # view is the full webtop desktop, tell it which application URL to open so
+            # the human takes over the SAME application the agent was filling. Best-
+            # effort and signature-stable: only the webtop adapter exposes
+            # ``bind_application_url``.
+            session_url = session.remote_view_url
+            remote_view = getattr(self._sandbox, "remote_view", None)
+            if callable(remote_view):
+                rv = remote_view()
+                bind = getattr(rv, "bind_application_url", None)
+                if callable(bind):
+                    bind(session.session_id, url)
+                    session_url = rv.view_url(session.session_id)
+            result = PrefillResult(
+                application_id=aid,
+                state=app.status,
+                sandbox_session_url=session_url,
+            )
 
-        # 2. Open the first page. For the native Proxmox Windows backend the session
-        # carries a CDP endpoint to the remote Windows VM's Chrome — the engine
-        # connects to THAT real browser over CDP (genuine Windows fingerprint, no
-        # spoof) instead of launching a local one. For the local backend it is None
-        # and the local-launch path is unchanged. The kwarg is passed only when the
-        # session actually carries an endpoint (signature-stable for fake browsers).
-        cdp_endpoint = getattr(session, "cdp_endpoint", None)
-        if cdp_endpoint:
-            self._browser.open(aid, url, cdp_endpoint=cdp_endpoint)
-        else:
-            self._browser.open(aid, url)
+            # 2. Open the first page. For the native Proxmox Windows backend the
+            # session carries a CDP endpoint to the remote Windows VM's Chrome — the
+            # engine connects to THAT real browser over CDP (genuine Windows
+            # fingerprint, no spoof) instead of launching a local one. For the local
+            # backend it is None and the local-launch path is unchanged. The kwarg is
+            # passed only when the session actually carries an endpoint (signature-
+            # stable for fake browsers).
+            cdp_endpoint = getattr(session, "cdp_endpoint", None)
+            if cdp_endpoint:
+                self._browser.open(aid, url, cdp_endpoint=cdp_endpoint)
+            else:
+                self._browser.open(aid, url)
 
-        # 2b. Move from the job posting/landing page INTO the application flow (click
-        # "Apply"). A no-op when the URL already lands inside the flow, or for the
-        # in-memory fake source (FR-PREFILL-1). Without this the engine inspects the
-        # posting page (no form fields) and finishes having filled nothing. Signature-
-        # stable: a minimal stub browser without this method simply skips the entry.
-        enter_application = getattr(self._browser, "enter_application", None)
-        if callable(enter_application):
-            enter_application(aid)
+            # 2b. Move from the job posting/landing page INTO the application flow
+            # (click "Apply"). A no-op when the URL already lands inside the flow, or
+            # for the in-memory fake source (FR-PREFILL-1). Without this the engine
+            # inspects the posting page (no form fields) and finishes having filled
+            # nothing. Signature-stable: a minimal stub browser without this method
+            # simply skips the entry.
+            enter_application = getattr(self._browser, "enter_application", None)
+            if callable(enter_application):
+                enter_application(aid)
 
-        # 3. Account GATE (sign-in OR create-account) → pre-fill what we can, then hand
-        # off (FR-PREFILL-4). Broader than create-only: a Workday account step often
-        # shows sign-in *options* (incl. OAuth "Sign in with Google", which the engine
-        # cannot drive) before any field, so the loop must hand off here rather than
-        # mistake a field-less gate for 'done'. Signature-stable: a minimal stub browser
-        # without is_account_gate falls back to the create-only check.
-        if self._on_account_gate(aid):
-            app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
-            # FR-PREFILL-6: run a cautious detection check BEFORE filling the account
-            # page — a CAPTCHA/Cloudflare/etc. there must pause + hand off, never fill.
-            # The account context's legal hand-off is the account human step (the user
-            # takes over the live session to clear the challenge + create the account).
-            if cautious:
-                event = self._check_detection(aid)
-                if event is not None:
-                    result.detection_signal = event.signal_type
-                    # #3 (FR-PREFILL-5): pass the BOUND session url (carries ``&app=``
-                    # continuity) — not the pre-binding ``session.remote_view_url``
-                    # snapshot — so the takeover link lands on the same application.
-                    return self._account_handoff(
-                        app, result, result.sandbox_session_url, signal_type=event.signal_type
-                    )
-            # Automate-by-default: if we hold a stored credential for this ATS, log in
-            # ourselves (email/password) and proceed straight to the form — no per-
-            # application human sign-in. Login failure / no credential / OAuth fall
-            # through to the human hand-off below (which the persistent session + the
-            # 2FA flow build on next).
-            credential = self._lookup_credential(app)
-            if credential is not None and self._try_log_in(aid, credential):
-                self._capture_screenshot(aid, result)
-                return self._prefill_pages(app, attributes, result, cautious=cautious)
-            # "Sign in with Google" (OAuth): a persistent Google session usually clicks
-            # straight through; if Google demands 2FA, the engine cannot produce the
-            # second factor → run the 2FA notify/continue/retry hand-off.
-            google = self._lookup_credential(app, tenant_key=GOOGLE_CREDENTIAL_KEY)
-            if google is not None and self._offers_google(aid):
-                status = self._try_google_login(aid, google)
-                if status == "ok":
+            # 3. Account GATE (sign-in OR create-account) → pre-fill what we can, then
+            # hand off (FR-PREFILL-4). Broader than create-only: a Workday account
+            # step often shows sign-in *options* (incl. OAuth "Sign in with Google",
+            # which the engine cannot drive) before any field, so the loop must hand
+            # off here rather than mistake a field-less gate for 'done'. Signature-
+            # stable: a minimal stub browser without is_account_gate falls back to the
+            # create-only check.
+            if self._on_account_gate(aid):
+                app = app.with_status(ApplicationState.ACCOUNT_PREFILL)
+                # FR-PREFILL-6: run a cautious detection check BEFORE filling the
+                # account page — a CAPTCHA/Cloudflare/etc. there must pause + hand
+                # off, never fill. The account context's legal hand-off is the
+                # account human step (the user takes over the live session to clear
+                # the challenge + create the account).
+                if cautious:
+                    event = self._check_detection(aid)
+                    if event is not None:
+                        result.detection_signal = event.signal_type
+                        # #3 (FR-PREFILL-5): pass the BOUND session url (carries
+                        # ``&app=`` continuity) — not the pre-binding
+                        # ``session.remote_view_url`` snapshot — so the takeover link
+                        # lands on the same application.
+                        return self._account_handoff(
+                            app,
+                            result,
+                            result.sandbox_session_url,
+                            signal_type=event.signal_type,
+                        )
+                # Automate-by-default: if we hold a stored credential for this ATS,
+                # log in ourselves (email/password) and proceed straight to the form
+                # — no per-application human sign-in. Login failure / no credential /
+                # OAuth fall through to the human hand-off below (which the
+                # persistent session + the 2FA flow build on next).
+                credential = self._lookup_credential(app)
+                if credential is not None and self._try_log_in(aid, credential):
                     self._capture_screenshot(aid, result)
                     return self._prefill_pages(app, attributes, result, cautious=cautious)
-                if status == "two_factor":
-                    return self._two_factor_handoff(app, result)
-                # "failed" → fall through (try account creation / hand off).
-            # No working login: create an account from the predefined set if the
-            # operator opted in (ADR-0004). On success continue; if it triggers email
-            # verification, bank the credential and hand off (verify is irreducible).
-            created = self._maybe_create_account(app)
-            if created == "ok":
+                # "Sign in with Google" (OAuth): a persistent Google session usually
+                # clicks straight through; if Google demands 2FA, the engine cannot
+                # produce the second factor → run the 2FA notify/continue/retry
+                # hand-off.
+                google = self._lookup_credential(app, tenant_key=GOOGLE_CREDENTIAL_KEY)
+                if google is not None and self._offers_google(aid):
+                    status = self._try_google_login(aid, google)
+                    if status == "ok":
+                        self._capture_screenshot(aid, result)
+                        return self._prefill_pages(
+                            app, attributes, result, cautious=cautious
+                        )
+                    if status == "two_factor":
+                        return self._two_factor_handoff(app, result)
+                    # "failed" → fall through (try account creation / hand off).
+                # No working login: create an account from the predefined set if the
+                # operator opted in (ADR-0004). On success continue; if it triggers
+                # email verification, bank the credential and hand off (verify is
+                # irreducible).
+                created = self._maybe_create_account(app)
+                if created == "ok":
+                    self._capture_screenshot(aid, result)
+                    return self._prefill_pages(app, attributes, result, cautious=cautious)
+                if created == "email_verify":
+                    self._capture_screenshot(aid, result)
+                    return self._account_handoff(app, result, result.sandbox_session_url)
+                blocked = self._fill_current_page(
+                    app, attributes, result, block_on_missing=False
+                )
+                if blocked is not None:
+                    return blocked
                 self._capture_screenshot(aid, result)
-                return self._prefill_pages(app, attributes, result, cautious=cautious)
-            if created == "email_verify":
-                self._capture_screenshot(aid, result)
+                # The engine never clicks the account-creating submit — hand off.
+                # #3: use the bound ``result.sandbox_session_url`` (with ``&app=``),
+                # not the pre-binding ``session.remote_view_url``.
                 return self._account_handoff(app, result, result.sandbox_session_url)
-            blocked = self._fill_current_page(
-                app, attributes, result, block_on_missing=False
-            )
-            if blocked is not None:
-                return blocked
-            self._capture_screenshot(aid, result)
-            # The engine never clicks the account-creating submit — hand off.
-            # #3: use the bound ``result.sandbox_session_url`` (with ``&app=``), not the
-            # pre-binding ``session.remote_view_url``.
-            return self._account_handoff(app, result, result.sandbox_session_url)
 
-        # 4. No account needed → straight to pre-filling.
-        return self._prefill_pages(app, attributes, result, cautious=cautious)
+            # 4. No account needed → straight to pre-filling.
+            return self._prefill_pages(app, attributes, result, cautious=cautious)
+        except Exception as exc:  # noqa: BLE001 — launch/account-gate crash must land
+            # a structured FAILED result, never escape uncaught (audit #37).
+            log.warning(
+                "Pre-fill launch/account-gate crashed for application %s — returning "
+                "a FAILED result instead of propagating",
+                aid,
+                exc_info=True,
+            )
+            if result is None:
+                result = PrefillResult(
+                    application_id=aid,
+                    state=app.status,
+                    sandbox_session_url=application.sandbox_session_url,
+                )
+            return self._failed_prefill(app, result, exc)
 
     def resume_after_account(
         self,

@@ -737,6 +737,73 @@ def test_aggressiveness_setter_clamps(svc):
     assert svc.set_aggressiveness(None) == 20
 
 
+class _FailingConfigStore:
+    """A config store double whose ``set`` always raises — simulates a storage
+    hiccup (disk full, DB blip) during persistence."""
+
+    def set(self, key, value):
+        raise RuntimeError("store unavailable")
+
+
+@pytest.mark.unit
+def test_aggressiveness_persist_failure_degrades_but_logs(storage, monkeypatch):
+    """Audit #46: ``_persist_aggressiveness`` used to swallow a store failure with a
+    bare ``except Exception: pass`` and zero trace — the user's chosen value would
+    silently fail to survive a restart with no way for an operator to notice. The
+    in-request behavior must stay unchanged (the chosen value still wins for the rest
+    of this instance's lifetime, and the setter still returns it cleanly, no
+    exception escapes to the caller) — only a warning is now logged so the failure is
+    at least observable.
+
+    Intercepts the ``warning()`` call on the exact logger the service uses rather than
+    relying on ``caplog`` — a prior test elsewhere in a full-suite run may reconfigure
+    logging (its own handlers, ``propagate=False``, a global ``logging.disable(...)``),
+    which drops the record before any handler runs and makes ``caplog``-based capture
+    order-dependent/flaky (the same pattern documented in
+    ``test_db_fallback_healthcheck.py::test_build_storage_marks_unreachable_db_as_fallback``).
+    """
+    import applicant.application.services.material_service as material_service_module
+
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        material_service_module.log,
+        "warning",
+        lambda msg, *a, **k: recorded.append(msg % a if a else msg),
+    )
+
+    svc = MaterialService(storage, resume_tailoring=LatexTailor(), config_store=_FailingConfigStore())
+    result = svc.set_aggressiveness(65)
+    # Success-path behavior is unchanged: the setter still returns the clamped value
+    # and the instance still reflects it, despite the store failure.
+    assert result == 65
+    assert svc.aggressiveness == 65
+    # But now there is a trace of the failure instead of total silence.
+    assert any("aggressiveness" in msg.lower() for msg in recorded)
+
+
+@pytest.mark.unit
+def test_aggressiveness_persist_success_is_unaffected_by_the_logging_change(storage, monkeypatch):
+    """Control: a normal (non-failing) persist path logs nothing and behaves exactly
+    as before — the logging addition only fires on the failure branch."""
+    import applicant.application.services.material_service as material_service_module
+    from applicant.adapters.storage.app_config_store import InMemoryAppConfigStore
+
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        material_service_module.log,
+        "warning",
+        lambda msg, *a, **k: recorded.append(msg % a if a else msg),
+    )
+
+    svc = MaterialService(
+        storage, resume_tailoring=LatexTailor(), config_store=InMemoryAppConfigStore()
+    )
+    result = svc.set_aggressiveness(65)
+    assert result == 65
+    assert svc.aggressiveness == 65
+    assert not recorded
+
+
 # === engine selection respects Phase 0 choice (FR-RESUME-3a) ==============
 @pytest.mark.unit
 def test_engine_selection_follows_conversion_choice(storage):

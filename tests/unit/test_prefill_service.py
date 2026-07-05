@@ -1184,3 +1184,112 @@ def test_resolving_prefill_block_expires_its_ping():
     # Resolving the block expires the SAME ping via the shared decision: ref.
     NotificationService(notifier).acted(ping_ref(app.id, "account_human_step"))
     assert not notifier.is_active(key)
+
+
+# ===========================================================================
+# Audit #37 (failure-paths lens 04): sandbox/browser-launch crash boundary.
+#
+# ``prefill_application`` used to have NO recovery boundary around sandbox
+# provisioning, the browser launch, or the account-gate/login block — only the
+# later page WALK (``_continue_pages``/``_walk_pages``) was guarded. A crash in
+# any of those earlier steps (missing browser binary, sandbox at capacity, an
+# account-gate adapter raising) propagated straight out uncaught: the application
+# never reached FAILED, no pending action told the operator why, and it silently
+# re-crashed on the same application every tick. These tests prove the crash now
+# lands a structured FAILED result + an "error" pending action instead, and that
+# the healthy (success) path through the same method is unaffected.
+# ===========================================================================
+@pytest.mark.unit
+class TestLaunchBoundary:
+    def test_sandbox_provision_crash_lands_failed_not_propagated(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+
+        class _BoomSandbox:
+            def provision(self, aid):  # noqa: ARG002
+                raise RuntimeError("sandbox at capacity")
+
+        service = PrefillService(
+            storage=storage,
+            browser=PatchrightBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=_BoomSandbox(),
+            credentials=None,
+        )
+        app = _app(cid)
+
+        # Must NOT raise -- the crash is caught and converted to a FAILED result.
+        result = service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+
+        assert result.state == ApplicationState.FAILED
+        stored = storage.applications.get(app.id)
+        assert stored is not None
+        assert stored.status == ApplicationState.FAILED
+        pending = storage.pending_actions.list_open(cid)
+        assert any(p.kind == "error" for p in pending)
+
+    def test_browser_open_crash_lands_failed_not_propagated(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+
+        class _BoomOpenBrowser(PatchrightBrowser):
+            def open(self, aid, url, **kwargs):  # noqa: ARG002
+                raise RuntimeError("no browser binary found on PATH")
+
+        service = PrefillService(
+            storage=storage,
+            browser=_BoomOpenBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+        )
+        app = _app(cid)
+
+        result = service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+
+        assert result.state == ApplicationState.FAILED
+        stored = storage.applications.get(app.id)
+        assert stored is not None
+        assert stored.status == ApplicationState.FAILED
+        # The sandbox session existed by the time the browser crashed, so the
+        # fallback FAILED result still carries a live session url (built from the
+        # real session, not the pre-crash placeholder) -- proving the earlier half
+        # of the try block still ran normally before the crash.
+        assert result.sandbox_session_url
+
+    def test_enter_application_crash_lands_failed_not_propagated(self):
+        """A crash in the "click Apply" step (2b, after the browser has opened but
+        before the account-gate check) is covered too -- the boundary wraps the
+        whole launch section, not just ``provision``/``open``. Unlike the
+        account-gate probe (which already had its own defensive try/except),
+        ``enter_application`` had none at all."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+
+        class _BoomEnterBrowser(PatchrightBrowser):
+            def enter_application(self, application_id):  # noqa: ARG002
+                raise RuntimeError("enter-application click crashed")
+
+        service = PrefillService(
+            storage=storage,
+            browser=_BoomEnterBrowser(),
+            detection=DetectionMonitor(),
+            sandbox=LocalSandbox(),
+            credentials=None,
+        )
+        app = _app(cid)
+
+        result = service.prefill_application(app, WORKDAY_URL, _full_answers(cid))
+
+        assert result.state == ApplicationState.FAILED
+        stored = storage.applications.get(app.id)
+        assert stored is not None and stored.status == ApplicationState.FAILED
+
+    def test_success_path_through_the_new_boundary_is_unchanged(self):
+        """Control: with a healthy sandbox/browser, the full maximal-prefill flow
+        completes exactly as it did before the boundary was added."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        service = _service(storage)
+        result = _resume_full(service, _app(cid), _full_answers(cid))
+        assert result.state == ApplicationState.AWAITING_FINAL_APPROVAL

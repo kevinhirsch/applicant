@@ -357,7 +357,15 @@ class MaterialService:
         return AGGRESSIVENESS_DEFAULT
 
     def _persist_aggressiveness(self, campaign_id: CampaignId | None = None) -> None:
-        """Write the current aggressiveness to the config store (global + per-campaign)."""
+        """Write the current aggressiveness to the config store (global + per-campaign).
+
+        The in-memory ``self._aggressiveness`` already reflects the user's choice for
+        this request/instance, so a store failure here is a *persistence* failure, not
+        a user-facing one — the call site's return value is unaffected either way
+        (audit #46: this used to be a bare ``except Exception: pass`` with zero trace,
+        so a failing store silently meant "resets to the default on the next restart"
+        with no way for an operator to notice before the user does).
+        """
         store = self._effective_config_store()
         if store is None:
             return
@@ -367,7 +375,13 @@ class MaterialService:
             if campaign_id is not None:
                 store.set(self._campaign_aggressiveness_key(campaign_id), dict(payload))
         except Exception:
-            pass
+            log.warning(
+                "Failed to persist aggressiveness setting (value=%s, campaign_id=%s); "
+                "it will not survive a restart",
+                self._aggressiveness,
+                campaign_id,
+                exc_info=True,
+            )
 
     @property
     def aggressiveness(self) -> int:
