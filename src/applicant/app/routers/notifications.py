@@ -82,6 +82,14 @@ def list_notifications(
         ge=1,
         description="Cap the number of rows returned (newest first).",
     ),
+    owner: str | None = Query(
+        None,
+        description=(
+            "Optional caller-identity tag (dark-engine audit lens 10 #28), "
+            "forwarded to the notifier for owner-scoped filtering when one "
+            "supports it. Omit for the historical, unchanged behavior."
+        ),
+    ),
     notifications=Depends(get_notification_service),
 ) -> dict:
     """List the current in-app notifications (newest first).
@@ -89,9 +97,13 @@ def list_notifications(
     With no query params this is exactly the historical behavior (used by the
     Portal's unmodified poll). ``since``/``limit`` let a caller that already
     tracks the newest ``created_at`` it has seen fetch only what's new instead
-    of re-shipping the full (up to ~1000-row) inbox every poll.
+    of re-shipping the full (up to ~1000-row) inbox every poll. ``owner`` is
+    defense-in-depth thread-through only (see
+    :meth:`NotificationService.list_inbox`); the real multi-user authorization
+    boundary is the workspace's own proxy, which must resolve the caller to
+    the engine-owner account before ever reaching this endpoint.
     """
-    entries = notifications.list_inbox(include_seen=include_seen)
+    entries = notifications.list_inbox(include_seen=include_seen, owner=owner)
     if since:
         try:
             cursor = datetime.fromisoformat(since.replace("Z", "+00:00"))
@@ -127,11 +139,24 @@ def deliver_now(notifications=Depends(get_notification_service)) -> dict:
 
 
 @router.post("/{notification_id}/seen", status_code=204)
-def mark_seen(notification_id: str, notifications=Depends(get_notification_service)) -> None:
+def mark_seen(
+    notification_id: str,
+    owner: str | None = Query(
+        None,
+        description=(
+            "Optional caller-identity tag (dark-engine audit lens 10 #28), "
+            "forwarded to the notifier for owner-scoped filtering when one "
+            "supports it. Omit for the historical, unchanged behavior."
+        ),
+    ),
+    notifications=Depends(get_notification_service),
+) -> None:
     """Dismiss one informational notification so it stops persisting.
 
     404 if the id no longer matches a current entry (already pruned/cleared), so
-    the caller can drop the row without retrying.
+    the caller can drop the row without retrying. ``owner`` is defense-in-depth
+    thread-through only (see :meth:`NotificationService.dismiss_notification`);
+    the real multi-user authorization boundary is the workspace's own proxy.
     """
-    if not notifications.dismiss_notification(notification_id):
+    if not notifications.dismiss_notification(notification_id, owner=owner):
         raise HTTPException(status_code=404, detail="That notification is no longer present.")

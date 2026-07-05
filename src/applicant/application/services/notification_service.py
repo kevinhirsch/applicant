@@ -328,27 +328,54 @@ class NotificationService:
         return handle
 
     # --- in-app notification center (FR-UI-3 feed) ------------------------
-    def list_inbox(self, *, include_seen: bool = False) -> list:
+    def list_inbox(self, *, include_seen: bool = False, owner: str | None = None) -> list:
         """Current in-app notifications backing the notification center.
 
         Delegates to the notifier's in-app sink. Returns an empty list if the
         configured notifier has no in-app inbox (degrade gracefully).
+
+        ``owner`` (dark-engine audit lens 10 #28): an optional caller-identity
+        tag, threaded straight to the notifier so an owner-aware notifier can
+        scope the returned entries to it. Every notifier in this tree is
+        single-tenant per deployment (every entry belongs to the one engine
+        owner), so passing ``owner`` today is a safe no-op — omitted entirely
+        when ``None`` (the default), and gracefully dropped via the
+        ``TypeError`` fallback if a notifier's ``list_inbox`` doesn't accept it,
+        so existing callers/notifiers are completely unaffected. The actual
+        multi-user authorization boundary for the front-door lives in the
+        workspace's own proxy (``applicant_portal_routes.py``), which must
+        resolve the caller to the engine-owner account BEFORE ever reaching
+        this service — this parameter is defense in depth, not the boundary.
         """
         lister = getattr(self._notification, "list_inbox", None)
         if lister is None:
             return []
-        return lister(include_seen=include_seen)
+        if owner is None:
+            return lister(include_seen=include_seen)
+        try:
+            return lister(include_seen=include_seen, owner=owner)
+        except TypeError:
+            return lister(include_seen=include_seen)
 
-    def dismiss_notification(self, inbox_id: str) -> bool:
+    def dismiss_notification(self, inbox_id: str, *, owner: str | None = None) -> bool:
         """Dismiss one informational in-app notification by id (FR-UI-3).
 
         Returns True if the id matched a current entry. Action-required entries
         are cleared via :meth:`acted` when their pending action resolves.
+
+        ``owner``: see :meth:`list_inbox` — same defense-in-depth thread-through,
+        same no-op-when-unsupported degrade, same ``None``-means-unchanged
+        default.
         """
         marker = getattr(self._notification, "mark_seen", None)
         if marker is None:
             return False
-        return bool(marker(inbox_id))
+        if owner is None:
+            return bool(marker(inbox_id))
+        try:
+            return bool(marker(inbox_id, owner=owner))
+        except TypeError:
+            return bool(marker(inbox_id))
 
     # --- ladder introspection (dark-engine audit #77) ----------------------
     def ladder_status(self, decision_ref: str) -> dict | None:
