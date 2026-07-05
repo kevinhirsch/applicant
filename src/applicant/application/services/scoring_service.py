@@ -97,12 +97,16 @@ class ScoringService:
         posting = self._storage.postings.get(posting_id)
         if posting is None:
             return ViabilityScoring(posting_id=posting_id, score=0.0, rationale="posting not found")
-        scoring = self._score(posting, criteria)
+        learning_model = self._load_learning_model(posting.campaign_id)
+        advanced_model = self._load_advanced_model(posting.campaign_id)
+        scoring = self._score(
+            posting, criteria, learning_model=learning_model, advanced_model=advanced_model
+        )
         self._persist_score(
             posting,
             scoring,
             criteria_sig=self._criteria_sig(criteria),
-            learning_sig=self._learning_sig(posting.campaign_id),
+            learning_sig=self._learning_sig(learning_model),
         )
         event_bus.emit(
             ViabilityScored(
@@ -150,7 +154,44 @@ class ScoringService:
         except Exception:  # pragma: no cover - never let persistence break scoring
             pass
 
-    def _learning_sig(self, campaign_id) -> str:
+    def _load_learning_model(self, campaign_id):
+        """Load the per-campaign ``LearningModel`` ONCE for a scoring pass (perf).
+
+        ``_score``/``_taste_bias``/``_signature_alignment``/``_learning_sig`` each
+        independently called ``self._learning.load_model(campaign_id)`` before this
+        change — up to 3 identical storage round-trips (a ``campaigns.get`` plus a
+        ``discovery_sources.list_for_campaign`` scan, per ``LearningService.load_model``)
+        for a SINGLE posting scored. ``load_model`` is a side-effect-free read and
+        nothing in the scoring call tree writes learning state in between, so loading
+        once per top-level call (``score_viability``/``score_for_digest``/
+        ``score_posting``) and threading the result through is byte-identical to
+        reloading at each call site — just without the redundant round-trips. Returns
+        ``None`` when no learning service is wired or the load fails (mirrors the
+        try/except every call site used to do individually).
+        """
+        if self._learning is None:
+            return None
+        try:
+            return self._learning.load_model(campaign_id)
+        except Exception:  # pragma: no cover - never let learning break scoring
+            return None
+
+    def _load_advanced_model(self, campaign_id):
+        """Load the per-campaign advanced-learning model ONCE for a scoring pass.
+
+        Companion to :meth:`_load_learning_model` — same perf rationale, separate
+        provider (``AdvancedLearningService.load_model`` may not always delegate to
+        the same ``LearningService`` instance as ``self._learning``, so this is kept
+        as its own call rather than reused from ``_load_learning_model``).
+        """
+        if self._advanced_learning is None:
+            return None
+        try:
+            return self._advanced_learning.load_model(campaign_id)
+        except Exception:  # pragma: no cover - never let learning break scoring
+            return None
+
+    def _learning_sig(self, model) -> str:
         """Stable signature of the LEARNING state a score depends on (#239).
 
         Empty (``""``) when no learning service is wired or the model is at cold start
@@ -160,12 +201,12 @@ class ScoringService:
         new conversion OR a new taste signal yields a fresh signature, invalidating the
         stale cached score on the next digest. Guarded: a learning hiccup degrades to
         ``""`` (reuse on criteria alone) rather than breaking the digest.
+
+        ``model`` is the pre-loaded ``LearningModel`` for this posting's campaign (see
+        :meth:`_load_learning_model`) — ``None`` covers both "no learning wired" and "the
+        load failed", exactly like the try/except this replaced.
         """
-        if self._learning is None:
-            return ""
-        try:
-            model = self._learning.load_model(campaign_id)
-        except Exception:  # pragma: no cover - never let learning break scoring
+        if model is None:
             return ""
         sig = getattr(model, "converting_role_signature", {}) or {}
         samples = int(getattr(model, "converting_samples", 0) or 0)
@@ -221,7 +262,12 @@ class ScoringService:
         matches the current criteria; otherwise compute fresh and persist it.
         """
         sig = self._criteria_sig(criteria)
-        learning_sig = self._learning_sig(posting.campaign_id)
+        # Load the learning model ONCE — needed for ``learning_sig`` regardless of a
+        # cache hit or miss. The ADVANCED model is only loaded below, lazily, on a
+        # miss (it was never fetched on a hit path before this change either, since
+        # a hit returns before ``_score`` ever runs) — no new work on the hit path.
+        learning_model = self._load_learning_model(posting.campaign_id)
+        learning_sig = self._learning_sig(learning_model)
         persisted = getattr(posting, "viability_score", None)
         rationale = getattr(posting, "rationale", None) or {}
         if (
@@ -237,7 +283,10 @@ class ScoringService:
                 score=persisted,
                 rationale=str(rationale.get("text") or ""),
             )
-        scoring = self._score(posting, criteria)
+        advanced_model = self._load_advanced_model(posting.campaign_id)
+        scoring = self._score(
+            posting, criteria, learning_model=learning_model, advanced_model=advanced_model
+        )
         self._persist_score(posting, scoring, criteria_sig=sig, learning_sig=learning_sig)
         return scoring
 
@@ -245,7 +294,11 @@ class ScoringService:
         self, posting: JobPosting, criteria: SearchCriteria | None = None
     ) -> ViabilityScoring:
         """Score an in-hand posting (no storage round-trip)."""
-        return self._score(posting, criteria)
+        learning_model = self._load_learning_model(posting.campaign_id)
+        advanced_model = self._load_advanced_model(posting.campaign_id)
+        return self._score(
+            posting, criteria, learning_model=learning_model, advanced_model=advanced_model
+        )
 
     def is_viable(self, scoring: ViabilityScoring) -> bool:
         """True if the scaled (0..100) score meets the configurable threshold.
@@ -258,7 +311,14 @@ class ScoringService:
         score = max(0.0, min(1.0, score))
         return score * 100.0 >= self._threshold
 
-    def _score(self, posting: JobPosting, criteria: SearchCriteria | None) -> ViabilityScoring:
+    def _score(
+        self,
+        posting: JobPosting,
+        criteria: SearchCriteria | None,
+        *,
+        learning_model=None,
+        advanced_model=None,
+    ) -> ViabilityScoring:
         # Honor the Scoring tool toggle at dispatch (FR-UI-4).
         if self._tools is not None:
             self._tools.ensure_enabled("scoring")
@@ -278,7 +338,7 @@ class ScoringService:
         # score so the feedback loop actually closes — a posting carrying a value the
         # user has consistently declined is nudged down, an approved one nudged up.
         # ``1.0`` (no taste / no match) leaves the score byte-identical to before.
-        taste = self._taste_bias(posting.campaign_id, f"{jd_text} {criteria_text}")
+        taste = self._taste_bias(learning_model, f"{jd_text} {criteria_text}")
         if taste != 1.0:
             biased_base = max(0.0, min(1.0, base * taste))
             direction = "up" if taste > 1.0 else "down"
@@ -288,7 +348,9 @@ class ScoringService:
             )
             base = biased_base
         score = base
-        alignment = self._signature_alignment(posting.campaign_id, jd_text)
+        alignment = self._signature_alignment(
+            learning_model, advanced_model, posting.campaign_id, jd_text
+        )
         if alignment > 0.0:
             # Blend toward the converting-role signature (FR-LEARN-5), transparently.
             score = (1.0 - _SIGNATURE_WEIGHT) * base + _SIGNATURE_WEIGHT * alignment
@@ -485,7 +547,7 @@ class ScoringService:
         # Hard-bound so learned context never bloats the scoring prompt (FR-MIND-13).
         return block[:1200]
 
-    def _taste_bias(self, campaign_id, text: str) -> float:
+    def _taste_bias(self, learning_model, text: str) -> float:
         """Accumulated approve/decline taste multiplier for a posting (#237, FR-LEARN-1).
 
         Reads the per-campaign ``feature_stats`` taste signal through the wired
@@ -493,16 +555,21 @@ class ScoringService:
         ``1.0`` (no bias) when no learning service is wired or nothing matches, so a
         cold campaign — and the no-learning baseline scorer — score byte-identically to
         before. Guarded: a learning/storage hiccup must never 500 the digest.
+
+        ``learning_model`` is the pre-loaded model from :meth:`_load_learning_model`
+        (``None`` covers both "no learning wired" and "the load failed", same net
+        effect as the try/except this replaced).
         """
-        if self._learning is None:
+        if self._learning is None or learning_model is None:
             return 1.0
         try:
-            model = self._learning.load_model(campaign_id)
-            return self._learning.taste_bias(model, text)
+            return self._learning.taste_bias(learning_model, text)
         except Exception:  # pragma: no cover - taste bias must never break scoring
             return 1.0
 
-    def _signature_alignment(self, campaign_id, jd_text: str) -> float:
+    def _signature_alignment(
+        self, learning_model, advanced_model, campaign_id, jd_text: str
+    ) -> float:
         """Advisory converting-signature alignment in [0,1] for a JD (FR-LEARN-5).
 
         Combines, via ``max`` (NOT a sum — so the same conversion evidence is never
@@ -518,22 +585,29 @@ class ScoringService:
         discrete features vs durable run history); reading all three biases ranking
         without re-folding any signal. 0.0 at cold start (no conversions, no recall)
         so a brand-new campaign scores byte-identically to before.
+
+        ``learning_model``/``advanced_model`` are pre-loaded once per scoring pass
+        (see :meth:`_load_learning_model`/:meth:`_load_advanced_model`) rather than
+        reloaded here — ``recall_alignment`` takes no model and is still attempted
+        whenever ``self._advanced_learning`` is wired, independent of whether the
+        model load succeeded, exactly as before.
         """
         signals: list[float] = []
-        if self._learning is not None:
+        if self._learning is not None and learning_model is not None:
             try:
-                model = self._learning.load_model(campaign_id)
                 # Keep the alignment call inside the guard: a flaky embedding must not
                 # 500 GET /api/digest/{id} or scoring — fall back to no bias instead.
-                signals.append(self._learning.converting_alignment(model, jd_text))
+                signals.append(self._learning.converting_alignment(learning_model, jd_text))
             except Exception:
                 pass
         if self._advanced_learning is not None:
-            try:
-                model = self._advanced_learning.load_model(campaign_id)
-                signals.append(self._advanced_learning.text_alignment(model, jd_text))
-            except Exception:
-                pass
+            if advanced_model is not None:
+                try:
+                    signals.append(
+                        self._advanced_learning.text_alignment(advanced_model, jd_text)
+                    )
+                except Exception:
+                    pass
             try:
                 signals.append(
                     self._advanced_learning.recall_alignment(campaign_id, jd_text)

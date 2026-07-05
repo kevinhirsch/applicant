@@ -87,9 +87,14 @@ class StatusUpdateService:
         nothing and is NEVER replaced with an invented value. Returns ``None`` when no
         source yields anything (so the scheduler emits nothing).
         """
-        past = self._past_lines(campaign_id)
-        present = self._present_lines(campaign_id, now)
-        future = self._future_lines(campaign_id)
+        # Perf: read the per-campaign run status ONCE — ``_past_lines``,
+        # ``_present_lines``, and ``_future_lines`` each independently called
+        # ``self._safe_run_status(campaign_id)`` before this change (3 identical
+        # calls to the same underlying ``agent_run_service.status()`` per emit).
+        run_status = self._safe_run_status(campaign_id)
+        past = self._past_lines(campaign_id, run_status)
+        present = self._present_lines(now, run_status)
+        future = self._future_lines(campaign_id, run_status)
 
         if not (past or present or future):
             return None
@@ -104,10 +109,9 @@ class StatusUpdateService:
         return " ".join(parts)
 
     # --- past: recent applications + their applied count ------------------
-    def _past_lines(self, campaign_id) -> list[str]:
+    def _past_lines(self, campaign_id, run_status) -> list[str]:
         lines: list[str] = []
         # Today's applied count (the truthful "how much have I done" number).
-        run_status = self._safe_run_status(campaign_id)
         if run_status is not None:
             applied = run_status.get("applied_today")
             if isinstance(applied, int) and applied > 0:
@@ -130,9 +134,8 @@ class StatusUpdateService:
         return lines
 
     # --- present: am I working, and is my work paused ---------------------
-    def _present_lines(self, campaign_id, now: datetime) -> list[str]:
+    def _present_lines(self, now: datetime, run_status) -> list[str]:
         lines: list[str] = []
-        run_status = self._safe_run_status(campaign_id)
         if run_status is not None and run_status.get("paused"):
             lines.append("my automated work is paused")
         if self._scheduler is not None:
@@ -142,9 +145,8 @@ class StatusUpdateService:
         return lines
 
     # --- future: next-action intent + what's pending ----------------------
-    def _future_lines(self, campaign_id) -> list[str]:
+    def _future_lines(self, campaign_id, run_status) -> list[str]:
         lines: list[str] = []
-        run_status = self._safe_run_status(campaign_id)
         if run_status is not None:
             intent = (run_status.get("latest_intent") or "").strip()
             if intent:

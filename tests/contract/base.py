@@ -523,6 +523,61 @@ class StoragePortContract:
         page = adapter.outcomes.list_for_campaign(cid, limit=2, offset=1)
         assert len(page) == 2
 
+    def test_decision_list_for_campaign(self, adapter):
+        """Perf lens 03 (round 2): batch decisions-by-campaign (no N+1 over
+        applications) — used by ``feedback_history.FeedbackSummaryProvider``."""
+        from applicant.core.entities.application import Application
+        from applicant.core.entities.decision import Decision, DecisionType
+        from applicant.core.ids import DecisionId, JobPostingId
+
+        cid = CampaignId(new_id())
+        other_cid = CampaignId(new_id())
+        aid = ApplicationId(new_id())
+        other_aid = ApplicationId(new_id())
+        adapter.campaigns.add(Campaign(id=cid, name="P"))
+        adapter.campaigns.add(Campaign(id=other_cid, name="Q"))
+        adapter.applications.add(Application(id=aid, campaign_id=cid, posting_id=JobPostingId("")))
+        adapter.applications.add(
+            Application(id=other_aid, campaign_id=other_cid, posting_id=JobPostingId(""))
+        )
+        adapter.decisions.add(
+            Decision(id=DecisionId(new_id()), application_id=aid, type=DecisionType.DECLINE, feedback_text="no")
+        )
+        adapter.decisions.add(
+            Decision(id=DecisionId(new_id()), application_id=aid, type=DecisionType.APPROVE)
+        )
+        # A decision on another campaign's application must not leak in.
+        adapter.decisions.add(
+            Decision(id=DecisionId(new_id()), application_id=other_aid, type=DecisionType.DECLINE)
+        )
+        adapter.commit()
+
+        decisions = adapter.decisions.list_for_campaign(cid)
+        assert len(decisions) == 2
+        assert all(d.application_id == aid for d in decisions)
+        assert adapter.decisions.list_for_campaign(other_cid)[0].application_id == other_aid
+
+    def test_revision_list_for_materials_batch(self, adapter):
+        """Perf lens 03 (round 2): batch revision-session lookup for many
+        materials in one call (no N+1 over documents)."""
+        from applicant.core.entities.revision_session import RevisionSession, RevisionStatus
+        from applicant.core.ids import GeneratedDocumentId, RevisionSessionId
+
+        mid_1 = GeneratedDocumentId(new_id())
+        mid_2 = GeneratedDocumentId(new_id())
+        mid_none = GeneratedDocumentId(new_id())  # no session for this one
+        s1 = RevisionSession(id=RevisionSessionId(new_id()), material_id=mid_1, status=RevisionStatus.OPEN)
+        s2 = RevisionSession(id=RevisionSessionId(new_id()), material_id=mid_2, status=RevisionStatus.OPEN)
+        adapter.revisions.add(s1)
+        adapter.revisions.add(s2)
+        adapter.commit()
+
+        found = adapter.revisions.list_for_materials([mid_1, mid_2, mid_none])
+        assert {str(s.material_id) for s in found} == {str(mid_1), str(mid_2)}
+        # Individual lookups still agree with the batch result (same rows).
+        assert adapter.revisions.get_for_material(mid_1) is not None
+        assert adapter.revisions.list_for_materials([]) == []
+
     def test_screenshot_list_for_campaign(self, adapter):
         from applicant.core.entities.application import Application
         from applicant.core.entities.application_screenshot import ApplicationScreenshot
