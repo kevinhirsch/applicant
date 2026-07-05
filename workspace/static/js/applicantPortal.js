@@ -81,6 +81,11 @@ let _badgePollStop = null;
 let _lastPendingCount = 0;
 let _recapSince = null;
 let _recapSinceReady = false;
+// The count the badge last actually painted (lens-10 audit #44): a transient
+// fetch error must not erase a real "N waiting" signal, so refreshBadge's
+// catch restores this instead of zeroing it. Kept current on every _setBadge
+// call (including explicit-zero ones — those are real states, not errors).
+let _lastBadgeCount = 0;
 // The "I'm on it" empty-state proof-of-life line (task #10): the engine's own
 // now/next agent-status snapshot, so the copy can name something concrete (the
 // applied-today count, the next scheduled action) instead of a static sentence.
@@ -137,6 +142,28 @@ function _setNotifSeenTs(ts) {
 function _notifTs(n) {
   const t = n && n.created_at ? Date.parse(n.created_at) : NaN;
   return Number.isFinite(t) ? t : 0;
+}
+
+// Lens-10 audit #40: the router ships `created_at` on every row
+// (app/routers/notifications.py `_shape`) but nothing ever rendered it —
+// pending-action rows already show a server-computed `age_label` (`_ageLabel`
+// below), so an error/update row gave no clue whether it happened 2 minutes
+// or 20 hours ago (and it silently vanishes after 24h). Notifications carry
+// no `age_label` field, so this mirrors that same short relative-time
+// affordance client-side from `created_at`, reusing `_notifTs` (the exact
+// parser `_toastNew` already relies on) rather than a new date library.
+function _notifAgeText(n) {
+  const t = _notifTs(n);
+  if (!t) return '';
+  const deltaMs = Date.now() - t;
+  if (deltaMs < 0) return '';
+  const mins = Math.floor(deltaMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 // Informational = not an open action (those are the pending-action rows already).
@@ -1269,22 +1296,33 @@ function _renderRowInner(item) {
 // An informational notification rendered as a dismissible queue row. It mirrors
 // the action-row shell (.admin-card) but the affordance is a single "Dismiss"
 // that calls the seen endpoint, since there is nothing to act on.
+//
+// Lens-10 audit #41: `digest` used to collapse onto the same "Update" label
+// and styling as generic `info` rows, so the one kind with a natural
+// affordance (today's roles are waiting, in the same digest embed below) was
+// indistinguishable from a routine update. Give it its own plain-language tag.
 const _NOTIF_KIND_LABEL = {
   error: 'Heads up',
-  digest: 'Update',
+  digest: 'Daily digest',
   info: 'Update',
 };
 
 function _renderNotifRow(n) {
-  const accent = n.kind === 'error' ? 'var(--color-danger,#e06c6c)' : 'var(--border)';
+  // The digest kind also gets its own accent (distinct from the plain border
+  // generic updates use) so the distinction reads at a glance, not just in text.
+  const accent = n.kind === 'error'
+    ? 'var(--color-danger,#e06c6c)'
+    : (n.kind === 'digest' ? 'var(--color-accent,#00aaff)' : 'var(--border)');
   const tag = _NOTIF_KIND_LABEL[n.kind] || 'Update';
+  const age = _notifAgeText(n);
+  const ageSuffix = age ? ` <span style="opacity:0.7;">· ${esc(age)}</span>` : '';
   const body = (n.body && n.body !== n.title) ? `<div style="opacity:0.7;font-size:11px;margin-top:2px;word-break:break-word;">${esc(n.body)}</div>` : '';
   return `
     <div class="admin-card og-card applicant-portal-notif" data-notif-id="${esc(n.id)}" style="border-left:2px solid ${accent};">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div style="font-size:13px;min-width:0;">
           <div style="font-weight:600;word-break:break-word;">${esc(n.title || tag)}</div>
-          <div style="opacity:0.55;font-size:11px;margin-top:1px;">${esc(tag)}</div>
+          <div style="opacity:0.55;font-size:11px;margin-top:1px;">${esc(tag)}${ageSuffix}</div>
           ${body}
         </div>
         <button type="button" class="cal-btn applicant-portal-dismiss" data-notif-id="${esc(n.id)}" title="Dismiss this notification" style="flex-shrink:0;">Dismiss</button>
@@ -1796,6 +1834,7 @@ function _removeNotifRow(host, id) {
 // ── Count badge ────────────────────────────────────────────────────────────────
 
 function _setBadge(n) {
+  _lastBadgeCount = Math.max(0, Number(n) || 0);
   const btn = document.getElementById('rail-portal');
   if (!btn) return;
   let badge = btn.querySelector('.rail-notes-badge');
@@ -1836,10 +1875,15 @@ async function refreshBadge() {
   let pendingCount = 0;
   try {
     const data = await _fetchJSON(`${API}/pending/count`);
+    // The engine explicitly reporting itself unreachable is a real state (the
+    // modal's own offline copy covers it) — zero the badge for that.
     if (data && data.engine_available === false) { _setBadge(0); return; }
     pendingCount = (data && data.count) || 0;
   } catch {
-    _setBadge(0);
+    // Lens-10 audit #44: a transient fetch error (one dropped poll, not a
+    // confirmed-offline engine) must not erase a real "N waiting" badge —
+    // leave the last count actually painted in place instead of zeroing it.
+    _setBadge(_lastBadgeCount);
     return;
   }
   const infoCount = await _loadNotifs();
