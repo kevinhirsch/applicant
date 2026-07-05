@@ -108,7 +108,12 @@ export function handleUIControl(uiData) {
     } else if (uiEvent === 'highlight' || uiData.ui_event === 'highlight') {
       document.querySelectorAll('.applicant-highlight').forEach(function(e) { e.classList.remove('applicant-highlight'); });
       document.querySelectorAll('.applicant-hl-label').forEach(function(e) { e.remove(); });
-      var target = document.querySelector(uiData.selector);
+      var target = null;
+      try {
+        target = document.querySelector(uiData.selector);
+      } catch (selErr) {
+        console.warn('highlight: invalid selector, skipping:', uiData.selector, selErr);
+      }
       if (target) {
         target.classList.add('applicant-highlight');
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
