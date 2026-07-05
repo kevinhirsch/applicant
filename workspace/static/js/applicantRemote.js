@@ -14,7 +14,7 @@
 //
 //     window.openApplicantRemoteSession(applicationId, sessionUrl)
 //
-// SECURITY: the "Authorize the assistant to finish" and "I submitted it myself"
+// SECURITY: the "Submit it for me" and "I submitted it myself"
 // controls call the engine's explicit authorize endpoints through the proxy. The
 // assistant can never click the final submit without the user's explicit action
 // — there is no client path that bypasses that.
@@ -70,8 +70,8 @@ function _ensureModalEl() {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;overflow:auto;">
         <p style="margin:0;opacity:0.75;font-size:13px;" id="applicant-remote-intro">
-          Watch the assistant fill out your application in real time. You can take
-          over at any moment to do the parts only you should do — creating an
+          Watch me fill out your application in real time. Take over at any
+          moment to do the parts only you should do — creating an
           account, clearing a verification, and the final submit.
         </p>
         <!-- a11y-deep audit #22: the phase arc (launching/ready/took-control/
@@ -88,7 +88,7 @@ function _ensureModalEl() {
                   referrerpolicy="no-referrer"></iframe>
           <div id="applicant-remote-empty"
                style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;opacity:0.7;color:#f2f5f7;">
-            No live session is open yet.
+            No live session is open yet — when I'm working in a browser, it appears here.
           </div>
         </div>
 
@@ -98,7 +98,7 @@ function _ensureModalEl() {
           <button id="applicant-remote-open-tab" class="cal-btn"
                   title="Open the live session full-screen in a new tab">Open in new tab</button>
           <button id="applicant-remote-refresh" class="cal-btn"
-                  title="Reload the list of live sessions">Refresh sessions</button>
+                  title="Reload the list of live sessions">Refresh list</button>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
@@ -108,7 +108,7 @@ function _ensureModalEl() {
                the inline font-size, unchanged. -->
           <h5 style="margin:0;font-size:0.95em;font-weight:600;">Resume after a step you did yourself</h5>
           <p style="margin:0;opacity:0.7;font-size:12px;">
-            Use these once you have finished a step the assistant can't do on its own.
+            Use these once you've finished a step I can't do on my own.
           </p>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="applicant-remote-resume-account" class="memory-toolbar-btn"
@@ -133,25 +133,25 @@ function _ensureModalEl() {
 
         <div id="applicant-remote-desktop" class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <h5 style="margin:0;font-size:0.95em;font-weight:600;flex:1 1 auto;">Let the assistant help on the desktop</h5>
+            <h5 style="margin:0;font-size:0.95em;font-weight:600;flex:1 1 auto;">Let me help on the desktop</h5>
             <button id="applicant-remote-desktop-toggle" class="cal-btn" disabled
-                    title="Let the assistant handle desktop steps the browser can't reach, like a file-upload dialog. You stay in control and approve each action.">
+                    title="Let me handle desktop steps the browser can't reach, like a file-upload dialog. You stay in control and approve each action.">
               Turn on</button>
           </div>
           <p id="applicant-remote-desktop-desc" style="margin:0;opacity:0.7;font-size:12px;">
             For the parts that live outside the web page — a file-upload dialog or
-            another desktop window. You stay in control: it never creates accounts,
-            clears verifications, or submits, and it asks before each step.
+            another desktop window. You stay in control: I never create accounts,
+            clear verifications, or submit, and I ask before each step.
           </p>
           <p id="applicant-remote-desktop-note" style="margin:0;opacity:0.6;font-size:11px;">
-            Coming in a future update — desktop help isn't set up on this sandbox yet.
+            Coming in a future update — desktop help isn’t set up on this computer yet.
           </p>
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:10px;">
           <h5 style="margin:0;font-size:0.95em;font-weight:600;">Finish the application</h5>
           <p style="margin:0;opacity:0.75;font-size:12px;">
-            The assistant has pre-filled everything and stopped before the final
+            I've filled in everything and stopped before the final
             submit. Choose how to finish — nothing is submitted until you decide.
           </p>
           <div>
@@ -165,7 +165,7 @@ function _ensureModalEl() {
                     title="You will click submit yourself in the live session">I'll submit it myself</button>
             <span aria-hidden="true" style="opacity:0.5;font-size:11px;font-style:italic;">or</span>
             <button id="applicant-remote-authorize" class="cal-btn cal-btn-danger"
-                    title="Let the assistant click the final submit, just this once">Authorize the assistant to finish</button>
+                    title="I'll click the final submit — only after you confirm here">Submit it for me</button>
           </div>
           <div id="applicant-remote-authorize-hold" hidden
                style="display:none;flex-wrap:wrap;align-items:center;gap:12px;border:1px solid color-mix(in srgb, var(--danger, #e5484d) 45%, transparent);
@@ -173,17 +173,17 @@ function _ensureModalEl() {
             <span id="applicant-remote-authorize-hold-text" role="status" aria-live="assertive"
                   style="font-weight:600;font-size:13px;"></span>
             <button id="applicant-remote-authorize-hold-cancel" type="button" class="memory-toolbar-btn"
-                    title="Stop now — nothing will be sent to the assistant">Cancel</button>
+                    title="Stop now — nothing has been sent yet">Cancel</button>
           </div>
           <p style="margin:0;opacity:0.55;font-size:11px;">
-            The assistant can only click the final submit when you authorize it
-            here — it never submits on its own.
+            I can only click the final submit when you authorize it
+            here — I never submit on my own.
           </p>
           <div id="applicant-remote-preview" class="applicant-snapshot-preview" hidden
                style="display:none;flex-direction:column;gap:8px;border-top:1px solid var(--border,#3334);padding-top:10px;">
             <div style="display:flex;align-items:center;gap:8px;">
               <strong style="font-size:12px;">Exactly what will be sent</strong>
-              <span style="opacity:0.55;font-size:11px;flex:1 1 auto;">The immutable record for this application — review before you authorize.</span>
+              <span style="opacity:0.55;font-size:11px;flex:1 1 auto;">The exact, unchangeable record for this application — review it before you authorize.</span>
             </div>
             <div id="applicant-remote-preview-body" style="font-size:12px;color:var(--fg,#f2f5f7);"></div>
           </div>
@@ -350,7 +350,7 @@ function _renderDesktopAssist() {
     btn.textContent = 'Turn on';
     btn.classList.remove('cal-btn-primary');
     btn.setAttribute('aria-pressed', 'false');
-    note.textContent = 'Coming in a future update — desktop help isn’t set up on this sandbox yet.';
+    note.textContent = 'Coming in a future update — desktop help isn’t set up on this computer yet.';
     note.style.display = '';
     return;
   }
@@ -362,8 +362,8 @@ function _renderDesktopAssist() {
   // programmatically, not just in the button's own changing label.
   btn.setAttribute('aria-pressed', String(enabled));
   note.textContent = enabled
-    ? 'On for this session. The assistant asks before each desktop step and never submits on its own.'
-    : 'Off. Turn it on to let the assistant help with desktop steps for this session only.';
+    ? "On for this session. I'll ask before each desktop step and never submit on my own."
+    : "Off. Turn it on and I'll help with desktop steps for this session only.";
   note.style.display = '';
 }
 
@@ -669,7 +669,7 @@ async function _offerSaveSignIn(resp) {
   if (!tenantKey && !campaignId) return;
   const site = tenantKey ? tenantKey.split(':').pop() : 'this site';
   const proceed = await _confirm(
-    `Save the sign-in you just used for ${site} so the assistant can reuse it next `
+    `Save the sign-in you just used for ${site} so I can reuse it next `
     + 'time? Your password is encrypted and never shown again.',
     { confirmText: 'Save it', cancelText: 'Not now' });
   if (!proceed) return;
@@ -722,7 +722,7 @@ export async function fetchCaveat() {
 function _authorizeConfirmMessage(ctx) {
   const who = ctx && ctx.label ? `“${ctx.label}”` : 'this application';
   return (
-    `Authorize the assistant to click the final submit for ${who}, just this once?\n\n`
+    `Let me click the final submit for ${who}, just this once?\n\n`
     + 'Materials approved ✓ — this submits immediately and cannot be undone.'
   );
 }
@@ -879,7 +879,7 @@ async function _onAuthorizeFinish() {
     if (btn) btn.textContent = 'Authorizing…';
     const appId = _activeSession.application_id;
     await authorizeEngineFinish(appId);
-    _toast('Authorized — the assistant submitted the application');
+    _toast('Done — I submitted the application for you');
     submitted = true;
   } catch (e) {
     _toast(e.message || 'Could not authorize the submission');
@@ -891,7 +891,7 @@ async function _onAuthorizeFinish() {
   // above so the terminal disabled state is the one that sticks — the
   // employer's real submit button was just physically clicked; a second tap
   // on Authorize must not be possible.
-  if (submitted) _markFinishTerminal('Submitted ✓ — the assistant finished it.');
+  if (submitted) _markFinishTerminal('Submitted ✓ — I finished it for you.');
 }
 
 // ── "Review exactly what will be sent" — the pre-submit snapshot preview ─────
@@ -902,8 +902,8 @@ async function _onAuthorizeFinish() {
 // timestamp. It renders whatever the engine has recorded and NEVER fabricates: the
 // pre-submit state (no snapshot yet) reads as an honest "nothing recorded to send
 // yet" empty state via the shared kit. The panel lives BELOW the decision pair so
-// opening it never pushes "I'll submit it myself" / "Authorize the assistant to
-// finish" below the fold.
+// opening it never pushes "I'll submit it myself" / "Submit it for me"
+// below the fold.
 
 let _previewOpen = false;
 
@@ -953,7 +953,7 @@ async function _loadSnapshotPreview() {
     return;
   }
   if (data && data.engine_available === false) {
-    body.innerHTML = errorHTML('Can’t reach the assistant to load the snapshot right now.');
+    body.innerHTML = errorHTML("I can't load what will be sent right now — try again in a moment.");
     wireRetry(body, () => _loadSnapshotPreview());
     return;
   }
@@ -965,8 +965,8 @@ async function _loadSnapshotPreview() {
 function _snapshotEmptyHTML() {
   return `<div class="applicant-empty" style="text-align:left;color:var(--fg-muted);padding:10px 2px;">`
     + `<div style="font-weight:600;color:var(--fg,#f2f5f7);">Nothing recorded to send yet</div>`
-    + `<div style="margin-top:4px;opacity:0.75;">The exact answers, documents, and posting appear here once the `
-    + `assistant records them at the stop-boundary. If this stays empty, open the live session above to review the filled form directly.</div>`
+    + `<div style="margin-top:4px;opacity:0.75;">The exact answers, documents, and posting appear here once `
+    + `I've filled everything in and stopped before the final submit. If this stays empty, open the live session above to review the filled form directly.</div>`
     + `</div>`;
 }
 

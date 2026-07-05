@@ -5,12 +5,15 @@ applicantVault.js.
 
 Per-file findings (see PR description / session notes for the full audit):
 
-- applicantMind.js: the modal-offline note, the curation ("Waiting for your
-  review") empty copy, and the saved-playbooks empty copy were ALREADY warm
-  (explain what the surface is, why it's empty, what happens next) — left
-  untouched. The two per-block memory hints inside `_renderMemory` ("Nothing
-  remembered yet." / "No preferences captured yet.") were genuinely flat —
-  warmed to explain why the section is empty and what will fill it.
+- applicantMind.js: the curation ("Waiting for your review") empty copy was
+  ALREADY warm (explains what the surface is, why it's empty, what happens
+  next) — left untouched. The two per-block memory hints inside
+  `_renderMemory` ("Nothing remembered yet." / "No preferences captured
+  yet.") were genuinely flat — warmed to explain why the section is empty
+  and what will fill it. The modal-offline note and the saved-playbooks
+  empty copy were warm in shape but still spoke in third person ("the
+  assistant") and leaned on "AI model" jargon — the copy/voice (exhaustive2
+  lens 02) audit's findings #163/#164 rewrote both to first person.
 - applicantCompare.js: the modal's initial "Nothing to compare yet" empty
   state already reused the shared `emptyHTML()` kit and was warm. The
   `_renderResult` no-data fallback ("No comparison returned.") was a bare,
@@ -66,14 +69,25 @@ def test_mind_memory_block_hints_are_warm_not_flat():
     assert "No preferences captured yet — tell the assistant what you like" in js
 
 
-def test_mind_curation_and_offline_and_skills_notes_already_warm_untouched():
-    """Sanity check that the surfaces this batch judged ALREADY warm (and
-    therefore left alone) are still intact — proves this pass was a
-    copy/tone fix, not a wholesale rewrite of applicantMind.js."""
+def test_mind_curation_notes_already_warm_untouched():
+    """Sanity check that the curation empty-state (already warm since this
+    batch) is still intact — proves this pass was a copy/tone fix, not a
+    wholesale rewrite of applicantMind.js."""
     js = _read(MIND_JS)
-    assert "Connect an AI model to start building what the assistant remembers" in js
     assert "Nothing waiting for your review. New suggestions appear here before anything is saved." in js
-    assert "No saved playbooks yet. The assistant writes these from its own work." in js
+
+
+def test_mind_offline_and_skills_notes_are_first_person_not_third():
+    """copy/voice (02) audit #163/#164: the modal-offline note and the
+    saved-playbooks empty state used to speak in third person ("the
+    assistant") and lean on internal "AI model" jargon — both rewritten to
+    first person, plain language. The old third-person strings must be gone."""
+    js = _read(MIND_JS)
+    assert "Connect an AI model to start building what the assistant remembers" not in js
+    assert "Connect a model in Settings or the setup wizard, and I'll start remembering" in js
+    assert "what I learn." in js
+    assert "No saved playbooks yet. The assistant writes these from its own work." not in js
+    assert "No saved playbooks yet. I write these as I learn from my own work." in js
 
 
 # ── applicantCompare.js ──────────────────────────────────────────────────────

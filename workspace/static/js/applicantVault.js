@@ -67,8 +67,8 @@ function _ensureModalEl() {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:20px;overflow:auto;">
         <p style="margin:0;opacity:0.75;font-size:13px;">
-          Save the username and password for a job site so the assistant can sign
-          in for you. Passwords are encrypted and are never shown again or sent
+          Save the username and password for a job site so I can sign in for you.
+          Passwords are encrypted and are never shown again or sent
           back to this screen.
         </p>
 
@@ -82,7 +82,7 @@ function _ensureModalEl() {
                  still controlled entirely by the inline font-size, unchanged. -->
             <h5 style="margin:0;font-size:0.95em;flex:1;font-weight:600;">Sites with a saved sign-in
               <span id="applicant-vault-count" style="font-weight:400;opacity:0.6;"></span></h5>
-            <button id="applicant-vault-refresh" class="memory-toolbar-btn" title="Reload">Refresh</button>
+            <button id="applicant-vault-refresh" class="memory-toolbar-btn" title="Reload the list of saved sign-ins">Refresh</button>
           </div>
           <div id="applicant-vault-list" role="list" style="display:flex;flex-direction:column;gap:6px;"></div>
           <div id="applicant-vault-empty" style="opacity:0.5;font-size:13px;padding:6px 0;">
@@ -94,7 +94,7 @@ function _ensureModalEl() {
           <h5 style="margin:0;font-size:0.95em;font-weight:600;">Account sign-ins (used everywhere)</h5>
           <p style="margin:0;opacity:0.7;font-size:12px;">
             Set these once — they apply to every job search. Your Google sign-in
-            lets the assistant use “Sign in with Google” on any site; the default
+            lets me use “Sign in with Google” on any site; the default
             sign-in is used only if a site requires creating a brand-new account.
           </p>
 
@@ -144,10 +144,10 @@ function _ensureModalEl() {
         </div>
 
         <div class="admin-card" style="display:flex;flex-direction:column;gap:8px;">
-          <h5 style="margin:0;font-size:0.95em;font-weight:600;">A specific site sign-in</h5>
+          <h5 style="margin:0;font-size:0.95em;font-weight:600;">Sign-in for a specific site</h5>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Site / employer
             <input id="applicant-vault-tenant" class="applicant-field" type="text" placeholder="acme.workday.com"
-                   title="The job site or employer tenant this sign-in is for"
+                   title="The job site or employer this sign-in is for"
                    style="width:100%;margin-top:4px;">
           </label>
           <label class="ow-field" style="font-size:12px;opacity:0.8;">Username or email
@@ -604,9 +604,9 @@ export async function offerApplicantCredentialCapture(c) {
   try {
     if (uiModule.styledConfirm) {
       proceed = await uiModule.styledConfirm(
-        `Save the sign-in you just used for "${c.tenantKey}" so the assistant can `
-        + 'reuse it next time? Your password will be encrypted.',
-        { confirmText: 'Save it', cancelText: 'No thanks' });
+        `Save the sign-in you just used for “${c.tenantKey}” so I can `
+        + 'reuse it next time? Your password is encrypted and never shown again.',
+        { confirmText: 'Save it', cancelText: 'Not now' });
     } else {
       proceed = window.confirm(`Save the sign-in for "${c.tenantKey}"?`);
     }
