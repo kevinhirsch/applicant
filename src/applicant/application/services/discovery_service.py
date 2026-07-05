@@ -14,6 +14,9 @@ Structured scraping incurs zero LLM tokens (FR-DISC-4).
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+
 from applicant.core.entities.discovery_source import DiscoverySource
 from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.search_criteria import SearchCriteria
@@ -26,6 +29,13 @@ from applicant.core.rules.source_pacing import (
 
 #: Cosine similarity above which two postings are treated as duplicates.
 _DEDUP_THRESHOLD = 0.97
+
+#: Hard ceiling on the TOTAL time one ``run_discovery`` call may spend waiting on
+#: per-domain pacing (#195, dark-engine audit item 49). Pacing is a best-effort
+#: anti-bot smoothing, not a hard guarantee -- a burst on one domain large enough to
+#: need more than this degrades to immediate (unpaced) emission for the remainder
+#: rather than stalling a scheduler tick indefinitely (never hangs unboundedly).
+_MAX_TOTAL_PACE_WAIT_SECONDS = 10.0
 
 
 class DiscoveryService:
@@ -40,6 +50,8 @@ class DiscoveryService:
         advanced_learning=None,
         source_pacer: SourcePacer | None = None,
         per_domain_interval_seconds: float = DEFAULT_PER_DOMAIN_INTERVAL_SECONDS,
+        pace_clock: Callable[[], float] = time.monotonic,
+        pace_sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._storage = storage
         self._discovery = discovery
@@ -50,6 +62,10 @@ class DiscoveryService:
         self._source_pacer = source_pacer or SourcePacer(
             interval_seconds=per_domain_interval_seconds
         )
+        # Injectable clock/sleep so ``_apply_pacing`` (below) is deterministically
+        # testable without real wall-clock delay; production uses the real clock.
+        self._pace_clock = pace_clock
+        self._pace_sleep = pace_sleep
         self._learning = learning  # optional LearningService for yield persistence
         # Optional AdvancedLearningService so discovery can also lean toward titles
         # mined from the DISCRETE converting signature the live loop writes, plus an
@@ -128,6 +144,10 @@ class DiscoveryService:
         # Load previously persisted postings for cross-run dedup (#196).
         existing = list(self._storage.postings.list_for_campaign(campaign_id))
         kept = self._dedup(raw, existing=existing)
+        # #195/dark-engine-49: space same-domain postings under the anti-bot interval
+        # before they're processed further, so a burst from one job-board domain
+        # doesn't hammer it. Postings on different domains are never mutually delayed.
+        self._apply_pacing(kept)
         for posting in kept:
             self._storage.postings.add(posting)
             event_bus.emit(
@@ -241,6 +261,36 @@ class DiscoveryService:
             self._source_pacer.record(url, release)
             scheduled.append((posting, release))
         return scheduled
+
+    def _apply_pacing(self, postings: list[JobPosting]) -> None:
+        """Enforce :meth:`pace_schedule` for real (dark-engine audit item 49).
+
+        ``pace_schedule`` is pure ("the caller decides whether/how to wait") — this is
+        that caller. Anchored at the real clock (``start=self._pace_clock()``) so a
+        posting that is FIRST for its domain releases immediately, and a later posting
+        on the SAME domain releases ``interval_seconds`` after the previous one;
+        postings on different domains always compute ``release <= start`` and so never
+        wait on each other (see ``SourcePacer.next_allowed_at``).
+
+        Bounded: the total time this call may spend sleeping is capped at
+        ``_MAX_TOTAL_PACE_WAIT_SECONDS`` — once that budget is spent the remaining
+        postings in this run are emitted immediately rather than blocking the caller
+        (a scheduler tick) indefinitely on a large same-domain burst.
+        """
+        if not postings:
+            return
+        start = self._pace_clock()
+        schedule = self.pace_schedule(postings, start=start)
+        budget = _MAX_TOTAL_PACE_WAIT_SECONDS
+        for _posting, release_at in schedule:
+            if budget <= 0:
+                break
+            wait = release_at - self._pace_clock()
+            if wait <= 0:
+                continue
+            wait = min(wait, budget)
+            self._pace_sleep(wait)
+            budget -= wait
 
     def source_yield(self, postings: list[JobPosting]) -> dict[str, int]:
         """Count postings per source-key for FR-DISC-5 source-yield learning."""

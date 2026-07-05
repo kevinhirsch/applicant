@@ -654,6 +654,16 @@ def build_container(settings: Settings | None = None) -> Container:
             )
         return ladder
 
+    # #48 dark-engine audit: LLM_RATE_LIMIT/LLM_RATE_PERIOD were configured but never
+    # gated a call. Wire the rolling-window gate into the ONE shared adapter singleton
+    # below. ``llm_rate_limit == 0`` disables it (the config comment's "0 disables"),
+    # in which case ``LLMRateLimiter`` is a zero-overhead no-op, so the default request
+    # path is unaffected unless an operator sets a real limit.
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    llm_rate_limiter = LLMRateLimiter(
+        limit=settings.llm_rate_limit, period=settings.llm_rate_period
+    )
     llm = OpenAICompatibleLLM(
         # Resolve the ladder lazily through the provider so a runtime model-connect
         # (which re-fires this) is picked up without rebuilding the adapter — the chat,
@@ -664,6 +674,7 @@ def build_container(settings: Settings | None = None) -> Container:
         ),
         app_context_manager=app_context_manager,
         prefix_cache=settings.prefix_cache,
+        rate_limiter=llm_rate_limiter,
     )
     # Connecting a model at runtime persists the new tier and then re-arms this exact
     # adapter, so the next completion walks the freshly-configured ladder (no restart).

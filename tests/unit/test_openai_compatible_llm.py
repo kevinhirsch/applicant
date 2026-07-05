@@ -664,3 +664,146 @@ def test_tool_result_messages_serialize_to_wire_shape():
     # The assistant message round-trips its tool_calls; the tool result carries its id.
     assert wire[1]["tool_calls"][0]["function"]["name"] == "recall"
     assert wire[2]["role"] == "tool" and wire[2]["tool_call_id"] == "c1"
+
+
+# --- #48 dark-engine audit: per-provider rate limiter wired into the call path ----
+def test_default_construction_has_no_rate_limiter_gating():
+    """No ``rate_limiter`` passed -> disabled gate, byte-identical to before (#48)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="t1",
+        transport=httpx.MockTransport(handler),
+    )
+    # Many calls in a tight loop: nothing gates them without an explicit limiter.
+    for _ in range(10):
+        res = llm.complete([ChatMessage(role="user", content="q")])
+        assert res.tier == 1
+
+
+def test_rate_limit_zero_disables_gating():
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    limiter = LLMRateLimiter(0, 60.0)  # "0 disables"
+    llm = OpenAICompatibleLLM(
+        provider="openai", base_url="https://a/v1", model="t1",
+        transport=httpx.MockTransport(handler),
+        rate_limiter=limiter,
+    )
+    for _ in range(10):
+        res = llm.complete([ChatMessage(role="user", content="q")])
+        assert res.tier == 1
+
+
+def test_rate_limited_tier_climbs_to_next_provider_tier():
+    """A tier over its rate budget is a soft failure -- the ladder climbs past it,
+    exactly like a transient HTTP failure (#48)."""
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": f"from {body['model']}"}}]}
+        )
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://b/v1", model="t2", context_window=100_000),
+        ]
+    )
+    # No-op sleep: the wait path is exercised but consumes no real wall-clock time.
+    limiter = LLMRateLimiter(limit=1, period=1_000.0, sleep=lambda s: None)
+    llm = OpenAICompatibleLLM(
+        ladder=ladder, transport=httpx.MockTransport(handler), rate_limiter=limiter,
+    )
+    # Pre-consume tier 1's single admission (simulating a prior burst on that
+    # provider/endpoint) so this ``complete`` call finds it exhausted.
+    assert limiter.acquire("openai|https://a/v1") is True
+
+    res = llm.complete([ChatMessage(role="user", content="q")])
+    assert res.tier == 2
+    assert res.model == "t2"
+
+
+def test_rate_limit_gate_shares_bucket_by_provider_and_endpoint_not_model():
+    """Two tiers on the SAME provider/base_url (different model) share one budget --
+    the limit is per endpoint, not per model (#48)."""
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": f"from {body['model']}"}}]}
+        )
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://a/v1", model="t2", context_window=100_000),
+        ]
+    )
+    limiter = LLMRateLimiter(limit=1, period=1_000.0, sleep=lambda s: None)
+    llm = OpenAICompatibleLLM(
+        ladder=ladder, transport=httpx.MockTransport(handler), rate_limiter=limiter,
+    )
+    assert limiter.acquire("openai|https://a/v1") is True  # exhaust the shared bucket
+
+    # Both tiers share "openai|https://a/v1" -> the ladder is fully exhausted, and
+    # the DOWNWARD fallback has no lower rung either (tier 1 IS the bottom) -> raises.
+    from applicant.ports.driven.llm import LLMLadderExhausted
+    with pytest.raises(LLMLadderExhausted):
+        llm.complete([ChatMessage(role="user", content="q")])
+
+
+def test_rate_limit_waits_then_succeeds_on_same_tier():
+    """A tiny real period: the second call waits (bounded) then succeeds -- proves
+    the gate is wired all the way into the real dispatch path, not just unit-tested
+    in isolation (#48)."""
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+        ]
+    )
+    limiter = LLMRateLimiter(limit=1, period=0.05)  # real, tiny window
+    llm = OpenAICompatibleLLM(
+        ladder=ladder, transport=httpx.MockTransport(handler), rate_limiter=limiter,
+    )
+    r1 = llm.complete([ChatMessage(role="user", content="q1")])
+    r2 = llm.complete([ChatMessage(role="user", content="q2")])
+    assert r1.tier == 1 and r2.tier == 1
+
+
+def test_rate_limit_gates_complete_with_tools_too():
+    from applicant.adapters.llm.rate_limit import LLMRateLimiter
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": f"from {body['model']}"}}]}
+        )
+
+    ladder = TierLadder(
+        tiers=[
+            TierConfig(provider="openai", base_url="https://a/v1", model="t1", context_window=100_000),
+            TierConfig(provider="openai", base_url="https://b/v1", model="t2", context_window=100_000),
+        ]
+    )
+    limiter = LLMRateLimiter(limit=1, period=1_000.0, sleep=lambda s: None)
+    llm = OpenAICompatibleLLM(
+        ladder=ladder, transport=httpx.MockTransport(handler), rate_limiter=limiter,
+    )
+    assert limiter.acquire("openai|https://a/v1") is True
+
+    res = llm.complete_with_tools([ChatMessage(role="user", content="q")], [])
+    assert res.tier == 2
+    assert res.model == "t2"

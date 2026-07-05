@@ -36,11 +36,13 @@ from applicant.adapters.llm.provider_profiles import (
     get_profile,
     tool_call_arguments,
 )
+from applicant.adapters.llm.rate_limit import LLMRateLimiter
 from applicant.observability.logging import get_logger
 from applicant.ports.driven.llm import (
     ChatMessage,
     LLMLadderExhausted,
     LLMNotConfigured,
+    LLMRateLimited,
     LLMResult,
     TierConfig,
     TierLadder,
@@ -226,6 +228,7 @@ class OpenAICompatibleLLM:
         context_manager: ContextWindowManager | None = None,
         app_context_manager: Any | None = None,
         prefix_cache: str = "auto",
+        rate_limiter: LLMRateLimiter | None = None,
     ) -> None:
         if ladder is None and (provider or model):
             ladder = TierLadder(
@@ -269,6 +272,10 @@ class OpenAICompatibleLLM:
         # Local/OpenAI-compatible providers advertise no support, so this is a
         # clean no-op for them regardless of the setting.
         self._prefix_cache = (prefix_cache or "auto").strip().lower()
+        # Per-provider LLM call rate gate (FR-DUR-2, #48). ``None`` (default) builds a
+        # DISABLED limiter (limit=None) so every existing call site/test is
+        # byte-identical unless the composition root wires a real one from config.
+        self._rate_limiter = rate_limiter or LLMRateLimiter(None, None)
 
     # --- runtime-reloadable ladder ---------------------------------------
     @property
@@ -310,6 +317,30 @@ class OpenAICompatibleLLM:
     # --- helpers ----------------------------------------------------------
     def _client(self) -> httpx.Client:
         return httpx.Client(transport=self._transport, timeout=self._timeout)
+
+    @staticmethod
+    def _rate_key(tier: TierConfig) -> str:
+        """Rolling-window bucket key: per provider/endpoint, not per model (#48).
+
+        Two tiers on the SAME provider/base_url (e.g. differing only by model) share
+        one budget -- the limit is a per-provider call cap, not a per-model one.
+        """
+        return f"{tier.provider}|{_normalize_base(tier.base_url)}"
+
+    def _gate_rate_limit(self, tier: TierConfig) -> None:
+        """Admit this call under the tier's rate bucket or raise (FR-DUR-2, #48).
+
+        A disabled limiter (the default, or ``LLM_RATE_LIMIT=0``) returns True
+        immediately with zero overhead -- byte-identical to no gating. When enabled
+        and the bucket is over its rolling-window limit, :meth:`LLMRateLimiter.acquire`
+        waits once (bounded by the configured period) and retries; still exhausted
+        after that bounded wait raises :class:`LLMRateLimited`, which the ladder loop
+        catches exactly like a transient tier failure and climbs past.
+        """
+        if not self._rate_limiter.acquire(self._rate_key(tier)):
+            raise LLMRateLimited(
+                f"Rate limit exceeded for provider {tier.provider!r} at {tier.base_url!r}."
+            )
 
     def _headers(self, tier: TierConfig) -> dict[str, str]:
         profile = get_profile(tier.provider, tier.base_url)
@@ -402,10 +433,12 @@ class OpenAICompatibleLLM:
                     ) from None
                 idx = nxt
                 continue
-            except (httpx.HTTPError, LLMNotConfigured, ValueError) as exc:
+            except (httpx.HTTPError, LLMNotConfigured, LLMRateLimited, ValueError) as exc:
                 # ValueError covers json.JSONDecodeError (a ValueError subclass): a
                 # non-JSON 200 (proxy/CDN HTML) must climb the ladder / exhaust
-                # gracefully, never crash the caller (FR-LLM-4).
+                # gracefully, never crash the caller (FR-LLM-4). LLMRateLimited (#48)
+                # is treated the same way: a tier over its per-provider rate budget
+                # is a transient soft failure, not a hard error -- climb past it.
                 last_error = exc
                 log.warning("llm_tier_failed", tier=idx + 1, error=str(exc))
                 idx += 1
@@ -432,7 +465,13 @@ class OpenAICompatibleLLM:
                 continue
             try:
                 result = self._call_tier(tier, down + 1, messages, json_schema, max_tokens)
-            except (httpx.HTTPError, LLMNotConfigured, ValueError, _Overflow) as exc:
+            except (
+                httpx.HTTPError,
+                LLMNotConfigured,
+                LLMRateLimited,
+                ValueError,
+                _Overflow,
+            ) as exc:
                 last_error = exc
                 log.warning("llm_tier_failed", tier=down + 1, error=str(exc), direction="down")
                 down -= 1
@@ -456,6 +495,8 @@ class OpenAICompatibleLLM:
         # Never send a prompt exceeding the active tier's window (FR-LLM-4a).
         if _estimate_tokens(messages) > tier.context_window:
             raise _Overflow()
+        # Per-provider rate gate (FR-DUR-2, #48): a disabled limiter is a no-op.
+        self._gate_rate_limit(tier)
 
         profile = get_profile(tier.provider, tier.base_url)
         base = _normalize_base(tier.base_url)
@@ -718,7 +759,7 @@ class OpenAICompatibleLLM:
                     ) from None
                 idx = nxt
                 continue
-            except (httpx.HTTPError, LLMNotConfigured, ValueError) as exc:
+            except (httpx.HTTPError, LLMNotConfigured, LLMRateLimited, ValueError) as exc:
                 last_error = exc
                 log.warning("llm_tool_tier_failed", tier=idx + 1, error=str(exc))
                 idx += 1
@@ -739,6 +780,8 @@ class OpenAICompatibleLLM:
     ) -> ToolCallResult:
         if _estimate_tokens(messages) > tier.context_window:
             raise _Overflow()
+        # Per-provider rate gate (FR-DUR-2, #48): a disabled limiter is a no-op.
+        self._gate_rate_limit(tier)
         profile = get_profile(tier.provider, tier.base_url)
         base = _normalize_base(tier.base_url)
         url = profile.chat_url(base)
