@@ -78,6 +78,51 @@ def test_llm_rate_limit(orchestrator):
     assert cap.admit_llm("c3") is False  # over the per-period limit
 
 
+# --- capacity introspection for the Debug surface (dark-engine audit #72) --
+@pytest.mark.unit
+def test_sandbox_queue_state_reports_active_and_waiting(orchestrator):
+    cap = CapacityService(orchestrator, sandbox_concurrency=1)
+    assert cap.admit_sandbox("a") is True
+    assert cap.admit_sandbox("b") is False  # b waits behind a
+
+    state = cap.sandbox_queue_state()
+    assert state["supported"] is True
+    assert state["active"] == ["a"]
+    assert state["waiting"] == ["b"]
+
+
+@pytest.mark.unit
+def test_sandbox_queue_state_tracks_a_pivot(orchestrator):
+    cap = CapacityService(orchestrator, sandbox_concurrency=1)
+    cap.admit_sandbox("a")
+    cap.admit_sandbox("b")
+    cap.yield_for_block("a", ApplicationState.AWAITING_FINAL_APPROVAL)
+
+    state = cap.sandbox_queue_state()
+    assert state["active"] == ["b"]
+    assert state["waiting"] == []
+
+
+@pytest.mark.unit
+def test_sandbox_queue_state_degrades_when_orchestrator_lacks_introspection():
+    """Defensive: a backend (e.g. DBOS) without ``queue_state`` must never raise —
+    it reports 'unsupported' rather than fabricating a snapshot."""
+
+    class _NoIntrospectionOrchestrator:
+        def create_queue(self, *a, **k):
+            return None
+
+        def acquire(self, *a, **k):
+            return True
+
+        def release(self, *a, **k):
+            return None
+
+    cap = CapacityService(_NoIntrospectionOrchestrator(), sandbox_concurrency=1)
+    state = cap.sandbox_queue_state()
+    assert state == {"active": [], "waiting": [], "supported": False}
+
+
 # === FinalApprovalService — durable recv gate + ladder (FR-NOTIF-2/4) =======
 @pytest.mark.unit
 def test_final_approval_gate_durable_recv(orchestrator):

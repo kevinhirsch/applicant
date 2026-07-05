@@ -840,6 +840,32 @@ class ApplicantEngineClient:
         """
         return await self._request("GET", "/api/admin/workspace-bridge")
 
+    async def admin_captcha_status(self) -> Any:
+        """Effective captcha strategy + real solve/avoid/handoff telemetry (dark-engine audit #67).
+
+        The configured ``CAPTCHA_STRATEGY``/service/key, whether a solver is
+        actually wired (only true for a non-default strategy), and — only when
+        one is — its real process-lived attempt/outcome counters. Never a
+        fabricated count.
+        """
+        return await self._request("GET", "/api/admin/captcha-status")
+
+    async def admin_capacity(self) -> Any:
+        """Sandbox concurrency snapshot: active vs. waiting applications (dark-engine audit #72).
+
+        Reads the same sandbox-concurrency queue the live scheduler drives
+        every tick, so this reflects the current queue, not a stale snapshot.
+        """
+        return await self._request("GET", "/api/admin/capacity")
+
+    async def admin_embedding_backend(self) -> Any:
+        """Which embedding backend powers memory/dedup matching (dark-engine audit #79).
+
+        Plain-language disclosure of the active ``EmbeddingPort`` backend and
+        its quality tier — today always the offline hashing-trick backend.
+        """
+        return await self._request("GET", "/api/admin/embedding-backend")
+
     async def admin_prefill_diagnostics(self) -> Any:
         """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
 

@@ -84,6 +84,27 @@ class CapacityService:
         """Release a sandbox slot on terminal completion; promote the next waiter."""
         return self._orch.release(SANDBOX_QUEUE, str(application_id))
 
+    # --- capacity introspection (dark-engine audit #72) --------------------
+    def sandbox_queue_state(self) -> dict:
+        """Read-only snapshot of who holds a sandbox slot vs. who is waiting.
+
+        Introspects the SAME ``SANDBOX_QUEUE`` primitive ``admit_sandbox`` /
+        ``release_sandbox`` drive every tick, via the orchestrator's
+        ``queue_state`` (implemented on the default checkpoint-shim backend).
+        Defensive: the optional DBOS backend doesn't implement this
+        introspection today, so this degrades to an "unsupported" snapshot
+        rather than raising — never fabricates counts it cannot read.
+        """
+        reader = getattr(self._orch, "queue_state", None)
+        if reader is None:
+            return {"active": [], "waiting": [], "supported": False}
+        state = reader(SANDBOX_QUEUE)
+        return {
+            "active": list(state.get("active", [])),
+            "waiting": list(state.get("waiting", [])),
+            "supported": True,
+        }
+
     # --- per-provider LLM rate limit (FR-DUR-2) ---------------------------
     def admit_llm(self, call_id: str) -> bool:
         """Try to admit an LLM call within the per-provider rate limit."""

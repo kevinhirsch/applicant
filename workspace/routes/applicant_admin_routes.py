@@ -365,6 +365,41 @@ def setup_applicant_admin_routes() -> APIRouter:
                 {"configured": False, "reachable": False},
             )
 
+    @router.get("/captcha-status")
+    async def captcha_status(request: Request) -> dict:
+        """Effective captcha strategy + real solve/avoid/handoff telemetry (dark-engine audit #67).
+
+        Whether captcha handling is on the default human hand-off, or an
+        avoidance/service strategy is actually wired and doing something —
+        never fabricates a count the engine isn't genuinely tracking.
+        """
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.admin_captcha_status(),
+                {"strategy": "human", "active": False},
+            )
+
+    @router.get("/capacity")
+    async def capacity(request: Request) -> dict:
+        """Sandbox concurrency snapshot: active vs. waiting applications (dark-engine audit #72)."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.admin_capacity(),
+                {"active": [], "waiting": [], "active_count": 0, "waiting_count": 0},
+            )
+
+    @router.get("/embedding-backend")
+    async def embedding_backend(request: Request) -> dict:
+        """Which embedding backend powers memory/dedup matching, plain-language (dark-engine audit #79)."""
+        _require_admin(request)
+        async with ApplicantEngineClient() as engine:
+            return await _soft_get(
+                engine.admin_embedding_backend(),
+                {"backend": "unknown", "quality_tier": "unknown"},
+            )
+
     @router.get("/prefill-diagnostics")
     async def prefill_diagnostics(request: Request) -> dict:
         """Recent pre-fill silent-degradation diagnostics (dark-engine audit #34).
