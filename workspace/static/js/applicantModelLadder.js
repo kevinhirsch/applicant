@@ -37,6 +37,11 @@
 
 import uiModule from './ui.js';
 import { esc, _toast, _fetchJSON, _put } from './applicantCore.js';
+// lens 01 #51: the shared drag-reorder kit already used by models.js /
+// sessions.js / the image editor's layer panel — the ladder previously only
+// had the up/down buttons. Reused as-is (see _wireDragReorder below), not
+// reimplemented.
+import dragSortModule from './dragSort.js';
 
 const SETUP = '/api/applicant/setup';
 const MAX_TIERS = 5;
@@ -319,7 +324,11 @@ function _syncFromDOM() {
       _tiers[i]._ctxFallback = true;
       _tiers[i]._ctxKnown = false;
     }
-    const key = get('.ml-key');
+    // lens 01 #11: an untrimmed API key (a stray leading/trailing space from a
+    // paste) is a silent auth failure later — the key looks right everywhere
+    // it's displayed (never echoed back) but the engine call fails. Trim it
+    // the same way base_url/model already are above.
+    const key = get('.ml-key').trim();
     if (key) { _tiers[i].api_key = key; }
     const connSel = row.querySelector('.ml-connection');
     if (connSel) _tiers[i]._connectionId = connSel.value;
@@ -376,7 +385,10 @@ function _tierRowHTML(t, i) {
   return `
     <div class="admin-card og-card" data-tier-row="${i}" style="margin-bottom:10px;">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-        <div style="font-weight:600;">Level ${i + 1}${i === 0 ? ' · entry model' : ''}</div>
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+          <span class="ml-drag-handle" aria-hidden="true" title="Drag to reorder" style="cursor:grab;opacity:0.5;padding:2px;user-select:none;">⠿</span>
+          <div style="font-weight:600;">Level ${i + 1}${i === 0 ? ' · entry model' : ''}</div>
+        </div>
         <div style="display:flex;gap:4px;">
           <button class="cal-btn ml-up" title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
           <button class="cal-btn ml-down" title="Move down" aria-label="Move down" ${i === last ? 'disabled' : ''}>↓</button>
@@ -396,7 +408,11 @@ function _tierRowHTML(t, i) {
       </label>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">API key
-          <input type="password" class="settings-select ml-key" value="" placeholder="${t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)'}" autocomplete="off" style="display:block;margin-top:3px;width:240px;" />
+          <span style="display:flex;gap:6px;align-items:center;margin-top:3px;">
+            <input type="password" class="settings-select ml-key" value="" placeholder="${t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)'}" autocomplete="off" style="display:block;width:240px;" />
+            <button type="button" class="ml-key-toggle cal-btn" aria-pressed="false"
+              title="Show/hide this level's API key as you type" style="flex-shrink:0;padding:2px 8px;font-size:11px;">Show</button>
+          </span>
           ${keyNote}
         </label>
         <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;" title="How much text (roughly, words and pieces of words) this model can read at once. Check the model's own listing if you're unsure — I trim older context to fit, so an accurate number just avoids wasted capacity.">Context window
@@ -435,7 +451,20 @@ function _render(offline) {
 
   _host.querySelectorAll('.ml-up').forEach((b) => b.addEventListener('click', () => _move(_rowIndex(b), -1)));
   _host.querySelectorAll('.ml-down').forEach((b) => b.addEventListener('click', () => _move(_rowIndex(b), 1)));
-  _host.querySelectorAll('.ml-del').forEach((b) => b.addEventListener('click', () => _remove(_rowIndex(b))));
+  _host.querySelectorAll('.ml-del').forEach((b) => b.addEventListener('click', async () => {
+    // lens 01 #13: _remove() is now async (it may await a confirm dialog) —
+    // disable the clicked button for the duration so a second click during
+    // that confirm can't double-fire. If the row survives (cancelled), put it
+    // back; if it was removed, _render() already replaced this button.
+    if (b.disabled) return;
+    const i = _rowIndex(b);
+    b.disabled = true;
+    try {
+      await _remove(i);
+    } finally {
+      b.disabled = false;
+    }
+  }));
   const addBtn = _host.querySelector('#ml-add');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
@@ -451,6 +480,8 @@ function _render(offline) {
   if (saveBtn) saveBtn.addEventListener('click', _save);
   _wireSavedEndpoints();
   _wireTierEditing();
+  _wireKeyToggles();
+  _wireDragReorder();
 }
 
 // lens 11 #9 / #33 / #55 — per-row wiring for the connection picker, the
@@ -580,23 +611,119 @@ function _wireTierEditing() {
   });
 }
 
+// lens 01 #19: the ladder's API-key field had no show/hide toggle, unlike the
+// Vault's password fields — a masked key can't be visually double-checked
+// before saving (a wrong paste just silently fails auth later). Mirrors
+// applicantVault.js's `_wireSecretToggles` pattern exactly, scoped to this
+// row's own key input.
+function _wireKeyToggles() {
+  if (!_host) return;
+  _host.querySelectorAll('.ml-key-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('[data-tier-row]');
+      const input = row && row.querySelector('.ml-key');
+      if (!input) return;
+      const revealing = input.type === 'password';
+      input.type = revealing ? 'text' : 'password';
+      btn.textContent = revealing ? 'Hide' : 'Show';
+      btn.setAttribute('aria-pressed', String(revealing));
+    });
+  });
+}
+
+// lens 01 #51: wires the shared dragSort.js kit onto the ladder's own drag
+// handle (`.ml-drag-handle`), the same pattern models.js/sessions.js and the
+// image editor's layer panel already use (`handleSelector` scoped to a
+// dedicated grip icon, never the whole row — dragSort's mouse path has no
+// input/button exclusion of its own, so without a handle a single click to
+// focus a text field would instead start a drag). The Up/Down buttons stay:
+// they're the keyboard-operable path (dragSort is mouse/touch-only), and
+// keep working for #50's focus-restore.
+function _wireDragReorder() {
+  if (!_host || !dragSortModule) return;
+  dragSortModule.enable('ml-rows', '[data-tier-row]', {
+    handleSelector: '.ml-drag-handle',
+    onReorder: _onDragReorder,
+  });
+}
+
+// Rebuilds _tiers in the dropped-into-place DOM order. dragSort physically
+// moves the row elements before calling back, but each row still carries its
+// PRE-drag `data-tier-row` index (rows aren't re-rendered until after this),
+// so map each element back to its tier by that old index rather than trusting
+// position. Flush any in-flight field edits first (_syncFromDOM keys off the
+// same old index, so it's order-agnostic) so a drag never discards a
+// not-yet-blurred edit the way it would if we reordered from stale data.
+function _onDragReorder(orderedEls) {
+  _syncFromDOM();
+  const newTiers = orderedEls
+    .map((el) => {
+      const oldIdx = parseInt(el.getAttribute('data-tier-row'), 10);
+      return Number.isFinite(oldIdx) ? _tiers[oldIdx] : undefined;
+    })
+    .filter(Boolean);
+  if (newTiers.length !== _tiers.length) return; // safety net: never apply a partial/mismatched reorder
+  _tiers = newTiers;
+  _markDirty();
+  _render(false);
+}
+
 function _rowIndex(btn) {
   const row = btn.closest('[data-tier-row]');
   return row ? parseInt(row.getAttribute('data-tier-row'), 10) : -1;
+}
+
+// lens 01 #50: _render() rebuilds every row from scratch (fresh DOM nodes)
+// on every reorder, which silently drops keyboard focus back to <body> — a
+// keyboard user pressing the Up/Down move buttons repeatedly loses their
+// place after the very first move and has to re-find the row by hand. Find
+// the row for the SAME tier object (by identity, since its index just
+// changed) after the re-render and refocus one of its own controls so
+// repeated keyboard reordering keeps working from where the user actually is.
+function _restoreFocusForTier(tier, preferredSelectors) {
+  if (!_host || !tier) return;
+  const idx = _tiers.indexOf(tier);
+  if (idx < 0) return;
+  const row = _host.querySelector(`[data-tier-row="${idx}"]`);
+  if (!row) return;
+  const selectors = preferredSelectors || ['.ml-up', '.ml-down', '.ml-del'];
+  for (const sel of selectors) {
+    const el = row.querySelector(sel);
+    if (el && !el.disabled) {
+      try { el.focus(); } catch { /* no-op */ }
+      return;
+    }
+  }
 }
 
 function _move(i, delta) {
   _syncFromDOM();
   const j = i + delta;
   if (i < 0 || j < 0 || j >= _tiers.length) return;
+  const movedTier = _tiers[i];
   const tmp = _tiers[i]; _tiers[i] = _tiers[j]; _tiers[j] = tmp;
   _markDirty();
   _render(false);
+  _restoreFocusForTier(movedTier);
 }
 
-function _remove(i) {
+// lens 01 #13: removing a level was a single click with no confirmation, even
+// when that level had a saved API key — a stray misclick silently deleted a
+// credential the user would otherwise have to re-enter (or re-generate) with
+// no undo. A keyless row stays the previous 1-click removal (nothing at risk);
+// a row with a saved key (`_hasKey`) now requires an explicit, danger-styled
+// confirm first, same shape as the saved-connections "Remove" confirm above.
+async function _remove(i) {
   _syncFromDOM();
-  if (_tiers.length <= 1 || i < 0) return;
+  if (_tiers.length <= 1 || i < 0 || !_tiers[i]) return;
+  const t = _tiers[i];
+  if (t._hasKey) {
+    const ok = await uiModule.styledConfirm(
+      `Remove Level ${i + 1}? Its saved API key will be deleted too — you'd need to re-enter it to use this level again.`,
+      { confirmText: 'Remove', cancelText: 'Cancel', danger: true },
+    );
+    if (!ok) return;
+  }
   _tiers.splice(i, 1);
   _markDirty();
   _render(false);
