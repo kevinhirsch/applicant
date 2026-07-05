@@ -212,9 +212,8 @@ function _renderOffline(body) {
   // (window.launchApplicantSetup, exported by applicantOnboarding.js), so there's
   // an actual next step instead of a instruction to go find Settings yourself.
   body.innerHTML = gatedHTML(
-    'Connect a model in Settings to activate the Job Assistant. Once a model is '
-      + 'connected it can answer questions about your applications and surface '
-      + 'anything that needs your input.',
+    'Connect a model in Settings and I can answer questions about your '
+      + 'applications and flag anything that needs your input.',
     '<button type="button" class="cal-btn cal-btn-primary" id="applicant-chat-connect-cta">Connect a model</button>',
   );
   const cta = body.querySelector('#applicant-chat-connect-cta');
@@ -297,7 +296,7 @@ function _renderConversation() {
       <textarea id="applicant-input" rows="2" placeholder="Ask about your applications, preferences, or what needs your attention…"
                 aria-label="Message the Job Assistant"
                 style="flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;"></textarea>
-      <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send to the assistant">Send</button>
+      <button type="button" class="cal-btn cal-btn-primary" id="applicant-send" title="Send — or press Ctrl+Enter">Send</button>
     </div>
     <div style="text-align:right;font-size:10px;opacity:0.5;margin-top:2px;">⌘/Ctrl + Enter to send</div>`;
 
@@ -388,7 +387,7 @@ function _prefillComposer(text) {
 const _STARTER_PROMPTS = [
   "Tell me what you're looking for",
   'What have you found so far?',
-  'Change my criteria',
+  'Change what you look for',
 ];
 
 function _renderStarters() {
@@ -505,14 +504,14 @@ function _renderCriteriaActions(actions) {
       <div class="applicant-criteria-action" data-idx="${i}"
            style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:6px;font-size:12px;">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-          <div><strong>Criteria change</strong>: ${summary}</div>
+          <div><strong>Search update</strong>: ${summary}</div>
           <button type="button" class="cal-btn cal-btn-primary applicant-confirm-criteria-btn"
                   data-idx="${i}">Confirm</button>
         </div>
       </div>`;
   }).join('');
   return `<div class="applicant-criteria-actions" style="margin-top:8px;">
-      <div style="font-size:11px;opacity:0.7;margin-bottom:2px;">Proposed criteria update</div>${rows}
+      <div style="font-size:11px;opacity:0.7;margin-bottom:2px;">Proposed search update</div>${rows}
     </div>`;
 }
 
@@ -526,7 +525,7 @@ async function _sendToBubble(message, thinking) {
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '…'; }
   try {
     const res = await _post(`${API}/message`, { campaign_id: _activeCampaignId, message }, { timeoutMs: MESSAGE_TIMEOUT_MS });
-    const reply = res.message || '(no reply)';
+    const reply = res.message || "I didn't get a reply — please try sending that again.";
     if (thinking) {
       const controls = res.control_actions || [];
       _setBubbleBody(thinking, reply,
@@ -632,11 +631,11 @@ function _wireCriteriaButtons(container, actions) {
           btn.remove();
           row.innerHTML += ' <span style="color:var(--success,#3a8a3a);font-size:11px;">saved</span>';
         }
-        _toast('Criteria updated');
+        _toast('Search settings updated');
       } catch (e) {
         btn.disabled = false;
         btn.textContent = 'Confirm';
-        _toast(e.message || 'Could not save criteria change');
+        _toast(e.message || 'Could not save the search update');
       }
     });
   });
@@ -664,7 +663,7 @@ async function _loadPending(seq) {
     host.innerHTML = `
       <div class="applicant-pending-link" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center;">
         <div style="font-size:12px;">
-          <strong>${esc(count)} item${count === 1 ? '' : 's'} need your attention</strong>
+          <strong>${esc(count)} item${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} your attention</strong>
           <div style="opacity:0.6;font-size:11px;">Review and act on these in your Pending home base.</div>
         </div>
         <button type="button" class="cal-btn cal-btn-primary" id="applicant-open-portal" style="flex-shrink:0;">Open Pending</button>

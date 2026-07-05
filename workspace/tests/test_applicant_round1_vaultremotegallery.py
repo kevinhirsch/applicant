@@ -147,7 +147,10 @@ def test_vault_trust_payoff_section_leads_with_live_count_badge():
     count_idx = src.index('id="applicant-vault-count"')
     trust_heading_idx = src.index("Sites with a saved sign-in")
     account_heading_idx = src.index("Account sign-ins (used everywhere)")
-    site_heading_idx = src.index("A specific site sign-in")
+    # copy/voice (02) audit #227: this heading was renamed "A specific site
+    # sign-in" -> "Sign-in for a specific site"; only the anchor string used
+    # for ordering below changed, not the assertion's intent.
+    site_heading_idx = src.index("Sign-in for a specific site")
 
     assert trust_heading_idx < account_heading_idx < site_heading_idx, (
         "the trust-payoff ('Sites with a saved sign-in') section must lead, "

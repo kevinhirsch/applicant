@@ -136,8 +136,8 @@ async function _api(path, { method = 'GET', body = null } = {}) {
   let payload = null;
   try { payload = await r.json(); } catch (_) { payload = null; }
   if (!r.ok) {
-    const detail = (payload && (payload.detail || payload.message)) || `Request failed (${r.status})`;
-    const err = new Error(typeof detail === 'string' ? detail : 'Request failed');
+    const detail = (payload && (payload.detail || payload.message)) || `That didn't go through (error ${r.status}). Try again shortly.`;
+    const err = new Error(typeof detail === 'string' ? detail : "That didn't go through. Try again shortly.");
     err.status = r.status;
     throw err;
   }
@@ -156,8 +156,8 @@ async function _apiResearch(path, { method = 'GET', body = null } = {}) {
   let payload = null;
   try { payload = await r.json(); } catch (_) { payload = null; }
   if (!r.ok) {
-    const detail = (payload && (payload.detail || payload.message)) || `Request failed (${r.status})`;
-    const err = new Error(typeof detail === 'string' ? detail : 'Request failed');
+    const detail = (payload && (payload.detail || payload.message)) || `That didn't go through (error ${r.status}). Try again shortly.`;
+    const err = new Error(typeof detail === 'string' ? detail : "That didn't go through. Try again shortly.");
     err.status = r.status;
     throw err;
   }
@@ -198,7 +198,7 @@ function _loopIntroHTML() {
   return `
     <div class="admin-card" id="applicant-digest-loop-intro" style="margin:0 0 8px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px;">
       <span style="flex:1;font-size:11px;opacity:0.85;line-height:1.4;">
-        Every approve or pass here tunes what tomorrow's digest contains — passing with a reason (the Pass button asks for one) teaches the assistant fastest.
+        Every approve or pass here tunes what tomorrow's digest contains — passing with a reason (the Pass button asks for one) teaches me fastest.
       </span>
       <button type="button" class="memory-toolbar-btn" id="applicant-digest-loop-intro-dismiss">Got it</button>
     </div>`;
@@ -237,18 +237,18 @@ function _ensurePanel(modal) {
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
         Refresh
       </button>
-      <button type="button" class="memory-toolbar-btn" id="applicant-digest-preview" title="Preview the digest exactly as it will be emailed to you">
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-preview" title="Preview today's update exactly as it will be emailed to you">
         Preview email
       </button>
-      <button type="button" class="memory-toolbar-btn" id="applicant-digest-feedback" title="Send the assistant a quick note about its suggestions">
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-feedback" title="Send me a quick note about my suggestions">
         Send feedback
       </button>
-      <button type="button" class="memory-toolbar-btn" id="applicant-digest-survey" title="Answer a few quick questions to help the assistant tune what it sends">
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-survey" title="Answer a few quick questions to help me tune what I send">
         Quick survey
       </button>
     </div>
     <p class="memory-desc" style="margin:6px 0 4px;opacity:0.7;font-size:11px;">
-      Roles your job-search assistant flagged today. The same summary is emailed to you; act on anything right here.
+      Roles I flagged for you today. I email you this same summary — act on anything right here.
     </p>
     ${_loopIntroHTML()}
     <div class="applicant-digest-bulk-bar" id="applicant-digest-bulk-bar" style="display:none;align-items:center;gap:8px;margin:0 0 6px;">
@@ -295,10 +295,10 @@ function _renderDigest(panel, payload) {
     // "Searched: …" summary); otherwise build a friendly line and append the
     // separate `searched` summary so the silence is never ambiguous.
     let note = (payload && payload.note) ? String(payload.note)
-      : 'No new roles cleared the bar today. The assistant keeps looking and will let you know.';
+      : "No new roles cleared the bar today. I'm still looking, and I'll let you know.";
     const searched = payload && payload.searched ? String(payload.searched) : '';
     if (searched && note.indexOf(searched) === -1) {
-      note += ` Searched: ${searched}.`;
+      note += ` I looked at: ${searched}.`;
     }
     body.appendChild(_el('div', {
       cls: 'email-loading',
@@ -502,7 +502,7 @@ export function buildDigestRow(row, ctx = {}) {
     head.appendChild(_el('span', {
       cls: 'memory-count',
       text: `${score}% match`,
-      title: 'How well this role fits what you told the assistant',
+      title: "How well this role fits what you've told me",
       style: 'font-size:10px;opacity:0.7;white-space:nowrap;',
     }));
   }
@@ -517,7 +517,7 @@ export function buildDigestRow(row, ctx = {}) {
     // truncated line (C3), so the reasoning is actually readable.
     card.appendChild(_el('div', {
       text: why || meta,
-      title: why ? 'Why the assistant suggested this' : '',
+      title: why ? 'Why I suggested this' : '',
       style: 'font-size:11px;opacity:0.72;margin-top:2px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;',
     }));
   }
@@ -547,7 +547,7 @@ export function buildDigestRow(row, ctx = {}) {
   const approve = _el('button', {
     cls: 'memory-toolbar-btn applicant-digest-approve',
     html: `${_ICON_CHECK}Approve`,
-    title: 'Greenlight this role for an application',
+    title: "Greenlight this role — I'll prepare the application, and you'll review it before anything is sent",
     attrs: { type: 'button' },
   });
   approve.addEventListener('click', () => _onApprove(card, row, approve, onResolved));
@@ -556,7 +556,7 @@ export function buildDigestRow(row, ctx = {}) {
   const pass = _el('button', {
     cls: 'memory-toolbar-btn applicant-digest-pass',
     html: `${_ICON_PASS}Pass`,
-    title: 'Skip this role and tell the assistant why (helps next time)',
+    title: "Skip this role and tell me why — it helps me choose better next time",
     attrs: { type: 'button' },
   });
   pass.addEventListener('click', () => _onPass(card, row, pass, onResolved));
@@ -568,7 +568,7 @@ export function buildDigestRow(row, ctx = {}) {
   const research = _el('button', {
     cls: 'memory-toolbar-btn applicant-digest-research',
     html: `${_ICON_SEARCH}Research`,
-    title: 'Run a quick background-research brief on this company/role',
+    title: 'Get a quick research brief on this company and role',
     attrs: { type: 'button' },
   });
   research.addEventListener('click', () => _onResearch(getCampaignId(), row, research));
@@ -613,7 +613,7 @@ async function _onAlignment(campaignId, row, btn, card) {
         `?campaign_id=${encodeURIComponent(campaignId)}`,
       { credentials: 'same-origin' },
     );
-    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    if (!res.ok) throw new Error(`That didn't go through (error ${res.status}). Try again shortly.`);
     const data = await res.json();
     const line = _el('div', { cls: 'applicant-digest-alignment', style: 'font-size:11px;opacity:0.8;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);' });
     if (data.cold_start || !Array.isArray(data.matched) || !data.matched.length) {
@@ -625,7 +625,7 @@ async function _onAlignment(campaignId, row, btn, card) {
     }
     card.appendChild(line);
   } catch (e) {
-    showToast(e.message || 'Could not check past-wins match right now.');
+    showToast(e.message || "I couldn't check that just now — try again in a moment.");
   } finally {
     btn.disabled = false;
     btn.innerHTML = original;
@@ -692,38 +692,38 @@ function _fadeOutRow(card) {
 
 async function _onApprove(card, row, btn, onResolved) {
   const id = _rowActionId(row);
-  if (!id) { showToast('This role is not ready to approve yet.'); return; }
+  if (!id) { showToast("I can't approve this one yet — it's still being prepared. Try again shortly."); return; }
   _disableRow(card);
   try {
     await _api(`/applications/${encodeURIComponent(id)}/approve`, { method: 'POST' });
-    showToast('Approved — the assistant will take it from here.');
+    showToast("Approved — I'll take it from here. You'll still review everything before it's sent.");
     _fadeOutRow(card);
     if (onResolved) { try { onResolved(card, row); } catch (_) {} }
   } catch (e) {
     btn.disabled = false;
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
-    showToast(e.message || 'Could not approve right now.');
+    showToast(e.message || "I couldn't approve that just now — try again in a moment.");
   }
 }
 
 async function _onPass(card, row, btn, onResolved) {
   const id = _rowActionId(row);
-  if (!id) { showToast('This role is not ready to act on yet.'); return; }
+  if (!id) { showToast("I can't act on this one yet — it's still being prepared."); return; }
   // Feedback is mandatory on the decline path (the engine enforces it); ask for
   // a short reason up front so the user is never bounced with a 422.
   const reason = await styledPrompt(
-    'Why pass on this one? A short reason teaches the assistant what to skip next time.',
+    'Why pass on this one? A short reason teaches me what to skip next time.',
     {
       title: 'Pass on this role',
       placeholder: 'e.g. too junior, wrong location, not my stack',
       confirmText: 'Pass',
-      cancelText: 'Keep',
+      cancelText: 'Keep this role',
       maxLength: 280,
     },
   );
   if (reason == null) return;          // user cancelled
   if (!reason.trim()) {
-    showToast('Add a short reason so the assistant can learn from it.');
+    showToast('Add a short reason so I can learn from it.');
     return;
   }
   _disableRow(card);
@@ -737,7 +737,7 @@ async function _onPass(card, row, btn, onResolved) {
     if (onResolved) { try { onResolved(card, row); } catch (_) {} }
   } catch (e) {
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
-    showToast(e.message || 'Could not save that right now.');
+    showToast(e.message || "I couldn't save that just now — try again in a moment.");
   }
 }
 
@@ -790,7 +790,7 @@ async function _onBulkApprove(panel) {
   if (ok) {
     showToast(`Approved ${ok} role${ok === 1 ? '' : 's'}${fail ? ` — ${fail} couldn’t be approved.` : '.'}`);
   } else {
-    showToast('Could not approve the selected roles.');
+    showToast("I couldn't approve those roles — try again in a moment.");
   }
 }
 
@@ -800,18 +800,18 @@ async function _onBulkDecline(panel) {
   // Same mandatory-feedback rule as the single-row Pass: one shared reason
   // covers the whole batch (the engine records it per application).
   const reason = await styledPrompt(
-    `Why pass on these ${sel.size} role${sel.size === 1 ? '' : 's'}? A short reason teaches the assistant what to skip next time.`,
+    `Why pass on these ${sel.size} role${sel.size === 1 ? '' : 's'}? A short reason teaches me what to skip next time.`,
     {
       title: `Pass on ${sel.size} role${sel.size === 1 ? '' : 's'}`,
       placeholder: 'e.g. too junior, wrong location, not my stack',
       confirmText: 'Pass',
-      cancelText: 'Keep',
+      cancelText: 'Keep these roles',
       maxLength: 280,
     },
   );
   if (reason == null) return;          // user cancelled
   if (!reason.trim()) {
-    showToast('Add a short reason so the assistant can learn from it.');
+    showToast('Add a short reason so I can learn from it.');
     return;
   }
   const ids = Array.from(sel);
@@ -839,7 +839,7 @@ async function _onBulkDecline(panel) {
   if (ok) {
     showToast(`Passed on ${ok} role${ok === 1 ? '' : 's'}${fail ? ` — ${fail} couldn’t be saved.` : ' — thanks, that helps the next round.'}`);
   } else {
-    showToast('Could not save that right now.');
+    showToast("I couldn't save that just now — try again in a moment.");
   }
 }
 
@@ -893,8 +893,8 @@ async function _onResearch(campaignId, row, btn) {
   } catch (e) {
     showToast(
       e.status === 503 || e.status === 504
-        ? 'The assistant is offline right now. Try again shortly.'
-        : (e.message || 'Could not run research right now.'),
+        ? "I'm having trouble connecting right now. Try again shortly."
+        : (e.message || "I couldn't run that research just now — try again in a moment."),
     );
   } finally {
     btn.disabled = false;
@@ -926,7 +926,7 @@ function _showReport(report, { company = '', role = '' } = {}) {
   if (data.budget_remaining != null) {
     bodyEl.appendChild(_el('div', {
       cls: 'memory-count',
-      text: `${data.budget_remaining} research run${data.budget_remaining === 1 ? '' : 's'} left for this job search${data.cached ? ' · served from a recent brief (no run used)' : ''}`,
+      text: `${data.budget_remaining} research brief${data.budget_remaining === 1 ? '' : 's'} left for this job search${data.cached ? ' · reused a recent brief, so none were used' : ''}`,
       style: 'font-size:10px;opacity:0.7;margin-bottom:8px;',
     }));
   }
@@ -934,10 +934,10 @@ function _showReport(report, { company = '', role = '' } = {}) {
   if (data.unavailable) {
     // Channel off / budget exhausted — a graceful state, not an error.
     const reasons = {
-      workspace_unavailable: 'Background research isn’t set up yet. Connect it in setup to enable research briefs.',
-      budget_exhausted: 'You’ve used up this job search’s research runs for now. They refresh over time.',
+      workspace_unavailable: 'Background research isn’t set up yet — connect it in Settings and I’ll be able to prepare briefs like this.',
+      budget_exhausted: 'You’ve used all of this job search’s research briefs for now — they refresh over time.',
       empty_query: 'There wasn’t enough to research on this role.',
-      research_failed: 'The research run didn’t complete this time. Please try again shortly.',
+      research_failed: 'The research didn’t come together this time. Try again shortly.',
     };
     bodyEl.appendChild(_el('p', {
       text: reasons[data.reason] || 'Research isn’t available for this one right now.',
@@ -1028,7 +1028,7 @@ async function _onFeedback(panel, campaignId, btn) {
   if (btn) btn.disabled = true;
   try {
     const text = await styledPrompt(
-      'Tell the assistant anything about its suggestions — what to show more or less of.',
+      "Tell me anything about my suggestions — what you'd like more or less of.",
       {
         title: 'Send feedback',
         placeholder: 'e.g. more remote roles, fewer recruiter agencies',
@@ -1038,14 +1038,14 @@ async function _onFeedback(panel, campaignId, btn) {
       },
     );
     if (text == null) return;
-    if (!text.trim()) { showToast('Nothing to send.'); return; }
+    if (!text.trim()) { showToast('Nothing to send yet — write a quick note first.'); return; }
     await _api('/feedback/freetext', {
       method: 'POST',
       body: { campaign_id: campaignId, text: text.trim(), criteria_delta: {} },
     });
     showToast('Thanks — feedback sent.');
   } catch (e) {
-    showToast(e.message || 'Could not send feedback right now.');
+    showToast(e.message || "I couldn't send that feedback just now — try again in a moment.");
   } finally {
     _busyFeedback = false;
     if (btn) btn.disabled = false;
@@ -1084,7 +1084,7 @@ const _SURVEY_QUESTIONS = [
   {
     key: 'resume_quality',
     label: 'How well did the tailored resume read?',
-    hint: 'Your take on the resume the assistant prepared for these roles.',
+    hint: 'Your take on the resume I prepared for these roles.',
     choices: [
       { value: 'strong', label: 'Strong' },
       { value: 'fine', label: 'Fine' },
@@ -1122,7 +1122,7 @@ function _askSurvey() {
 
     const bodyEl = _el('div', { cls: 'modal-body' });
     bodyEl.appendChild(_el('p', {
-      text: 'A few quick questions help the assistant tune what it sends. Answer any that apply — skip the rest.',
+      text: 'A few quick answers help me tune what I send. Answer any that apply — skip the rest.',
       style: 'margin:0 0 10px;font-size:12px;opacity:0.8;',
     }));
 
@@ -1221,7 +1221,7 @@ async function _onSurvey(panel, campaignId, btn) {
     const answers = await _askSurvey();
     if (answers == null) return;                       // cancelled
     if (!Object.keys(answers).length) {
-      showToast('Pick at least one answer, or use Send feedback for a free note.');
+      showToast('Pick at least one answer, or use “Send feedback” to write a note instead.');
       return;
     }
     const res = await _api('/feedback/survey', {
@@ -1232,12 +1232,12 @@ async function _onSurvey(panel, campaignId, btn) {
     // now waits in the portal — point the user there instead of a silent "thanks".
     const pending = (res && Array.isArray(res.pending)) ? res.pending.length : 0;
     if (pending > 0) {
-      showToast(`Thanks — ${pending} change${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your OK in your to-do list.`);
+      showToast(`Thanks — ${pending} change${pending === 1 ? '' : 's'} waiting for your OK on your to-do list.`);
     } else {
-      showToast('Thanks — that helps the assistant tune things.');
+      showToast('Thanks — that helps me tune what I send.');
     }
   } catch (e) {
-    showToast(e.message || 'Could not send the survey right now.');
+    showToast(e.message || "I couldn't send the survey just now — try again in a moment.");
   } finally {
     _busyFeedback = false;
     if (btn) btn.disabled = false;
@@ -1278,8 +1278,8 @@ async function _loadDigest(panel, campaignId) {
   } catch (e) {
     _renderMessage(panel,
       e.status === 503 || e.status === 504
-        ? 'The assistant is offline right now. Try again shortly.'
-        : (e.message || 'Could not load updates right now.'),
+        ? "I'm having trouble connecting right now. Try again shortly."
+        : (e.message || "I couldn't load today's updates just now — try again in a moment."),
     );
   }
 }

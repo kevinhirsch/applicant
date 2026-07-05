@@ -5,12 +5,15 @@ applicantVault.js.
 
 Per-file findings (see PR description / session notes for the full audit):
 
-- applicantMind.js: the modal-offline note, the curation ("Waiting for your
-  review") empty copy, and the saved-playbooks empty copy were ALREADY warm
-  (explain what the surface is, why it's empty, what happens next) — left
-  untouched. The two per-block memory hints inside `_renderMemory` ("Nothing
-  remembered yet." / "No preferences captured yet.") were genuinely flat —
-  warmed to explain why the section is empty and what will fill it.
+- applicantMind.js: the curation ("Waiting for your review") empty copy was
+  ALREADY warm (explains what the surface is, why it's empty, what happens
+  next) — left untouched. The two per-block memory hints inside
+  `_renderMemory` ("Nothing remembered yet." / "No preferences captured
+  yet.") were genuinely flat — warmed to explain why the section is empty
+  and what will fill it. The modal-offline note and the saved-playbooks
+  empty copy were warm in shape but still spoke in third person ("the
+  assistant") and leaned on "AI model" jargon — the copy/voice (exhaustive2
+  lens 02) audit's findings #163/#164 rewrote both to first person.
 - applicantCompare.js: the modal's initial "Nothing to compare yet" empty
   state already reused the shared `emptyHTML()` kit and was warm. The
   `_renderResult` no-data fallback ("No comparison returned.") was a bare,
@@ -66,14 +69,25 @@ def test_mind_memory_block_hints_are_warm_not_flat():
     assert "No preferences captured yet — tell the assistant what you like" in js
 
 
-def test_mind_curation_and_offline_and_skills_notes_already_warm_untouched():
-    """Sanity check that the surfaces this batch judged ALREADY warm (and
-    therefore left alone) are still intact — proves this pass was a
-    copy/tone fix, not a wholesale rewrite of applicantMind.js."""
+def test_mind_curation_notes_already_warm_untouched():
+    """Sanity check that the curation empty-state (already warm since this
+    batch) is still intact — proves this pass was a copy/tone fix, not a
+    wholesale rewrite of applicantMind.js."""
     js = _read(MIND_JS)
-    assert "Connect an AI model to start building what the assistant remembers" in js
     assert "Nothing waiting for your review. New suggestions appear here before anything is saved." in js
-    assert "No saved playbooks yet. The assistant writes these from its own work." in js
+
+
+def test_mind_offline_and_skills_notes_are_first_person_not_third():
+    """copy/voice (02) audit #163/#164: the modal-offline note and the
+    saved-playbooks empty state used to speak in third person ("the
+    assistant") and lean on internal "AI model" jargon — both rewritten to
+    first person, plain language. The old third-person strings must be gone."""
+    js = _read(MIND_JS)
+    assert "Connect an AI model to start building what the assistant remembers" not in js
+    assert "Connect a model in Settings or the setup wizard, and I'll start remembering" in js
+    assert "what I learn." in js
+    assert "No saved playbooks yet. The assistant writes these from its own work." not in js
+    assert "No saved playbooks yet. I write these as I learn from my own work." in js
 
 
 # ── applicantCompare.js ──────────────────────────────────────────────────────
@@ -82,13 +96,18 @@ def test_compare_no_data_fallback_uses_shared_empty_kit_not_bare_string():
     js = _read(COMPARE_JS)
     assert "'<div style=\"opacity:0.7;\">No comparison returned.</div>'" not in js
     assert "No comparison came back" in js
-    assert "The engine did not return a result for that comparison" in js
+    # Copy/voice pass (02): the follow-up line dropped the "engine" jargon in
+    # favor of first-person, plain-language guidance — assert the jargon is
+    # gone and the warm replacement is present.
+    assert "The engine did not return a result for that comparison" not in js
+    assert "I couldn't build a comparison from those IDs" in js
 
 
 def test_compare_initial_empty_state_already_warm_untouched():
     js = _read(COMPARE_JS)
     assert "Nothing to compare yet" in js
-    assert "Pick applications or postings above, paste two or more ids" in js
+    # Copy/voice pass (02): "ids" -> "IDs" casing fix (item #229).
+    assert "Pick applications or postings above, paste two or more IDs" in js
     # Both empty states route through the shared kit — consistency check.
     assert js.count("emptyHTML(") >= 2
 
@@ -99,8 +118,13 @@ def test_gallery_section_empty_states_are_warm_not_flat():
     js = _read(GALLERY_JS)
     assert "_empty('No screenshots yet.')" not in js
     assert "_empty('No generated materials yet.')" not in js
-    assert "these are captured automatically as the agent works through each page" in js
-    assert "resumes, cover letters, and screening answers will appear here as the agent drafts them" in js
+    # Copy updated by the copy/voice (exhaustive2 lens 02) pass: "the agent"
+    # -> first-person "I" (see docs/design/audits/exhaustive2/02_copy_voice.md
+    # finding #209 and this repo's dedicated test_applicant_exhaustive2_
+    # copyvoice_today_campaignsettings_gallery.py coverage) — the warm,
+    # explanatory shape these assertions protect is unchanged.
+    assert "these are captured automatically as I work through each page" in js
+    assert "resumes, cover letters, and screening answers will appear here as I draft them" in js
 
 
 def test_gallery_top_level_empty_states_already_warm_untouched():

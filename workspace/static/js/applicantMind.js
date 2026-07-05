@@ -58,8 +58,8 @@ function _ensureModalEl() {
          tabindex="0"
          style="width:min(720px,94vw);max-height:88vh;overflow:auto;padding:18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <h3 id="applicant-mind-title" style="margin:0;font-size:16px;">What the assistant remembers</h3>
-        <button type="button" class="cal-btn applicant-mind-close" aria-label="Close" title="Close">Close</button>
+        <h3 id="applicant-mind-title" style="margin:0;font-size:16px;">What I remember</h3>
+        <button type="button" class="cal-btn applicant-mind-close" aria-label="Close">Close</button>
       </div>
       <div class="applicant-mind-body" style="font-size:13px;max-width:66ch;margin:0 auto;"></div>
     </div>`;
@@ -98,8 +98,8 @@ function _body() {
 function _renderOffline() {
   _body().innerHTML = `
     <div class="memory-empty" style="padding:18px;text-align:center;opacity:0.85;">
-      Connect an AI model to start building what the assistant remembers. You can do
-      this in the setup wizard or under Settings.
+      Connect a model in Settings or the setup wizard, and I'll start remembering
+      what I learn.
     </div>`;
 }
 
@@ -203,7 +203,7 @@ function _wireIngestBox() {
       const result = await _post(`${MEMORY_API}/ingest`, { observations });
       resultEl.innerHTML = _renderIngestResult(result, skippedLines);
       input.value = '';
-      _toast('Imported.');
+      _toast('Imported');
     } catch (e) {
       resultEl.innerHTML = `<div class="memory-empty" style="opacity:0.7;">${esc(e.message || 'Could not import that.')}</div>`;
     } finally {
@@ -225,7 +225,7 @@ function _renderMemory(snap) {
       <span style="flex:1;">${esc(e.text)}</span>
       <button type="button" class="cal-btn applicant-mind-forget"
           data-ref="${esc(e.ref || '')}" data-text="${esc(e.text)}"
-          title="Ask the assistant to forget this"
+          title="I'll forget this note"
           style="font-size:11px;opacity:0.85;">Forget</button>
     </li>`;
   const block = (title, items, hint) => {
@@ -247,7 +247,7 @@ function _renderSkills(skills) {
   const items = (skills.items || []);
   if (!items.length) {
     return `<div class="memory-empty" style="opacity:0.7;padding:6px 0;">
-      No saved playbooks yet. The assistant writes these from its own work.</div>`;
+      No saved playbooks yet. I write these as I learn from my own work.</div>`;
   }
   return `<ul style="margin:6px 0 0;padding-left:0;list-style:none;">` + items.map((s) => `
     <li class="memory-item og-card applicant-mind-skill" data-skill="${esc(s.name)}" tabindex="0"
@@ -291,8 +291,8 @@ function _renderCuration(curation) {
       : `${esc(p.label || 'Something to remember')}: ${esc(p.text || '')}`;
     const flag = p.claims_authority
       ? `<div style="color:var(--danger,#c0392b);margin-top:2px;">
-           Heads up: this note mentions taking an action on its own — it is a suggestion only and
-           grants no permission.</div>`
+           Heads up: this note mentions acting on its own. It's only a suggestion — I won't do
+           anything without your say-so.</div>`
       : '';
     return `<li class="memory-item og-card" data-proposal-id="${esc(p.id)}"
         style="border:1px solid var(--border,#3334);border-radius:8px;padding:8px 10px;margin:6px 0;">
@@ -474,7 +474,7 @@ function _wirePlaybookApply(ats) {
       await _post(`${API}/playbooks/${encodeURIComponent(ats)}/apply-deltas`, {
         deltas: [{ op, key, text }],
       });
-      _toast('Playbook updated.');
+      _toast('Playbook updated');
       await _loadPlaybook(ats);
     } catch (e) {
       _toast(e.message || 'Could not update that playbook.');
@@ -525,7 +525,7 @@ function _wireCurationButtons() {
       btn.disabled = true;
       try {
         await _post(`${API}/curation/${encodeURIComponent(btn.dataset.id)}/approve`);
-        _toast('Saved.');
+        _toast('Saved');
         _removeMindRow(btn);
       } catch (e) {
         _toast(e.message || 'Could not save that.');
@@ -538,7 +538,7 @@ function _wireCurationButtons() {
       btn.disabled = true;
       try {
         await _post(`${API}/curation/${encodeURIComponent(btn.dataset.id)}/deny`);
-        _toast('Dismissed.');
+        _toast('Dismissed');
         _removeMindRow(btn);
       } catch (e) {
         _toast(e.message || 'Could not dismiss that.');
@@ -557,7 +557,7 @@ function _wireForgetButtons() {
       // Confirm first — a forget is a real change to what I remember. Routed
       // through the shared styled dialog (micro-interactions audit #76)
       // instead of the native window.confirm every neighbouring flow avoids.
-      const ok = await _confirm(`Forget this note?\n\n${text}`,
+      const ok = await _confirm(`Forget this note? I'll stop using it and it won't come back.\n\n${text}`,
         { confirmText: 'Forget it', cancelText: 'Cancel', danger: true });
       if (!ok) return;
       btn.disabled = true;
@@ -576,7 +576,7 @@ function _wireForgetButtons() {
         if (res && res.staged) {
           _toast('Sent to your review queue — approve it to forget this.');
         } else {
-          _toast('Forgotten.');
+          _toast('Forgotten');
           _removeMindRow(btn);
         }
       } catch (e) {
@@ -722,7 +722,7 @@ function _wireLauncher() {
     btn.id = 'applicant-mind-open-btn';
     btn.type = 'button';
     btn.className = 'cal-btn';
-    btn.textContent = 'What the assistant remembers';
+    btn.textContent = 'What I remember';
     btn.style.cssText = 'margin-left:10px;font-size:12px;';
     btn.addEventListener('click', openApplicantMind);
     anchor.appendChild(btn);

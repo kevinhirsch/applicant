@@ -53,7 +53,7 @@ function _errLine(err) {
     return 'Finish setup (connect a model and your profile) to enable comparisons.';
   }
   if (err && (err.kind === 'offline' || err.kind === 'network')) {
-    return 'The Applicant engine is not reachable right now. Try again once it is connected.';
+    return "I can't connect right now. Try again in a moment.";
   }
   return errText(err);
 }
@@ -101,17 +101,17 @@ function _ensureModalEl() {
             </select>
           </label>
           <label class="ow-field" style="min-width:200px;flex:1;">
-            <span>Campaign (optional scope)</span>
+            <span>Job search (optional)</span>
             <select id="applicant-compare-campaign" class="ow-select">
-              <option value="">All campaigns</option>
+              <option value="">All job searches</option>
             </select>
           </label>
         </div>
         <label class="ow-field" style="display:block;margin-bottom:14px;">
-          <span>Ids to compare</span>
-          <textarea id="applicant-compare-ids" rows="3" placeholder="One id per line, or comma-separated — at least two"
+          <span>IDs to compare</span>
+          <textarea id="applicant-compare-ids" rows="3" placeholder="One ID per line, or comma-separated — at least two"
             style="width:100%;box-sizing:border-box;resize:vertical;"></textarea>
-          <span class="ow-field-hint">The engine needs two or more ids from the same campaign.</span>
+          <span class="ow-field-hint">Add two or more IDs from the same job search.</span>
         </label>
         <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
           <button class="ow-btn ow-btn-prominent" id="applicant-compare-run">Compare</button>
@@ -163,7 +163,7 @@ async function _loadCampaigns() {
   try {
     const data = await _fetchJSON('/campaigns');
     const campaigns = (data && data.campaigns) || [];
-    // Keep the "All campaigns" default; clear any previously-appended options
+    // Keep the "All job searches" default; clear any previously-appended options
     // first so reopening the modal doesn't duplicate every campaign name.
     sel.querySelectorAll('option[value]:not([value=""])').forEach((opt) => opt.remove());
     for (const c of campaigns) {
@@ -175,8 +175,8 @@ async function _loadCampaigns() {
       sel.appendChild(opt);
     }
   } catch (_) {
-    // Soft-degrade: the picker just stays "All campaigns" when the engine is
-    // unreachable. The compare action itself surfaces the real error.
+    // Soft-degrade: the picker just stays "All job searches" when the engine
+    // is unreachable. The compare action itself surfaces the real error.
   }
 }
 
@@ -204,7 +204,7 @@ async function _runCompare() {
   const runBtn = _modalEl.querySelector('#applicant-compare-run');
 
   if (ids.length < 2) {
-    _setStatus('Enter at least two ids to compare.', true);
+    _setStatus('Enter at least two IDs to compare.', true);
     return;
   }
   _setStatus('', false);
@@ -236,7 +236,7 @@ async function _runCompare() {
     if (_compareCancelled) {
       result.innerHTML = '<div style="opacity:0.7;padding:8px 0;">Comparison cancelled.</div>';
     } else {
-      // Inline error + Retry so the user recovers without re-typing their ids.
+      // Inline error + Retry so the user recovers without re-typing their IDs.
       result.innerHTML = errorHTML(_errLine(e));
       wireRetry(result, _runCompare);
     }
@@ -263,7 +263,7 @@ function _renderResult(container, data, kind, campaignId) {
   if (!data) {
     container.innerHTML = emptyHTML(
       'No comparison came back',
-      'The engine did not return a result for that comparison. Try again, or adjust the ids and re-run.',
+      "I couldn't build a comparison from those IDs — check them and try again.",
       '');
     return;
   }
@@ -296,16 +296,16 @@ function _renderResult(container, data, kind, campaignId) {
   // Applications can be opened in the Debug/Activity detail view; postings have
   // no reachable detail surface within this module, so their labels stay plain.
   const canLink = kind === 'applications';
-  let headRow = '<tr><th>Dimension</th>';
+  let headRow = '<tr><th>Field</th>';
   for (const id of entityIds) {
     // Click-to-copy the raw id so it can be re-pasted into another compare /
     // surface without hand-typing. The label stays visible; the id is the payload.
     headRow += `<th>
-      <button type="button" class="applicant-compare-copy-id" data-id="${_esc(id)}" title="Copy id — ${_esc(id)}">${_esc(labels[id] || id)}</button>
+      <button type="button" class="applicant-compare-copy-id" data-id="${_esc(id)}" title="Copy ID — ${_esc(id)}">${_esc(labels[id] || id)}</button>
       ${canLink ? `<button type="button" class="applicant-compare-open-detail" data-id="${_esc(id)}" title="Open this application in Activity">Open in Activity →</button>` : ''}
     </th>`;
   }
-  headRow += '<th title="A short note from the engine on what actually differs for this row">Difference</th></tr>';
+  headRow += '<th title="A short note on what actually differs for this row">Difference</th></tr>';
   thead.innerHTML = headRow;
   table.appendChild(thead);
 
@@ -355,7 +355,7 @@ export async function openApplicantCompare(opts) {
   if (result && !result.innerHTML.trim()) {
     result.innerHTML = emptyHTML(
       'Nothing to compare yet',
-      'Pick applications or postings above, paste two or more ids, then Compare to see where they differ.',
+      'Pick applications or postings above, paste two or more IDs, then Compare to see where they differ.',
       '');
   }
   await _loadCampaigns();
