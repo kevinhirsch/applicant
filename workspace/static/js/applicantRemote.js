@@ -34,6 +34,47 @@ let _modalA11yCleanup = null;
 let _activeSession = null;   // { session_id, application_id, view_url }
 let _busy = false;
 
+// ── first-open explainer card (help/self-explain audit lens 12, #21) ───────
+//
+// The permanent intro paragraph above is good copy but is easy to skim past
+// the first time someone opens this surface. Mirrors the digest's first-open
+// feedback-loop card (emailLibrary/applicantDigest.js LOOP_INTRO_SEEN_KEY /
+// _loopIntroHTML / _dismissLoopIntro): a localStorage "seen" flag under this
+// session's established `applicant-` / `applicant_` key-naming convention
+// (NOTIF_SEEN_KEY / RECAP_SEEN_KEY in applicantPortal.js), a small dismissible
+// card reusing the `admin-card` look, and a `memory-toolbar-btn` "Got it"
+// dismiss — no new plumbing. Shown exactly once, ever, per browser.
+const REMOTE_INTRO_SEEN_KEY = 'applicant-remote-intro-seen';
+
+function _isFirstOpenSeen() {
+  try { return localStorage.getItem(REMOTE_INTRO_SEEN_KEY) === '1'; } catch (_) { return false; }
+}
+
+function _dismissFirstOpenCard(modal) {
+  try { localStorage.setItem(REMOTE_INTRO_SEEN_KEY, '1'); } catch (_) { /* no-op */ }
+  const el = modal && modal.querySelector('#applicant-remote-first-open');
+  if (el) el.remove();
+}
+
+// Rendered once into the modal's static innerHTML (the modal element itself is
+// memoized in `_modalEl` and only ever built once per page load), so this
+// reflects the seen-flag at BUILD time — once dismissed it never reappears
+// without a fresh page load, and a fresh load re-checks the persisted flag.
+function _firstOpenCardHTML() {
+  if (_isFirstOpenSeen()) return '';
+  return `
+    <div class="admin-card" id="applicant-remote-first-open" style="margin:0;padding:8px 10px;display:flex;align-items:flex-start;gap:8px;">
+      <span style="flex:1;font-size:11px;opacity:0.85;line-height:1.4;">
+        <strong>What live takeover is for:</strong> I work in a real browser and always stop
+        before the steps only you should do — creating an account, clearing a verification,
+        or the final submit. Click "Take control" any time to drive it yourself; when you're
+        done, use the matching "Continue" button and I pick up right where you left off.
+        Closing this window only stops you watching — it doesn't end the session.
+      </span>
+      <button type="button" class="memory-toolbar-btn" id="applicant-remote-first-open-dismiss">Got it</button>
+    </div>`;
+}
+
 // ── tiny helpers ────────────────────────────────────────────────────────────
 
 
@@ -72,8 +113,12 @@ function _ensureModalEl() {
         <p style="margin:0;opacity:0.75;font-size:13px;" id="applicant-remote-intro">
           Watch me fill out your application in real time. Take over at any
           moment to do the parts only you should do — creating an
-          account, clearing a verification, and the final submit.
+          account, clearing a verification, and the final submit. When
+          you're done, use the matching "Continue" button below and I'll
+          pick up right where you left off — closing this window just
+          stops you watching; it doesn't end the session.
         </p>
+        ${_firstOpenCardHTML()}
         <!-- a11y-deep audit #22: the phase arc (launching/ready/took-control/
              continuing/submitted) was only visible pixels — this one polite
              live region mirrors it in words, updated by _announcePhase(). -->
@@ -112,9 +157,9 @@ function _ensureModalEl() {
           </p>
           <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <button id="applicant-remote-resume-account" class="memory-toolbar-btn"
-                    title="Continue after you created the account">I created the account — continue</button>
+                    title="Continue after you created the account — I'll pick up right where I left off">I created the account — continue</button>
             <button id="applicant-remote-resume-detection" class="memory-toolbar-btn"
-                    title="Continue after you cleared a verification / CAPTCHA">I cleared the verification — continue</button>
+                    title="Continue after you cleared a verification / CAPTCHA — I'll pick up right where I left off">I cleared the verification — continue</button>
           </div>
         </div>
 
@@ -215,6 +260,7 @@ function _wire(modal) {
   on('applicant-remote-preview-toggle', 'click', _onTogglePreview);
   on('applicant-remote-desktop-toggle', 'click', _onToggleDesktopAssist);
   on('applicant-remote-handoff-copy-all', 'click', _onCopyAllHandoff);
+  on('applicant-remote-first-open-dismiss', 'click', () => _dismissFirstOpenCard(modal));
 
   const picker = modal.querySelector('#applicant-remote-picker');
   if (picker) {
