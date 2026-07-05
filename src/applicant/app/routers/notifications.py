@@ -6,7 +6,13 @@ captured in the notifier's in-app sink, and this router exposes that sink so the
 front-door Portal can fold informational notifications in alongside action-
 required rows and toast new ones as they arrive.
 
-- ``GET  /api/notifications``            — current in-app notifications.
+- ``GET  /api/notifications``            — current in-app notifications. Defaults to today's
+  behavior (newest-first, dismissed entries omitted, no cap beyond the notifier's own prune)
+  when called with no query params — existing callers (the Portal poll) are unaffected. Optional
+  ``include_seen=true`` also returns dismissed entries (undo/history browsing); optional ``since``
+  (an ISO-8601 timestamp, matching the ``created_at`` this same endpoint returns) returns only
+  entries newer than that cursor so a poller can fetch just what's new; optional ``limit`` bounds
+  the page size.
 - ``POST /api/notifications/{id}/seen``  — dismiss one informational notification
   so it stops persisting. Action-required notifications are NOT dismissed here;
   they clear when their underlying pending action is resolved (the notifier drops
@@ -18,7 +24,9 @@ router that backs the same home-base surface.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from applicant.app.deps import get_notification_service, require_llm_configured
 
@@ -57,9 +65,50 @@ def _shape(entry) -> dict:
 
 
 @router.get("")
-def list_notifications(notifications=Depends(get_notification_service)) -> dict:
-    """List the current in-app notifications (newest first)."""
-    entries = notifications.list_inbox()
+def list_notifications(
+    include_seen: bool = Query(
+        False,
+        description="Also return dismissed/seen entries (default omits them, unchanged).",
+    ),
+    since: str | None = Query(
+        None,
+        description=(
+            "Only return entries newer than this ISO-8601 timestamp "
+            "(the same shape as each row's created_at)."
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        description="Cap the number of rows returned (newest first).",
+    ),
+    notifications=Depends(get_notification_service),
+) -> dict:
+    """List the current in-app notifications (newest first).
+
+    With no query params this is exactly the historical behavior (used by the
+    Portal's unmodified poll). ``since``/``limit`` let a caller that already
+    tracks the newest ``created_at`` it has seen fetch only what's new instead
+    of re-shipping the full (up to ~1000-row) inbox every poll.
+    """
+    entries = notifications.list_inbox(include_seen=include_seen)
+    if since:
+        try:
+            cursor = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="since must be an ISO-8601 timestamp."
+            ) from exc
+        if cursor.tzinfo is None:
+            cursor = cursor.replace(tzinfo=UTC)
+        filtered = []
+        for entry in entries:
+            created = getattr(entry, "created_at", None)
+            if created is None or created > cursor:
+                filtered.append(entry)
+        entries = filtered
+    if limit is not None:
+        entries = entries[:limit]
     items = [_shape(e) for e in entries]
     return {"count": len(items), "items": items}
 

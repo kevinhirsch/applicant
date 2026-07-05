@@ -810,7 +810,7 @@ class PostSubmissionService:
                 try:
                     self._notification.notify_decision(
                         str(fup.id),
-                        title=fup.subject,
+                        title=self._followup_ready_notification_title(fup),
                         body=fup.body,
                         deep_link=f"/applications/{fup.application_id}",
                     )
@@ -835,6 +835,44 @@ class PostSubmissionService:
         if sent:
             self._storage.commit()
         return sent
+
+    def _company_label_for_application(self, application_id) -> str:
+        """Plain-language company label for ``application_id`` (lens 10 #53).
+
+        Shared lookup for :meth:`_followup_ready_notification_title` below --
+        best-effort and NEVER allowed to raise from inside a notify path (a
+        missing application/posting/company just falls back to a generic
+        phrase, mirroring ``_flag_ghosting_pending_action``'s same pattern).
+        """
+        try:
+            app = self._storage.applications.get(application_id)
+            if app is not None and app.posting_id is not None:
+                posting = self._storage.postings.get(app.posting_id)
+                company = (getattr(posting, "company", None) or "").strip() if posting else ""
+                if company:
+                    return company
+        except Exception:
+            pass
+        return "your application"
+
+    def _followup_ready_notification_title(self, fup) -> str:
+        """Product-voice notification title for a due follow-up (lens 10 #53).
+
+        ``fup.subject``/``fup.body`` are first-person content ADDRESSED TO THE
+        EMPLOYER (e.g. "Thank you for your time", see ``_default_subject``/
+        ``_default_body`` below) -- routing that verbatim through the
+        notification TITLE would read as though the PRODUCT itself is thanking
+        the user, when the real intent is telling the OWNER a follow-up they
+        already reviewed and approved (``approve_follow_up_draft`` is the only
+        path that ever schedules one) is going out. Re-frame as a decision-style
+        "review & send" ping -- matching the label already used for this same
+        follow-up's draft pending action (``_draft_followup_if_due``:
+        "Follow-up ready to review: {label}") -- and leave the actual
+        thank-you/check-in copy in the notification BODY (``body=fup.body``,
+        set by the caller), never the title.
+        """
+        label = self._company_label_for_application(fup.application_id)
+        return f"Follow-up drafted for {label} — review & send"
 
     @staticmethod
     def _default_subject(template):
