@@ -129,6 +129,7 @@ function _ensureModalEl() {
       <div id="applicant-tracker-suggestions" style="display:none;flex-shrink:0;max-height:38vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-confirm" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div id="applicant-tracker-stuck" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
+      <div id="applicant-tracker-blocked" style="display:none;flex-shrink:0;max-height:32vh;overflow-y:auto;border-bottom:1px solid var(--border,rgba(255,255,255,0.08));"></div>
       <div class="modal-body" id="applicant-tracker-body" style="flex:1;overflow-y:auto;">
         <div class="hwfit-loading">Loading…</div>
       </div>
@@ -137,7 +138,7 @@ function _ensureModalEl() {
   if (_modalA11yCleanup) _modalA11yCleanup();
   _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   modal.querySelector('#applicant-tracker-close').addEventListener('click', _close);
-  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => { _load(true); _loadPendingConfirmation(); _loadStuck(); });
+  modal.querySelector('#applicant-tracker-refresh').addEventListener('click', () => { _load(true); _loadPendingConfirmation(); _loadStuck(); _loadBlocked(); });
   const findBtn = modal.querySelector('#applicant-tracker-find-emails');
   findBtn.addEventListener('click', () => _onFindResponses(findBtn));
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
@@ -436,6 +437,101 @@ async function _retryStuck(btn) {
     await _post(`${API}/applications/${encodeURIComponent(id)}/retry`, {});
     _toast("Retrying — Applicant will pick this back up on its next pass.");
     await _loadStuck();
+  } catch (e) {
+    _toast(errText(e));
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  } finally {
+    _busyIds.delete(id);
+  }
+}
+
+// ── Blocked applications (dark-engine audit #61) ────────────────────────────
+// G07's pre-submit safety checks (scam/ghost-job, duplicate cooldown,
+// per-company volume cap, eligibility/work-authorization) run every tick
+// against every APPROVED application — until now a block left the posting
+// APPROVED forever with nothing an owner could see or act on. This is a
+// SEPARATE panel from "Needs a look" above: a blocked application never even
+// started the pipeline (it's still sitting APPROVED), so it is a distinct
+// condition from a paused/given-up one. Loaded independently of the board
+// fetch (own panel element, own endpoint) so it still shows even when the
+// board itself is empty/gated/offline, and degrades silently (hides itself)
+// on any failure — this is a bonus surface, never allowed to blank out the
+// primary tracker.
+
+function _blockedPanelEl() {
+  return _modalEl && _modalEl.querySelector('#applicant-tracker-blocked');
+}
+
+function _blockedLabel(app) {
+  const role = String(app.job_title || app.role_name || 'A role').trim() || 'A role';
+  const company = app.company ? ` at ${app.company}` : '';
+  return `${role}${company}`;
+}
+
+function _renderBlockedRow(app) {
+  const id = esc(String(app.application_id || ''));
+  const label = esc(_blockedLabel(app));
+  const reason = esc(String(app.reason || 'A safety check stopped this application.'));
+  const times = Number(app.times_blocked || 0) || 0;
+  const timesText = times > 1 ? ` (checked ${esc(String(times))} times)` : '';
+  const busy = _busyIds.has(String(app.application_id));
+  return `
+    <div class="memory-item ow-list-row" data-blocked-row="${id}" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:6px 4px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+        <div style="margin-top:2px;font-size:10.5px;opacity:0.65;">${reason}${timesText}</div>
+      </div>
+      <button class="cal-btn" type="button" data-blocked-override="${id}" ${busy ? 'disabled' : ''} title="Start this application anyway, despite the safety flag" aria-label="Proceed anyway with ${label}">Proceed anyway</button>
+    </div>`;
+}
+
+function _renderBlockedPanel(rows) {
+  return `
+    <div style="padding:8px 10px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 6px;">
+        <span style="font-size:9.5px;letter-spacing:0.04em;text-transform:uppercase;opacity:0.6;color:var(--red,#e5484d);">Blocked by a safety check</span>
+        <span style="font-size:9.5px;opacity:0.4;">(${rows.length})</span>
+      </div>
+      ${rows.map(_renderBlockedRow).join('')}
+    </div>`;
+}
+
+async function _loadBlocked() {
+  const panel = _blockedPanelEl();
+  if (!panel) return;
+  try {
+    const data = await _fetchJSON(`${API}/blocked`);
+    const rows = Array.isArray(data && data.applications) ? data.applications : [];
+    if (!rows.length) {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+    panel.style.display = 'block';
+    panel.innerHTML = _renderBlockedPanel(rows);
+    panel.querySelectorAll('[data-blocked-override]').forEach((btn) => {
+      btn.addEventListener('click', () => _overrideBlocked(btn));
+    });
+  } catch {
+    // Bonus surface — never show an error banner over the primary tracker;
+    // just hide the panel and try again on the next refresh/poll.
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+  }
+}
+
+async function _overrideBlocked(btn) {
+  const id = btn.getAttribute('data-blocked-override');
+  if (!id || _busyIds.has(id)) return;
+  _busyIds.add(id);
+  btn.disabled = true;
+  const origLabel = btn.textContent;
+  btn.textContent = 'Starting…';
+  try {
+    await _post(`${API}/applications/${encodeURIComponent(id)}/override-block`, {});
+    _toast('Got it — Applicant will start this application on its next pass.');
+    await _loadBlocked();
   } catch (e) {
     _toast(errText(e));
     btn.disabled = false;
@@ -1320,10 +1416,10 @@ export async function openApplicantTracker() {
   const modal = _ensureModalEl();
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
-  await Promise.all([_load(true), _loadPendingConfirmation(), _loadStuck()]);
+  await Promise.all([_load(true), _loadPendingConfirmation(), _loadStuck(), _loadBlocked()]);
   // Keep it fresh while open (only while the tab is visible).
   if (_pollStop) _pollStop();
-  _pollStop = pollVisible(() => { _load(false); _loadPendingConfirmation(); _loadStuck(); }, 60000);
+  _pollStop = pollVisible(() => { _load(false); _loadPendingConfirmation(); _loadStuck(); _loadBlocked(); }, 60000);
 }
 
 // ── Launcher + boot ──────────────────────────────────────────────────────────

@@ -2666,6 +2666,13 @@
      and reuses the shared .modal/.admin-card chrome — no other file needed
      changes. -->
 <script type="module" src="/static/js/applicantShortcuts.js"></script>
+<!-- "What the assistant can do" capability disclosure (dark-engine audit item
+     24): surfaces the engine's native MCP tool list (GET /mcp/tools) as a
+     plain-language overlay via /api/applicant/capabilities. Self-boots (injects
+     its own floating trigger button + wires a Ctrl+Shift+/ chord at module-eval
+     time, same pattern as applicantShortcuts.js above) and reuses the shared
+     .modal/.admin-card/.cal-btn chrome -- no other file needed changes. -->
+<script type="module" src="/static/js/applicantCapabilities.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>

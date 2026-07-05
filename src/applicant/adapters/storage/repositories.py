@@ -609,6 +609,26 @@ class RevisionSessionRepo:
         ).first()
         return _revision_to_entity(row) if row else None
 
+    def list_for_materials(
+        self, material_ids: list[GeneratedDocumentId]
+    ) -> list[RevisionSession]:
+        """Batch ``get_for_material`` for many materials in one query (perf).
+
+        ``open_revision`` (material_service.py) always fetches-then-creates, so
+        there is at most one session per ``material_id`` in practice — the same
+        invariant ``get_for_material`` relies on — making this a safe drop-in
+        replacement for N individual ``get_for_material`` calls (the
+        feedback-history curation-tick N+1).
+        """
+        if not material_ids:
+            return []
+        rows = self._s.scalars(
+            select(m.RevisionSessionModel).where(
+                m.RevisionSessionModel.material_id.in_(material_ids)
+            )
+        ).all()
+        return [_revision_to_entity(r) for r in rows]
+
 
 class DecisionRepo:
     def __init__(self, session: Session) -> None:
@@ -629,6 +649,28 @@ class DecisionRepo:
         rows = self._s.scalars(
             select(m.DecisionModel)
             .where(m.DecisionModel.application_id == application_id)
+            .order_by(m.DecisionModel.id)
+        ).all()
+        return [_decision_to_entity(r) for r in rows]
+
+    def list_for_campaign(self, campaign_id: CampaignId) -> list[Decision]:
+        """All decisions attached to a real application in the campaign (perf).
+
+        A single join instead of one ``list_for_application`` round-trip per
+        application (feedback_history.py's curation-tick N+1). Mirrors Leg 1 of
+        ``list_approved_postings_for_campaign``: a decision keyed directly on a
+        POSTING id (a pre-application digest approval) has no matching row in
+        ``applications`` and is correctly excluded here — the same scope a
+        per-application ``list_for_application(app.id)`` loop would ever see,
+        since such a decision was never reachable by iterating real applications.
+        """
+        rows = self._s.scalars(
+            select(m.DecisionModel)
+            .join(
+                m.ApplicationModel,
+                m.DecisionModel.application_id == m.ApplicationModel.id,
+            )
+            .where(m.ApplicationModel.campaign_id == campaign_id)
             .order_by(m.DecisionModel.id)
         ).all()
         return [_decision_to_entity(r) for r in rows]

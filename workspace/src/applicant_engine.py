@@ -1367,6 +1367,44 @@ class ApplicantEngineClient:
             "POST", "/api/compare/postings", json=posting_ids, params=params
         )
 
+    # -- blocked applications (engine routers/admin.py, dark-engine audit #61) -
+    # G07's pre-submit safety checks (scam/ghost-job, duplicate cooldown,
+    # per-company volume cap, eligibility/work-authorization) run every tick
+    # against every APPROVED application; a block previously left the posting
+    # APPROVED forever with only a log line -- these expose the block list
+    # itself (reason + how many times it has recurred) plus an override so an
+    # owner can decide to proceed anyway (mirrors the stuck-applications pair,
+    # #62, above).
+
+    async def admin_blocked_applications(self, campaign_id: str) -> Any:
+        """Applications the pre-submit safety gate has stopped on, for one campaign."""
+        return await self._request("GET", f"/api/admin/blocked-applications/{campaign_id}")
+
+    async def admin_override_blocked_application(self, application_id: str) -> Any:
+        """Proceed with one blocked application anyway, on the owner's decision."""
+        return await self._request(
+            "POST", f"/api/admin/blocked-applications/{application_id}/override"
+        )
+
+    # -- capability disclosure (engine routers/mcp.py, dark-engine audit item
+    #    24) -------------------------------------------------------------------
+    # The engine's native, dependency-free MCP tool surface (``GET /mcp/tools``)
+    # advertises the exact read-only tools the agent/external MCP clients can
+    # call (list_campaigns / get_attributes / get_applications /
+    # get_pending_actions / health) -- but nothing in the front door ever
+    # showed the owner what the assistant can actually do. This is a plain,
+    # read-only proxy of that SAME list (mirrors the ``tools/list`` JSON-RPC
+    # shape the engine already returns) -- no new engine logic, no fabricated
+    # tools, and consequential actions (final submit) are deliberately absent
+    # from the engine's own list, so they can never appear here either.
+
+    async def mcp_tools_list(self) -> Any:
+        """The engine's advertised MCP tool surface: ``{"tools": [{"name",
+        "description", "inputSchema"}, ...]}``. Gated at the engine layer behind
+        ``require_llm_configured`` (409 until the LLM is connected) -- forwarded
+        honestly as a GATED state by the caller, never silently emptied."""
+        return await self._request("GET", "/mcp/tools")
+
 
 # ---------------------------------------------------------------------------
 # Sync convenience helpers (non-async callers: startup probes, scripts, the

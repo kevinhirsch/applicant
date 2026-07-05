@@ -41,6 +41,22 @@ class _Gate:
         return self.allowed
 
 
+class _GateWithPrefs(_Gate):
+    """Mirrors ``SetupService``: the automated-work gate PLUS the persisted
+    Settings > Automation overrides (item 100) that ``get_automation_prefs``
+    returns -- e.g. the "let the assistant propose memory/skill updates
+    daily" toggle. ``None``/absent means "nothing saved yet"."""
+
+    def __init__(self, allowed=True, curation_schedule=None):
+        super().__init__(allowed=allowed)
+        self._curation_schedule = curation_schedule
+
+    def get_automation_prefs(self) -> dict:
+        if self._curation_schedule is None:
+            return {}
+        return {"curation_schedule": self._curation_schedule}
+
+
 def _campaign(storage):
     cid = CampaignId(new_id())
     storage.campaigns.add(Campaign(id=cid, name="C", active=True))
@@ -193,3 +209,100 @@ def test_curation_state_survives_per_tick_service_rebuild():
     assert "run-2" in ledger.proposed_runs
     assert len(ledger.staged) == staged_after_day1 + 2  # run-2's memory + skill
     assert rebuilds["n"] >= 2  # the service really was rebuilt per tick
+
+
+@pytest.mark.unit
+def test_curation_settings_toggle_enables_without_restart():
+    """Dark-engine audit item 66: the Settings > Automation "let the assistant
+    propose memory/skill updates daily" toggle (item 100, ``AutomationPrefsIn.
+    curation_schedule``) must flip the LIVE scheduler cadence -- not just a value
+    that only takes effect after a process restart. The Scheduler is constructed
+    with the ``CURATION_SCHEDULE`` env default (``off``, dormant), exactly like the
+    container builds it once at boot; ``setup_service.get_automation_prefs()``
+    then reports a saved ``"daily"`` override (as if the operator just flipped the
+    toggle in Settings) and the very next tick must generate a real curation
+    proposal that reaches the Mind queue (the CurationLedger's staged proposals) --
+    with NO Scheduler rebuild in between.
+    """
+    storage = InMemoryStorage()
+    _campaign(storage)
+    ledger = CurationLedger()
+    sched = Scheduler(
+        storage=storage,
+        agent_loop=_Loop(),
+        setup_service=_GateWithPrefs(allowed=True, curation_schedule="daily"),
+        curation_service=_curation(ledger),
+        curation_schedule="off",  # the process-lived env default: dormant
+        run_summaries_provider=_summaries,
+    )
+    now = datetime(2026, 6, 16, 9, 0, tzinfo=UTC)
+    out = sched.tick(now)
+    assert out["curation"]["ran"] is True
+    assert out["curation"]["reviewed"] == 1
+    assert len(ledger.staged) == 2  # proposals actually reach the review queue
+    assert "run-1" in ledger.proposed_runs
+
+
+@pytest.mark.unit
+def test_curation_settings_toggle_disables_without_restart():
+    """The inverse of the above: a live ``"off"`` override must dormant the nudge
+    even when the process-lived env default was ``"daily"`` (e.g. the operator
+    turned the toggle back off in Settings without a restart)."""
+    storage = InMemoryStorage()
+    _campaign(storage)
+    ledger = CurationLedger()
+    sched = Scheduler(
+        storage=storage,
+        agent_loop=_Loop(),
+        setup_service=_GateWithPrefs(allowed=True, curation_schedule="off"),
+        curation_service=_curation(ledger),
+        curation_schedule="daily",  # the process-lived env default: enabled
+        run_summaries_provider=_summaries,
+    )
+    out = sched.tick(datetime(2026, 6, 16, 9, 0, tzinfo=UTC))
+    assert out["curation"] == {"ran": False, "reason": "disabled"}
+    assert ledger.staged == []
+
+
+@pytest.mark.unit
+def test_curation_no_saved_override_falls_back_to_constructor_default():
+    """When nothing has been saved yet (``get_automation_prefs`` returns ``{}``,
+    the real ``SetupService`` shape before any Settings save), the constructor's
+    ``CURATION_SCHEDULE`` env default still governs -- no behavior change for
+    deployments that never touch the toggle."""
+    storage = InMemoryStorage()
+    _campaign(storage)
+    ledger = CurationLedger()
+    sched = Scheduler(
+        storage=storage,
+        agent_loop=_Loop(),
+        setup_service=_GateWithPrefs(allowed=True, curation_schedule=None),
+        curation_service=_curation(ledger),
+        curation_schedule="off",
+        run_summaries_provider=_summaries,
+    )
+    out = sched.tick(datetime(2026, 6, 16, 9, 0, tzinfo=UTC))
+    assert out["curation"] == {"ran": False, "reason": "disabled"}
+    assert ledger.staged == []
+
+
+@pytest.mark.unit
+def test_curation_setup_service_without_get_automation_prefs_is_defensive():
+    """A ``setup_service`` that doesn't implement ``get_automation_prefs`` at all
+    (e.g. the ``_Gate`` double used by the other tests in this file, or any other
+    minimal stand-in) must never break a tick -- it falls back to the constructor
+    default exactly like before this change."""
+    storage = InMemoryStorage()
+    _campaign(storage)
+    ledger = CurationLedger()
+    sched = Scheduler(
+        storage=storage,
+        agent_loop=_Loop(),
+        setup_service=_Gate(allowed=True),
+        curation_service=_curation(ledger),
+        curation_schedule="daily",
+        run_summaries_provider=_summaries,
+    )
+    out = sched.tick(datetime(2026, 6, 16, 9, 0, tzinfo=UTC))
+    assert out["curation"]["ran"] is True
+    assert len(ledger.staged) == 2

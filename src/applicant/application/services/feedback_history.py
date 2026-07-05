@@ -70,24 +70,60 @@ class FeedbackSummaryProvider:
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("feedback_history_apps_failed", error=str(exc))
                 continue
+
+            # Perf (N+1): batch decisions + documents ONCE per campaign (instead
+            # of a ``list_for_application`` round-trip per application below),
+            # and revisions ONCE for the campaign's documents (instead of a
+            # ``get_for_material`` round-trip per document) — the repository
+            # methods already exist / were added for this fix. Grouped by
+            # application/material id in Python, reused per application.
+            try:
+                campaign_decisions = storage.decisions.list_for_campaign(campaign.id)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("feedback_history_decisions_failed", error=str(exc))
+                campaign_decisions = []
+            decisions_by_app: dict = {}
+            for d in campaign_decisions:
+                decisions_by_app.setdefault(d.application_id, []).append(d)
+
+            try:
+                campaign_documents = storage.documents.list_for_campaign(campaign.id)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("feedback_history_documents_failed", error=str(exc))
+                campaign_documents = []
+            documents_by_app: dict = {}
+            for doc in campaign_documents:
+                documents_by_app.setdefault(doc.application_id, []).append(doc)
+
+            try:
+                campaign_revisions = storage.revisions.list_for_materials(
+                    [doc.id for doc in campaign_documents]
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("feedback_history_revisions_failed", error=str(exc))
+                campaign_revisions = []
+            revisions_by_material = {r.material_id: r for r in campaign_revisions}
+
             for app in apps:
-                for summary in self._feedback_for_app(storage, campaign, app):
+                for summary in self._feedback_for_app(
+                    campaign,
+                    app,
+                    decisions=decisions_by_app.get(app.id, []),
+                    documents=documents_by_app.get(app.id, []),
+                    revisions_by_material=revisions_by_material,
+                ):
                     summaries.append(summary)
                     if len(summaries) >= self._max:
                         return summaries
         return summaries
 
-    def _feedback_for_app(self, storage, campaign, app):
+    def _feedback_for_app(self, campaign, app, *, decisions, documents, revisions_by_material):
         """Yield one preference ``RunSummary`` per stored feedback item for ``app``."""
         from applicant.application.services.curation_service import RunSummary
 
         campaign_id = str(getattr(campaign, "id", "") or "")
 
         # 1) digest decline-with-feedback (FR-DIG-5): the user's stated decline reason.
-        try:
-            decisions = storage.decisions.list_for_application(app.id)
-        except Exception:  # pragma: no cover - defensive
-            decisions = []
         for d in decisions:
             text = (getattr(d, "feedback_text", "") or "").strip()
             if not text:
@@ -105,15 +141,8 @@ class FeedbackSummaryProvider:
             )
 
         # 2) résumé/answer revision feedback (FR-RESUME-8): each redline instruction.
-        try:
-            documents = storage.documents.list_for_application(app.id)
-        except Exception:  # pragma: no cover - defensive
-            documents = []
         for doc in documents:
-            try:
-                session = storage.revisions.get_for_material(doc.id)
-            except Exception:  # pragma: no cover - defensive
-                session = None
+            session = revisions_by_material.get(doc.id)
             if session is None:
                 continue
             for i, turn in enumerate(getattr(session, "turns", ()) or ()):

@@ -793,14 +793,13 @@ class AdvancedLearningService:
         if self._storage is None:
             return []
         try:
-            existing = {
-                (a.name or "").strip().lower()
-                for a in self._storage.attributes.list_for_campaign(campaign_id)
-            }
-            existing |= {
-                (a.value or "").strip().lower()
-                for a in self._storage.attributes.list_for_campaign(campaign_id)
-            }
+            # Perf: fetch the campaign's attributes ONCE and derive both the
+            # name-set and value-set from that single list, instead of two
+            # identical ``list_for_campaign`` reads (this runs on the polled
+            # setup-status path — perf lens 03 #29).
+            attrs = list(self._storage.attributes.list_for_campaign(campaign_id))
+            existing = {(a.name or "").strip().lower() for a in attrs}
+            existing |= {(a.value or "").strip().lower() for a in attrs}
         except Exception:  # pragma: no cover - defensive
             existing = set()
         text = self._stored_input_text(campaign_id).lower()

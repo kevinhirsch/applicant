@@ -74,23 +74,32 @@ class RunHistoryProvider:
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("run_history_apps_failed", error=str(exc))
                 continue
+            # Perf (N+1): one campaign-scoped outcomes read instead of an
+            # ``outcomes.list_for_application`` round-trip per application below —
+            # ``OutcomeEventRepo.list_for_campaign`` already exists (joins through
+            # applications) and returns the exact same rows this tick would otherwise
+            # fetch app-by-app. Grouped once per campaign, reused per application.
+            try:
+                campaign_outcomes = storage.outcomes.list_for_campaign(campaign.id)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("run_history_outcomes_failed", error=str(exc))
+                campaign_outcomes = []
+            outcomes_by_app: dict = {}
+            for e in campaign_outcomes:
+                outcomes_by_app.setdefault(e.application_id, []).append(e)
             for app in apps:
                 if app.status not in _REVIEWABLE_STATES:
                     continue
-                summary = self._to_summary(storage, app)
+                summary = self._to_summary(outcomes_by_app.get(app.id, []), app)
                 if summary is not None:
                     summaries.append(summary)
                     if len(summaries) >= self._max:
                         return summaries
         return summaries
 
-    def _to_summary(self, storage, app: Application):
+    def _to_summary(self, outcomes: list, app: Application):
         from applicant.application.services.curation_service import RunSummary
 
-        try:
-            outcomes = storage.outcomes.list_for_application(app.id)
-        except Exception:  # pragma: no cover - defensive
-            outcomes = []
         submitted = any(getattr(e, "type", "") in _SUBMISSION_TYPES for e in outcomes)
         title = app.job_title or app.role_name or "an application"
         # A stable topic so re-encounters of the same site/role map to the same skill.

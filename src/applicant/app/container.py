@@ -1075,7 +1075,12 @@ def build_container(settings: Settings | None = None) -> Container:
     material_service._research_enabled = settings.material_research_enabled
 
     # Phase 5: the agent run loop + scheduler — the missing end-to-end drivers.
-    from applicant.application.services.agent_loop import AgentLoop, DigestLedger, ResumeLedger
+    from applicant.application.services.agent_loop import (
+        AgentLoop,
+        DigestLedger,
+        PresubmitBlockLedger,
+        ResumeLedger,
+    )
     from applicant.application.services.scheduler import Scheduler
 
     # ONE resume ledger for the whole process. The scheduler rebuilds a fresh
@@ -1087,6 +1092,12 @@ def build_container(settings: Settings | None = None) -> Container:
     # would reset the "already delivered today" guard, re-sending the digest every
     # tick). Injected into both the shared loop and each per-tick loop.
     digest_ledger = DigestLedger()
+    # ONE pre-submit-block ledger for the whole process (dark-engine audit #61):
+    # the per-tick rebuild would otherwise lose every block reason (and any operator
+    # override) the moment the next tick's fresh AgentLoop is built. Injected into
+    # both the shared loop (admin reads) and each per-tick loop (the tick that writes
+    # it), exactly like resume_ledger/digest_ledger above.
+    presubmit_block_ledger = PresubmitBlockLedger()
 
     # FR-MIND: the agent-learning substrate. Build the curated-memory / skills / recall
     # adapter trio (default ``in_memory`` — hermetic, no deps; ``bridge`` reaches the
@@ -1225,6 +1236,8 @@ def build_container(settings: Settings | None = None) -> Container:
         loop_toolset_factory=_make_loop_toolset_factory(curation_service),
         # G07: pre-submit safety parameters from settings.
         presubmit_safety_params=presubmit_safety_params,
+        # dark-engine audit #61: process-lived block ledger (reason + override).
+        presubmit_block_ledger=presubmit_block_ledger,
     )
     # CONC-2: the 24/7 scheduler thread MUST NOT share the request-scoped Session
     # (SQLAlchemy Sessions are not thread-safe). When a real DB is configured, build a
@@ -1358,6 +1371,8 @@ def build_container(settings: Settings | None = None) -> Container:
             loop_toolset_factory=_make_loop_toolset_factory(tick_curation),
             # G07: pre-submit safety parameters from settings.
             presubmit_safety_params=presubmit_safety_params,
+            # dark-engine audit #61: process-lived block ledger (reason + override).
+            presubmit_block_ledger=presubmit_block_ledger,
         )
         return {
             "storage": tick_storage,

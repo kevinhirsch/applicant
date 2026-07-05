@@ -97,6 +97,38 @@ class DigestLedger:
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
+@dataclass
+class PresubmitBlockLedger:
+    """Cross-tick record of pre-submit safety blocks (dark-engine audit #61).
+
+    G07's pre-submit safety checks (scam/ghost-job, duplicate cooldown,
+    per-company volume cap, eligibility/work-authorization -- see
+    ``presubmit_safety.py``) run every tick against every APPROVED application.
+    Before this ledger, a check that raised ``PresubmitBlock`` was handled with
+    only ``log.info("presubmit_blocked")`` and a ``continue`` -- the posting
+    stayed APPROVED forever with no user-visible reason and no way to resolve
+    it short of a config change the operator could not even see they needed.
+    This ledger persists the LATEST block per application (which check, its
+    plain-language reason, first/last-seen timestamps, how many ticks it has
+    recurred) plus an ``overridden`` set the operator can add an application id
+    to so the loop proceeds past the block on ITS OWN informed decision --
+    review-before-submit (FR-REVIEW) still gates the actual final submit
+    downstream, so an override here only lets prefill/materials generation
+    START, never auto-submits anything.
+
+    The scheduler rebuilds a fresh ``AgentLoop`` every tick (per-tick Session
+    isolation, ``container._build_tick_services``), so this must live OUTSIDE
+    the loop instance or the whole record (and any override) would vanish the
+    moment the next tick's fresh instance runs -- exactly like
+    ``ResumeLedger``/``DigestLedger`` above. The container creates ONE of these
+    for the process and injects it into every per-tick loop.
+    """
+
+    blocks: dict[str, dict] = field(default_factory=dict)
+    overridden: set[str] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
 #: Plain-language "why nothing happened" sentences for the two early-return gates
 #: a SCHEDULED tick can hit before any new work starts (dark-engine audit #64).
 #: ``campaign_not_found`` isn't here (no campaign row to attach a run to);
@@ -158,6 +190,9 @@ class AgentLoop:
             "_resume_failures",
             "_resume_giveup",
             "_digest_sent",
+            "_presubmit_block_ledger",
+            "_presubmit_blocks",
+            "_presubmit_overridden",
         }
     )
 
@@ -215,6 +250,9 @@ class AgentLoop:
         # When set, the loop runs scam/ghost-job detection before each pipeline.
         # ``None`` (default) skips all checks — byte-identical to before.
         presubmit_safety_params: dict | None = None,
+        # dark-engine audit #61: process-lived ledger of pre-submit safety blocks
+        # (reason + override), shared across per-tick rebuilds by the container.
+        presubmit_block_ledger: PresubmitBlockLedger | None = None,
     ) -> None:
         self._storage = storage
         self._runs = agent_run_service
@@ -304,6 +342,19 @@ class AgentLoop:
         # checks before starting each pipeline. ``None`` (default) skips all checks
         # so existing callers are byte-identical.
         self._presubmit_safety_params = presubmit_safety_params
+        # dark-engine audit #61: pre-submit block bookkeeping lives in a ledger that
+        # OUTLIVES this instance for the same reason resume/digest bookkeeping does —
+        # the scheduler rebuilds the loop every tick, so a per-instance dict would lose
+        # every block reason (and any operator override) the moment the next tick's
+        # fresh instance runs. The container injects one shared ledger; when none is
+        # given (unit tests / direct use) a fresh per-instance one is used.
+        self._presubmit_block_ledger = (
+            presubmit_block_ledger
+            if presubmit_block_ledger is not None
+            else PresubmitBlockLedger()
+        )
+        self._presubmit_blocks = self._presubmit_block_ledger.blocks
+        self._presubmit_overridden = self._presubmit_block_ledger.overridden
 
     # --- daily throughput ledger (FR-AGENT-1) -----------------------------
     def acted_today(self, campaign_id: CampaignId, now: datetime) -> int:
@@ -577,63 +628,69 @@ class AgentLoop:
             # Only act on applications that have not yet started the pipeline.
             if app.status is not ApplicationState.APPROVED:
                 continue
-            # G07: run pre-submit safety checks before starting the pipeline.
-            # When a check blocks, log it and skip — the posting remains APPROVED
-            # and a future re-drive with updated settings may pass.
+            # G07: run pre-submit safety checks before starting the pipeline. When a
+            # check blocks, PERSIST the reason (dark-engine audit #61 -- previously
+            # only ``log.info`` recorded it, so the posting sat APPROVED forever with
+            # nothing user-visible) and skip; the posting remains APPROVED so either a
+            # future re-drive with the condition resolved, or an explicit operator
+            # override, may proceed.
             if self._presubmit_safety_params is not None:
                 posting = self._storage.postings.get(posting_id)
                 if posting is not None:
-                    from applicant.application.services.presubmit_safety import (
-                        PresubmitBlock,
-                        check_duplicate_application,
-                        check_eligibility,
-                        check_per_company_volume_cap,
-                        check_scam_or_ghost_job,
-                    )
+                    app_key = str(app.id)
+                    with self._presubmit_block_ledger.lock:
+                        overridden = app_key in self._presubmit_overridden
+                    if overridden:
+                        # The operator explicitly chose to proceed past the safety
+                        # flag for THIS application (#61) -- skip the checks and
+                        # clear the bookkeeping now that it is actually starting.
+                        self._clear_presubmit_block(app.id)
+                    else:
+                        from applicant.application.services.presubmit_safety import (
+                            PresubmitBlock,
+                            check_duplicate_application,
+                            check_eligibility,
+                            check_per_company_volume_cap,
+                            check_scam_or_ghost_job,
+                        )
 
-                    try:
-                        check_scam_or_ghost_job(
-                            posting,
-                            max_age_days=self._presubmit_safety_params.get(
-                                "max_age_days", 90
-                            ),
-                            reference_date=now.date(),
-                        )
-                        check_duplicate_application(
-                            campaign.id,
-                            posting,
-                            self._storage,
-                            cooldown_days=self._presubmit_safety_params.get(
-                                "duplicate_cooldown_days", 30
-                            ),
-                            reference_date=now.date(),
-                        )
-                        check_per_company_volume_cap(
-                            campaign.id,
-                            posting,
-                            self._storage,
-                            max_per_day=self._presubmit_safety_params.get(
-                                "max_apps_per_company_per_day", 3
-                            ),
-                            reference_date=now.date(),
-                        )
-                        if self._presubmit_safety_params.get(
-                            "eligibility_enabled", True
-                        ):
-                            check_eligibility(
+                        try:
+                            check_scam_or_ghost_job(
+                                posting,
+                                max_age_days=self._presubmit_safety_params.get(
+                                    "max_age_days", 90
+                                ),
+                                reference_date=now.date(),
+                            )
+                            check_duplicate_application(
                                 campaign.id,
                                 posting,
                                 self._storage,
+                                cooldown_days=self._presubmit_safety_params.get(
+                                    "duplicate_cooldown_days", 30
+                                ),
+                                reference_date=now.date(),
                             )
-                    except PresubmitBlock as exc:
-                        log.info(
-                            "presubmit_blocked",
-                            application_id=str(app.id),
-                            posting_id=str(posting_id),
-                            check=exc.check,
-                            reason=exc.reason,
-                        )
-                        continue
+                            check_per_company_volume_cap(
+                                campaign.id,
+                                posting,
+                                self._storage,
+                                max_per_day=self._presubmit_safety_params.get(
+                                    "max_apps_per_company_per_day", 3
+                                ),
+                                reference_date=now.date(),
+                            )
+                            if self._presubmit_safety_params.get(
+                                "eligibility_enabled", True
+                            ):
+                                check_eligibility(
+                                    campaign.id,
+                                    posting,
+                                    self._storage,
+                                )
+                        except PresubmitBlock as exc:
+                            self._record_presubmit_block(app, posting, exc, now)
+                            continue
             # #9: record the daily-acted budget ONLY after the pipeline actually
             # started. _start_pipeline returns False when admission is deferred (full
             # sandbox capacity); counting before would burn budget for work that never
@@ -818,6 +875,125 @@ class AgentLoop:
             self._resume_failures.pop(key, None)
             self._last_resume.pop(key, None)
         log.info("resume_retry_cleared", application_id=key)
+        return True
+
+    # --- G07 pre-submit safety blocks (dark-engine audit #61) --------------
+    def _record_presubmit_block(self, app: Application, posting, exc, now: datetime) -> None:
+        """Persist ONE pre-submit safety block so it survives the tick (#61).
+
+        Previously ``PresubmitBlock`` was handled with only ``log.info`` -- the
+        posting stayed APPROVED forever with nothing an operator could see or
+        act on. This writes the latest check/reason into the process-lived
+        ``PresubmitBlockLedger`` (surfaced by ``list_blocked``) and keeps counting
+        how many ticks it has recurred, so a persistently-blocked application
+        reads as "blocked 12 times since Tuesday", not a one-off blip.
+        """
+        key = str(app.id)
+        with self._presubmit_block_ledger.lock:
+            existing = self._presubmit_blocks.get(key)
+            first_blocked_at = (
+                existing["first_blocked_at"] if existing else now.isoformat()
+            )
+            times_blocked = (existing["times_blocked"] if existing else 0) + 1
+            self._presubmit_blocks[key] = {
+                "application_id": key,
+                "campaign_id": str(app.campaign_id),
+                "check": exc.check,
+                "reason": exc.reason,
+                "first_blocked_at": first_blocked_at,
+                "last_blocked_at": now.isoformat(),
+                "times_blocked": times_blocked,
+            }
+        log.info(
+            "presubmit_blocked",
+            application_id=key,
+            posting_id=str(posting.id),
+            check=exc.check,
+            reason=exc.reason,
+            times_blocked=times_blocked,
+        )
+        # Surface it to the operator ONCE per application (deduped on first block,
+        # not every recurring tick -- unlike the resume give-up cap this has no
+        # threshold, it would otherwise refire every ~60s tick forever), mirroring
+        # ``_record_resume_failure``'s notification above. Never let this break
+        # the tick.
+        if times_blocked == 1 and self._notifications is not None:
+            try:
+                self._notifications.notify_error(
+                    title="An application needs a look",
+                    body=(
+                        f"A safety check stopped one of your applications: {exc.reason} "
+                        "Open Tracker to review it or start it anyway."
+                    ),
+                    dedup_key=f"presubmit_blocked:{key}",
+                )
+            except Exception:  # pragma: no cover - notification must never break the loop
+                pass
+
+    def _clear_presubmit_block(self, application_id: ApplicationId) -> None:
+        """Drop one application's block record + override flag (#61).
+
+        Called once the application actually starts the pipeline (an operator
+        override let it through) so stale bookkeeping does not linger.
+        """
+        key = str(application_id)
+        with self._presubmit_block_ledger.lock:
+            self._presubmit_blocks.pop(key, None)
+            self._presubmit_overridden.discard(key)
+
+    def list_blocked(self, campaign_id: CampaignId | None = None) -> list[dict]:
+        """Applications the pre-submit safety gate has stopped on (dark-engine audit #61).
+
+        G07 checks (scam/ghost-job, duplicate cooldown, per-company volume cap,
+        eligibility/work-authorization) run every tick against every APPROVED
+        application; a block previously left the posting APPROVED forever with
+        only a log line -- no reason surfaced, no way to act short of guessing at
+        a config change. Reads the SAME process-lived ``PresubmitBlockLedger``
+        the tick loop writes to, so this always reflects live loop state, not a
+        stale snapshot. Only applications STILL in the APPROVED state are
+        returned (one that has since been overridden/resolved, deleted, or
+        otherwise moved on is not a currently-blocked row anymore, even if a
+        stale ledger entry lingers until the next re-check clears it).
+        """
+        with self._presubmit_block_ledger.lock:
+            entries = list(self._presubmit_blocks.values())
+        rows: list[dict] = []
+        for entry in entries:
+            app = self._storage.applications.get(ApplicationId(entry["application_id"]))
+            if app is None or app.status is not ApplicationState.APPROVED:
+                continue
+            if campaign_id is not None and app.campaign_id != campaign_id:
+                continue
+            posting = self._storage.postings.get(app.posting_id) if app.posting_id else None
+            rows.append(
+                {
+                    **entry,
+                    "status": app.status.value,
+                    "job_title": app.job_title or (posting.title if posting else None),
+                    "company": posting.company if posting else None,
+                    "role_name": app.role_name,
+                }
+            )
+        rows.sort(key=lambda r: r["last_blocked_at"], reverse=True)
+        return rows
+
+    def override_blocked(self, application_id: str) -> bool:
+        """Let the operator proceed with ONE blocked application despite the
+        safety flag (dark-engine audit #61).
+
+        Marks the application so the NEXT tick's pre-submit gate skips the G07
+        checks and starts the pipeline -- the operator's own informed decision,
+        not the engine self-authorizing anything: review-before-submit
+        (FR-REVIEW) still gates the actual final submit downstream, so this only
+        lets prefill/materials generation begin. Returns ``False`` (a no-op)
+        when the application is not currently in the blocked set.
+        """
+        key = str(application_id)
+        with self._presubmit_block_ledger.lock:
+            if key not in self._presubmit_blocks:
+                return False
+            self._presubmit_overridden.add(key)
+        log.info("presubmit_block_overridden", application_id=key)
         return True
 
     def resume_backoff_status(

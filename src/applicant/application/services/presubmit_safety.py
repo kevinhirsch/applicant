@@ -205,8 +205,12 @@ def check_duplicate_application(
         ApplicationState.FOLLOWING_UP,
         ApplicationState.ARCHIVED,
     }
+    # Perf (N+1): one campaign-scoped postings read instead of a
+    # ``postings.get(app.posting_id)`` round-trip per application below — this
+    # check runs before every submission attempt.
+    postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
     for app in storage.applications.list_for_campaign(campaign_id):
-        existing_posting = storage.postings.get(app.posting_id)
+        existing_posting = postings_by_id.get(app.posting_id)
         if existing_posting is None:
             continue
         if (existing_posting.company or "").strip().lower() != company:
@@ -257,8 +261,11 @@ def check_per_company_volume_cap(
     if not company:
         return
     count = 0
+    # Perf (N+1): same fix as ``check_duplicate_application`` — one batch fetch
+    # instead of a per-application ``postings.get()``.
+    postings_by_id = {p.id: p for p in storage.postings.list_for_campaign(campaign_id)}
     for app in storage.applications.list_for_campaign(campaign_id):
-        existing_posting = storage.postings.get(app.posting_id)
+        existing_posting = postings_by_id.get(app.posting_id)
         if existing_posting is None:
             continue
         if (existing_posting.company or "").strip().lower() != company:

@@ -266,6 +266,15 @@ class _RevisionRepo:
                 return s
         return None
 
+    def list_for_materials(self, material_ids) -> list[RevisionSession]:
+        """Batch ``get_for_material`` for many materials (perf — mirrors the SQL
+        adapter's ``.in_()`` batch; safe because ``open_revision`` always
+        fetches-then-creates, so there is at most one session per material)."""
+        keys = {str(mid) for mid in material_ids}
+        if not keys:
+            return []
+        return [s for s in self._d.values() if str(s.material_id) in keys]
+
     def delete_for_materials(self, material_ids: set[str]) -> int:
         stale = [
             k for k, s in self._d.items() if str(s.material_id) in material_ids
@@ -293,6 +302,21 @@ class _DecisionRepo:
 
     def list_for_application(self, aid: ApplicationId) -> list[Decision]:
         return [d for d in self._l if d.application_id == aid]
+
+    def list_for_campaign(self, cid: CampaignId) -> list[Decision]:
+        """All decisions attached to a real application in the campaign (perf).
+
+        Mirrors the SQL adapter's join-based ``list_for_campaign``: a decision
+        keyed directly on a posting id (pre-application digest approval) has no
+        matching real application and is excluded, same scope a per-application
+        ``list_for_application(app.id)`` loop would ever see.
+        """
+        out = []
+        for d in self._l:
+            app = self._applications.get(d.application_id)
+            if app is not None and app.campaign_id == cid:
+                out.append(d)
+        return out
 
     def delete_for_applications(self, application_ids: set[str]) -> int:
         before = len(self._l)

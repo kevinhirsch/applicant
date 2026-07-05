@@ -34,6 +34,7 @@ Empty/tiny inputs degrade to a zero score and empty lists rather than raising.
 
 from __future__ import annotations
 
+import functools
 import re
 
 # === curated hard-skill / tool / certification / methodology terms =========
@@ -134,12 +135,20 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|[\n\r]+")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+/#.\-]*")
 
 
+@functools.lru_cache(maxsize=512)
 def _term_pattern(term: str) -> re.Pattern[str]:
     """A case-insensitive, "word"-boundary regex for ``term``.
 
     Uses alnum-boundary lookarounds (not ``\\b``) so terms containing
     punctuation the standard ``\\b`` mishandles (``C++``, ``C#``, ``.NET``,
     ``CI/CD``) still match as whole terms rather than as a raw substring.
+
+    Memoized (perf): ``term`` -> compiled pattern is a pure, deterministic
+    mapping, and ``compute_jd_match`` calls this for every one of the ~150
+    ``KNOWN_SKILL_TERMS`` PLUS every candidate term (against both the posting
+    and the résumé text) on EVERY call — recompiling the same fixed set of
+    regexes from scratch each time despite them never changing. 512 comfortably
+    covers the curated lexicon plus per-call fallback candidates.
     """
     escaped = re.escape(term)
     return re.compile(rf"(?<![A-Za-z0-9])(?:{escaped})(?![A-Za-z0-9])", re.IGNORECASE)
