@@ -242,6 +242,10 @@ class AutomationPrefsIn(BaseModel):
     essentials_nudge_schedule: str | None = None
     #: Item 101: comma-separated discovery-crawler proxy list.
     discovery_proxies: str | None = None
+    #: Item 80 (dark-engine audit B7): comma-separated custom job-board RSS
+    #: feed URL list -- mirrors ``discovery_proxies`` exactly (SSRF/format
+    #: validated engine-side, merged alongside the hardcoded default feed).
+    discovery_rss_feeds: str | None = None
     #: Item 103: live-takeover desktop environment + remote-view technology.
     takeover_desktop: str | None = None
     remote_view_backend: str | None = None

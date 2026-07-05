@@ -9,7 +9,9 @@ extended below for items 92/93/94/95/96/100/101/103/104 -- the sandbox backend/
 stealth persona, the browser engine/channel, the assistant/loop tool-autonomy
 switches, company-research enrichment, the desktop-assist backend/mode/
 approvals, the proactive-cadence schedules, the discovery proxy list, the
-live-takeover appearance, and resume render fidelity).
+live-takeover appearance, and resume render fidelity; and further extended
+below for item 80 (dark-engine audit B7) -- the custom job-board RSS feed
+list, mirroring ``discovery_proxies`` exactly).
 
 Mirrors ``test_applicant_setup_routes.py``'s ``test_get_tiers_passes_through`` /
 ``test_set_tiers_forwards_ladder`` shape: the engine client is replaced with a
@@ -507,3 +509,58 @@ def test_put_automation_prefs_rejects_engine_422_for_egress_proxy_url(monkeypatc
     )
     assert resp.status_code == 422
     assert "must be an http(s) URL" in resp.json()["detail"]
+
+
+# ── item 80 (dark-engine audit B7): custom job-board RSS feed list ─────────
+# Same proxy body, mirroring discovery_proxies (item 101) exactly.
+
+
+def test_get_automation_prefs_passes_discovery_rss_feeds_through(monkeypatch):
+    payload = {"discovery_rss_feeds": ""}
+    _patch_engine(monkeypatch, result=payload)
+    resp = _make_client().get("/api/applicant/setup/automation")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+
+
+def test_put_automation_prefs_forwards_discovery_rss_feeds(monkeypatch):
+    _patch_engine(monkeypatch, result=None)
+    body = {"discovery_rss_feeds": "https://boards.example.com/careers.rss"}
+    resp = _make_client().put("/api/applicant/setup/automation", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == body
+
+
+def test_put_automation_prefs_only_forwards_discovery_rss_feeds_actually_sent(monkeypatch):
+    """Same partial-update contract as every other automation-prefs field: a
+    field omitted from the request body must not be forwarded."""
+    _patch_engine(monkeypatch, result=None)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"resume_render": "off"},
+    )
+    assert resp.status_code == 200
+    name, args = _FakeEngine.last_call
+    assert name == "setup_set_automation_prefs"
+    assert args[0] == {"resume_render": "off"}
+    assert "discovery_rss_feeds" not in args[0]
+
+
+def test_put_automation_prefs_rejects_engine_422_for_discovery_rss_feeds(monkeypatch):
+    """``discovery_rss_feeds`` is SSRF-checked engine-side (item 12) and 422s
+    (InvalidInput, a DomainError) rather than 400ing (plain ValueError) -- the
+    proxy must pass that status through unchanged, not coerce it. Mirrors
+    ``discovery_proxies``'s own behavior exactly."""
+    err = EngineError(
+        "bad", status=422, detail="RSS feed entry 'file:///etc/passwd' uses a disallowed scheme 'file'."
+    )
+    _patch_engine(monkeypatch, error=err)
+    resp = _make_client().put(
+        "/api/applicant/setup/automation",
+        json={"discovery_rss_feeds": "file:///etc/passwd"},
+    )
+    assert resp.status_code == 422
+    assert "disallowed scheme" in resp.json()["detail"]

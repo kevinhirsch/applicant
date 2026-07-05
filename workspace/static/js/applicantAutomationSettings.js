@@ -68,7 +68,10 @@
 //     essentials" reminder.
 //   * Automation network (item 101) — the discovery-crawler proxy list; also
 //     where the residential-egress mode/attestation/proxy URL (item 89) live,
-//     as a companion network setting.
+//     as a companion network setting, and (item 80, dark-engine audit B7) the
+//     custom job-board RSS feed list — the engine only shipped a hardcoded
+//     single feed with no add-feed UI, so this control lets an operator add
+//     their own without a code change.
 //   * Live takeover appearance (item 103) — the desktop environment and
 //     remote-view technology used for the one-click live-takeover session.
 //   * Captcha handling (item 83) — human hand-off (default, safe) vs. avoid
@@ -178,6 +181,13 @@ function _cardHTML(prefs) {
   const statusUpdateSchedule = prefs.status_update_schedule || 'off';
   const essentialsNudgeSchedule = prefs.essentials_nudge_schedule || 'off';
   const discoveryProxiesText = String(prefs.discovery_proxies || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join('\n');
+  // Item 80 (dark-engine audit B7): custom job-board RSS feeds, parsed/joined
+  // exactly like the discovery-proxy list above.
+  const discoveryRssFeedsText = String(prefs.discovery_rss_feeds || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -628,6 +638,19 @@ function _cardHTML(prefs) {
                   placeholder="One proxy URL per line, e.g. http://user:pass@proxy.example.com:8080"
                   rows="3" style="max-width:420px;">${esc(discoveryProxiesText)}</textarea>
       </div>
+      <div class="admin-toggle-sub" style="margin-bottom:8px; margin-top:14px;"
+           title="Add your own job-board RSS/Atom feed URLs (e.g. a company careers page feed or a niche job board) so Applicant discovers postings from them too, in addition to its built-in sources. Leave blank to use only the built-in sources.">
+        Custom job-board feeds — add your own RSS/Atom feed URLs (e.g. a company
+        careers page or a niche job board) so Applicant discovers postings from
+        them too, alongside its built-in sources. Leave blank to use only the
+        built-in sources.
+      </div>
+      <div class="settings-row" style="align-items:flex-start;">
+        <label class="settings-label" for="as-discovery-rss-feeds">Custom job-board feeds</label>
+        <textarea id="as-discovery-rss-feeds" class="settings-input" data-as-field="discovery_rss_feeds"
+                  placeholder="One RSS/Atom feed URL per line, e.g. https://example.com/jobs.rss"
+                  rows="3" style="max-width:420px;">${esc(discoveryRssFeedsText)}</textarea>
+      </div>
       <h2 style="font-size:1em;margin-top:14px;">Residential egress</h2>
       <div class="admin-toggle-sub" style="margin-bottom:8px">
         Route Applicant's browser automation itself (not just discovery) through a
@@ -851,6 +874,7 @@ function _readForm(host) {
   const statusUpdateScheduleEl = get('status_update_schedule');
   const essentialsNudgeScheduleEl = get('essentials_nudge_schedule');
   const discoveryProxiesEl = get('discovery_proxies');
+  const discoveryRssFeedsEl = get('discovery_rss_feeds');
   const takeoverDesktopEl = get('takeover_desktop');
   const remoteViewBackendEl = get('remote_view_backend');
   const captchaStrategyEl = get('captcha_strategy');
@@ -945,6 +969,17 @@ function _readForm(host) {
       .map((s) => s.trim())
       .filter(Boolean);
     body.discovery_proxies = proxies.join(',');
+  }
+  if (discoveryRssFeedsEl) {
+    // Item 80 (dark-engine audit B7): parse the textarea (one feed per line,
+    // commas also accepted) into a list, then join back into the
+    // comma-separated string DISCOVERY_RSS_FEEDS persists -- same shape as
+    // discovery_proxies above.
+    const feeds = discoveryRssFeedsEl.value
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    body.discovery_rss_feeds = feeds.join(',');
   }
   if (takeoverDesktopEl) body.takeover_desktop = takeoverDesktopEl.value;
   if (remoteViewBackendEl) body.remote_view_backend = remoteViewBackendEl.value;

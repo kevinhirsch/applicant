@@ -114,8 +114,10 @@ function _savedEndpointsHTML() {
           <div class="admin-toggle-sub" style="opacity:0.7;">${statusBits}</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button type="button" class="cal-btn ml-ep-toggle" data-ep-id="${id}">${enabled ? 'Disable' : 'Enable'}</button>
-          <button type="button" class="cal-btn ml-ep-remove" data-ep-id="${id}" data-ep-name="${name}">Remove</button>
+          <button type="button" class="cal-btn ml-ep-toggle" data-ep-id="${id}"
+            title="${enabled ? 'Stop this connection from being used, without deleting it' : 'Make this connection available again'}">${enabled ? 'Disable' : 'Enable'}</button>
+          <button type="button" class="cal-btn ml-ep-remove" data-ep-id="${id}" data-ep-name="${name}"
+            title="Permanently delete this connection">Remove</button>
         </div>
       </div>`;
   }).join('');
@@ -247,7 +249,7 @@ function _tierRowHTML(t, i) {
           <input type="password" class="settings-select ml-key" value="" placeholder="${t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)'}" autocomplete="off" style="display:block;margin-top:3px;width:240px;" />
           ${keyNote}
         </label>
-        <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">Context window
+        <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;" title="How much text (roughly, words and pieces of words) this model can read at once. Check the model's own listing if you're unsure — the engine trims older context to fit, so an accurate number just avoids wasted capacity.">Context window
           <input type="number" class="settings-select ml-ctx" min="1024" value="${esc(t.context_window)}" style="display:block;margin-top:3px;width:140px;" />
         </label>
       </div>

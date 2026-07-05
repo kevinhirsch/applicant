@@ -1933,10 +1933,16 @@ async function _maybeDismiss() {
 // short "you're set, here's what's next" toast, matching the honest, low-key voice
 // of the models.js welcome-card work rather than a hard silent auto-navigation.
 function _openHomeBaseAfterSetup() {
+  // Help/self-explain audit item 23: the send-off should teach the daily
+  // rhythm, not just unlock nav — so the user leaves setup already knowing
+  // Applicant searches continuously, digests arrive on their own, and
+  // anything needing a decision waits in Pending rather than vanishing.
   try {
     if (window.uiModule && typeof window.uiModule.showToast === 'function') {
       window.uiModule.showToast(
-        'You’re all set — Applicant is getting to work. Here’s your home base.',
+        'You’re all set — I’ll keep searching around the clock. Your digest '
+          + 'will arrive on its own, and anything that needs you waits right '
+          + 'here in Pending, your home base.',
         { duration: 6000 });
     } else {
       _toast('You’re all set — Applicant is getting to work.');

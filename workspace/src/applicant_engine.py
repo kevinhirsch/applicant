@@ -372,8 +372,9 @@ class ApplicantEngineClient:
         sandbox/browser/stealth selectors, the assistant/loop tool-autonomy
         switches, company-research enrichment, desktop-assist backend/mode/
         approvals, proactive-cadence schedules, the discovery proxy list, the
-        live-takeover appearance, the resume render fidelity, the
-        captcha-handling strategy/service (the API key surfaces only as a
+        custom job-board RSS feed list (item 80, merged alongside the engine's
+        hardcoded default feed), the live-takeover appearance, the resume render
+        fidelity, the captcha-handling strategy/service (the API key surfaces only as a
         boolean ``captcha_api_key_configured``, never the key itself), and the
         residential-egress mode/attestation/proxy URL -- persisted overrides
         merged onto the engine's env defaults."""

@@ -503,7 +503,8 @@ function _renderRuns(host, items) {
       </div>`;
   });
   const heading = `
-    <div style="padding:4px 10px 6px;font-size:11px;font-weight:600;opacity:0.6;">
+    <div style="padding:4px 10px 6px;font-size:11px;font-weight:600;opacity:0.6;"
+      title="Each row is one pass your assistant took through your job search, newest first">
       Recently I…
     </div>`;
   host.innerHTML = `<div>${heading}${rows.join('')}</div>`;

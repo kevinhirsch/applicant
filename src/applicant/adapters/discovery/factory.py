@@ -40,6 +40,16 @@ RSS_FEEDS: dict[str, str] = {
     "rss:hn-hiring": "https://hnrss.org/jobs",
 }
 
+#: Source-key prefix for an operator-configured custom feed (dark-engine audit
+#: item 80, B7) so it can never collide with a hardcoded ``RSS_FEEDS`` key.
+CUSTOM_RSS_KEY_PREFIX = "rss:custom"
+
+
+def _parse_feed_list(value: str) -> tuple[str, ...]:
+    """Split a comma-separated feed-URL string (``DISCOVERY_RSS_FEEDS`` shape)
+    into a tuple, exactly like ``container.py`` parses ``discovery_proxies``."""
+    return tuple(p.strip() for p in (value or "").split(",") if p.strip())
+
 
 def build_default_discovery(
     *,
@@ -48,12 +58,21 @@ def build_default_discovery(
     proxies: tuple[str, ...] = (),
     include_sample: bool = True,
     include_rss: bool = True,
+    rss_feeds: tuple[str, ...] | None = None,
 ) -> JobSpySearxngDiscovery:
     """Build the default master-aggregator discovery adapter.
 
     The ``SampleSource`` is included by default so the offline lane always has at
     least one yielding source; in a real ``live`` deployment it is harmless (clearly
     marked example.test URLs) but may be toggled off via the registry.
+
+    ``rss_feeds`` (item 80, B7): an explicit tuple of operator-added job-board feed
+    URLs, registered ALONGSIDE the hardcoded ``RSS_FEEDS`` (never replacing them) so
+    an empty/unset value reproduces today's hardcoded-only behavior byte-identical.
+    ``container.py`` threads the configured ``discovery_rss_feeds`` Settings field in
+    here the same way it injects ``proxies`` -- the adapter never reaches up into the
+    app/config layer itself (hexagonal layering, NFR-ARCH-1); a ``None``/omitted value
+    simply means "no operator feeds", exactly like an empty ``proxies`` tuple.
     """
     proxy = ProxyConfig(proxies=proxies, enabled=bool(proxies))
 
@@ -77,6 +96,16 @@ def build_default_discovery(
         for key, feed_url in RSS_FEEDS.items():
             sources.append(
                 RssSource(client=rss_client, feed_url=feed_url, proxy=proxy, key=key)
+            )
+        configured_feeds = rss_feeds or ()
+        for idx, feed_url in enumerate(configured_feeds, start=1):
+            sources.append(
+                RssSource(
+                    client=rss_client,
+                    feed_url=feed_url,
+                    proxy=proxy,
+                    key=f"{CUSTOM_RSS_KEY_PREFIX}-{idx}",
+                )
             )
 
     return JobSpySearxngDiscovery(sources=sources, proxy=proxy)
