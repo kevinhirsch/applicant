@@ -148,6 +148,36 @@ class ScreeningAnswerReuseIn(BaseModel):
     question: str
 
 
+class DeferredEssayIn(BaseModel):
+    """Resolve a DEFERRED essay screening question pre-fill parked instead of
+    auto-answering (dark-engine audit item 21). ``true_source`` defaults blank
+    so the engine derives the ground truth server-side, matching
+    ``CoverLetterIn``/``ScreeningAnswerIn``'s precedent above; ``selector`` is
+    what lets the engine clear the originating ``agent_question`` pending
+    action once the draft is generated."""
+
+    campaign_id: str
+    application_id: str
+    true_source: str = ""
+    label: str = ""
+    question: str | None = None
+    selector: str | None = None
+    url: str | None = None
+    explicit_answer: str | None = None
+
+
+class RedlineIn(BaseModel):
+    """Render a standalone add/subtract/highlighted-HTML redline between two
+    arbitrary text sources (dark-engine audit item 22) -- a pure, stateless
+    diff with no persistence, usable outside a review session (e.g. "compare
+    to the original" once a document has been edited)."""
+
+    variant_id: str
+    base_source: str
+    new_source: str
+    aggressiveness: int = 20
+
+
 def _engine_error_response(exc: EngineError) -> JSONResponse:
     """Translate a typed :class:`EngineError` into a clean JSON error response.
 
@@ -384,6 +414,38 @@ def setup_applicant_documents_routes() -> APIRouter:
             logger.info("applicant screening-answer generation failed: %s", exc)
             return _engine_error_response(exc)
         return JSONResponse(content=data, status_code=201)
+
+    @router.post("/deferred-essay")
+    async def generate_deferred_essay(body: DeferredEssayIn, request: Request) -> JSONResponse:
+        """Resolve a DEFERRED essay screening question pre-fill parked instead of
+        auto-answering (engine ``POST /api/documents/deferred-essay``; dark-engine
+        audit item 21). Generates + routes the answer to review; the engine
+        itself clears the originating ``agent_question`` Portal item when a
+        ``selector`` is supplied, so the caller need not resolve it separately."""
+        require_privilege(request, "can_use_documents")
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.generate_deferred_essay(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant deferred-essay generation failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data, status_code=201)
+
+    @router.post("/redline")
+    async def redline(body: RedlineIn, request: Request) -> JSONResponse:
+        """Render a standalone add/subtract/highlighted-HTML redline between two
+        arbitrary text sources (engine ``POST /api/documents/redline``; dark-engine
+        audit item 22). A plain, stateless computation over caller-supplied
+        strings (no storage write) -- same read-only auth tier as ``jd_match``
+        above, reused by the review surface's "compare to original" control."""
+        require_user(request)
+        try:
+            async with ApplicantEngineClient() as engine:
+                data = await engine.render_redline(body.model_dump())
+        except EngineError as exc:
+            logger.info("applicant redline render failed: %s", exc)
+            return _engine_error_response(exc)
+        return JSONResponse(content=data)
 
     # ── screening-answer library (product-gaps backlog #20) ─────────────
 

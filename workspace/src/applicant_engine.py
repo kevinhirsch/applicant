@@ -415,6 +415,18 @@ class ApplicantEngineClient:
             params={"refresh": str(bool(refresh)).lower()},
         )
 
+    async def patch_model_endpoint(self, endpoint_id: str) -> Any:
+        """Toggle a saved model endpoint enabled/disabled (dark-engine audit item
+        20; engine ``PATCH /api/model-endpoints/{id}``). The engine route takes no
+        body -- it flips the current state."""
+        return await self._request("PATCH", f"/api/model-endpoints/{endpoint_id}")
+
+    async def delete_model_endpoint(self, endpoint_id: str) -> Any:
+        """Remove a saved model endpoint (dark-engine audit item 20; engine
+        ``DELETE /api/model-endpoints/{id}``) -- so a stale or mistyped endpoint
+        doesn't accumulate forever in the engine's own endpoint registry."""
+        return await self._request("DELETE", f"/api/model-endpoints/{endpoint_id}")
+
     # -- fonts: detect/install for resume fidelity (FR-FONT) -------------
 
     async def list_fonts(self) -> Any:
@@ -520,6 +532,21 @@ class ApplicantEngineClient:
         return await self._request(
             "GET", f"/api/documents/interview-prep/{campaign_id}/{application_id}"
         )
+
+    async def generate_deferred_essay(self, body: Any) -> Any:
+        """Resolve a DEFERRED essay screening question pre-fill parked instead of
+        auto-answering (dark-engine audit item 21; engine ``POST
+        /api/documents/deferred-essay``). Generates + routes the answer to
+        review, and the engine clears the originating ``agent_question``
+        pending action itself when a ``selector`` is supplied."""
+        return await self._request("POST", "/api/documents/deferred-essay", json=body)
+
+    async def render_redline(self, body: Any) -> Any:
+        """Render an add/subtract/highlighted-HTML redline between two arbitrary
+        text sources (dark-engine audit item 22; engine ``POST
+        /api/documents/redline``) -- a pure, stateless diff (no persistence),
+        reusable for "what changed vs. the original" outside a review session."""
+        return await self._request("POST", "/api/documents/redline", json=body)
 
     async def review_document(self, document_id: str) -> Any:
         return await self._request("POST", f"/api/documents/{document_id}/review")
@@ -638,6 +665,17 @@ class ApplicantEngineClient:
 
     async def conversion_reject(self, campaign_id: str) -> Any:
         return await self._request("POST", f"/api/conversion/{campaign_id}/reject")
+
+    async def download_conversion_preview_pdf(self, campaign_id: str) -> Any:
+        """Download the compiled LaTeX conversion preview PDF (dark-engine audit
+        item 19; engine ``GET /api/conversion/{campaign_id}/preview/download``),
+        mirroring the ``download_variant_pdf`` binary-passthrough convention: the
+        raw ``httpx.Response`` is returned rather than JSON-decoded."""
+        return await self._request(
+            "GET",
+            f"/api/conversion/{campaign_id}/preview/download",
+            expect_json=False,
+        )
 
     # -- chat / assistant (Lane C) ---------------------------------------
 

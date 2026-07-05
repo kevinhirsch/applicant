@@ -2601,6 +2601,61 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       panel.appendChild(redline);
 
+      // "Compare to original" (dark-engine audit item 22): the review session's
+      // own redline_state only ever carries the latest content, never a real
+      // additions/subtractions diff, so this is the one path that renders an
+      // actual highlighted redline once a turn has been applied. Only offered
+      // for résumé variants (the engine route's typed for a variant_id) and
+      // only once we have both an original snapshot (the content the card
+      // showed before review opened) and a current one that differs from it.
+      const isVariant = (item.type || '').toLowerCase() === 'resume_variant';
+      const originalContent = (item.content || '').toString();
+      const currentContent = (rl && typeof rl.content === 'string') ? rl.content : '';
+      if (isVariant && originalContent && currentContent && currentContent !== originalContent) {
+        const compareBtn = document.createElement('button');
+        compareBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+        compareBtn.textContent = 'Compare to original';
+        compareBtn.title = 'See exactly what changed vs. the original version.';
+        compareBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          compareBtn.disabled = true;
+          const original = compareBtn.textContent;
+          compareBtn.textContent = 'Comparing…';
+          try {
+            const res = await fetch(`${_APPLICANT_BASE}/redline`, {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                variant_id: item.id,
+                base_source: originalContent,
+                new_source: currentContent,
+              }),
+            });
+            if (!res.ok) throw new Error(await _applicantErrText(res));
+            const diff = await res.json();
+            const renderedHtml2 = diff && (diff.rendered_html || diff.html);
+            const additions2 = diff && Array.isArray(diff.additions) ? diff.additions : [];
+            const subtractions2 = diff && Array.isArray(diff.subtractions) ? diff.subtractions : [];
+            if (renderedHtml2) {
+              redline.innerHTML = renderedHtml2;
+            } else if (additions2.length || subtractions2.length) {
+              const add2 = additions2.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
+              const sub2 = subtractions2.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
+              redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Changes vs. the original</div><ul style="margin:0;padding-left:16px;list-style:none;">${add2}${sub2}</ul>`;
+            } else {
+              redline.innerHTML = '<div style="opacity:0.6;">No differences found.</div>';
+            }
+          } catch (err) {
+            if (uiModule) uiModule.showError(err.message || String(err));
+          } finally {
+            compareBtn.disabled = false;
+            compareBtn.textContent = original;
+          }
+        });
+        panel.appendChild(compareBtn);
+      }
+
       // Turn history (what was asked + the engine's response), if any.
       const turns = session && Array.isArray(session.turns) ? session.turns : [];
       if (turns.length) {

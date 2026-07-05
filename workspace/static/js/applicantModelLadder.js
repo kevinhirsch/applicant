@@ -22,6 +22,17 @@ import { esc, _toast, _fetchJSON, _put } from './applicantCore.js';
 const SETUP = '/api/applicant/setup';
 const MAX_TIERS = 5;
 
+// Plain-language labels for the engine's model-type enum (dark-engine audit
+// item 20's saved-connections list below).
+const _TYPE_LABEL = {
+  llm: 'Chat / writing model',
+  embedding: 'Embedding model',
+  image: 'Image model',
+  rerank: 'Re-ranking model',
+  stt: 'Speech-to-text model',
+  tts: 'Text-to-speech model',
+};
+
 // Provider options the engine accepts. Cloud providers are OpenAI-compatible from
 // the engine's perspective; "Local" is the Ollama-compatible path.
 const PROVIDERS = [
@@ -37,6 +48,10 @@ let _tiers = [];
 // endpoint is actually being called and why, straight from the router the LLM
 // adapter itself uses — never fabricated/guessed here.
 let _routing = null;
+// Saved model-endpoint records the engine's registry accumulates (dark-engine
+// audit item 20) — a separate store from the tiers above, read here so stale
+// or mistyped ones can be disabled/removed instead of piling up forever.
+let _endpoints = [];
 
 
 
@@ -68,7 +83,84 @@ async function _load() {
   }));
   _tiers = tiers.length ? tiers : [_blankTier()];
   _routing = data.routing || null;
+  try {
+    const eps = await _fetchJSON(`${SETUP}/model-endpoints`);
+    _endpoints = Array.isArray(eps) ? eps : [];
+  } catch {
+    _endpoints = [];
+  }
   _render(data.engine_available === false);
+}
+
+// Saved model connections list (dark-engine audit item 20): the engine's own
+// endpoint registry, separate from the ordered tier ladder above. Nothing in
+// the front door could previously edit or remove a saved entry once added —
+// this renders it read/enable-disable/remove, reusing the same admin-card +
+// cal-btn design system as the rest of Settings.
+function _savedEndpointsHTML() {
+  if (!_endpoints.length) return '';
+  const rows = _endpoints.map((ep) => {
+    const id = esc(ep.id || '');
+    const name = esc(ep.name || ep.base_url || 'Untitled connection');
+    const typeLabel = esc(_TYPE_LABEL[ep.model_type] || ep.model_type || 'Model');
+    const enabled = ep.is_enabled !== false;
+    const online = ep.online !== false;
+    const statusBits = [typeLabel, online ? 'online' : 'offline', enabled ? '' : 'disabled']
+      .filter(Boolean).join(' · ');
+    return `
+      <div class="admin-card og-card" data-ep-row="${id}" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <div style="min-width:0;">
+          <div style="font-weight:600;">${name}</div>
+          <div class="admin-toggle-sub" style="opacity:0.7;">${statusBits}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button type="button" class="cal-btn ml-ep-toggle" data-ep-id="${id}">${enabled ? 'Disable' : 'Enable'}</button>
+          <button type="button" class="cal-btn ml-ep-remove" data-ep-id="${id}" data-ep-name="${name}">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div style="margin-top:16px;">
+      <div style="font-weight:600;margin-bottom:6px;">Saved model connections</div>
+      <div class="admin-toggle-sub" style="opacity:0.75;margin-bottom:8px;">
+        Other model sources the engine has discovered or been given, separate from the ladder above. Disable or remove ones you no longer use.
+      </div>
+      ${rows}
+    </div>`;
+}
+
+function _wireSavedEndpoints() {
+  if (!_host) return;
+  _host.querySelectorAll('.ml-ep-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.epId;
+      btn.disabled = true;
+      try {
+        await _fetchJSON(`${SETUP}/model-endpoints/${encodeURIComponent(id)}`, { method: 'PATCH' });
+        await _load();
+      } catch (e) {
+        _toast(e.message || 'Could not update that connection.');
+        btn.disabled = false;
+      }
+    });
+  });
+  _host.querySelectorAll('.ml-ep-remove').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.epId;
+      const name = btn.dataset.epName || 'this connection';
+      const ok = await uiModule.styledConfirm(`Remove ${name}?`, { confirmText: 'Remove', danger: true });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await _fetchJSON(`${SETUP}/model-endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        _toast('Connection removed.');
+        await _load();
+      } catch (e) {
+        _toast(e.message || 'Could not remove that connection.');
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 // Renders the live routing status row: which endpoint is actually being used
@@ -180,7 +272,8 @@ function _render(offline) {
       <button class="cal-btn" id="ml-add" ${_tiers.length >= MAX_TIERS ? 'disabled' : ''}>+ Add a level</button>
       <button class="cal-btn cal-btn-primary" id="ml-save">Save ladder</button>
     </div>
-    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">Up to ${MAX_TIERS} levels. Each level needs a provider and a model.</span>`;
+    <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">Up to ${MAX_TIERS} levels. Each level needs a provider and a model.</span>
+    ${_savedEndpointsHTML()}`;
 
   _host.querySelectorAll('.ml-up').forEach((b, idx) => b.addEventListener('click', () => _move(_rowIndex(b), -1)));
   _host.querySelectorAll('.ml-down').forEach((b) => b.addEventListener('click', () => _move(_rowIndex(b), 1)));
@@ -189,6 +282,7 @@ function _render(offline) {
   if (addBtn) addBtn.addEventListener('click', () => { _syncFromDOM(); if (_tiers.length < MAX_TIERS) { _tiers.push(_blankTier()); _render(false); } });
   const saveBtn = _host.querySelector('#ml-save');
   if (saveBtn) saveBtn.addEventListener('click', _save);
+  _wireSavedEndpoints();
 }
 
 function _rowIndex(btn) {
