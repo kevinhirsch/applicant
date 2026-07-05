@@ -1641,7 +1641,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <h2 style="margin:0;padding:0;line-height:1;">Applications <span id="doclib-applicant-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
               <button class="memory-toolbar-btn" id="doclib-applicant-refresh" title="Reload the latest tailored resumes and cover letters." style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Refresh</button>
             </div>
-            <p class="memory-desc doclib-desc">Tailored resumes and cover letters generated for your job applications. Open one to review the suggested changes, ask for tweaks, then approve it before it is used.</p>
+            <p class="memory-desc doclib-desc">Resumes and cover letters I tailor for your job applications. Open one to review my suggested changes, ask for tweaks, then approve it before it's used.</p>
             <div id="doclib-applicant-grid" class="doclib-grid"></div>
           </div>
           <div data-doclib-panel="documents" class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
@@ -1945,8 +1945,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     async function _applicantErrText(res) {
       try {
         const j = await res.json();
-        return (j && (j.message || j.detail)) || ('Request failed (' + res.status + ')');
-      } catch { return 'Request failed (' + res.status + ')'; }
+        return (j && (j.message || j.detail)) || ("That didn't go through (error " + res.status + '). Try again shortly.');
+      } catch { return "That didn't go through (error " + res.status + '). Try again shortly.'; }
     }
 
     // The Applications panel: a small "look up an application" form plus a
@@ -1970,21 +1970,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             'style="flex:1;min-width:160px;" />' +
           '<button class="memory-toolbar-btn" id="doclib-applicant-lookup-btn" ' +
             'title="Show the tailored materials generated for this application.">' +
-            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show materials</button>' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show documents</button>' +
         '</div>' +
         '<div id="doclib-applicant-results"></div>' +
         // Resume-variant library: the lineage of tailored resumes tried for a job
         // search, with fit scores + approval state (FR-RESUME-6 / FR-UI-6).
         '<div class="memory-desc doclib-desc" style="margin-top:6px;border-top:1px solid var(--color-border,rgba(128,128,128,0.2));padding-top:8px;">' +
-          'Resume variants — the different tailored resumes tried for a job search and how they relate.</div>' +
+          'Resume versions — the different takes on your resume I’ve tried for a job search, and how they relate.</div>' +
         '<div class="memory-toolbar" style="gap:6px;">' +
           '<input type="text" id="doclib-variant-campaign" class="memory-search-input" ' +
             'placeholder="Job-search ID…" ' +
-            'title="Paste the ID of the job search whose resume variants you want to see." ' +
+            'title="Paste the ID of the job search whose resume versions you want to see." ' +
             'style="flex:1;min-width:160px;" />' +
           '<button class="memory-toolbar-btn" id="doclib-variant-lookup-btn" ' +
-            'title="Show the resume variants tried for this job search.">' +
-            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show variants</button>' +
+            'title="Show the resume versions tried for this job search.">' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>Show versions</button>' +
         '</div>' +
         '<div id="doclib-variant-results"></div>';
       grid.appendChild(wrap);
@@ -2010,7 +2010,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (_variantLastCampaign) vInput.value = _variantLastCampaign;
       const _goVariants = () => {
         const id = (vInput.value || '').trim();
-        if (!id) { if (uiModule) uiModule.showError('Enter a job-search ID to see its resume variants.'); return; }
+        if (!id) { if (uiModule) uiModule.showError('Enter a job-search ID to see its resume versions.'); return; }
         _variantLastCampaign = id;
         _loadVariantLibrary(id, vResults);
       };
@@ -2026,7 +2026,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const genWrap = document.createElement('div');
       genWrap.style.cssText = 'border-top:1px solid var(--color-border,rgba(128,128,128,0.2));padding-top:8px;';
       genWrap.innerHTML =
-        '<div class="memory-desc doclib-desc">Draft a document for an application — it goes to your review before it is ever used.</div>' +
+        '<div class="memory-desc doclib-desc">I’ll draft a document for this application — it comes to you for review before it’s ever used.</div>' +
         '<div class="memory-toolbar" style="gap:6px;flex-wrap:wrap;">' +
           '<button class="memory-toolbar-btn" id="doclib-gen-cover-btn" title="Write a cover letter for the application ID above.">Draft cover letter</button>' +
           '<button class="memory-toolbar-btn" id="doclib-gen-answer-btn" title="Answer a screening question for the application ID above.">Draft screening answer</button>' +
@@ -2082,12 +2082,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             _applicantLastAppId = ids.application_id;
             _loadApplicantMaterials(ids.application_id, results);
           }
-        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+        } catch { _setGen('I couldn’t connect just now. Try again shortly.'); }
       });
       genWrap.querySelector('#doclib-gen-answer-btn').addEventListener('click', async () => {
         const ids = _genIds();
         if (!_needIds(ids)) return;
-        const question = (window.prompt('What screening question should the assistant answer?') || '').trim();
+        const question = (window.prompt('What screening question should I answer?') || '').trim();
         if (!question) return;
         _setGen('Drafting an answer…');
         try {
@@ -2100,7 +2100,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _setGen('Answer drafted — see the review list above.');
           _applicantLastAppId = ids.application_id;
           _loadApplicantMaterials(ids.application_id, results);
-        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+        } catch { _setGen('I couldn’t connect just now. Try again shortly.'); }
       });
 
       // Template merge-fill (dark-engine audit item 41): deterministic {{field}}
@@ -2152,7 +2152,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           fillOutput.style.display = 'block';
           fillCopyBtn.style.display = 'inline-block';
           _setGen('Template filled below — nothing was sent to the review list.');
-        } catch { _setGen('Could not reach the application engine. Try again shortly.'); }
+        } catch { _setGen('I couldn’t connect just now. Try again shortly.'); }
       });
       fillCopyBtn.addEventListener('click', async () => {
         try {
@@ -2167,18 +2167,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const note = document.createElement('div');
       note.className = 'doclib-empty';
       note.style.cssText = 'padding:14px;';
-      note.textContent = 'Checking the application engine…';
+      note.textContent = 'Checking the connection…';
       results.appendChild(note);
       fetch(`${_APPLICANT_BASE}/library`, { credentials: 'same-origin' })
         .then(async (res) => {
           if (!res.ok) { note.textContent = await _applicantErrText(res); return; }
-          if (stats) stats.textContent = 'engine ready';
+          if (stats) stats.textContent = 'connected';
           note.textContent = _applicantLastAppId
             ? 'Loading…'
             : 'Enter an application ID above to see its tailored resume and cover letter.';
           if (_applicantLastAppId) _loadApplicantMaterials(_applicantLastAppId, results);
         })
-        .catch(e => { console.error('Failed to load:', e); note.textContent = 'Could not reach the application engine. Try again shortly.'; });
+        .catch(e => { console.error('Failed to load:', e); note.textContent = 'I couldn’t connect just now. Try again shortly.'; });
     }
 
     // Fetch + render the resume-variant library (lineage / fit / approval) for a
@@ -2187,7 +2187,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     async function _loadVariantLibrary(campaignId, container) {
       if (!container) return;
       const esc = (s) => (uiModule ? uiModule.esc(String(s ?? '')) : String(s ?? ''));
-      container.innerHTML = '<div class="doclib-empty" style="padding:12px;">Loading resume variants…</div>';
+      container.innerHTML = '<div class="doclib-empty" style="padding:12px;">Loading resume versions…</div>';
       let data;
       try {
         const res = await fetch(`${_APPLICANT_BASE}/variants/${encodeURIComponent(campaignId)}`,
@@ -2198,12 +2198,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         }
         data = await res.json();
       } catch {
-        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">Could not reach the application engine. Try again shortly.</div>';
+        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">I couldn’t connect just now. Try again shortly.</div>';
         return;
       }
       const variants = (data && data.variants) || [];
       if (!variants.length) {
-        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">No resume variants have been built for this job search yet.</div>';
+        container.innerHTML = '<div class="doclib-empty" style="padding:12px;">I haven’t tried any resume versions for this job search yet.</div>';
         return;
       }
       container.innerHTML = variants.map((v) => {
@@ -2212,7 +2212,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // JD-keyword coverage for this tailored resume, in plain language.
         // 'not scored' when this variant has not been JD-matched yet.
         const scoreText = _applicantFitScoreText(v.fit_scores) || 'not scored';
-        const approved = v.approved === true ? 'approved' : 'awaiting review';
+        const approved = v.approved === true ? 'approved' : 'needs review';
         const depth = v.lineage_depth ? ` · ${esc(v.lineage_depth)} edits deep` : '';
         const from = v.parent_id ? ` · from ${esc(v.parent_id)}` : '';
         // Ancestry breadcrumb (dark-engine audit item 50): "Original -> Tailored
@@ -2317,7 +2317,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
       const badge = document.createElement('span');
       badge.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);font-weight:600;align-self:flex-start;';
-      badge.title = 'The assistant looked up the company before writing this — it informed the wording below.';
+      badge.title = 'I looked up the company before writing this — it informed the wording below.';
       badge.textContent = data.company ? `Company research used — ${data.company}` : 'Company research used';
       box.appendChild(badge);
 
@@ -2369,7 +2369,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (!res.ok) { results.innerHTML = `<div class="doclib-empty" style="padding:14px;">${_esc(await _applicantErrText(res))}</div>`; return; }
         data = await res.json();
       } catch {
-        results.innerHTML = '<div class="doclib-empty" style="padding:14px;">Could not reach the application engine. Try again shortly.</div>';
+        results.innerHTML = '<div class="doclib-empty" style="padding:14px;">I couldn’t connect just now. Try again shortly.</div>';
         return;
       }
 
@@ -2467,7 +2467,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const empty = document.createElement('div');
         empty.className = 'doclib-empty';
         empty.style.cssText = 'padding:14px;';
-        empty.textContent = 'No tailored materials for this application yet. They appear here once the engine has generated them.';
+        empty.textContent = "No tailored documents for this application yet. They appear here once I've drafted them.";
         results.appendChild(empty);
         return;
       }
@@ -2620,7 +2620,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       } else {
         const reviewBtn = document.createElement('button');
         reviewBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-        reviewBtn.textContent = 'Review & edit';
+        reviewBtn.textContent = 'Review and edit';
         reviewBtn.title = 'Open this document, see the suggested changes, ask for tweaks, then approve it.';
         reviewBtn.addEventListener('click', (e) => { e.stopPropagation(); _openApplicantReview(item, appId, card, results); });
         actions.appendChild(reviewBtn);
@@ -2708,7 +2708,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         // redline HTML.
         const add = additions.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
         const sub = subtractions.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
-        redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Suggested changes</div><ul style="margin:0;padding-left:16px;list-style:none;">${add}${sub}</ul>`;
+        redline.innerHTML = `<div style="opacity:0.6;margin-bottom:4px;">Suggested changes — lines with + are text I'd add, − is text I'd remove</div><ul style="margin:0;padding-left:16px;list-style:none;">${add}${sub}</ul>`;
       } else {
         redline.innerHTML = '<div style="opacity:0.6;">No tracked changes to show — you can still ask for edits below.</div>';
       }
@@ -2794,7 +2794,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       ask.style.cssText = 'display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;';
       ask.innerHTML =
         '<select class="memory-search-input doclib-applicant-kind" ' +
-          'title="Choose whether to add text, remove text, or just describe a change." ' +
+          'title="Pick how to change it — give me exact text to add or remove, or describe the change and I’ll work it in." ' +
           'style="flex:0 0 auto;width:auto;min-height:38px;">' +
           '<option value="free_text">Describe a change</option>' +
           '<option value="add">Add text</option>' +
@@ -2802,9 +2802,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         '</select>' +
         '<textarea class="memory-search-input doclib-applicant-instruction" rows="2" ' +
           'placeholder="Ask for a change, e.g. “shorten the summary” or “mention my Python experience”" ' +
-          'title="Describe the change in plain language. The engine revises the document and shows the result here." ' +
+          'title="Describe the change in plain language. I’ll revise the document and show the result here." ' +
           'style="flex:1;resize:vertical;min-height:38px;"></textarea>' +
-        '<button class="doclib-card-text-btn doclib-applicant-send" title="Send this change request to the engine.">Request change</button>';
+        '<button class="doclib-card-text-btn doclib-applicant-send" title="Ask me to make this change — I’ll show the updated draft here.">Request change</button>';
       panel.appendChild(ask);
 
       const instruction = ask.querySelector('.doclib-applicant-instruction');
@@ -2834,7 +2834,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           return;
         }
         sendBtn.disabled = true;
-        sendBtn.textContent = 'Working…';
+        sendBtn.textContent = 'Making the change…';
         try {
           const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/turn`, {
             method: 'POST', credentials: 'same-origin',
@@ -2861,7 +2861,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const approveBtn = document.createElement('button');
       approveBtn.className = 'doclib-card-text-btn doclib-card-action-btn odec-confirm';
       approveBtn.textContent = 'Approve';
-      approveBtn.title = 'Approve this document so it can be used for the application.';
+      approveBtn.title = 'Approve this document — I’ll use it for the application.';
       approveBtn.addEventListener('click', async () => {
         approveBtn.disabled = true;
         approveBtn.textContent = 'Approving…';
@@ -2879,7 +2879,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const declineBtn = document.createElement('button');
       declineBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger odec-opt';
       declineBtn.textContent = 'Decline';
-      declineBtn.title = 'Reject this draft. It stays unapproved and will not be sent.';
+      declineBtn.title = 'Decline this draft — it stays unapproved and won’t be sent.';
       declineBtn.addEventListener('click', async () => {
         declineBtn.disabled = true;
         declineBtn.textContent = 'Declining…';
