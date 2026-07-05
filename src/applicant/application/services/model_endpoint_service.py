@@ -64,6 +64,41 @@ def _is_ollama(base_url: str) -> bool:
     return "11434" in u or "ollama" in u
 
 
+# Substrings of the low-level socket error that mean "couldn't resolve the
+# hostname" rather than "reached the host but it refused/reset the connection".
+_DNS_ERROR_HINTS = (
+    "name or service not known",
+    "nodename nor servname",
+    "temporary failure in name resolution",
+    "getaddrinfo failed",
+    "no address associated with hostname",
+    "name resolution",
+)
+
+
+def _humanize_ping_error(exc: Exception) -> str:
+    """Map a live model-fetch failure to a plain-language, actionable message.
+
+    ``str(exc)`` can carry raw socket/TLS internals (resolved addresses,
+    connection tracebacks) that shouldn't reach the setup/onboarding UI, so
+    callers must show only this mapped string -- never the raw exception text.
+    The original detail still goes to the log line at the call site.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (401, 403):
+            return "The server rejected the API key."
+        return "Couldn't reach the model server."
+    if isinstance(exc, httpx.TimeoutException):
+        return "The server didn't respond in time."
+    if isinstance(exc, httpx.ConnectError):
+        detail = str(exc).lower()
+        if any(hint in detail for hint in _DNS_ERROR_HINTS):
+            return "Couldn't find that server address."
+        return "Couldn't reach the server — is it running and the address right?"
+    return "Couldn't reach the model server."
+
+
 class ModelEndpointService:
     """Add/list/delete model endpoints and live-list their available models.
 
@@ -281,7 +316,7 @@ class ModelEndpointService:
                 data = resp.json()
         except (httpx.HTTPError, json.JSONDecodeError) as exc:
             log.warning("model_endpoint_list_failed", base_url=base, error=str(exc))
-            return [], False, str(exc)
+            return [], False, _humanize_ping_error(exc)
         models = self._parse_models(data)
         self._cache[base] = (now + _CACHE_TTL_SECONDS, models)
         return models, True, None

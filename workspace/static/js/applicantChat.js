@@ -388,6 +388,7 @@ const _STARTER_PROMPTS = [
   "Tell me what you're looking for",
   'What have you found so far?',
   'Change what you look for',
+  'How does this all work?',
 ];
 
 function _renderStarters() {
