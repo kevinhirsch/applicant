@@ -170,6 +170,40 @@ function _rowActionId(row) {
   return row.application_id || row.posting_id || row.id || '';
 }
 
+// --- first-open feedback-loop intro (help/self-explain audit item 22) ------
+//
+// Before the user's first-ever approve/pass, teach the feedback loop up
+// front — today only the Pass button's own tooltip whispers it ("helps next
+// time"), so nothing tells the user *before* their first decision that every
+// approve/pass here tunes tomorrow's digest. Shown once, dismissed exactly
+// like the referral nudge above: a localStorage flag under this session's
+// established `applicant_` key-naming convention (MILESTONES_SEEN_KEY /
+// NOTIF_SEEN_KEY in applicantPortal.js, REFERRAL_DISMISSED_KEY above).
+const LOOP_INTRO_SEEN_KEY = 'applicant_digest_loop_intro_seen';
+
+function _isLoopIntroSeen() {
+  try { return localStorage.getItem(LOOP_INTRO_SEEN_KEY) === '1'; } catch (_) { return false; }
+}
+
+function _dismissLoopIntro(panel) {
+  try { localStorage.setItem(LOOP_INTRO_SEEN_KEY, '1'); } catch (_) { /* no-op */ }
+  const el = panel && panel.querySelector('#applicant-digest-loop-intro');
+  if (el) el.remove();
+}
+
+// Reuses the existing `admin-card` card look and the same `memory-toolbar-btn`
+// dismiss-button pattern already used elsewhere in this file — no new CSS.
+function _loopIntroHTML() {
+  if (_isLoopIntroSeen()) return '';
+  return `
+    <div class="admin-card" id="applicant-digest-loop-intro" style="margin:0 0 8px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px;">
+      <span style="flex:1;font-size:11px;opacity:0.85;line-height:1.4;">
+        Every approve or pass here tunes what tomorrow's digest contains — passing with a reason (the Pass button asks for one) teaches the assistant fastest.
+      </span>
+      <button type="button" class="memory-toolbar-btn" id="applicant-digest-loop-intro-dismiss">Got it</button>
+    </div>`;
+}
+
 // --- rendering -------------------------------------------------------------
 
 function _panelEl(modal) {
@@ -216,6 +250,7 @@ function _ensurePanel(modal) {
     <p class="memory-desc" style="margin:6px 0 4px;opacity:0.7;font-size:11px;">
       Roles your job-search assistant flagged today. The same summary is emailed to you; act on anything right here.
     </p>
+    ${_loopIntroHTML()}
     <div class="applicant-digest-bulk-bar" id="applicant-digest-bulk-bar" style="display:none;align-items:center;gap:8px;margin:0 0 6px;">
       <label class="memory-bulk-check-all"><input type="checkbox" id="applicant-digest-select-all"> All</label>
       <span class="memory-count" id="applicant-digest-selected-count" style="font-size:11px;opacity:0.75;">0 selected</span>
@@ -1304,6 +1339,8 @@ function _wire(panel) {
   if (fb) fb.addEventListener('click', () => _onFeedback(panel, _currentCampaign(panel), fb));
   const survey = panel.querySelector('#applicant-digest-survey');
   if (survey) survey.addEventListener('click', () => _onSurvey(panel, _currentCampaign(panel), survey));
+  const introDismiss = panel.querySelector('#applicant-digest-loop-intro-dismiss');
+  if (introDismiss) introDismiss.addEventListener('click', () => _dismissLoopIntro(panel));
 
   const selectAll = panel.querySelector('#applicant-digest-select-all');
   if (selectAll) {

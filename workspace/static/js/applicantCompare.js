@@ -94,7 +94,8 @@ function _ensureModalEl() {
         <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px;">
           <label class="ow-field" style="min-width:160px;">
             <span>What to compare</span>
-            <select id="applicant-compare-kind" class="ow-select">
+            <select id="applicant-compare-kind" class="ow-select"
+              title="Applications: your own submissions, with status and materials. Postings: just the job listings, before you've applied.">
               <option value="applications">Applications</option>
               <option value="postings">Postings</option>
             </select>
@@ -304,7 +305,7 @@ function _renderResult(container, data, kind, campaignId) {
       ${canLink ? `<button type="button" class="applicant-compare-open-detail" data-id="${_esc(id)}" title="Open this application in Activity">Open in Activity →</button>` : ''}
     </th>`;
   }
-  headRow += '<th>Difference</th></tr>';
+  headRow += '<th title="A short note from the engine on what actually differs for this row">Difference</th></tr>';
   thead.innerHTML = headRow;
   table.appendChild(thead);
 
