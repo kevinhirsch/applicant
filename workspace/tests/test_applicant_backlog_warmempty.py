@@ -96,13 +96,18 @@ def test_compare_no_data_fallback_uses_shared_empty_kit_not_bare_string():
     js = _read(COMPARE_JS)
     assert "'<div style=\"opacity:0.7;\">No comparison returned.</div>'" not in js
     assert "No comparison came back" in js
-    assert "The engine did not return a result for that comparison" in js
+    # Copy/voice pass (02): the follow-up line dropped the "engine" jargon in
+    # favor of first-person, plain-language guidance — assert the jargon is
+    # gone and the warm replacement is present.
+    assert "The engine did not return a result for that comparison" not in js
+    assert "I couldn't build a comparison from those IDs" in js
 
 
 def test_compare_initial_empty_state_already_warm_untouched():
     js = _read(COMPARE_JS)
     assert "Nothing to compare yet" in js
-    assert "Pick applications or postings above, paste two or more ids" in js
+    # Copy/voice pass (02): "ids" -> "IDs" casing fix (item #229).
+    assert "Pick applications or postings above, paste two or more IDs" in js
     # Both empty states route through the shared kit — consistency check.
     assert js.count("emptyHTML(") >= 2
 

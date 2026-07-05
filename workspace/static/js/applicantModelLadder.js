@@ -125,7 +125,7 @@ function _savedEndpointsHTML() {
     <div style="margin-top:16px;">
       <div style="font-weight:600;margin-bottom:6px;">Saved model connections</div>
       <div class="admin-toggle-sub" style="opacity:0.75;margin-bottom:8px;">
-        Other model sources the engine has discovered or been given, separate from the ladder above. Disable or remove ones you no longer use.
+        Other model connections I've found or been given, separate from the levels above. Disable or remove ones you no longer use.
       </div>
       ${rows}
     </div>`;
@@ -182,7 +182,7 @@ function _routingStatusHTML() {
       ? `Right now, requests are actually going to <strong>${esc(active.name)}</strong> — ahead of Level 1 because ${r.prefer_local ? 'a local model is online and preferred' : 'it is the best available match right now'}.`
       : `Right now, requests are going to <strong>${esc(active.name)}</strong> — the configured Level 1.`;
   } else {
-    line = 'No online endpoint reported yet — requests fall back to the ladder order above.';
+    line = 'No online endpoint reported yet — requests fall back to the level order above.';
   }
   const healthBits = [];
   if (typeof health.endpoints_online === 'number') {
@@ -232,13 +232,13 @@ function _tierRowHTML(t, i) {
         <div style="display:flex;gap:4px;">
           <button class="cal-btn ml-up" title="Move up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
           <button class="cal-btn ml-down" title="Move down" aria-label="Move down" ${i === last ? 'disabled' : ''}>↓</button>
-          <button class="cal-btn ml-del" title="Remove this tier" aria-label="Remove tier" ${_tiers.length <= 1 ? 'disabled' : ''}>✕</button>
+          <button class="cal-btn ml-del" title="Remove this level" aria-label="Remove this level" ${_tiers.length <= 1 ? 'disabled' : ''}>✕</button>
         </div>
       </div>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">Provider
         <select class="settings-select ml-provider" style="display:block;margin-top:3px;min-width:240px;">${providerOpts}</select>
       </label>
-      <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">Endpoint URL
+      <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">Server address
         <input type="text" class="settings-select ml-base" value="${esc(t.base_url)}" placeholder="https://openrouter.ai/api/v1 (blank for a local default)" style="display:block;margin-top:3px;width:100%;max-width:420px;" />
       </label>
       <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;">Model
@@ -249,7 +249,7 @@ function _tierRowHTML(t, i) {
           <input type="password" class="settings-select ml-key" value="" placeholder="${t._hasKey ? '•••••••• (saved)' : 'cloud key (local models need none)'}" autocomplete="off" style="display:block;margin-top:3px;width:240px;" />
           ${keyNote}
         </label>
-        <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;" title="How much text (roughly, words and pieces of words) this model can read at once. Check the model's own listing if you're unsure — the engine trims older context to fit, so an accurate number just avoids wasted capacity.">Context window
+        <label class="admin-toggle-sub" style="display:block;margin-bottom:6px;" title="How much text (roughly, words and pieces of words) this model can read at once. Check the model's own listing if you're unsure — I trim older context to fit, so an accurate number just avoids wasted capacity.">Context window
           <input type="number" class="settings-select ml-ctx" min="1024" value="${esc(t.context_window)}" style="display:block;margin-top:3px;width:140px;" />
         </label>
       </div>
@@ -259,12 +259,12 @@ function _tierRowHTML(t, i) {
 function _render(offline) {
   if (!_host) return;
   if (offline) {
-    _host.innerHTML = '<p class="admin-toggle-sub" style="opacity:0.7;">The application engine is offline — open this again once it is reachable to edit the model ladder.</p>';
+    _host.innerHTML = `<p class="admin-toggle-sub" style="opacity:0.7;">I can't reach my back end right now — open this again in a moment to edit your model levels.</p>`;
     return;
   }
   _host.innerHTML = `
     <div class="admin-toggle-sub" style="opacity:0.8;margin-bottom:10px;">
-      Applicant starts at <strong>Level 1</strong> and climbs to a higher level only when a task needs more capability —
+      I start at <strong>Level 1</strong> and climb to a higher level only when a task needs more capability —
       low confidence, a prompt too long for the current model, or a heavy task like writing a resume or cover letter.
       Put your cheapest capable model first and your strongest last.
     </div>
@@ -272,7 +272,7 @@ function _render(offline) {
     <div id="ml-rows">${_tiers.map((t, i) => _tierRowHTML(t, i)).join('')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
       <button class="cal-btn" id="ml-add" ${_tiers.length >= MAX_TIERS ? 'disabled' : ''}>+ Add a level</button>
-      <button class="cal-btn cal-btn-primary" id="ml-save">Save ladder</button>
+      <button class="cal-btn cal-btn-primary" id="ml-save">Save levels</button>
     </div>
     <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:8px;">Up to ${MAX_TIERS} levels. Each level needs a provider and a model.</span>
     ${_savedEndpointsHTML()}`;
@@ -333,11 +333,11 @@ async function _save() {
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
   try {
     await _put(`${SETUP}/llm/tiers`, payload);
-    _toast(`Saved a ${_tiers.length}-level model ladder.`);
+    _toast("Saved. I'll start at Level 1 and step up only when a task needs more.");
     await _load(); // re-read so saved-key markers refresh
   } catch (e) {
-    _toast(e.message || 'Could not save the model ladder.');
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save ladder'; }
+    _toast(e.message || "I couldn't save your levels.");
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save levels'; }
   }
 }
 
@@ -348,7 +348,7 @@ export function mountModelLadder(host) {
   _host.innerHTML = '<div class="hwfit-loading">Loading…</div>';
   _load().catch(e => {
     console.error('Failed to load model ladder:', e);
-    if (_host) _host.innerHTML = '<div class="admin-card"><p class="admin-toggle-sub" style="opacity:0.7;margin:0;">Could not load the model ladder. Reload to try again.</p></div>';
+    if (_host) _host.innerHTML = `<div class="admin-card"><p class="admin-toggle-sub" style="opacity:0.7;margin:0;">I couldn't load your model levels. Reload to try again.</p></div>`;
   });
   return true;
 }

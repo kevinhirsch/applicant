@@ -4,7 +4,7 @@
 // what the job agent is doing, in two front-door surfaces:
 //
 //   1. An always-visible STATUS STRIP in the app chrome (the chat top bar):
-//      a compact "Applicant is: <current action>" pill with a live/paused dot.
+//      a compact first-person "<current action>" pill with a live/paused dot.
 //      Polls /api/applicant/activity/status on a slow interval; clicking it opens
 //      the Activity page. It hides itself gracefully when there is no campaign,
 //      the engine is unreachable, or there is no activity yet.
@@ -91,8 +91,8 @@ function _setPauseBtn(running, visible) {
   btn.dataset.state = running ? 'live' : 'paused';
   const label = running ? 'Pause' : 'Resume';
   const aria = running
-    ? 'Pause your assistant — stop all automated work'
-    : 'Resume your assistant — restart automated work';
+    ? "Pause me — I'll stop all automated work"
+    : "Resume me — I'll restart automated work";
   btn.setAttribute('aria-label', aria);
   btn.setAttribute('aria-pressed', running ? 'false' : 'true');
   btn.title = aria;
@@ -119,7 +119,7 @@ async function _onPauseToggle() {
   const wasRunning = btn.dataset.state !== 'paused';
   // Confirm the global stop (one-tap resume needs no confirmation).
   if (wasRunning
-      && !window.confirm('Pause all automated work? Your assistant stops until you resume.')) {
+      && !window.confirm("Pause all automated work? I'll stop everything until you resume.")) {
     return;
   }
   // Full path segments (leading slash) so the reachability contract sees the
@@ -188,7 +188,7 @@ function _renderStrip(data) {
   strip.classList.toggle('is-live', running);
   strip.classList.toggle('is-paused', !running);
   const sentence = _statusSentence(data);
-  text.textContent = running ? `Applicant is: ${sentence}` : sentence;
+  text.textContent = sentence;
   strip.title = `${text.textContent} — open Activity`;
   strip.style.display = 'inline-flex';
   // Keep the global pause/resume toggle in step with the live/paused state
@@ -210,8 +210,8 @@ function _renderReconnecting() {
   if (!visible) return false;
   strip.classList.remove('is-live');
   strip.classList.add('is-paused');
-  text.textContent = 'Applicant is: reconnecting…';
-  strip.title = 'Reconnecting to your assistant — open Activity';
+  text.textContent = 'Reconnecting…';
+  strip.title = 'Reconnecting — open Activity';
   return true;
 }
 
@@ -403,7 +403,7 @@ function _renderSnapshot(host, data) {
   if (!parts.length) { host.innerHTML = ''; return; }
   host.innerHTML = `
     <div class="admin-card" style="margin:0 0 8px;padding:10px 12px;">
-      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">${dot}Agent status</div>
+      <div style="font-size:11px;font-weight:600;opacity:0.8;margin-bottom:4px;">${dot}Right now</div>
       ${parts.join('')}
     </div>`;
 }
@@ -422,7 +422,7 @@ async function _loadSnapshot() {
 function _renderOffline(host) {
   host.innerHTML = `
     <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.75;">
-      Your assistant's activity will appear here once it's connected and running.
+      My activity will appear here once I'm connected and running.
     </div>`;
 }
 
@@ -430,7 +430,7 @@ function _renderOffline(host) {
 // engine's own plain-language setup message so the owner knows what to finish.
 function _renderGated(host, data) {
   const msg = (data && data.message)
-    || 'Finish onboarding and configure your model and notification channels to enable automated work.';
+    || "Finish setup — connect a model and fill in your profile — and I can start working for you.";
   host.innerHTML = `
     <div style="padding:18px 8px;text-align:center;font-size:12px;opacity:0.8;">${esc(msg)}</div>`;
 }
@@ -440,13 +440,13 @@ function _renderEmpty(host) {
   // is warming up, not idle.
   host.innerHTML = emptyHTML(
     'Warming up',
-    'No activity yet — your assistant is getting ready. As soon as it starts '
-      + 'working on your job search, everything it does shows up here.',
+    "No activity yet — I'm getting ready. As soon as I start "
+      + 'working on your job search, everything I do shows up here.',
   );
 }
 
 // Friendly one-line summary from a run's stats block, e.g.
-// "Discovered 5 · pre-filling 3 · completed 1". Each part is included only when
+// "discovered 5 · pre-filled 3 · submitted 1". Each part is included only when
 // it carries a number, so a sparse run reads cleanly. Returns '' when empty.
 function _statSummary(stats) {
   if (!stats || typeof stats !== 'object') return '';
@@ -455,15 +455,15 @@ function _statSummary(stats) {
     const v = Number(n);
     if (Number.isFinite(v) && v > 0) parts.push(`${label} ${v}`);
   };
-  push(stats.discovered, 'Discovered');
+  push(stats.discovered, 'discovered');
   push(stats.digest_rows, 'shortlisted');
-  push(stats.pipelines_started, 'pre-filling');
+  push(stats.pipelines_started, 'pre-filled');
   push(stats.handoffs, 'handed to you');
-  push(stats.completed, 'completed');
+  push(stats.completed, 'submitted');
   let line = parts.join(' · ');
   const budget = Number(stats.budget_remaining);
   if (Number.isFinite(budget) && budget >= 0) {
-    line += `${line ? ' · ' : ''}${budget} left in today's budget`;
+    line += `${line ? ' · ' : ''}${budget} more I can send today`;
   }
   return line;
 }
@@ -504,7 +504,7 @@ function _renderRuns(host, items) {
   });
   const heading = `
     <div style="padding:4px 10px 6px;font-size:11px;font-weight:600;opacity:0.6;"
-      title="Each row is one pass your assistant took through your job search, newest first">
+      title="Each row is one pass I took through your job search, newest first">
       Recently I…
     </div>`;
   host.innerHTML = `<div>${heading}${rows.join('')}</div>`;
