@@ -29,6 +29,7 @@ engine-client methods this lane added.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -63,6 +64,34 @@ class ExplorationBudgetIn(BaseModel):
 
 # --- helpers ----------------------------------------------------------------
 
+#: Headers that prove a request was forwarded by a proxy/tunnel (cloudflared,
+#: nginx, Caddy, Tailscale Funnel, ...). Such a proxy/tunnel connects to this
+#: app FROM loopback, so a bare ``client.host in ("127.0.0.1", "::1")`` check
+#: would let a remote, unauthenticated caller inherit local trust and reach
+#: these operator controls (update / run controls / discovery sources) while
+#: auth isn't configured yet. Mirrors ``workspace/app.py``'s
+#: ``_is_trusted_loopback`` — the same class of forwarded-loopback spoofing
+#: this proxy must also refuse to fail open on.
+_PROXY_FWD_HEADERS = (
+    "cf-connecting-ip", "cf-ray", "cf-visitor",
+    "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+)
+
+
+def _is_trusted_loopback(request: Request) -> bool:
+    """True ONLY for a DIRECT loopback connection with no proxy/tunnel
+    forwarding headers present. Used to gate the narrow first-run bypass
+    below — never treat a tunneled/forwarded request as local just because
+    the immediate TCP peer happens to be loopback."""
+    client = getattr(request, "client", None)
+    host = (getattr(client, "host", "") if client else "") or ""
+    if host not in ("127.0.0.1", "::1"):
+        return False
+    for header in _PROXY_FWD_HEADERS:
+        if request.headers.get(header):
+            return False
+    return True
+
 
 def _require_admin(request: Request) -> str:
     """Require an authenticated admin (or the lone owner in single-user mode)."""
@@ -71,13 +100,15 @@ def _require_admin(request: Request) -> str:
     configured = bool(getattr(auth_mgr, "is_configured", False)) if auth_mgr else False
 
     if not configured:
-        # First-run: allow the lone owner, but only from loopback — a remote
-        # unauthenticated caller must not reach operator controls during setup (#228).
+        # First-run: allow the lone owner, but only from a DIRECT loopback
+        # connection — a remote unauthenticated caller (including one arriving
+        # via a tunnel/reverse-proxy that merely connects to us from loopback)
+        # must not reach operator controls during setup (#228). Fail closed:
+        # any ambiguity about the caller's true origin raises 401 rather than
+        # falling through to the bypass.
         if owner:
             return owner
-        client = getattr(request, "client", None)
-        host = (getattr(client, "host", "") if client else "") or ""
-        if host in ("127.0.0.1", "::1", "localhost"):
+        if _is_trusted_loopback(request):
             return ""
         raise HTTPException(status_code=401, detail="Not authenticated")
     if not owner:
@@ -92,11 +123,66 @@ def _require_admin(request: Request) -> str:
     return owner
 
 
+#: Safe, plain-language fallback per 4xx status family, used whenever the
+#: engine's own detail isn't safe to forward verbatim (see
+#: :func:`_sanitize_4xx_detail`).
+_GENERIC_4XX_MESSAGES = {
+    400: "The request was invalid.",
+    401: "Not authenticated.",
+    403: "You don't have permission for this.",
+    404: "That wasn't found.",
+    409: "This action can't be completed right now.",
+    422: "The submitted data was invalid.",
+}
+_DEFAULT_4XX_MESSAGE = "The request could not be completed."
+
+#: A forwarded detail longer than this reads as raw internal output (a dump,
+#: a page body, a trace) rather than a short, intentional client-facing
+#: message — never forward it verbatim.
+_MAX_SAFE_DETAIL_LEN = 300
+
+#: Substrings that mark a "detail" string as raw internal output (a stack
+#: trace, an HTML error page, a filesystem path) rather than a short,
+#: intentional client-facing message.
+_UNSAFE_DETAIL_MARKERS = (
+    "Traceback (most recent call last)",
+    "<html",
+    "<!DOCTYPE",
+    "site-packages",
+    'File "',
+)
+
+
+def _sanitize_4xx_detail(status: int, detail: Any) -> str:
+    """Return a safe, plain-language detail for a 4xx forwarded to the client.
+
+    The engine's own ``detail`` is only forwarded verbatim when it is a short,
+    plain string that reads like an intentional client-facing message. Anything
+    else — a non-string body (e.g. a raw validation-error list/dict when the
+    engine's JSON had no ``detail`` key), an empty value, or text shaped like a
+    stack trace / HTML error page — is replaced with a generic, safe message
+    for the status family instead. This never reveals internal field names,
+    tracebacks, or raw response bodies to the client.
+    """
+    if (
+        isinstance(detail, str)
+        and detail.strip()
+        and len(detail) <= _MAX_SAFE_DETAIL_LEN
+        and not any(marker in detail for marker in _UNSAFE_DETAIL_MARKERS)
+    ):
+        return detail
+    return _GENERIC_4XX_MESSAGES.get(status, _DEFAULT_4XX_MESSAGE)
+
+
 def _engine_http_error(exc: EngineError) -> HTTPException:
     """Translate a typed :class:`EngineError` into an HTTPException for a *write*.
 
-    4xx responses are forwarded (client-correctable). 5xx responses are scrubbed
-    — raw detail may contain internal stack traces; logged server-side only.
+    4xx responses are forwarded (client-correctable) but SANITIZED — only a
+    short, plain-language detail is passed through; anything else (a raw
+    validation body, HTML, a stack trace) is replaced with a generic message
+    for that status (see :func:`_sanitize_4xx_detail`). 5xx responses are
+    always scrubbed — raw detail may contain internal stack traces; logged
+    server-side only.
     """
     if exc.status is None:
         return HTTPException(
@@ -106,7 +192,9 @@ def _engine_http_error(exc: EngineError) -> HTTPException:
     if exc.status >= 500:
         logger.warning("engine 5xx (ops): status=%s detail=%s", exc.status, exc.detail or exc.message)
         return HTTPException(status_code=502, detail="The Applicant engine returned an error.")
-    detail = exc.detail if exc.detail not in (None, "") else exc.message
+    if exc.detail not in (None, ""):
+        logger.debug("engine 4xx (ops): status=%s detail=%r", exc.status, exc.detail)
+    detail = _sanitize_4xx_detail(exc.status, exc.detail)
     return HTTPException(status_code=exc.status, detail=detail)
 
 
