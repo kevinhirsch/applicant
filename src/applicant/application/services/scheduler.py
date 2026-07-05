@@ -180,6 +180,15 @@ class Scheduler:
         # itself guarded so two threads creating the same campaign's lock can't race.
         self._campaign_locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
+        # FR-OBS-2 (dark-engine audit #73): per-campaign tick failures and
+        # overlap-skips ("still busy from a prior tick") previously reached only
+        # ``log.warning``/``log.info`` — the whole-tick metrics snapshot counts
+        # only ticks where EVERY campaign failed, so a single flaky campaign
+        # inside an otherwise-healthy tick left no visible trace at all. This is
+        # a bounded, process-lived dict (the Scheduler itself is a long-lived
+        # singleton, unlike the per-tick ``AgentLoop`` — see ``campaign_health``)
+        # so it survives across ticks without a ``*_ledger`` indirection.
+        self._campaign_health: dict[str, dict] = {}
 
     def tick(self, now: datetime | None = None) -> dict:
         """Advance every active campaign + daily digest + the escalation ladder.
@@ -225,6 +234,7 @@ class Scheduler:
                 lock = self._campaign_lock(campaign.id)
                 if not lock.acquire(blocking=False):
                     log.info("campaign_tick_skipped_in_progress", campaign_id=str(campaign.id))
+                    self._note_campaign_skip(campaign.id, now)
                     continue
                 campaign_attempts += 1
                 try:
@@ -235,6 +245,7 @@ class Scheduler:
                     log.warning(
                         "campaign_tick_failed", campaign_id=str(campaign.id), error=str(exc)
                     )
+                    self._note_campaign_failure(campaign.id, now, exc)
                 finally:
                     lock.release()
             # (b) run the closed-loop curation nudge once per UTC day (FR-MIND-7),
@@ -376,6 +387,33 @@ class Scheduler:
         """A read-only snapshot of the operational metrics surface (FR-OBS-2)."""
         try:
             return self._metrics.snapshot()
+        except Exception:  # pragma: no cover - defensive
+            return {}
+
+    # --- per-campaign tick health (dark-engine audit #73) ------------------
+    def _note_campaign_skip(self, campaign_id, now: datetime) -> None:
+        """Record that this campaign's tick was skipped (a prior tick is still busy)."""
+        entry = self._campaign_health.setdefault(str(campaign_id), {})
+        entry["last_skipped_at"] = now.isoformat()
+        entry["skipped_count"] = int(entry.get("skipped_count", 0)) + 1
+
+    def _note_campaign_failure(self, campaign_id, now: datetime, exc: Exception) -> None:
+        """Record this campaign's tick failure (error text + when + a running count)."""
+        entry = self._campaign_health.setdefault(str(campaign_id), {})
+        entry["last_error"] = str(exc)
+        entry["last_error_at"] = now.isoformat()
+        entry["failure_count"] = int(entry.get("failure_count", 0)) + 1
+
+    def campaign_health(self, campaign_id) -> dict:
+        """Read-only per-campaign tick health: last error / overlap-skip + counts.
+
+        Empty when the campaign has never failed or been skipped for overlap —
+        the common case — so a healthy campaign's status payload carries no
+        noise. Process-lived on the Scheduler (a long-lived singleton, unlike the
+        per-tick ``AgentLoop``), so it survives across ticks without a ledger.
+        """
+        try:
+            return dict(self._campaign_health.get(str(campaign_id), {}))
         except Exception:  # pragma: no cover - defensive
             return {}
 

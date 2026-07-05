@@ -59,9 +59,22 @@ def run_status(
     scheduler=Depends(get_scheduler),
 ) -> dict:
     """Live agent status: per-campaign config + latest intent/stats + today's count,
-    plus the scheduler heartbeat (running / last-tick / next-tick) (FR-AGENT-7)."""
+    plus the scheduler heartbeat (running / last-tick / next-tick) (FR-AGENT-7).
+
+    ``scheduler.campaign`` (dark-engine audit #73) carries THIS campaign's own
+    tick failures / overlap-skips, which previously reached only the logs — it is
+    omitted entirely when the campaign has never failed or been skipped, so a
+    healthy campaign's payload is unchanged.
+    """
     out = svc.status(campaign_id)  # type: ignore[arg-type]
     out["scheduler"] = scheduler.state() if scheduler is not None else None
+    if scheduler is not None and isinstance(out["scheduler"], dict):
+        try:
+            health = scheduler.campaign_health(campaign_id)
+        except Exception:  # pragma: no cover - defensive: a health read is best-effort
+            health = {}
+        if health:
+            out["scheduler"]["campaign"] = health
     return out
 
 
@@ -104,6 +117,10 @@ def list_runs(campaign_id: str, svc=Depends(get_agent_run_service)) -> dict:
                 "run_mode": r.run_mode.value,
                 "throughput_target": r.throughput_target,
                 "stats": r.stats,
+                # dark-engine audit #75: a "recent runs" mini-table needs a WHEN
+                # per row — every run already carries one, it just never left
+                # this endpoint.
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
             }
             for r in runs
         ],
