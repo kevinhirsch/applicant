@@ -144,7 +144,7 @@ function _renderFunnel(summary) {
   const approved = _num(summary.total_approved);
   const submitted = _num(summary.total_submitted);
   const steps = [
-    { label: 'Matched', tip: 'Roles the assistant found that fit your criteria.', value: matched, of: null },
+    { label: 'Matched', tip: 'Roles I found that fit your criteria.', value: matched, of: null },
     { label: 'Approved', tip: 'Roles you approved to move forward.', value: approved, of: matched },
     { label: 'Submitted', tip: 'Applications that were submitted.', value: submitted, of: approved },
   ];
@@ -152,7 +152,7 @@ function _renderFunnel(summary) {
   const rows = steps.map((s) => {
     const w = Math.max(2, Math.round((100 * _num(s.value)) / max));
     const rate = s.of != null ? _pct(s.value, s.of) : '';
-    const rateLabel = rate ? `<span style="opacity:0.55;font-size:10.5px;margin-left:6px;">${esc(rate)} of prior</span>` : '';
+    const rateLabel = rate ? `<span style="opacity:0.55;font-size:10.5px;margin-left:6px;">${esc(rate)} of the step before</span>` : '';
     return `
       <div style="margin:6px 0;">
         <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;">
@@ -218,7 +218,7 @@ function _renderSources(sources) {
   });
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
-      ${_sectionHead('Where your roles come from', 'Each source the assistant searches, ranked by how well it converts for you.')}
+      ${_sectionHead('Where your roles come from', "Each place I search, ranked by how well it's working for you.")}
       ${_headline(_sourcesHeadline(sources))}
       ${rows.join('')}
     </div>`;
@@ -232,11 +232,11 @@ function _renderSignature(roles, samples) {
     <span style="display:inline-block;padding:3px 9px;margin:0 6px 6px 0;border-radius:12px;border:1px solid var(--border);font-size:11px;">${esc(String(r))}</span>`);
   const headline = `Based on what's actually converted so far, you tend to move forward on roles like these:`;
   const sub = (samples != null && _num(samples) > 0)
-    ? `<div style="font-size:10px;opacity:0.55;margin-bottom:8px;">Learned from ${esc(String(_num(samples)))} converting application${_num(samples) === 1 ? '' : 's'}.</div>`
+    ? `<div style="font-size:10px;opacity:0.55;margin-bottom:8px;">Based on ${esc(String(_num(samples)))} application${_num(samples) === 1 ? '' : 's'} that moved forward.</div>`
     : '';
   return `
     <div class="admin-card" style="margin:0 0 12px;padding:12px;">
-      ${_sectionHead('What converts for you', 'The kinds of roles that actually move forward — the bias the assistant learns and applies.')}
+      ${_sectionHead('What converts for you', "The kinds of roles that actually move forward — what I've learned to favor for you.")}
       ${_headline(headline)}
       ${sub}
       <div>${chips.join('')}</div>
@@ -284,7 +284,7 @@ function _renderResults(host, data) {
 function _renderEmpty(host) {
   host.innerHTML = emptyHTML(
     'No results yet',
-    'Your results appear here once your assistant has submitted a few applications. '
+    'Your results appear here once I\'ve submitted a few applications for you. '
     + 'You\'ll see how roles move from found, to approved, to submitted — plus which '
     + 'sources convert best and what kinds of roles move forward for you.',
   );
@@ -292,8 +292,8 @@ function _renderEmpty(host) {
 
 function _renderOffline(host) {
   host.innerHTML = emptyHTML(
-    'Results are offline',
-    'Your results will appear here once your assistant is connected and running.',
+    'Not connected yet',
+    'Your results will appear here once I\'m connected and running.',
   );
 }
 
@@ -301,7 +301,7 @@ function _renderOffline(host) {
 // own plain-language setup message so the owner knows what to finish.
 function _renderGated(host, data) {
   const msg = (data && data.message)
-    || 'Finish onboarding and connect a model to start collecting results.';
+    || 'Finish setup and connect a model — your results will start appearing here.';
   host.innerHTML = gatedHTML(msg);
 }
 
