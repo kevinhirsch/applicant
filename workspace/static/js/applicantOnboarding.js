@@ -581,6 +581,12 @@ async function _renderChannels() {
   let cur = {};
   try { cur = await _fetchJSON(`${SETUP}/channels`); } catch { cur = {}; }
   const qh = (cur && cur.quiet_hours) || { enabled: false, start: '22:00', end: '07:00', tz: '' };
+  // A free-text zone silently degrades to UTC on the engine side if it's ever left blank
+  // or unrecognized, so default a first-time (unsaved) field to the browser's own zone
+  // rather than blank/UTC — a new user then starts from a correct zone.
+  let _browserTz = 'UTC';
+  try { _browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* keep UTC fallback */ }
+  const qhTz = qh.tz || _browserTz;
   _setBody(`
     <h2 class="ao-step-title">Notifications ${_tip('How Applicant reaches you — Discord and/or email — for your daily digest and approval requests. Optional: you can skip this and set it up later in Settings.')}</h2>
     <p class="ao-step-desc">Add a Discord webhook and/or an email address so Applicant can send you updates and ask for approvals. This is optional — you can <strong>Skip for now</strong> and set it up later.</p>
@@ -658,8 +664,8 @@ async function _renderChannels() {
             <input id="ao-qh-end" class="settings-select" type="time" value="${esc(qh.end || '07:00')}" />
           </div>
           <div class="settings-row">
-            <label class="settings-label">Time zone ${_tip('Optional. An IANA name like America/Phoenix or Europe/London. Leave blank to use UTC.')}</label>
-            <input id="ao-qh-tz" class="settings-select" type="text" placeholder="UTC" value="${esc(qh.tz || '')}" />
+            <label class="settings-label">Time zone ${_tip('An IANA name like America/Phoenix or Europe/London. Defaults to your browser\'s own time zone; leave blank to use UTC.')}</label>
+            <input id="ao-qh-tz" class="settings-select" type="text" placeholder="UTC" value="${esc(qhTz)}" />
           </div>
           <div class="settings-row">
             <label class="settings-label">During quiet hours ${_tip('Choose per channel. Set one to "anytime" to keep it delivering overnight — e.g. hold Discord but still let email through.')}</label>

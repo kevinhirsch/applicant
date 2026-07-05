@@ -382,10 +382,15 @@ def test_refresh_badge_zeroes_when_engine_unavailable_without_loading_notifs(nod
     assert out["notifsCalled"] is False
 
 
-def test_refresh_badge_zeroes_on_network_failure(node_available):
+def test_refresh_badge_keeps_last_count_on_network_failure(node_available):
+    # Lens-10 audit #44: a transient fetch error (one dropped poll, not a
+    # confirmed-offline engine) must NOT erase a real "N waiting" badge — the
+    # last-known count stays painted. Only the explicit engine_available===false
+    # success state zeroes the badge (covered by the sibling test above).
     block = _refresh_badge_block()
     script = textwrap.dedent(f"""
         const API = '/api/applicant/portal';
+        let _lastBadgeCount = 3;  // a real count was painted on the previous poll
         async function _fetchJSON() {{ throw new Error('network down'); }}
         let badgeCalls = [];
         function _setBadge(n) {{ badgeCalls.push(n); }}
@@ -396,7 +401,10 @@ def test_refresh_badge_zeroes_on_network_failure(node_available):
         console.log(JSON.stringify({{ badgeCalls }}));
     """)
     out = _run_node(script)
-    assert out["badgeCalls"] == [0]
+    assert out["badgeCalls"] == [3], (
+        "a transient network error must preserve the last-known badge count, "
+        "not zero it"
+    )
 
 
 # ===========================================================================

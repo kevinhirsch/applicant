@@ -68,6 +68,35 @@ def _safe_href(url) -> str:
     return "#"
 
 
+def _subject_safe(text: str) -> str:
+    """Collapse whitespace/newlines so scraped title/company can't smuggle a
+    second header line (mail header injection) into the digest subject."""
+    return " ".join(str(text or "").split())
+
+
+def _digest_subject(payload: dict, top_row: dict | None) -> str:
+    """Lens 10 #30: an informative digest subject instead of always the same string.
+
+    Degrades gracefully with what ``build_digest_payload``/``render_email`` already
+    have in hand (row count + the highest-scored row) — no re-query, no new
+    dependency: zero matches keeps the existing empty-day variant, one match uses
+    singular grammar, and 2+ matches lead with the count and name the top match's
+    role/company so ten digests in an inbox are no longer indistinguishable.
+    """
+    if payload["empty"]:
+        return "Daily digest — no new matches today"
+    count = len(payload["rows"])
+    noun = "match" if count == 1 else "matches"
+    subject = f"Your daily digest — {count} new {noun}"
+    if top_row:
+        title = _subject_safe(top_row.get("title") or "")
+        company = _subject_safe(top_row.get("company") or "")
+        top_match = f"{title} at {company}".strip() if title and company else title or company
+        if top_match:
+            subject += f" (top: {top_match})"
+    return subject
+
+
 def _criteria_fingerprint(criteria: SearchCriteria | None) -> tuple | None:
     """Cheap, hashable snapshot of the criteria fields a score depends on.
 
@@ -424,6 +453,7 @@ class DigestService:
         if payload is None:
             payload = self.build_digest_payload(campaign_id, criteria)
         lines = ["<h1>Your daily digest</h1>"]
+        top_row: dict | None = None
         if payload["empty"]:
             lines.append(f"<p><em>{html.escape(str(payload['note'] or ''))}</em></p>")
         else:
@@ -438,6 +468,9 @@ class DigestService:
                 key=lambda r: float(r.get("viability_score") or 0),
                 reverse=True,
             )[:MAX_EMAIL_ROWS]
+            # lens 10 #30: the highest-scored row also seeds the subject line's
+            # "top match" callout below — reuse the SAME sort instead of a second pass.
+            top_row = top_rows[0] if top_rows else None
             lines.append(
                 "<table border='1' cellpadding='6'><tr><th>Role</th><th>Work mode</th>"
                 "<th>Score</th><th>Why suggested</th><th>Link</th></tr>"
@@ -467,9 +500,7 @@ class DigestService:
                     f"by score — view the remaining {remaining} in the portal.</em></p>"
                 )
         return {
-            "subject": "Your daily digest"
-            if not payload["empty"]
-            else "Daily digest — no new matches today",
+            "subject": _digest_subject(payload, top_row),
             "html": "\n".join(lines),
             "campaign_id": campaign_id,
             "row_count": len(payload["rows"]),
