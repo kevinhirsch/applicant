@@ -2658,6 +2658,14 @@
      window.applicantXModule.openApplicantX() launchers those surfaces already
      export above — no other file needed changes. -->
 <script type="module" src="/static/js/commandPalette.js"></script>
+<!-- Keyboard-shortcuts help overlay (design-audit exhaustive2/07_power_users.md
+     #36): bare "?" toggles a cheat-sheet rendered from the LIVE keybind map
+     (window._applicantKeybinds, set by keyboard-shortcuts.js) so custom
+     rebinds show correctly. Self-boots (wires its own trigger keydown
+     listener at module-eval time, same pattern as commandPalette.js above)
+     and reuses the shared .modal/.admin-card chrome — no other file needed
+     changes. -->
+<script type="module" src="/static/js/applicantShortcuts.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
