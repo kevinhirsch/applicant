@@ -341,9 +341,11 @@ def updater_script(t10ctx):
 @when("its rollback path is inspected")
 def inspect_rollback(t10ctx):
     text = t10ctx["update"]
-    # Isolate the `--rollback` branch so we judge that path's actions.
-    start = text.index('if [[ "${ROLLBACK}" -eq 1 ]]; then')
-    t10ctx["rollback_body"] = text[start : start + 800]
+    # The rollback actions now live in the shared `auto_rollback()` function, which
+    # BOTH the manual `--rollback` branch and the auto-recovery-on-failure path call.
+    # Inspect that function body — it is what the rollback path actually executes.
+    start = text.index("auto_rollback() {")
+    t10ctx["rollback_body"] = text[start : start + 1200]
 
 
 @then("it reverts the git checkout and the container images alongside the database")
