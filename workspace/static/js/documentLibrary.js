@@ -2635,6 +2635,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return card;
     }
 
+    // Lens 04 #54: the "ask for a change" free-text instruction previously
+    // lived only in the DOM textarea, so any re-render of the review surface
+    // (a fresh turn's response re-rendering the panel, or a full materials
+    // reload closing and reopening it) silently discarded whatever the user
+    // had typed but not yet sent. Keyed by document id (module-level, mirrors
+    // the persistence of other per-item Library state such as
+    // `_librarySelectedIds`/`_chatsSelected` above), so the draft survives
+    // both re-render paths and is restored whenever this item's review panel
+    // is (re)built, then cleared once the instruction is actually submitted.
+    const _reviewInstructionDrafts = new Map();
+
     // Open the interactive review session for a non-variant document and render
     // the redline + change box + approve / decline controls inline in the card.
     async function _openApplicantReview(item, appId, card, results) {
@@ -2700,9 +2711,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const subtractions = rl && Array.isArray(rl.subtractions) ? rl.subtractions : (rl && Array.isArray(rl.removals) ? rl.removals : []);
       if (renderedHtml) {
         // PRIMARY: the engine-rendered side-by-side highlighted redline (both
-        // additions and deletions vs the base). Insert as-is (same-origin
-        // trusted engine output, consistent with how research reports render).
-        redline.innerHTML = renderedHtml;
+        // additions and deletions vs the base). This HTML incorporates
+        // scraped/model-derived content (posting text, LLM output), so it is
+        // NOT trusted verbatim (lens 04 #69 — XSS sink): run it through the
+        // same allowlist sanitizer markdown.js already uses for the other
+        // engine/model-derived HTML fragment it renders (`<details>`/`<a>`
+        // blocks) rather than assigning it to innerHTML raw.
+        redline.innerHTML = markdownModule.sanitizeAllowedHtml(renderedHtml);
       } else if (additions.length || subtractions.length) {
         // FALLBACK: plain add/remove lists when the engine returns no rendered
         // redline HTML.
@@ -2751,7 +2766,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             const additions2 = diff && Array.isArray(diff.additions) ? diff.additions : [];
             const subtractions2 = diff && Array.isArray(diff.subtractions) ? diff.subtractions : [];
             if (renderedHtml2) {
-              redline.innerHTML = renderedHtml2;
+              // Same untrusted-HTML sink as the primary redline above —
+              // sanitize before injecting (lens 04 #69).
+              redline.innerHTML = markdownModule.sanitizeAllowedHtml(renderedHtml2);
             } else if (additions2.length || subtractions2.length) {
               const add2 = additions2.map(a => `<li style="color:var(--color-success,#4caf50);">+ ${_esc(String(a))}</li>`).join('');
               const sub2 = subtractions2.map(s => `<li style="color:var(--color-danger,#e06c75);">− ${_esc(String(s))}</li>`).join('');
@@ -2817,8 +2834,33 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         add: 'Text to add, e.g. “Led a team of 5 engineers.”',
         subtract: 'Text or phrasing to remove, e.g. “the second bullet about internships”',
       };
+
+      // Lens 04 #54: restore any not-yet-sent instruction the user typed
+      // before this panel was re-rendered (a turn's response re-render, or a
+      // full materials reload that closes and reopens the review), instead of
+      // always starting the box blank.
+      const _draftKey = String(item.id);
+      const _draft = _reviewInstructionDrafts.get(_draftKey);
+      if (_draft && _draft.text) {
+        instruction.value = _draft.text;
+        kindSel.value = _draft.kind || 'free_text';
+      }
+      instruction.placeholder = _kindPlaceholder[kindSel.value] || _kindPlaceholder.free_text;
+
+      // Persist the draft on every keystroke/kind change so it survives the
+      // next re-render; clear it once there is nothing typed.
+      const _saveDraft = () => {
+        const text = instruction.value || '';
+        if (text.trim()) {
+          _reviewInstructionDrafts.set(_draftKey, { kind: kindSel.value, text });
+        } else {
+          _reviewInstructionDrafts.delete(_draftKey);
+        }
+      };
+      instruction.addEventListener('input', _saveDraft);
       kindSel.addEventListener('change', () => {
         instruction.placeholder = _kindPlaceholder[kindSel.value] || _kindPlaceholder.free_text;
+        _saveDraft();
       });
       sendBtn.addEventListener('click', async () => {
         const text = (instruction.value || '').trim();
@@ -2843,6 +2885,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           });
           if (!res.ok) throw new Error(await _applicantErrText(res));
           const next = await res.json();
+          // The instruction was submitted and applied — clear the draft so a
+          // stale request doesn't reappear in the next render.
+          _reviewInstructionDrafts.delete(_draftKey);
           if (uiModule) uiModule.showToast('Change applied');
           _renderApplicantReview(item, appId, panel, next, card, results);
         } catch (err) {
@@ -2868,6 +2913,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         try {
           const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/approve`, { method: 'POST', credentials: 'same-origin' });
           if (!res.ok) throw new Error(await _applicantErrText(res));
+          _reviewInstructionDrafts.delete(_draftKey);
           if (uiModule) uiModule.showToast('Document approved');
           _loadApplicantMaterials(appId, results);
         } catch (err) {
@@ -2886,6 +2932,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         try {
           const res = await fetch(`${_APPLICANT_BASE}/${encodeURIComponent(item.id)}/decline`, { method: 'POST', credentials: 'same-origin' });
           if (!res.ok) throw new Error(await _applicantErrText(res));
+          _reviewInstructionDrafts.delete(_draftKey);
           if (uiModule) uiModule.showToast('Document declined');
           _loadApplicantMaterials(appId, results);
         } catch (err) {
