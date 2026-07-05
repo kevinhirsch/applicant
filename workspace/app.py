@@ -821,6 +821,11 @@ app.include_router(setup_applicant_routes())
 # First-run setup wizard — engine OOBE + onboarding intake proxy (/api/applicant/setup/*).
 from routes.applicant_setup_routes import setup_applicant_setup_routes
 app.include_router(setup_applicant_setup_routes())
+# Model-endpoint edit/remove + conversion-preview download (dark-engine audit items
+# 19/20) — a standalone sibling of the setup routes above under the same prefix,
+# kept in its own file/router to avoid touching that in-flight file.
+from routes.applicant_model_connections_routes import setup_applicant_model_connections_routes
+app.include_router(setup_applicant_model_connections_routes())
 # Lane A — engine resume/cover-letter library + redline review (/api/applicant/documents/*).
 from routes.applicant_documents_routes import setup_applicant_documents_routes
 app.include_router(setup_applicant_documents_routes())

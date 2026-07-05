@@ -1769,6 +1769,7 @@ async function _buildPreview() {
         <div class="settings-row" style="margin-top:6px;">
           <button class="cal-btn cal-btn-primary" id="ao-prev-accept">Use this version</button>
           <button class="cal-btn" id="ao-prev-reject">Keep my original</button>
+          <button class="cal-btn" id="ao-prev-download">Open preview PDF</button>
           <span id="ao-prev-status" style="font-size:0.82rem;opacity:0.75;"></span>
         </div>
       </div>`;
@@ -1781,6 +1782,33 @@ async function _buildPreview() {
       try { await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/reject`, {});
         document.getElementById('ao-prev-status').textContent = 'Keeping your original.';
       } catch (e) { _toast(e.message || 'Could not reject.'); }
+    };
+    // Download the actual compiled PDF (dark-engine audit item 19) so the
+    // accept/reject choice can be made from the real document, not just the
+    // page-count/fidelity summary above.
+    document.getElementById('ao-prev-download').onclick = async (e) => {
+      const btn = e.currentTarget;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Opening…';
+      try {
+        const res = await fetch(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/preview/download`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(await res.text().catch(() => 'Preview not available yet.'));
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `resume-preview-${_campaignId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        _toast((err && err.message) || 'Could not open the preview PDF.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     };
   } catch (e) {
     wrap.innerHTML = `<p style="font-size:0.82rem;opacity:0.75;">Preview unavailable: ${esc(e.message || '')}</p>`;

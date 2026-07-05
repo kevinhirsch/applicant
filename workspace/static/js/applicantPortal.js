@@ -981,11 +981,27 @@ function _rowShell(item, inner) {
 
 function _renderAnswer(item) {
   // Inline answer → resolve. Covers agent questions / confirms / soft errors.
+  // For a deferred essay/screening question the pre-fill walk parked instead
+  // of auto-answering (dark-engine audit item 21), also offer to have the
+  // assistant draft one from the profile — still routed through the normal
+  // document review before it's ever used — as an alternative to typing one
+  // by hand below.
+  const p = item.payload || {};
+  const draftBtn = item.kind === 'agent_question' ? `
+      <button type="button" class="cal-btn applicant-portal-generate-essay"
+              data-action-id="${esc(item.id)}"
+              data-campaign-id="${esc(item.campaign_id || '')}"
+              data-application-id="${esc(_appId(item))}"
+              data-question="${esc(p.question || '')}"
+              data-selector="${esc(p.field_selector || '')}"
+              data-url="${esc(p.url || '')}"
+              title="Draft an answer from your profile — you still review it before it's used">Generate a draft</button>` : '';
   return `
-    <div style="display:flex;gap:8px;align-items:flex-end;">
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
       <textarea class="applicant-portal-answer" rows="2" placeholder="Type your answer…"
-                style="flex:1;resize:vertical;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:12px;"></textarea>
+                style="flex:1;min-width:160px;resize:vertical;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:12px;"></textarea>
       <button type="button" class="cal-btn cal-btn-primary applicant-portal-send-answer" data-action-id="${esc(item.id)}">Send</button>
+      ${draftBtn}
     </div>`;
 }
 
@@ -1451,6 +1467,41 @@ function _wireRows(host) {
         btn.disabled = false;
         btn.textContent = 'Send';
         _toast(e.message || 'Could not send that');
+      }
+    });
+  });
+
+  // Generate a draft answer for a deferred essay/screening question
+  // (dark-engine audit item 21) instead of typing one by hand — the engine
+  // generates + routes it through the normal document review, and clears the
+  // originating question itself once the draft is created.
+  host.querySelectorAll('.applicant-portal-generate-essay').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.actionId;
+      const campaignId = btn.dataset.campaignId;
+      const applicationId = btn.dataset.applicationId;
+      if (!campaignId || !applicationId) {
+        _toast('Missing campaign/application context for this question.');
+        return;
+      }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = 'Drafting…';
+      try {
+        await _post('/api/applicant/documents/deferred-essay', {
+          campaign_id: campaignId,
+          application_id: applicationId,
+          question: btn.dataset.question || '',
+          label: btn.dataset.question || '',
+          selector: btn.dataset.selector || null,
+          url: btn.dataset.url || null,
+        });
+        _removeRow(host, id);
+        _toast('Draft generated — find it in Documents for review.');
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _toast(e.message || 'Could not generate a draft.');
       }
     });
   });
