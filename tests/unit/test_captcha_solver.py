@@ -130,6 +130,51 @@ def test_composite_avoid_strategy_avoids_score_solves_nothing():
     )
 
 
+# --- real telemetry counters, never fabricated (dark-engine audit #67) ------
+def test_stats_start_at_zero_and_expose_the_effective_configuration():
+    composite = CaptchaSolver(strategy="avoid")
+    stats = composite.stats()
+    assert stats["strategy"] == "avoid"
+    assert stats["service_configured"] is False
+    assert stats["attempts"] == 0
+    assert stats["solved"] == 0
+    assert stats["avoided"] == 0
+    assert stats["handed_off"] == 0
+
+
+def test_stats_tally_avoided_outcomes():
+    composite = CaptchaSolver(strategy="avoid")
+    composite.resolve(CaptchaContext(url="x", kind=CaptchaKind.TURNSTILE))
+    composite.resolve(CaptchaContext(url="x", kind=CaptchaKind.RECAPTCHA_V3))
+    stats = composite.stats()
+    assert stats["attempts"] == 2
+    assert stats["avoided"] == 2
+    assert stats["solved"] == 0
+    assert stats["handed_off"] == 0
+
+
+def test_stats_tally_handed_off_outcomes_under_the_default_strategy():
+    composite = CaptchaSolver(strategy="human")
+    composite.resolve(CaptchaContext(url="x", kind=CaptchaKind.HCAPTCHA, site_key="sk"))
+    stats = composite.stats()
+    assert stats["attempts"] == 1
+    assert stats["handed_off"] == 1
+    assert stats["solved"] == 0
+    assert stats["avoided"] == 0
+
+
+def test_stats_tally_solved_outcomes_under_the_service_strategy():
+    svc = SolverServiceAdapter(solver=_mock_solver("tok"), injector=RecordingInjector())
+    composite = CaptchaSolver(strategy="service", service=svc)
+    composite.resolve(CaptchaContext(url="x", kind=CaptchaKind.HCAPTCHA, site_key="sk"))
+    stats = composite.stats()
+    assert stats["service_configured"] is True
+    assert stats["attempts"] == 1
+    assert stats["solved"] == 1
+    assert stats["handed_off"] == 0
+    assert stats["avoided"] == 0
+
+
 # --- token injection for the three interactive families ---------------------
 @pytest.mark.parametrize(
     ("kind", "expected_field"),

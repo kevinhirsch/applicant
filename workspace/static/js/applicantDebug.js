@@ -1272,6 +1272,82 @@ async function _renderBridge(host) {
   host.innerHTML = intro + _statGrid(rows) + detail;
 }
 
+// Captcha handling — dark-engine audit #67: the captcha strategy is
+// configurable (CAPTCHA_STRATEGY) and the composite solver decides
+// avoid/solve/handoff, but nothing showed which strategy is active or
+// whether it's doing anything. Reports the configured strategy plus, only
+// when a solver is actually wired, its REAL process-lived attempt/outcome
+// counts — never a fabricated number. Engine-wide (not campaign-scoped),
+// mirrors the Background connection sub-section just above.
+const _CAPTCHA_STRATEGY_LABELS = {
+  human: 'Hand off to you',
+  avoid: 'Avoid automatically (stealth)',
+  service: 'Solve automatically (paid service)',
+};
+
+async function _renderCaptcha(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/captcha-status`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">How the assistant handles a captcha it runs into while filling out an application.</div>`;
+  const strategyLabel = _CAPTCHA_STRATEGY_LABELS[data.strategy] || data.strategy || 'Hand off to you';
+  const rows = [
+    ['Strategy', strategyLabel],
+    ['Currently active', data.active ? 'Yes' : 'No (default hand-off)'],
+  ];
+  if (data.strategy === 'service') {
+    rows.push(['Solving service', data.service || 'Not set']);
+    rows.push(['Service key configured', data.key_configured ? 'Yes' : 'No']);
+  }
+  if (data.active && typeof data.attempts === 'number') {
+    rows.push(['Captchas seen', data.attempts]);
+    rows.push(['Solved', data.solved || 0]);
+    rows.push(['Avoided', data.avoided || 0]);
+    rows.push(['Handed off to you', data.handed_off || 0]);
+  }
+  host.innerHTML = intro + _statGrid(rows);
+}
+
+// Automation capacity — dark-engine audit #72: CapacityService admits/defers
+// a sandbox slot for every application every tick (the browser-concurrency
+// cap + pivot-around-blocker), but a deferred admission only ever logged
+// "sandbox_admission_deferred" with nothing telling the owner how many
+// applications are waiting for a slot right now. Engine-wide (not
+// campaign-scoped), mirrors the Captcha handling sub-section just above.
+async function _renderCapacity(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/capacity`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const intro = `<div class="admin-toggle-sub" style="opacity:0.7;margin-bottom:8px;">How many applications currently hold a live browser, versus how many are waiting for one to free up.</div>`;
+  if (!data.supported) {
+    host.innerHTML = intro + _empty('Not available on the current automation backend.');
+    return;
+  }
+  const rows = [
+    ['Applications with a browser open', data.active_count || 0],
+    ['Applications waiting for one', data.waiting_count || 0],
+  ];
+  host.innerHTML = intro + _statGrid(rows);
+}
+
+// Matching engine (embedding backend) — dark-engine audit #79: LocalEmbedding
+// is a deterministic offline hashing-trick backend powering dedup, resume-
+// variant scoring, and conversion-signature learning, but nothing disclosed
+// that semantic-match quality is the basic offline fallback rather than a
+// trained model. Engine-wide (not campaign-scoped), mirrors the Automation
+// capacity sub-section just above.
+async function _renderEmbedding(host) {
+  host = host || _body();
+  const data = await _fetchJSON(`${ADMIN}/embedding-backend`);
+  if (data.engine_available === false) { _renderOffline(undefined, host); return; }
+  const rows = [
+    ['Matching engine', data.model_backed ? 'Model-backed' : 'Basic (offline)'],
+    ['Quality', data.quality_tier || 'unknown'],
+  ];
+  const detail = data.detail ? `<div class="admin-toggle-sub" style="opacity:0.7;margin-top:8px;">${esc(String(data.detail))}</div>` : '';
+  host.innerHTML = _statGrid(rows) + detail;
+}
+
 async function _renderUpdate(host) {
   host = host || _body();
   let status = { engine_available: true };
@@ -1341,6 +1417,18 @@ async function _renderConfig() {
       <div style="font-weight:600;margin-bottom:8px;" title="Background agent health">Background connection</div>
       <div id="applicant-config-bridge">${loadingHTML('Loading…')}</div>
     </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Captcha handling</div>
+      <div id="applicant-config-captcha">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Automation capacity</div>
+      <div id="applicant-config-capacity">${loadingHTML('Loading…')}</div>
+    </div>
+    <div class="applicant-debug-list" style="margin-bottom:16px;">
+      <div style="font-weight:600;margin-bottom:8px;">Matching engine</div>
+      <div id="applicant-config-embedding">${loadingHTML('Loading…')}</div>
+    </div>
     <div class="applicant-debug-list">
       <div style="font-weight:600;margin-bottom:8px;">Update</div>
       <div id="applicant-config-update">${loadingHTML('Loading…')}</div>
@@ -1351,6 +1439,9 @@ async function _renderConfig() {
   const stealthHost = host.querySelector('#applicant-config-stealth');
   const diagnosticsHost = host.querySelector('#applicant-config-diagnostics');
   const bridgeHost = host.querySelector('#applicant-config-bridge');
+  const captchaHost = host.querySelector('#applicant-config-captcha');
+  const capacityHost = host.querySelector('#applicant-config-capacity');
+  const embeddingHost = host.querySelector('#applicant-config-embedding');
   const updateHost = host.querySelector('#applicant-config-update');
   const sections = [
     [sourcesHost, _renderSources],
@@ -1359,6 +1450,9 @@ async function _renderConfig() {
     [stealthHost, _renderStealth],
     [diagnosticsHost, _renderDiagnostics],
     [bridgeHost, _renderBridge],
+    [captchaHost, _renderCaptcha],
+    [capacityHost, _renderCapacity],
+    [embeddingHost, _renderEmbedding],
     [updateHost, _renderUpdate],
   ];
   for (const [sectionHost, renderFn] of sections) {

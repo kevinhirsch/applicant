@@ -346,6 +346,94 @@ def workspace_bridge(container: Container = Depends(get_container)) -> dict:
     return {"configured": True, "reachable": reachable, "detail": detail, "status": "live"}
 
 
+# === Captcha handling status (dark-engine audit #67) =======================
+@router.get("/captcha-status")
+def captcha_status(container: Container = Depends(get_container)) -> dict:
+    """Effective captcha-handling strategy + any real solve/avoid/handoff telemetry.
+
+    ``CAPTCHA_STRATEGY`` (item #83) decides whether captchas hand off to the
+    human, are avoided via stealth, or are solved by a paid third-party
+    service — but nothing previously reported which is actually configured, or
+    whether it's doing anything. The composite solver (``CaptchaSolver``) is
+    only built for a non-default strategy (``container.py``'s
+    ``_build_captcha_solver`` — the shipped ``human`` default leaves pre-fill's
+    captcha handling unwired so every captcha still hands off byte-for-byte as
+    today), so this always reports the CONFIGURED strategy from settings, plus
+    — only when a solver is actually wired — its real, process-lived
+    attempt/outcome counters. Never fabricates a solved/avoided/handed-off
+    count: with the default strategy those fields are simply absent.
+    """
+    settings = container.settings
+    pf = container.prefill_service
+    solver = pf.captcha_solver if pf is not None else None
+    body = {
+        "strategy": settings.captcha_strategy,
+        "service": settings.captcha_service,
+        "key_configured": bool(settings.captcha_api_key),
+        "active": solver is not None,
+    }
+    if solver is not None and hasattr(solver, "stats"):
+        body.update(solver.stats())
+    return {**body, "status": "live"}
+
+
+# === Sandbox capacity pacing (dark-engine audit #72) =======================
+@router.get("/capacity")
+def capacity(container: Container = Depends(get_container)) -> dict:
+    """How many applications hold a live sandbox slot vs. wait for one.
+
+    ``CapacityService`` admits/defers a sandbox slot for every application every
+    tick (the concurrency cap + pivot-around-blocker), but a deferred admission
+    previously only logged ``sandbox_admission_deferred`` with no operator-
+    visible surface. Reads the SAME ``SANDBOX_QUEUE`` the live scheduler drives,
+    so this always reflects the current queue, not a stale snapshot.
+    """
+    svc = container.capacity_service
+    if svc is None:
+        return {
+            "active": [],
+            "waiting": [],
+            "active_count": 0,
+            "waiting_count": 0,
+            "supported": False,
+            "status": "live",
+        }
+    state = svc.sandbox_queue_state()
+    return {
+        "active": state["active"],
+        "waiting": state["waiting"],
+        "active_count": len(state["active"]),
+        "waiting_count": len(state["waiting"]),
+        "supported": state["supported"],
+        "status": "live",
+    }
+
+
+# === Embedding backend disclosure (dark-engine audit #79) ==================
+@router.get("/embedding-backend")
+def embedding_backend(container: Container = Depends(get_container)) -> dict:
+    """Which embedding backend powers memory/dedup matching, and its quality tier.
+
+    ``LocalEmbedding`` is a deterministic offline hashing-trick backend (no
+    model download); a real model-backed adapter would implement the same
+    ``EmbeddingPort`` and disclose itself the same way via ``describe()``. Read-
+    only, plain-language — never claims a quality the active backend doesn't
+    have.
+    """
+    emb = container.embedding
+    describe = getattr(emb, "describe", None)
+    if callable(describe):
+        info = describe()
+    else:
+        info = {
+            "backend": type(emb).__name__ if emb is not None else "none",
+            "quality_tier": "unknown",
+            "model_backed": False,
+            "detail": "",
+        }
+    return {**info, "status": "live"}
+
+
 # === PII-retention sweep, on demand (dark-engine audit #37) ================
 @router.post("/retention/prune")
 def run_retention_sweep(

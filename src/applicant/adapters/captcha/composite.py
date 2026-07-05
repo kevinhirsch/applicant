@@ -48,10 +48,34 @@ class CaptchaSolver:
         self._avoidance = avoidance or BehavioralAvoidanceStrategy()
         self._service = service
         self._handoff = handoff or HumanHandoffAdapter()
+        # dark-engine audit #67: process-lived, REAL attempt/outcome counters —
+        # incremented only inside ``resolve()`` below, never fabricated. A fresh
+        # process (or the default ``human`` strategy, which the container never
+        # even builds a solver for) honestly reports zero for all of them.
+        self._attempts = 0
+        self._solved = 0
+        self._avoided = 0
+        self._handed_off = 0
 
     @property
     def strategy(self) -> str:
         return self._strategy
+
+    def stats(self) -> dict:
+        """Read-only telemetry snapshot for the Debug surface (dark-engine audit #67).
+
+        The effective strategy + whether a third-party solver service is wired,
+        plus the REAL counts this process has recorded resolving captchas so
+        far — never a fabricated/estimated number.
+        """
+        return {
+            "strategy": self._strategy,
+            "service_configured": self._service is not None,
+            "attempts": self._attempts,
+            "solved": self._solved,
+            "avoided": self._avoided,
+            "handed_off": self._handed_off,
+        }
 
     def classify(self, context: CaptchaContext) -> CaptchaDisposition:
         # ``human`` short-circuits: every captcha hands off, byte-for-byte as today.
@@ -70,9 +94,22 @@ class CaptchaSolver:
     def resolve(self, context: CaptchaContext) -> CaptchaOutcome:
         disposition = self.classify(context)
         if disposition is CaptchaDisposition.AVOID:
-            return self._avoidance.resolve(context)
-        if disposition is CaptchaDisposition.SOLVE and self._service is not None:
-            outcome = self._service.resolve(context)
+            outcome = self._avoidance.resolve(context)
+        elif disposition is CaptchaDisposition.SOLVE and self._service is not None:
             # A failed solve degrades to hand-off (outcome already says HANDOFF).
-            return outcome
-        return self._handoff.resolve(context)
+            outcome = self._service.resolve(context)
+        else:
+            outcome = self._handoff.resolve(context)
+        self._record(outcome)
+        return outcome
+
+    def _record(self, outcome: CaptchaOutcome) -> None:
+        """dark-engine audit #67: tally the REAL outcome — read-only bookkeeping,
+        no effect on ``outcome`` or the caller's control flow."""
+        self._attempts += 1
+        if outcome.solved:
+            self._solved += 1
+        elif outcome.disposition is CaptchaDisposition.AVOID:
+            self._avoided += 1
+        else:
+            self._handed_off += 1

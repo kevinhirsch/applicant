@@ -327,6 +327,17 @@ class PrefillService:
         """
         return list(self._diagnostics)
 
+    @property
+    def captcha_solver(self):
+        """Read-only accessor for the wired captcha solver (dark-engine audit #67).
+
+        ``None`` for the shipped default (``CAPTCHA_STRATEGY=human`` — the container
+        never even builds a solver for it, so every captcha still hands off exactly
+        as before). Mirrors the ``diagnostics()`` / ``list_routines()`` process-lived
+        adapter accessors above: a plain read, no behavior change.
+        """
+        return self._captcha_solver
+
     def _record_diagnostic(self, message: str) -> None:
         """Record one operator-visible diagnostic (bounded, deduped against the last)."""
         if not message:

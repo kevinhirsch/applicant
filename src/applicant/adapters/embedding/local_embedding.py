@@ -55,6 +55,33 @@ def _cosine(a: list[float], b: list[float]) -> float:
 class LocalEmbedding:
     """EmbeddingPort adapter (deterministic hashing-based; no model download)."""
 
+    #: dark-engine audit #79: a real (sentence-transformer-backed) adapter would
+    #: set these to something like ("sentence-transformer", "model-backed") when
+    #: it drops in behind the same ``EmbeddingPort`` — this backend is always the
+    #: basic offline hashing-trick, disclosed honestly rather than left silent.
+    backend = "hashing-trick"
+    quality_tier = "basic"
+
+    def describe(self) -> dict:
+        """Plain-language disclosure of which embedding backend is active (#79).
+
+        Powers dedup, resume-variant scoring, and conversion-signature learning
+        fully offline with no model download — but the lexical-overlap signal it
+        gives is coarse, not true semantic similarity. Read-only; never claims a
+        quality this backend doesn't have.
+        """
+        return {
+            "backend": self.backend,
+            "quality_tier": self.quality_tier,
+            "model_backed": False,
+            "detail": (
+                "Matching runs on a basic offline word-overlap comparison, not a "
+                "trained language model. It works everywhere with no setup, but "
+                "semantic matches (paraphrases, synonyms) are less precise than a "
+                "model-backed embedding would give."
+            ),
+        }
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [_vector(t) for t in texts]
 

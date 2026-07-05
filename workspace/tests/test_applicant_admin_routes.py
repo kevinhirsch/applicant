@@ -108,6 +108,22 @@ class FakeEngine:
             "workspace_bridge", default={"configured": False, "reachable": False}
         )
 
+    async def admin_captcha_status(self):
+        return await self._maybe(
+            "captcha_status", default={"strategy": "human", "active": False}
+        )
+
+    async def admin_capacity(self):
+        return await self._maybe(
+            "capacity",
+            default={"active": [], "waiting": [], "active_count": 0, "waiting_count": 0},
+        )
+
+    async def admin_embedding_backend(self):
+        return await self._maybe(
+            "embedding_backend", default={"backend": "unknown", "quality_tier": "unknown"}
+        )
+
     async def outcome_log(self, aid):
         return await self._maybe("log", aid, default={"application_id": aid})
 
@@ -282,6 +298,125 @@ def test_workspace_bridge_requires_admin(monkeypatch):
     monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
     c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
     assert c.get("/api/applicant/admin/workspace-bridge").status_code == 403
+
+
+# --- captcha handling status (dark-engine audit #67) ------------------------
+
+
+def test_captcha_status_passthrough_with_real_counters(client):
+    FakeEngine.responses["captcha_status"] = {
+        "strategy": "avoid",
+        "service": "capsolver",
+        "key_configured": False,
+        "active": True,
+        "attempts": 3,
+        "solved": 0,
+        "avoided": 3,
+        "handed_off": 0,
+        "status": "live",
+    }
+    r = client.get("/api/applicant/admin/captcha-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["strategy"] == "avoid"
+    assert body["active"] is True
+    assert body["avoided"] == 3
+
+
+def test_captcha_status_default_never_fabricates_a_count(client):
+    FakeEngine.responses["captcha_status"] = {"strategy": "human", "active": False}
+    body = client.get("/api/applicant/admin/captcha-status").json()
+    assert body["strategy"] == "human"
+    assert body["active"] is False
+    assert "attempts" not in body
+
+
+def test_captcha_status_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["captcha_status"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/captcha-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["strategy"] == "human"
+    assert body["active"] is False
+
+
+def test_captcha_status_requires_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/captcha-status").status_code == 403
+
+
+# --- sandbox capacity pacing (dark-engine audit #72) ------------------------
+
+
+def test_capacity_passthrough_reports_active_and_waiting(client):
+    FakeEngine.responses["capacity"] = {
+        "active": ["app-1", "app-2"],
+        "waiting": ["app-3"],
+        "active_count": 2,
+        "waiting_count": 1,
+        "supported": True,
+        "status": "live",
+    }
+    r = client.get("/api/applicant/admin/capacity")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["active_count"] == 2
+    assert body["waiting_count"] == 1
+    assert body["waiting"] == ["app-3"]
+
+
+def test_capacity_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["capacity"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/capacity")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["active_count"] == 0
+    assert body["waiting_count"] == 0
+
+
+def test_capacity_requires_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/capacity").status_code == 403
+
+
+# --- embedding backend disclosure (dark-engine audit #79) -------------------
+
+
+def test_embedding_backend_passthrough(client):
+    FakeEngine.responses["embedding_backend"] = {
+        "backend": "hashing-trick",
+        "quality_tier": "basic",
+        "model_backed": False,
+        "detail": "Matching runs on a basic offline word-overlap comparison.",
+        "status": "live",
+    }
+    r = client.get("/api/applicant/admin/embedding-backend")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is True
+    assert body["backend"] == "hashing-trick"
+    assert body["model_backed"] is False
+
+
+def test_embedding_backend_soft_degrades_when_engine_down(client):
+    FakeEngine.raises["embedding_backend"] = EngineError("down", is_timeout=True)
+    r = client.get("/api/applicant/admin/embedding-backend")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["engine_available"] is False
+    assert body["backend"] == "unknown"
+
+
+def test_embedding_backend_requires_admin(monkeypatch):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    c = TestClient(_make_app(user="bob", configured=True, admins=("alice",)))
+    assert c.get("/api/applicant/admin/embedding-backend").status_code == 403
 
 
 def test_workflow_and_screenshots_and_outcomes(client):
