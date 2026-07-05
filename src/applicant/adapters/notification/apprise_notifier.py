@@ -873,7 +873,16 @@ class AppriseNotifier:
             # #234: isolate per-channel failures so one bad channel (e.g. Discord
             # webhook unreachable, SMTP misconfigured) never crashes the whole scheduler
             # tick or prevents the remaining ladder rungs from firing. A delivery error
-            # is logged and the rung is marked fired so it does not retry endlessly.
+            # is logged and the rung is left UN-fired (#45): each rung's ``due_at`` is
+            # fixed at build time and is independent of the other rungs (this loop does
+            # not gate a later hop on an earlier one having fired), so leaving a failed
+            # rung un-fired simply means the NEXT ``advance()`` tick re-scans it (still
+            # ``due_at <= ts`` and ``not fired``) and retries the same dispatch — it
+            # cannot wedge the ladder or block a sibling rung from firing on schedule.
+            # Marking it fired anyway (the prior behavior) recorded a channel that never
+            # actually delivered as "sent" (``sent_channels``/``ladder_status``), so a
+            # dead Discord webhook or SMTP outage silently dropped an "agent stuck"
+            # alert with no retry and no visible failure.
             try:
                 self._dispatch(rung.channel, delivery.notification)
             except Exception as exc:
@@ -883,6 +892,7 @@ class AppriseNotifier:
                     dedup_key=delivery.notification.dedup_key,
                     error=str(exc),
                 )
+                continue
             rung.fired = True
             delivery.sent_channels.append(rung.channel)
             fired.append(rung.channel)
