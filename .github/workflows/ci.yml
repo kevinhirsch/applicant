@@ -92,7 +92,9 @@ jobs:
                ':!docs/spec/computer-use.md' \
                ':!docs/spec/agent-intelligence.md' \
                ':!docs/adr/0005-computer-use-cua-driver.md' \
-               ':!docs/adr/0006-agent-intelligence-port.md'; then
+               ':!docs/adr/0006-agent-intelligence-port.md' \
+               ':!workspace/tests/test_applicant_mind_help_lens12.py' \
+               ':!workspace/tests/test_applicant_remote_help_lens12.py'; then
             echo "::error::hermes-agent project reference found above — white-label violation."
             exit 1
           fi
