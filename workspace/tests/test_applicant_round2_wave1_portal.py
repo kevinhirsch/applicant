@@ -280,7 +280,7 @@ def test_header_carries_a_neverdoes_toggle_separate_from_the_gated_state():
     assert 'id="applicant-portal-neverdoes-panel"' in block, (
         "the header toggle needs a panel host in the modal body to expand into"
     )
-    assert "What it never does" in block
+    assert "What I never do" in block
     # Visually quiet: a small text button next to the icon-only refresh control,
     # not styled as a primary action.
     m = re.search(r'<button[^>]*id="applicant-portal-neverdoes"[^>]*>', block)
