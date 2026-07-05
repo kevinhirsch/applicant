@@ -813,6 +813,11 @@ class SetupService:
         status_update_schedule: str | None = None,
         essentials_nudge_schedule: str | None = None,
         discovery_proxies: str | None = None,
+        #: Item 80 (dark-engine audit B7): comma-separated custom job-board RSS
+        #: feed URL list, SSRF/format-validated the same way ``discovery_proxies``
+        #: is, and merged ALONGSIDE the hardcoded default feed at the discovery
+        #: factory (never replacing it).
+        discovery_rss_feeds: str | None = None,
         takeover_desktop: str | None = None,
         remote_view_backend: str | None = None,
         resume_render: str | None = None,
@@ -907,6 +912,11 @@ class SetupService:
         ``DISCOVERY_PROXIES``): a comma-separated proxy list the discovery
         crawler routes through instead of direct egress; each entry is
         SSRF-checked the same way Apprise/ntfy URLs are (item 12).
+        ``discovery_rss_feeds`` (item 80, ``DISCOVERY_RSS_FEEDS``): a
+        comma-separated list of custom job-board RSS feed URLs, validated
+        exactly like ``discovery_proxies`` above, and merged ALONGSIDE the
+        engine's hardcoded default feed at the discovery factory (an empty
+        value reproduces today's hardcoded-only behavior byte-identical).
         ``takeover_desktop``/``remote_view_backend`` (item 103,
         ``TAKEOVER_DESKTOP``/``REMOTE_VIEW_BACKEND``): the live-takeover
         desktop environment and remote-view technology. ``resume_render``
@@ -1033,6 +1043,11 @@ class SetupService:
             # SAME way Apprise/ntfy URLs are -- reuses the existing helper
             # rather than re-implementing the check.
             validate_operator_urls(discovery_proxies, field="Discovery proxy")
+        if discovery_rss_feeds is not None:
+            # Item 80 (SSRF/format, B7): each comma-separated custom feed URL is
+            # guarded the SAME way ``discovery_proxies`` is above -- reuses the
+            # identical helper rather than re-implementing the check.
+            validate_operator_urls(discovery_rss_feeds, field="RSS feed")
         if takeover_desktop is not None and takeover_desktop not in _TAKEOVER_DESKTOPS:
             raise ValueError(f"Takeover desktop must be one of {_TAKEOVER_DESKTOPS}.")
         if (
@@ -1139,6 +1154,8 @@ class SetupService:
             rec["essentials_nudge_schedule"] = essentials_nudge_schedule
         if discovery_proxies is not None:
             rec["discovery_proxies"] = discovery_proxies.strip()
+        if discovery_rss_feeds is not None:
+            rec["discovery_rss_feeds"] = discovery_rss_feeds.strip()
         if takeover_desktop is not None:
             rec["takeover_desktop"] = takeover_desktop
         if remote_view_backend is not None:
@@ -1209,6 +1226,9 @@ class SetupService:
             status_update_schedule=rec.get("status_update_schedule"),
             essentials_nudge_schedule=rec.get("essentials_nudge_schedule"),
             discovery_proxies=rec.get("discovery_proxies"),
+            # NEW field (item 80): the stricter bar noted above -- only whether one
+            # is configured, not the raw feed URL list.
+            discovery_rss_feeds_configured=bool(rec.get("discovery_rss_feeds")),
             takeover_desktop=rec.get("takeover_desktop"),
             remote_view_backend=rec.get("remote_view_backend"),
             resume_render=rec.get("resume_render"),

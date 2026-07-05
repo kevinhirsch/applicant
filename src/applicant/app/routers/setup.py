@@ -180,6 +180,9 @@ class AutomationPrefsIn(BaseModel):
     essentials_nudge_schedule: str | None = None
     #: Item 101: comma-separated proxy list the discovery crawler routes through.
     discovery_proxies: str | None = None
+    #: Item 80 (dark-engine audit B7): comma-separated custom job-board RSS feed
+    #: URL list, validated + merged the same way ``discovery_proxies`` is.
+    discovery_rss_feeds: str | None = None
     #: Item 103: live-takeover desktop environment + remote-view technology.
     takeover_desktop: str | None = None
     remote_view_backend: str | None = None
@@ -629,6 +632,9 @@ def get_automation_prefs(
         "discovery_proxies": stored.get(
             "discovery_proxies", settings.discovery_proxies
         ),
+        "discovery_rss_feeds": stored.get(
+            "discovery_rss_feeds", settings.discovery_rss_feeds
+        ),
         "takeover_desktop": stored.get(
             "takeover_desktop", settings.takeover_desktop
         ),
@@ -692,6 +698,7 @@ def set_automation_prefs(body: AutomationPrefsIn, svc=Depends(get_setup_service)
             status_update_schedule=body.status_update_schedule,
             essentials_nudge_schedule=body.essentials_nudge_schedule,
             discovery_proxies=body.discovery_proxies,
+            discovery_rss_feeds=body.discovery_rss_feeds,
             takeover_desktop=body.takeover_desktop,
             remote_view_backend=body.remote_view_backend,
             resume_render=body.resume_render,

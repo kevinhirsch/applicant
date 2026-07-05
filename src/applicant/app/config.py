@@ -361,6 +361,11 @@ class Settings(BaseSettings):
     searxng_url: str = Field(default="", alias="SEARXNG_URL")
     # FR-DISC-6 proxy hook: comma-separated; empty = direct egress (no proxy committed).
     discovery_proxies: str = Field(default="", alias="DISCOVERY_PROXIES")
+    # Dark-engine audit item 80 (B7): comma-separated custom job-board RSS feed
+    # URLs an operator can add without a code change. Merged ALONGSIDE the
+    # hardcoded default feed (factory.py's ``RSS_FEEDS``) -- empty (the
+    # default) keeps today's hardcoded-only behavior byte-identical.
+    discovery_rss_feeds: str = Field(default="", alias="DISCOVERY_RSS_FEEDS")
 
     # Browser egress (FR-STEALTH-4). The automation MUST egress via the user's
     # residential connection. "direct" (default) uses the host's own connection;
