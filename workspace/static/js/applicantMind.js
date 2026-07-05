@@ -298,8 +298,10 @@ function _renderCuration(curation) {
         style="border:1px solid var(--border,#3334);border-radius:8px;padding:8px 10px;margin:6px 0;">
       <div>${summary}</div>${flag}
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button type="button" class="cal-btn applicant-mind-approve" data-id="${esc(p.id)}">Approve</button>
-        <button type="button" class="cal-btn applicant-mind-deny" data-id="${esc(p.id)}">Dismiss</button>
+        <button type="button" class="cal-btn applicant-mind-approve" data-id="${esc(p.id)}"
+            title="Save this — I'll remember it and use it going forward">Approve</button>
+        <button type="button" class="cal-btn applicant-mind-deny" data-id="${esc(p.id)}"
+            title="Throw this away — I won't remember it or change anything because of it">Dismiss</button>
       </div></li>`;
   }).join('') + `</ul>`;
 }
@@ -680,6 +682,11 @@ export async function openApplicantMind(opts) {
       </div>
       <div class="memory-section" style="margin-bottom:18px;">
         <h4 style="margin:0 0 6px;">Saved playbooks</h4>
+        <div style="opacity:0.75;font-size:12px;margin-bottom:6px;">
+          A playbook is a set of steps I write for myself after working through something
+          tricky — I check the relevant one before doing similar work again, so I don't
+          have to relearn the same lesson twice.
+        </div>
         ${_renderSkills(skills)}
       </div>
       <div class="memory-section" style="margin-bottom:18px;">
