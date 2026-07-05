@@ -28,6 +28,13 @@ const API_BASE = window.location.origin;
 const LAST_CAMPAIGN_KEY = 'applicant-digest-last-campaign';
 
 let _featurePromise = null;
+let _featurePromiseAt = 0;
+// Short TTL on the cached feature check (lens-04 #67): memoizing it for the
+// whole page session meant a mid-session config change (e.g. the owner
+// finishing setup, or an admin flipping the section back on) was never
+// picked up until a hard reload. Re-checking every couple of minutes is
+// cheap (one small GET) and keeps the panel honest without polling.
+const _FEATURE_CACHE_TTL_MS = 120000;
 let _busyFeedback = false; // re-entry guard for feedback/survey actions
 
 // --- small DOM helpers -----------------------------------------------------
@@ -108,7 +115,9 @@ const _ICON_STAR =
 // Ask the derived Applicant feature state whether the email/digest surface is
 // live. Cached for the page session; never throws (a down engine -> not active).
 async function _emailSectionActive() {
-  if (!_featurePromise) {
+  const now = Date.now();
+  if (!_featurePromise || (now - _featurePromiseAt) > _FEATURE_CACHE_TTL_MS) {
+    _featurePromiseAt = now;
     _featurePromise = (async () => {
       try {
         const r = await fetch(`${API_BASE}/api/applicant/features`, { credentials: 'same-origin' });
@@ -145,13 +154,17 @@ async function _api(path, { method = 'GET', body = null } = {}) {
 }
 
 // Same shape as _api but against the manual deep-research proxy
-// (/api/applicant/research/*) instead of the email/digest proxy.
-async function _apiResearch(path, { method = 'GET', body = null } = {}) {
+// (/api/applicant/research/*) instead of the email/digest proxy. Accepts an
+// optional AbortSignal so a caller can enforce a client-side timeout/cancel
+// (lens-04 #60) — a research run has no such ceiling server-side by design
+// (see "Exempt internal research from the 45s timeout"), so the client owns it.
+async function _apiResearch(path, { method = 'GET', body = null, signal } = {}) {
   const opts = { method, credentials: 'same-origin', headers: {} };
   if (body != null) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
+  if (signal) opts.signal = signal;
   const r = await fetch(`${API_BASE}/api/applicant/research${path}`, opts);
   let payload = null;
   try { payload = await r.json(); } catch (_) { payload = null; }
@@ -690,6 +703,14 @@ function _fadeOutRow(card) {
 
 // --- actions ---------------------------------------------------------------
 
+// Preserves a decline reason across a FAILED submit (lens-04 #53): before this,
+// the prompt's own input was gone the moment it resolved, win or lose, so a
+// flaky POST forced the user to retype the same reason from scratch on retry.
+// Keyed by row id so a retry (same row, fresh `_onPass` call) can prefill the
+// prompt with whatever they already typed; cleared the moment the decline
+// actually goes through.
+const _lastDeclineReasonByRow = new Map();
+
 async function _onApprove(card, row, btn, onResolved) {
   const id = _rowActionId(row);
   if (!id) { showToast("I can't approve this one yet — it's still being prepared. Try again shortly."); return; }
@@ -710,11 +731,15 @@ async function _onPass(card, row, btn, onResolved) {
   const id = _rowActionId(row);
   if (!id) { showToast("I can't act on this one yet — it's still being prepared."); return; }
   // Feedback is mandatory on the decline path (the engine enforces it); ask for
-  // a short reason up front so the user is never bounced with a 422.
+  // a short reason up front so the user is never bounced with a 422. If a
+  // previous attempt for this SAME row failed after the reason was typed,
+  // prefill it so a retry never forces a retype.
+  const priorReason = _lastDeclineReasonByRow.get(id) || '';
   const reason = await styledPrompt(
     'Why pass on this one? A short reason teaches me what to skip next time.',
     {
       title: 'Pass on this role',
+      defaultValue: priorReason,
       placeholder: 'e.g. too junior, wrong location, not my stack',
       confirmText: 'Pass',
       cancelText: 'Keep this role',
@@ -732,10 +757,12 @@ async function _onPass(card, row, btn, onResolved) {
       method: 'POST',
       body: { feedback_text: reason.trim(), criteria_delta: {} },
     });
+    _lastDeclineReasonByRow.delete(id);  // succeeded — nothing left to preserve
     showToast('Passed — thanks, that helps the next round.');
     _fadeOutRow(card);
     if (onResolved) { try { onResolved(card, row); } catch (_) {} }
   } catch (e) {
+    _lastDeclineReasonByRow.set(id, reason.trim()); // preserve it for the retry
     card.querySelectorAll('button').forEach(b => { b.disabled = false; });
     showToast(e.message || "I couldn't save that just now — try again in a moment.");
   }
@@ -856,10 +883,11 @@ function _researchQuery(row) {
 // 38): a `null` return means nothing is cached yet for this query — the
 // caller falls back to a fresh POST .../run. Any other failure (engine down,
 // setup gate) is rethrown so it surfaces the same way a run failure would.
-async function _apiResearchCached(campaignId, query) {
+async function _apiResearchCached(campaignId, query, signal) {
   try {
     return await _apiResearch(
       `/${encodeURIComponent(campaignId)}/cached?query=${encodeURIComponent(query)}`,
+      { signal },
     );
   } catch (e) {
     if (e.status === 404) return null;
@@ -867,18 +895,44 @@ async function _apiResearchCached(campaignId, query) {
   }
 }
 
+// Client-side ceiling + cancel affordance for a manual research run (lens-04
+// #60): without either of these, a slow/hung engine call left the button
+// stuck on "Researching…" forever with no way out. The engine's own request
+// layer deliberately exempts research from its shared 45s timeout (a real
+// brief legitimately takes longer), so this client-side ceiling is generous
+// but finite, and re-clicking the button while a run is in flight cancels it.
+const RESEARCH_TIMEOUT_MS = 90000;
+const _researchRuns = new WeakMap(); // btn -> { controller, cancelled }
+
+function _cancelResearch(btn) {
+  const run = _researchRuns.get(btn);
+  if (!run) return;
+  run.cancelled = true;
+  run.controller.abort();
+}
+
 async function _onResearch(campaignId, row, btn) {
+  // A run already in flight for this SAME button: the button doubles as its
+  // own cancel control while busy (lens-04 #60), so this click cancels the
+  // in-flight run instead of starting an overlapping second one.
+  if (btn.dataset.researching === '1') { _cancelResearch(btn); return; }
   if (!campaignId) { showToast('Pick a job search first.'); return; }
   const company = row.company || '';
   const role = row.title || row.role || '';
   const query = _researchQuery(row);
   const original = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = `${_ICON_SEARCH}Researching…`;
+  const originalTitle = btn.title;
+  const controller = new AbortController();
+  const run = { controller, cancelled: false };
+  _researchRuns.set(btn, run);
+  btn.dataset.researching = '1';
+  btn.innerHTML = `${_ICON_SEARCH}Researching… (click to cancel)`;
+  btn.title = 'Click to cancel this research run';
+  const timeoutId = setTimeout(() => { controller.abort(); }, RESEARCH_TIMEOUT_MS);
   try {
     // A prior run may already have this exact brief cached — reuse it for
     // free instead of burning another research run on the same question.
-    let report = await _apiResearchCached(campaignId, query);
+    let report = await _apiResearchCached(campaignId, query, controller.signal);
     if (!report) {
       report = await _apiResearch(`/${encodeURIComponent(campaignId)}/run`, {
         method: 'POST',
@@ -887,18 +941,29 @@ async function _onResearch(campaignId, row, btn) {
           company: company || null,
           role: role || null,
         },
+        signal: controller.signal,
       });
     }
     _showReport(report, { company, role });
   } catch (e) {
-    showToast(
-      e.status === 503 || e.status === 504
-        ? "I'm having trouble connecting right now. Try again shortly."
-        : (e.message || "I couldn't run that research just now — try again in a moment."),
-    );
+    if (controller.signal.aborted) {
+      showToast(run.cancelled
+        ? 'Research cancelled.'
+        : "That research is taking too long, so I stopped it — try again shortly.");
+    } else {
+      showToast(
+        e.status === 503 || e.status === 504
+          ? "I'm having trouble connecting right now. Try again shortly."
+          : (e.message || "I couldn't run that research just now — try again in a moment."),
+      );
+    }
   } finally {
+    clearTimeout(timeoutId);
+    _researchRuns.delete(btn);
+    delete btn.dataset.researching;
     btn.disabled = false;
     btn.innerHTML = original;
+    btn.title = originalTitle;
   }
 }
 
@@ -1411,11 +1476,26 @@ function _signalPresence() {
     });
     const leave = () => _postPresence(false);
     const enter = () => { _markPresenceActivity(); _postPresence(true); };
+    // A bare `blur` fires even when focus only moved WITHIN this same tab —
+    // e.g. into a same-page iframe (the email preview modal renders one), or
+    // transiently while a sibling tab/window briefly has OS focus — none of
+    // which means the user actually left (lens-04 #64). Defer one tick and
+    // re-check: `document.hasFocus()` reports true whenever focus is still
+    // anywhere in this document (including its iframes), and the
+    // visibilitychange handler above already owns the genuinely-hidden case,
+    // so only report absent when neither of those is true.
+    const onBlur = () => {
+      setTimeout(() => {
+        if (document.visibilityState === 'hidden') return; // handled by visibilitychange
+        if (document.hasFocus && document.hasFocus()) return; // focus just moved within this document
+        leave();
+      }, 0);
+    };
     try {
       document.addEventListener('visibilitychange', () => {
         (document.visibilityState === 'hidden') ? leave() : enter();
       });
-      window.addEventListener('blur', leave);
+      window.addEventListener('blur', onBlur);
       window.addEventListener('focus', enter);
       window.addEventListener('pagehide', leave);
     } catch (_) {}
