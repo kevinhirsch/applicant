@@ -666,7 +666,7 @@ async function _renderInsights() {
     ? `<div class="admin-card">
         <div style="font-weight:600;">Exploration budget</div>
         <div class="admin-toggle-sub" style="opacity:0.8;margin-top:4px;">
-          ${esc(Number(data.exploration_budget))} — share of effort spent trying new or under-used sources instead of the proven ones.
+          ${esc(Math.round(Number(data.exploration_budget) * 100))}% — share of effort spent trying new or under-used sources instead of the proven ones.
         </div>
         <span class="admin-toggle-sub" style="opacity:0.6;display:block;margin-top:6px;">Change this under Config → Sources.</span>
       </div>`
@@ -725,30 +725,66 @@ function _logLevelColor(level) {
 // #95: logs used to render as one raw `<pre>` blob. Structured rows (time ·
 // level chip · plain message) instead — the raw text is still one click away
 // via Download, for anyone who wants to grep/attach the whole thing.
+//
+// lens 12 #35: this used to hardcode `?limit=100` against the engine's
+// `deque(maxlen=500)` ring (src/applicant/observability/logging.py) with no
+// way to see more or narrow down — precisely the crash a self-hoster most
+// wants to diagnose could scroll off both the view and the download. Fetch
+// the fuller ring (up to the 500 the engine keeps; `admin.py`'s `/logs` route
+// clamps `limit` to 1000 anyway) and add a lightweight client-side level +
+// text filter over the fetched entries — download still exports everything
+// fetched, not just what's currently filtered into view.
 async function _renderLogs() {
-  const data = await _fetchJSON(`${ADMIN}/logs?limit=100`);
+  const data = await _fetchJSON(`${ADMIN}/logs?limit=500`);
   if (data.engine_available === false) { _renderOffline(); return; }
   const entries = data.entries || [];
   if (!entries.length) { _body().innerHTML = _empty('No recent activity logs.'); return; }
   const raw = entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n');
-  const rows = entries.map((e) => {
-    const { time, level, message } = _parseLogEntry(e);
-    const when = time ? (_relWhen(time) || time) : '';
-    const color = _logLevelColor(level);
-    const chip = level
-      ? `<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;color:${color};background:color-mix(in srgb, ${color} 15%, transparent);">${esc(level)}</span>`
-      : '';
-    return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
-      <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;min-width:60px;">${esc(when)}</span>
-      ${chip}
-      <span style="flex:1;min-width:0;word-break:break-word;">${esc(message)}</span>
-    </div>`;
-  }).join('');
+  const parsed = entries.map(_parseLogEntry);
+  const levels = Array.from(new Set(parsed.map((p) => p.level).filter(Boolean))).sort();
+  const levelOptions = ['<option value="">All levels</option>']
+    .concat(levels.map((l) => `<option value="${esc(l)}">${esc(l)}</option>`))
+    .join('');
   _body().innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-      <button class="cal-btn" id="applicant-logs-download" title="Download the raw logs as a text file">Download logs</button>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
+      <select id="applicant-logs-level" class="settings-input" style="width:auto;" title="Show only this log level" aria-label="Filter logs by level">${levelOptions}</select>
+      <input type="text" id="applicant-logs-q" class="settings-input" placeholder="Filter by text…" style="flex:1;min-width:140px;" title="Only show log lines containing this text" aria-label="Filter logs by text" />
+      <span id="applicant-logs-count" class="admin-toggle-sub" style="opacity:0.6;white-space:nowrap;"></span>
+      <button class="cal-btn" id="applicant-logs-download" title="Download all fetched logs as a text file">Download logs</button>
     </div>
-    <div class="applicant-debug-list">${rows}</div>`;
+    <div class="applicant-debug-list" id="applicant-logs-rows"></div>`;
+  const levelSel = _body().querySelector('#applicant-logs-level');
+  const qInput = _body().querySelector('#applicant-logs-q');
+  const rowsEl = _body().querySelector('#applicant-logs-rows');
+  const countEl = _body().querySelector('#applicant-logs-count');
+  const renderRows = () => {
+    const level = levelSel ? levelSel.value : '';
+    const q = qInput ? qInput.value.trim().toLowerCase() : '';
+    const filtered = parsed.filter((p) => {
+      if (level && p.level !== level) return false;
+      if (q && !p.message.toLowerCase().includes(q) && !p.time.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    if (countEl) countEl.textContent = `${filtered.length} of ${parsed.length}`;
+    if (!rowsEl) return;
+    rowsEl.innerHTML = filtered.length
+      ? filtered.map((p) => {
+        const when = p.time ? (_relWhen(p.time) || p.time) : '';
+        const color = _logLevelColor(p.level);
+        const chip = p.level
+          ? `<span style="flex-shrink:0;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;color:${color};background:color-mix(in srgb, ${color} 15%, transparent);">${esc(p.level)}</span>`
+          : '';
+        return `<div class="applicant-debug-list-row" style="align-items:flex-start;">
+          <span class="admin-toggle-sub" style="opacity:0.55;flex-shrink:0;min-width:60px;">${esc(when)}</span>
+          ${chip}
+          <span style="flex:1;min-width:0;word-break:break-word;">${esc(p.message)}</span>
+        </div>`;
+      }).join('')
+      : _empty('No log entries match this filter.');
+  };
+  renderRows();
+  if (levelSel) levelSel.addEventListener('change', renderRows);
+  if (qInput) qInput.addEventListener('input', renderRows);
   const downloadBtn = _body().querySelector('#applicant-logs-download');
   if (downloadBtn) downloadBtn.addEventListener('click', () => _downloadText(raw, `applicant-logs-${_campaignId || 'engine'}.txt`));
 }
@@ -1100,12 +1136,19 @@ async function _renderSources(host) {
   // Exploration budget (FR-LEARN-6): the explore/exploit knob. Shown above the
   // source list. Editable when the engine reports it; read-only note otherwise.
   const hasBudget = data.exploration_budget != null && !isNaN(Number(data.exploration_budget));
+  // Percent-based (0-100), matching Campaign settings' "Trying new sources" field
+  // (applicantCampaignSettings.js) so the same knob teaches one mental model
+  // everywhere it appears (lens 12 #10). The engine stores/expects a 0.0-1.0
+  // fraction (criteria.py `set_exploration_budget`), so the UI boundary here
+  // converts on the way in and back out.
+  const budgetPct = hasBudget ? Math.round(Number(data.exploration_budget) * 100) : 0;
   const budgetCard = hasBudget
     ? `<div class="admin-card" style="margin-bottom:10px;">
         <div style="font-weight:600;">Exploration budget</div>
-        <div class="admin-toggle-sub" style="opacity:0.7;margin:2px 0 8px;">How much effort to spend trying new or under-used sources instead of the proven ones. 0 sticks to what works; 1 explores the most.</div>
+        <div class="admin-toggle-sub" style="opacity:0.7;margin:2px 0 8px;">How much effort to spend trying new or under-used sources instead of the proven ones. 0% sticks to what works; 100% explores the most.</div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="number" id="applicant-explore-budget" class="settings-input" min="0" max="1" step="0.05" value="${esc(Number(data.exploration_budget))}" style="width:90px;" title="A number between 0 and 1." aria-label="Exploration budget, a number between 0 and 1" />
+          <input type="number" id="applicant-explore-budget" class="settings-input" min="0" max="100" step="5" value="${esc(String(budgetPct))}" style="width:90px;" title="A percentage between 0 and 100." aria-label="Exploration budget, a percentage between 0 and 100" />
+          <span class="admin-toggle-sub" style="opacity:0.7;">%</span>
           <button class="cal-btn" id="applicant-explore-save" title="Save the exploration budget">Save</button>
           <span id="applicant-explore-msg" class="admin-toggle-sub" style="opacity:0.7;"></span>
         </div>
@@ -1167,11 +1210,15 @@ function _wireExploreBudget(host) {
   const msg = host.querySelector('#applicant-explore-msg');
   if (!input || !btn) return; // read-only / not exposed by the engine
   btn.addEventListener('click', async () => {
-    const val = parseFloat(input.value);
-    if (isNaN(val) || val < 0 || val > 1) {
-      if (msg) msg.textContent = 'Enter a number between 0 and 1.';
+    const pct = parseFloat(input.value);
+    if (isNaN(pct) || pct < 0 || pct > 100) {
+      if (msg) msg.textContent = 'Enter a percentage between 0 and 100.';
       return;
     }
+    // UI boundary conversion: Campaign settings and this control both speak
+    // percent (0-100); the engine's exploration-budget endpoint stores/expects
+    // a 0.0-1.0 fraction (criteria.py `set_exploration_budget`).
+    const val = Math.max(0, Math.min(pct, 100)) / 100;
     btn.disabled = true;
     if (msg) msg.textContent = 'Saving…';
     try {
