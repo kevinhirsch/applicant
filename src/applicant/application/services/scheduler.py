@@ -58,6 +58,7 @@ class Scheduler:
         weekly_recap_schedule: str = "off",
         retention_service=None,
         retention_schedule: str = "off",
+        post_submission_service=None,
         metrics: Metrics | None = None,
         failure_alert_threshold: int = DEFAULT_FAILURE_ALERT_THRESHOLD,
     ) -> None:
@@ -135,6 +136,24 @@ class Scheduler:
         # (UTC date) -> True. Once-per-day guard so re-running a tick the same day never
         # re-runs the sweep (follows the same pattern as curation/status-update).
         self._retention_days: dict[date, bool] = {}
+        # Dark-engine audit B2 items 8/9/60: the post-submission lifecycle sweep --
+        # ``PostSubmissionService.check_ghosting`` (flags silent-past-SLA applications)
+        # + its new follow-up-drafting pass (drafts a review-only check-in message,
+        # NEVER auto-sent) -- both previously had zero scheduler callers. Runs
+        # unconditionally (like the daily digest) rather than behind an off/on
+        # schedule string: both passes are already individually safe (no auto-send,
+        # no auto-submit, only a §7 state transition + a Portal pending action) and
+        # gating on the SAME automated-work gate below is the guard that matters.
+        # ``None`` (no service wired -- legacy/unit tests) is a fast no-op.
+        self._post_submission = post_submission_service
+        # (campaign_id, UTC date) -> True. Once-per-day guard so re-ticking the same
+        # day never re-runs the sweep (mirrors the status-update/essentials-nudge
+        # per-day idempotency). Defense in depth ONLY: the actual pending-action
+        # side effects additionally dedupe on the application id via a persisted
+        # ``dedup_key`` (``PostSubmissionService.run_post_submission_sweep``), so a
+        # Scheduler restart that forgets this in-memory guard still can never
+        # duplicate an open ghosting-flag / follow-up-draft for the same application.
+        self._post_submission_days: dict[tuple[str, date], bool] = {}
         # The cadence the live loop ticks at (``app/lifespan.py``), surfaced so the
         # status endpoint can report a ``next_tick`` estimate (FR-AGENT-7/FR-OBS-2).
         # None when unknown (in-memory / unit-driven schedulers).
@@ -213,6 +232,12 @@ class Scheduler:
         curation = (
             services.get("curation_service") if services else None
         ) or self._curation
+        # Dark-engine audit B2 items 8/9/60: prefer the per-tick, storage-isolated
+        # PostSubmissionService (shares this tick's Session, CONC-2) over the shared
+        # singleton, exactly like curation above.
+        post_submission = (
+            services.get("post_submission_service") if services else None
+        ) or self._post_submission
 
         ticked: list[str] = []
         # FR-OBS-2 / NFR-OPS: track this tick's health so the metrics surface records
@@ -269,6 +294,11 @@ class Scheduler:
             # (b5) #363: run the PII retention sweep once per UTC day, gated +
             #     idempotent. Prunes stored PII/EEO older than the configured window.
             retention_pruned = self._run_pii_retention(now)
+            # (b6) dark-engine audit B2 items 8/9/60: the post-submission lifecycle
+            #      sweep (ghosting detection + follow-up drafting) once per
+            #      (campaign, UTC day), gated + idempotent. Uses the SAME campaigns
+            #      the loop ticked above.
+            post_submission_swept = self._run_post_submission_sweep(post_submission, storage, now)
         except Exception:
             # The tick body itself blew up (services factory / campaign query / a nudge
             # ran unguarded) — count it as a failed tick for stall detection, then
@@ -308,6 +338,8 @@ class Scheduler:
             status_updates=len(status_pushed),
             essentials_nudges=len(essentials_nudged),
             weekly_recaps=len(weekly_recapped),
+            ghosted=len(post_submission_swept.get("ghosted", [])),
+            followups_drafted=len(post_submission_swept.get("followups_drafted", [])),
         )
         return {
             "ticked": ticked,
@@ -330,6 +362,11 @@ class Scheduler:
             "weekly_recaps": weekly_recapped,
             # #363: PII retention sweep — pruned count (0 when disabled/gated/already-run).
             "pii_retention": retention_pruned,
+            # Dark-engine audit B2 items 8/9/60: application ids newly flagged
+            # likely-ghosted / newly given a drafted (never auto-sent) follow-up
+            # this tick (empty when no service wired / gated / already-run today /
+            # nothing due).
+            "post_submission_sweep": post_submission_swept,
             # FR-OBS-2 / NFR-OPS: this tick's health (False when every attempted campaign
             # failed). The metrics surface tracks the cross-tick consecutive-failure run.
             "tick_ok": tick_ok,
@@ -751,6 +788,56 @@ class Scheduler:
         finally:
             self._retention_days[today] = True
         return pruned
+
+    # --- post-submission lifecycle sweep (dark-engine audit B2 items 8/9/60) ---
+    def _run_post_submission_sweep(self, post_submission, storage, now: datetime) -> dict:
+        """Run the ghosting + follow-up-drafting sweep at most once per (campaign, UTC day).
+
+        Fast no-op when (a) no ``post_submission_service`` is wired, or (b) the
+        automated-work gate is closed (mirrors the status-update/weekly-recap
+        gating -- proactively flagging/drafting outreach on the owner's behalf is
+        gated behind onboarding/LLM/channels being satisfied, exactly like every
+        other proactive push). For each active campaign that hasn't been swept
+        today, delegates to ``PostSubmissionService.run_post_submission_sweep``,
+        which does the actual ``check_ghosting`` + follow-up-drafting work and
+        materializes both as pending actions (Portal-visible, never a new UI
+        surface). A single campaign's failure is logged and skipped -- never
+        allowed to abort the tick or the other campaigns (best-effort, mirrors
+        every other per-campaign guard in this method's siblings above).
+        """
+        if post_submission is None:
+            return {"ghosted": [], "followups_drafted": []}
+        if not self._automated_work_allowed():
+            return {"ghosted": [], "followups_drafted": []}
+        today = now.date()
+        self._prune_post_submission_days(today)
+        ghosted: list[str] = []
+        drafted: list[str] = []
+        for campaign in self._active_campaigns(storage):
+            key = (str(campaign.id), today)
+            if self._post_submission_days.get(key):
+                continue
+            # Mark BEFORE running so a crash mid-sweep doesn't loop it the same day;
+            # the persisted dedup_key on each pending action is the second line of
+            # defense (defense in depth, mirrors every other daily guard above).
+            self._post_submission_days[key] = True
+            try:
+                result = post_submission.run_post_submission_sweep(campaign.id, now=now)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning(
+                    "post_submission_sweep_failed", campaign_id=str(campaign.id), error=str(exc)
+                )
+                continue
+            if isinstance(result, dict):
+                ghosted.extend(result.get("ghosted", []) or [])
+                drafted.extend(result.get("followups_drafted", []) or [])
+        return {"ghosted": ghosted, "followups_drafted": drafted}
+
+    def _prune_post_submission_days(self, today: date) -> None:
+        """Keep the once-per-day post-submission-sweep guard bounded over 24/7 operation."""
+        self._post_submission_days = {
+            k: v for k, v in self._post_submission_days.items() if k[1] == today
+        }
 
     def _active_campaigns(self, storage=None):
         store = storage or self._storage

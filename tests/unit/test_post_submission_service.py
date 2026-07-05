@@ -20,12 +20,17 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from applicant.adapters.storage.in_memory import InMemoryStorage
+from applicant.application.services.followup_service import FollowUpService
+from applicant.application.services.pending_actions_service import PendingActionsService
 from applicant.application.services.post_submission_service import (
     DEFAULT_SLA_DAYS,
+    KIND_FOLLOWUP_DRAFT,
+    KIND_GHOSTING_FLAG,
     PostSubmissionService,
 )
 from applicant.core.entities.application import Application
 from applicant.core.entities.follow_up import FollowUpTemplate
+from applicant.core.entities.job_posting import JobPosting
 from applicant.core.entities.outcome_event import OutcomeEvent
 from applicant.core.entities.submission_snapshot import SubmissionSnapshot
 from applicant.core.ids import (
@@ -378,3 +383,220 @@ class TestRecordManualOutcome:
 
         assert event.type == "rejected"
         assert storage.applications.get(app.id).status == ApplicationState.ARCHIVED
+
+
+# --- dark-engine audit B2 items 8/9/60: the scheduler-driven post-submission
+# sweep (ghosting-detection + follow-up-drafting) -----------------------------
+#
+# Neither ``check_ghosting`` nor ``FollowUpService.draft_followup``/
+# ``followup_is_due`` had a real caller before this: the DB tables + service
+# methods existed, but nothing ran them on a schedule and nothing surfaced a
+# result anywhere reachable. ``run_post_submission_sweep`` is the new single
+# entry point the scheduler drives once per (campaign, UTC day); these tests
+# pin down that it (a) actually flags/drafts, (b) surfaces BOTH as pending
+# actions through the existing Portal substrate (zero new UI), (c) is
+# idempotent (dedupes on the application id, not just the UTC day -- re-running
+# the sweep never piles up a second open action for the same application), and
+# (d) never auto-sends the drafted follow-up or auto-schedules it onto the
+# separate send-queue (``FollowUp``/``schedule_follow_up``, item 7 -- explicitly
+# out of scope for this wiring).
+
+
+def _posting(cid, *, company="Acme Corp", title="Senior Engineer"):
+    posting = JobPosting(
+        id=JobPostingId(new_id()),
+        campaign_id=cid,
+        title=title,
+        company=company,
+        source_url="https://acme.example/jobs/1",
+    )
+    return posting
+
+
+@pytest.mark.unit
+class TestRunPostSubmissionSweep:
+    def test_ghosting_flag_materialized_as_pending_action(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting = _posting(cid)
+        storage.postings.add(posting)
+        app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=cid,
+            posting_id=posting.id,
+            status=ApplicationState.AWAITING_RESPONSE,
+        )
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=30)  # past the 21-day default SLA
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        assert result["ghosted"] == [str(app.id)]
+        assert storage.applications.get(app.id).status == ApplicationState.GHOSTED
+        actions = [a for a in storage.pending_actions.list_open(cid) if a.kind == KIND_GHOSTING_FLAG]
+        assert len(actions) == 1
+        assert actions[0].application_id == app.id
+        assert "Acme Corp" in actions[0].title
+
+    def test_followup_drafted_when_due_and_never_auto_sent(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        posting = _posting(cid, company="Widgets Inc", title="Data Analyst")
+        storage.postings.add(posting)
+        app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=cid,
+            posting_id=posting.id,
+            status=ApplicationState.AWAITING_RESPONSE,
+        )
+        storage.applications.add(app)
+        # 15 days: past the 10-day follow-up-due window, but well within the
+        # 21-day ghosting SLA -- this app must be DRAFTED, not ghosted.
+        _seed_submitted(storage, app, days_ago=15)
+        pending = PendingActionsService(storage)
+        notifier = _DecisionSpy()
+        service = PostSubmissionService(storage, notifier, pending_actions=pending)
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        assert result["ghosted"] == []
+        assert result["followups_drafted"] == [str(app.id)]
+        assert storage.applications.get(app.id).status == ApplicationState.AWAITING_RESPONSE
+
+        drafts = [a for a in storage.pending_actions.list_open(cid) if a.kind == KIND_FOLLOWUP_DRAFT]
+        assert len(drafts) == 1
+        draft = drafts[0]
+        assert draft.application_id == app.id
+        assert "Widgets Inc" in draft.title
+        body = draft.payload.get("body", "")
+        assert "Data Analyst" in body
+        assert "Widgets Inc" in body
+
+        # Never auto-sent: no notification fired, and nothing was queued onto the
+        # SEPARATE scheduled send-queue (FollowUp/schedule_follow_up, item 7 --
+        # out of scope here).
+        assert notifier.calls == []
+        assert storage.follow_ups.list_for_application(app.id) == []
+
+    def test_not_yet_due_is_a_noop(self):
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=2)  # well under the 10-day due window
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        assert result == {"ghosted": [], "followups_drafted": []}
+        assert storage.pending_actions.list_open(cid) == []
+
+    def test_sweep_is_idempotent_running_twice_creates_no_duplicate_actions(self):
+        """Re-running the sweep (same day or not) must never open a SECOND
+        ghosting-flag / follow-up-draft pending action for the same application --
+        the dedup key is the application id, not the UTC day (unlike the
+        Scheduler's own once-per-day guard, which is defense in depth only)."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        ghost_posting = _posting(cid, company="GhostCo")
+        storage.postings.add(ghost_posting)
+        ghost_app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=cid,
+            posting_id=ghost_posting.id,
+            status=ApplicationState.AWAITING_RESPONSE,
+        )
+        storage.applications.add(ghost_app)
+        _seed_submitted(storage, ghost_app, days_ago=30)
+
+        draft_posting = _posting(cid, company="DraftCo")
+        storage.postings.add(draft_posting)
+        draft_app = Application(
+            id=ApplicationId(new_id()),
+            campaign_id=cid,
+            posting_id=draft_posting.id,
+            status=ApplicationState.AWAITING_RESPONSE,
+        )
+        storage.applications.add(draft_app)
+        _seed_submitted(storage, draft_app, days_ago=15)
+
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(storage, pending_actions=pending)
+        now = datetime.now(UTC)
+
+        first = service.run_post_submission_sweep(cid, now=now)
+        second = service.run_post_submission_sweep(cid, now=now + timedelta(minutes=1))
+
+        # The ghosted app already transitioned away from AWAITING_RESPONSE/
+        # POST_SUBMISSION on the first pass, so check_ghosting naturally excludes
+        # it the second time; the draft app is still AWAITING_RESPONSE + still due,
+        # so the SECOND pass re-considers it -- but ``materialize``'s dedup_key
+        # must still yield exactly ONE open pending action per kind.
+        assert first["ghosted"] == [str(ghost_app.id)]
+        assert second["ghosted"] == []
+        assert second["followups_drafted"] == [str(draft_app.id)]
+
+        ghost_actions = [a for a in storage.pending_actions.list_open(cid) if a.kind == KIND_GHOSTING_FLAG]
+        draft_actions = [a for a in storage.pending_actions.list_open(cid) if a.kind == KIND_FOLLOWUP_DRAFT]
+        assert len(ghost_actions) == 1
+        assert len(draft_actions) == 1
+
+    def test_no_pending_actions_collaborator_degrades_silently(self):
+        """Every EXISTING caller of ``check_ghosting``/``draft_followup`` (before
+        this sweep) constructs ``PostSubmissionService`` with no ``pending_actions``
+        -- the sweep must not crash when it's absent, it just can't surface
+        anything (nothing to materialize through)."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=30)
+        service = PostSubmissionService(storage)  # no pending_actions
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        # check_ghosting itself is unaffected -- the app still transitions.
+        assert result["ghosted"] == [str(app.id)]
+        assert storage.applications.get(app.id).status == ApplicationState.GHOSTED
+
+    def test_ghosting_failure_does_not_block_followup_drafting(self):
+        """Best-effort: a broken ``check_ghosting`` (defensive guard inside the
+        sweep) must not prevent the follow-up-drafting pass from still running for
+        the SAME campaign."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=15)
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(storage, pending_actions=pending)
+
+        def _boom(*a, **k):
+            raise RuntimeError("storage exploded")
+
+        service.check_ghosting = _boom  # simulate a broken ghosting pass
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        assert result["ghosted"] == []
+        assert result["followups_drafted"] == [str(app.id)]
+
+    def test_followup_service_due_window_is_configurable(self):
+        """A custom ``FollowUpService(due_after_days=...)`` collaborator changes
+        the sweep's due window (no hardcoded threshold)."""
+        cid = CampaignId(new_id())
+        storage = InMemoryStorage()
+        app = _app(cid, status=ApplicationState.AWAITING_RESPONSE)
+        storage.applications.add(app)
+        _seed_submitted(storage, app, days_ago=4)  # under the default 10-day window
+        pending = PendingActionsService(storage)
+        service = PostSubmissionService(
+            storage, pending_actions=pending, followup=FollowUpService(due_after_days=3)
+        )
+
+        result = service.run_post_submission_sweep(cid, now=datetime.now(UTC))
+
+        assert result["followups_drafted"] == [str(app.id)]

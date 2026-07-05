@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from applicant.application.services.followup_service import FollowUpService
 from applicant.core.entities.follow_up import FollowUp, FollowUpTemplate
 from applicant.core.entities.ghosting_signal import GhostingSignal
 from applicant.core.entities.outcome_event import OutcomeEvent, OutcomeSource, is_recognized_outcome
@@ -18,6 +19,17 @@ from applicant.core.state_machine import ApplicationState
 from applicant.observability.logging import get_logger
 
 log = get_logger(__name__)
+#: Pending-action ``kind`` values for the two new post-submission-lifecycle
+#: surfaces (dark-engine audit B2 items 8/9/60): a "likely ghosted" flag and a
+#: drafted, NEVER-auto-sent follow-up message. Both are materialized through the
+#: SAME pending-actions substrate the Portal already renders generically
+#: (CLAUDE.md principle #3 -- reuse the Portal, no new UI) and both dedupe on
+#: the application id (see ``run_post_submission_sweep`` below), so a re-run --
+#: same day or a later one -- never piles up a second open flag/draft for the
+#: same application; only the owner resolving the existing one lets a fresh one
+#: appear later.
+KIND_GHOSTING_FLAG = "ghosting_flag"
+KIND_FOLLOWUP_DRAFT = "followup_draft"
 #: Days of total silence after which a submitted application is considered likely
 #: ghosted (single source of truth, shared with SilenceService — #192/#190). 14 days
 #: is aggressive for large-company pipelines; 30 is defensible but slow to flag a
@@ -62,7 +74,16 @@ _MANUAL_OUTCOME_STATUS: dict[str, ApplicationState] = {
 
 
 class PostSubmissionService:
-    def __init__(self, storage, notification_service=None, *, learning=None, workspace=None):
+    def __init__(
+        self,
+        storage,
+        notification_service=None,
+        *,
+        learning=None,
+        workspace=None,
+        pending_actions=None,
+        followup=None,
+    ):
         self._storage = storage
         self._notification = notification_service
         # Optional (design-audit Top-25 #5 nice-to-have): when supplied, a
@@ -79,6 +100,21 @@ class PostSubmissionService:
         # ``calendar_interviews``). ``None`` (the default, and every existing
         # caller before this) fully degrades -- byte-identical to before.
         self._workspace = workspace
+        # Optional PendingActionsService (dark-engine audit B2 items 8/9/60):
+        # when supplied, the scheduler-driven sweep (``run_post_submission_sweep``
+        # below) materializes a ghosting flag / drafted follow-up onto the SAME
+        # pending-actions substrate the Portal already renders generically --
+        # zero new UI (CLAUDE.md principle #3). ``None`` (the default, and every
+        # existing caller of ``check_ghosting``/``schedule_follow_up`` before
+        # this) fully degrades: those methods are completely unchanged, only the
+        # NEW sweep entry point needs this collaborator.
+        self._pending_actions = pending_actions
+        # Optional FollowUpService (#193): drafts the plain-language, NEVER-auto-
+        # sent check-in message and decides whether enough silence has passed to
+        # warrant one. Defaults to a fresh instance (stateless aside from the
+        # configurable ``due_after_days`` threshold) so callers that don't need to
+        # override the SLA don't have to construct one themselves.
+        self._followup = followup or FollowUpService()
 
     def enter_post_submission(self, application, *, snapshot=None):
         """Transition the application to POST_SUBMISSION.
@@ -411,6 +447,157 @@ class PostSubmissionService:
                     submitted_at = submitted_at.replace(tzinfo=UTC)
                 return now - submitted_at
         return None
+
+    # --- scheduler-driven sweep: ghosting + follow-up drafting (B2 items 8/9/60) --
+
+    def run_post_submission_sweep(self, campaign_id, *, now=None, sla_days=DEFAULT_SLA_DAYS):
+        """Ghosting-detection + follow-up-drafting sweep for one campaign.
+
+        Driven by ``Scheduler._run_post_submission_sweep`` once per (campaign, UTC
+        day) -- see that method for the cadence/idempotency guard. Two independent
+        passes, each best-effort so a failure in one never blocks the other:
+
+        1. ``check_ghosting`` (pre-existing, previously had zero callers) flags any
+           AWAITING_RESPONSE/POST_SUBMISSION application silent past ``sla_days``.
+           Each newly-flagged application ALSO materializes a ``ghosting_flag``
+           pending action (when ``pending_actions`` is wired) so it surfaces on
+           the Portal instead of only living in the ``ghosting_signals`` table.
+        2. Every application still AWAITING_RESPONSE (i.e. NOT just flipped to
+           GHOSTED by pass 1 -- ``check_ghosting`` already excludes those) whose
+           silence has crossed ``FollowUpService.due_after_days`` gets a follow-up
+           DRAFTED -- never sent, never scheduled -- and materialized as a
+           ``followup_draft`` pending action for the owner to review/send
+           (review-before-send, mirrors the engine's review-before-submit
+           posture: a follow-up email is user-facing outbound content, so the
+           engine never sends it on its own).
+
+        Both materializations dedupe on the application id (not the UTC day, see
+        ``KIND_GHOSTING_FLAG``/``KIND_FOLLOWUP_DRAFT``), so re-running this sweep
+        -- same day or a later one -- never creates a second open flag/draft for
+        the same application; only the owner resolving the existing one lets a
+        fresh one appear later. Returns a small summary dict for scheduler logging
+        (``{"ghosted": [...app ids], "followups_drafted": [...app ids]}``).
+        """
+        now = now or datetime.now(UTC)
+        try:
+            ghost_signals = self.check_ghosting(campaign_id, sla_days=sla_days, now=now)
+        except Exception:
+            log.warning(
+                "post_submission_ghosting_check_failed",
+                campaign_id=str(campaign_id),
+                exc_info=True,
+            )
+            ghost_signals = []
+
+        ghosted_ids: list = []
+        for signal in ghost_signals:
+            ghosted_ids.append(str(signal.application_id))
+            self._flag_ghosting_pending_action(signal)
+
+        drafted_ids: list = []
+        try:
+            due_apps = list(
+                self._storage.applications.list_by_status(
+                    campaign_id, (ApplicationState.AWAITING_RESPONSE,)
+                )
+            )
+        except Exception:
+            log.warning(
+                "post_submission_followup_scan_failed",
+                campaign_id=str(campaign_id),
+                exc_info=True,
+            )
+            due_apps = []
+        for app in due_apps:
+            try:
+                if self._draft_followup_if_due(app, now):
+                    drafted_ids.append(str(app.id))
+            except Exception:
+                log.warning(
+                    "post_submission_followup_draft_failed",
+                    application_id=str(app.id),
+                    exc_info=True,
+                )
+
+        return {"ghosted": ghosted_ids, "followups_drafted": drafted_ids}
+
+    def _flag_ghosting_pending_action(self, signal) -> None:
+        """Materialize a Portal pending action for a newly-flagged ghosting signal.
+
+        Best-effort and fully degrades when no ``pending_actions`` collaborator is
+        wired (every existing caller of ``check_ghosting`` before this sweep) --
+        ``check_ghosting`` itself is completely unchanged either way; this is purely
+        additive surfacing.
+        """
+        if self._pending_actions is None:
+            return
+        try:
+            app = self._storage.applications.get(signal.application_id)
+            label = "your application"
+            if app is not None and app.posting_id is not None:
+                posting = self._storage.postings.get(app.posting_id)
+                company = (getattr(posting, "company", None) or "").strip() if posting else ""
+                if company:
+                    label = company
+            self._pending_actions.materialize(
+                signal.campaign_id,
+                KIND_GHOSTING_FLAG,
+                f"Likely gone silent: {label}",
+                application_id=signal.application_id,
+                payload={
+                    "sla_days": signal.sla_days,
+                    "submission_age_days": signal.submission_age_days,
+                },
+                dedup_key=f"{KIND_GHOSTING_FLAG}:{signal.application_id}",
+            )
+        except Exception:
+            log.warning(
+                "post_submission_ghosting_flag_failed",
+                application_id=str(signal.application_id),
+                exc_info=True,
+            )
+
+    def _draft_followup_if_due(self, app, now) -> bool:
+        """Draft + materialize a review-only follow-up for ``app`` when it is due.
+
+        Returns ``True`` when a due draft was (or already is) surfaced as a
+        pending action, ``False`` when not yet due or there is nothing to surface
+        the draft through (no ``pending_actions`` collaborator -- degrades exactly
+        like ``_flag_ghosting_pending_action`` above).
+        """
+        age = self._submission_age(app, now)
+        if age is None:
+            return False
+        if not self._followup.followup_is_due(
+            age.days, due_after_days=self._followup.due_after_days
+        ):
+            return False
+        if self._pending_actions is None:
+            return False
+        posting = (
+            self._storage.postings.get(app.posting_id) if app.posting_id is not None else None
+        )
+        company = (getattr(posting, "company", None) or "").strip() if posting else ""
+        role = (
+            (getattr(posting, "title", None) or app.job_title or app.role_name or "").strip()
+        )
+        body = self._followup.draft_followup(
+            role=role or "the role", company=company or "your team"
+        )
+        label = company or "your application"
+        self._pending_actions.materialize(
+            app.campaign_id,
+            KIND_FOLLOWUP_DRAFT,
+            f"Follow-up ready to review: {label}",
+            application_id=app.id,
+            payload={
+                "subject": self._default_subject(FollowUpTemplate.CHECK_IN),
+                "body": body,
+                "days_since_submission": age.days,
+            },
+            dedup_key=f"{KIND_FOLLOWUP_DRAFT}:{app.id}",
+        )
+        return True
 
     def schedule_follow_up(self, application_id, *, template, delay_hours=None, subject="", body=""):
         app = self._storage.applications.get(application_id)

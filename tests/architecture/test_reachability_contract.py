@@ -69,6 +69,16 @@ KNOWN_UNWIRED: dict[str, str] = {
     # ops/discovery surface (applicantDebug renders data.exploration_budget); the
     # research-scoped budget GET is the unconsumed twin.
     "GET /api/applicant/research/{campaign_id}/budget": "release-readiness §2d (FR-LEARN-6 read via ops/discovery)",
+    # dark-engine audit B2 items 8/9/60: the scheduler's ghosting-detection +
+    # follow-up-drafting sweep already surfaces BOTH as Portal-visible pending
+    # actions (the existing pending-actions substrate/JS renders them generically
+    # today — zero new UI needed for that half), so the CORE capability is already
+    # reachable. This GET is an ADDITIONAL queryable per-campaign read added for a
+    # future dedicated Tracker panel; that dedicated panel is a deferred follow-on
+    # (docs/design/audits/exhaustive2/08_engine_dark_matrix.md §B2) because
+    # applicantTracker.js/applicantPortal.js/documentLibrary.js are sibling-owned
+    # this round. Pull in once that panel is built.
+    "GET /api/applicant/followups/{campaign_id}": "dark-engine audit B2 items 8/9/60 (deferred Tracker panel)",
 }
 
 
