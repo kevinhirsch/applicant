@@ -70,8 +70,11 @@ services:
     depends_on:
       searxng:
         condition: service_healthy
+      # chromadb now declares its own healthcheck (below); wait for it to actually
+      # answer instead of just having started, so the UI doesn't boot with RAG init
+      # racing an unready vector store (issue #23).
       chromadb:
-        condition: service_started
+        condition: service_healthy
       # Wait for the engine to report a REAL healthy /healthz (DB reachable) before
       # the public front door starts serving — closes the window where the UI is up
       # but the engine it proxies to is not yet ready.
@@ -264,6 +267,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # A slow-disk first boot (init.sql + initdb) can burn all 10 retries before
+      # Postgres is even listening, reporting unhealthy during normal first-start
+      # (issue #23). Give it a grace window before failures count against retries,
+      # matching the api/searxng healthchecks above.
+      start_period: 30s
     restart: always
 
   # Takeover desktop (FR-SANDBOX-2/3, FR-PREFILL-5): a containerized, web-streamed
@@ -353,6 +361,16 @@ services:
       - "8000"
     volumes:
       - chromadb-data:/chroma/chroma
+    healthcheck:
+      # Chroma's heartbeat endpoint moved from /api/v1 to /api/v2 across versions;
+      # try v2 first and fall back to v1 so this works against either (issue #23) —
+      # without this, applicant-ui's `depends_on: condition: service_started` let the
+      # UI boot before the vector store was actually ready (RAG init silently retries).
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat', timeout=5)\" || python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=5)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
     restart: always
 
   # ---------------------------------------------------------------------------
@@ -369,6 +387,15 @@ services:
       - "80"
     volumes:
       - ntfy-cache:/var/cache/ntfy
+    healthcheck:
+      # ntfy's documented health endpoint (issue #23) — previously no healthcheck at
+      # all, so a dead/still-starting ntfy was indistinguishable from a ready one to
+      # `docker compose ps` / install.sh's health monitor.
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://localhost:80/v1/health | grep -Eq '\"healthy\"\\s*:\\s*true'"]
+      interval: 15s
+      timeout: 6s
+      retries: 10
+      start_period: 15s
     restart: always
 
   # ---------------------------------------------------------------------------

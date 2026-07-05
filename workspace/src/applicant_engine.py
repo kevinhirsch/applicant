@@ -28,8 +28,10 @@ surfaces; keep them small and typed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 from typing import Any, Optional
 
 import httpx
@@ -44,6 +46,38 @@ DEFAULT_ENGINE_URL = "http://api:8000"
 #: hang a UI request behind it. Read stays generous for LLM-backed endpoints
 #: (chat / document generation) which legitimately take a few seconds.
 _DEFAULT_TIMEOUT = httpx.Timeout(connect=3.0, read=30.0, write=10.0, pool=3.0)
+
+#: Bounded retry policy for SAFE, IDEMPOTENT requests only (``GET``). The engine
+#: is internal and momentary blips are common during a restart/deploy — a
+#: connection reset/refusal mid-request, or a 502/503 while the container comes
+#: back up, is a transient shape worth one or two quick retries rather than
+#: failing the whole front-door call. Writes (POST/PUT/DELETE) are NEVER
+#: retried here (a lost response after the engine already committed a write
+#: must not be silently re-sent), and a 4xx is NEVER retried (that's the engine
+#: correctly rejecting the request, not a blip). Read timeouts also stay
+#: fast-fail, unchanged: a slow-but-connected engine is a different failure
+#: mode than a dropped connection, and stacking read-timeout waits behind one
+#: UI request would undercut the module's deliberate fast-fail design.
+_RETRYABLE_STATUSES = frozenset({502, 503})
+_MAX_RETRY_ATTEMPTS = 2  # extra attempts after the first, i.e. up to 3 tries total
+_RETRY_BACKOFF_BASE_SECONDS = 0.05
+
+
+async def _sleep_before_retry(seconds: float) -> None:
+    """Backoff sleep before a retried request.
+
+    Isolated into its own (patchable) coroutine so hermetic tests can replace
+    it with a no-op and keep the retry-path tests fast instead of actually
+    waiting out the backoff.
+    """
+    await asyncio.sleep(seconds)
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    """Short exponential backoff for retry ``attempt`` (1-indexed), with light
+    jitter so concurrent requests retrying together don't all land in lockstep."""
+    base = _RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+    return base + random.uniform(0, base / 4)
 
 
 def engine_base_url() -> str:
@@ -251,39 +285,67 @@ class ApplicantEngineClient:
         raw :class:`httpx.Response` for non-JSON endpoints (e.g. file payloads).
         A 2xx with an empty body (the engine's ``204 No Content`` writes) returns
         ``None`` rather than raising.
+
+        Bounded retry (safe methods only): a ``GET`` is retried up to
+        :data:`_MAX_RETRY_ATTEMPTS` times, with a short backoff between
+        attempts, when the failure is a clearly-transient connection
+        error/refusal or an HTTP 502/503 (see :data:`_RETRYABLE_STATUSES`).
+        Every other method, and every other failure shape, behaves exactly as
+        before — including the final error raised once retries are exhausted,
+        which is identical to the single-attempt error.
         """
-        try:
-            resp = await self._client.request(
-                method, path, json=json, params=params, files=files, data=data
-            )
-        except httpx.TimeoutException as exc:
-            raise EngineError(
-                f"Engine request timed out: {method} {path}",
-                is_timeout=True,
-            ) from exc
-        except httpx.HTTPError as exc:
-            # ConnectError, ReadError, pool errors, invalid URL, etc.
-            raise EngineError(
-                f"Engine request failed: {method} {path}: {exc}",
-            ) from exc
+        is_retryable_method = method.upper() == "GET"
+        attempt = 0
+        while True:
+            try:
+                resp = await self._client.request(
+                    method, path, json=json, params=params, files=files, data=data
+                )
+            except httpx.TimeoutException as exc:
+                raise EngineError(
+                    f"Engine request timed out: {method} {path}",
+                    is_timeout=True,
+                ) from exc
+            except (httpx.ConnectError, httpx.ReadError) as exc:
+                if is_retryable_method and attempt < _MAX_RETRY_ATTEMPTS:
+                    attempt += 1
+                    await _sleep_before_retry(_retry_delay_seconds(attempt))
+                    continue
+                raise EngineError(
+                    f"Engine request failed: {method} {path}: {exc}",
+                ) from exc
+            except httpx.HTTPError as exc:
+                # Pool errors, invalid URL, protocol errors, etc. — not
+                # retried; only the connection-reset/refusal shape above is.
+                raise EngineError(
+                    f"Engine request failed: {method} {path}: {exc}",
+                ) from exc
 
-        if resp.status_code >= 400:
-            detail = _safe_detail(resp)
-            raise EngineError(
-                f"Engine returned HTTP {resp.status_code} for {method} {path}",
-                status=resp.status_code,
-                detail=detail,
-            )
+            if resp.status_code >= 400:
+                if (
+                    is_retryable_method
+                    and resp.status_code in _RETRYABLE_STATUSES
+                    and attempt < _MAX_RETRY_ATTEMPTS
+                ):
+                    attempt += 1
+                    await _sleep_before_retry(_retry_delay_seconds(attempt))
+                    continue
+                detail = _safe_detail(resp)
+                raise EngineError(
+                    f"Engine returned HTTP {resp.status_code} for {method} {path}",
+                    status=resp.status_code,
+                    detail=detail,
+                )
 
-        if not expect_json:
-            return resp
-        if resp.status_code == 204 or not resp.content:
-            return None
-        try:
-            return resp.json()
-        except ValueError:
-            # 2xx but non-JSON body — hand back text so the caller can decide.
-            return resp.text
+            if not expect_json:
+                return resp
+            if resp.status_code == 204 or not resp.content:
+                return None
+            try:
+                return resp.json()
+            except ValueError:
+                # 2xx but non-JSON body — hand back text so the caller can decide.
+                return resp.text
 
     # -- health ------------------------------------------------------------
 

@@ -27,7 +27,7 @@ from typing import Dict
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -137,6 +137,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/shell/stream",    # SSE
     "/api/research",        # multi-minute jobs
     "/api/applicant/research",  # manual deep-research trigger (engine-backed; can be multi-minute)
+    "/api/applicant/internal/research",  # engine deep-research callback (multi-minute; must not be killed)
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
     "/api/model-endpoints", # /probe sub-route also iterates models
@@ -453,6 +454,17 @@ class _RevalidatingStatic(StaticFiles):
       shell should never be stale for more than one reload, so it keeps
       paying the conditional-GET RTT it always has; unchanged bytes still
       return a cheap 304 (ETag/Last-Modified preserved).
+
+    Starlette's `FileResponse` fixes `Content-Length` from a `stat()` taken
+    up front, then streams the file body in 64KB chunks over the life of the
+    response. A file rewritten in place (e.g. a deploy overwriting a `.js`/
+    `.css`/`.html` asset while a request is mid-flight) can change size
+    between that `stat()` and a later chunk read, so the client can be
+    handed a body shorter than the promised `Content-Length` — a truncated,
+    partial response. Buffering the whole file into memory in one read below
+    means the `Content-Length` we send always matches the exact bytes we
+    send, from a single point-in-time snapshot of the file — no window for a
+    concurrent rewrite to produce a partial body.
     """
 
     async def get_response(self, path, scope):
@@ -461,6 +473,22 @@ class _RevalidatingStatic(StaticFiles):
             resp.headers["Cache-Control"] = "max-age=60"
         elif path.endswith(".html"):
             resp.headers["Cache-Control"] = "no-cache"
+        if isinstance(resp, FileResponse) and resp.status_code == 200:
+            import anyio
+            from pathlib import Path as _Path
+            try:
+                body = await anyio.to_thread.run_sync(_Path(resp.path).read_bytes)
+            except OSError:
+                return resp
+            headers = dict(resp.headers)
+            headers["content-length"] = str(len(body))
+            resp = Response(
+                content=body,
+                status_code=resp.status_code,
+                headers=headers,
+                media_type=resp.media_type,
+                background=resp.background,
+            )
         return resp
 
 

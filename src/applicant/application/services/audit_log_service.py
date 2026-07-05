@@ -66,10 +66,20 @@ class AuditLogService:
         *,
         session_factory=None,
         bus: DomainEventBus | None = None,
+        max_write_attempts: int = 3,
     ) -> None:
         self._storage = storage
         self._session_factory = session_factory
         self._bus = bus or event_bus
+        # Bounded retry for the isolated-session write path (#47): an initial try
+        # plus a couple of retries absorbs a transient storage blip (e.g. a brief
+        # connection hiccup) without letting a truly-broken store retry forever.
+        self._max_write_attempts = max(1, int(max_write_attempts))
+        # Process-lived counter of ActionEvents permanently dropped after
+        # exhausting all retry attempts — the "at least count it" half of #47,
+        # since a swallowed exception with no signal is how audit entries used
+        # to vanish silently.
+        self._write_failures = 0
 
     def start(self) -> None:
         """Subscribe to domain events on the process-lived bus."""
@@ -110,21 +120,60 @@ class AuditLogService:
             self._storage.commit()
 
     def _persist_isolated(self, ae: ActionEvent) -> None:
-        """Write the event through a fresh per-event session (real DB lane)."""
+        """Write the event through a fresh per-event session (real DB lane).
+
+        Retries up to ``self._max_write_attempts`` times (a fresh session per
+        attempt, since a session that failed mid-commit may be unusable) so a
+        transient storage blip doesn't drop the entry. Never raises into the
+        caller (the audit trail must not break the primary flow) — but a write
+        that is still failing after every attempt increments the process-lived
+        ``_write_failures`` counter and is logged at error level, so the drop
+        is observable instead of silently vanishing (#47).
+        """
         from applicant.adapters.storage.repositories import SqlAlchemyStorage
 
-        sess = self._session_factory()
-        try:
-            store = SqlAlchemyStorage(sess)
-            store.action_events.add(ae)
-            store.commit()
-        except Exception:
-            log.exception("Failed to persist audit event %s", ae.id)
-        finally:
+        last_exc: Exception | None = None
+        for attempt in range(1, self._max_write_attempts + 1):
+            sess = self._session_factory()
             try:
-                sess.close()
-            except Exception:
-                pass
+                store = SqlAlchemyStorage(sess)
+                store.action_events.add(ae)
+                store.commit()
+                return
+            except Exception as exc:
+                last_exc = exc
+                log.warning(
+                    "Audit event write failed (attempt %d/%d) for %s",
+                    attempt,
+                    self._max_write_attempts,
+                    ae.id,
+                    exc_info=True,
+                )
+            finally:
+                try:
+                    sess.close()
+                except Exception:
+                    pass
+
+        self._write_failures += 1
+        log.error(
+            "Audit event permanently dropped after %d attempt(s): %s "
+            "(cumulative dropped audit events: %d)",
+            self._max_write_attempts,
+            ae.id,
+            self._write_failures,
+            exc_info=last_exc,
+        )
+
+    @property
+    def write_failure_count(self) -> int:
+        """Count of ActionEvents permanently dropped after exhausting retries.
+
+        Process-lived for the life of this (singleton, built-once-at-startup)
+        service instance — the observable counter half of #47's fix, so a
+        dropped audit write is countable rather than a silent no-op.
+        """
+        return self._write_failures
 
     # -- reason extraction ---------------------------------------------------
 
