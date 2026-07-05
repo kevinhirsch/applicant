@@ -121,36 +121,70 @@ function _ensureModalEl() {
   modal.className = 'modal hidden ow-window';
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-modal', 'true');
-  modal.setAttribute('aria-label', 'Today');
+  modal.setAttribute('aria-labelledby', 'applicant-today-title');
   modal.innerHTML = `
     <div class="modal-content" style="--window-w:560px;display:flex;flex-direction:column;max-height:86vh;background:var(--bg);">
       <div class="modal-header ow-titlebar">
         <div class="ow-controls">
           <button type="button" class="ow-close modal-close tap-exempt" id="applicant-today-close" aria-label="Close" title="Close">&times;</button>
         </div>
-        <h4 class="ow-title">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <h4 class="ow-title" id="applicant-today-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Today
         </h4>
         <div style="display:flex;gap:8px;align-items:center;">
-          <span id="applicant-today-progress" style="font-size:11px;opacity:0.65;"></span>
+          <span id="applicant-today-progress" style="font-size:11px;opacity:0.65;" aria-live="polite"></span>
           <button type="button" class="memory-toolbar-btn" id="applicant-today-refresh" aria-label="Refresh" title="Refresh today's items" style="width:26px;height:26px;padding:0;flex-shrink:0;">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
         </div>
       </div>
-      <div class="modal-body" id="applicant-today-body" style="flex:1;overflow-y:auto;">
+      <div class="modal-body" id="applicant-today-body" style="flex:1;overflow-y:auto;" aria-live="polite" aria-busy="false">
         <div class="hwfit-loading">Loading…</div>
       </div>
     </div>`;
   document.body.appendChild(modal);
-  if (_modalA11yCleanup) _modalA11yCleanup();
-  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
-  modal.querySelector('#applicant-today-close').addEventListener('click', _close);
+  // initModalA11y (focus trap + Escape arbiter + focus restore) is (re-)wired
+  // from openApplicantToday() on every open, not here — this element is
+  // created once and reused across opens, so wiring it only at creation time
+  // would leave every reopen after the first with no focus management at all
+  // (a11y-deep audit item #1's "six modals lose focus mgmt after first
+  // close" class of bug, mirrored here even though Today postdates that
+  // audit — Portal/Vault/Mind/Remote re-init on every open; Today now does
+  // too).
+  modal.querySelector('#applicant-today-close').addEventListener('click', () => _requestClose());
   modal.querySelector('#applicant-today-refresh').addEventListener('click', () => _load(true));
-  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+  modal.addEventListener('click', (e) => { if (e.target === modal) _requestClose(); });
   _modalEl = modal;
   return modal;
+}
+
+// Does the current card carry unsent typed input? Mirrors the Portal/micro-
+// interactions audit's #8 finding ("Backdrop-click closes the Portal over
+// dirty inputs") — Today walks one card at a time so the check is scoped to
+// whatever's on screen right now: the answer textarea, or either half of the
+// missing-detail pair.
+function _hasUnsavedInput() {
+  const host = _body();
+  if (!host) return false;
+  const ta = host.querySelector('.applicant-today-answer');
+  if (ta && (ta.value || '').trim()) return true;
+  const val = host.querySelector('[data-role="value"]');
+  if (val && (val.value || '').trim()) return true;
+  return false;
+}
+
+// Backdrop-click and Escape both route through this instead of calling
+// _close() directly, so a card with unsent typed input asks first rather
+// than silently discarding it (same hazard class as micro-interactions #8).
+async function _requestClose() {
+  if (_hasUnsavedInput()) {
+    const ok = await _confirm('Discard what you just typed and close Today?', {
+      confirmText: 'Discard & close', cancelText: 'Keep editing', danger: true,
+    });
+    if (!ok) return;
+  }
+  _close();
 }
 
 function _close() {
@@ -224,17 +258,17 @@ function _busyBtn(btn, label) {
 
 function _renderAnswer(wrap, item) {
   wrap.innerHTML = `
-    <textarea class="applicant-today-answer" rows="3" placeholder="Type your answer…"
+    <textarea class="applicant-today-answer" rows="3" placeholder="Type your answer…" aria-label="Your answer"
               style="width:100%;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;"></textarea>
     <div style="display:flex;justify-content:flex-end;margin-top:8px;">
       <button type="button" class="cal-btn cal-btn-primary" data-role="send">Send</button>
     </div>`;
   const sendBtn = wrap.querySelector('[data-role="send"]');
-  sendBtn.addEventListener('click', async () => {
+  const send = async () => {
     const btn = sendBtn;
     const ta = wrap.querySelector('.applicant-today-answer');
     const text = (ta && ta.value || '').trim();
-    if (!text) { if (ta) ta.focus(); return; }
+    if (!text) { if (ta) ta.focus(); _toast('Type an answer first'); return; }
     const restore = _busyBtn(btn, '…');
     try {
       await _post(`${API}/actions/${encodeURIComponent(item.id)}/resolve`, { answer: text });
@@ -243,6 +277,15 @@ function _renderAnswer(wrap, item) {
     } catch (err) {
       restore();
       _toast(err.message || 'Could not send that');
+    }
+  };
+  sendBtn.addEventListener('click', send);
+  // Cmd/Ctrl+Enter submits, mirroring the chat composer's chord (a11y-deep
+  // audit #16: "Portal answer textarea has no Cmd/Ctrl+Enter submit").
+  wrap.querySelector('.applicant-today-answer').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      send();
     }
   });
 }
@@ -269,28 +312,35 @@ function _renderMissing(wrap, item) {
   const p = item.payload || {};
   const name = p.attribute_name || p.name || '';
   const cid = item.campaign_id || '';
+  // When the engine already knows which attribute it needs, render that name
+  // read-only instead of editable free text — a stray edit here would rename
+  // the attribute and the engine would acquire the wrong key (micro-
+  // interactions audit #30). Only fall back to an editable field when the
+  // engine sent no name at all.
+  const nameReadonly = !!name;
   wrap.innerHTML = `
     <div style="font-size:12px;opacity:0.8;margin-bottom:8px;">
       Provide the value below and the application will pick up where it left off.
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <input type="text" data-role="name" value="${esc(name)}" placeholder="Field"
-             style="flex:1;min-width:120px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
-      <input type="text" data-role="value" placeholder="Value"
+      <input type="text" data-role="name" value="${esc(name)}" placeholder="Field" aria-label="Field name"
+             ${nameReadonly ? 'readonly title="Provided by the assistant"' : ''}
+             style="flex:1;min-width:120px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;${nameReadonly ? 'opacity:0.75;' : ''}" />
+      <input type="text" data-role="value" placeholder="Value" aria-label="Value"
              style="flex:2;min-width:140px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:12px;" />
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:8px;">
       <button type="button" class="cal-btn cal-btn-primary" data-role="save">Save &amp; continue</button>
     </div>`;
   const saveBtn = wrap.querySelector('[data-role="save"]');
-  saveBtn.addEventListener('click', async () => {
+  const save = async () => {
     const btn = saveBtn;
     const nameEl = wrap.querySelector('[data-role="name"]');
     const valEl = wrap.querySelector('[data-role="value"]');
     const nm = (nameEl && nameEl.value || '').trim();
     const val = (valEl && valEl.value || '').trim();
-    if (!nm) { if (nameEl) nameEl.focus(); return; }
-    if (!val) { if (valEl) valEl.focus(); return; }
+    if (!nm) { if (nameEl) nameEl.focus(); _toast('Name the field first'); return; }
+    if (!val) { if (valEl) valEl.focus(); _toast('Type a value first'); return; }
     const restore = _busyBtn(btn, 'Saving…');
     try {
       await _post(`${API}/missing-attribute`, { name: nm, value: val, campaign_id: cid, action_id: item.id });
@@ -299,6 +349,15 @@ function _renderMissing(wrap, item) {
     } catch (err) {
       restore();
       _toast(err.message || 'Could not save that');
+    }
+  };
+  saveBtn.addEventListener('click', save);
+  // Enter-to-save from the value field (a11y-deep audit #17: "Missing-detail
+  // row: no Enter-to-save").
+  wrap.querySelector('[data-role="value"]').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      save();
     }
   });
 }
@@ -355,11 +414,27 @@ function _renderTwoFactor(wrap, item) {
   twoFactorBtn.addEventListener('click', async () => {
     const btn = twoFactorBtn;
     if (!appId) { _toast('No application is linked to this item yet'); return; }
-    const restore = _busyBtn(btn, 'Waiting for your phone…');
+    // A ticking countdown instead of a frozen "Waiting…" label for the up-to-
+    // 60s wait (micro-interactions audit #46: "Two-factor wait: 60 seconds of
+    // frozen label with no countdown or cancel") — the copy already promises
+    // "within 60 seconds", so the label now counts down to match it and
+    // signals the wait is still alive rather than possibly stuck.
+    const orig = btn.textContent;
+    btn.disabled = true;
+    let remaining = 60;
+    const tick = () => { btn.textContent = `Waiting for your phone… (${remaining}s)`; };
+    tick();
+    const countdown = setInterval(() => {
+      remaining -= 1;
+      if (remaining > 0) tick();
+      else clearInterval(countdown);
+    }, 1000);
+    const restore = () => { clearInterval(countdown); btn.disabled = false; btn.textContent = orig; };
     try {
       const data = await remoteModule.continueTwoFactor(appId);
       const state = String((data && data.state) || '').toUpperCase();
       if (state && state !== 'AWAITING_ACCOUNT_HUMAN_STEP') {
+        clearInterval(countdown);
         _toast('Signed in — the application is continuing');
         _removeItem(item.id);
       } else {
@@ -514,7 +589,7 @@ function _renderCardShell(item) {
   card.className = 'admin-card';
   card.style.padding = '16px';
   card.innerHTML = `
-    <div style="font-size:15px;font-weight:600;word-break:break-word;">${esc(title)}${_urgencyBadge(item)}</div>
+    <h3 id="applicant-today-card-title" tabindex="-1" style="font-size:15px;font-weight:600;word-break:break-word;margin:0;">${esc(title)}${_urgencyBadge(item)}</h3>
     <div style="opacity:0.6;font-size:11.5px;margin-top:2px;margin-bottom:14px;">${esc(meta.label)}${_ageLabel(item)}${where}</div>
     <div data-role="card-body"></div>
     ${resolvable ? `
@@ -584,6 +659,23 @@ function _renderDone(host) {
   );
 }
 
+// Every card/step swaps the body's entire innerHTML, which destroys whatever
+// element held keyboard focus and drops it silently to <body> (a11y-deep
+// audit #6: "Refresh/step/tab re-renders destroy the focused element").
+// Re-anchor focus on a stable, always-present element after every such swap
+// — the new card's own heading when one exists, otherwise the rendered
+// empty/error/gated region — so a keyboard/AT user is never stranded.
+function _focusRenderedRegion(host) {
+  if (!host) return;
+  const target = host.querySelector('#applicant-today-card-title')
+    || host.querySelector('.applicant-empty')
+    || host.querySelector('.applicant-error')
+    || host.querySelector('.applicant-gated');
+  if (!target) return;
+  if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+  try { target.focus({ preventScroll: true }); } catch { try { target.focus(); } catch { /* no-op */ } }
+}
+
 function _renderCurrent() {
   const host = _body();
   if (!host) return;
@@ -591,6 +683,7 @@ function _renderCurrent() {
   if (!_items.length) {
     if (slot) slot.textContent = '';
     _renderDone(host);
+    _focusRenderedRegion(host);
     return;
   }
   _idx = _clampIndex(_idx, _items.length);
@@ -598,6 +691,7 @@ function _renderCurrent() {
   host.innerHTML = '';
   host.appendChild(_renderCardShell(_items[_idx]));
   _renderNav(host);
+  _focusRenderedRegion(host);
 }
 
 // ── Load / open ──────────────────────────────────────────────────────────────
@@ -631,6 +725,7 @@ async function _load(showSpinner) {
   const host = _body();
   const slot = _progressSlot();
   if (slot) slot.textContent = '';
+  if (host) host.setAttribute('aria-busy', 'true');
   if (host && showSpinner) host.innerHTML = loadingHTML("Loading today's items…");
   try {
     const data = await _fetchJSON(`${API}/pending`);
@@ -639,12 +734,14 @@ async function _load(showSpinner) {
       _state = 'gated';
       _items = []; _idx = 0;
       _renderGated(host, data);
+      _focusRenderedRegion(host);
       return;
     }
     if (data && data.engine_available === false) {
       _state = 'offline';
       _items = []; _idx = 0;
       _renderOffline(host);
+      _focusRenderedRegion(host);
       return;
     }
     _state = 'ready';
@@ -657,8 +754,10 @@ async function _load(showSpinner) {
     if (host) {
       host.innerHTML = errorHTML(_errMsg);
       wireRetry(host, () => _load(true));
+      _focusRenderedRegion(host);
     }
   } finally {
+    if (host) host.setAttribute('aria-busy', 'false');
     _loading = false;
   }
 }
@@ -668,6 +767,12 @@ export async function openApplicantToday(opts) {
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
   if (!(opts && opts.skipHashUpdate)) setHash('today');
+  // Keyboard a11y: trap focus, Escape to close, restore on close — re-wired
+  // on every open (not just the first), the fix for a11y-deep audit #1.
+  // Escape routes through _requestClose so it asks first when the current
+  // card has unsent typed input (micro-interactions audit #8's hazard).
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _requestClose);
   await _load(true);
 }
 
