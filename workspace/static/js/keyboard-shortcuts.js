@@ -13,6 +13,75 @@ const _defaultKeybinds = {
   open_notes: '', open_tasks: '', open_theme: '',
 };
 
+// Rail button id -> keybind action, for every rail icon whose click already
+// triggers one of the actions above (search, new/delete session, open-tool).
+// Used to append the live, human-readable shortcut to each button's `title`
+// so hovering discovers it — mirroring the existing `#rail-search-btn` title
+// ("Search conversations (Ctrl+K)"), which already hard-codes its hint.
+const _RAIL_KEYBIND_MAP = {
+  'rail-search-btn':     'search',
+  'rail-new-session':    'new_session',
+  'rail-delete-session': 'delete_session',
+  'rail-calendar':       'open_calendar',
+  'rail-compare':        'open_compare',
+  'rail-cookbook':       'open_cookbook',
+  'rail-research':       'open_research',
+  'rail-gallery':        'open_gallery',
+  'rail-archive':        'open_library',
+  'rail-memory':         'open_memory',
+  'rail-notes':          'open_notes',
+  'rail-tasks':          'open_tasks',
+  'rail-theme':          'open_theme',
+};
+
+// Same "(Ctrl+K)" style used by rail-search-btn's own hard-coded title.
+function _formatKeybindHint(combo) {
+  if (!combo) return '';
+  const parts = combo.split('+').map((part) => {
+    if (part === 'ctrl') return 'Ctrl';
+    if (part === 'alt') return 'Alt';
+    if (part === 'shift') return 'Shift';
+    if (part === 'escape') return 'Esc';
+    if (part.length === 1) return part.toUpperCase();
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  });
+  return `(${parts.join('+')})`;
+}
+
+// Append each rail button's live keybind to its `title` (and `aria-label`)
+// so the shortcut is discoverable on hover, without duplicating a suffix
+// that's already present (e.g. rail-search-btn's own hard-coded hint).
+// Re-run whenever the keybind map changes (default assignment + after the
+// saved-settings fetch resolves) so a user rebind updates the tooltip too.
+function _applyRailKeybindHints() {
+  // Defensive: this runs right after the (synchronous) default-keybind
+  // assignment, which some test harnesses exercise against a minimal
+  // window/document stand-in that has no real DOM (see tests/js/runner.js's
+  // keyboard-shortcuts.js suite) — degrade to a no-op rather than throw.
+  if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return;
+  const kb = window._applicantKeybinds || {};
+  for (const id in _RAIL_KEYBIND_MAP) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    // Remember the hint-free base title/label the first time we see this
+    // button, so re-runs (rebind in Settings) replace rather than stack hints.
+    if (btn.dataset.baseTitle === undefined) {
+      btn.dataset.baseTitle = btn.getAttribute('title') || '';
+    }
+    if (btn.dataset.baseLabel === undefined) {
+      btn.dataset.baseLabel = btn.getAttribute('aria-label') || '';
+    }
+    const base = btn.dataset.baseTitle;
+    const baseLabel = btn.dataset.baseLabel;
+    // Base title already ends in its own "(...)" suffix (rail-search-btn) —
+    // leave it alone rather than appending a second, possibly-conflicting one.
+    if (/\([^()]*\)\s*$/.test(base)) continue;
+    const hint = _formatKeybindHint(kb[_RAIL_KEYBIND_MAP[id]]);
+    btn.setAttribute('title', hint ? `${base} ${hint}` : base);
+    if (baseLabel) btn.setAttribute('aria-label', hint ? `${baseLabel} ${hint}` : baseLabel);
+  }
+}
+
 function _matchesCombo(e, combo) {
   if (!combo) return false;
   const parts = combo.split('+');
@@ -48,12 +117,14 @@ export function initKeyboardShortcuts(modules) {
   } = modules;
 
   window._applicantKeybinds = { ..._defaultKeybinds };
+  _applyRailKeybindHints();
 
   // Load saved keybinds
   fetch('/api/auth/settings', { credentials: 'same-origin' })
     .then(r => r.json())
     .then(s => { if (s.keybinds) window._applicantKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
-    .catch(e => console.error('Silent catch in keyboard-shortcuts:', e));
+    .catch(e => console.error('Silent catch in keyboard-shortcuts:', e))
+    .finally(() => _applyRailKeybindHints());
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
   // Every tool's bulk-select bar has a `*-bulk-cancel` button whose click
