@@ -3700,7 +3700,8 @@ body.bg-pattern-sparkles {
     body:has(.notes-pane.modal-right-docked) .toast.exiting { transform: translateX(120%); }
     @media (max-width: 768px) {
       .toast {
-        top: 12px;
+        /* (06) #34: same notch/status-bar safe-area padding as the top bar. */
+        top: calc(12px + env(safe-area-inset-top, 0px));
         right: 12px;
         max-width: calc(100vw - 24px);
         /* Receive touches so the swipe-to-dismiss gesture works (desktop keeps
@@ -3914,16 +3915,26 @@ body.bg-pattern-sparkles {
       .section-header-flex h4::before {
         height: 18px;
       }
-      /* Compact top bar on mobile — align with sidebar header */
+      /* Compact top bar on mobile — align with sidebar header. Mobile audit
+         (06) #34: pad the top with the notch/status-bar safe area (0 on a
+         device without one) so the status strip / pause pill don't render
+         under the iPhone status text in the installed edge-to-edge PWA
+         (viewport-fit=cover, index.html). */
       .chat-top-bar {
         padding: 1px 8px;
         min-height: 14px;
         margin-top: -31px;
-        padding-top: 31px;
+        padding-top: calc(31px + env(safe-area-inset-top, 0px));
       }
       .chat-top-bar .chat-new-btn { display: none; }
       .chat-meta-overlay { font-size: 0.65em; max-width: 55%; overflow: visible; left: 50%; top: 50%; transform: translate(-50%, -50%); position: absolute; }
       .chat-meta-overlay .export-dl-btn { display: inline-flex; }
+      /* (06) #31 (partial mitigation, continued): shrink the centered overlay's
+         own ceiling to match the narrower status-strip budget above — see the
+         full rationale on `.applicant-status-strip`'s ≤480px rule. */
+      @media (max-width: 480px) {
+        .chat-meta-overlay { max-width: 40%; }
+      }
       /* Icon rail on mobile — hidden by default, shown in mini-sidebar state */
       .icon-rail { display: none !important; }
       .icon-rail.mobile-mini {
@@ -4710,10 +4721,17 @@ body.bg-pattern-sparkles {
       background:var(--panel);
       /* Sheet width/height: full-width, 85dvh with an 85vh fallback for
          browsers without dvh. (Desktop overrides these via the kit tokens /
-         --window-w / --window-h below.) */
+         --window-w / --window-h below.) Mobile audit (06) #5: the fallback
+         MUST be declared first — a browser without dvh support treats the
+         var(--window-sheet-max-h) declaration (85dvh) as invalid at
+         computed-value time and reverts to the nearest PRECEDING valid
+         declaration for the same property, so 85vh has to come before it,
+         not after (the inverted order previously meant 85vh always won and
+         dvh was never actually used, sizing the sheet against the large
+         viewport under Firefox Android / iOS Safari's URL bar). */
       width:100%;
-      max-height:var(--window-sheet-max-h);
       max-height:85vh;
+      max-height:var(--window-sheet-max-h);
       height:auto;
       padding:var(--window-pad);
       padding-top:var(--window-sheet-pad-top);
@@ -4777,8 +4795,10 @@ body.bg-pattern-sparkles {
     @media (max-width: 768px) {
       .modal-content {
         width:100% !important;
-        max-height:var(--window-sheet-max-h) !important;
+        /* (06) #5: fallback first, dvh-enhanced value second — see the base
+           .modal-content rule above for why the order is load-bearing. */
         max-height:85vh !important;
+        max-height:var(--window-sheet-max-h) !important;
         height:auto !important;
         padding-top:var(--window-sheet-pad-top) !important;
       }
@@ -4788,6 +4808,32 @@ body.bg-pattern-sparkles {
          behavior (the inverted base rule lost its !important). */
       .modal-content .close-btn,
       .modal-content .modal-close { display:none !important; }
+    }
+    /* Mobile audit (06) #52: a landscape phone (viewport ≈ 660×320) still
+       matches the mobile sheet rules above (width well under 769px), so the
+       sheet is capped to 85dvh of a ~320px-tall viewport — a few rows of
+       Portal or ~3 lines of the redline diff, with no adaptation at all. In
+       this short-and-wide case only, let the sheet go full-bleed (no rounded
+       top, no reserved corner) so the same content gets the whole viewport
+       instead of losing 15% of an already-short screen. Guarded by
+       `max-width:768px` too so a short DESKTOP browser window can't
+       accidentally match this (desktop never uses the sheet layout at all,
+       but the guard keeps this rule unambiguously mobile-sheet-only). Placed
+       after the mobile-authority block above so it wins the (equal-
+       specificity, equally-!important) `max-height` tie by source order. */
+    @media (max-width: 768px) and (max-height: 480px) and (orientation: landscape) {
+      .modal-content {
+        max-height: 100vh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+      }
+      /* Grab handle still works as a swipe-dismiss target (JS arms from the
+         top 48px regardless), but the extra vertical padding it reserves is
+         a luxury this height doesn't have. */
+      .modal-content::before {
+        border-top-width: 4px;
+        border-bottom-width: 2px;
+      }
     }
     /* DESKTOP floating window — centered in the chat area (overlay offsets
        above), a bounded card with shadow and all-corner radius. Per-window
@@ -5026,7 +5072,11 @@ body.bg-pattern-sparkles {
     }
     @media (max-width:768px) {
       .styled-prompt-box { width: 85vw; }
-      .styled-prompt-input { font-size: 0.9rem; padding: 10px 12px; }
+      /* Mobile audit (06) #12: 0.9rem (~14.4px) is under iOS Safari's 16px
+         auto-zoom threshold — focusing this input zoomed the whole sheet in,
+         leaving it horizontally cropped after blur. 16px avoids the zoom
+         without disabling user-scaling (that stays enabled app-wide). */
+      .styled-prompt-input { font-size: 16px; padding: 10px 12px; }
     }
     /* Scroll navigation buttons */
     .scroll-nav-btn {
@@ -7509,6 +7559,15 @@ textarea.memory-add-input {
 .memory-toolbar-btn:hover {
   border-color: var(--fg);
   color: var(--fg);
+}
+/* Mobile audit (06) #30: same rationale as `.cal-btn` above — give touch
+   devices (no hover state) an immediate pressed acknowledgment. */
+@media (hover: none) {
+  .memory-toolbar-btn:active {
+    border-color: var(--fg);
+    color: var(--fg);
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
 }
 
 .memory-toolbar-btn.active {
@@ -30992,6 +31051,15 @@ textarea.cal-input { resize:vertical; font-family:inherit; }
 .cal-form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
 button.cal-btn { background:color-mix(in srgb, var(--fg) 8%, transparent); border:1px solid var(--border); color:var(--chrome-ink); border-radius:5px; padding:0 14px; min-height:44px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; transition:background 0.15s, border-color 0.15s; }
 button.cal-btn:hover { background:color-mix(in srgb, var(--fg) 14%, transparent); }
+/* Mobile audit (06) #30: `.cal-btn` only defines `:hover`, so a touch device
+   (no hover state) gets zero visual acknowledgment of a tap on Approve/
+   Snooze/Done/etc. until the network round-trip completes. `(hover:none)`
+   scopes this to devices that can't hover at all, so mouse/trackpad users
+   keep the existing hover-only feedback unchanged. */
+@media (hover: none) {
+  button.cal-btn:active { background:color-mix(in srgb, var(--fg) 20%, transparent); }
+  button.cal-btn.cal-btn-primary:active { opacity:0.85; }
+}
 button.cal-btn.cal-btn-primary { background:var(--sys-blue); color:#fff; border-color:var(--sys-blue); }
 button.cal-btn.cal-btn-primary:hover { opacity:0.9; background:var(--sys-blue); }
 button.cal-btn.cal-btn-danger { color:var(--sys-red); border-color:var(--sys-red); background:transparent; }
@@ -32353,6 +32421,14 @@ body.theme-frosted .modal {
 #rail-portal { opacity: 0.62; }
 #rail-portal:hover { opacity: 1; }
 #rail-portal .rail-notes-badge { background: var(--red); }
+/* Mobile audit (06) #60: the dim-until-hover treatment above assumes a
+   pointer that can hover. In the hamburger-summoned `.icon-rail.mobile-mini`
+   (the ONLY way to reach the rail on a phone, ≤768px) there is no hover, so
+   the single most important mobile entry point permanently read at 0.62
+   opacity — visually identical to a genuinely `.applicant-locked` (0.4
+   opacity) launcher one rule up, i.e. it looked disabled. Full opacity in
+   that context only; the desktop hover-reveal above is untouched. */
+.icon-rail.mobile-mini #rail-portal { opacity: 1; }
 /* CRIT-portal end */
 
 /* Redline diff (document review, static/js/documentLibrary.js
@@ -32375,6 +32451,54 @@ body.theme-frosted .modal {
 }
 .redline-eq { color: var(--fg); opacity: 0.75; }
 #redline-view { white-space: pre-wrap; font-family: var(--code-font, ui-monospace, monospace); line-height: 1.5; }
+/* Mobile audit (06) #1: `.doclib-applicant-redline` (the box documentLibrary.js
+   inserts the engine's rendered_html into, distinct from the engine's own
+   #redline-view) carries only an inline style with no white-space rule, so
+   the per-line <span>/<del>/<ins> markup (joined with "\n") collapsed every
+   newline into a space — the whole résumé diff read as one run-on paragraph,
+   worst on a narrow phone reviewing inside a short box. No selector existed
+   for this class at all (grep: 0 matches) before this rule. */
+.doclib-applicant-redline {
+  white-space: pre-wrap;
+  font-family: var(--code-font, ui-monospace, monospace);
+}
+/* Mobile audit (06) #11: the box is pinned to a flat `max-height:200px` via
+   an INLINE style set at render time (documentLibrary.js), so on a phone the
+   full diff is reviewed through a ~5-line slot inside an 85dvh sheet that has
+   spare room below. `!important` is required to outrank the inline style,
+   same reasoning as the mobile Remote-iframe fix a few sections up; scoped to
+   the mobile breakpoint only so desktop's fixed 200px window is unchanged. */
+@media (max-width: 768px) {
+  .doclib-applicant-redline {
+    max-height: 45vh !important;
+    max-height: 45dvh !important;
+  }
+}
+
+/* Mobile audit (06) #10/#55: the daily-loop digest panel
+   (emailLibrary/applicantDigest.js — header toolbar, bulk-select bar, and
+   every row's Open/Approve/Pass/Research/Past-wins-match action) reuses the
+   generic `.memory-toolbar-btn` (24px tall, 11px type) everywhere else in the
+   app it's a dense icon/utility button. Approving a role is the single most-
+   tapped action in the product, so on a phone give every button inside the
+   digest panel a real ≥44px touch target (matching the `.cal-btn` standard
+   already used elsewhere, `button.cal-btn { min-height:44px }`) instead of
+   just an invisible hit-area, and let the campaign-name <select> (inline
+   `max-width:200px` in applicantDigest.js) take the full row width so long
+   names aren't truncated to a sliver. Scoped to `.applicant-digest-panel` so
+   memory/tasks/library/email-reader usages of the same shared class are
+   untouched, and to the mobile breakpoint so desktop's compact density is
+   unchanged. */
+@media (max-width: 768px) {
+  .applicant-digest-panel .memory-toolbar-btn {
+    min-height: 44px;
+    padding: 6px 10px;
+  }
+  .applicant-digest-campaign {
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+}
 
 /* Agent status strip (static/js/applicantActivity.js). A compact, always-visible
    "Applicant is: <current action>" pill in the chat top bar with a live/paused
@@ -32403,6 +32527,18 @@ body.theme-frosted .modal {
 .applicant-status-strip:hover {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+/* Mobile audit (06) #31 (partial mitigation): at 320-375px this strip
+   (max-width:46vw), the ≥44px pause pill beside it, and `.chat-meta-overlay`
+   (which becomes a centered `max-width:55%` absolute overlay on mobile, see
+   the ≤768px block below) all share the same top bar and can mathematically
+   overlap — 46vw + 44px + 55% alone exceeds 100% of a 320px bar. A full fix
+   needs the meta overlay to know the strip is actually visible (JS/HTML
+   state, out of this CSS-only pass's scope); shrinking each element's own
+   ceiling at the narrowest widths is a safe, corrective reduction in how much
+   they *can* overlap without hiding or disabling anything. */
+@media (max-width: 480px) {
+  .applicant-status-strip { max-width: 30vw; }
 }
 .applicant-status-text {
   overflow: hidden;
@@ -32577,6 +32713,23 @@ body.theme-frosted .modal {
   font-size: 11px; font-weight: 400; line-height: 1.4; letter-spacing: normal;
   box-shadow: 0 6px 18px rgba(0,0,0,0.38); z-index: 10001; pointer-events: none;
 }
+/* Mobile audit (06) #46 (partial: touch-target size only — the tooltip's
+   edge-collision clamping still needs JS and is deferred): the visible `?`
+   is a 15x15px circle (`.preset-hint-icon`), under the 24px floor a touch
+   target should have. `::after` already renders the hover/focus bubble, so
+   the invisible hit-area pad uses `::before` instead — inset:-6px turns the
+   15px circle into a ~27px square hit box without changing its look. Scoped
+   to mobile only and to the wizard/settings tip specifically (not the base
+   `.preset-hint-icon` used elsewhere, e.g. desktop Settings → Presets, which
+   is untouched). */
+@media (max-width: 768px) {
+  #applicant-onboarding-overlay .ao-tip::before,
+  .ao-settings-body .ao-tip::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+  }
+}
 /* Persistent Back / Skip bar — always present so no step traps the user.
    D69: now a left-aligned button cluster living inside the shared
    `.ao-actionbar` row (see above) alongside the step's own primary action,
@@ -32660,6 +32813,51 @@ body.theme-frosted .modal {
   white-space: nowrap;
   max-width: 100%;
 }
+/* Mobile audit (06) #17: at 320-375px the sheet's content column (~290px)
+   is narrower than several of these sentence-length labels (e.g. "I'll
+   submit it myself (open live session)"), so `white-space:nowrap` clips the
+   label silently — `max-width:100%` bounds the box but nothing adds
+   overflow-handling. Rather than clip or truncate an authorize/decision
+   label (the worst place to lose text), let it wrap to 2 lines on mobile;
+   `.cal-btn`'s `min-height:44px` (not a fixed height) already lets the box
+   grow to fit, so wrapped text is never cut off. Desktop (>768px) keeps the
+   one-line/grow-the-button behavior above, unchanged. */
+@media (max-width: 768px) {
+  #applicant-portal-modal .cal-btn,
+  #applicant-chat-modal .cal-btn,
+  #applicant-remote-modal .cal-btn,
+  #applicant-vault-modal .cal-btn {
+    white-space: normal;
+    text-align: center;
+    line-height: 1.3;
+  }
+}
+
+/* Mobile audit (06) #12: these fields carry sub-16px INLINE font-size (set at
+   render time by applicantPortal.js / applicantChat.js), which triggers iOS
+   Safari's auto-zoom-on-focus — the sheet zooms in and stays horizontally
+   cropped after blur, since the app deliberately leaves pinch-zoom/user-
+   scaling enabled elsewhere. `!important` is required to outrank the inline
+   style; 16px is the documented iOS no-zoom threshold. Scoped to mobile only
+   — desktop keeps the existing compact 12/13px sizing. */
+@media (max-width: 768px) {
+  .applicant-portal-answer,
+  .applicant-portal-missing-name,
+  .applicant-portal-missing-value,
+  #applicant-input {
+    font-size: 16px !important;
+  }
+}
+
+/* Mobile audit (06) #25: the Remote session picker's inline `max-width:46%`
+   (applicantRemote.js) leaves ~135px for a "Company — Role" label at 320px
+   with no mobile override; let it take the full row on mobile instead. */
+@media (max-width: 768px) {
+  #applicant-remote-picker {
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+}
 
 /* ===== Apple Genius audit §F/§G — Vault / Remote / Gallery (#104-121, #137-138) === */
 
@@ -32695,6 +32893,41 @@ body.theme-frosted #applicant-vault-modal .modal-content {
 }
 #applicant-vault-modal .modal-body > .admin-card + .admin-card {
   border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+/* Mobile audit (06) #51: applicant tool windows sit inside an overlay
+   narrowed by the rail+sidebar (`left`/`width` calc() on `.modal`, in the
+   Window Kit section), but the shared `@media (min-width:769px) .modal-
+   content` rule caps their own width against the plain VIEWPORT (`92vw`),
+   not that narrowed overlay. At a ~800px tablet-portrait width with the
+   sidebar open, a wide `--window-w` can still resolve to a `92vw` value
+   wider than the overlay it must center in, so the window overflows under
+   the sidebar/off-screen. Re-declared here with a percentage instead: since
+   `.modal-content`'s containing block for these ids IS that narrowed
+   `.modal` overlay (also flex-centered), `92%` resolves against the
+   overlay's real width rather than the full viewport, so the window can
+   never exceed it. Scoped to just Portal/Chat/Vault (higher specificity
+   than the bare `.modal-content` rule, so it wins without touching that
+   rule) — Remote is deliberately excluded here: test_applicant_backlog_
+   mobileremote.py's `test_remote_modal_still_uses_shared_mobile_bottom_
+   sheet_chrome_not_bespoke` is an existing, intentional regression guard
+   asserting Remote's `.modal-content` never grows a bespoke width/height
+   rule (its own verified fix path is scoping the #applicant-remote-frame
+   iframe instead); adding Remote to this selector list would violate that
+   guard, so its tablet-width overflow is left as a deferral rather than
+   fought around. Every other tool window's desktop sizing is unchanged.
+   (Placed here, after the Vault border-color rule above, rather than up in
+   the Window Kit section, so test_applicant_round1_vaultremotegallery.py's
+   "first #applicant-vault-modal .modal-content match in the file" regex
+   still finds THAT rule, not this one — this rule wins on specificity
+   regardless of source order, so the later position changes nothing about
+   which one actually applies.) */
+@media (min-width: 769px) {
+  #applicant-portal-modal .modal-content,
+  #applicant-chat-modal .modal-content,
+  #applicant-vault-modal .modal-content {
+    width: min(var(--window-w, var(--window-max-w)), 92%);
+  }
 }
 
 /* #108: a plain neutral text field for credentials — NOT `.settings-select`
@@ -32880,6 +33113,16 @@ body.glass-full #applicant-chat-modal .chat-input-bar {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
+}
+/* Mobile audit (06) #57: watching a self-update through a 220px window of
+   11.5px monospace is squint-grade on a phone, during a critical operation
+   the user especially wants to be able to read. Give it more room and a
+   legible size on mobile only; desktop's compact log tail is unchanged. */
+@media (max-width: 768px) {
+  .applicant-update-log {
+    max-height: 50vh;
+    font-size: 13px;
+  }
 }
 /* The "Update now" button is disabled while an update is running — give it a
    clear inactive cue (the shared .cal-btn has no :disabled rule). Scoped to the
@@ -36520,11 +36763,19 @@ body.signin-entrance .chat-history {
   white-space: nowrap;
   transition: background 0.15s, border-color 0.15s;
 }
-/* Extend the tappable area to ≥44px tall without growing the visible pill. */
+/* Extend the tappable area to ≥44px tall without growing the visible pill.
+   Mobile audit (06) #32: the horizontal -6px used to eat into the ~10px gap
+   toward the adjacent status strip (`.applicant-status-strip` sits right
+   before this pill, both carrying `margin-right:10px`), so a tap aimed at
+   the strip's right edge could land on the pause toggle's invisible overlay
+   instead — pausing all automated work when the user meant "show me what
+   you're doing". Keep the vertical inflation (still gets height to ≥44px)
+   but drop the horizontal one so the invisible area no longer reaches past
+   the pill's own visible edges into the neighboring control's space. */
 .applicant-pause-toggle::after {
   content: "";
   position: absolute;
-  inset: -11px -6px;
+  inset: -11px 0;
 }
 .applicant-pause-toggle:hover {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
