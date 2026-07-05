@@ -298,6 +298,7 @@ function buildToastHarness() {
     return {
       run: _toastNew,
       seedSeenTs: (ts) => { _store.set(NOTIF_SEEN_KEY, String(ts)); },
+      seedSeenRaw: (raw) => { _store.set(NOTIF_SEEN_KEY, raw); },
       setFetchImpl: (f) => { _fetchImpl = f; },
       setNowMinutes: (m) => { _fixedNowMinutes = m; },
       getFetchCalls: () => _fetchCalls.slice(),
@@ -568,4 +569,411 @@ test('_wireDeliverNow (finding #46) re-enables the button and toasts an error me
   assert.equal(btn.disabled, false, 'a failed release must leave the button clickable again');
   assert.ok(h.getToastCalls().some((m) => m.includes('deliver failed')), 'the failure reason should surface in a toast');
   assert.equal(h.getRenderListCalls(), 0, 'the center should not be re-rendered on a failed release');
+});
+
+// ── Lens-04 audit findings #49/#50/#62/#63/#65/#66 ─────────────────────────
+//
+// Re-render/poll/clock resilience hardening. Same "extract the real source,
+// execute it headlessly" pattern as every test above.
+
+// ── #49: in-flight input (an answer draft, a missing-detail name/value)
+// must survive a re-render of the pending list ─────────────────────────────
+
+function makeFakeInput(value) { return { value }; }
+function makeFakeDraftRow(id, children) {
+  return {
+    getAttribute: (name) => (name === 'data-action-id' ? id : null),
+    querySelector: (sel) => children[sel] || null,
+  };
+}
+function makeFakeDraftBody(rows) {
+  return { querySelectorAll: (sel) => (sel === '.applicant-portal-row' ? rows : []) };
+}
+
+function buildDraftHarness() {
+  const body = [
+    extractFunction(SRC, '_captureDraftInputs'),
+    extractFunction(SRC, '_restoreDraftInputs'),
+    'return { _captureDraftInputs, _restoreDraftInputs };',
+  ].join('\n');
+  // eslint-disable-next-line no-new-func
+  return new Function(body)();
+}
+
+test('_captureDraftInputs/_restoreDraftInputs (finding #49) round-trip an in-flight answer across a re-render', () => {
+  const { _captureDraftInputs, _restoreDraftInputs } = buildDraftHarness();
+
+  const answerInput = makeFakeInput('a partial answer the user was mid-typing');
+  const oldRow = makeFakeDraftRow('q1', { '.applicant-portal-answer': answerInput });
+  const drafts = _captureDraftInputs(makeFakeDraftBody([oldRow]));
+  assert.deepEqual(drafts, { q1: { answer: 'a partial answer the user was mid-typing' } });
+
+  // Simulate the re-render: a BRAND NEW (empty) input for the SAME action id.
+  const freshAnswerInput = makeFakeInput('');
+  const freshRow = makeFakeDraftRow('q1', { '.applicant-portal-answer': freshAnswerInput });
+  _restoreDraftInputs(makeFakeDraftBody([freshRow]), drafts);
+
+  assert.equal(freshAnswerInput.value, 'a partial answer the user was mid-typing', 'the draft must survive onto the freshly-rendered row');
+});
+
+test('_captureDraftInputs/_restoreDraftInputs (finding #49) round-trip a missing-detail name/value pair too', () => {
+  const { _captureDraftInputs, _restoreDraftInputs } = buildDraftHarness();
+
+  const nameInput = makeFakeInput('LinkedIn URL');
+  const valueInput = makeFakeInput('https://linkedin.com/in/example');
+  const oldRow = makeFakeDraftRow('m1', {
+    '.applicant-portal-missing-name': nameInput,
+    '.applicant-portal-missing-value': valueInput,
+  });
+  const drafts = _captureDraftInputs(makeFakeDraftBody([oldRow]));
+
+  const freshName = makeFakeInput('LinkedIn URL');
+  const freshValue = makeFakeInput('');
+  const freshRow = makeFakeDraftRow('m1', {
+    '.applicant-portal-missing-name': freshName,
+    '.applicant-portal-missing-value': freshValue,
+  });
+  _restoreDraftInputs(makeFakeDraftBody([freshRow]), drafts);
+
+  assert.equal(freshValue.value, 'https://linkedin.com/in/example', 'the missing-detail value draft must survive the re-render');
+});
+
+test('_captureDraftInputs (finding #49) captures nothing for an untouched/empty row', () => {
+  const { _captureDraftInputs } = buildDraftHarness();
+  const emptyRow = makeFakeDraftRow('q2', { '.applicant-portal-answer': makeFakeInput('') });
+  const drafts = _captureDraftInputs(makeFakeDraftBody([emptyRow]));
+  assert.deepEqual(drafts, {}, 'an empty/untouched input is not a draft worth preserving');
+});
+
+test('_renderList (finding #49) captures drafts BEFORE rebuilding the DOM and restores them AFTER', () => {
+  const fnSrc = extractFunction(SRC, '_renderList');
+  const captureIdx = fnSrc.indexOf('_captureDraftInputs(body)');
+  const innerHtmlIdx = fnSrc.indexOf('body.innerHTML =');
+  const restoreIdx = fnSrc.indexOf('_restoreDraftInputs(body, drafts)');
+  assert.ok(captureIdx !== -1, '_renderList must call _captureDraftInputs');
+  assert.ok(restoreIdx !== -1, '_renderList must call _restoreDraftInputs');
+  assert.ok(captureIdx < innerHtmlIdx, 'drafts must be captured BEFORE the DOM is overwritten, or there is nothing left to capture');
+  assert.ok(restoreIdx > innerHtmlIdx, 'drafts must be restored AFTER the DOM is rebuilt, or there is nothing left to restore them into');
+});
+
+// ── #50: resolving an action that's already handled gets an honest state,
+// not a silent/confusing result (pairs with engine #27) ────────────────────
+
+function buildDoResolveHarness(openIds) {
+  const harness = `
+    const API = '/api/applicant/portal';
+    let _items = ${JSON.stringify((openIds || []).map((id) => ({ id })))};
+    const _postCalls = [];
+    let _postDelayed = false;
+    const _pendingPostResolvers = [];
+    async function _post(url, body) {
+      _postCalls.push({ url, body });
+      if (_postDelayed) {
+        return new Promise((resolve) => { _pendingPostResolvers.push(resolve); });
+      }
+      return {};
+    }
+
+    ${extractFunction(SRC, '_isActionOpen')}
+    const _resolvingActionIds = new Set();
+    ${extractFunction(SRC, '_doResolve')}
+
+    return {
+      doResolve: _doResolve,
+      getPostCalls: () => _postCalls.slice(),
+      setDelayed: (v) => { _postDelayed = v; },
+      resolveNextPost: () => { const fn = _pendingPostResolvers.shift(); if (fn) fn({}); },
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(harness)();
+}
+
+test('_doResolve (finding #50) throws an "already handled" error (no network call) when the action is no longer open', async () => {
+  const h = buildDoResolveHarness(['a1']);
+  await assert.rejects(
+    () => h.doResolve('gone'),
+    (err) => {
+      assert.equal(err.alreadyHandled, true, 'the error must be flagged so the UI can show a calm "already handled" state');
+      return true;
+    },
+  );
+  assert.equal(h.getPostCalls().length, 0, 'no network call should be made resolving an action already known to be gone');
+});
+
+test('_doResolve (finding #50, regression guard) still resolves normally over the network when the action is genuinely open', async () => {
+  const h = buildDoResolveHarness(['a1']);
+  await h.doResolve('a1');
+  const calls = h.getPostCalls();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/applicant/portal/actions/a1/resolve');
+});
+
+test('_doResolve (finding #50) rejects a second concurrent resolve of the SAME action while the first is still in flight', async () => {
+  const h = buildDoResolveHarness(['a1']);
+  h.setDelayed(true);
+  const p1 = h.doResolve('a1'); // in flight — _post hasn't settled yet
+  await assert.rejects(
+    () => h.doResolve('a1'),
+    (err) => { assert.equal(err.alreadyHandled, true); return true; },
+    'a second resolve attempt on the same in-flight action must be rejected as already-handled, not double-POSTed',
+  );
+  h.resolveNextPost();
+  await p1;
+  assert.equal(h.getPostCalls().length, 1, 'only ONE network resolve call should ever be made for the two overlapping attempts');
+});
+
+test('_wireRows (finding #50) shows a calm "already handled" state instead of the generic failure toast when _doResolve reports it', () => {
+  assert.ok(
+    SRC.includes('if (e && e.alreadyHandled)'),
+    'the Done-button handler must specifically recognize the already-handled error',
+  );
+  assert.ok(
+    SRC.includes("_toast('This was already handled')"),
+    'an already-resolved action must get its own honest message, not the generic failure toast',
+  );
+});
+
+// ── #62: the seen-marker claim must be atomic w.r.t. toasting ─────────────
+
+test('_toastNew (finding #62) claims/advances the seen-marker BEFORE the quiet-hours await, closing the staleness window', () => {
+  const fnSrc = extractFunction(SRC, '_toastNew');
+  const claimIdx = fnSrc.indexOf('_setNotifSeenTs(newest)');
+  const awaitIdx = fnSrc.indexOf('await _refreshQuietHoursCfg()');
+  assert.ok(claimIdx !== -1, 'the marker-claim call must still exist in _toastNew');
+  assert.ok(awaitIdx !== -1, 'the quiet-hours await must still exist in _toastNew');
+  assert.ok(
+    claimIdx < awaitIdx,
+    'the seen-marker must be read and advanced BEFORE the quiet-hours await (a real network round trip) — ' +
+    'claiming it only afterward reopens a window where an overlapping call (another poll, or another tab ' +
+    'sharing this same localStorage key) can read the same stale marker and toast the same arrivals twice',
+  );
+});
+
+// ── #65: a corrupt/blank seen-marker must not re-toast the whole backlog ──
+
+test('_notifSeenTs (finding #65) treats a missing/corrupt/non-positive marker as "no marker" (null), never as epoch zero', () => {
+  const harness = `
+    const NOTIF_SEEN_KEY = ${JSON.stringify(NOTIF_SEEN_KEY_LITERAL)};
+    const _store = new Map();
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+    ${extractFunction(SRC, '_notifSeenTs')}
+    return {
+      _notifSeenTs,
+      setRaw: (v) => { if (v === null) _store.delete(NOTIF_SEEN_KEY); else _store.set(NOTIF_SEEN_KEY, v); },
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  const { _notifSeenTs, setRaw } = new Function(harness)();
+
+  setRaw(null);
+  assert.equal(_notifSeenTs(), null, 'a missing key -> null');
+  setRaw('');
+  assert.equal(_notifSeenTs(), null, 'an empty string -> null, not epoch zero (Number(\'\') === 0 in JS)');
+  setRaw('   ');
+  assert.equal(_notifSeenTs(), null, 'a whitespace-only string -> null (Number(\'   \') === 0 in JS too)');
+  setRaw('not-a-timestamp');
+  assert.equal(_notifSeenTs(), null, 'non-numeric garbage -> null');
+  setRaw('0');
+  assert.equal(_notifSeenTs(), null, 'a literal "0" is not a usable cutoff either');
+  setRaw('-5');
+  assert.equal(_notifSeenTs(), null, 'a negative marker is not usable');
+  setRaw('1700000000000');
+  assert.equal(_notifSeenTs(), 1700000000000, 'a real positive timestamp still round-trips correctly');
+});
+
+test('_toastNew (finding #65) treats a corrupted marker as "no marker yet" instead of re-toasting the whole backlog', async () => {
+  const h = buildToastHarness();
+  h.seedSeenRaw(''); // corrupted: an empty string sitting in localStorage, not a missing key
+  h.setFetchImpl(async () => ({ enabled: false }));
+
+  const backlog = [
+    { id: 'a1', kind: 'action', title: 'Old item 1', created_at: new Date(1000).toISOString() },
+    { id: 'a2', kind: 'info', title: 'Old item 2', created_at: new Date(2000).toISOString() },
+  ];
+  await h.run(backlog);
+
+  assert.equal(h.getToastActionCalls().length, 0, 'a corrupt marker must not re-toast the backlog as if it were all brand new');
+  assert.equal(h.getToastCalls().length, 0, 'a corrupt marker must not re-toast informational backlog items either');
+  assert.ok(Number(h.getSeenTs()) > 0, 'the marker should be repaired to a real value after this run');
+});
+
+// ── #63/#66: the recap cursor must be read-modify-write safe across tabs,
+// and anchored to the server's own timeline rather than the client clock ───
+
+const RECAP_SEEN_KEY_LITERAL = (SRC.match(/const RECAP_SEEN_KEY = '([^']+)'/) || [])[1];
+assert.ok(RECAP_SEEN_KEY_LITERAL, 'could not find RECAP_SEEN_KEY in applicantPortal.js — has it been renamed?');
+
+function buildRecapAnchorHarness() {
+  const harness = `
+    const RECAP_SEEN_KEY = ${JSON.stringify(RECAP_SEEN_KEY_LITERAL)};
+    const _store = new Map();
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+    ${extractFunction(SRC, '_runTs')}
+    ${extractFunction(SRC, '_reanchorRecapMarker')}
+    return {
+      reanchor: _reanchorRecapMarker,
+      setStored: (v) => { _store.set(RECAP_SEEN_KEY, String(v)); },
+      getStored: () => _store.get(RECAP_SEEN_KEY),
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(harness)();
+}
+
+test('_reanchorRecapMarker (findings #63/#66) advances the stored cursor to the newest server-observed run timestamp', () => {
+  const h = buildRecapAnchorHarness();
+  h.setStored(1000); // an earlier client-clock claim already sitting there
+  h.reanchor([
+    { created_at: new Date(5000).toISOString() },
+    { created_at: new Date(3000).toISOString() },
+  ]);
+  assert.equal(Number(h.getStored()), 5000, 'the cursor should move forward to the newest server-provided run timestamp');
+});
+
+test('_reanchorRecapMarker (findings #63/#66) never moves the cursor BACKWARD past what is already stored', () => {
+  const h = buildRecapAnchorHarness();
+  h.setStored(9000); // another tab/context already advanced it further
+  h.reanchor([{ created_at: new Date(2000).toISOString() }]);
+  assert.equal(Number(h.getStored()), 9000, 'a re-anchor must not roll the cursor back and reopen a window another context already consumed');
+});
+
+test('_reanchorRecapMarker (findings #63/#66) is a no-op when there is no server timestamp available to anchor to', () => {
+  const h = buildRecapAnchorHarness();
+  h.setStored(1234);
+  h.reanchor([]);
+  h.reanchor([{ no_created_at_here: true }]);
+  assert.equal(Number(h.getStored()), 1234, 'nothing to anchor to -> leave the existing marker untouched');
+});
+
+test('_captureRecapSince (finding #63) goes through the Web Locks API for cross-tab mutual exclusion when the browser supports it', async () => {
+  const harness = `
+    const RECAP_SEEN_KEY = ${JSON.stringify(RECAP_SEEN_KEY_LITERAL)};
+    let _recapSinceReady = false;
+    let _recapSince = null;
+    const _store = new Map();
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+    const _lockCalls = [];
+    const navigator = {
+      locks: { request: (name, cb) => { _lockCalls.push(name); return Promise.resolve(cb()); } },
+    };
+    ${extractFunction(SRC, '_captureRecapSinceUnlocked')}
+    ${extractFunction(SRC, '_captureRecapSince')}
+    return { capture: _captureRecapSince, getLockCalls: () => _lockCalls.slice() };
+  `;
+  // eslint-disable-next-line no-new-func
+  const { capture, getLockCalls } = new Function(harness)();
+  await capture();
+  const calls = getLockCalls();
+  assert.equal(calls.length, 1, 'capturing the recap cursor must go through exactly one Web Locks request');
+  assert.ok(String(calls[0]).includes(RECAP_SEEN_KEY_LITERAL), 'the lock name should be scoped to the recap cursor key');
+});
+
+test('_captureRecapSince (finding #63, regression guard) still works correctly with no Web Locks support in the browser', async () => {
+  const harness = `
+    const RECAP_SEEN_KEY = ${JSON.stringify(RECAP_SEEN_KEY_LITERAL)};
+    let _recapSinceReady = false;
+    let _recapSince = null;
+    const _store = new Map();
+    _store.set(RECAP_SEEN_KEY, '5000');
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+    ${extractFunction(SRC, '_captureRecapSinceUnlocked')}
+    ${extractFunction(SRC, '_captureRecapSince')}
+    return { capture: _captureRecapSince, getRecapSince: () => _recapSince, getStored: () => _store.get(RECAP_SEEN_KEY) };
+  `;
+  // eslint-disable-next-line no-new-func
+  const { capture, getRecapSince, getStored } = new Function(harness)();
+  await capture();
+  assert.equal(getRecapSince(), 5000, 'the prior marker must still be captured correctly without Web Locks');
+  assert.ok(Number(getStored()) > 5000, 'the marker should still be advanced afterward');
+});
+
+test('_captureRecapSinceUnlocked (finding #63, consistency with #65) treats a corrupt/blank stored cursor as "no prior visit", not epoch zero', async () => {
+  const harness = `
+    const RECAP_SEEN_KEY = ${JSON.stringify(RECAP_SEEN_KEY_LITERAL)};
+    let _recapSince = 'unset';
+    const _store = new Map();
+    _store.set(RECAP_SEEN_KEY, '');
+    const window = {
+      localStorage: {
+        getItem: (k) => (_store.has(k) ? _store.get(k) : null),
+        setItem: (k, v) => { _store.set(k, String(v)); },
+      },
+    };
+    ${extractFunction(SRC, '_captureRecapSinceUnlocked')}
+    _captureRecapSinceUnlocked();
+    return { recapSince: _recapSince };
+  `;
+  // eslint-disable-next-line no-new-func
+  const { recapSince } = new Function(harness)();
+  assert.equal(recapSince, null, 'a blank/corrupt stored value must read back as null (no prior visit), never as an epoch-zero cutoff');
+});
+
+// ── #66 (remaining client-clock anchors): notification age text and the
+// supportive streak ─────────────────────────────────────────────────────────
+
+test('_notifAgeText (finding #66) clamps a client clock running slightly behind the server to "just now" instead of hiding the age', () => {
+  const body = `${extractFunction(SRC, '_notifTs')}\n${extractFunction(SRC, '_notifAgeText')}\nreturn _notifAgeText;`;
+  // eslint-disable-next-line no-new-func
+  const _notifAgeText = new Function(body)();
+  const futureIso = new Date(Date.now() + 30 * 1000).toISOString();
+  assert.equal(_notifAgeText({ created_at: futureIso }), 'just now', 'a small negative skew should read as "just now", not disappear entirely');
+});
+
+function buildStreakHarness() {
+  const harness = `
+    const _ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    ${extractFunction(SRC, '_runTs')}
+    ${extractFunction(SRC, '_dayKey')}
+    ${extractFunction(SRC, '_computeStreakDays')}
+    return {
+      run: (items, fakeNow) => {
+        const origNow = Date.now;
+        Date.now = () => fakeNow;
+        try { return _computeStreakDays(items); } finally { Date.now = origNow; }
+      },
+    };
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(harness)();
+}
+
+test('_computeStreakDays (finding #66) credits "today" from a server-observed run even when the client clock reports an earlier calendar day', () => {
+  const h = buildStreakHarness();
+  // All local-time constructions, so this is TZ-independent: _dayKey reads the
+  // same local calendar the test builds these instants from.
+  const serverRunTs = new Date(2024, 0, 15, 1, 0, 0).getTime(); // "today" per the server
+  const clientNow = new Date(2024, 0, 14, 20, 0, 0).getTime(); // the client clock itself still reads yesterday evening
+  const yesterdayRunTs = new Date(2024, 0, 14, 9, 0, 0).getTime();
+
+  const runs = [
+    { created_at: new Date(serverRunTs).toISOString() },
+    { created_at: new Date(yesterdayRunTs).toISOString() },
+  ];
+
+  assert.equal(
+    h.run(runs, clientNow),
+    2,
+    'the server-observed run for "today" must be credited toward the streak even though the client clock itself still reads yesterday',
+  );
 });

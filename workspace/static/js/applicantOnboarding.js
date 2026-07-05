@@ -68,6 +68,19 @@ let _formDirty = false;
 // completion hand-off apart from an Escape/cancel out of a still-incomplete
 // wizard. Consumed (and reset) the moment _dismiss() reads it.
 let _justCompletedSetup = false;
+// Resilience audit (exhaustive2 lens 04 #52): which draft-persistence "scope" the
+// CURRENTLY rendered body belongs to — 'welcome' | 'llm' | 'onboarding:<section>' |
+// a Settings step key ('channels'/'sandbox'/'fonts'/'update'). Set by whichever
+// render path is about to call _setBody (see _renderStep / _renderIntakeSection /
+// mountSettingsStep) so _saveDraft/_restoreDraft key sessionStorage correctly
+// without depending on the transient _bodyTarget swap (which is restored to null
+// again before the user ever types — see mountSettingsStep's finally).
+let _draftScope = null;
+// The in-flight résumé-conversion preview build request, if any (exhaustive2 lens
+// 04 #59): lets a second trigger (e.g. the resume-upload flow and the
+// font-install "Continue" handler can both call _buildPreview back-to-back)
+// attach to the SAME build instead of firing a second, overlapping POST.
+let _previewInFlight = null;
 
 // Ordered wizard steps. `done(status)` reads the engine status to decide if the
 // step is already satisfied (drives resume + the progress rail).
@@ -135,8 +148,145 @@ const NEVER_DOES = [
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
+// Busy-button pair (exhaustive2 lens 04 #29a): mirrors applicantRemote.js's
+// _setButtonBusy/_clearButtonBusy (that file's local, not exported, so this is a
+// same-shape copy rather than an import) — disable + relabel a button while its
+// action is in flight so a fast double-click can't replay/duplicate it, then
+// restore its original label and enabled state.
+function _setButtonBusy(btn, busyText) {
+  if (!btn) return null;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'wait';
+  if (busyText) btn.textContent = busyText;
+  return orig;
+}
 
+function _clearButtonBusy(btn, orig) {
+  if (!btn) return;
+  btn.disabled = false;
+  btn.removeAttribute('aria-busy');
+  btn.style.opacity = '';
+  btn.style.cursor = '';
+  if (orig != null) btn.textContent = orig;
+}
 
+// ── draft persistence (exhaustive2 lens 04 #52) ─────────────────────────────
+//
+// The wizard (and the Settings panels reusing its step renderers) had zero draft
+// persistence: a session-expiry or accidental reload mid-section threw away
+// everything typed on the CURRENT step/section, with no recovery. This is a
+// lightweight, scoped sessionStorage draft: every text-ish field inside the
+// active body is captured on input/change, restored the next time that exact
+// step/section renders (including after a reload — sessionStorage survives a
+// same-tab reload, just not a closed tab/new session), and cleared the moment
+// that step's data is actually saved to the engine (see _advanceAndContinue /
+// _nextIntakeOrComplete). Never wired to a fresh scope until one is set — a
+// missing/unavailable sessionStorage (private browsing) degrades to a no-op.
+const _DRAFT_KEY_PREFIX = 'applicant_onboarding_draft:';
+
+// Fields whose VALUE is itself credential-bearing (not just `type=password`,
+// which is already excluded below): the Discord webhook acts as a bearer
+// secret, and the Apprise/SMTP + ntfy URLs commonly embed a password or a
+// secret channel token right in the string (e.g. `mailto://user:pass@host`).
+// Per the hard rule for this fix, none of these are ever persisted, even to
+// sessionStorage.
+const _DRAFT_EXCLUDE_IDS = new Set(['ao-ch-discord', 'ao-ch-email', 'ao-ch-ntfy']);
+
+function _draftStorageKey(scope) {
+  return scope ? `${_DRAFT_KEY_PREFIX}${scope}` : null;
+}
+
+function _isDraftableField(el) {
+  if (!el) return false;
+  const type = (el.type || '').toLowerCase();
+  // Never draft passwords/secrets, file pickers (their value can't be restored
+  // anyway) or non-data controls.
+  if (['password', 'file', 'hidden', 'submit', 'button'].includes(type)) return false;
+  if (el.id && _DRAFT_EXCLUDE_IDS.has(el.id)) return false;
+  if (!el.id && !el.name) return false; // nothing stable to key the draft on
+  return true;
+}
+
+// A stable per-element key for the draft object. Most fields have a unique
+// `id`; the intake sections' generated fields (see _fieldHTML/_collectForm)
+// only set `name`, and repeatable sections (work history/education/references)
+// reuse the SAME `name` across every entry card — scope those by their
+// `.ao-repeat-entry` card index so entries don't clobber each other.
+function _draftFieldKey(el) {
+  if (el.id) return `id:${el.id}`;
+  if (!el.name) return null;
+  const entry = el.closest && el.closest('.ao-repeat-entry');
+  if (entry) return `entry${entry.getAttribute('data-idx') || '0'}:${el.name}`;
+  return `name:${el.name}`;
+}
+
+function _saveDraft(body) {
+  const key = _draftStorageKey(_draftScope);
+  if (!key || !body) return;
+  const data = {};
+  body.querySelectorAll('input, textarea, select').forEach((el) => {
+    if (!_isDraftableField(el)) return;
+    const fkey = _draftFieldKey(el);
+    if (!fkey) return;
+    data[fkey] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+  });
+  try {
+    if (Object.keys(data).length) sessionStorage.setItem(key, JSON.stringify(data));
+    else sessionStorage.removeItem(key);
+  } catch { /* best-effort — a full/unavailable sessionStorage must never break the wizard */ }
+}
+
+function _restoreDraft(body) {
+  const key = _draftStorageKey(_draftScope);
+  if (!key || !body) return;
+  let data = null;
+  try { data = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch { data = null; }
+  if (!data) return;
+  body.querySelectorAll('input, textarea, select').forEach((el) => {
+    if (!_isDraftableField(el)) return;
+    const fkey = _draftFieldKey(el);
+    if (!fkey || !(fkey in data)) return;
+    if (el.type === 'checkbox' || el.type === 'radio') el.checked = !!data[fkey];
+    else el.value = data[fkey];
+  });
+}
+
+function _clearDraft(scope) {
+  const key = _draftStorageKey(scope || _draftScope);
+  if (!key) return;
+  try { sessionStorage.removeItem(key); } catch { /* best-effort */ }
+}
+
+// Best-effort cleanup of every draft once the wizard genuinely completes (see
+// _dismiss) — nothing left to resume, so no reason to keep any scope around.
+function _clearAllDrafts() {
+  try {
+    const toRemove = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(_DRAFT_KEY_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach((k) => sessionStorage.removeItem(k));
+  } catch { /* best-effort */ }
+}
+
+// Wire the save-on-input/change listener directly onto the body element ONCE
+// (a dataset flag survives the innerHTML rewrites _setBody does on every
+// render, so this never double-binds across step transitions). Takes `body`
+// as a parameter — deliberately NOT re-reading the module-level _bodyTarget at
+// save time, since mountSettingsStep() restores that to its previous value
+// (typically null) synchronously right after the render call returns, well
+// before the user has typed anything.
+function _wireDraftListeners(body) {
+  if (!body || body.dataset.aoDraftWired) return;
+  body.dataset.aoDraftWired = '1';
+  const handler = () => _saveDraft(body);
+  body.addEventListener('input', handler);
+  body.addEventListener('change', handler);
+}
 
 // (Multipart uploads no longer hand-roll FormData here — the fonts/resume steps
 // reuse fileHandler.js's picker uploadPending(), which builds + POSTs the form.)
@@ -262,7 +412,14 @@ let _footTarget = null;
 
 function _setBody(html) {
   const body = _bodyTarget || document.getElementById('ao-body');
-  if (body) body.innerHTML = html;
+  if (body) {
+    body.innerHTML = html;
+    // #52: restore any draft saved for the CURRENT scope (set by the caller
+    // before this render — see _renderStep/_renderIntakeSection/mountSettingsStep)
+    // then (re-)wire the save-on-input listener for whatever's on screen now.
+    _restoreDraft(body);
+    _wireDraftListeners(body);
+  }
   // A fresh render means whatever was on screen is now either saved (we only
   // get here after a save/step-advance, or on first paint of a step) or
   // discarded intentionally — either way there's nothing unsaved left to lose.
@@ -333,6 +490,9 @@ async function _renderStep() {
   _renderRail();
   _renderNav();
   const step = STEPS[_stepIndex];
+  // #52: default the draft scope to this step's key; _renderIntakeSection
+  // narrows it further to `onboarding:<section>` before its own _setBody call.
+  _draftScope = step.key;
   // Whenever we render anything other than the LLM step, return the shared
   // endpoint manager to its Settings home so it isn't left detached in the DOM.
   if (step.key !== 'llm') _restoreEndpointManager();
@@ -348,6 +508,10 @@ async function _renderStep() {
 }
 
 async function _advanceAndContinue(stepKey) {
+  // #52: callers only reach here after their own data-save POST already
+  // succeeded, so the draft for this step is now redundant — clear it before
+  // it can ever mask what the engine actually has on a later reopen.
+  _clearDraft(stepKey);
   // Mark the engine step complete (best-effort) then move forward (linearly).
   try { _status = await _post(`${SETUP}/advance/${stepKey}`); }
   catch { await _refreshStatus().catch(e => console.error('Silent catch in applicantOnboarding:', e)); }
@@ -1563,6 +1727,9 @@ function _profileGapsHTML() {
 
 async function _renderIntakeSection() {
   const key = INTAKE_SECTIONS[_intakeIndex];
+  // #52: scope the draft per intake section (not just 'onboarding') so each
+  // section's typed answers persist/restore independently.
+  _draftScope = `onboarding:${key}`;
   const total = INTAKE_SECTIONS.length;
   const saved = (_onboarding.intake && _onboarding.intake[key]) || {};
 
@@ -1814,11 +1981,28 @@ function _renderConflicts(conflicts) {
         </div>`).join('')}
       <button class="cal-btn" id="ao-conf-apply" style="margin-top:6px;">Apply choices</button>
     </div>`;
-  document.getElementById('ao-conf-apply').onclick = async () => {
+  const applyBtn = document.getElementById('ao-conf-apply');
+  // #29a: an in-flight guard — the loop below fires one confirm-conflict POST
+  // per conflict with no guard, so a double-click on Apply replayed the whole
+  // batch. Mirrors the _setButtonBusy/_clearButtonBusy busy-button pattern.
+  applyBtn.onclick = async () => {
+    if (applyBtn.disabled) return;
+    const orig = _setButtonBusy(applyBtn, 'Applying…');
     try {
       for (const c of conflicts) {
         const i = wrap.querySelector(`[data-attr="${CSS.escape(c.attribute)}"]`).getAttribute('data-i');
-        const choice = wrap.querySelector(`input[name="ao-conf-${i}"]:checked`).value;
+        // #68: `.value` on a possibly-null `:checked` match null-derefed when a
+        // conflict was left unanswered, surfacing as the generic "Could not
+        // apply choices" toast instead of a real validation message. Every
+        // choice defaults `checked` on render, but guard the read anyway so a
+        // stray DOM state never throws.
+        const checkedEl = wrap.querySelector(`input[name="ao-conf-${i}"]:checked`);
+        if (!checkedEl) {
+          _toast(`Please choose an option for ${c.attribute}.`);
+          _clearButtonBusy(applyBtn, orig);
+          return;
+        }
+        const choice = checkedEl.value;
         const value = choice === 'parsed' ? c.parsed_value : c.interview_value;
         await _post(`${SETUP}/onboarding/${encodeURIComponent(_campaignId)}/confirm-conflict`, {
           attribute: c.attribute, value,
@@ -1827,15 +2011,37 @@ function _renderConflicts(conflicts) {
       wrap.innerHTML = '<p class="admin-success" style="font-size:0.86rem;margin:8px 0;">Choices applied.</p>';
     } catch (e) {
       _toast(e.message || 'Could not apply choices.');
+      _clearButtonBusy(applyBtn, orig);
     }
   };
 }
 
 async function _buildPreview() {
   const wrap = document.getElementById('ao-preview');
+  // #59: attach to an already-running build rather than firing a second,
+  // overlapping POST — the caller that started it already renders the result
+  // (or the "unavailable" message) into the same #ao-preview.
+  if (_previewInFlight) {
+    try { await _previewInFlight; } catch { /* handled by the original caller */ }
+    return;
+  }
   wrap.innerHTML = '<p style="font-size:0.82rem;opacity:0.75;">Building a polished version…</p>';
+  // #59: give this specific LaTeX/LibreOffice render an explicit, generous
+  // client deadline (rather than relying on _fetchJSON's generic 15s default,
+  // which a real compile can plausibly exceed) so a stalled build fails loud
+  // instead of leaving "Building a polished version…" up forever.
+  const req = _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/preview`, {}, { timeoutMs: 45000 });
+  _previewInFlight = req;
+  let p;
   try {
-    const p = await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/preview`, {});
+    p = await req;
+  } catch (e) {
+    wrap.innerHTML = `<p style="font-size:0.82rem;opacity:0.75;">Preview unavailable: ${esc(e.message || '')}</p>`;
+    return;
+  } finally {
+    if (_previewInFlight === req) _previewInFlight = null;
+  }
+  {
     const note = p.fidelity_ok ? 'Looks like a faithful match.' : 'Some formatting may differ.';
     // `notes` may come back as an array, a single string, or be absent — coerce to
     // an array so a string value doesn't crash the preview on `.map` (it has a
@@ -1856,15 +2062,36 @@ async function _buildPreview() {
           <span id="ao-prev-status" style="font-size:0.82rem;opacity:0.75;"></span>
         </div>
       </div>`;
-    document.getElementById('ao-prev-accept').onclick = async () => {
-      try { await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/accept`, {});
+    // #29a: an in-flight guard on accept/reject — neither was disabled while
+    // its POST was outstanding, so a fast double-click double-posted the
+    // accept/reject choice to the engine.
+    const acceptBtn = document.getElementById('ao-prev-accept');
+    const rejectBtn = document.getElementById('ao-prev-reject');
+    acceptBtn.onclick = async () => {
+      if (acceptBtn.disabled) return;
+      const orig = _setButtonBusy(acceptBtn, 'Applying…');
+      if (rejectBtn) rejectBtn.disabled = true;
+      try {
+        await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/accept`, {});
         document.getElementById('ao-prev-status').textContent = 'Using the polished version.';
       } catch (e) { _toast(e.message || 'Could not accept.'); }
+      finally {
+        _clearButtonBusy(acceptBtn, orig);
+        if (rejectBtn) rejectBtn.disabled = false;
+      }
     };
-    document.getElementById('ao-prev-reject').onclick = async () => {
-      try { await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/reject`, {});
+    rejectBtn.onclick = async () => {
+      if (rejectBtn.disabled) return;
+      const orig = _setButtonBusy(rejectBtn, 'Applying…');
+      if (acceptBtn) acceptBtn.disabled = true;
+      try {
+        await _post(`${SETUP}/conversion/${encodeURIComponent(_campaignId)}/reject`, {});
         document.getElementById('ao-prev-status').textContent = 'Keeping your original.';
       } catch (e) { _toast(e.message || 'Could not reject.'); }
+      finally {
+        _clearButtonBusy(rejectBtn, orig);
+        if (acceptBtn) acceptBtn.disabled = false;
+      }
     };
     // Download the actual compiled PDF (dark-engine audit item 19) so the
     // accept/reject choice can be made from the real document, not just the
@@ -1893,12 +2120,14 @@ async function _buildPreview() {
         btn.textContent = original;
       }
     };
-  } catch (e) {
-    wrap.innerHTML = `<p style="font-size:0.82rem;opacity:0.75;">Preview unavailable: ${esc(e.message || '')}</p>`;
   }
 }
 
 async function _nextIntakeOrComplete() {
+  // #52: the section just rendered has already been POSTed successfully by the
+  // time every caller reaches this function — clear its draft (still the
+  // current _draftScope, `onboarding:<that section>`) before moving on.
+  _clearDraft();
   if (_intakeIndex < INTAKE_SECTIONS.length - 1) {
     _intakeIndex += 1;
     await _renderIntakeSection();
@@ -2069,6 +2298,9 @@ function _dismiss() {
   // Escape/cancel never sets it, so this stays scoped to real completions.
   const justCompleted = _justCompletedSetup;
   _justCompletedSetup = false;
+  // #52: nothing left to resume once setup genuinely completes — drop every
+  // scoped draft rather than leave stale ones around for a later re-run/Settings visit.
+  if (justCompleted) _clearAllDrafts();
   // Re-run the feature-activation layer so the job sections light up now that the
   // engine gate is open. app.js exposes the refresh; fall back to a reload.
   try {
@@ -2226,6 +2458,9 @@ export async function mountSettingsStep(stepKey, container) {
   const prevFoot = _footTarget;
   _bodyTarget = body;
   _footTarget = foot;
+  // #52: scope the draft to this Settings step (e.g. 'channels'/'sandbox'/
+  // 'fonts'/'update') so a reload while editing Settings also survives.
+  _draftScope = stepKey;
   try {
     await render();
   } finally {

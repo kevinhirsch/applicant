@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -47,6 +48,30 @@ from src.applicant_engine import ApplicantEngineClient, EngineError
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
+
+# A deep-research run is heavy: the engine's ``ResearchService`` calls back into
+# the workspace's OWN multi-source researcher (search + LLM synthesis), which can
+# legitimately run for minutes -- the caller's ``max_time`` (engine-side clamped
+# to 30-600s, `applicant_internal_routes.py`'s ``_RESEARCH_MIN/MAX_MAX_TIME`)
+# bounds that budget. The client's default 30s read timeout (lens 04 #10) 502'd
+# every run that took longer than a trivial cache hit. Give this ONE call (not
+# the client's other, cheap reads) a read window sized off the caller's own
+# ``max_time`` -- generous default when omitted, always at least the engine-side
+# floor plus buffer, capped so a misbehaving request can't hold the connection
+# open forever -- mirroring how ``applicant_documents_routes.py``'s redline
+# ``_TURN_TIMEOUT`` overrides the client's timeout for its own heavy write.
+_RESEARCH_RUN_MIN_TIMEOUT = 60.0
+_RESEARCH_RUN_DEFAULT_TIMEOUT = 210.0
+_RESEARCH_RUN_MAX_TIMEOUT = 630.0
+_RESEARCH_RUN_BUFFER = 30.0
+
+
+def _research_run_timeout(max_time: int | None) -> httpx.Timeout:
+    """Read-timeout for the research ``run`` proxy call, overridable by the
+    caller's own ``max_time`` (falls back to a generous default when omitted)."""
+    read = _RESEARCH_RUN_DEFAULT_TIMEOUT if not max_time else float(max_time) + _RESEARCH_RUN_BUFFER
+    read = max(_RESEARCH_RUN_MIN_TIMEOUT, min(read, _RESEARCH_RUN_MAX_TIMEOUT))
+    return httpx.Timeout(connect=3.0, read=read, write=10.0, pool=3.0)
 
 
 # --- request body -----------------------------------------------------------
@@ -115,7 +140,7 @@ def setup_applicant_research_routes() -> APIRouter:
             "max_time": body.max_time,
             "force": body.force,
         }
-        async with ApplicantEngineClient() as engine:
+        async with ApplicantEngineClient(timeout=_research_run_timeout(body.max_time)) as engine:
             try:
                 result = await engine.research_run(campaign_id, payload)
             except EngineError as exc:

@@ -128,11 +128,21 @@ function _toastAction(msg, actionLabel, onAction) {
 // are skipped here because the pending-action rows already represent them and
 // they clear on resolve.
 
+// Lens-04 audit #65: `Number('')` and `Number('   ')` both coerce to 0 in JS
+// (not NaN), so a corrupted/blank marker — a partial write, a stray manual
+// edit, anything that isn't a genuine missing key — used to read back as a
+// "since epoch zero" cutoff, making the ENTIRE backlog look newly-arrived and
+// re-toasting all of it at once. Only a genuinely positive, finite timestamp
+// counts as a usable marker; a missing OR corrupt one both return null so
+// callers can treat them identically ("no marker yet" — seed silently,
+// never re-toast the backlog) instead of silently defaulting to 0.
 function _notifSeenTs() {
   try {
-    const v = Number(window.localStorage.getItem(NOTIF_SEEN_KEY));
-    return Number.isFinite(v) ? v : 0;
-  } catch { return 0; }
+    const raw = window.localStorage.getItem(NOTIF_SEEN_KEY);
+    if (raw == null || raw === '') return null;
+    const v = Number(raw);
+    return (Number.isFinite(v) && v > 0) ? v : null;
+  } catch { return null; }
 }
 
 function _setNotifSeenTs(ts) {
@@ -155,8 +165,13 @@ function _notifTs(n) {
 function _notifAgeText(n) {
   const t = _notifTs(n);
   if (!t) return '';
-  const deltaMs = Date.now() - t;
-  if (deltaMs < 0) return '';
+  // Lens-04 audit #66: `t` is the server's own `created_at`, but "now" here is
+  // the CLIENT clock — a client running even slightly behind the server can
+  // make a just-created item look like it happened in the future. Clamp
+  // rather than blank the age out entirely: the item still deserves an
+  // honest, if approximate, affordance, and "just now" reads truthfully for a
+  // small negative skew instead of silently withholding real information.
+  const deltaMs = Math.max(0, Date.now() - t);
   const mins = Math.floor(deltaMs / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -223,6 +238,17 @@ function _parseHHMM(s) {
 // Minutes-since-midnight "now", in the configured IANA zone when given and
 // valid; falls back to the browser's local clock otherwise — the same
 // graceful degrade the engine documents for an unrecognised zone name.
+//
+// Lens-04 audit #66 (client-clock trust): unlike the other timing decisions
+// in this file, there is no server-provided timestamp anywhere in the
+// quiet-hours payload (`{enabled,start,end,tz}`) to anchor "now" to — the
+// gate is genuinely computed from the CLIENT's own clock. A client whose
+// clock (not just its timezone) is wrong will therefore compute the wrong
+// quiet-hours verdict with no way for this function to detect or correct
+// that from data already in hand. Flagging this here rather than silently
+// living with it: fully fixing this needs the quiet-hours proxy to start
+// returning a `server_now` (or equivalent) field this function can anchor
+// to instead of `Date.now()`.
 function _minutesNowInTz(tz) {
   if (tz) {
     try {
@@ -253,31 +279,38 @@ function _isQuietHoursNow(cfg) {
 }
 
 // Fire a transient toast for each notification newer than the last-toasted
-// marker, then advance the marker. On the very first load (no marker yet) we
-// seed the marker to the newest item WITHOUT toasting, so a backlog never
-// spams. Informational AND action-required arrivals share one seen-marker
-// (lens-10 audit #39) so an action item already toasted once is never
-// re-toasted on a later poll just because no new informational item arrived
-// meanwhile.
+// marker, then advance the marker. On the very first load (no marker yet, or
+// a corrupted one — #65) we seed the marker to the newest item WITHOUT
+// toasting, so a backlog never spams. Informational AND action-required
+// arrivals share one seen-marker (lens-10 audit #39) so an action item
+// already toasted once is never re-toasted on a later poll just because no
+// new informational item arrived meanwhile.
 async function _toastNew(notifs) {
-  const cfg = await _refreshQuietHoursCfg();
   const all = notifs || [];
   const newest = all.reduce((mx, n) => Math.max(mx, _notifTs(n)), 0);
-  let seen;
-  try { seen = window.localStorage.getItem(NOTIF_SEEN_KEY); } catch { seen = null; }
-  if (seen === null) {
-    // First ever load — settle the backlog into the queue silently.
+  const since = _notifSeenTs();
+  if (since == null) {
+    // No usable marker (missing OR corrupt, #65) — settle the backlog into
+    // the queue silently, same as a genuine first-ever load.
     _setNotifSeenTs(newest);
     return;
   }
-  const since = _notifSeenTs();
-  // Lens-10 audit #45: quiet hours suppresses the arrival signal itself, but
-  // the marker still advances so nothing already-seen re-toasts in a burst
-  // once the window ends.
-  if (_isQuietHoursNow(cfg)) {
-    if (newest > since) _setNotifSeenTs(newest);
-    return;
-  }
+  // Lens-04 audit #62: claim the cutoff and advance the marker in this same
+  // synchronous step — BEFORE the quiet-hours fetch below (a real await) or
+  // any other yield point. The previous ordering read `since` only AFTER
+  // that await, leaving a window where a second overlapping call (another
+  // poll cycle, or another tab sharing this same localStorage key) could
+  // read the identical stale marker and toast the very same arrivals a
+  // second time. Claiming first means whichever call's synchronous read+
+  // write executes first is authoritative for this batch; a second call —
+  // this tab or another — sees the marker already moved forward and has
+  // nothing left to toast.
+  if (newest > since) _setNotifSeenTs(newest);
+  const cfg = await _refreshQuietHoursCfg();
+  // Lens-10 audit #45: quiet hours suppresses the arrival signal itself; the
+  // marker was already advanced above so nothing already-seen re-toasts in a
+  // burst once the window ends.
+  if (_isQuietHoursNow(cfg)) return;
   const fresh = all
     .filter((n) => _notifTs(n) > since)
     .sort((a, b) => _notifTs(a) - _notifTs(b));
@@ -300,7 +333,6 @@ async function _toastNew(notifs) {
     _toast(label);
     _maybeDesktopNotify(n);
   }
-  if (newest > since) _setNotifSeenTs(newest);
 }
 
 // Optional desktop notification, mirroring calendar.js/tasks.js: only when the
@@ -661,14 +693,61 @@ function _momentumHost() { return _modalEl && _modalEl.querySelector('#applicant
 // advance the stored marker to now so the NEXT visit measures from this one. On
 // the very first ever load (no marker) there is no prior visit to summarise, so we
 // seed silently and leave `_recapSince` null — mirroring _toastNew's backlog seed.
-function _captureRecapSince() {
-  if (_recapSinceReady) return;
-  _recapSinceReady = true;
+//
+// Lens-04 audit #63: a plain read-then-write here is a classic read-modify-write
+// race the moment TWO tabs/windows of the same session are open — each can call
+// this near-simultaneously, each reads the SAME old marker, and whichever one's
+// write lands last silently clobbers the other's already-claimed cursor (the
+// interval between them either drops out of both recaps, or — depending on
+// ordering — gets shown to both). Claim it inside a Web Locks cross-tab mutual-
+// exclusion section when the browser supports one; a browser without it falls
+// back to the plain read+write below, which is still safe WITHIN a single tab
+// since `_recapSinceReady` already prevents a second same-tab capture.
+function _captureRecapSinceUnlocked() {
   let stored = null;
   try { stored = window.localStorage.getItem(RECAP_SEEN_KEY); } catch { stored = null; }
   const n = Number(stored);
-  _recapSince = (stored === null || !Number.isFinite(n)) ? null : n;
+  _recapSince = (stored == null || stored === '' || !Number.isFinite(n) || n <= 0) ? null : n;
   try { window.localStorage.setItem(RECAP_SEEN_KEY, String(Date.now())); } catch { /* no-op */ }
+}
+
+function _captureRecapSince() {
+  if (_recapSinceReady) return Promise.resolve();
+  _recapSinceReady = true;
+  let locks = null;
+  try { locks = (typeof navigator !== 'undefined' && navigator && navigator.locks) || null; } catch { locks = null; }
+  if (locks && typeof locks.request === 'function') {
+    try {
+      return Promise.resolve(locks.request(`${RECAP_SEEN_KEY}:lock`, () => { _captureRecapSinceUnlocked(); }))
+        .catch(() => { _captureRecapSinceUnlocked(); });
+    } catch { /* fall through to the unlocked path below */ }
+  }
+  _captureRecapSinceUnlocked();
+  return Promise.resolve();
+}
+
+// Lens-04 audit #66 (client-clock trust): the persisted "last visit" marker
+// above is written from the CLIENT's clock, but the recap totals it gates
+// (`_recapTotals`) are computed against SERVER-timestamped activity runs
+// (`_runTs`, from the SAME `/activity/runs` payload this function receives).
+// Comparing a client-clock cutoff against server timestamps means a skewed
+// client clock can drop real activity (client clock running ahead) or
+// re-show/double-count it (client clock running behind). Once the run data
+// is in hand, re-anchor the stored marker to the newest SERVER timestamp
+// actually observed — a real value already present in this payload — rather
+// than trusting the client clock any further. Only ever moves the marker
+// FORWARD (never earlier than what's already stored), so it can't reopen a
+// window another tab already consumed; a client clock running AHEAD of the
+// server still isn't fully correctable this way — that would need a real
+// `server_now` field on this payload, which doesn't exist today.
+function _reanchorRecapMarker(items) {
+  const newestServerTs = (items || []).reduce((mx, r) => Math.max(mx, _runTs(r)), 0);
+  if (!newestServerTs) return; // nothing server-timestamped in this payload to anchor to
+  try {
+    const current = Number(window.localStorage.getItem(RECAP_SEEN_KEY));
+    const anchored = Number.isFinite(current) ? Math.max(current, newestServerTs) : newestServerTs;
+    window.localStorage.setItem(RECAP_SEEN_KEY, String(anchored));
+  } catch { /* no-op — best-effort refinement only */ }
 }
 
 // Best timestamp (ms) for a run record, tolerating ISO strings and epoch s/ms.
@@ -730,7 +809,7 @@ function _renderRecap(host, totals, pending) {
 async function _loadRecap() {
   const host = _recapHost();
   if (!host) return;
-  _captureRecapSince();
+  await _captureRecapSince();
   // First-ever visit: no prior visit to summarise. Stay quiet.
   if (_recapSince == null) { host.innerHTML = ''; return; }
   let data;
@@ -743,6 +822,7 @@ async function _loadRecap() {
   // Offline / gated → hide; the pending panel already surfaces those states.
   if (!data || data.engine_available === false || data.gated === true) { host.innerHTML = ''; return; }
   const items = (Array.isArray(data.items) ? data.items : []).filter((it) => it && typeof it === 'object');
+  _reanchorRecapMarker(items); // #66: prefer the server's own timeline once we have one
   _renderRecap(host, _recapTotals(items, _recapSince), _lastPendingCount);
 }
 
@@ -772,13 +852,24 @@ function _dayKey(ts) {
 
 function _computeStreakDays(items) {
   const days = new Set();
+  let newestServerTs = 0;
   for (const run of items) {
     if (!run || typeof run !== 'object') continue;
     const ts = _runTs(run);
-    if (ts) days.add(_dayKey(ts));
+    if (ts) {
+      days.add(_dayKey(ts));
+      if (ts > newestServerTs) newestServerTs = ts;
+    }
   }
   if (!days.size) return 0;
-  const now = Date.now();
+  // Lens-04 audit #66: anchor "today" to the LATER of the client clock and the
+  // newest SERVER-observed run already in `items` — a client clock running
+  // behind the server (common under VM clock drift) would otherwise fail to
+  // credit a run that has already genuinely happened today server-side,
+  // silently breaking a real streak. A client clock running AHEAD of the
+  // server isn't correctable this way (there's no server "now" in this
+  // payload to anchor to instead — this is the honest best-effort version).
+  const now = Math.max(Date.now(), newestServerTs);
   let anchor = now;
   if (!days.has(_dayKey(now))) {
     const yesterday = now - _ONE_DAY_MS;
@@ -1445,7 +1536,55 @@ function _infoNotifs() {
   return (_notifs || []).filter(_isInformational);
 }
 
+// ── In-flight input preservation across a re-render (lens-04 #49) ──────────
+//
+// `_renderList` fully rebuilds the pending-list DOM from `_items` on every
+// call — the first paint, the notifications fold-in a moment later, "Deliver
+// now", any resolve/snooze/bulk-approve, and the manual refresh button all
+// re-render it. Anything the user was mid-typing into an open row (an agent-
+// question answer, a missing-detail name/value pair) lived only in that
+// now-discarded DOM and silently vanished from under them. Capture what's
+// actually been typed before the rebuild and splice it back into the
+// freshly-rendered rows afterward, keyed by the same `data-action-id` a row
+// already carries elsewhere (`_removeRow`).
+function _captureDraftInputs(body) {
+  const drafts = {};
+  if (!body || !body.querySelectorAll) return drafts;
+  Array.from(body.querySelectorAll('.applicant-portal-row')).forEach((row) => {
+    const id = row.getAttribute && row.getAttribute('data-action-id');
+    if (!id) return;
+    const q = (sel) => (row.querySelector ? row.querySelector(sel) : null);
+    const answer = q('.applicant-portal-answer');
+    const missingName = q('.applicant-portal-missing-name');
+    const missingValue = q('.applicant-portal-missing-value');
+    const entry = {};
+    if (answer && answer.value) entry.answer = answer.value;
+    if (missingName && missingName.value) entry.missingName = missingName.value;
+    if (missingValue && missingValue.value) entry.missingValue = missingValue.value;
+    if (Object.keys(entry).length) drafts[id] = entry;
+  });
+  return drafts;
+}
+
+function _restoreDraftInputs(body, drafts) {
+  if (!body || !drafts || !body.querySelectorAll) return;
+  const rows = Array.from(body.querySelectorAll('.applicant-portal-row'));
+  Object.keys(drafts).forEach((id) => {
+    const row = rows.find((r) => r.getAttribute && r.getAttribute('data-action-id') === id);
+    if (!row) return; // the row is gone (resolved/snoozed/expired) — nothing to restore it into
+    const d = drafts[id];
+    const q = (sel) => (row.querySelector ? row.querySelector(sel) : null);
+    const answer = q('.applicant-portal-answer');
+    if (answer && d.answer != null) answer.value = d.answer;
+    const missingName = q('.applicant-portal-missing-name');
+    if (missingName && d.missingName != null) missingName.value = d.missingName;
+    const missingValue = q('.applicant-portal-missing-value');
+    if (missingValue && d.missingValue != null) missingValue.value = d.missingValue;
+  });
+}
+
 function _renderList(body) {
+  const drafts = _captureDraftInputs(body);
   const infos = _infoNotifs();
   if (!_items.length && !infos.length) { _renderEmpty(body); return; }
   const actionRows = _items.map((it) => _rowShell(it, _renderRowInner(it))).join('');
@@ -1481,6 +1620,7 @@ function _renderList(body) {
        </div>`
     : '';
   body.innerHTML = `${actionHdr}${actionRows}${notifHdr}${notifRows}`;
+  _restoreDraftInputs(body, drafts);
   _wireRows(body);
   _wireDigestWhy(body);
   _wireDeliverNow(body);
@@ -1624,8 +1764,35 @@ function _removeRow(host, id) {
   }
 }
 
+// Lens-04 audit #50 (pairs with engine #27): the engine's resolve endpoint is
+// idempotent-silent — it always reports success even for an action that's
+// already resolved, gone, or mid-resolve elsewhere (a stale click after a
+// bulk-approve/another tab/poll raced it away, or a genuine double-tap
+// before the button's own disabled state lands) — there is nothing in that
+// response to tell "really just resolved" apart from "resolving something
+// that no longer needs it." Track what Portal itself already knows is no
+// longer open (`_items`) plus a same-tab in-flight guard, and answer BOTH
+// cases ourselves with a calm, explicit "already handled" state instead of
+// quietly repeating the original success toast or bubbling a confusing
+// network error for a click that had nothing left to do.
+const _resolvingActionIds = new Set();
+
+function _isActionOpen(id) {
+  return _items.some((it) => String(it.id) === String(id));
+}
+
 async function _doResolve(id) {
-  await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, {});
+  if (!_isActionOpen(id) || _resolvingActionIds.has(id)) {
+    const err = new Error('This was already handled');
+    err.alreadyHandled = true;
+    throw err;
+  }
+  _resolvingActionIds.add(id);
+  try {
+    await _post(`${API}/actions/${encodeURIComponent(id)}/resolve`, {});
+  } finally {
+    _resolvingActionIds.delete(id);
+  }
 }
 
 function _wireRows(host) {
@@ -1641,6 +1808,14 @@ function _wireRows(host) {
         _removeRow(host, id);
         _toast('Marked as handled');
       } catch (e) {
+        if (e && e.alreadyHandled) {
+          // Nothing left to do — the row (if it's even still here) just
+          // needs to go, with an honest "already handled" instead of either
+          // a silent no-op or the generic failure toast below.
+          _removeRow(host, id);
+          _toast('This was already handled');
+          return;
+        }
         btn.disabled = false;
         btn.textContent = orig;
         _toast(e.message || 'Could not update that');
