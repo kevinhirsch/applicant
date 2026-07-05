@@ -54,12 +54,16 @@ _ALREADY_SUBMITTED_STATES = frozenset(
 )
 
 # Bug fix: a process-lived guard against a double-click (or the same row open in two
-# tabs) firing TWO real physical clicks against the employer's live submit button.
-# ``app.status`` alone can't close the race — both requests can read
-# AWAITING_FINAL_APPROVAL before either finishes recording the decision — so this
-# in-flight set is checked/claimed BEFORE the click, mirroring the container's
-# process-lived ``desktop_assist_sessions`` set (FR-CUA-4) but scoped to this module
-# since it only needs to span one in-flight authorize-finish call.
+# tabs) delivering the SAME terminal decision twice. ``app.status`` alone can't close
+# the race — both requests can read AWAITING_FINAL_APPROVAL before either finishes
+# recording the decision — so this in-flight set is checked/claimed BEFORE the
+# consequential work runs, mirroring the container's process-lived
+# ``desktop_assist_sessions`` set (FR-CUA-4). Shared by both terminal-decision routes
+# (``authorize-engine-finish`` — where a double dispatch would physically re-click the
+# employer's live submit button — and ``submit-self``, audit #28: without this guard a
+# double-click there still calls ``final_approval_service.submit_decision`` twice,
+# ``send``-ing a second, permanently-undrained message onto the durable mailbox even
+# though the resulting OutcomeEvent itself is deduped).
 _finish_in_progress: set[str] = set()
 
 
@@ -379,21 +383,43 @@ def submit_self(
     submit/teardown steps run (recording the outcome, releasing capacity) instead of
     recording out-of-band and leaving the pipeline stuck at ``recv`` forever. The
     pipeline's submit step records the single OutcomeEvent — no double-recording here.
+
+    Audit #28: guarded the same way as ``authorize-engine-finish`` — a state check
+    (already-terminal -> 409) plus the shared in-flight lock BEFORE
+    ``_deliver_decision`` — so a double-click / two-tab race can't deliver the
+    decision twice. ``record_submission`` already dedupes the resulting OutcomeEvent,
+    but without this guard each duplicate call still ``send``s a second message onto
+    the durable final-approval mailbox that nothing will ever drain.
     """
     # An outcome can only be recorded for a real application; a bogus/stale id would
     # otherwise hit a foreign-key IntegrityError (-> 500) at record_submission on a real
     # DB. Fail cleanly with 404, mirroring resume-account/resume-detection.
-    if storage.applications.get(application_id) is None:  # type: ignore[arg-type]
+    app = storage.applications.get(application_id)  # type: ignore[arg-type]
+    if app is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown application")
-    event = _deliver_decision(
-        container,
-        storage,
-        submission,
-        application_id,
-        DECISION_SUBMIT_SELF,
-        OutcomeSource.MANUAL,
-        post_submission=post_submission,
-    )
+    if app.status in _ALREADY_SUBMITTED_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application has already been submitted.",
+        )
+    if application_id in _finish_in_progress:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application is already being submitted.",
+        )
+    _finish_in_progress.add(application_id)
+    try:
+        event = _deliver_decision(
+            container,
+            storage,
+            submission,
+            application_id,
+            DECISION_SUBMIT_SELF,
+            OutcomeSource.MANUAL,
+            post_submission=post_submission,
+        )
+    finally:
+        _finish_in_progress.discard(application_id)
     return {
         "application_id": application_id,
         "result": "submitted_by_user",

@@ -513,3 +513,151 @@ def test_desktop_enable_then_action_when_surface_live(app, monkeypatch):
         assert c.post(
             f"/api/remote/sessions/{sid}/desktop/action", json={"action": "capture"}
         ).status_code == 409
+
+
+# ── submit-self double-submit guard (audit #28, failure-paths lens 04) ──────
+#
+# ``submit-self`` used to have NO state/in-flight guard at all: only
+# ``authorize-engine-finish`` (which physically clicks a real button) was hardened.
+# A double-click / two-tab race on submit-self still delivered the decision twice
+# through ``final_approval_service.submit_decision`` -> ``orchestrator.send`` — the
+# resulting OutcomeEvent is deduped (IDEM-3), but each duplicate ``send`` left a
+# second, permanently-undrained message sitting in the durable final-approval
+# mailbox forever (a latent poison message per audit #28). These tests prove the
+# same state-guard + in-flight lock authorize-engine-finish already has now also
+# covers submit-self, and that it does so WITHOUT calling ``submit_decision`` twice.
+
+
+def _spy_submit_decision(container):
+    """Wrap the real ``final_approval_service.submit_decision`` with a call-count spy."""
+    calls: list[tuple[str, str, str]] = []
+    orig = container.final_approval_service.submit_decision
+
+    def spy(workflow_id, application_id, decision):
+        calls.append((str(workflow_id), str(application_id), decision))
+        return orig(workflow_id, application_id, decision)
+
+    container.final_approval_service.submit_decision = spy
+    return calls
+
+
+def test_submit_self_already_submitted_409_no_double_send(client):
+    """A second submit-self call on an application ALREADY in a terminal submitted
+    state must 409 WITHOUT delivering the decision to the durable gate again."""
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.SUBMITTED_BY_USER,
+        )
+    )
+    container.storage.commit()
+    calls = _spy_submit_decision(container)
+
+    res = client.post(f"/api/remote/applications/{aid}/submit-self")
+
+    assert res.status_code == 409
+    assert "already been submitted" in res.json()["detail"]
+    assert calls == []  # the decision was never re-delivered to the durable gate
+
+
+def test_submit_self_engine_finish_state_also_blocks(client):
+    """The state guard covers BOTH terminal states — an application the ENGINE
+    already finished must also block a stray submit-self call."""
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.FINISHED_BY_ENGINE,
+        )
+    )
+    container.storage.commit()
+    calls = _spy_submit_decision(container)
+
+    res = client.post(f"/api/remote/applications/{aid}/submit-self")
+
+    assert res.status_code == 409
+    assert calls == []
+
+
+def test_submit_self_in_flight_guard_blocks_concurrent_submit(client):
+    """Two near-simultaneous submit-self calls for the SAME application must result
+    in exactly ONE decision delivered to the durable gate. The in-flight guard is
+    claimed before ``_deliver_decision`` runs, so a second request racing in while
+    the first is still mid-flight is rejected 409 rather than double-delivering.
+
+    Simulated the same way as the equivalent authorize-engine-finish race test: the
+    (synchronous, in-process) ``final_approval_service.submit_decision`` re-enters
+    the endpoint for the same application id from inside the first call.
+    """
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    container.storage.commit()
+
+    calls: list[str] = []
+    nested_responses = []
+    orig_submit_decision = container.final_approval_service.submit_decision
+
+    def racing_submit_decision(workflow_id, application_id, decision):
+        calls.append(str(application_id))
+        # The in-flight guard must already be claimed at this point (it is added
+        # BEFORE ``_deliver_decision`` runs), so this nested near-simultaneous call
+        # must be refused rather than delivering the decision a second time.
+        nested_responses.append(
+            client.post(f"/api/remote/applications/{application_id}/submit-self")
+        )
+        return orig_submit_decision(workflow_id, application_id, decision)
+
+    container.final_approval_service.submit_decision = racing_submit_decision
+
+    res = client.post(f"/api/remote/applications/{aid}/submit-self")
+
+    assert res.status_code == 201
+    assert res.json()["result"] == "submitted_by_user"
+    assert len(calls) == 1  # the decision was only ever delivered once
+    assert len(nested_responses) == 1
+    assert nested_responses[0].status_code == 409
+    assert "already being submitted" in nested_responses[0].json()["detail"]
+
+
+def test_submit_self_success_path_unchanged(client):
+    """Control: a normal (non-racing, non-duplicate) submit-self call still succeeds
+    exactly as before the guard was added — proving the guard only changes the
+    failure path, not the success path."""
+    container = client.app.state.container
+    aid = ApplicationId(new_id())
+    container.storage.applications.add(
+        Application(
+            id=aid,
+            campaign_id=CampaignId(new_id()),
+            posting_id=JobPostingId(new_id()),
+            status=ApplicationState.AWAITING_FINAL_APPROVAL,
+        )
+    )
+    container.storage.commit()
+
+    res = client.post(f"/api/remote/applications/{aid}/submit-self")
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["application_id"] == str(aid)
+    assert body["result"] == "submitted_by_user"
+    assert body["gate"] == "delivered"
+    assert body["outcome_id"]
+    # The application actually left AWAITING_FINAL_APPROVAL for a real terminal state.
+    app = container.storage.applications.get(aid)
+    assert app.status in (ApplicationState.SUBMITTED_BY_USER, ApplicationState.POST_SUBMISSION)

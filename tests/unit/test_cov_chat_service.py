@@ -283,4 +283,101 @@ def test_single_fact_value_is_unchanged():
     parsed = svc._parse_proposal("My email address is dana@example.com")
     assert parsed is not None
     assert parsed.name == "email address"
-    assert parsed.value == "dana@example.com"
+
+
+# === interview-context callback failure (audit #7, failure-paths lens 04) ===
+#
+# ``_interview_context`` degrades to "" on ANY failure of the workspace
+# ``calendar_interviews`` callback (a flaky/absent workspace must never break a
+# chat turn) — that degrade-silently behavior is intentional and must not change.
+# What was missing: a bare ``except Exception: return ""`` left zero trace, so a
+# genuine workspace outage was indistinguishable from "no interviews scheduled".
+# The fix logs a warning on the exception path only; the return value is unchanged
+# on both the success and failure paths.
+
+
+class _AvailableRaisingWorkspace:
+    """WorkspacePort double: reports available, then raises on the actual call."""
+
+    def available(self) -> bool:
+        return True
+
+    def calendar_interviews(self, *, owner=None) -> dict:
+        raise RuntimeError("workspace callback exploded")
+
+
+class _AvailableOkWorkspace:
+    """WorkspacePort double: reports available and returns a normal payload."""
+
+    def __init__(self, interviews):
+        self._interviews = interviews
+
+    def available(self) -> bool:
+        return True
+
+    def calendar_interviews(self, *, owner=None) -> dict:
+        return {"interviews": self._interviews}
+
+
+def _svc_with_workspace(workspace):
+    storage = InMemoryStorage()
+    attrs = AttributeCloudService(storage)
+    criteria = CriteriaService(storage)
+    return ChatService(attribute_service=attrs, criteria_service=criteria, workspace=workspace)
+
+
+def test_interview_context_callback_failure_degrades_to_empty_and_logs(monkeypatch):
+    """Audit #7: intercepts the ``warning()`` call on the exact logger the service
+    uses rather than relying on ``caplog`` — a prior test elsewhere in a full-suite
+    run may reconfigure logging (its own handlers, ``propagate=False``, a global
+    ``logging.disable(...)``), which drops the record before any handler runs and
+    makes ``caplog``-based capture order-dependent/flaky (the same pattern documented
+    in ``test_db_fallback_healthcheck.py::test_build_storage_marks_unreachable_db_as_fallback``).
+    """
+    import applicant.application.services.chat_service as chat_service_module
+
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        chat_service_module.log,
+        "warning",
+        lambda msg, *a, **k: recorded.append(msg % a if a else msg),
+    )
+
+    svc = _svc_with_workspace(_AvailableRaisingWorkspace())
+    ctx = svc._interview_context()
+    # Success-path-preserving: the turn is never broken by the callback failure —
+    # the context still degrades to "" exactly as before.
+    assert ctx == ""
+    # But the failure is no longer completely silent.
+    assert any("calendar_interviews" in msg for msg in recorded)
+
+
+def test_interview_context_no_workspace_is_unaffected(monkeypatch):
+    """Control: no workspace configured at all -> "" with no log noise (the
+    logging change only fires on an actual callback exception)."""
+    import applicant.application.services.chat_service as chat_service_module
+
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        chat_service_module.log,
+        "warning",
+        lambda msg, *a, **k: recorded.append(msg % a if a else msg),
+    )
+
+    svc = _svc_with_workspace(None)
+    ctx = svc._interview_context()
+    assert ctx == ""
+    assert not recorded
+
+
+def test_interview_context_success_path_is_unchanged():
+    """Control: a working workspace callback still produces the interview block,
+    with no warning logged."""
+    svc = _svc_with_workspace(
+        _AvailableOkWorkspace(
+            [{"title": "Onsite", "detected_company": "Acme", "start": "Tuesday 2pm"}]
+        )
+    )
+    ctx = svc._interview_context()
+    assert ctx != ""
+    assert "Acme" in ctx

@@ -27,6 +27,14 @@ const GALLERY = '/api/applicant/gallery';
 let _modalEl = null;
 let _modalA11yCleanup = null;
 let _campaignId = null;
+let _renderSeq = 0;
+
+// Shared with emailLibrary/applicantDigest.js's own last-campaign memory
+// (exhaustive2 lens 01 micro-interactions #58) — Gallery deliberately reads
+// AND writes the very same localStorage key rather than keeping its own
+// campaign choice only for the page session, so picking a job search in
+// either surface is remembered across a refresh in both.
+const LAST_CAMPAIGN_KEY = 'applicant-digest-last-campaign';
 
 // ── Modal scaffold ──────────────────────────────────────────────────────────
 
@@ -42,7 +50,7 @@ function _ensureModalEl() {
     <div class="modal-content" style="--window-w:820px;display:flex;flex-direction:column;max-height:88vh;">
       <div class="modal-header">
         <h4>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
           Application Gallery
         </h4>
         <button class="modal-close" id="applicant-gallery-close" title="Close" aria-label="Close">×</button>
@@ -54,20 +62,47 @@ function _ensureModalEl() {
         </label>
         <span id="applicant-gallery-engine" class="admin-toggle-sub" style="margin:0;opacity:0.6;"></span>
       </div>
-      <div class="modal-body" id="applicant-gallery-body" style="flex:1;overflow-y:auto;padding:14px;">
+      <div class="modal-body" id="applicant-gallery-body" style="flex:1;overflow-y:auto;padding:14px;" aria-live="polite" aria-busy="false">
         ${loadingHTML('Loading…')}
       </div>
     </div>`;
   document.body.appendChild(modal);
-  if (_modalA11yCleanup) _modalA11yCleanup();
-  // Escape is handled by initModalA11y above (topmost-modal arbiter,
-  // design-audit item #17) — do not add a second local Escape listener here.
-  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
+  // initModalA11y (focus trap + Escape arbiter + focus restore) is (re-)wired
+  // from openApplicantGallery() on every open, not here — this element is
+  // created once and reused across opens, so wiring it only at creation time
+  // would leave every reopen after the first with no focus management at all
+  // (a11y-deep audit item #1's "six modals lose focus mgmt after first
+  // close" class of bug — Portal/Vault/Mind/Remote already re-init on every
+  // open; Gallery was one of the six named).
   modal.querySelector('#applicant-gallery-close').addEventListener('click', _close);
   modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
   modal.querySelector('#applicant-gallery-campaign').addEventListener('change', (e) => {
     _campaignId = e.target.value || null;
+    try { localStorage.setItem(LAST_CAMPAIGN_KEY, _campaignId || ''); } catch { /* best-effort */ }
     _renderGallery();
+  });
+  // Delegated on the body (not the tiles) so it keeps working across every
+  // _renderGallery() innerHTML swap of the body's children (micro-
+  // interactions audit #64: material snippets hard-cut at 240 chars with no
+  // ellipsis and no way to read the rest).
+  modal.querySelector('#applicant-gallery-body').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-role="snippet-toggle"]');
+    if (!btn) return;
+    const tile = btn.closest('.applicant-gallery-tile');
+    const snippet = tile && tile.querySelector('.applicant-gallery-snippet');
+    if (!snippet) return;
+    const expanded = snippet.getAttribute('data-expanded') === '1';
+    if (expanded) {
+      snippet.textContent = snippet.getAttribute('data-short') || '';
+      snippet.style.maxHeight = '4.2em';
+      snippet.setAttribute('data-expanded', '0');
+      btn.textContent = 'Show more';
+    } else {
+      snippet.textContent = snippet.getAttribute('data-full') || '';
+      snippet.style.maxHeight = 'none';
+      snippet.setAttribute('data-expanded', '1');
+      btn.textContent = 'Show less';
+    }
   });
   _modalEl = modal;
   return modal;
@@ -140,7 +175,16 @@ async function _loadCampaigns() {
   sel.innerHTML = campaigns.length
     ? campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name || c.id)}</option>`).join('')
     : '<option value="">No job searches yet</option>';
-  if (!_campaignId && campaigns.length) _campaignId = campaigns[0].id;
+  if (!_campaignId && campaigns.length) {
+    // Prefer the last campaign remembered by this shared key (micro-
+    // interactions #58) over always defaulting back to the first one, so a
+    // page refresh doesn't quietly switch a user back to a different search.
+    let remembered = '';
+    try { remembered = localStorage.getItem(LAST_CAMPAIGN_KEY) || ''; } catch { /* best-effort */ }
+    _campaignId = (remembered && campaigns.some((c) => c.id === remembered))
+      ? remembered
+      : campaigns[0].id;
+  }
   if (_campaignId) sel.value = _campaignId;
   return data && data.engine_available !== false;
 }
@@ -155,7 +199,7 @@ function _shotCard(s) {
   return `
     <div class="applicant-gallery-tile" style="display:flex;flex-direction:column;gap:6px;">
       <div style="display:flex;align-items:center;gap:8px;color:var(--text-muted,#888);">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
         <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${ref}</strong>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">${url}</div>
@@ -176,9 +220,24 @@ function _matCard(m) {
   const path = m.storage_path
     ? `<div class="admin-toggle-sub" style="opacity:0.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(m.storage_path)}">${esc(m.storage_path)}</div>`
     : '';
-  const snippet = m.content
-    ? `<div style="font-size:12px;line-height:1.4;max-height:4.2em;overflow:hidden;">${esc(String(m.content).slice(0, 240))}</div>`
-    : '';
+  // Micro-interactions audit #64: the 240-char cut used to hard-truncate
+  // mid-word with no "…" and no way to read the rest. Now it truncates on a
+  // word boundary, adds an ellipsis, and (when truncated) a real
+  // keyboard-operable "Show more"/"Show less" toggle wired via the
+  // delegated body listener in _ensureModalEl — the material is no longer
+  // otherwise unviewable from the Gallery.
+  let snippet = '';
+  if (m.content) {
+    const full = String(m.content);
+    const truncated = full.length > 240;
+    const cut = full.slice(0, 240);
+    const short = truncated ? `${cut.slice(0, Math.max(1, cut.lastIndexOf(' ')) )}…` : full;
+    snippet = `<div class="applicant-gallery-snippet" data-full="${esc(full)}" data-short="${esc(short)}" data-expanded="0" `
+      + `style="font-size:12px;line-height:1.4;${truncated ? 'max-height:4.2em;overflow:hidden;' : ''}">${esc(short)}</div>`
+      + (truncated
+        ? '<button type="button" class="cal-btn" data-role="snippet-toggle" style="margin-top:4px;font-size:11px;padding:2px 8px;">Show more</button>'
+        : '');
+  }
   return `
     <div class="applicant-gallery-tile" style="display:flex;flex-direction:column;gap:6px;">
       <div style="display:flex;align-items:center;gap:8px;">
@@ -194,27 +253,40 @@ function _grid(cards) {
 }
 
 async function _renderGallery() {
+  // Stale-render guard (micro-interactions audit #44: "Campaign-switch races
+  // — only Chat has a stale-render guard"): capture this call's own sequence
+  // number and bail before every DOM write once a later call has started, so
+  // scrubbing the campaign picker quickly can never paint an earlier fetch's
+  // response over a newer selection.
+  const seq = (_renderSeq += 1);
+  const host = _body();
+  const stale = () => seq !== _renderSeq || !_modalEl;
   if (!_campaignId) {
-    _body().innerHTML = emptyHTML(
+    host.innerHTML = emptyHTML(
       'No job searches yet',
       'Create a job search to start capturing screenshots and materials here.',
       _createSearchCTA());
     _wireCreateSearchCTA();
     return;
   }
-  _body().innerHTML = loadingHTML('Loading…');
+  host.setAttribute('aria-busy', 'true');
+  host.innerHTML = loadingHTML('Loading…');
   let data;
   try {
     data = await _fetchJSON(`${GALLERY}/${encodeURIComponent(_campaignId)}`);
   } catch (err) {
+    if (stale()) return;
+    _body().setAttribute('aria-busy', 'false');
     _body().innerHTML = errorHTML(_errLine(err));
     wireRetry(_body(), _renderGallery);
     return;
   }
+  if (stale()) return;
   const shots = (data && data.screenshots && Array.isArray(data.screenshots.items)) ? data.screenshots.items : [];
   const mats = (data && data.materials && Array.isArray(data.materials.items)) ? data.materials.items : [];
 
   if (!shots.length && !mats.length) {
+    _body().setAttribute('aria-busy', 'false');
     _body().innerHTML = emptyHTML(
       'Nothing captured yet',
       'This job search has no screenshots or generated materials yet — they appear here as the agent works.',
@@ -230,6 +302,7 @@ async function _renderGallery() {
   sections.push(`<h5 style="margin:16px 0 8px;">Materials <span class="admin-toggle-sub" style="opacity:0.6;">${mats.length}</span></h5>`);
   sections.push(mats.length ? _grid(mats.map(_matCard)) : _empty(
     'No generated materials yet — resumes, cover letters, and screening answers will appear here as the agent drafts them.'));
+  _body().setAttribute('aria-busy', 'false');
   _body().innerHTML = sections.join('');
 }
 
@@ -240,6 +313,10 @@ export async function openApplicantGallery(opts) {
   modal.classList.remove('hidden');
   modal.style.display = 'flex';
   if (!(opts && opts.skipHashUpdate)) setHash('gallery');
+  // Keyboard a11y: trap focus, Escape to close, restore on close — re-wired
+  // on every open (not just the first), the fix for a11y-deep audit #1.
+  if (_modalA11yCleanup) _modalA11yCleanup();
+  _modalA11yCleanup = uiModule.initModalA11y(modal, _close);
   _body().innerHTML = loadingHTML('Loading…');
   try {
     const up = await _loadCampaigns();

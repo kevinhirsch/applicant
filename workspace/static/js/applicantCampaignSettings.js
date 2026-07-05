@@ -111,7 +111,7 @@ function _campaignCard(c) {
       <div class="settings-row">
         <label class="settings-label" for="cs-name-${id}">Name</label>
         <input id="cs-name-${id}" class="settings-input" type="text" value="${esc(c.name)}"
-               data-cs-field="name" placeholder="Campaign name">
+               data-cs-field="name" placeholder="Campaign name" maxlength="120">
       </div>
       <div class="settings-row">
         <label class="settings-label" for="cs-mode-${id}">Run mode</label>
@@ -123,6 +123,7 @@ function _campaignCard(c) {
         <input id="cs-tput-${id}" class="settings-input" type="number" min="1" max="30"
                value="${esc(String(throughput))}" data-cs-field="throughput_target" style="max-width:120px">
       </div>
+      <div class="admin-toggle-sub cs-tput-note" id="cs-tput-note-${id}" style="opacity:0.75;margin:-6px 0 4px;display:none;" role="status"></div>
       <div class="settings-row">
         <label class="settings-label" for="cs-budget-${id}">Exploration budget
           <span style="opacity:0.6;font-weight:normal">(% effort on new sources)</span></label>
@@ -227,7 +228,8 @@ function _readEdits(card) {
 
 async function _wireCard(host, card) {
   const id = card.getAttribute('data-campaign-id');
-  card.querySelector('.cs-save')?.addEventListener('click', async (ev) => {
+  const saveBtn = card.querySelector('.cs-save');
+  saveBtn?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
     btn.disabled = true;
     try {
@@ -239,9 +241,49 @@ async function _wireCard(host, card) {
       btn.disabled = false;
     }
   });
+  // Enter-to-commit from the rename field, mirroring the chat composer's
+  // create-campaign chord (micro-interactions audit #24).
+  card.querySelector('[data-cs-field="name"]')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      saveBtn?.click();
+    }
+  });
+  // Client-side clamp on the daily-throughput input so a typed-then-capped
+  // value doesn't look like a silent bug once the engine's own hard cap
+  // rewrites it server-side (micro-interactions audit #25).
+  const tputInput = card.querySelector('[data-cs-field="throughput_target"]');
+  const tputNote = card.querySelector(`#cs-tput-note-${CSS.escape(id)}`);
+  tputInput?.addEventListener('change', () => {
+    const raw = parseInt(tputInput.value, 10);
+    if (!Number.isFinite(raw)) return;
+    const min = parseInt(tputInput.min, 10) || 1;
+    const max = parseInt(tputInput.max, 10) || 30;
+    const clamped = Math.max(min, Math.min(raw, max));
+    if (clamped !== raw) {
+      tputInput.value = String(clamped);
+      if (tputNote) {
+        tputNote.textContent = `Capped at ${clamped} for safety.`;
+        tputNote.style.display = '';
+      }
+    } else if (tputNote) {
+      tputNote.style.display = 'none';
+    }
+  });
   card.querySelector('.cs-archive')?.addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
     const active = btn.getAttribute('data-cs-active') === '1';
+    // Archiving stops a whole job search — confirm first (weight follows
+    // consequence, micro-interactions audit #41). Reactivating stays a
+    // single click; it only resumes work, nothing is lost by a mis-click.
+    if (active) {
+      const name = card.querySelector('.cs-name-label')?.textContent?.trim() || 'this campaign';
+      const ok = await _confirm(
+        `Archive "${name}"? The assistant will stop working this job search until you reactivate it.`,
+        { confirmText: 'Archive', cancelText: 'Keep active' },
+      );
+      if (!ok) return;
+    }
     btn.disabled = true;
     try {
       await _patch(`${BASE}/${encodeURIComponent(id)}`, { active: !active });
@@ -332,7 +374,7 @@ async function _wireCreate(host) {
   const btn = host.querySelector('#cs-create');
   const input = host.querySelector('#cs-create-name');
   if (!btn || !input) return;
-  btn.addEventListener('click', async () => {
+  const create = async () => {
     const name = input.value.trim();
     if (!name) {
       _toast('Give the campaign a name first');
@@ -347,16 +389,35 @@ async function _wireCreate(host) {
       _toast(`Could not create campaign: ${e.message || e}`);
       btn.disabled = false;
     }
+  };
+  btn.addEventListener('click', create);
+  // Enter-to-commit, mirroring the chat composer's own create-campaign
+  // chord (micro-interactions audit #24: "no Enter-to-commit, no maxlength").
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      create();
+    }
   });
 }
 
 export async function mountApplicantCampaignSettings(host) {
   if (!host) return;
+  // This panel fully re-mounts on every save/archive/duplicate/delete/create
+  // (a fuller "patch the one edited card in place" refactor is the real fix
+  // for micro-interactions audit #39 and is deferred — see the task report);
+  // in the meantime, mark the host a live/busy-aware region (a11y-deep audit
+  // #12) and preserve the reader's scroll position across the swap instead
+  // of always snapping back to the top.
+  host.setAttribute('aria-live', 'polite');
+  host.setAttribute('aria-busy', 'true');
+  const savedScrollTop = host.scrollTop;
   host.innerHTML = '<p style="font-size:0.85rem;opacity:0.7;">Loading campaigns…</p>';
   const { available, campaigns } = await _loadCampaigns();
   if (!available) {
     host.innerHTML =
       '<p style="font-size:0.85rem;opacity:0.7;">Applicant is offline — campaign settings will appear once it reconnects.</p>';
+    host.setAttribute('aria-busy', 'false');
     return;
   }
   const createCard = `
@@ -364,7 +425,8 @@ export async function mountApplicantCampaignSettings(host) {
       <h2>Create a campaign</h2>
       <div class="admin-toggle-sub" style="margin-bottom:8px">A campaign is one job search — its own criteria, sources, and learning.</div>
       <div class="settings-row" style="gap:8px">
-        <input id="cs-create-name" class="settings-input" type="text" placeholder="e.g. Senior Backend Engineer">
+        <input id="cs-create-name" class="settings-input" type="text" placeholder="e.g. Senior Backend Engineer"
+               aria-label="Campaign name" maxlength="120">
         <button type="button" class="cal-btn" id="cs-create">Create</button>
       </div>
     </div>`;
@@ -372,6 +434,8 @@ export async function mountApplicantCampaignSettings(host) {
     ? campaigns.map(_campaignCard).join('')
     : '<p style="font-size:0.85rem;opacity:0.7;">No campaigns yet — create one above to get started.</p>';
   host.innerHTML = createCard + cards;
+  host.scrollTop = savedScrollTop;
+  host.setAttribute('aria-busy', 'false');
   await _wireCreate(host);
   for (const card of host.querySelectorAll('[data-campaign-id]')) {
     await _wireCard(host, card);

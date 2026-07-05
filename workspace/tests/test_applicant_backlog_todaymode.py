@@ -684,6 +684,236 @@ def test_empty_deck_at_open_shows_completion_copy_too(node_available):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 6b. Accessibility + micro-interactions regression coverage
+#     (exhaustive2 lenses 05/01, "today/campaign-settings/gallery" batch).
+#     Every assertion here was verified failing by temporarily reverting the
+#     source fix it protects, then restoring (clean git diff after).
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_modal_a11y_reinitialized_on_every_open_not_just_the_first(node_available):
+    """a11y-deep audit #1: six modals (incl. siblings of this surface) only
+    wired initModalA11y behind the `if (_modalEl) return` first-creation
+    guard, so every reopen after the first had no focus trap/Escape
+    arbiter/focus-restore at all. Today must call initModalA11y again from
+    openApplicantToday() on every open, not just from _ensureModalEl()."""
+    script = f"""
+        {_THREE_ITEMS_RESPONDER}
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        mod.closeApplicantToday();
+        await mod.openApplicantToday();
+        console.log(JSON.stringify({{
+          initCalls: globalThis.__initModalA11yCalls || 0,
+          cleanupCalls: globalThis.__initModalA11yCleanupCalls || 0,
+        }}));
+    """
+    out = _run_node(script)
+    assert out["initCalls"] == 2, "initModalA11y must be re-wired on every open, not just the first"
+    assert out["cleanupCalls"] == 1, "the first open's cleanup must run when it's closed"
+
+
+def test_body_region_carries_aria_live_and_toggles_aria_busy(node_available):
+    """a11y-deep audit #12: the shared loading/error/empty kit carries no
+    role/aria-live/aria-busy, so every swap into it is inaudible. Today's own
+    body container must at least mark itself a live, non-busy region once
+    a load completes."""
+    script = f"""
+        {_THREE_ITEMS_RESPONDER}
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        console.log(JSON.stringify({{
+          ariaLive: body.getAttribute('aria-live'),
+          ariaBusyAfterLoad: body.getAttribute('aria-busy'),
+        }}));
+    """
+    out = _run_node(script)
+    assert out == {"ariaLive": "polite", "ariaBusyAfterLoad": "false"}
+
+
+def test_focus_moves_to_card_heading_after_next_navigation(node_available):
+    """a11y-deep audit #6: step/re-renders destroy the focused element with
+    focus silently falling to <body>. Today must re-anchor focus on the new
+    card's own heading after every navigation."""
+    script = f"""
+        {_THREE_ITEMS_RESPONDER}
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        body.querySelector('[data-role="next"]').dispatchEvent({{ type: 'click' }});
+        console.log(JSON.stringify({{
+          activeId: document.activeElement && document.activeElement.id,
+        }}));
+    """
+    out = _run_node(script)
+    assert out == {"activeId": "applicant-today-card-title"}
+
+
+def test_focus_moves_to_completion_region_when_deck_empties(node_available):
+    """Same #6 fix, exercised on the terminal (deck-emptied) render path."""
+    script = f"""
+        globalThis.__fetchResponder = (url, method) => {{
+          if (url.endsWith('/api/applicant/portal/pending') && method === 'GET') {{
+            return {{ status: 200, body: {{ engine_available: true, gated: false, items: [
+              {{ id: 'only1', kind: 'agent_question', title: 'Only one' }},
+            ] }} }};
+          }}
+          if (url.endsWith('/api/applicant/portal/actions/only1/resolve') && method === 'POST') {{
+            return {{ status: 200, body: {{}} }};
+          }}
+          return {{ status: 404, body: {{}} }};
+        }};
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        body.querySelector('[data-role="done"]').dispatchEvent({{ type: 'click' }});
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const el = document.activeElement;
+        console.log(JSON.stringify({{
+          activeIsEmptyRegion: !!(el && el.classList && el.classList.contains('applicant-empty')),
+        }}));
+    """
+    out = _run_node(script)
+    assert out == {"activeIsEmptyRegion": True}
+
+
+def test_missing_detail_field_name_readonly_when_engine_supplied(node_available):
+    """Micro-interactions audit #30: an editable "Field" name invites a stray
+    edit that renames the attribute and makes the engine acquire the wrong
+    key. When the engine already supplied a name, render it read-only."""
+    script = f"""
+        globalThis.__fetchResponder = (url, method) => {{
+          if (url.endsWith('/api/applicant/portal/pending') && method === 'GET') {{
+            return {{ status: 200, body: {{ engine_available: true, gated: false, items: [
+              {{ id: 'm1', kind: 'missing_attr', title: 'Need a value', campaign_id: 'c1',
+                 payload: {{ attribute_name: 'Salary expectation' }} }},
+            ] }} }};
+          }}
+          return {{ status: 404, body: {{}} }};
+        }};
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const nameEl = document.getElementById('applicant-today-body').querySelector('[data-role="name"]');
+        console.log(JSON.stringify({{
+          readonly: nameEl.hasAttribute('readonly'),
+          value: nameEl.getAttribute('value'),
+        }}));
+    """
+    out = _run_node(script)
+    assert out == {"readonly": True, "value": "Salary expectation"}
+
+
+def test_missing_detail_field_name_stays_editable_when_engine_sent_none(node_available):
+    script = f"""
+        globalThis.__fetchResponder = (url, method) => {{
+          if (url.endsWith('/api/applicant/portal/pending') && method === 'GET') {{
+            return {{ status: 200, body: {{ engine_available: true, gated: false, items: [
+              {{ id: 'm1', kind: 'missing_attr', title: 'Need a value', campaign_id: 'c1' }},
+            ] }} }};
+          }}
+          return {{ status: 404, body: {{}} }};
+        }};
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const nameEl = document.getElementById('applicant-today-body').querySelector('[data-role="name"]');
+        console.log(JSON.stringify({{ readonly: nameEl.hasAttribute('readonly') }}));
+    """
+    out = _run_node(script)
+    assert out == {"readonly": False}
+
+
+def test_enter_key_saves_missing_detail_value_field(node_available):
+    """a11y-deep audit #17: "Missing-detail row: no Enter-to-save" — Enter in
+    the value field must submit without a mouse trip to the Save button."""
+    script = f"""
+        globalThis.__fetchResponder = (url, method) => {{
+          if (url.endsWith('/api/applicant/portal/pending') && method === 'GET') {{
+            return {{ status: 200, body: {{ engine_available: true, gated: false, items: [
+              {{ id: 'm1', kind: 'missing_attr', title: 'Need a value', campaign_id: 'c1' }},
+            ] }} }};
+          }}
+          if (url.endsWith('/api/applicant/portal/missing-attribute') && method === 'POST') {{
+            return {{ status: 200, body: {{}} }};
+          }}
+          return {{ status: 404, body: {{}} }};
+        }};
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        body.querySelector('[data-role="name"]').value = 'Salary expectation';
+        const valEl = body.querySelector('[data-role="value"]');
+        valEl.value = '120000';
+        valEl.dispatchEvent({{ type: 'keydown', key: 'Enter', preventDefault(){{}} }});
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const call = globalThis.__fetchCalls.find((c) => c.url.endsWith('/api/applicant/portal/missing-attribute'));
+        console.log(JSON.stringify({{ found: !!call, name: call && call.body && call.body.name }}));
+    """
+    out = _run_node(script)
+    assert out == {"found": True, "name": "Salary expectation"}
+
+
+def test_ctrl_enter_submits_the_answer_textarea(node_available):
+    """a11y-deep audit #16: "Portal answer textarea has no Cmd/Ctrl+Enter
+    submit" — the chord 20px away in chat works; Today's own answer
+    textarea must accept it too."""
+    script = f"""
+        {_THREE_ITEMS_RESPONDER}
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        const ta = body.querySelector('.applicant-today-answer');
+        ta.value = 'my answer';
+        ta.dispatchEvent({{ type: 'keydown', key: 'Enter', ctrlKey: true, preventDefault(){{}} }});
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const call = globalThis.__fetchCalls.find((c) => c.url.endsWith('/api/applicant/portal/actions/a1/resolve') && c.method === 'POST');
+        console.log(JSON.stringify({{ found: !!call, answer: call && call.body && call.body.answer }}));
+    """
+    out = _run_node(script)
+    assert out == {"found": True, "answer": "my answer"}
+
+
+def test_backdrop_click_confirms_only_when_the_current_card_has_unsent_input(node_available):
+    """Micro-interactions audit #8 ("Backdrop-click closes the Portal over
+    dirty inputs") applied to Today: a clean card closes immediately, but a
+    card with unsent typed input must confirm before discarding it."""
+    script = f"""
+        {_THREE_ITEMS_RESPONDER}
+        let confirmCalls = 0;
+        window.confirm = () => {{ confirmCalls += 1; return true; }};
+        const mod = await import('file://{_TODAY_JS}');
+        await mod.openApplicantToday();
+        const modal = document.getElementById('applicant-today-modal');
+        modal.dispatchEvent({{ type: 'click', target: modal }});
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const hiddenAfterCleanClose = modal.classList.contains('hidden');
+        const cleanCloseConfirmCalls = confirmCalls;
+
+        await mod.openApplicantToday();
+        const body = document.getElementById('applicant-today-body');
+        body.querySelector('.applicant-today-answer').value = 'unsent draft';
+        modal.dispatchEvent({{ type: 'click', target: modal }});
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        console.log(JSON.stringify({{
+          hiddenAfterCleanClose,
+          cleanCloseConfirmCalls,
+          dirtyCloseConfirmCalls: confirmCalls - cleanCloseConfirmCalls,
+          hiddenAfterDirtyClose: modal.classList.contains('hidden'),
+        }}));
+    """
+    out = _run_node(script)
+    assert out["hiddenAfterCleanClose"] is True
+    assert out["cleanCloseConfirmCalls"] == 0, "a clean card must close without asking"
+    assert out["dirtyCloseConfirmCalls"] == 1, "a card with unsent input must confirm exactly once before discarding it"
+    assert out["hiddenAfterDirtyClose"] is True, "confirming the discard must still close the modal"
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 7. Reachability: index.html wiring (this round left index.html mid-merge —
 #    see module docstring; asserted defensively either way).
 # ══════════════════════════════════════════════════════════════════════════

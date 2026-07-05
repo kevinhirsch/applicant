@@ -18,6 +18,7 @@ the rest of the system (no bypass).
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -27,6 +28,8 @@ from applicant.core.ids import CampaignId
 from applicant.core.rules.confirmation_gate import requires_confirmation
 from applicant.core.rules.sensitive_fields import is_sensitive_field
 from applicant.ports.driven.llm import ChatMessage
+
+log = logging.getLogger(__name__)
 
 #: Core needs a campaign must cover before it can apply confidently (FR-CHAT-1 gaps).
 #: Each is (display label, accepted attribute keys). Onboarding stores CANONICAL keys
@@ -882,8 +885,12 @@ class ChatService:
         Pulls auto-detected interviews from the front-door workspace via the
         callback channel (``container.workspace.calendar_interviews``) ONLY when
         the channel is configured (``available()``). Any failure / empty result
-        degrades silently to "" so the chat turn is never broken by a flaky or
-        absent workspace. Bounded to a handful of lines to keep the prompt lean.
+        degrades silently (to the caller/turn: the reply is never broken by a
+        flaky or absent workspace) to "" — but a raised exception is logged first
+        (audit #7: previously a bare ``except Exception: return ""`` left zero
+        trace, so a workspace outage looked identical to "no interviews" with no
+        way for an operator to tell them apart). Bounded to a handful of lines to
+        keep the prompt lean.
         """
         ws = self._workspace
         if ws is None:
@@ -893,6 +900,11 @@ class ChatService:
                 return ""
             payload = ws.calendar_interviews(owner=owner)
         except Exception:
+            log.warning(
+                "chat: calendar_interviews callback failed; degrading to no "
+                "interview context for this turn",
+                exc_info=True,
+            )
             return ""
         interviews = (payload or {}).get("interviews") or []
         if not interviews:
