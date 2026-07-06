@@ -191,9 +191,13 @@ _KEYWORDS = re.compile(
 #: Visible-reply token budget for a chat turn. 256 was too small for a reasoning
 #: model (e.g. deepseek-v4-pro): its hidden reasoning tokens consumed the whole
 #: budget, leaving ``result.text`` empty so the chat silently fell back to the
-#: canned deterministic reply. 1024 leaves ample room for the visible answer after
-#: reasoning while staying reasonable on cost.
-_CHAT_MAX_TOKENS = 1024
+#: canned deterministic reply. 1024 hit the same wall with current hybrid
+#: reasoning models (verified live: qwen3.6-27b on a real chat turn spends
+#: ~1.2k tokens on its hidden reasoning channel before the first visible
+#: token, finishing with ``finish_reason=length`` and EMPTY content at 1024).
+#: 4096 leaves ample room for the visible answer after reasoning; the model
+#: stops on its own well before the cap, so typical cost is unchanged.
+_CHAT_MAX_TOKENS = 4096
 
 
 @dataclass(frozen=True)
