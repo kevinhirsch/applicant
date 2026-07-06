@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'applicant-v327';
+const CACHE_NAME = 'applicant-v328';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -60,6 +60,36 @@ const PRECACHE = [
   '/static/js/sidebar-layout.js',
   '/static/js/section-management.js',
   '/static/lib/highlight.min.js',
+  // Applicant module chain (lens-06 mobile/PWA audit #40): these load
+  // network-first like the rest of the JS above, but weren't in the initial
+  // precache — a first offline open of the Portal (the PWA's actual daily
+  // surface) 404'd on modules it had never fetched online yet. Keep this
+  // block in sync with the applicant* / documentLibrary imports.
+  '/static/js/applicantCore.js',
+  '/static/js/applicantPortal.js',
+  '/static/js/applicantActivity.js',
+  '/static/js/applicantOnboarding.js',
+  '/static/js/applicantChat.js',
+  '/static/js/applicantRemote.js',
+  '/static/js/applicantVault.js',
+  '/static/js/applicantResults.js',
+  '/static/js/applicantTracker.js',
+  '/static/js/applicantToday.js',
+  '/static/js/applicantMind.js',
+  '/static/js/applicantTrust.js',
+  '/static/js/applicantCapabilities.js',
+  '/static/js/applicantReachability.js',
+  '/static/js/applicantAutomationSettings.js',
+  '/static/js/applicantCampaignSettings.js',
+  '/static/js/applicantModelLadder.js',
+  '/static/js/applicantShortcuts.js',
+  '/static/js/applicantCompare.js',
+  '/static/js/applicantGallery.js',
+  '/static/js/applicantUpdate.js',
+  '/static/js/applicantUpdateView.js',
+  '/static/js/applicantDebug.js',
+  '/static/js/emailLibrary/applicantDigest.js',
+  '/static/js/documentLibrary.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -89,6 +119,34 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+
+  // Badging API sync (lens-06 mobile/PWA audit #9 / #44): the Portal's badge
+  // poll (`applicantPortal.js` refreshBadge) already computes the exact
+  // pending count by hitting this one lightweight endpoint every 60s. Rather
+  // than duplicating that request, piggyback on it here: forward it to the
+  // network completely unchanged (still never cached, same response returned
+  // to the page) and, as a side effect, mirror the count onto the installed
+  // app icon via the Badging API when the browser supports it. Feature-detected
+  // and best-effort only — never blocks or alters the actual response.
+  if (url.pathname === '/api/applicant/portal/pending/count' && e.request.method === 'GET') {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if (res && res.ok && 'setAppBadge' in self.navigator) {
+          res.clone().json().then(data => {
+            if (!data || data.engine_available === false) return;
+            const n = Number(data.count) || 0;
+            if (n > 0) {
+              self.navigator.setAppBadge(n).catch(() => {});
+            } else if ('clearAppBadge' in self.navigator) {
+              self.navigator.clearAppBadge().catch(() => {});
+            }
+          }).catch(() => {});
+        }
+        return res;
+      })
+    );
+    return;
+  }
 
   // Never touch API calls or non-GET.
   if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;

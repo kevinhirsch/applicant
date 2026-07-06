@@ -1,7 +1,7 @@
 {
   "name": "Applicant",
   "short_name": "Applicant",
-  "description": "Self-hosted AI chat with memory, documents, and tools",
+  "description": "Automated job search — finds roles, tailors your resume, and asks for your approval before anything is submitted.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,7 +9,7 @@
   "background_color": "#282c34",
   "theme_color": "#282c34",
   "icons": [
-    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }
