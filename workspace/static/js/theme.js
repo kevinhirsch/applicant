@@ -397,7 +397,11 @@ export function applyColors(colors) {
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
   // CC-S1-2: mark whether this palette is dark so the frosted chrome can track it.
-  try { if (document.body) document.body.classList.toggle('applicant-theme-dark', _themeBgIsDark(colors.bg)); } catch { /* body not ready yet — initThemeUI re-applies on boot */ }
+  // EXCEPTION: the neutral "Liquid Glass" default (`glass:true`) is intentionally
+  // rendered with the LIGHT frosted material (its dark bg is the wallpaper, not the
+  // chrome) — that's the shipped default look — so it never takes the dark ramp even
+  // though its bg is dark. Every OTHER dark palette (dark/midnight/ocean/…) does.
+  try { if (document.body) document.body.classList.toggle('applicant-theme-dark', _themeBgIsDark(colors.bg) && !colors.glass); } catch { /* body not ready yet — initThemeUI re-applies on boot */ }
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).

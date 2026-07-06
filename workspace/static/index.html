@@ -77,7 +77,9 @@
         // not parsed yet inside <head>) so the frosted chrome renders dark glass
         // from first paint on a dark theme instead of flashing the light material.
         // applyColors() re-applies this on boot; this just removes the flash.
-        document.addEventListener('DOMContentLoaded', function(){ try { document.body.classList.toggle('applicant-theme-dark', dk); } catch(_){} }, {once:true});
+        // Neutral "Liquid Glass" default (glass:true) keeps the LIGHT frosted
+        // material even though its bg is dark — matches applyColors()'s exception.
+        document.addEventListener('DOMContentLoaded', function(){ try { document.body.classList.toggle('applicant-theme-dark', dk && !(c && c.glass)); } catch(_){} }, {once:true});
       }
       // Apply font early
       if (t && t.font) {
