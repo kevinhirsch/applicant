@@ -224,12 +224,36 @@ class DocxTailor:
                 "We couldn't produce the polished PDF, so this is an approximate preview. "
                 "If this keeps happening, rebuild the engine so the document tools are up to date."
             )
+        elif not converted.converted and self._render_mode != "off" and self._soffice() is None:
+            # The convert toolchain is absent at runtime (default "auto" mode
+            # included). HONESTY: no PDF was produced, so the fidelity check
+            # cannot have passed and the user must be told why.
+            fidelity_ok = False
+            notes.append(
+                "The document tools needed to build the polished PDF aren't available, so this is "
+                "an approximate preview. Rebuild the engine to enable high-fidelity rendering."
+            )
+
+        # "Looks like a faithful match." may ONLY describe a PDF that was really
+        # converted and passed every check. The remaining no-PDF cases (explicit
+        # "off" stub, or an in-memory source that is not a document file) state
+        # plainly that only source-level checks ran.
+        if notes:
+            note_text = "; ".join(notes)
+        elif converted.converted:
+            note_text = "Looks like a faithful match."
+        else:
+            note_text = (
+                "No polished preview file was produced for this pass, "
+                "so this is a source-level check only."
+            )
 
         return RenderResult(
             storage_path=converted.storage_path,
             fidelity_ok=fidelity_ok,
             page_count=page_count,
-            notes="; ".join(notes) if notes else "Looks like a faithful match.",
+            notes=note_text,
+            artifact_available=converted.converted,
         )
 
     # --- CONVERT BOUNDARY -------------------------------------------------

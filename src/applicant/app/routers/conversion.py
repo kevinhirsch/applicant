@@ -60,11 +60,17 @@ def build_preview(
     """Compile the LaTeX conversion of the base resume for accept/reject."""
     source = body.source or _base_source(campaign_id, onboarding)
     preview = svc.build_preview(campaign_id, source)
+    # HONESTY (server-derived truth): only a preview whose PDF was REALLY built
+    # may carry artifact metadata. Without an artifact there is no page count to
+    # report (the internal number is a source estimate, not a measurement), no
+    # file at the storage path, and the fidelity check cannot have passed.
+    available = bool(preview.artifact_available)
     return {
         "campaign_id": preview.campaign_id,
-        "storage_path": preview.storage_path,
-        "page_count": preview.page_count,
-        "fidelity_ok": preview.fidelity_ok,
+        "artifact_available": available,
+        "storage_path": preview.storage_path if available else None,
+        "page_count": preview.page_count if available else None,
+        "fidelity_ok": bool(preview.fidelity_ok and available),
         "notes": preview.notes,
     }
 
@@ -87,7 +93,10 @@ def download_preview(
             return FileResponse(str(p), media_type="application/pdf", filename=p.name)
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail="Conversion preview PDF not available. Install a TeX engine and set RESUME_RENDER=auto.",
+        detail=(
+            "No polished preview file exists for this résumé — the document tools "
+            "aren't available in this deployment, so nothing was rendered."
+        ),
     )
 
 

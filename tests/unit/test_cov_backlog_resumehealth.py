@@ -133,7 +133,7 @@ def test_base_resume_upload_response_includes_resume_health_when_clean(client):
     assert r.status_code == 200
     body = r.json()
     assert "resume_health" in body, "upload response must surface resume_health inline"
-    assert body["resume_health"] == {"parseable": True, "issues": []}
+    assert body["resume_health"] == {"verdict": "good", "parseable": True, "issues": []}
 
 
 def test_base_resume_upload_response_flags_issues_when_messy(client):
@@ -185,7 +185,10 @@ async def test_router_dict_mirrors_service_parseability_verdict(tmp_path):
         "camp-router-stub", file=upload, svc=stub, container=object()
     )
 
+    # A result that never computed a verdict maps to the CONSERVATIVE "unknown"
+    # (never an optimistic default), and the issues pass through verbatim.
     assert out["resume_health"] == {
+        "verdict": "unknown",
         "parseable": False,
         "issues": ["contact email is not recoverable"],
     }

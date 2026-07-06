@@ -198,7 +198,11 @@ def test_base_resume_step_is_first_person_and_says_resume_with_accent():
 
 def test_resume_parse_success_message_is_first_person():
     js = _read(ONBOARDING_JS)
-    assert "I read ${res.attribute_count || 0} details from your résumé and filled in the next steps" in js
+    # HONESTY (live audit): the count is the engine's per-parse field count
+    # (parsed_field_count), and the confident success line only renders for a
+    # real, non-trivial parse — never the attribute-cloud total.
+    assert "I read ${n} details from your résumé and filled in the next steps" in js
+    assert "res.attribute_count" not in js
     assert "we’ve filled in the next steps" not in js
 
 

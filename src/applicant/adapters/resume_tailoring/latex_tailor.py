@@ -318,19 +318,37 @@ class LatexTailor:
                 "We couldn't produce the polished PDF, so this is an approximate preview. "
                 "If this keeps happening, rebuild the engine so the document tools are up to date."
             )
-        elif not compiled.compiled and self._allow_compile:
-            # Engine was requested but no render tools were found at runtime.
+        elif not compiled.compiled and self._render_mode != "off":
+            # No render tools were found at runtime (default "auto" mode included —
+            # previously only the forced mode admitted this, so "auto" with no
+            # engine silently claimed a faithful match for a PDF that was never
+            # built). HONESTY: no artifact ⇒ the fidelity check cannot have
+            # passed, and the user must be told why.
             fidelity_ok = False
             notes.append(
                 "The document tools needed to build the polished PDF aren't available, so this is "
                 "an approximate preview. Rebuild the engine to enable high-fidelity rendering."
             )
 
+        # "Looks like a faithful match." may ONLY describe a PDF that was really
+        # compiled and passed every check; the explicit-stub lane ("off") states
+        # plainly that only source-level checks ran.
+        if notes:
+            note_text = "; ".join(notes)
+        elif compiled.compiled:
+            note_text = "Looks like a faithful match."
+        else:
+            note_text = (
+                "No polished preview file was produced (rendering is turned off), "
+                "so this is a source-level check only."
+            )
+
         return RenderResult(
             storage_path=compiled.storage_path,
             fidelity_ok=fidelity_ok,
             page_count=page_count,
-            notes="; ".join(notes) if notes else "Looks like a faithful match.",
+            notes=note_text,
+            artifact_available=compiled.compiled,
         )
 
     # --- COMPILE BOUNDARY -------------------------------------------------

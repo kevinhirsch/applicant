@@ -85,15 +85,23 @@ class ReconciliationResult:
     auto_applied: list[str] = field(default_factory=list)
     conflicts: list[ReconciliationConflict] = field(default_factory=list)
     attribute_count: int = 0
-    # Resume-health self-check (issue #370's ats_parseability rule, reused at
-    # upload time rather than only pre-submission): whether the uploaded
-    # resume's own extractable text is ATS-recoverable, and why not if it
-    # isn't. Surfaced immediately at upload so a formatting problem (a
-    # text-as-image render, a missing contact line, no recognizable section
-    # headers) is an instant, actionable signal rather than a silent
-    # downstream failure.
-    parseable: bool = True
+    # HONESTY: the number of details actually extracted from THIS parse (name /
+    # email / phone found + skills + work-history + education entries) — NOT the
+    # campaign's total attribute-cloud size, which includes details gathered
+    # elsewhere and would inflate the "I read N details from your résumé" claim.
+    parsed_field_count: int = 0
+    # Resume-health self-check at upload: whether the uploaded resume's own
+    # extractable text + parsed contact fields look ATS-recoverable, and why not
+    # if they don't. Surfaced immediately at upload so a formatting problem (a
+    # text-as-image render, a missing name/contact line, no recognizable section
+    # headers) is an instant, actionable signal rather than a silent downstream
+    # failure. Defaults are CONSERVATIVE: an unpopulated result must never read
+    # as a healthy résumé.
+    parseable: bool = False
     parseability_issues: list[str] = field(default_factory=list)
+    #: Computed verdict ("good" / "issues" / "unreadable"); "unknown" only when
+    #: the health check genuinely did not run.
+    health_verdict: str = "unknown"
 
 
 @runtime_checkable
