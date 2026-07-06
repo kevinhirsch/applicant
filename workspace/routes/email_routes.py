@@ -938,8 +938,7 @@ def setup_email_routes():
             return {"emails": emails, "total": total, "folder": folder, "offset": offset}
         except Exception as e:
             logger.error(f"Failed to list emails: {e}")
-            detail = str(e).strip()
-            return {"emails": [], "total": 0, "error": f"Mail operation failed: {detail[:180]}" if detail else "Mail operation failed"}
+            return {"emails": [], "total": 0, "error": "I couldn't reach your mail server just now. Check the account settings and try again."}
 
     @router.get("/list")
     async def list_emails(
