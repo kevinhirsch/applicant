@@ -329,11 +329,13 @@ def test_never_does_list_is_imported_not_duplicated_in_source():
     assert "import { neverDoesList } from './applicantOnboarding.js';" in src
     # None of the wizard's exact sentences should appear as a separate string
     # literal in this file — the only place they can appear is via the import
-    # + the `.map()` render, never a copy-pasted second array.
+    # + the `.map()` render, never a copy-pasted second array. (Demo-tone
+    # pass: NEVER_DOES's wording changed from "never" disclaimers to positive
+    # control statements — these are the current sentences.)
     for sentence in [
-        "Never submits an application without your approval.",
-        "Never solves CAPTCHAs",
-        "Never guesses your voluntary self-identification",
+        "Submits an application only with your approval.",
+        "Hands every CAPTCHA to you to solve.",
+        "Keeps your voluntary self-identification (EEO) answers in your own words.",
     ]:
         # It's fine for the sentence to appear once it's imported/rendered, so
         # this checks the SOURCE doesn't declare it as a literal (i.e. no
@@ -460,18 +462,22 @@ def test_gate_section_describes_the_real_authorize_hold_window(node_available):
     """The irreversible-action-gate section must describe the ACTUAL
     mechanics shipped in applicantRemote.js: the "Submitting in 5…" hold and
     that the owner (not the assistant) always makes the final call — not a
-    vaguer or over-claiming rewrite."""
+    vaguer or over-claiming rewrite.
+
+    Demo-tone pass: "but I never click it myself without you" (a negative-
+    capability disclaimer) was reframed as "the send is always yours to
+    make" — same fact, positive control framing."""
     script = _IMPORT_TRIO + """
         await trustMod.openApplicantTrust();
         const norm = document.getElementById('applicant-trust-body').innerHTML.replace(/\\s+/g, ' ');
         console.log(JSON.stringify({
           mentionsHoldCountdown: norm.includes('Submitting in 5'),
           mentionsCancel: norm.includes('Cancel'),
-          mentionsNoAutoSubmit: norm.includes('never click it myself without you'),
+          mentionsOwnerAlwaysDecides: norm.includes('the send is always yours to make'),
         }));
     """
     out = _run_node(script)
-    assert out == {"mentionsHoldCountdown": True, "mentionsCancel": True, "mentionsNoAutoSubmit": True}
+    assert out == {"mentionsHoldCountdown": True, "mentionsCancel": True, "mentionsOwnerAlwaysDecides": True}
 
 
 def test_honesty_section_reflects_real_debug_affordances_and_wires_the_button(node_available):

@@ -263,7 +263,9 @@ def test_load_fires_load_agent_pulse_alongside_the_recap():
 
 
 # ===========================================================================
-# #14 - persistent "what it never does" trust contract in the Portal HEADER
+# #14 - persistent "you're in control" trust affordance in the Portal HEADER
+# (demo-tone pass: this used to be a "what it never does" toggle; the
+# id/wiring/aria contract is unchanged, only the label and content are)
 # ===========================================================================
 
 def _modal_shell_block() -> str:
@@ -274,13 +276,16 @@ def _modal_shell_block() -> str:
 def test_header_carries_a_neverdoes_toggle_separate_from_the_gated_state():
     block = _modal_shell_block()
     assert 'id="applicant-portal-neverdoes"' in block, (
-        "the header should carry its own 'what it never does' affordance, reachable "
-        "any time the Portal is open — not only inside the gated/empty states"
+        "the header should carry its own trust affordance, reachable any time "
+        "the Portal is open — not only inside the gated/empty states"
     )
     assert 'id="applicant-portal-neverdoes-panel"' in block, (
         "the header toggle needs a panel host in the modal body to expand into"
     )
-    assert "What I never do" in block
+    assert "You’re in control" in block
+    assert "What I never do" not in block, (
+        "expected the negative-capability 'What I never do' label gone"
+    )
     # Visually quiet: a small text button next to the icon-only refresh control,
     # not styled as a primary action.
     m = re.search(r'<button[^>]*id="applicant-portal-neverdoes"[^>]*>', block)

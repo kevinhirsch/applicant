@@ -62,7 +62,7 @@ function _bodyHTML(tools) {
       <div style="margin-top:6px;font-size:12px;">The assistant hasn't advertised any tools yet.</div>
     </div>`;
   }
-  return `<div style="margin-bottom:10px;font-size:12px;opacity:0.75;">These are the read-only things the assistant can look up on your behalf. It never takes a consequential action (like submitting an application) without your review and approval.</div>`
+  return `<div style="margin-bottom:10px;font-size:12px;opacity:0.75;">These are the read-only things the assistant can look up on your behalf. Any consequential action — like submitting an application — always goes through your review and approval first.</div>`
     + tools.map(_rowHTML).join('');
 }
 

@@ -258,16 +258,26 @@ def test_portal_modal_title_and_aria_label_name_a_place_not_a_state():
     assert ">\n          Pending\n        </h4>" not in shell
 
 
-def test_portal_neverdoes_toggle_and_panel_are_first_person():
-    """Finding #14: the trust-contract toggle/panel spoke as "What Applicant
-    never does" / "What it never does" — third-person brand-as-actor."""
+def test_portal_neverdoes_toggle_and_panel_speak_in_positive_control_language():
+    """Finding #14 originally fixed "What Applicant never does" / "What it
+    never does" (third-person brand-as-actor) to first-person "What I never
+    do". A later demo-tone pass went further: negative-capability framing
+    ("never do") reads as a disclaimer wall, not a selling point, so the
+    toggle/panel now state the same guarantee as ONE positive control line
+    instead of a list of "nots"."""
     src = _src()
     assert "What Applicant never does" not in src
     assert 'aria-label="What Applicant never does"' not in src
-    assert "What I never do" in src
+    assert ">What I never do<" not in src
+    assert 'aria-label="What I never do"' not in src
+    assert "You’re in control" in src
+    assert "import { trustLine } from './applicantOnboarding.js';" in src, (
+        "expected the panel to reuse the wizard's single trust line, not "
+        "hardcode/duplicate its own copy"
+    )
     fn = _slice_between(src, "function _neverDoesHTML() {", "\nfunction ")
-    assert "What I never do" in fn
-    assert "What Applicant never does" not in fn
+    assert "trustLine" in fn
+    assert "<ul" not in fn, "expected a single positive line, not a bulleted list of nots"
 
 
 # ══════════════════════════════════════════════════════════════════════════

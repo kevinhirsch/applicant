@@ -106,28 +106,31 @@ def test_welcome_step_uses_flattened_hairline_group():
     assert re.search(r"border-bottom:\s*1px solid var\(--border\)", row.group(1))
 
 
-def test_welcome_never_does_list_is_collapsed_behind_details():
-    """The 'what Applicant never does' trust list used to be an always-visible
-    second card. It must now be collapsed behind a `<details>` disclosure
-    (`.ao-welcome-trust`), a beat away from the initial view rather than a
-    wall of text ahead of the CTA."""
+def test_welcome_trust_line_is_a_single_positive_statement_not_a_list():
+    """Demo-tone pass (supersedes the old #68/#81 test below): the 'what
+    Applicant never does' trust list used to be collapsed behind a `<details>`
+    disclosure — still a wall of negative "never" statements, just deferred a
+    beat. It has been replaced with ONE confident, positive control statement
+    (`trustLine`, imported from this same module), rendered directly — a
+    single line needs no toggle."""
     src = _read(ONBOARDING_JS)
     m = re.search(r"function _renderWelcome\(\)\s*\{(.*?)\n\}", src, re.S)
     assert m, "expected to find _renderWelcome"
     body = m.group(1)
-    assert re.search(r"<details class=\"ao-adv ao-welcome-trust\">", body), (
-        "expected the trust list wrapped in a collapsed <details> element"
+    assert "<details" not in body, (
+        "expected the never-do disclosure removed outright, not just relabeled"
     )
-    assert "<summary>What I never do</summary>" in body
-    # The details wrapper must be present in the SAME render as the trust
-    # list items so the list actually lives inside it (not just anywhere in
-    # the function).
-    details_idx = body.index("<details class=\"ao-adv ao-welcome-trust\">")
-    summary_close_idx = body.index("</summary>")
-    ul_idx = body.index("ao-trust-list")
-    assert details_idx < summary_close_idx < ul_idx, (
-        "expected <details><summary>...</summary> to precede the trust list"
-    )
+    assert "ao-welcome-trust" in body
+    assert "trustLine" in body
+
+
+def test_trust_line_is_exported_and_reads_as_a_positive_control_statement():
+    src = _read(ONBOARDING_JS)
+    m = re.search(r"export const trustLine = '([^']+)';", src)
+    assert m, "expected an exported trustLine constant"
+    line = m.group(1)
+    assert "never" not in line.lower(), "expected no negative-capability framing"
+    assert "you" in line.lower() and "control" in line.lower()
 
 
 # ── #69: Nav + footer merged into one .ao-actionbar ─────────────────────────

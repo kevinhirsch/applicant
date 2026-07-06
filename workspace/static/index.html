@@ -504,7 +504,7 @@
                   <label style="font-size:11px;opacity:0.6;display:block;margin-bottom:3px" for="applicant-attr-value">Value</label>
                   <input type="text" id="applicant-attr-value" placeholder="+1 555 0100" style="width:100%" title="The value to fill in for this detail">
                 </div>
-                <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) are only ever taken from what you type here — never guessed." for="applicant-attr-sensitive">
+                <label class="ow-switch" style="font-size:11px;opacity:0.7;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Sensitive details (e.g. demographics) always come from exactly what you type here." for="applicant-attr-sensitive">
                   <input type="checkbox" id="applicant-attr-sensitive" role="switch"><span class="ow-switch-track" aria-hidden="true"></span><span class="ow-switch-label">Sensitive</span>
                 </label>
                 <button type="button" id="applicant-attr-add-btn" class="admin-btn-add" style="white-space:nowrap">+ Add</button>
@@ -1192,7 +1192,7 @@
         <!-- Trust Center — "How Applicant protects you". Content-only (no engine
              calls); wired by applicantTrust.js's own `_wireLaunchers()`, which
              looks for exactly this id. -->
-        <div class="list-item" id="tool-trust-btn" role="button" tabindex="0" title="How Applicant protects you — the irreversible-action gate, what I never do, and your data">
+        <div class="list-item" id="tool-trust-btn" role="button" tabindex="0" title="How Applicant protects you — the final say, my promises, and your data">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             style="flex-shrink:0;opacity:0.5;">
@@ -2099,7 +2099,7 @@
               </label>
               <label class="vis-row" for="vis-show-thinking">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4.5 7.5.7.6 1.2 1.3 1.5 2h2c.3-.7.8-1.4 1.5-2C17 14.5 19 12 19 9a7 7 0 0 0-7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg></span>
-                <span class="vis-label">Thinking Process <span class="vis-hint">Show &lt;think&gt; collapsible bars</span></span>
+                <span class="vis-label">Thinking Process <span class="vis-hint">Show the model's reasoning, expandable per reply</span></span>
                 <input id="vis-show-thinking" type="checkbox" checked data-ui-key="show-thinking"><span class="vis-switch"></span>
               </label>
               <label class="vis-row" for="vis-sensitive-blur">
@@ -2695,7 +2695,7 @@
      .modal/.admin-card/.cal-btn chrome -- no other file needed changes. -->
 <script type="module" src="/static/js/applicantCapabilities.js"></script>
 <!-- Trust Center ("How Applicant protects you"): a single, calm, plain-language
-     read that consolidates the irreversible-action gate, "what I never do",
+     read that consolidates the irreversible-action gate, "what I promise",
      the pre-submit snapshot/audit-log export, and the owner-scoping/self-hosting
      story. Content-only (no engine calls); self-boots and wires #tool-trust-btn,
      exposing window.applicantTrustModule.openApplicantTrust. -->

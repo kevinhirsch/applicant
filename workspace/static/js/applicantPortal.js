@@ -31,7 +31,7 @@
 import uiModule from './ui.js';
 import digestModule from './emailLibrary/applicantDigest.js';
 import remoteModule from './applicantRemote.js';
-import { neverDoesList } from './applicantOnboarding.js';
+import { trustLine } from './applicantOnboarding.js';
 import { esc, _toast, _fetchJSON, _post } from './applicantCore.js';
 import {
   errText, loadingHTML, errorHTML, wireRetry, pollVisible,
@@ -550,7 +550,7 @@ function _ensureModalEl() {
           Waiting on you
         </h4>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="What I never do" aria-expanded="false" aria-controls="applicant-portal-neverdoes-panel" title="My hard limits — the things I will never do without you" style="font-size:11px;padding:2px 8px;opacity:0.8;">What I never do</button>
+          <button class="cal-btn" id="applicant-portal-neverdoes" aria-label="You’re in control" aria-expanded="false" aria-controls="applicant-portal-neverdoes-panel" title="You approve every application before it’s sent" style="font-size:11px;padding:2px 8px;opacity:0.8;">You’re in control</button>
           <button type="button" class="memory-toolbar-btn" id="applicant-portal-refresh" aria-label="Refresh the list" title="Check for anything new right now" style="width:26px;height:26px;padding:0;flex-shrink:0;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           </button>
@@ -576,8 +576,8 @@ function _ensureModalEl() {
   return modal;
 }
 
-// Trust affordance (task #3): the "what Applicant never does" contract is always
-// one tap away from the header, even when the queue is full — not only on the
+// Trust affordance (task #3): the "you're in control" statement is always one
+// tap away from the header, even when the queue is full — not only on the
 // empty/gated view. Toggles a small inline panel that reuses _neverDoesHTML().
 function _toggleNeverDoesPanel() {
   const panel = _modalEl && _modalEl.querySelector('#applicant-portal-neverdoes-panel');
@@ -1078,17 +1078,16 @@ function _renderGated(body, data) {
 }
 
 function _neverDoesHTML() {
-  // D4: reuse the EXACT "what Applicant never does" list from the OOBE (B1).
-  const items = (Array.isArray(neverDoesList) && neverDoesList.length)
-    ? neverDoesList
-    : (window.applicantNeverDoesList || []);
-  if (!items.length) return '';
+  // D4: reuse the EXACT trust statement (`trustLine`) from the OOBE welcome
+  // step (B1). Demo-tone pass: this used to render a disclaimer-style list of
+  // negative "never" statements — replaced with the same ONE positive
+  // control line the wizard shows, so the empty state reads as reassurance,
+  // not a wall of "nots".
+  const line = trustLine || (typeof window !== 'undefined' && window.applicantTrustLine) || '';
+  if (!line) return '';
   return `
     <div style="max-width:380px;margin:14px auto 0;text-align:left;border-top:1px solid var(--border);padding-top:12px;">
-      <div style="font-size:11px;opacity:0.7;margin-bottom:4px;">What I never do</div>
-      <ul style="margin:0;padding-left:16px;font-size:11px;opacity:0.75;line-height:1.5;">
-        ${items.map((t) => `<li>${esc(t)}</li>`).join('')}
-      </ul>
+      <div style="font-size:11px;opacity:0.75;line-height:1.5;">${esc(line)}</div>
     </div>`;
 }
 

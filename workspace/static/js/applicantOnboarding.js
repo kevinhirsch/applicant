@@ -137,23 +137,29 @@ const INTAKE_SECTIONS = [
   'references',
 ];
 
-// The honest "what Applicant never does" list (B1). Exported via the module so
-// other surfaces (e.g. the Portal empty state, D4) reuse the EXACT same wording.
-// NOTE (copy/voice lens 02, #36): the audit flags this list as third-person
-// ("Never submits…" reads as a spec sentence, not the agent speaking) and
-// recommends a first-person rewrite. Left as-is here because
-// workspace/static/landing.html's #trust section (outside this pass's
-// allowlist) does a verbatim substring match against these exact sentences
-// (test_applicant_activation_funnel_09.py::
-// test_trust_section_reuses_the_never_does_wording_verbatim) — rewriting
-// this array without updating the landing page in lockstep would break that
-// drift-guard. Fix both files together in a follow-up pass.
+// Trust-contract list reused by the Trust Center (applicantTrust.js) and
+// landing.html's #trust section (verbatim substring match, see
+// test_applicant_activation_funnel_09.py::
+// test_trust_section_reuses_the_never_does_wording_verbatim — updated in
+// lockstep with this array). Demo-tone pass: reframed from "never"/
+// negative-capability phrasing to positive control statements — a list of
+// "nots" reads as a disclaimer wall, not a selling point. The wizard welcome
+// step and the Portal empty state no longer render this as a list at all
+// (see `trustLine` below); this array now backs only the fuller Trust
+// Center / landing-page treatments, where an itemized explanation is still
+// the right amount of detail.
 const NEVER_DOES = [
-  'Never submits an application without your approval.',
+  'Submits an application only with your approval.',
   'Pauses and asks whenever something is uncertain.',
-  'Never solves CAPTCHAs — it hands those to you.',
-  'Never guesses your voluntary self-identification (EEO) answers.',
+  'Hands every CAPTCHA to you to solve.',
+  'Keeps your voluntary self-identification (EEO) answers in your own words.',
 ];
+
+// A single, confident control statement — used wherever the product needs to
+// say "you decide, always" without unspooling a list of negative disclaimers
+// (the wizard welcome step below and the Portal empty state; see D39).
+export const trustLine = 'You approve every application before it’s sent — you’re always in control.';
+try { if (typeof window !== 'undefined') window.applicantTrustLine = trustLine; } catch { /* no-op */ }
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
@@ -586,7 +592,7 @@ function _renderNav() {
   // consequence right next to the button instead of leaving it silent.
   const cur = STEPS[_stepIndex];
   const skipHint = (!last && cur && cur.required && !cur.done(_status))
-    ? '<span class="ao-skip-hint" style="font-size:11px;opacity:0.65;margin-left:10px;">Skipping this means Applicant can’t start yet.</span>'
+    ? '<span class="ao-skip-hint" style="font-size:11px;opacity:0.65;margin-left:10px;">Connect a model to get started.</span>'
     : '';
   // D69: nav is now a left-aligned button cluster inside the shared `.ao-actionbar`
   // row (see _buildOverlay) rather than a full-width row of its own — no need for
@@ -603,19 +609,19 @@ function _renderNav() {
 
 // ── STEP 0: Welcome (B1) ─────────────────────────────────────────────────────
 //
-// A short, honest preview of the journey and a plain-language list of what
-// Applicant never does. Reuses the shared `.admin-card` framing + `.ao-step-*`
-// classes so it matches every other step. The persistent Skip/Back nav already
-// lets the user move on; this step just adds an explicit "Let's go" foot button.
+// A short, honest preview of the journey and a confident, one-line control
+// statement. Reuses the shared `.admin-card` framing + `.ao-step-*` classes
+// so it matches every other step. The persistent Skip/Back nav already lets
+// the user move on; this step just adds an explicit "Let's go" foot button.
 //
 // D68/D81: this used to stack TWO bordered `.admin-card` boxes (an ordered list
 // + a dense paragraph, then a second card with a 4-item list) before the user
 // could do anything — a lot to read on the very first screen. Trimmed to the
 // one-line promise + a flattened hairline group that calls out the one actually
-// required step (D76); the "what Applicant never does" trust list is still here
-// verbatim (same NEVER_DOES the Portal empty state reuses — see D39) but
-// collapsed behind a `<details>` disclosure so it's a beat away, not a wall of
-// text ahead of the CTA.
+// required step (D76). Demo-tone pass: the old "What I never do" disclosure
+// (a collapsed list of negative "never" statements) read as a wall of
+// disclaimers, not a selling point — replaced with ONE confident control
+// statement (`trustLine`, also reused by the Portal empty state — see D39).
 //
 // NOTE (copy/voice lens 02, #51): the audit flags this step-desc as
 // third-person and suggests a first-person rewrite. Left as-is because
@@ -638,12 +644,7 @@ function _renderWelcome() {
         <span class="ao-hairline-text">Your profile — add a résumé to speed things up, or skip it and tell me in chat. Notifications, fonts and where I browse live in Settings any time.</span>
       </div>
     </div>
-    <details class="ao-adv ao-welcome-trust">
-      <summary>What I never do</summary>
-      <ul class="ao-trust-list">
-        ${NEVER_DOES.map((t) => `<li>${esc(t)}</li>`).join('')}
-      </ul>
-    </details>
+    <p class="ao-welcome-trust" style="font-size:11px;opacity:0.7;margin:14px 0 0;">${esc(trustLine)}</p>
   `);
   _setFoot(`<button class="cal-btn cal-btn-primary" id="ao-welcome-next">Let's get started</button>`);
   const btn = document.getElementById('ao-welcome-next');
@@ -2576,4 +2577,4 @@ export async function mountSettingsStep(stepKey, container) {
 
 if (typeof window !== 'undefined') window.mountApplicantSettingsStep = mountSettingsStep;
 
-export default { maybeLaunchOnboarding, launchOnboarding, neverDoesList, mountSettingsStep };
+export default { maybeLaunchOnboarding, launchOnboarding, neverDoesList, trustLine, mountSettingsStep };
