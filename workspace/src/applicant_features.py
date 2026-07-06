@@ -101,7 +101,10 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
         "key": "documents",
         "lane": "A",
         "title": "Documents / resume library",
-        "nav_ids": ["rail-documents", "tool-library-btn", "overflow-doc-btn"],
+        # nav_ids track the actual launchers renderNav (applicantNav.js) emits:
+        # the rail button is `rail-archive` (rail-documents is a native
+        # "docs-attached" chat indicator, not this section's launcher).
+        "nav_ids": ["rail-archive", "tool-library-btn", "overflow-doc-btn"],
         "dormant_keys": ["redline_surface"],
         "requires": "onboarding_complete",
         "present_but_disabled": False,
@@ -268,12 +271,14 @@ APPLICANT_SECTIONS: tuple[dict[str, Any], ...] = (
     # Reachable via the /api/applicant/results proxy over the engine's learning
     # summary, which is gated behind the engine LLM/setup gate — so this section
     # lights up once a model is connected, like the other engine-backed surfaces.
-    # Its own rail entry (#rail-results), opened by applicantResults.js.
+    # Its own rail entry (#rail-results) plus the reconciled sidebar twin
+    # (#tool-results-btn) renderNav emits — both gated so the sidebar door
+    # can't be clicked while the section is locked (a missing id fails OPEN).
     {
         "key": "results",
         "lane": None,
         "title": "Results — your funnel & what converts",
-        "nav_ids": ["rail-results"],
+        "nav_ids": ["rail-results", "tool-results-btn"],
         "dormant_keys": [],
         "requires": "llm_configured",
         "present_but_disabled": False,

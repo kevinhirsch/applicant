@@ -34,6 +34,10 @@ INDEX_HTML = REPO_ROOT / "workspace" / "static" / "index.html"
 VAULT_JS = JS_DIR / "applicantVault.js"
 REMOTE_JS = JS_DIR / "applicantRemote.js"
 GALLERY_JS = JS_DIR / "applicantGallery.js"
+# Pass 2a (later than this batch): rail-applicant-gallery / tool-applicant-
+# gallery-btn moved out of index.html into applicantNav.js's single-source
+# NAV array.
+NAV_JS = JS_DIR / "applicantNav.js"
 
 
 def _read(path: pathlib.Path) -> str:
@@ -443,7 +447,15 @@ def test_engine_gallery_relabeled_application_gallery_everywhere():
     """Relabel: the engine's Gallery must read "Application Gallery"
     everywhere it's surfaced — disambiguating it from the workspace's own
     native photo gallery (which stays plain "Gallery") — in the modal
-    itself, and in both front-door launchers (rail icon + tool list item)."""
+    itself, and in both front-door launchers' tooltips (rail icon + tool list
+    item).
+
+    Pass 2a (a later nav-reconciliation pass) moved the launchers themselves
+    out of index.html into applicantNav.js's NAV array, and shortened the
+    SIDEBAR's visible label to plain "Gallery" — the full "Application
+    Gallery — ..." name now lives only in the shared `title` field (rendered
+    as the rail button's title+aria-label AND the sidebar item's title), not
+    in the sidebar's visible text."""
     gallery_src = _read(GALLERY_JS)
     assert "Application Gallery — screenshots and generated materials" in gallery_src, (
         "expected the modal's aria-label to read 'Application Gallery — ...'"
@@ -454,24 +466,42 @@ def test_engine_gallery_relabeled_application_gallery_everywhere():
         f"modal header must read exactly 'Application Gallery', got {header_m.group(1)!r}"
     )
 
-    html = _read(INDEX_HTML)
-    rail_m = re.search(
-        r'id="rail-applicant-gallery"\s+title="([^"]*)"\s+aria-label="([^"]*)"', html,
+    nav_src = _read(NAV_JS)
+    item_m = re.search(
+        r"\{\s*rail:\s*'rail-applicant-gallery',\s*side:\s*'tool-applicant-gallery-btn'[^}]*\}",
+        nav_src,
+        re.S,
     )
-    assert rail_m, "expected to find the rail-applicant-gallery launcher markup"
-    assert rail_m.group(1).startswith("Application Gallery")
-    assert rail_m.group(2).startswith("Application Gallery")
+    assert item_m, "expected the rail-applicant-gallery / tool-applicant-gallery-btn NAV entry"
+    entry = item_m.group(0)
 
-    tool_m = re.search(
-        r'id="tool-applicant-gallery-btn".*?<span class="grow">([^<]*)</span>', html, re.S,
+    title_m = re.search(r"title:\s*'([^']*)'", entry)
+    assert title_m, "expected a title field on the NAV entry"
+    assert title_m.group(1).startswith("Application Gallery"), (
+        f"expected the tooltip to start with 'Application Gallery', got {title_m.group(1)!r}"
     )
-    assert tool_m, "expected to find the tool-applicant-gallery-btn launcher markup"
-    assert tool_m.group(1) == "Application Gallery", (
-        f"tool list-item label must read exactly 'Application Gallery', got {tool_m.group(1)!r}"
+
+    label_m = re.search(r"label:\s*'([^']*)'", entry)
+    assert label_m, "expected a label field on the NAV entry"
+    assert label_m.group(1) == "Gallery", (
+        f"expected the sidebar's short visible label to read 'Gallery', got {label_m.group(1)!r}"
+    )
+
+    # _railButton always emits aria-label from the SAME `title` field, so the
+    # title assertion above plus this template check together establish
+    # "starts with Application Gallery" for both the rail button's title AND
+    # its aria-label (see test_applicant_round2_wave1_a11y_labels.py, which
+    # pins this invariant for every NAV rail item).
+    rail_fn_m = re.search(r"function _railButton\(item\)\s*\{(.*?)\n\}", nav_src, re.S)
+    assert rail_fn_m and 'aria-label="${item.title}"' in rail_fn_m.group(1), (
+        "expected _railButton to emit aria-label from the same `title` field as title"
     )
 
     # And the workspace's OWN native gallery must stay plain "Gallery" — the
     # relabel is scoped to the engine's surfaces only, not a global rename.
+    # (rail-gallery is the native, vendored, hidden rail button — still
+    # static index.html markup; Pass 2a doesn't touch it.)
+    html = _read(INDEX_HTML)
     native_rail_m = re.search(r'id="rail-gallery"\s+title="([^"]*)"', html)
     assert native_rail_m and native_rail_m.group(1) == "Gallery", (
         "the native workspace gallery launcher must remain plain 'Gallery'"

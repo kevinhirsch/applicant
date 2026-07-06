@@ -1408,6 +1408,12 @@ function initializeEventListeners() {
     })
     .catch(() => {});
   };
+  // Nav: render BOTH nav surfaces from the single applicantNav.js source before
+  // feature-gating runs — gating binds to the exact ids renderNav emits, so a
+  // missing id would fail OPEN. applicantNav also self-boots from its own
+  // <script> tag (which loads before app.js), so this is an idempotent safety
+  // net that additionally documents the required ordering (render → gate).
+  try { if (window.applicantNavModule) window.applicantNavModule.renderNav(); } catch (_) { /* non-fatal */ }
   window._applicantFeaturesReady = window.refreshApplicantFeatures();
 
   // CRIT-portal: load the standalone Pending-Actions Portal. It self-boots (wires
@@ -1477,6 +1483,13 @@ function initializeEventListeners() {
         // #email= deep link, etc.) exactly as the page loaded with it.
         try { await portal.openApplicantPortal({ skipHashUpdate: true }); } catch { /* non-fatal */ }
       }
+      // One-window-at-a-time (Pass 2a): seed the active-surface tracker so
+      // navigating to another surface closes this home base instead of stacking
+      // on top of it. The 2a landing opens the Pending portal (labelled "Today"
+      // in the nav, still registered under the 'portal' token — applicantToday
+      // already owns the 'today' route); Pass 2b promotes Today to a real tab
+      // host and seeds that instead.
+      if (router && typeof router.setActive === 'function') router.setActive('portal');
       // Idempotent — also covers the "no hash at all" / "#portal" cases so
       // hashchange listening (back/forward, later deep links) is always live.
       if (router) router.initHashRouting();

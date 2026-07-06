@@ -33,6 +33,14 @@ function _hashToken() {
 // present, instead of short-circuiting on "nothing changed".
 let _lastToken = null;
 
+// One-window-at-a-time (audit #7): the token of the surface currently treated
+// as "open" via the click path, so opening another one can close it first
+// (surfaces used to stack). Seeded by setActive() (the boot landing) and kept
+// current by setHash(). The 'chat' token is transparent to this — the native
+// chat pane is a persistent backdrop that is never closed by (and never
+// closes) another surface opening over it, so it never becomes _activeToken.
+let _activeToken = null;
+
 /**
  * Register a surface under a hash token.
  * @param {string} token - e.g. 'portal' (the hash becomes '#portal').
@@ -55,12 +63,34 @@ export function hasRoute(token) {
  */
 export function setHash(token) {
   if (!token || _hashToken() === token) return;
+  // One-window-at-a-time: opening a new surface via the click path closes the
+  // previously-active one first (the hashchange path in _applyFromHash already
+  // does this for back/forward). 'chat' is exempt in BOTH directions — opening
+  // chat never closes the active surface, and chat is never the active surface
+  // that gets closed — so the native chat pane coexists with any modal.
+  if (token !== 'chat' && _activeToken && _activeToken !== token && _activeToken !== 'chat') {
+    const prev = _routes.get(_activeToken);
+    if (prev && typeof prev.close === 'function') {
+      try { prev.close(); } catch (_) { /* a surface's own close must not break routing */ }
+    }
+  }
   try {
     history.pushState(null, '', '#' + token);
   } catch (_) {
     window.location.hash = token;
   }
   _lastToken = token;
+  if (token !== 'chat') _activeToken = token;
+}
+
+/**
+ * Seed / update the one-window active token WITHOUT opening or closing
+ * anything. Used by the boot landing (which opens its home-base surface with
+ * skipHashUpdate, so setHash never runs) so the next click-path open knows
+ * which surface to close. No-op semantics for 'chat' are the caller's concern.
+ */
+export function setActive(token) {
+  _activeToken = token || null;
 }
 
 /**
@@ -125,7 +155,7 @@ export function initHashRouting() {
 }
 
 const hashRouterModule = {
-  registerRoute, hasRoute, setHash, clearHash, currentHashToken, syncToken, initHashRouting,
+  registerRoute, hasRoute, setHash, clearHash, currentHashToken, syncToken, initHashRouting, setActive,
 };
 // Expose for non-module callers / debugging, mirroring the window.applicant*Module pattern.
 try { window.applicantHashRouter = hashRouterModule; } catch (_) { /* no-op */ }
