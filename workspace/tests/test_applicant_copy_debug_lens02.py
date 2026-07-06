@@ -194,13 +194,15 @@ def test_engine_banner_says_not_connected():
 
 
 def test_modal_heading_matches_settled_launcher_name():
-    """Finding #189 — the launcher/nav button became "Activity & controls";
-    the modal's own on-screen heading (the aria-labelledby target) must match
-    it instead of just "Activity"."""
+    """Finding #189 — the modal's on-screen heading (the aria-labelledby target)
+    must match its settled launcher/nav name. The nav reconciliation renamed the
+    debug launcher to "Run log" (disambiguating it from the live "Activity" feed),
+    so the heading must read "Run log" too — not the old "Activity & controls"."""
     src = _read(DEBUG_JS)
-    assert re.search(r'id="applicant-debug-title">\s*<svg[^<]*<[^<]*</svg>\s*Activity &amp; controls\s*</h4>', src), (
-        "expected the modal heading text to read 'Activity & controls'"
+    assert re.search(r'id="applicant-debug-title">.*?Run log\s*</h4>', src, re.S), (
+        "expected the modal heading text to read 'Run log'"
     )
+    assert "Activity &amp; controls" not in src and "Activity & controls" not in src
 
 
 def test_run_headline_speaks_in_first_person_not_about_the_agent():

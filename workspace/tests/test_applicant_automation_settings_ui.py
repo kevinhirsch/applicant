@@ -147,10 +147,17 @@ def test_load_reads_from_the_same_proxy_base():
 # ── settings.js: the tab is actually wired into the Settings modal ─────────
 
 
-def test_settings_js_injects_an_automation_nav_tab():
+def test_settings_js_folds_automation_prefs_into_the_sandbox_panel():
+    """The engine automation-preferences UI is no longer a SEPARATE 'Automation'
+    nav tab (which collided with the sandbox tab already labelled 'Automation').
+    injectAutomationTab now folds the 'Automation Preferences' card into the
+    EXISTING sandbox panel, so the sidebar shows ONE Automation tab, not two."""
     src = _read(SETTINGS_JS)
     assert "function injectAutomationTab()" in src
-    assert 'dataset.settingsTab = \'automation\';' in src
+    body = re.search(r"function injectAutomationTab\(\) \{.*?\n\}\n", src, re.S).group(0)
+    assert '[data-settings-panel="sandbox"]' in body
+    # the separate 'automation' nav tab is gone (folded in, not a second tab)
+    assert "dataset.settingsTab = 'automation'" not in src
 
 
 def test_injected_tab_label_does_not_collide_with_the_existing_sandbox_tab():
@@ -165,12 +172,15 @@ def test_injected_tab_label_does_not_collide_with_the_existing_sandbox_tab():
     assert "Automation Preferences" in body
 
 
-def test_injected_tab_is_admin_gated_like_sandbox_and_update():
+def test_injected_prefs_inherit_sandbox_admin_gating():
+    """Folded into the already-admin-gated sandbox panel, the automation-prefs
+    card needs no separate nav-item gating — it rides the sandbox tab's
+    admin-only visibility for free."""
     src = _read(SETTINGS_JS)
     fn = re.search(r"function injectAutomationTab\(\) \{.*?\n\}\n", src, re.S)
     assert fn
     body = fn.group(0)
-    assert "'settings-nav-item admin-only'" in body
+    assert '[data-settings-panel="sandbox"]' in body
 
 
 def test_injection_runs_before_tab_click_handlers_are_bound():
@@ -192,7 +202,9 @@ def test_automation_tab_mount_is_wired_in_mount_relocated_setup_step():
     fn = re.search(r"function mountRelocatedSetupStep\(tab\) \{.*?\n\}\n", src, re.S)
     assert fn, "expected a mountRelocatedSetupStep(tab) function"
     body = fn.group(0)
-    assert "tab === 'automation'" in body
+    # The automation-prefs module now mounts under the merged 'sandbox' tab
+    # (its card was folded into the sandbox panel), not a separate 'automation' key.
+    assert "tab === 'sandbox'" in body
     assert "'ao-settings-automation'" in body
     assert "window.mountApplicantAutomationSettings" in body
 

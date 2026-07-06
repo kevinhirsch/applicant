@@ -508,17 +508,22 @@ def test_compare_open_in_activity_link_is_applications_only():
 
 # ── #99: Refresh -> icon-only button, same .close-btn treatment as Close ───
 
-def test_activity_refresh_button_is_icon_only_close_btn_treatment():
-    """The Activity modal's Refresh control must be icon-only (an inline SVG,
-    `.close-btn` styling, `aria-label`), matching Close's treatment — not the
-    old mixed text+'✖' button."""
+def test_activity_refresh_button_is_icon_only_and_not_a_window_control():
+    """The Activity modal's Refresh control must be icon-only (an inline SVG +
+    `aria-label`) but must NOT reuse the `.close-btn` window-control class —
+    sharing it made the frosted theme paint Refresh as a red close-disc identical
+    to the real Close (SR-S1-1). It's an action button (`.memory-toolbar-btn`),
+    not a window control."""
     src = _read(ACTIVITY_JS)
     m = re.search(
-        r'<button class="close-btn" id="applicant-activity-refresh"[^>]*>(.*?)</button>',
+        r'(<button[^>]*id="applicant-activity-refresh"[^>]*>)(.*?)</button>',
         src, re.S,
     )
-    assert m, "expected the icon-only refresh button"
-    inner = m.group(1)
+    assert m, "expected the refresh button"
+    open_tag, inner = m.group(1), m.group(2)
+    assert "close-btn" not in open_tag, (
+        "refresh must NOT use the .close-btn window-control class (SR-S1-1)"
+    )
     assert "<svg" in inner
     assert "✖" not in inner
     assert re.match(r"^\s*$", re.sub(r"<svg.*?</svg>", "", inner, flags=re.S)), (
