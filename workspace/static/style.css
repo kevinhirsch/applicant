@@ -36332,6 +36332,27 @@ body.theme-frosted .gallery-detail-menu {
   --send-btn-hover: color-mix(in srgb, var(--sys-blue) 82%, #000);
 }
 
+/* FORM-CONTROL RAMP (recurrence root-cause fix) — the global rule `input, textarea,
+   button, select { background:var(--bg); color:var(--fg) }` (~line 1804) resolves the
+   DARK :root --bg/--fg on any field NOT inside the chrome allow-list above, so fields in
+   Settings/Gallery/Compare/Tasks/Cookbook/Vision/Email-compose windows still rendered as
+   solid black slabs. Target the controls themselves in frosted mode so EVERY light-glass
+   window gets legible fields, not just an enumerated container list. Scoped to
+   body.theme-frosted (the glass-off dark tier keeps its dark fields). Specificity (0,1,2)
+   beats the global `input`/`input:hover` rules but stays UNDER the composer's intentional
+   `textarea#message` (1,0,1) and the .admin-card carve-outs, so those are unaffected. */
+body.theme-frosted input,
+body.theme-frosted textarea,
+body.theme-frosted select {
+  background: var(--input-bg, rgba(255, 255, 255, 0.82));
+  color: #16191f;
+  border-color: var(--input-border, rgba(22, 25, 31, 0.2));
+}
+body.theme-frosted input::placeholder,
+body.theme-frosted textarea::placeholder {
+  color: rgba(22, 25, 31, 0.5);
+}
+
 /* LIGHT-ON-LIGHT GUARD — some text controls inside the light-glass chrome set their
    OWN light --fg with HIGHER specificity than the blanket chrome dark-ink rule above,
    so they survived as light text on the light glass (unreadable):
