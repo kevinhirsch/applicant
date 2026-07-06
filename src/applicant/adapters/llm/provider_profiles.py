@@ -15,6 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from applicant.core.rules.reasoning_hygiene import strip_reasoning
+
 
 @dataclass(frozen=True)
 class ProviderProfile:
@@ -241,7 +243,18 @@ def _ollama_build_request(
 
 
 def _openai_extract_text(raw: dict[str, Any]) -> str:
-    """Extract text from an OpenAI-style ``choices[0].message`` response."""
+    """Extract text from an OpenAI-style ``choices[0].message`` response.
+
+    Reasoning hygiene (P0 leak fix): a reasoning model's separate
+    ``message.reasoning`` / ``message.reasoning_content`` channel (OpenRouter
+    et al.) is DROPPED — it is deliberately never read here and never
+    concatenated into the visible text. Inline chain-of-thought that leaked
+    into ``content`` itself (``<think>`` blocks, unclosed-tag variants,
+    untagged "thinking process" preambles) is stripped by
+    :func:`~applicant.core.rules.reasoning_hygiene.strip_reasoning`. The
+    tool-call-arguments fallback is a machine-consumed JSON string and passes
+    through verbatim.
+    """
     choices = raw.get("choices") if isinstance(raw, dict) else None
     if not (isinstance(choices, list) and choices and isinstance(choices[0], dict)):
         return ""
@@ -250,20 +263,27 @@ def _openai_extract_text(raw: dict[str, Any]) -> str:
         return ""
     text = message.get("content") or ""
     if not text:
-        text = tool_call_arguments(message) or ""
-    return text
+        return tool_call_arguments(message) or ""
+    return strip_reasoning(text)
 
 
 def _ollama_extract_text(raw: dict[str, Any]) -> str:
-    """Extract text from an Ollama ``message.content`` / ``response`` body."""
+    """Extract text from an Ollama ``message.content`` / ``response`` body.
+
+    Reasoning hygiene (P0 leak fix): Ollama's separate ``message.thinking``
+    channel is deliberately never read, and inline chain-of-thought leaked
+    into the content (``<think>`` blocks etc.) is stripped before the text
+    reaches any user-facing path.
+    """
     if not isinstance(raw, dict):
         return ""
     message = raw.get("message")
-    return (
+    text = (
         (message.get("content") if isinstance(message, dict) else None)
         or raw.get("response")
         or ""
     )
+    return strip_reasoning(text)
 
 
 # ---------------------------------------------------------------------------
