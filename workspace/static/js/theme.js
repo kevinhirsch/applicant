@@ -144,7 +144,7 @@ export const THEMES = {
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
 };
 
-const DEFAULT_THEME = 'glass';
+const DEFAULT_THEME = 'light';
 const LS_KEY = 'applicant-theme';
 const CUSTOM_THEMES_KEY = 'applicant-custom-themes';
 
@@ -589,7 +589,7 @@ export const GLASS_TIERS = ['off', 'frosted', 'full'];
 // SVG refraction) and 'off' (flat panels) remain opt-in via Settings. @supports
 // gives a solid-panel fallback where backdrop-filter is unavailable, and
 // prefers-reduced-motion strips motion but keeps the frost.
-const DEFAULT_GLASS_TIER = 'full';
+const DEFAULT_GLASS_TIER = 'off';
 
 /** Apply a glass tier ('off' | 'frosted' | 'full'). The SOLE writer of the
  *  `theme-frosted`/`glass-full` body classes that the style.css frost material

@@ -32332,6 +32332,20 @@ body.theme-frosted {
   --theme-bg-raw: var(--bg);
 }
 
+/* FLAT (glass-off) LIGHT themes — same light-on-light hazard as the frosted case
+   above, but the `body.theme-frosted` fix never reaches them (no frosted class).
+   A flat LIGHT theme (light bg ⇒ NOT stamped `applicant-theme-dark`) with the
+   default glass tier OFF paints every var(--chrome-ink) site (window titles,
+   .cal-btn labels, settings-nav labels, section headers) near-white on a solid
+   near-white panel. Mirror the dark chrome-ink ramp here so the flat light
+   default is legible. Flat DARK themes keep the :root near-white ink (correct on
+   their dark panels); the frosted override still wins for glass. */
+body:not(.theme-frosted):not(.applicant-theme-dark) {
+  --chrome-ink: #16191f;
+  --chrome-ink-2: rgba(22, 25, 31, 0.68);
+  --chrome-ink-3: rgba(22, 25, 31, 0.45);
+}
+
 body.theme-frosted #sidebar,
 body.theme-frosted .modal-content,
 body.theme-frosted .doclib-modal-content,

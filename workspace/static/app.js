@@ -3551,13 +3551,12 @@ function startApplicantApp() {
   const _railToolMap = {
     'rail-compare':   'tool-compare-btn',
     // S1-6: collapsed-rail twins for the secondary utilities applicantNav.js now
-    // emits (Compare, Run log, Trust) so a collapsed user can reach them — they
+    // emits (Compare, Run log, Themes) so a collapsed user can reach them — they
     // delegate to their sidebar list-items exactly like the other rail icons.
     // The Applicant Compare twin is #rail-applicant-compare (the vendored
     // #rail-compare above stays hidden — distinct id, no collision).
     'rail-applicant-compare': 'tool-compare-btn',
     'rail-debug':     'tool-debug-btn',
-    'rail-trust':     'tool-trust-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-archive':   'tool-library-btn',
