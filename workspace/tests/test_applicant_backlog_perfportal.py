@@ -145,6 +145,13 @@ class DelayedFakeEngine:
         await asyncio.sleep(DELAY)
         return DelayedFakeEngine.onboarding.get(cid, {"complete": True, "missing_sections": []})
 
+    setup: dict = {}
+
+    async def setup_status(self):
+        DelayedFakeEngine.calls.append("setup_status")
+        await asyncio.sleep(DELAY)
+        return DelayedFakeEngine.setup
+
     async def _request(self, method, path, **kw):
         DelayedFakeEngine.calls.append((method, path))
         await asyncio.sleep(DELAY)
@@ -161,6 +168,13 @@ def _reset_fake():
     ]
     DelayedFakeEngine.pending = {}
     DelayedFakeEngine.onboarding = {}
+    # Gate OPEN by default so the perf tests measure the pending fan-out itself,
+    # not a synthetic "finish setup" gap row.
+    DelayedFakeEngine.setup = {
+        "apply_ready": True,
+        "automated_work_allowed": True,
+        "apply_missing": [],
+    }
     DelayedFakeEngine.counts = {f"c{i}": i + 1 for i in range(N_CAMPAIGNS)}
     DelayedFakeEngine.raises = {}
     yield
@@ -172,26 +186,27 @@ def client(monkeypatch):
     return TestClient(_make_app())
 
 
-def test_pending_fans_out_both_loops_concurrently(client):
-    # #4: two per-campaign loops (list_pending_actions, then onboarding_state
-    # via _onboarding_gap_item) each gathered ⇒ ~2*DELAY total regardless of
-    # campaign count. A sequential implementation would take ~2*N*DELAY, which
-    # for N_CAMPAIGNS=4 is 8x slower than the concurrent bound checked below.
+def test_pending_fans_out_campaigns_concurrently(client):
+    # #4: the per-campaign pending fan-out (list_pending_actions) is gathered ⇒
+    # ~DELAY regardless of campaign count, plus a single apply-readiness gate read
+    # (setup_status). A sequential implementation of the fan-out would take
+    # ~N*DELAY, which for N_CAMPAIGNS=4 is far slower than the bound checked below.
     start = time.monotonic()
     r = client.get("/api/applicant/portal/pending")
     elapsed = time.monotonic() - start
     assert r.status_code == 200
     assert elapsed < (N_CAMPAIGNS * DELAY), (
-        f"elapsed={elapsed:.3f}s — the per-campaign loops look serial, not gathered "
-        f"(sequential N={N_CAMPAIGNS} campaigns * DELAY={DELAY}s per loop would be "
-        f"~{2 * N_CAMPAIGNS * DELAY:.3f}s)"
+        f"elapsed={elapsed:.3f}s — the per-campaign pending fan-out looks serial, not "
+        f"gathered (sequential N={N_CAMPAIGNS} campaigns * DELAY={DELAY}s would be "
+        f"~{N_CAMPAIGNS * DELAY:.3f}s)"
     )
-    # Every campaign was actually queried on both loops (concurrency isn't
-    # achieved by skipping work, just by not serializing it).
+    # Every campaign was actually queried (concurrency isn't achieved by skipping
+    # work, just by not serializing it), and the gate is read exactly once — a
+    # single status read, NOT a per-campaign onboarding_state fan-out.
     list_calls = [c for c in DelayedFakeEngine.calls if isinstance(c, tuple) and c[0] == "list_pending_actions"]
-    onboarding_calls = [c for c in DelayedFakeEngine.calls if isinstance(c, tuple) and c[0] == "onboarding_state"]
     assert {c[1] for c in list_calls} == {"c0", "c1", "c2", "c3"}
-    assert {c[1] for c in onboarding_calls} == {"c0", "c1", "c2", "c3"}
+    assert DelayedFakeEngine.calls.count("setup_status") == 1
+    assert not any(isinstance(c, tuple) and c[0] == "onboarding_state" for c in DelayedFakeEngine.calls)
 
 
 def test_pending_count_fans_out_concurrently(client):
@@ -238,20 +253,21 @@ def test_pending_preserves_campaign_order_despite_uneven_completion(client):
     )
 
 
-def test_pending_gap_uses_first_incomplete_campaign_even_when_gathered(client):
-    # The onboarding-gap loop's "first incomplete campaign wins" semantics must
-    # survive the gather conversion: c1 is incomplete, c0/c2/c3 are complete.
-    DelayedFakeEngine.onboarding = {
-        "c0": {"complete": True, "missing_sections": []},
-        "c1": {"complete": False, "missing_sections": ["identity"]},
-        "c2": {"complete": True, "missing_sections": []},
-        "c3": {"complete": False, "missing_sections": ["education"]},
+def test_pending_gap_attaches_to_first_campaign_when_gate_closed(client):
+    # The apply-readiness gate is a single global signal (one setup_status read,
+    # not a per-campaign fan-out); when it's closed the gap row attaches to the
+    # owner's FIRST campaign so its "Finish setup" jump lands somewhere real.
+    DelayedFakeEngine.setup = {
+        "apply_ready": False,
+        "automated_work_allowed": False,
+        "apply_missing": ["a résumé"],
     }
     r = client.get("/api/applicant/portal/pending")
     body = r.json()
     gap = next((it for it in body["items"] if it.get("kind") == "onboarding_incomplete"), None)
     assert gap is not None
-    assert gap["campaign_id"] == "c1", "the FIRST incomplete campaign in list order must win"
+    assert gap["campaign_id"] == "c0", "the first campaign in list order must win"
+    assert gap["missing"] == ["a résumé"]
 
 
 def test_pending_one_failing_campaign_does_not_sink_the_others(client):
@@ -432,6 +448,10 @@ def test_load_renders_pending_rows_before_notifications_resolve(node_available):
         let _items = [];
         let _lastPendingCount = 0;
         let _loading = false;
+        // `_load` now captures the apply-readiness gate from the payload; declare
+        // the module var it writes to (same as _items above) so the extracted
+        // block runs standalone in this harness.
+        let _gate = {{ automated_work_allowed: null, apply_ready: null, apply_missing: [] }};
 
         function _renderList(body) {{
           renderListCalls += 1;

@@ -254,6 +254,45 @@ def test_apply_readiness_none_without_reporter():
     assert setup.apply_readiness() is None
 
 
+def test_missing_lists_agree_across_status_chat_and_gate(onboarding):
+    """The three surfaces a user sees "what's left" on — the wizard-finish/setup-
+    status list, the chat assistant's essentials list, and the onboarding gate —
+    must all read from the ONE ``apply_readiness().missing``, never disagree."""
+    from applicant.application.services.attribute_cloud_service import AttributeCloudService
+    from applicant.application.services.chat_service import ChatService
+
+    svc, storage, _store = onboarding
+    # A partial setup: titles + work mode + locations present, but salary / skills /
+    # résumé still missing — so the "what's left" list is non-empty and worth agreeing on.
+    crit = SearchCriteria(
+        campaign_id=CampaignId(CID),
+        titles=("Software Engineer",),
+        work_modes=("remote",),
+        locations=("Remote",),
+    )
+    svc.set_criteria_service(_FakeCriteria(crit))
+
+    setup = SetupService(
+        llm_configured=True,
+        config_store=InMemoryAppConfigStore(),
+        onboarding_gate=lambda: svc.is_ready_to_apply(CID),
+    )
+    setup.set_apply_readiness_reporter(lambda: svc.apply_readiness(CID))
+    chat = ChatService(
+        attribute_service=AttributeCloudService(storage),
+        criteria_service=_FakeCriteria(crit),
+        onboarding=svc,
+    )
+
+    gate_missing = list(svc.apply_readiness(CID).missing)          # the single source
+    status_missing = list(setup.apply_readiness().missing)         # wizard-finish + Portal proxy
+    chat_missing = list(chat._essentials_missing(CID))             # chat assistant
+
+    assert gate_missing  # there genuinely IS something left
+    assert status_missing == gate_missing
+    assert chat_missing == gate_missing
+
+
 # --- setup-status surface (reachable via the real app) -----------------------
 
 

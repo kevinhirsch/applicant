@@ -97,6 +97,9 @@ def test_greeting_line_is_time_aware_and_reflects_pending_count(node_available):
     script = textwrap.dedent(f"""
         class FakeDate {{ getHours() {{ return globalThis.__fakeHour; }} }}
         globalThis.Date = FakeDate;
+        // `_greetingLine` now consults the apply-readiness gate; stub it open so
+        // the zero-pending line reads as the normal "all clear" reassurance.
+        function _gateClosed() {{ return false; }}
 
         {block}
 
@@ -137,6 +140,9 @@ def test_agent_pulse_line_prefers_now_then_next_then_static_fallback(node_availa
         let _modalEl = null;
         const ACTIVITY_API = '/api/applicant/activity';
         async function _fetchJSON() {{ throw new Error('unused in this test'); }}
+        // `_agentPulseLine`'s fallback now consults the gate; stub it open so the
+        // static fallback line is exercised (matching the pre-gate behavior).
+        function _gateClosed() {{ return false; }}
 
         {block}
 
@@ -183,6 +189,8 @@ def test_load_agent_pulse_fetches_snapshot_and_updates_pulse_text_in_place(node_
         }};
         const ACTIVITY_API = '/api/applicant/activity';
         let _fetchJSON;
+        // `_agentPulseLine`'s fallback now consults the gate; stub it open.
+        function _gateClosed() {{ return false; }}
 
         {block}
 
