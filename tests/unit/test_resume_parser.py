@@ -204,3 +204,192 @@ def test_education_year_range_on_next_line_is_not_dropped(parser, tmp_path):
     edu = next(e for e in parsed.education if "M.S" in e.degree)
     assert edu.start_year == "2015"
     assert edu.end_year == "2017"
+
+
+# --- data-corruption regressions: wrong-offset degree split + work-history ---
+# --- jamming/dropping (product-gaps: onboarding "Your profile" review) -------
+
+#: A realistic 2-job resume with achievement bullets under each role and an
+#: Associate degree whose field of study previously triggered a wrong-offset
+#: split: "A.A. Computer Infor" / "mation Systems" (concatenating the two
+#: reconstructs "A.A. Computer Information Systems" exactly), because the old
+#: degree regex had no word boundaries and matched the "ma" bigram inside
+#: "Infor-ma-tion" as a false M.A. hit.
+_TWO_JOB_RESUME_WITH_BULLETS = """\
+Jordan A. Sample
+jordan.sample@example.com | (312) 555-0142
+
+Experience:
+Senior Support Engineer, Acme Corp    Jan 2021 - Present
+Resolved over 200 customer escalations per quarter across enterprise accounts.
+Automated the ticket-triage pipeline, cutting median response time by 40%.
+
+IT Support Specialist, Globex Industries    Jun 2018 - Dec 2020
+Maintained a 500-endpoint Windows/macOS fleet with 99.5% uptime.
+Built a self-service password-reset tool adopted by the whole helpdesk team.
+
+Education:
+A.A. Computer Information Systems, Springfield Community College    2016 - 2018
+
+Skills:
+Python, SQL, Zendesk, Jira
+"""
+
+
+def test_education_degree_never_splits_a_word(parser, tmp_path):
+    """Regression: 'A.A. Computer Information Systems' rendered as degree=
+    'mation Systems' / institution='A.A. Computer Infor' -- a wrong-offset
+    slice landing mid-word, not fuzzy AI error. The degree must come out whole
+    and the institution must be the actual college name, not a fragment of
+    the degree text."""
+    p = tmp_path / "r.txt"
+    p.write_text(_TWO_JOB_RESUME_WITH_BULLETS)
+    parsed = parser.parse(str(p))
+    assert len(parsed.education) == 1
+    edu = parsed.education[0]
+    assert edu.degree == "A.A. Computer Information Systems"
+    assert edu.institution == "Springfield Community College"
+    assert edu.start_year == "2016"
+    assert edu.end_year == "2018"
+    # The two concrete corrupt values from the bug report must never recur.
+    assert edu.degree != "mation Systems"
+    assert edu.institution != "A.A. Computer Infor"
+    # Concatenating degree + institution must not reconstruct the full string
+    # the way the old wrong-offset split did (proving neither field is a
+    # truncated fragment of the other).
+    assert edu.institution + edu.degree != "A.A. Computer Infor" + "mation Systems"
+
+
+def test_degree_regex_does_not_false_positive_on_ordinary_words(parser, tmp_path):
+    """Regression: the un-bounded old regex matched the bare 'ma'/'ms' bigram
+    anywhere case-insensitively, so an achievement bullet like 'Maintained the
+    fleet...' (contains 'ma') was misparsed as a bogus education entry."""
+    resume = (
+        "Experience:\n"
+        "Senior Support Engineer, Acme Corp    Jan 2021 - Present\n"
+        "Maintained the fleet with a team of five people.\n"
+        "Managed vendor contracts and system upgrades.\n"
+    )
+    p = tmp_path / "r.txt"
+    p.write_text(resume)
+    parsed = parser.parse(str(p))
+    assert parsed.education == ()
+    # The lines stay attached to the job as achievements, not spliced away.
+    assert len(parsed.work_history) == 1
+    assert "Maintained the fleet with a team of five people." in parsed.work_history[0].achievements
+
+
+def test_two_job_resume_yields_two_entries_with_separate_fields_and_bullets(parser, tmp_path):
+    """Regression: work history jammed title+company into one field, dropped
+    achievements (WorkHistoryEntry had no field for them), and a two-job resume
+    produced only one entry. All three must now be fixed together."""
+    p = tmp_path / "r.txt"
+    p.write_text(_TWO_JOB_RESUME_WITH_BULLETS)
+    parsed = parser.parse(str(p))
+
+    assert len(parsed.work_history) == 2
+
+    first, second = parsed.work_history
+    assert first.title == "Senior Support Engineer"
+    assert first.company == "Acme Corp"
+    assert second.title == "IT Support Specialist"
+    assert second.company == "Globex Industries"
+    # Title and company are never the same field jammed together.
+    for w in parsed.work_history:
+        assert w.title and w.company
+        assert w.title != w.company
+        assert w.company not in w.title
+
+    # Achievements/bullets survive and are attributed to the correct job.
+    assert first.achievements == (
+        "Resolved over 200 customer escalations per quarter across enterprise accounts.",
+        "Automated the ticket-triage pipeline, cutting median response time by 40%.",
+    )
+    assert second.achievements == (
+        "Maintained a 500-endpoint Windows/macOS fleet with 99.5% uptime.",
+        "Built a self-service password-reset tool adopted by the whole helpdesk team.",
+    )
+    # No bullet leaks across the job boundary.
+    assert not any("password-reset" in a for a in first.achievements)
+    assert not any("escalations" in a for a in second.achievements)
+
+
+def test_contact_fields_still_parse_alongside_fixed_extraction(parser, tmp_path):
+    """The parsing fixes above must not regress plain identity extraction."""
+    p = tmp_path / "r.txt"
+    p.write_text(_TWO_JOB_RESUME_WITH_BULLETS)
+    parsed = parser.parse(str(p))
+    assert parsed.full_name == "Jordan A. Sample"
+    assert parsed.email == "jordan.sample@example.com"
+    assert "555" in parsed.phone
+    assert "Python" in parsed.skills
+
+
+def test_work_history_title_company_not_jammed_multispace_columns(parser, tmp_path):
+    """Regression: a plain-text export using fixed-width columns (spaces, not
+    ', '/' at '/tab) jammed 'Title     Company' into ONE field with company
+    left empty."""
+    resume = (
+        "Experience:\n"
+        "Senior Support Engineer     Acme Corp    Jan 2021 - Present\n"
+        "Resolved customer escalations.\n"
+        "IT Support Specialist     Globex Industries    Jun 2018 - Dec 2020\n"
+        "Maintained the fleet.\n"
+    )
+    p = tmp_path / "r.txt"
+    p.write_text(resume)
+    parsed = parser.parse(str(p))
+    assert len(parsed.work_history) == 2
+    first, second = parsed.work_history
+    assert first.title == "Senior Support Engineer"
+    assert first.company == "Acme Corp"
+    assert second.title == "IT Support Specialist"
+    assert second.company == "Globex Industries"
+
+
+def test_slash_style_numeric_dates_do_not_drop_the_second_job(parser, tmp_path):
+    """Regression: 'MM/YYYY' dates (a very common template format) didn't
+    match the date-range regex at all, so the SECOND job's line never matched
+    and the whole entry silently vanished -- a two-job resume yielded one
+    entry."""
+    resume = (
+        "Experience:\n"
+        "Senior Support Engineer, Acme Corp    01/2021 - Present\n"
+        "Resolved customer escalations.\n"
+        "IT Support Specialist, Globex Industries    06/2018 - 12/2020\n"
+        "Maintained the fleet.\n"
+    )
+    p = tmp_path / "r.txt"
+    p.write_text(resume)
+    parsed = parser.parse(str(p))
+    assert len(parsed.work_history) == 2
+    first, second = parsed.work_history
+    assert first.company == "Acme Corp"
+    assert first.start_date == "01/2021"
+    assert second.company == "Globex Industries"
+    assert second.start_date == "06/2018"
+    assert second.end_date == "12/2020"
+
+
+def test_work_history_heading_variant_is_recognized(parser, tmp_path):
+    """Regression: a 'Work History:' heading (not in the recognized-heading
+    list) fell through to whole-document fallback scanning, which spliced an
+    unrelated education line in as a bogus THIRD work-history entry."""
+    resume = (
+        "Jordan Sample\n"
+        "jordan@example.com\n\n"
+        "Work History:\n"
+        "Senior Support Engineer, Acme Corp    Jan 2021 - Present\n"
+        "Resolved customer escalations.\n"
+        "IT Support Specialist, Globex Industries    Jun 2018 - Dec 2020\n"
+        "Maintained the fleet.\n\n"
+        "Education:\n"
+        "A.A. Computer Information Systems, Springfield Community College    2016 - 2018\n"
+    )
+    p = tmp_path / "r.txt"
+    p.write_text(resume)
+    parsed = parser.parse(str(p))
+    assert len(parsed.work_history) == 2
+    assert {w.company for w in parsed.work_history} == {"Acme Corp", "Globex Industries"}
+    assert len(parsed.education) == 1
+    assert parsed.education[0].degree == "A.A. Computer Information Systems"
