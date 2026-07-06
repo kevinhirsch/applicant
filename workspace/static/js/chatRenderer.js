@@ -2277,6 +2277,23 @@ export function addMessage(role, content, modelName, metadata) {
       wrap.appendChild(createUserMsgFooter(wrap));
     }
 
+    // Per-message decoration seam — Job Assistant (engine-backed) turns carry
+    // their job-action payload (proposed updates / gaps / search-update
+    // confirms) under metadata.applicant; hand the finished bubble to the
+    // surface module so the inline chips render identically on a history
+    // reload and on the live send. Dynamic import: cached after the first
+    // call, and history can render before applicantChat.js's lazy boot
+    // import resolves.
+    if (role === 'assistant' && metadata && metadata.applicant) {
+      import('./applicantChat.js')
+        .then((m) => {
+          if (m && typeof m.decorateEngineMessage === 'function') {
+            m.decorateEngineMessage(wrap, metadata.applicant);
+          }
+        })
+        .catch((e) => console.warn('Job assistant decoration failed:', e));
+    }
+
     box.appendChild(wrap);
 
     // TTS is now part of the msg-actions system

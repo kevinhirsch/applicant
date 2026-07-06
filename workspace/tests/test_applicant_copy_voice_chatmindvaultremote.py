@@ -64,10 +64,12 @@ def test_chat_gated_state_speaks_in_first_person():
 
 def test_chat_send_button_tooltip_is_not_third_person_restatement():
     """#202: the Send tooltip used to say "Send to the assistant" — third
-    person and a bare restatement of the visible "Send" label."""
+    person and a bare restatement of the visible "Send" label. After the
+    chat-unification pass the module has no send button of its own (the
+    NATIVE composer owns it); the guard that remains is that the offending
+    third-person copy never comes back."""
     js = _read(CHAT_JS)
     assert "Send to the assistant" not in js
-    assert 'title="Send — or press Ctrl+Enter"' in js
 
 
 def test_chat_criteria_jargon_renamed_to_search_update():

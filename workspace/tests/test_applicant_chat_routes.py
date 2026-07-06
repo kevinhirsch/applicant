@@ -339,3 +339,199 @@ def test_dead_remote_action_routes_are_gone(client):
     ):
         r = client.post(f"/api/applicant/chat/applications/app1/{route}")
         assert r.status_code == 404
+
+
+# --- the unified Job Assistant session (chat-unification pass) ---------------
+#
+# GET /session resolves/creates the per-user workspace session flagged by the
+# ENGINE_SESSION_URL sentinel; POST /message with session_id persists the turn
+# into it. The session manager is faked (the real one needs the workspace DB);
+# under the hermetic DATABASE_URL the route's DB lookup fails fast and falls
+# back to the manager's in-memory cache, which is exactly what these exercise.
+
+
+class FakeSession:
+    def __init__(self, id, owner, endpoint_url, name="Job assistant",
+                 model="Job assistant", archived=False):
+        self.id = id
+        self.owner = owner
+        self.endpoint_url = endpoint_url
+        self.name = name
+        self.model = model
+        self.archived = archived
+
+
+class FakeSessionManager:
+    def __init__(self):
+        self.sessions: dict = {}
+        self.messages: dict = {}
+        self.created: list = []
+
+    def get_session(self, sid):
+        if sid not in self.sessions:
+            raise KeyError(sid)
+        return self.sessions[sid]
+
+    def create_session(self, session_id, name, endpoint_url, model, rag=False, owner=None):
+        s = FakeSession(session_id, owner, endpoint_url, name=name, model=model)
+        self.sessions[session_id] = s
+        self.created.append(session_id)
+        return s
+
+
+    def add_message(self, sid, message):
+        self.messages.setdefault(sid, []).append(message)
+
+
+def _client_with_sm(monkeypatch, sm=None, authed=True):
+    monkeypatch.setattr(mod, "ApplicantEngineClient", FakeEngine)
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _auth(request, call_next):
+        request.state.current_user = "tester" if authed else None
+        return await call_next(request)
+
+    app.include_router(setup_applicant_chat_routes(session_manager=sm))
+    return TestClient(app)
+
+
+def test_session_bootstrap_creates_the_flagged_session(monkeypatch):
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    r = c.get("/api/applicant/chat/session")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] is True
+    sid = data["session_id"]
+    s = sm.sessions[sid]
+    assert s.owner == "tester"
+    assert s.endpoint_url == mod.ENGINE_SESSION_URL
+    assert s.name == mod.ENGINE_SESSION_NAME
+    assert s.model == mod.ENGINE_SESSION_MODEL
+
+
+def test_session_bootstrap_reuses_the_existing_session(monkeypatch):
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    first = c.get("/api/applicant/chat/session").json()
+    second = c.get("/api/applicant/chat/session").json()
+    assert second["session_id"] == first["session_id"]
+    assert second["created"] is False
+    assert len(sm.created) == 1
+
+
+def test_session_bootstrap_ignores_foreign_and_ordinary_sessions(monkeypatch):
+    """Another user's flagged session, and the caller's own ORDINARY chats,
+    must never be handed out as the Job Assistant session."""
+    sm = FakeSessionManager()
+    sm.sessions["other"] = FakeSession("other", "someone-else", mod.ENGINE_SESSION_URL)
+    sm.sessions["plain"] = FakeSession("plain", "tester", "http://localhost:1234/v1")
+    c = _client_with_sm(monkeypatch, sm)
+    data = c.get("/api/applicant/chat/session").json()
+    assert data["session_id"] not in ("other", "plain")
+    assert data["created"] is True
+
+
+def test_session_bootstrap_without_manager_is_unavailable(monkeypatch):
+    c = _client_with_sm(monkeypatch, sm=None)
+    r = c.get("/api/applicant/chat/session")
+    assert r.status_code == 503
+
+
+def test_session_bootstrap_requires_auth(monkeypatch):
+    c = _client_with_sm(monkeypatch, FakeSessionManager(), authed=False)
+    assert c.get("/api/applicant/chat/session").status_code == 401
+
+
+def test_send_message_with_session_persists_both_turns(monkeypatch):
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    sid = c.get("/api/applicant/chat/session").json()["session_id"]
+    FakeEngine.responses["chat"] = {
+        "message": "Noted.",
+        "gaps": ["portfolio"],
+        "proposed_changes": [
+            {"kind": "attribute", "name": "salary", "value": "100k",
+             "requires_confirmation": True, "applied": False},
+        ],
+    }
+    r = c.post(
+        "/api/applicant/chat/message",
+        json={"campaign_id": "c1", "message": "hello", "session_id": sid},
+    )
+    assert r.status_code == 200
+    msgs = sm.messages[sid]
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[0].content == "hello"
+    assert msgs[1].content == "Noted."
+    # The assistant turn carries the label + the scrubbed job-action payload
+    # so the native renderer's decoration seam can rebuild the chips on a
+    # history reload.
+    meta = msgs[1].metadata
+    assert meta["character_name"] == mod.ENGINE_SESSION_NAME
+    assert meta["applicant"]["gaps"] == ["portfolio"]
+    assert meta["applicant"]["proposed_changes"][0]["name"] == "salary"
+
+
+def test_send_message_with_plain_reply_persists_without_applicant_metadata(monkeypatch):
+    """No chips payload => no metadata.applicant key (the decoration seam
+    only fires when there is something to decorate)."""
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    sid = c.get("/api/applicant/chat/session").json()["session_id"]
+    FakeEngine.responses["chat"] = {"message": "Just chatting."}
+    r = c.post(
+        "/api/applicant/chat/message",
+        json={"campaign_id": "c1", "message": "hi", "session_id": sid},
+    )
+    assert r.status_code == 200
+    meta = sm.messages[sid][1].metadata
+    assert "applicant" not in meta
+
+
+def test_send_message_rejects_foreign_or_ordinary_sessions(monkeypatch):
+    """Owner-scoping: a session that isn't the caller's own sentinel-flagged
+    Job Assistant session 404s BEFORE the engine is called."""
+    sm = FakeSessionManager()
+    sm.sessions["foreign"] = FakeSession("foreign", "someone-else", mod.ENGINE_SESSION_URL)
+    sm.sessions["plain"] = FakeSession("plain", "tester", "http://localhost:1234/v1")
+    c = _client_with_sm(monkeypatch, sm)
+    for sid in ("foreign", "plain", "missing"):
+        r = c.post(
+            "/api/applicant/chat/message",
+            json={"campaign_id": "c1", "message": "hi", "session_id": sid},
+        )
+        assert r.status_code == 404, sid
+    assert not any(call[0] == "chat" for call in FakeEngine.calls if isinstance(call, tuple)), (
+        "the engine must not be called for a rejected session"
+    )
+    assert sm.messages == {}
+
+
+def test_send_message_without_session_id_skips_persistence(monkeypatch):
+    """The session-less contract is unchanged: reply passes through, nothing
+    is persisted anywhere."""
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    r = c.post(
+        "/api/applicant/chat/message",
+        json={"campaign_id": "c1", "message": "hi"},
+    )
+    assert r.status_code == 200
+    assert sm.messages == {}
+
+
+def test_send_message_engine_error_persists_nothing(monkeypatch):
+    """A failed engine turn must leave no half-written history — the user's
+    bubble only persists alongside a real reply."""
+    sm = FakeSessionManager()
+    c = _client_with_sm(monkeypatch, sm)
+    sid = c.get("/api/applicant/chat/session").json()["session_id"]
+    FakeEngine.raises["chat"] = EngineError("down", status=None)
+    r = c.post(
+        "/api/applicant/chat/message",
+        json={"campaign_id": "c1", "message": "hi", "session_id": sid},
+    )
+    assert r.status_code == 503
+    assert sm.messages == {}
