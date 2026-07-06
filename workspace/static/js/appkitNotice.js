@@ -202,9 +202,13 @@
       ".on-card.on-sev-warn {" +
       "  border-color: var(--color-warning, #f0ad4e);" +
       "  background: linear-gradient(0deg, color-mix(in srgb, var(--color-warning, #f0ad4e) 8%, transparent), color-mix(in srgb, var(--color-warning, #f0ad4e) 8%, transparent)), var(--panel, #111); }" +
+      // CC-S2-4: tint the icon too (mirrors .on-sev-success .on-icon below) so a warn/error
+      // notice reads as distinct from an info one on the glyph, not just the border/wash.
+      ".on-card.on-sev-warn .on-icon { color: var(--color-warning, #f0ad4e); }" +
       ".on-card.on-sev-error {" +
       "  border-color: var(--color-error, var(--red, #e06c75));" +
       "  background: linear-gradient(0deg, color-mix(in srgb, var(--color-error, var(--red, #e06c75)) 10%, transparent), color-mix(in srgb, var(--color-error, var(--red, #e06c75)) 10%, transparent)), var(--panel, #111); }" +
+      ".on-card.on-sev-error .on-icon { color: var(--color-error, var(--red, #e06c75)); }" +
       // success: a confirmation tint (the old toast's green check, now an .on-sev-* skin). Borders
       // green; the icon (check) tints with it. #951.
       ".on-card.on-sev-success { border-color: var(--green, #50fa7b); }" +
@@ -212,6 +216,15 @@
       // toast: the ephemeral feedback card. Quiet by default (the accent left-edge the legacy toast
       // used), a left accent border so it reads as a peer of the old `.toast` look. #951.
       ".on-card.on-toast { border-left: 3px solid var(--accent, #e06c75); }" +
+      // CC-S2-4: an error/warn TOAST looked identical to an info one — `.on-toast`'s
+      // border-left above and `.on-sev-error`/`.on-sev-warn`'s border-color above it are
+      // equal-specificity (two classes each), so whichever rule is LATER in this
+      // stylesheet wins the cascade on the shared border-left-color, and `.on-toast`
+      // (declared after) was clobbering the severity tint on exactly the edge users
+      // notice most. These three-class overrides outrank both by specificity — order-
+      // independent — so a severity toast's accent edge always reads as its own color.
+      ".on-card.on-toast.on-sev-warn { border-left-color: var(--color-warning, #f0ad4e); }" +
+      ".on-card.on-toast.on-sev-error { border-left-color: var(--color-error, var(--red, #e06c75)); }" +
       // continue: a quiet nudge to keep going.
       ".on-card.on-continue { border-color: color-mix(in srgb, var(--accent, #e06c75) 50%, var(--border, #355a66)); }" +
       // ── motion (reduced-motion stripped) ──────────────────────────────────────
