@@ -18,17 +18,16 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
   path from wherever the file was lifted, now wrong. Cosmetic; fix on next touch of that file.
   Where: `workspace/core/middleware.py` (top-of-file comment). Status: open (surfaced fixing 03-perf).
 
-- **DISC-15 · high (security) · Cross-user isolation gap likely extends to other proxies.**
-  The notification-inbox owner-scope fix (lens 10 #28) closed one hole, but the same class
-  affects the sibling `applicant_*_routes.py` proxies (`/pending`, campaigns, tracker, activity):
-  they gate with `require_user` + "id validated against `list_campaigns()`" — but the engine is
-  single-tenant, so `list_campaigns()` returns the SAME data to every workspace account, so that
-  check is only IDOR protection against foreign ids, NOT cross-account isolation. A second
-  workspace account can likely read the owner's pending actions / campaigns / tracker board today.
-  Fix: apply the same owner-scope gate (`_require_notification_owner`-style) to those proxies.
-  Where: `workspace/routes/applicant_portal_routes.py` (`/pending`), `applicant_campaigns_routes.py`,
-  `applicant_tracker_routes.py`, `applicant_activity_routes.py`.
-  Status: open (surfaced fixing lens 10 #28). **Sequence after the #28 fix merges** (shares the file).
+- **DISC-15b · high (security) · Cross-account WRITE isolation still open on campaigns/tracker.**
+  DISC-15 (below) closed the cross-account READ hole, but the WRITE endpoints in
+  `applicant_campaigns_routes.py` (`PATCH`, `POST /clone`, `DELETE`, `PUT /sources/{key}`) and
+  `applicant_tracker_routes.py` (the 7 POST mutators — record-outcome, archive, mark-submitted,
+  detect, retry, override-block, scan-email) still gate only on `require_user`. Because the engine
+  is single-tenant, the "id validated against the engine's own list" check is trivially satisfied
+  for ANY authenticated account, so a second workspace account can still MUTATE the owner's
+  campaigns/applications. Fix: apply `require_engine_owner` to those write endpoints too.
+  Where: `applicant_campaigns_routes.py`, `applicant_tracker_routes.py` (write endpoints).
+  Status: open (surfaced fixing DISC-15). **Sequence after the DISC-15 read fix merges** (shares the files).
 
 - **DISC-14 · low · Notifier reads the clock independently in three places.**
   `notify()`, `advance()`, `deliver_now()` each take/compute a timestamp, and `_build_rungs`
@@ -147,6 +146,15 @@ Status: `open`, `in-progress`, `fixed (PR #…)`, `wontfix (reason)`.
 ---
 
 ## Resolved
+
+- **DISC-15 · high (security) · Cross-account READ on pending/campaigns/tracker/activity proxies.**
+  The sibling `applicant_*_routes.py` read proxies gated only on `require_user`; since the engine is
+  single-tenant, that let a second workspace account read the owner's pending actions / campaigns /
+  tracker board / activity feed. Fixed by factoring the `_require_notification_owner` gate into the
+  shared `require_engine_owner` (`workspace/src/auth_helpers.py`) and applying it to every read
+  endpoint on those four proxies (lone owner in single-user mode still passes; a second account gets
+  403). The WRITE-endpoint half is tracked separately as **DISC-15b** (still open).
+  Status: **fixed** (batch-4 PR — `2684ac0`, +16 cross-user isolation tests).
 
 - **DISC-1 · NOT A BUG (was mis-captured) · Approved follow-ups DO send.**
   Originally captured as "nothing calls `send_scheduled_follow_ups()`" — that was wrong,
