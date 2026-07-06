@@ -135,7 +135,16 @@ def test_conversion_accept_reject_persists(client):
 
     prev = client.post(f"/api/conversion/{cid}/preview", json={"source": "\\section{S}\nbody"})
     assert prev.status_code == 200
-    assert prev.json()["page_count"] >= 1
+    prev_json = prev.json()
+    # Honest contract: a page count is reported only when a real PDF was compiled
+    # and inspected. Where the render toolchain (TeX/LibreOffice) is absent — e.g.
+    # the CI runner, which doesn't bake the engine image — the preview is flagged
+    # unavailable and MUST NOT fabricate a page count.
+    if prev_json.get("artifact_available"):
+        assert prev_json["page_count"] >= 1
+    else:
+        assert prev_json.get("artifact_available") is False
+        assert prev_json.get("page_count") is None
 
     assert client.post(f"/api/conversion/{cid}/accept").json()["engine"] == "latex"
     assert client.get(f"/api/conversion/{cid}/engine").json()["engine"] == "latex"
