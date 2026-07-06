@@ -33281,6 +33281,35 @@ body.theme-frosted .attach-image-skeleton {
   background-color: var(--ow-glass-light-color) !important;
   background-image: var(--ow-glass-light-fill) !important;
 }
+/* ── SCRIM ≠ WINDOW (root cause of the "white-on-white ghost shell") ──────────
+   Several dialogs compose the kit window class onto the LEGACY full-viewport
+   modal BACKDROP element itself (`class="modal ow-window"` — the onboarding
+   wizard, Portal, live-takeover and chat windows). Two failures followed:
+   · under the glass tiers, the light-glass fill above painted the ENTIRE
+     fixed inset-0 backdrop with the 0.60 white kube glass, milk-washing the
+     whole shell behind it (sidebar / top bar / wallpaper all read as a
+     white-on-white ghost town);
+   · outside the glass tiers, the kit's own `.ow-window { background:
+     var(--win-bg, var(--panel)) }` (injected at runtime, so it wins the
+     cascade) painted the backdrop as an OPAQUE solid panel.
+   A full-screen backdrop is a SCRIM: it dims and defocuses, it is never
+   itself a window surface. Re-pin the combo to scrim duty — the dialog's own
+   .modal-content still carries the window/glass card. Kit-level: covers every
+   present and future `.modal.ow-window` composition. */
+.modal.ow-window {
+  background: var(--ow-scrim-bg, rgba(0, 0, 0, 0.55)) !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+body.theme-frosted .modal.ow-window {
+  /* frost blur (kept from the shared blur rules) already separates the layers,
+     so the dim can stay lighter than the flat-theme scrim */
+  background: color-mix(in srgb, #000 26%, transparent) !important;
+  background-image: none !important;
+}
 /* A subtle text-shadow on glass body copy guarantees legibility on the very      */
 /* brightest animated-bg frames. Post-#725 these CHROME surfaces carry DARK ink on */
 /* the LIGHT glass, so the legibility halo must be the LIGHT halo (a dark shadow   */
@@ -33823,6 +33852,31 @@ body.theme-frosted #minimized-dock .minimized-dock-chip:active {
   body.theme-frosted #minimized-dock .minimized-dock-chip:hover {
     transform: none;   /* no motion under reduced-motion; color/bloom still change */
   }
+}
+
+/* PRIMARY CTA guard — the glass-chip morph above catches EVERY button inside a
+   card/window, including the ONE filled primary action (`.cal-btn-primary`,
+   which paints a literal #fff label). Dissolving it into a translucent chip
+   left white-on-light-glass (~1.3:1 — the invisible "Let's get started" on the
+   welcome card). The filled system-blue CTA is sanctioned ON glass (HIG:
+   prominent action keeps its tint); everything else stays a quiet chip. */
+body.theme-frosted button.cal-btn.cal-btn-primary,
+body.theme-frosted .ow-window .ow-body button.cal-btn.cal-btn-primary,
+body.theme-frosted .on-card button.cal-btn.cal-btn-primary,
+body.theme-frosted .og-card button.cal-btn.cal-btn-primary {
+  background: var(--sys-blue) !important;
+  background-color: var(--sys-blue) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  text-shadow: none !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18) !important;
+}
+body.theme-frosted button.cal-btn.cal-btn-primary:hover,
+body.theme-frosted .ow-window .ow-body button.cal-btn.cal-btn-primary:hover,
+body.theme-frosted .on-card button.cal-btn.cal-btn-primary:hover,
+body.theme-frosted .og-card button.cal-btn.cal-btn-primary:hover {
+  background: color-mix(in srgb, var(--sys-blue) 88%, #000) !important;
+  background-color: color-mix(in srgb, var(--sys-blue) 88%, #000) !important;
 }
 
 /* ============================================================================ */
@@ -35710,13 +35764,20 @@ body.theme-frosted [style*="color:var(--red)"] {
    most mid-tones; adaptiveGlass then flips it to light-ink+dark-halo over a dark
    wallpaper within one debounced pass. Both polarities clear the floor; this default
    only has to hold for the first frame and the (rare) no-JS path. */
+/* DEFAULT-POLARITY CORRECTION: the adaptive JS this block deferred to
+   (appkitGlass.js) is not loaded by any page — the static default IS the
+   shipped state — and every shipped wallpaper preset base is DARK
+   (meshGradient.css --lbg-base: #4a1f33/#102a3a/#11244f/#3a2a12/#3a2c52).
+   The dark-ink default assumed a light wallpaper that cannot occur
+   out-of-box, rendering the wordmark near-black over the dark mesh. Default
+   to LIGHT ink + dark halo — correct over all five presets. */
 body.theme-frosted #welcome-screen .welcome-name {
   background: none !important;
-  -webkit-text-fill-color: #16191f;
+  -webkit-text-fill-color: #eef1f4;
   -webkit-background-clip: border-box !important;
   background-clip: border-box !important;
-  color: #16191f;
-  text-shadow: 0 1px 2px rgba(255,255,255,0.55), 0 0 3px rgba(255,255,255,0.45);
+  color: #eef1f4;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 3px rgba(0,0,0,0.40);
 }
 /* subtitle + the inline /setup link share the hero's adaptive default (neutral dark
    ink + light halo). The /setup span sets its OWN accent color inline (style="color:
@@ -35725,10 +35786,10 @@ body.theme-frosted #welcome-screen .welcome-name {
    to color-mix(--fg 60%) @ opacity .6 — over a light wallpaper that washed out, so we
    restate it here at the dark ink with full presence on the glass theme. */
 body.theme-frosted #welcome-screen .welcome-sub {
-  color: #16191f !important;
-  -webkit-text-fill-color: #16191f !important;
+  color: #dfe4e8 !important;
+  -webkit-text-fill-color: #dfe4e8 !important;
   opacity: 1 !important;
-  text-shadow: 0 1px 2px rgba(255,255,255,0.55), 0 0 3px rgba(255,255,255,0.45);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 3px rgba(0,0,0,0.40);
 }
 /* the inline /setup span sets its OWN accent color (style="color:var(--accent)…") — kill
    it and let it INHERIT the subtitle's ink, which adaptiveGlass flips per wallpaper. So
@@ -36051,18 +36112,63 @@ body.theme-frosted .icon-rail button {
    light-on-light contrast probe (gadget card + settings row). */
 body.theme-frosted .og-card,
 body.theme-frosted .admin-card,
+body.theme-frosted .ow-window,
 body.theme-frosted .ow-window .ow-body,
 body.theme-frosted .modal-content,
+body.theme-frosted .settings-modal-content,
 body.theme-frosted .on-card,
 body.theme-frosted .dropdown,
 body.theme-frosted .overflow-menu,
-body.theme-frosted .cp-popover {
+body.theme-frosted .cp-popover,
+/* ROOT FIX (owner: "white-on-white / black buttons") — the ink flip below was
+   only half of light-mode: the SURFACE tokens stayed at the base theme's DARK
+   values (--panel #1d2026, --bg #15171c, --input-bg #1d2026 …), so every
+   interior component that paints its background FROM a token — sidebar rows
+   and pills (var(--bg)), the sidebar's own 55% --panel fill mix, form
+   inputs/selects/textareas (var(--input-bg): the "solid black slabs" inside
+   the white wizard card), dropdown hovers, wells, toggles — composited DARK
+   inside the light chrome while the ink flipped dark ⇒ black-on-black. The
+   chrome scope below therefore redefines the WHOLE surface ramp (macOS light
+   chrome: near-white surfaces, near-black ink, hairline borders), not just
+   --fg. Same per-surface scoping as the ink flip, so content surfaces (chat
+   bubbles, wallpaper, hero, the dark tool panes) are untouched. */
+body.theme-frosted #sidebar,
+body.theme-frosted .icon-rail,
+body.theme-frosted .chat-top-bar,
+body.theme-frosted .chat-input-bar,
+body.theme-frosted .model-picker-btn,
+body.theme-frosted .model-picker-menu,
+body.theme-frosted .toast,
+body.theme-frosted .tool-indicator,
+body.theme-frosted .attach-card,
+body.theme-frosted #minimized-dock,
+body.theme-frosted .doc-tab-dropdown,
+body.theme-frosted .gallery-detail-menu {
   /* Redefine --fg to the chrome dark ink on these surfaces, so inner
      `color: var(--fg)` AND `color-mix(in srgb, var(--fg) N%, …)` resolve to dark /
-     muted-dark. With --panel left dark, color-mix(--fg N%, --panel) mixes two darks ⇒ a
-     muted DARK that's legible on the light glass and keeps the muted gradation (full vs.
-     secondary), instead of the old light-on-light. */
+     muted-dark. color-mix(--fg N%, --panel) now mixes dark ink with the LIGHT
+     panel ⇒ a muted mid-gray that keeps the muted gradation (full vs.
+     secondary) and stays legible on the light glass. */
   --fg: #16191f;
+  /* macOS-light surface ramp (HIG light chrome: near-white surface, #1d1d1f-class
+     ink, hairline separators). These are the values every token-derived interior
+     fill resolves against inside the light chrome. */
+  --panel: #f5f6f8;             /* raised surface / component chrome            */
+  --bg: #e9ecf0;                /* recessed well / hover wash                   */
+  --border: rgba(22, 25, 31, 0.16);
+  --sidebar-bg: transparent;    /* the frost fill owns the sidebar ground       */
+  --win-bg: #f5f6f8;            /* kit windows derive their frost from this     */
+  --input-bg: rgba(255, 255, 255, 0.78);
+  --input-border: rgba(22, 25, 31, 0.2);
+  --code-bg: #eef0f3;
+  --code-fg: #16191f;
+  --toggle-bg: rgba(22, 25, 31, 0.18);
+  --toggle-active: var(--sys-blue);
+  /* The one sanctioned CTA/action color on glass chrome is system blue — the
+     glass base theme's NEUTRAL gray accent (#9aa3af) painted white-labelled
+     buttons ~2.4:1 (the "gray CTA" / unreadable send affordances). */
+  --send-btn-bg: var(--sys-blue);
+  --send-btn-hover: color-mix(in srgb, var(--sys-blue) 82%, #000);
 }
 
 /* LIGHT-ON-LIGHT GUARD — some text controls inside the light-glass chrome set their
@@ -36104,6 +36210,27 @@ body.theme-frosted .chat-input-bar textarea#message::placeholder {
 body.theme-frosted .chat-meta-overlay .chat-meta-count,
 body.theme-frosted .chat-meta-overlay .session-cost-display {
   color: rgba(22,25,31,0.60) !important;
+}
+/* <details>/<summary> disclosures ride the SYNTAX token --hl-string (a pale
+   sand hue under the glass base theme) for their ink — on the light cards that
+   rendered the "What I never do" row as faint amber-on-cream (~1.6:1). Inside
+   the light chrome the disclosure ink follows the chrome's dark --fg (with a
+   whisper of the original tint so the row still reads as a soft callout). */
+body.theme-frosted .modal-content summary,
+body.theme-frosted .settings-modal-content summary,
+body.theme-frosted .admin-card summary,
+body.theme-frosted .ow-window .ow-body summary,
+body.theme-frosted .og-card summary,
+body.theme-frosted .on-card summary {
+  color: color-mix(in srgb, var(--fg) 85%, var(--hl-string) 15%);
+  border-bottom-color: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+/* The floating hamburger rides --hamburger-color (the base theme's LIGHT fg)
+   but always sits over the light top-bar strip / light sidebar under the glass
+   tiers — dark chrome ink there, like every other small chrome symbol. */
+body.theme-frosted .hamburger-btn,
+body.theme-frosted .sidebar-hamburger {
+  color: #16191f;
 }
 /* ── WINDOW-KIT TITLEBAR + WINDOW HEADERS dark-ink-on-glass (#742, #725 stragglers) ──
    The titlebar (.ow-titlebar / .ow-title) and the legacy modal header (.modal-header h4)
@@ -37115,3 +37242,105 @@ body.ow-sheet-open { overflow: hidden; }
   text-align: left;
 }
 #applicant-compare-modal .applicant-compare-open-detail:hover { text-decoration: underline; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Search overlay (Ctrl+K conversation palette) — #search-overlay/.search-popup
+   had NO styles anywhere in the tree: the palette rendered as a naked,
+   unpositioned input at the end of <body> (a black strip clipped off the
+   top-right — the "unreadable search bar"). Standard command-palette
+   presentation: full-viewport scrim, centered card near the top, list rows.
+   Entirely token-driven so it follows every theme; under the glass tiers the
+   frost variant below folds it onto the ONE light glass + chrome ink like the
+   other popovers.
+   ═════════════════════════════════════════════════════════════════════════ */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: var(--ow-scrim-bg, rgba(0, 0, 0, 0.45));
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.search-overlay.hidden { display: none; }
+.search-popup {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.search-popup #search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 16px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+}
+.search-popup #search-input::placeholder { color: color-mix(in srgb, var(--fg) 55%, transparent); }
+.search-results { overflow-y: auto; }
+.search-results .search-empty {
+  padding: 18px 16px;
+  font-size: 0.85rem;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+.search-results .search-group-header {
+  padding: 10px 16px 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.search-results .search-result-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.search-results .search-result-item:hover,
+.search-results .search-result-item.selected {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-left-color: var(--sys-blue, #0a84ff);
+}
+.search-results .search-result-role {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.search-results .search-result-snippet { font-size: 0.85rem; line-height: 1.4; }
+.search-results .search-result-time {
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.search-results .search-highlight {
+  background: color-mix(in srgb, var(--sys-blue, #0a84ff) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+}
+/* Glass tiers: the palette is a chrome popover — same light glass + dark ink
+   ramp as .dropdown/.cp-popover (tokens resolve from the ramp below). */
+body.theme-frosted .search-popup {
+  --fg: #16191f;
+  --panel: #f5f6f8;
+  --bg: #e9ecf0;
+  --border: rgba(22, 25, 31, 0.16);
+  background-color: var(--ow-glass-light-color, rgba(255, 255, 255, 0.6));
+  background-image: var(--ow-glass-light-fill);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+  color: #16191f;
+}
+body.theme-frosted .search-overlay {
+  background: color-mix(in srgb, #000 26%, transparent);
+}
