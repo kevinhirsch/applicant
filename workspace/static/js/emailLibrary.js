@@ -611,10 +611,10 @@ export function openEmailLibrary(opts = {}) {
           </div>
           <div class="memory-toolbar">
             <div class="memory-category-filters">
-              <select class="memory-sort-select" id="email-lib-folder" style="flex:1;min-width:0;text-overflow:ellipsis;">
+              <select class="memory-sort-select" id="email-lib-folder" aria-label="Folder" title="Folder" style="flex:1;min-width:0;text-overflow:ellipsis;">
                 <option value="INBOX">Inbox</option>
               </select>
-              <select class="memory-sort-select" id="email-lib-filter" style="flex:1;min-width:0;">
+              <select class="memory-sort-select" id="email-lib-filter" aria-label="Filter emails" title="Filter emails" style="flex:1;min-width:0;">
                 <option value="all">All</option>
                 <option value="unread">Unread</option>
                 <option value="favorites">Favorites</option>
@@ -1257,6 +1257,16 @@ async function _loadFolders({ resetMissing = false } = {}) {
     }
     sel.innerHTML = '';
     const { priority, others } = sortedFolders(data.folders);
+    // #75: an account that hasn't enumerated any real folders yet (empty
+    // `data.folders`) used to leave this select with nothing but the
+    // "Scheduled" virtual folder below -- reading as a stray, unlabeled
+    // empty dropdown. Always give it the one folder every mailbox has.
+    if (!priority.length && !others.length) {
+      const fallback = document.createElement('option');
+      fallback.value = 'INBOX';
+      fallback.textContent = 'Inbox';
+      sel.appendChild(fallback);
+    }
     for (const f of priority) {
       const opt = document.createElement('option');
       opt.value = f;

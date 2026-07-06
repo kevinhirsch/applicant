@@ -2079,6 +2079,36 @@ const SHORTCUT_CATEGORIES = [
   { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
+// Mirrors keyboard-shortcuts.js's own (module-private) `_toolBtns` id map.
+// #107: several "Open X" shortcuts point at tools this deployment doesn't
+// actually surface in the nav (hidden via `style="display:none"` in
+// index.html -- e.g. Cookbook/Notes/Tasks/Theme aren't part of the
+// Applicant product). Offering to bind a key to open something that isn't
+// reachable is confusing busywork, so those rows are skipped below rather
+// than shown as an unbound "Set". Checked live against the DOM (not a
+// hardcoded list of which tools are "in" or "out") so this never drifts
+// from whatever the nav actually shows.
+const OPEN_TOOL_NAV_IDS = {
+  open_calendar: 'tool-calendar-btn',
+  open_compare:  'tool-compare-btn',
+  open_cookbook: 'tool-cookbook-btn',
+  open_research: 'tool-research-btn',
+  open_gallery:  'tool-gallery-btn',
+  open_library:  'tool-library-btn',
+  open_memory:   'tool-memory-btn',
+  open_notes:    'tool-notes-btn',
+  open_tasks:    'tool-tasks-btn',
+  open_theme:    'tool-theme-btn',
+};
+
+function _toolShortcutIsReachable(action) {
+  const navId = OPEN_TOOL_NAV_IDS[action];
+  if (!navId) return true; // not an "open a tool" action -- always eligible
+  const btn = document.getElementById(navId);
+  if (!btn) return false;
+  try { return getComputedStyle(btn).display !== 'none'; } catch { return true; }
+}
+
 function _formatKeyCaps(combo) {
   return combo.split('+').map(p => {
     let label;
@@ -2145,6 +2175,7 @@ async function initShortcuts() {
 
       for (const action of cat.keys) {
         if (!(action in keybinds)) continue;
+        if (!_toolShortcutIsReachable(action)) continue;
         const combo = keybinds[action];
         // Unbound shortcuts (empty combo) still render so the user can
         // assign one \u2014 they show a "Set" affordance instead of keycaps.

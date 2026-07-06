@@ -46,9 +46,32 @@ function _isEditableTarget(target) {
   return tag === 'input' || tag === 'textarea' || !!target.isContentEditable;
 }
 
+// #110/#111: the engine's tool surface intentionally uses plain machine
+// identifiers ("list_campaigns") and its own stock description ("List all
+// campaigns.", predating this product's "job search" wording) -- fine for an
+// MCP client, unreadable for the owner looking at this overlay. This is a
+// presentation-only relabeling: it still renders every tool the proxy
+// actually returned (see the module doc's "never fabricates" contract),
+// just with a plain-language name/description instead of the raw id. A
+// tool name outside this map (a future engine addition) still renders --
+// humanized rather than dropped — so nothing here can hide a real tool.
+const FRIENDLY_TOOL_LABELS = {
+  list_campaigns: { label: 'Look up your job searches', desc: 'Lists your job searches and where each one stands.' },
+  get_attributes: { label: 'Look up your saved details', desc: 'Lists the facts I have on file about you — name, skills, and the rest of your profile.' },
+  get_applications: { label: 'Look up your applications', desc: 'Lists your applications and their current status.' },
+  get_pending_actions: { label: 'Look up what needs your attention', desc: 'Lists the open items waiting on your review.' },
+  health: { label: 'Check that I’m running', desc: 'Confirms the assistant is up and responding.' },
+};
+
+function _humanizeToolName(name) {
+  return String(name || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function _rowHTML(tool) {
-  const name = esc(tool.name || '');
-  const desc = esc(tool.description || '');
+  const rawName = tool.name || '';
+  const friendly = FRIENDLY_TOOL_LABELS[rawName];
+  const name = esc(friendly ? friendly.label : _humanizeToolName(rawName));
+  const desc = esc((friendly && friendly.desc) || tool.description || '');
   return `<div class="admin-card applicant-capabilities-row" style="padding:10px 12px;margin-bottom:8px;">
     <div style="font-weight:600;">${name}</div>
     ${desc ? `<div style="margin-top:4px;font-size:12px;opacity:0.8;">${desc}</div>` : ''}
@@ -134,7 +157,12 @@ function _ensureTriggerEl() {
   btn.className = 'cal-btn';
   btn.title = 'What can the assistant do?';
   btn.setAttribute('aria-label', 'What can the assistant do?');
-  btn.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:850;border-radius:999px;width:auto;padding:0 14px;box-shadow:0 4px 12px rgba(0,0,0,0.25);';
+  // #31: bottom-left put this pill directly over the sidebar's own bottom-left
+  // user bar (avatar/name), covering it and intercepting clicks meant for it,
+  // on any sidebar width (full, resized, or collapsed to the icon rail).
+  // Bottom-right mirrors the top-right toast corner and stays clear of the
+  // sidebar at every width.
+  btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:850;border-radius:999px;width:auto;padding:0 14px;box-shadow:0 4px 12px rgba(0,0,0,0.25);';
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Assistant can…';
   btn.addEventListener('click', () => toggleApplicantCapabilities());
   document.body.appendChild(btn);

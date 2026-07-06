@@ -66,13 +66,14 @@ const ASSISTANT_LABEL = 'Job assistant';
 
 // Design-audit #9: _fetchJSON's shared 15s default timeout is right for plain
 // CRUD calls, but a chat turn runs the engine's full agent loop server-side —
-// the workspace backend's own engine client already waits up to 30s (read
-// timeout, see ApplicantEngineClient._DEFAULT_TIMEOUT in
-// workspace/src/applicant_engine.py) for that reply. A 15s browser-side abort
-// would fire WHILE the backend is still legitimately waiting on the engine,
-// surfacing a false "timed out" error for a request that was still in flight.
-// Give this one call room to clear the backend's own timeout with margin.
-const MESSAGE_TIMEOUT_MS = 35000;
+// including remote-LLM round trips — and the workspace backend's /message
+// proxy waits up to 90s for it (the dedicated _CHAT_TURN_TIMEOUT read budget
+// in routes/applicant_chat_routes.py; everything else keeps the tight 30s
+// ApplicantEngineClient default). A shorter browser-side abort would fire
+// WHILE the backend is still legitimately waiting on the engine, surfacing a
+// false "timed out" error for a request that was still in flight. Give this
+// one call room to clear the backend's own budget with margin.
+const MESSAGE_TIMEOUT_MS = 100000;
 
 // The single guardrail/guidance hint for the Job Assistant composer. Registered
 // once with the Chat Hint kit; `gameBuildOnly:false` so it is eligible here (this
@@ -93,6 +94,7 @@ function _ensureChatHintRegistered() {
 let _sessionId = null;        // resolved Job Assistant session id (this tab)
 let _campaigns = [];
 let _activeCampaignId = null;
+let _engineAvailable = null;  // last /campaigns reachability (null = unknown)
 let _sending = false;
 let _renderSeq = 0; // monotonic - guards stale async renders on fast campaign switches
 
@@ -120,7 +122,7 @@ export function isEngineSessionActive() {
 let _openInFlight = false; // re-entrancy guard (double click / route replay)
 
 export async function openApplicantChat(opts) {
-  if (_openInFlight) return;
+  if (_openInFlight) return false;
   _openInFlight = true;
   // Hash routing (audit #7): '#chat' deep-links here; selectSession() below
   // then replaces it with the canonical '#<sessionId>' hash the native chat
@@ -129,8 +131,10 @@ export async function openApplicantChat(opts) {
   try {
     const info = await _fetchJSON(`${API}/session`);
     if (!info || !info.session_id) {
-      _toast('The assistant is unavailable right now');
-      return;
+      // `quiet` suppresses failure toasts for opportunistic callers (the
+      // bare-composer send probe in chat.js) that have their own fallback.
+      if (!(opts && opts.quiet)) _toast('The assistant is unavailable right now');
+      return false;
     }
     _sessionId = info.session_id;
     // The sidebar list and the send-path dispatch identify this session from
@@ -148,9 +152,11 @@ export async function openApplicantChat(opts) {
     // "nothing changed" and the deep link would go dead.
     syncToken();
     _syncExtras();
+    return true;
   } catch (e) {
     console.error('openApplicantChat failed:', e);
-    _toast(errText(e));
+    if (!(opts && opts.quiet)) _toast(errText(e));
+    return false;
   } finally {
     _openInFlight = false;
   }
@@ -240,6 +246,7 @@ function _unmountExtras() {
 
 async function _loadCampaigns() {
   const data = await _fetchJSON(`${API}/campaigns`);
+  _engineAvailable = !(data && data.engine_available === false);
   _campaigns = Array.isArray(data && data.campaigns) ? data.campaigns : [];
   if (!_activeCampaignId && _campaigns.length) _activeCampaignId = _campaigns[0].id;
   return data;
@@ -709,7 +716,12 @@ export async function sendEngineMessage(rawText) {
     try { await _loadCampaigns(); } catch { /* fall through to the guard below */ }
   }
   if (!_activeCampaignId) {
-    _toast('Pick or create a job search first');
+    // Tell the user the right next step: "create a job search" only applies
+    // when the engine is actually reachable — otherwise the missing piece is
+    // the model connection, and the bar renders that gate with its CTA.
+    _toast(_engineAvailable === false
+      ? 'Connect a model first — the bar above will walk you through it'
+      : 'Pick or create a job search first');
     _refreshBar();
     return false;
   }
@@ -729,6 +741,68 @@ export async function sendEngineMessage(rawText) {
   try { uiModule.scrollHistory(); } catch { /* no-op */ }
   await _sendToBubble(message, rawComposerValue, thinking);
   return true;
+}
+
+// ── ONE-chat unification (New Chat opens the Applicant assistant) ───────────
+//
+// There is a single user-facing chat: the engine-backed Applicant assistant.
+// Every generic "start a chat" affordance — the sidebar brand, the New Chat
+// list item, the icon-rail new-session button, the mobile new-chat button —
+// opens THIS conversation instead of spinning up a bare workspace-LLM
+// session. The raw-LLM path stays reachable only through a deliberate model
+// pick (the model picker / models list), which other workspace features
+// (document chat, agent runs, Compare) still rely on.
+//
+// The interception is document-capture so it wins regardless of module load
+// order, and it engages only after the boot probe confirms this account owns
+// the engine chat (`GET /api/applicant/chat/session` is gated by
+// require_engine_owner — a second, non-owner workspace account keeps the
+// native behavior since the engine is single-tenant).
+
+const NEW_CHAT_LAUNCHER_IDS = [
+  'sidebar-brand-btn', 'sidebar-new-chat-btn', 'chat-new-btn',
+  'rail-new-session', 'mobile-new-chat-btn',
+];
+
+let _unifiedPrimary = false;
+
+function _relabelNewChatLaunchers() {
+  // The affordances now open the one Applicant chat — say so. (Runtime-only;
+  // the static markup keeps its generic labels for non-owner accounts.)
+  const title = 'Chat — your Applicant assistant';
+  for (const id of NEW_CHAT_LAUNCHER_IDS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.title = title;
+    if (el.getAttribute('aria-label')) el.setAttribute('aria-label', title);
+  }
+  const newChatItem = document.getElementById('sidebar-new-chat-btn');
+  const label = newChatItem && newChatItem.querySelector('.grow');
+  if (label && /new chat/i.test(label.textContent || '')) label.textContent = 'Chat';
+}
+
+async function _probeUnifiedPrimary() {
+  try {
+    const info = await _fetchJSON(`${API}/session`);
+    if (info && info.session_id) {
+      _sessionId = info.session_id;
+      _unifiedPrimary = true;
+      _relabelNewChatLaunchers();
+    }
+  } catch { /* not the engine owner (or engine chat down) — native behavior stays */ }
+}
+
+function _interceptNewChatClick(e) {
+  if (!_unifiedPrimary) return;
+  const target = e.target;
+  if (!target || typeof target.closest !== 'function') return;
+  const hit = target.closest(NEW_CHAT_LAUNCHER_IDS.map((id) => `#${id}`).join(', '));
+  if (!hit) return;
+  // Capture phase on document: stop the event before app.js's own handlers
+  // (which would set up a pending direct-LLM chat) ever see it.
+  e.preventDefault();
+  e.stopPropagation();
+  openApplicantChat();
 }
 
 // ── Launchers / boot ─────────────────────────────────────────────────────────
@@ -751,6 +825,10 @@ function _wireLauncher() {
 
 function _boot() {
   _wireLauncher();
+  // ONE chat: claim the generic new-chat affordances for the assistant (the
+  // probe flips the switch only for the engine-owner account).
+  document.addEventListener('click', _interceptNewChatClick, true);
+  _probeUnifiedPrimary();
   // The launchers may be (re)rendered after boot; retry briefly so they always
   // get wired without a hard dependency on load order.
   let tries = 0;

@@ -32,7 +32,7 @@
 //   3. Honesty artifacts — the pre-submit snapshot ("Review exactly what will
 //      be sent", applicantRemote.js) and the immutable per-application
 //      submission record + full audit-log JSON export, both reachable from
-//      Activity & Debug (applicantDebug.js: `_renderSnapshot`,
+//      Activity & controls (applicantDebug.js: `_renderSnapshot`,
 //      `_downloadAuditLog`).
 //   4. Data isolation — owner-scoped data (workspace/CLAUDE.md's
 //      ownership/multi-user model: the `owner` column + `owner_filter`, with
@@ -175,17 +175,17 @@ function _honestySectionHTML() {
       <p style="font-size:12px;line-height:1.6;margin:0 0 8px;">
         Once an application is submitted, that same record becomes an
         immutable submission record you can reopen any time — go to
-        Activity &amp; Debug → Activity, pick an application, and open
+        Activity &amp; controls, pick an application, and open
         Details → Submission record.
       </p>
       <p style="font-size:12px;line-height:1.6;margin:0 0 10px;">
         You can also export the complete action trail for a job search as
-        JSON, any time, from Activity &amp; Debug's overflow menu → Download
+        JSON, any time, from Activity &amp; controls' overflow menu → Download
         activity log (available to the admin on a shared install).
       </p>
       <button type="button" class="cal-btn" id="applicant-trust-open-debug"
-              title="Open Activity & Debug">Open Activity &amp; Debug</button>
-      ${hasDebug ? '' : '<div style="font-size:11px;opacity:0.6;margin-top:6px;">Finish setup to reach Activity &amp; Debug.</div>'}
+              title="Open Activity & controls">Open Activity &amp; controls</button>
+      ${hasDebug ? '' : '<div style="font-size:11px;opacity:0.6;margin-top:6px;">Finish setup to reach Activity &amp; controls.</div>'}
     </div>`;
 }
 
@@ -225,7 +225,7 @@ function _render(host) {
           return;
         }
       } catch { /* fall through */ }
-      try { uiModule.showToast('Finish setup to reach Activity & Debug'); } catch { /* no-op */ }
+      try { uiModule.showToast('Finish setup to reach Activity & controls'); } catch { /* no-op */ }
     });
   }
 }

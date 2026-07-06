@@ -441,6 +441,23 @@ import createResearchSynapse from './researchSynapse.js';
       window.applicantChatModule.sendEngineMessage(msg);
       return;
     }
+    // Belt-and-braces for the same seam: the surface module loads lazily, so
+    // an engine session selected before it finished loading must still never
+    // fall through to the LLM streaming path (which would try to dial the
+    // sentinel endpoint). Identify the session by the sentinel directly and
+    // pull the module in on demand.
+    {
+      const _sidNow = sessionModule.getCurrentSessionId();
+      const _sessNow = _sidNow && (sessionModule.getSessions() || []).find(s => s.id === _sidNow);
+      if (_sessNow && _sessNow.endpoint_url === 'applicant://engine') {
+        _releaseSendFlag();
+        try {
+          const _m = (await import('./applicantChat.js')).default;
+          if (_m && typeof _m.sendEngineMessage === 'function') _m.sendEngineMessage(msg);
+        } catch (e) { console.error('Job assistant surface unavailable:', e); }
+        return;
+      }
+    }
 
     // Materialize pending session (deferred from model click) on first message
     if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
@@ -449,6 +466,34 @@ import createResearchSynapse from './researchSynapse.js';
     }
 
     if (!sessionModule.getCurrentSessionId()) {
+      // ONE chat: a bare-composer send (no session selected, no explicit
+      // model pick pending) belongs to the engine-backed Applicant
+      // assistant. Open (or resolve) its unified session and hand the send
+      // to the engine path — the direct-model auto-create below survives
+      // only as the fallback for accounts the assistant is not available to
+      // (e.g. a second, non-owner workspace account; the engine is
+      // single-tenant) or when the assistant session cannot be resolved.
+      try {
+        let _jam = window.applicantChatModule;
+        if (!_jam || typeof _jam.openApplicantChat !== 'function') {
+          _jam = (await import('./applicantChat.js')).default;
+        }
+        if (_jam && typeof _jam.openApplicantChat === 'function') {
+          // quiet + no '#chat' hash: on success selectSession installs the
+          // canonical '#<sessionId>' hash itself; on failure (non-owner
+          // account) we fall back below without an error toast.
+          const _opened = await _jam.openApplicantChat({ skipHashUpdate: true, quiet: true });
+          if (_opened
+              && typeof _jam.isEngineSessionActive === 'function' && _jam.isEngineSessionActive()
+              && typeof _jam.sendEngineMessage === 'function') {
+            _releaseSendFlag();
+            _jam.sendEngineMessage(msg);
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn('assistant chat unavailable — falling back to a direct model chat:', e);
+      }
       // Auto-create a session using default chat config. Always fetch fresh
       // so that a recent Settings change takes effect without a page reload.
       try {
@@ -1869,6 +1914,19 @@ import createResearchSynapse from './researchSynapse.js';
                 // can be edited/deleted immediately, without reloading the chat.
                 if (_isBg) continue;
                 if (currentHolder && json.id) currentHolder.dataset.dbId = json.id;
+
+              } else if (json.type === 'content_replace') {
+                // Server-side reasoning hygiene: the completed reply's clean
+                // text diverged from what streamed live (an untagged reasoning
+                // head the stripper could only classify at end of stream).
+                // Rebase the accumulated text so the final render — and the
+                // background-map copy — shows only the clean reply.
+                accumulated = json.content || '';
+                roundText = accumulated;
+                currentAccumulated = accumulated;
+                var bgRep = _backgroundStreams.get(streamSessionId);
+                if (bgRep) bgRep.accumulated = accumulated;
+                if (!_isBg) _renderStream();
 
               } else if (json.type === 'tool_start') {
                 if (_isBg) continue;

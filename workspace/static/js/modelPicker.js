@@ -418,6 +418,22 @@ export function updateModelPicker() {
     if (wrap) { wrap.style.display = 'none'; }
     return;
   }
+  // Belt-and-braces without the module: applicantChat.js loads lazily, and a
+  // boot/reload runs this refresh BEFORE that import resolves. Identify the
+  // engine session by its sentinel endpoint directly — otherwise the
+  // "model no longer available → PATCH first available model" auto-heal
+  // below rewrites the sentinel and silently reconnects the assistant's
+  // chat to a raw LLM endpoint (the exact split-brain the chat unification
+  // exists to prevent). The server refuses that PATCH too (session_routes),
+  // but don't even try.
+  {
+    const _sidNow = _deps.getCurrentSessionId();
+    const _sNow = _sidNow && (_deps.getSessions() || []).find(x => x.id === _sidNow);
+    if (_sNow && _sNow.endpoint_url === 'applicant://engine') {
+      if (wrap) { wrap.style.display = 'none'; }
+      return;
+    }
+  }
   // Reset inline visibility (may have been hidden by typing in previous session)
   if (wrap) {
     wrap.style.display = '';
