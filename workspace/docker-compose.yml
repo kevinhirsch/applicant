@@ -47,11 +47,14 @@ services:
     restart: unless-stopped
 
   chromadb:
-    image: docker.io/chromadb/chroma:latest
+    # Pinned off :latest — Chroma 1.x persists to /data (not the old /chroma/chroma)
+    # and its minimal image has no python/curl, so an unpinned bump silently moves
+    # the data dir and breaks any python-based healthcheck. Bump this tag deliberately.
+    image: docker.io/chromadb/chroma:1.0.21
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
-      - chromadb-data:/chroma/chroma
+      - chromadb-data:/data
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped

@@ -21,8 +21,12 @@ Five related failure paths in the install/update/stack recovery story:
   every provisioning apply, not just `--update`.
 - #23: `chromadb` and `ntfy` had no `healthcheck:` at all (the UI only waited for
   `service_started` on chromadb), and `postgres` had no `start_period`, so a slow first
-  boot could burn all of `pg_isready`'s retries. All three now have sensible
-  healthchecks/start_period matching the style of the existing api/searxng ones.
+  boot could burn all of `pg_isready`'s retries. ntfy/postgres got sensible
+  healthchecks/start_period. chromadb's was later removed and its contract reconciled
+  (see below): the unpinned `:latest` tag pulled Chroma 1.x — a minimal image with no
+  python/curl to run a healthcheck, persisting to `/data` — so chromadb is now pinned,
+  mounts its volume at `/data`, and the UI gates it on `service_started` (the RAG client
+  retries an unready store).
 
 The update.sh behavioral tests are hermetic: a fake ``docker`` on PATH stands in for
 the real CLI and captures/decides based on the invoked subcommand tokens, following
@@ -246,16 +250,32 @@ def test_compose_parses_with_nonempty_services():
 
 
 @pytest.mark.unit
-def test_chromadb_has_a_healthcheck_and_ui_waits_on_it():
+def test_chromadb_is_pinned_persists_to_data_and_ui_gates_on_it():
+    # Reconciled from the original issue-#23 "chromadb must have a healthcheck +
+    # service_healthy" contract: the unpinned chromadb/chroma:latest tag pulled
+    # Chroma 1.x, a minimal Rust image with NO python/curl/wget — so the old
+    # python heartbeat healthcheck failed exit-127 forever and blocked the deploy,
+    # and 1.x persists to /data (not /chroma/chroma). The corrected invariants:
     spec = _load_compose()
     chromadb = spec["services"]["chromadb"]
-    hc = chromadb.get("healthcheck")
-    assert hc, "chromadb must declare a healthcheck (issue #23)"
-    assert hc.get("test"), "chromadb healthcheck must define a test command"
 
+    # 1) Pinned off :latest so a fresh --build can't silently pull a new major.
+    image = chromadb.get("image", "")
+    tag = image.rsplit("/", 1)[-1]
+    assert ":" in tag and not tag.endswith(":latest"), (
+        f"chromadb image must be pinned to an explicit version tag, not :latest (got {image!r})"
+    )
+
+    # 2) Named volume mounts at /data — Chroma 1.x's persist dir — or vectors land
+    #    in the throwaway container layer and are lost on recreate.
+    targets = [v.split(":", 1)[1] for v in chromadb.get("volumes", []) if isinstance(v, str) and ":" in v]
+    assert "/data" in targets, f"chromadb volume must mount at /data (got {chromadb.get('volumes')!r})"
+
+    # 3) The 1.x image ships no healthcheck and no in-image HTTP client to build one
+    #    with, so the UI gates on service_started; the RAG client retries.
     ui_depends = spec["services"]["applicant-ui"]["depends_on"]
-    assert ui_depends["chromadb"]["condition"] == "service_healthy", (
-        "the UI should wait for chromadb to be actually healthy, not just started"
+    assert ui_depends["chromadb"]["condition"] == "service_started", (
+        "the UI should gate chromadb on service_started (Chroma 1.x has no usable in-container healthcheck)"
     )
 
 

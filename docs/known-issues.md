@@ -86,6 +86,7 @@ must NOT be forced green in CI. Verified via `docs/production-smoke.md` on a Doc
 
 | Finding | PR |
 |---|---|
+| **`compose up` aborted at chromadb** — the unpinned `chromadb/chroma:latest` pulled Chroma 1.x, whose minimal image has no `python`/`curl`/`wget`, so the python-based heartbeat healthcheck failed exit-127 forever (`unhealthy`) and blocked the whole stack even though the server was serving. 1.x also persists to `/data`, not the mounted `/chroma/chroma`, so vectors weren't durable. Fixed: pinned `chromadb/chroma:1.0.21` (prod + workspace compose), moved the volume to `/data`, and dropped the impossible in-container healthcheck for a `service_started` gate (the RAG client retries). | (this PR) |
 | `scored` audit events persisted with NULL `campaign_id` → invisible to campaign-scoped export | #550 |
 | `browser` extra's `patchright` resolved to the non-importable `0.0.1` name-squatter stub (chromium stealth silently degraded); chromium binary-rev mismatch | #550 |
 | Chat couldn't converse — boot-time LLM adapter never reloaded after a runtime model-connect; `max_tokens=256` starved reasoning models | #543 |

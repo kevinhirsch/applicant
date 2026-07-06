@@ -70,11 +70,11 @@ services:
     depends_on:
       searxng:
         condition: service_healthy
-      # chromadb now declares its own healthcheck (below); wait for it to actually
-      # answer instead of just having started, so the UI doesn't boot with RAG init
-      # racing an unready vector store (issue #23).
+      # chromadb 1.x ships no healthcheck and no in-image HTTP client to add one
+      # (see the chromadb service below), so gate on service_started; the workspace
+      # RAG client retries an unready vector store rather than failing (issue #23).
       chromadb:
-        condition: service_healthy
+        condition: service_started
       # Wait for the engine to report a REAL healthy /healthz (DB reachable) before
       # the public front door starts serving — closes the window where the UI is up
       # but the engine it proxies to is not yet ready.
@@ -354,23 +354,25 @@ services:
   # Internal only in prod — the UI reaches it at chromadb:8000.
   # ---------------------------------------------------------------------------
   chromadb:
-    image: chromadb/chroma:latest
+    # PINNED off :latest. A fresh `--build` silently pulled Chroma 1.x, whose
+    # minimal (Rust) image contains no python/curl/wget/nc — so the previous
+    # python-based heartbeat healthcheck failed with exit 127 ("python: not found")
+    # on every probe and left the container permanently `unhealthy`, which aborted
+    # the whole `compose up` even though the server itself was serving fine. 1.x
+    # also persists to /data (its config.yaml default), NOT the old /chroma/chroma,
+    # so the named volume moves with it. Bump this tag deliberately, never via :latest.
+    image: chromadb/chroma:1.0.21
     environment:
       ANONYMIZED_TELEMETRY: "FALSE"
     expose:
       - "8000"
     volumes:
-      - chromadb-data:/chroma/chroma
-    healthcheck:
-      # Chroma's heartbeat endpoint moved from /api/v1 to /api/v2 across versions;
-      # try v2 first and fall back to v1 so this works against either (issue #23) —
-      # without this, applicant-ui's `depends_on: condition: service_started` let the
-      # UI boot before the vector store was actually ready (RAG init silently retries).
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat', timeout=5)\" || python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=5)\""]
-      interval: 10s
-      timeout: 6s
-      retries: 12
-      start_period: 20s
+      - chromadb-data:/data
+    # No in-container healthcheck: the 1.x image declares none and ships no HTTP
+    # client to build one with (python/curl/wget all absent). Dependents therefore
+    # gate on `service_started`, and the workspace RAG client retries until the
+    # store answers rather than failing (issue #23). If a future pinned tag ships a
+    # usable client or its own HEALTHCHECK, restore a real gate here.
     restart: always
 
   # ---------------------------------------------------------------------------
